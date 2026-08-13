@@ -88,7 +88,11 @@
         "macOS arm64 packaged Desktop builds, stages binaries, and account-gate smoke passes",
         "Rust/optimized-Node backup comparison records contract parity and recovery without claiming ZIP byte parity",
         "Packaged Local App dogfood records real cycle/date counts and fails closed below 100 cycles across 7 UTC dates",
-        "native_ab producer emits exactly 3 trials per arm, while live evaluation remains blocked without real binaries"
+        "native_ab producer emits exactly 3 trials per arm, while live evaluation remains blocked without real binaries",
+        "Agent Run process/I/O host remains not_admitted pending Local App dependency and real-run evidence",
+        "Runtime payload installer/extractor remains not_admitted pending backup admission and recovery evidence",
+        "Run evidence offset indexer/parser remains not_admitted pending bounded production path and provider parity",
+        "Workspace manifest/index watcher remains not_admitted pending freshness contract and scale evidence"
       ],
       "state_inventory": [
         "implementation",
@@ -111,13 +115,14 @@
       "packet_version": "2"
     },
     "verifier": {
-      "verdict": "pending",
+      "verdict": "QUESTION",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
       "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
       "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2"
+      "packet_version": "2",
+      "reason": "Packaged artifact, native hashes, versions, ZIP integrity, account-gate, server-package, and App Builder checks are current; no authorized hosted authenticated Local App fixture exists, so dogfood and live native_ab cannot be observed."
     },
     "final_review": {
       "verdict": "pending",
@@ -137,6 +142,12 @@
         "before_source_sha": "b528f1ab339f2aa1d4bc4d1d484ac00855a3eab1",
         "after_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
         "reason": "Restored 0.7.7 package/Cargo alignment and completed the required project resource fixture before rebuilding the exact packaged candidate."
+      },
+      {
+        "type": "integration_remote_drift",
+        "before_source_sha": "e0b9ca5faa0c990ccc5dbbb919713e39d36753bc",
+        "after_source_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
+        "reason": "origin/main advanced with an unrelated runtime recovery context patch; prior integration CAS identity is stale and is being refrozen without reusing the old delivered SHA."
       },
       {
         "type": "candidate_rebased_and_integrated",
@@ -163,21 +174,23 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
+    "base_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "96cb4fe6a5f09cba266770b854627467bfc854a1",
+    "observed_remote_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
     "branch_refs": [
-      "a08bd880725f9adcfadac72f2097f31695b3e037"
+      "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "e0b9ca5faa0c990ccc5dbbb919713e39d36753bc",
+      "ef95852d405ea411eb2f3f6d56955ada56023c11"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-pilot-integrate.0e3c9b817",
-    "patch_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
-    "expected_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
+    "patch_tree_sha": "replace-with-next-docs-commit-tree-sha",
+    "expected_old_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
     "cas": {
-      "attempted": true,
-      "succeeded": true,
-      "observed_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
-      "delivered_sha": "db55044a299d57a92cf43df9c95f9ba03b744b6f"
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
+      "delivered_sha": null
     },
     "index_update_mode": "none"
   },

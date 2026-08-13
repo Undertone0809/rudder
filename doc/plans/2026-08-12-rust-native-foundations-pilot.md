@@ -26,7 +26,9 @@ related_code:
   - packages/run-intelligence-core/src/transcript.ts
   - server/src/services/organization-workspace-browser.ts
 commit_refs:
-  - 8037198f1
+  - 75b4ef82971ceafb0eb0c3896f7fb485616854dc
+  - e0b9ca5faa0c990ccc5dbbb919713e39d36753bc
+  - ef95852d405ea411eb2f3f6d56955ada56023c11
 updated_at: 2026-08-14
 ---
 
@@ -48,9 +50,11 @@ packaged app executable SHA-256 is
 The staged binaries report `0.7.7`, with hashes recorded in the delivery
 packet.
 
-The packet/evidence commit is `e2aac99ffdf4ed7afd3a40c52bee517dd73f873a`;
-it changes evidence only and does not replace the implementation source used
-to build the artifact. The candidate remains blocked for Local App promotion:
+The packet/evidence was delivered on `main` at `e0b9ca5faa0c990ccc5dbbb919713e39d36753bc`; this continuation
+patch is based on `ef95852d405ea411eb2f3f6d56955ada56023c11` and changes
+evidence/proposal metadata only. Neither replaces the implementation source
+used to build the artifact. The candidate remains blocked for Local App
+promotion:
 no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
 cannot run. A live three-trial `rudder-evals native_ab` campaign is also not
