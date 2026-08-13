@@ -1,0 +1,9 @@
+[package]
+name = "rudder-update-helper"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rudder-update-helper-core = { path = "../../crates/update-helper-core" }
+serde_json = "1.0"

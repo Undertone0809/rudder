@@ -30,6 +30,7 @@ export function createDesktopQuitFlow(context: {
   fetchApi: DesktopApiFetch;
   prepareForQuit?: () => Promise<void>;
   prepareLocalAppsForQuit?: () => Promise<void>;
+  beforeFinalizeQuit?: () => Promise<"handled" | "continue">;
   stopLocalRudder: () => Promise<void>;
   destroyResidentTray: () => void;
 }) {
@@ -316,6 +317,11 @@ export function createDesktopQuitFlow(context: {
           if (decision === "stop-runs") {
             await cancelActiveRunsBeforeQuit(activeRuns);
           }
+        }
+
+        if (context.beforeFinalizeQuit) {
+          const updateDecision = await context.beforeFinalizeQuit();
+          if (updateDecision === "handled") return;
         }
 
         await finalizeQuit();

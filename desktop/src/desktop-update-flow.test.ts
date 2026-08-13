@@ -349,7 +349,7 @@ describe("desktop update flow", () => {
         listRunningRunsForUpdate,
       });
 
-      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("handled");
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("continue");
       expect(spawnMock).toHaveBeenCalledWith(expect.stringContaining("rudder-update-helper"), ["--stdin"], expect.objectContaining({ detached: true }));
       const request = JSON.parse(String(child.stdin.write.mock.calls[0]?.[0])) as Record<string, unknown>;
       expect(request).toMatchObject({

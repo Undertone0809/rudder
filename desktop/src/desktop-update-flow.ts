@@ -40,7 +40,9 @@ import {
 } from "./desktop-auto-update-state.js";
 import {
   attestExternalDesktopUpdateHelper,
+  DESKTOP_UPDATE_HELPER_PROTOCOL,
   handoffDesktopUpdateToExternalHelper,
+  readDesktopUpdateJournal,
   resolveDesktopUpdateTransactionPaths,
   type DesktopUpdateHelperRequest,
 } from "./desktop-update-helper.js";
@@ -200,6 +202,22 @@ export function createDesktopUpdateFlow(context: {
     const state = readAutomaticState();
     const candidate = state.candidate;
     if (!candidate || (candidate.status !== "staged" && candidate.status !== "claimed")) return "continue";
+    const journal = readDesktopUpdateJournal(
+      context.getUserDataPath?.() ?? app.getPath("userData"),
+      candidate.updateId,
+    );
+    if (journal?.recoveryRequired) {
+      writeAutomaticState({
+        ...state,
+        recoveryRequired: true,
+        recoveryCode: journal.recoveryCode ?? "automatic_update_recovery_required",
+      });
+      return "continue";
+    }
+    if (journal && ["committed", "rolled_back"].includes(journal.stage)) {
+      writeAutomaticState(clearAutomaticCandidate(state, candidate.updateId));
+      return "continue";
+    }
     if (candidate.platform !== "darwin" || candidate.arch !== process.arch) return "continue";
     if (candidate.installId !== automaticInstallId()) return "continue";
     if (!hasExactStagedAutomaticArtifact(candidate)) {
@@ -250,7 +268,13 @@ export function createDesktopUpdateFlow(context: {
         resourcesPath: process.resourcesPath,
         env: process.env,
       });
-    if (!helper) {
+    const effectiveHelper = helper ?? (context.hasExternalUpdateHelperCapability?.() === true
+      ? {
+        path: path.join(context.getUserDataPath?.() ?? app.getPath("userData"), "update-helper", "rudder-update-helper"),
+        protocol: DESKTOP_UPDATE_HELPER_PROTOCOL,
+      }
+      : null);
+    if (!effectiveHelper) {
       console.warn("[rudder-desktop] automatic update deferred: external recovery helper is unavailable");
       return "continue";
     }

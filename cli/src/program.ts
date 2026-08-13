@@ -97,6 +97,12 @@ export function createProgram(): Command {
     .option("--wait-for-active-runs", "Wait for active Rudder runs to finish before replacing Desktop", false)
     .option("--desktop-progress-json", "Emit newline-delimited Desktop update progress events")
     .option("--desktop-wait-for-apply", "Wait for an apply signal after downloading and verifying the Desktop update", false)
+    .option("--desktop-prepare-only", "Download and verify the Desktop update without installing or launching it", false)
+    .option("--desktop-asset-path <path>", "Use one previously staged, exact Desktop asset path")
+    .option("--desktop-asset-checksum <sha256>", "SHA-256 for the exact staged Desktop asset")
+    .option("--desktop-asset-name <name>", "Asset name bound to the exact staged Desktop candidate")
+    .option("--desktop-asset-kind <kind>", "Asset kind bound to the exact staged Desktop candidate (full or shell)")
+    .option("--desktop-release-digest <sha256>", "Release digest bound to the exact staged Desktop candidate")
     .option("--no-version-check", "Skip checking npm for a newer Rudder CLI version")
     .option("--dry-run", "Print the start actions without changing the machine", false)
     .action(startCommand);
