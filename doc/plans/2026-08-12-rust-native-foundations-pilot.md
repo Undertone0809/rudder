@@ -25,7 +25,9 @@ related_code:
   - cli/src/runtime/install.ts
   - packages/run-intelligence-core/src/transcript.ts
   - server/src/services/organization-workspace-browser.ts
-commit_refs: []
+commit_refs:
+  - 690dc4df5
+  - a30c19b73
 updated_at: 2026-08-13
 ---
 
@@ -64,11 +66,45 @@ claim that a missing implementation passed its acceptance gate.
 operation is promoted to a product default. The four `not_admitted` rows are
 fail-closed scope decisions, not claims of successful native implementations.
 
-The candidate lineage also passed the focused macOS arm64 Local App native
-suite 11/11 using the release `rudder-process-host` binary, and the bounded
-evidence indexer tests pass. This is supporting evidence only and does not
-replace packaged Desktop acceptance. The final delivery packet records the
-post-proposal commit SHA and receipt identities.
+The candidate lineage passed the focused macOS arm64 Local App native suite
+11/11 using the release `rudder-process-host` binary, and the bounded evidence
+indexer tests pass. The packaged macOS arm64 candidate then built successfully,
+staged all three native binaries, passed the server-package and Computer Use
+package checks, passed a direct packaged Resident-shell launch, and passed the
+packaged account-gate smoke including the email-code interaction. This is
+supporting acceptance evidence only: it does not replace the Local App
+seven-day/100-cycle dogfood gate or a live `rudder-evals native_ab` campaign.
+The final delivery packet must record the post-proposal commit SHA and receipt
+identities.
+
+### Candidate evidence snapshot (2026-08-13)
+
+Evidence was collected in the isolated macOS arm64 worktree
+`/tmp/rudder-native-pilot-next.u89BHp` at source parent
+`a30c19b738c3f0aff90380b903203a7fb408332a`. The packaged artifact was built
+from that source and reported product version `0.7.4`:
+
+| Evidence | Result | Identity |
+| --- | --- | --- |
+| `pnpm --filter @rudderhq/desktop build` | passed; native staging completed | `aarch64-apple-darwin`, release binaries |
+| `pnpm desktop:dist` | passed; server package verification passed | `Rudder-0.7.4-macos-arm64-portable.zip` |
+| `verify-computer-use-package.mjs` | passed | packaged `darwin/arm64` runtime |
+| direct packaged launch | passed; Resident shell stayed alive for 20 seconds | isolated `RUDDER_HOME` and user-data root |
+| packaged account-gate smoke | passed; account-gate and email-code screenshots written | packaged App, isolated ports/data |
+| 100-block Local App Node/Rust A/B after worker-exit fix | correctness passed, 206 observations; sampler marked `not_comparable` | source `690dc4df5cb3257ea3893dd68d1026df057235da`, 25 ms sampler |
+
+Packaged artifact hashes from the snapshot:
+
+- portable ZIP: `5b16122a621f17f2b51a231bee42b0b6cae3b781968312875917a2b012df0ade`
+- `rudder-process-host`: `7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f`
+- `rudder-native`: `777cf32e063a6dd22bfff6b53ee2f3544d179ad7a95ee91b0c666d129c9609df`
+- `rudder-update-helper`: `d66e9a548a1378690cd554ff3457425b5ed9f5f9ce7ba07a16637264e6c6b4fa`
+
+The A/B sampler result is intentionally fail-closed: nine observations had
+cadence/observer-overhead errors, so no p95 promotion claim is made from that
+run. Earlier 20-block comparable evidence showed approximately 37% idle-
+adjusted process-tree RSS improvement but latency confidence intervals crossed
+zero; Local App therefore remains `opt-in` pending dogfood and live eval proof.
 
 Release version alignment is a hard gate: every first-party Rust package,
 Cargo lock entry, staged binary `--version`, Desktop/server package, and
