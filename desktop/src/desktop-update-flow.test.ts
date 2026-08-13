@@ -1,23 +1,24 @@
-import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
-  RUDDER_POSTGRES_BIN_DIR_ENV,
-} from "./postgres-runtime.js";
 import {
   createInitialDesktopAutoUpdateState,
   stageAutomaticCandidate,
   writeDesktopAutoUpdateState,
   type DesktopAutoUpdateCandidate,
 } from "./desktop-auto-update-state.js";
+import {
+  RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV,
+  RUDDER_POSTGRES_BIN_DIR_ENV,
+} from "./postgres-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 const showMessageBoxMock = vi.hoisted(() => vi.fn());
 
-vi.mock("node:child_process", () => ({
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
   spawn: spawnMock,
 }));
 
@@ -100,6 +101,7 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
   };
   const flow = createDesktopUpdateFlow({
     appName: "Rudder",
+    platform: "darwin",
     getMainWindow: () => mainWindow,
     getServerHandle: () => ({ runtime: { version: "0.3.3" } }),
     getBootState: () => ({ stage: "ready", runtime: { localEnv: "prod_local", version: "0.3.3" } }),
