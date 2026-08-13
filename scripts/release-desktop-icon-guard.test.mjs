@@ -6,7 +6,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 
 describe("desktop release icon guard", () => {
   it("keeps Windows executable resource editing enabled so the Rudder icon is embedded", () => {
-    const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
+    const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
     const manifest = JSON.parse(readFileSync(path.join(repoRoot, "desktop", "package.json"), "utf8"));
 
     expect(workflow).not.toContain("signAndEditExecutable = false");

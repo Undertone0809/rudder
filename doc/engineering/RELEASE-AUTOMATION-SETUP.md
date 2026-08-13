@@ -5,32 +5,33 @@ This document covers the GitHub and npm setup required for the current Rudder re
 - automatic canaries from `main`
 - manual stable promotion from a full locked commit SHA
 - npm trusted publishing via GitHub OIDC
-- direct-main release execution with exact-source CI
+- direct-main release execution with exact-source Test
 
 Repo-side files that depend on this setup:
 
 - `.github/workflows/release.yml`
-- `.github/workflows/desktop-release.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/docs-production.yml`
 - `.github/CODEOWNERS`
 
 The `Release` workflow needs `actions: write` because it inspects exact-source
-CI runs, dispatches `desktop-release.yml`, and starts CI for the generated
-post-stable version commit. It needs `contents: write` to push release tags and
-the direct version handoff commit to `main`. A tag or branch push performed with
-`GITHUB_TOKEN` will not, by itself, trigger a second workflow run, so the
-workflow dispatches handoff CI explicitly.
+Test runs and starts Test for the generated post-stable version commit. It needs
+`contents: write` to push release tags and the direct version handoff commit to
+`main`. A tag or branch push performed with `GITHUB_TOKEN` will not, by itself,
+trigger a second workflow run, so the workflow dispatches handoff Test
+explicitly.
 
 Note:
 
-- release and Desktop jobs use `pnpm install --frozen-lockfile` because the
-  exact source commit must already have passed CI dependency resolution
-- canary publishing begins from the successful `CI` workflow-run SHA; manual
-  stable dispatches query CI for the exact immutable source before installing
+- Release candidate jobs use `pnpm install --frozen-lockfile` because the exact
+  source commit must already have passed Test dependency resolution
+- canary publishing begins from the successful `Test` workflow-run SHA; manual
+  stable dispatches query Test for the exact immutable source before installing
   dependencies
 - release-specific preflight rejects stale versions and missing notes before
   package installation or build work
 - stable preflight also rejects a missing English or Chinese public changelog
-  entry, and an approved stable invokes the docs-production workflow from the
+  entry, and an approved stable invokes Docs Release from the
   immutable stable tag
 
 ## 1. Merge the Repo Changes First
@@ -40,7 +41,8 @@ Before touching GitHub or npm settings, merge the release automation code so the
 Required files:
 
 - `.github/workflows/release.yml`
-- `.github/workflows/desktop-release.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/docs-production.yml`
 - `.github/CODEOWNERS`
 
 ## 2. Configure npm Trusted Publishing
@@ -179,7 +181,7 @@ Reasoning:
 - an explicit release/publish request is the human authorization gate; when the
   version is omitted, the agent may infer the single consistent stable target
   from the repository release state and state it before publishing
-- locked source SHA, exact successful CI, and immutable-version checks form the
+- locked source SHA, exact successful Test, and immutable-version checks form the
   mandatory machine gate
 - the environment isolates stable credentials and limits use to `main` without
   introducing an account switch or reviewer click
@@ -189,7 +191,7 @@ Reasoning:
 Stable release work does not require a PR, branch-protection approval, repository
 attestation variable, or workflow confirmation phrase. The release agent pushes
 the validated source directly to `main`; the workflow then requires that exact
-SHA to have a successful `main` CI run before it can publish.
+SHA to have a successful `main` Test run before it can publish.
 
 The generated post-stable `[skip release]` version commit is also pushed
 directly to `main`, followed by an explicit CI dispatch for its immutable SHA.
@@ -204,7 +206,8 @@ release path does not require a CODEOWNERS approval.
 These files should always trigger code owner review:
 
 - `.github/workflows/release.yml`
-- `.github/workflows/desktop-release.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/docs-production.yml`
 - `scripts/release.sh`
 - `scripts/release-lib.sh`
 - `scripts/release-package-map.mjs`
@@ -236,15 +239,16 @@ This keeps LLM spending intentional and avoids a high-value token sitting in Act
 After setup:
 
 1. merge a harmless commit to `main`
-2. confirm the exact push passes the `CI` workflow
-3. open the `Release` workflow run triggered by that successful CI run and
+2. confirm the exact push passes the `Test` workflow
+3. open the `Release` workflow run triggered by that successful Test run and
    confirm its preflight reports the same source SHA
 4. confirm publish succeeds under the `npm-canary` environment
 5. confirm npm now shows a new `canary` release
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
-7. confirm `.github/workflows/desktop-release.yml` runs for that canary tag
-8. confirm the canary GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
-9. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
+7. confirm the Release candidate matrix built and smoked all four platform assets before npm publication
+8. confirm the canary GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets from that matrix
+9. confirm the three-platform public install matrix passed inside the same Release run
+10. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
 
 Start-path check:
 
@@ -264,7 +268,7 @@ After at least one good canary exists:
    `releases/v0.1.0.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx` in
    parallel with read-only preflight; the primary release agent reviews and
    integrates them
-4. confirm the exact final source has successful main CI, stable preflight,
+4. confirm the exact final source has successful main Test, stable preflight,
    package validation, and no conflicting npm version or tag
 5. if a same-base canary is only waiting for Desktop assets, record its npm/tag
    state and stop that remaining work; do not unpublish the npm canary
@@ -277,15 +281,14 @@ After at least one good canary exists:
 9. confirm npm `latest` points to the new stable version
 10. confirm git tag `v0.1.0` exists
 11. confirm the GitHub Release was created
-12. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
-13. confirm the GitHub Release contains macOS, Windows, Linux, and
+12. confirm the GitHub Release contains macOS, Windows, Linux, and
     `SHASUMS256.txt` assets
-14. confirm the Docs production child workflow publishes `docs/release/v0.1.0`
+13. confirm the Docs Release child workflow publishes `docs/release/v0.1.0`
     from the matching `v0.1.0` source and passes public health checks
-15. confirm Windows, macOS, and Linux public install smoke all pass; do not
+14. confirm Windows, macOS, and Linux public install smoke all pass; do not
     remove a slow Windows smoke because it measures real installation behavior
-16. confirm the workflow commits the next patch version directly to `main` and
-    dispatches CI for that exact commit, or reports that `main` already advanced
+15. confirm the workflow commits the next patch version directly to `main` and
+    dispatches Test for that exact commit, or reports that `main` already advanced
 
 Start-path check:
 

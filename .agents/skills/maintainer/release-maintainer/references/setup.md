@@ -2,8 +2,8 @@
 
 Use only for setup or setup diagnosis.
 
-1. Confirm release, Desktop, dist-tag, docs, and CODEOWNERS workflows are on
-   `main`.
+1. Confirm Test, Release, Docs Release, dist-tag recovery, and CODEOWNERS files
+   are on `main`.
 2. List every public package with `scripts/release-package-map.mjs`.
 3. For existing packages, configure npm trusted publishing with repository
    `Undertone0809/rudder` and workflow filename `release.yml`.

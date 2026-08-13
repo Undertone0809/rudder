@@ -246,15 +246,14 @@ test("docs config declares the shared social preview image", () => {
   );
 });
 
-test("staging and production workflows postprocess exported docs", () => {
-  for (const workflow of ["docs-staging.yml", "docs-production.yml"]) {
-    const source = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8");
-    assert.match(
-      source,
-      /node scripts\/postprocess-docs-export\.mjs "\$RUNNER_TEMP\/rudder-docs-export"/,
-      `${workflow} must postprocess the static export before deployment`,
-    );
-  }
+test("the single Docs Release workflow postprocesses exported docs", () => {
+  const workflow = "docs-production.yml";
+  const source = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8");
+  assert.match(
+    source,
+    /node scripts\/postprocess-docs-export\.mjs "\$RUNNER_TEMP\/rudder-docs-export"/,
+    `${workflow} must postprocess the static export before deployment`,
+  );
 });
 
 test("static acceptance checks cover every canonical route and generated active alias", () => {
@@ -339,7 +338,7 @@ test("static verification times out stalled responses", async () => {
   }
 });
 
-test("public health, package scripts, exact-source CI, and staging cover static docs search", () => {
+test("public health, package scripts, and exact-source Test cover static docs search", () => {
   const healthCheck = fs.readFileSync(
     path.join(REPO_ROOT, "scripts/check-docs-public-health.mjs"),
     "utf8",
@@ -377,12 +376,11 @@ test("public health, package scripts, exact-source CI, and staging cover static 
   assert.match(ci, /pnpm exec playwright install --with-deps chromium/);
   assert.match(ci, /pnpm test:docs-search/);
 
-  const staging = fs.readFileSync(
-    path.join(REPO_ROOT, ".github/workflows/docs-staging.yml"),
+  const docsRelease = fs.readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/docs-production.yml"),
     "utf8",
   );
-  assert.match(staging, /scripts\/docs-static-search\.js/);
-  assert.match(staging, /scripts\/postprocess-docs-export\.mjs/);
+  assert.match(docsRelease, /scripts\/postprocess-docs-export\.mjs/);
 });
 
 test("docs production requires explicit target confirmation before deployment", () => {

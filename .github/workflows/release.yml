@@ -2,7 +2,7 @@ name: Release
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Test"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -10,25 +10,34 @@ on:
         description: "Full commit SHA to promote as stable"
         required: true
       dry_run:
-        description: "Preview stable publish without publishing"
+        description: "Build and verify the release candidate without publishing"
         required: true
         type: boolean
         default: true
       resume_missing:
-        description: "Resume a partial stable npm publish without republishing existing versions"
+        description: "Resume a partial stable release without republishing existing versions"
         required: true
         type: boolean
         default: false
+      candidate_run_id:
+        description: "Original Release run ID containing the verified candidate artifacts (required for resume)"
+        required: false
+        type: string
+
 permissions:
   contents: read
 
 concurrency:
-  group: release-source-${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.workflow_run.head_sha }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
+  group: release-publish
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   preflight:
-    name: Release preflight
+    name: Lock source and preflight
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -42,7 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
-      version: ${{ steps.release-preflight.outputs.version }}
+      version: ${{ steps.release.outputs.version }}
+      channel: ${{ steps.release.outputs.channel }}
+      tag: ${{ steps.release.outputs.tag }}
+      publish: ${{ steps.release.outputs.publish }}
+      resume: ${{ steps.release.outputs.resume }}
+      candidate_run_id: ${{ steps.release.outputs.candidate_run_id }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -54,10 +68,10 @@ jobs:
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
         run: |
-          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Stable source_ref must be a full 40-character commit SHA, not a moving branch or tag." >&2
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Stable source_ref must be a full 40-character commit SHA." >&2
             exit 1
-          fi
+          }
 
       - name: Resolve immutable release source
         id: source
@@ -69,12 +83,9 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main; then
-            echo "Release source $SOURCE_SHA is not reachable from main." >&2
-            exit 1
-          fi
+          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
 
-      - name: Require successful CI for exact source
+      - name: Require successful Test for exact source
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,74 +96,98 @@ jobs:
             -f status=success \
             -f per_page=100 \
             --jq '[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length')"
-          if [ "$count" -lt 1 ]; then
-            echo "No successful CI workflow found for exact source $SOURCE_SHA." >&2
+          test "$count" -ge 1 || {
+            echo "No successful Test workflow found for exact source $SOURCE_SHA." >&2
             exit 1
-          fi
+          }
 
-      - name: Release preflight
-        id: release-preflight
+      - name: Resolve release identity
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          RESUME_MISSING: ${{ inputs.resume_missing }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
             git checkout -B main "${{ steps.source.outputs.sha }}"
+            channel="canary"
             version="$(./scripts/release.sh canary --preflight)"
-          elif [ "${{ inputs.resume_missing }}" = "true" ]; then
-            version="$(node -p "require('./cli/package.json').version")"
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            test -f "releases/v${version}.md"
+            tag="canary/v${version}"
+            publish="true"
+            resume="false"
           else
-            version="$(./scripts/release.sh stable --preflight)"
+            channel="stable"
+            resume="${RESUME_MISSING:-false}"
+            if [ "$resume" = "true" ]; then
+              [[ "${CANDIDATE_RUN_ID:-}" =~ ^[0-9]+$ ]] || {
+                echo "candidate_run_id is required when resume_missing is true." >&2
+                exit 1
+              }
+              version="$(node -p "require('./cli/package.json').version")"
+              [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+              test -f "releases/v${version}.md"
+            else
+              version="$(./scripts/release.sh stable --preflight)"
+            fi
+            tag="v${version}"
+            if [ "${DRY_RUN:-true}" = "true" ]; then publish="false"; else publish="true"; fi
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Release source: ${{ steps.source.outputs.sha }}"
-          echo "Release version: $version"
+          {
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$publish"
+            echo "resume=$resume"
+            echo "candidate_run_id=${CANDIDATE_RUN_ID:-$GITHUB_RUN_ID}"
+          } >> "$GITHUB_OUTPUT"
 
-  resume-stable:
-    name: Resume partial stable release
+      - name: Require matching verified candidate run for recovery
+        if: steps.release.outputs.resume == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.head_sha' <<< "$run_json")" = "$SOURCE_SHA"
+          test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" --jq '.artifacts | map(select(.expired == false)) | map(.name) | .[]')"
+          for artifact in \
+            npm-release-candidate \
+            desktop-macos-x64 \
+            desktop-macos-arm64 \
+            desktop-windows-x64 \
+            desktop-linux-x64; do
+            grep -Fxq "$artifact" <<< "$artifacts" || {
+              echo "Candidate run $CANDIDATE_RUN_ID is missing unexpired artifact $artifact." >&2
+              exit 1
+            }
+          done
+
+  npm-candidate:
+    name: Build npm candidate
     needs: preflight
-    if: github.event_name == 'workflow_dispatch' && inputs.resume_missing && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
+    if: needs.preflight.outputs.resume != 'true'
     runs-on: ubuntu-latest
-    environment: npm-stable
-    concurrency:
-      group: release-publish
-      cancel-in-progress: false
+    timeout-minutes: 25
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    outputs:
-      version: ${{ steps.recovery-source.outputs.version }}
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
 
-      - name: Require locked stable source
-        id: recovery-source
-        env:
-          SOURCE_REF: ${{ inputs.source_ref }}
-          PREFLIGHT_VERSION: ${{ needs.preflight.outputs.version }}
-        run: |
-          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
-          version="$(node -p "require('./cli/package.json').version")"
-          test "$version" = "$PREFLIGHT_VERSION"
-          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: "https://registry.npmjs.org"
 
       - name: Enable pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@10.9.8
 
       - name: Resolve pnpm store
         id: pnpm-store
@@ -165,7 +200,7 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
 
-      - name: Build resumable publish payloads
+      - name: Build publish payloads
         run: |
           pnpm install --frozen-lockfile
           pnpm build
@@ -183,392 +218,508 @@ jobs:
           node scripts/release-package-map.mjs set-publish-version "$RELEASE_VERSION" --allow-source-mutation
           ./scripts/build-npm.sh --skip-checks --skip-typecheck
 
-      - name: Publish only missing packages and create release
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_REF: ${{ inputs.source_ref }}
+      - name: Pack immutable npm payloads
         run: |
+          mkdir -p dist/npm-payloads
+          : > dist/npm-payloads/manifest.tsv
           package_map="$(mktemp)"
           node scripts/release-package-map.mjs list > "$package_map"
           test "$(wc -l < "$package_map" | xargs)" = "15"
-
           while IFS=$'\t' read -r pkg_dir pkg_name pkg_version; do
             [ -n "$pkg_dir" ] || continue
+            pack_json="$(cd "$pkg_dir" && npm pack --json --pack-destination "$GITHUB_WORKSPACE/dist/npm-payloads")"
+            filename="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(p[0].filename)' <<< "$pack_json")"
+            digest="$(shasum -a 256 "dist/npm-payloads/$filename" | awk '{print $1}')"
+            printf '%s\t%s\t%s\t%s\n' "$pkg_name" "$pkg_version" "$filename" "$digest" >> dist/npm-payloads/manifest.tsv
+          done < "$package_map"
+          test "$(wc -l < dist/npm-payloads/manifest.tsv | xargs)" = "15"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-release-candidate
+          path: dist/npm-payloads/*
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop-candidate:
+    name: Desktop candidate ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: preflight
+    if: needs.preflight.outputs.resume != 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            arch: x64
+            runner: macos-15-intel
+          - platform: macos
+            arch: arm64
+            runner: macos-14
+          - platform: windows
+            arch: x64
+            runner: windows-latest
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright Chromium
+        if: matrix.platform != 'windows'
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-chromium-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        if: matrix.platform != 'windows'
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            pnpm exec playwright install --with-deps chromium
+          else
+            pnpm exec playwright install chromium
+          fi
+
+      - name: Cache PostgreSQL runtime payload
+        uses: actions/cache@v5
+        with:
+          path: ~/.rudder/runtime-payloads/postgres-18.4
+          key: postgres-runtime-18.4-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/release.yml') }}
+
+      - name: Prepare PostgreSQL runtime payload
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+        run: |
+          if [ "$MATRIX_PLATFORM" = "linux" ]; then
+            runtime_root="${HOME}/.rudder/runtime-payloads/postgres-18.4/linux-${{ matrix.arch }}"
+            bin_dir="${runtime_root}/bin"
+            if [ ! -x "${bin_dir}/postgres" ]; then
+              source_url="https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
+              source_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+              source_archive="${RUNNER_TEMP}/postgresql-18.4.tar.bz2"
+              source_root="${RUNNER_TEMP}/postgresql-18.4"
+              build_root="${RUNNER_TEMP}/postgresql-18.4-build"
+              curl --fail --location --output "$source_archive" "$source_url"
+              test "$(shasum -a 256 "$source_archive" | awk '{print $1}')" = "$source_sha256"
+              tar -xjf "$source_archive" -C "$RUNNER_TEMP"
+              mkdir -p "$build_root"
+              cd "$build_root"
+              "$source_root/configure" --prefix="$runtime_root" --without-icu --without-readline --without-zlib
+              make -j2
+              make install
+            fi
+            test -f "$runtime_root/share/postgres.bki"
+            test -d "$runtime_root/share/timezone"
+            postgres_configure="$("$bin_dir/pg_config" --configure)"
+            ! grep -q -- '--with-system-tzdata' <<< "$postgres_configure" || {
+              echo "Linux portable PostgreSQL must bundle its own timezone database." >&2
+              exit 1
+            }
+          else
+            bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
+          fi
+          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+
+      - name: Build final Desktop candidate
+        env:
+          RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node scripts/release-package-map.mjs set-version "$RELEASE_VERSION"
+          if [ "$(uname -s)" = "Darwin" ]; then ulimit -n 65536 || ulimit -n 10240 || true; fi
+          if [ "$(uname -s)" = "Linux" ]; then
+            dbus-run-session -- xvfb-run --auto-servernum pnpm desktop:dist
+          else
+            pnpm desktop:dist
+          fi
+
+      - name: Smoke packaged App Builder
+        if: matrix.platform != 'windows'
+        run: |
+          if [ "$(uname -s)" = "Linux" ]; then
+            dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
+          else
+            node desktop/scripts/app-builder-smoke.mjs --packaged
+          fi
+
+      - name: Smoke staged PostgreSQL runtime
+        if: matrix.platform != 'windows'
+        run: |
+          runtime_platform="linux"
+          if [ "$(uname -s)" = "Darwin" ]; then runtime_platform="darwin"; fi
+          staged_runtime="$GITHUB_WORKSPACE/desktop/.packaged/postgres-18.4/${runtime_platform}-${{ matrix.arch }}"
+          source_runtime="$(dirname "$RUDDER_POSTGRES_BIN_DIR")"
+          hidden_source_runtime="${source_runtime}.portable-smoke-hidden"
+          restore_runtime() { if [ -d "$hidden_source_runtime" ]; then mv "$hidden_source_runtime" "$source_runtime"; fi; }
+          trap restore_runtime EXIT
+          mv "$source_runtime" "$hidden_source_runtime"
+          smoke_data="$(mktemp -d "$RUNNER_TEMP/rudder-postgres-smoke.XXXXXX")"
+          "$staged_runtime/bin/initdb" --pgdata="$smoke_data" --no-locale --encoding=UTF8
+          "$staged_runtime/bin/pg_ctl" --pgdata="$smoke_data" --options="-h 127.0.0.1 -p 55432" --wait start
+          "$staged_runtime/bin/pg_ctl" --pgdata="$smoke_data" --mode=fast --wait stop
+          restore_runtime
+          trap - EXIT
+
+      - name: Smoke packaged account gate
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
+
+      - name: Collect verified Desktop asset
+        run: |
+          node scripts/collect-desktop-release-assets.mjs \
+            --version "$RELEASE_VERSION" \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --out dist/desktop-assets
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/desktop-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  candidate-complete:
+    name: Candidate complete
+    needs:
+      - preflight
+      - npm-candidate
+      - desktop-candidate
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      ((needs.preflight.outputs.resume == 'true' &&
+        needs.npm-candidate.result == 'skipped' &&
+        needs.desktop-candidate.result == 'skipped') ||
+       (needs.preflight.outputs.resume != 'true' &&
+        needs.npm-candidate.result == 'success' &&
+        needs.desktop-candidate.result == 'success'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record immutable candidate
+        run: |
+          echo "Source: ${{ needs.preflight.outputs.source_sha }}"
+          echo "Version: ${{ needs.preflight.outputs.version }}"
+          echo "Tag: ${{ needs.preflight.outputs.tag }}"
+
+  publish-canary:
+    name: Publish canary
+    needs:
+      - preflight
+      - candidate-complete
+    if: needs.preflight.outputs.channel == 'canary' && needs.preflight.outputs.publish == 'true'
+    permissions:
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    environment: npm-canary
+    outputs:
+      version: ${{ needs.preflight.outputs.version }}
+      tag: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: npm-release-candidate
+          path: dist/npm-payloads
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+      - name: Publish exact candidate
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+        run: |
+          while IFS=$'\t' read -r pkg_name pkg_version filename digest; do
+            test "$(shasum -a 256 "dist/npm-payloads/$filename" | awk '{print $1}')" = "$digest"
+            npm publish "dist/npm-payloads/$filename" --tag canary --access public --provenance
+          done < dist/npm-payloads/manifest.tsv
+          . ./scripts/release-lib.sh
+          package_map="$(mktemp)"
+          awk -F '\t' 'NF == 4 { print ".\t" $1 "\t" $2 }' dist/npm-payloads/manifest.tsv > "$package_map"
+          test "$(wc -l < "$package_map" | xargs)" = "15"
+          wait_for_npm_package_versions "$(cat "$package_map")" 60 5
+          git tag "$RELEASE_TAG" "$SOURCE_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
+          gh release create "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease --notes "Desktop artifacts for $RELEASE_TAG."
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+          gh release upload "$RELEASE_TAG" Rudder-* SHASUMS256.txt
+
+  publish-stable:
+    name: Publish stable
+    needs:
+      - preflight
+      - candidate-complete
+    if: needs.preflight.outputs.channel == 'stable' && needs.preflight.outputs.publish == 'true'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    environment: npm-stable
+    outputs:
+      version: ${{ needs.preflight.outputs.version }}
+      tag: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: npm-release-candidate
+          path: dist/npm-payloads
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Publish missing npm payloads
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RESUME_MISSING: ${{ needs.preflight.outputs.resume }}
+        run: |
+          while IFS=$'\t' read -r pkg_name pkg_version filename digest; do
+            test "$(shasum -a 256 "dist/npm-payloads/$filename" | awk '{print $1}')" = "$digest"
             view_error="$(mktemp)"
             if published="$(npm view "$pkg_name@$pkg_version" version 2>"$view_error")"; then
+              test "$RESUME_MISSING" = "true"
               test "$published" = "$pkg_version"
-              echo "Skipping existing $pkg_name@$pkg_version"
+              echo "Keeping existing $pkg_name@$pkg_version"
             elif grep -q "E404" "$view_error"; then
-              (cd "$pkg_dir" && npm publish --tag latest --access public --no-git-checks --provenance)
+              npm publish "dist/npm-payloads/$filename" --tag latest --access public --provenance
             else
               cat "$view_error" >&2
               exit 1
             fi
             rm -f "$view_error"
-          done < "$package_map"
-
+          done < dist/npm-payloads/manifest.tsv
           . ./scripts/release-lib.sh
-          if ! wait_for_npm_package_versions "$(cat "$package_map")" 60 5; then
-            release_fail "publish completed but npm never exposed: $WAIT_FOR_NPM_PACKAGE_VERSIONS_MISSING"
-          fi
-          rm -f "$package_map"
-
-          tag="v${RELEASE_VERSION}"
-          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1}')"
+          package_map="$(mktemp)"
+          awk -F '\t' 'NF == 4 { print ".\t" $1 "\t" $2 }' dist/npm-payloads/manifest.tsv > "$package_map"
+          test "$(wc -l < "$package_map" | xargs)" = "15"
+          wait_for_npm_package_versions "$(cat "$package_map")" 60 5
+      - name: Create immutable Release and upload verified Desktop assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          RESUME_MISSING: ${{ needs.preflight.outputs.resume }}
+        run: |
+          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
           if [ -n "$remote_tag_sha" ]; then
-            test "$remote_tag_sha" = "$SOURCE_REF"
-            git tag --force "$tag" "$SOURCE_REF"
+            test "$RESUME_MISSING" = "true"
+            test "$remote_tag_sha" = "$SOURCE_SHA"
           else
-            git tag "$tag" "$SOURCE_REF"
-            git push origin "refs/tags/$tag"
+            git tag "$RELEASE_TAG" "$SOURCE_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
           fi
           PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "$RELEASE_VERSION"
-          gh workflow run desktop-release.yml --ref main -f release_tag="$tag" -f source_ref="$tag"
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          verify_dir="$(mktemp -d)"
+          for asset in Rudder-*; do
+            if grep -Fxq "$asset" <<< "$existing_assets"; then
+              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$verify_dir"
+              test "$(shasum -a 256 "$verify_dir/$asset" | awk '{print $1}')" = "$(shasum -a 256 "$asset" | awk '{print $1}')" || {
+                echo "Existing release asset $asset does not match the verified candidate." >&2
+                exit 1
+              }
+              echo "Verified existing release asset $asset"
+            else
+              gh release upload "$RELEASE_TAG" "$asset"
+            fi
+          done
+          gh release upload "$RELEASE_TAG" SHASUMS256.txt --clobber
 
-  canary:
-    name: Publish npm canary
-    needs: preflight
-    if: github.event_name == 'workflow_run'
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
-    concurrency:
-      group: release-publish
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    environment: npm-canary
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    outputs:
-      version: ${{ steps.publish.outputs.version }}
+  canary-install:
+    name: Canary public install ${{ matrix.label }}
+    needs:
+      - preflight
+      - publish-canary
+    if: needs.publish-canary.result == 'success'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-latest
+          - label: Windows x64
+            runner: windows-latest
+          - label: macOS arm64
+            runner: macos-14
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - name: Pin canary source to main
-        run: git checkout -B main "${{ needs.preflight.outputs.source_sha }}"
-
-      - name: Locked canary preflight
-        id: locked-preflight
-        run: echo "version=$(./scripts/release.sh canary --preflight)" >> "$GITHUB_OUTPUT"
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@10.9.8
-          npm --version
-
-      - name: Resolve pnpm store
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Publish canary
-        id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          version="${{ steps.locked-preflight.outputs.version }}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh canary --skip-verify --expected-version "$version"
-          git push origin "refs/tags/canary/v${version}"
-
-      - name: Start desktop release build
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="canary/v${{ steps.publish.outputs.version }}"
-          gh workflow run desktop-release.yml \
-            --ref main \
-            -f release_tag="$tag" \
-            -f source_ref="$tag"
-
-  canary-desktop:
-    name: Wait for canary Desktop assets
-    needs:
-      - preflight
-      - canary
-    if: needs.canary.result == 'success'
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - name: Wait for desktop release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
-        run: |
-          tag="canary/v${{ needs.canary.outputs.version }}"
-          node scripts/wait-for-desktop-release-assets.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --tag "$tag" \
-            --version "${{ needs.canary.outputs.version }}"
+      - name: Smoke public install
+        run: node scripts/smoke-public-install.mjs --package-spec "@rudderhq/cli@${{ needs.preflight.outputs.version }}" --repo "$GITHUB_REPOSITORY"
 
   canary-promote-latest:
     name: Promote first canary to npm latest
     needs:
       - preflight
-      - canary
-      - canary-desktop
-    if: needs.canary.result == 'success' && needs.canary-desktop.result == 'success'
+      - publish-canary
+      - canary-install
+    if: needs.publish-canary.result == 'success' && needs.canary-install.result == 'success'
     permissions:
       contents: read
       id-token: write
-    concurrency:
-      group: release-publish
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: npm-canary
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-
-      - name: Promote canary to npm latest
+      - name: Promote canary to latest only before the first stable
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          node scripts/promote-npm-dist-tag.mjs \
-            --version "${{ needs.canary.outputs.version }}" \
-            --tag latest \
-            --only-if-no-stable
-
-  stable-dry-run:
-    name: Preview stable release
-    needs: preflight
-    if: github.event_name == 'workflow_dispatch' && inputs.dry_run && !inputs.resume_missing
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@10.9.8
-          npm --version
-
-      - name: Resolve pnpm store
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Preview stable publish
-        run: ./scripts/release.sh stable --dry-run --skip-verify
-
-  stable:
-    name: Publish stable release
-    needs: preflight
-    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && !inputs.resume_missing && github.repository == 'Undertone0809/rudder'
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
-    concurrency:
-      group: release-publish
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    environment: npm-stable
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    outputs:
-      version: ${{ steps.publish.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Enable pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-          npm install --global npm@10.9.8
-          npm --version
-
-      - name: Resolve pnpm store
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Publish stable
-        id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${{ needs.preflight.outputs.version }}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh stable --skip-verify --expected-version "$version"
-          git push origin "refs/tags/v${version}"
-          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "${version}"
-
-      - name: Start desktop release build
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="v${{ steps.publish.outputs.version }}"
-          gh workflow run desktop-release.yml \
-            --ref main \
-            -f release_tag="$tag" \
-            -f source_ref="$tag"
-
-  stable-desktop:
-    name: Wait for stable Desktop assets
-    needs:
-      - preflight
-      - stable
-      - resume-stable
-    if: always() && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - name: Wait for desktop release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
-          RELEASE_VERSION: ${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
-        run: |
-          node scripts/wait-for-desktop-release-assets.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --tag "v${RELEASE_VERSION}" \
-            --version "$RELEASE_VERSION"
+        run: node scripts/promote-npm-dist-tag.mjs --version "${{ needs.preflight.outputs.version }}" --tag latest --only-if-no-stable
 
   stable-docs:
-    name: Publish stable changelog to docs production
+    name: Publish stable docs
     needs:
       - preflight
-      - stable
-      - resume-stable
-    if: always() && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
+      - publish-stable
+    if: needs.publish-stable.result == 'success'
     permissions:
+      actions: read
       contents: write
     uses: ./.github/workflows/docs-production.yml
     with:
-      source_ref: v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
-      tag_name: docs/release/v${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
+      source_ref: ${{ needs.preflight.outputs.tag }}
+      tag_name: docs/release/v${{ needs.preflight.outputs.version }}
       release_docs_approved: true
     secrets: inherit
 
-  canary-public-install:
-    name: Canary public install smoke
-    needs:
-      - canary
-      - canary-desktop
-    if: needs.canary.result == 'success' && needs.canary-desktop.result == 'success'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/public-install-smoke.yml
-    with:
-      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version }}"
-      repo: ${{ github.repository }}
-
-  stable-public-install:
-    name: Stable public install smoke
-    needs:
-      - stable
-      - resume-stable
-      - stable-desktop
-    if: >-
-      always() &&
-      needs.stable-desktop.result == 'success' &&
-      (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
-    permissions:
-      contents: read
-    uses: ./.github/workflows/public-install-smoke.yml
-    with:
-      package_spec: "@rudderhq/cli@${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
-      repo: ${{ github.repository }}
-
-  stable-canary-cleanup:
-    name: Clean up obsolete canary releases
+  stable-install:
+    name: Stable public install ${{ matrix.label }}
     needs:
       - preflight
-      - stable
-      - resume-stable
-      - stable-desktop
-    if: >-
-      always() &&
-      needs.stable-desktop.result == 'success' &&
-      (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
+      - publish-stable
+    if: needs.publish-stable.result == 'success'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-latest
+          - label: Windows x64
+            runner: windows-latest
+          - label: macOS arm64
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Smoke public install
+        run: node scripts/smoke-public-install.mjs --package-spec "@rudderhq/cli@${{ needs.preflight.outputs.version }}" --repo "$GITHUB_REPOSITORY"
+
+  stable-surfaces:
+    name: Verify stable public surfaces
+    needs:
+      - preflight
+      - publish-stable
+      - stable-docs
+      - stable-install
+    if: needs.publish-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - name: Verify npm, tag, Release assets, and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/wait-for-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --version "${{ needs.preflight.outputs.version }}"
+          test "$(git ls-remote --tags origin "refs/tags/${{ needs.preflight.outputs.tag }}" | awk '{print $1}')" = "${{ needs.preflight.outputs.source_sha }}"
+          while IFS=$'\t' read -r _ pkg_name pkg_version; do
+            test "$(npm view "$pkg_name@$pkg_version" version)" = "$pkg_version"
+            test "$(npm view "$pkg_name" dist-tags.latest)" = "$pkg_version"
+          done < <(node scripts/release-package-map.mjs list)
+
+  stable-cleanup:
+    name: Clean up obsolete canaries
+    needs:
+      - preflight
+      - stable-surfaces
+    if: needs.stable-surfaces.result == 'success'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -577,34 +728,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
-
-      - name: Clean up obsolete canary releases
+      - name: Remove obsolete canary Releases and tags
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
-        run: |
-          node scripts/cleanup-obsolete-canaries.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --remote origin \
-            --stable-version "$RELEASE_VERSION"
+        run: node scripts/cleanup-obsolete-canaries.mjs --repo "$GITHUB_REPOSITORY" --remote origin --stable-version "${{ needs.preflight.outputs.version }}"
 
   next-release-base:
     name: Advance next release base
     needs:
       - preflight
-      - stable
-      - resume-stable
-      - stable-desktop
-      - stable-docs
-      - stable-public-install
-      - stable-canary-cleanup
-    if: >-
-      always() &&
-      (needs.stable.result == 'success' || needs.resume-stable.result == 'success') &&
-      needs.stable-desktop.result == 'success' &&
-      needs.stable-docs.result == 'success' &&
-      needs.stable-public-install.result == 'success' &&
-      needs.stable-canary-cleanup.result == 'success'
+      - publish-stable
+      - stable-surfaces
+      - stable-cleanup
+    if: needs.publish-stable.result == 'success' && needs.stable-surfaces.result == 'success' && needs.stable-cleanup.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -614,29 +750,15 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.preflight.outputs.source_sha }}
-
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
       - name: Advance main to the next patch version
         id: next-release
-        run: |
-          node scripts/prepare-next-release.mjs \
-            --stable-version "${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
-
-      - name: Start CI for the advanced release base
+        run: node scripts/prepare-next-release.mjs --stable-version "${{ needs.preflight.outputs.version }}"
+      - name: Start Test for the advanced release base
         if: steps.next-release.outputs.action == 'updated'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run ci.yml \
-            --ref main \
-            -f source_sha="${{ steps.next-release.outputs.head_sha }}"
-          {
-            echo "### Next release base"
-            echo "Version: ${{ steps.next-release.outputs.version }}"
-            echo "Commit: ${{ steps.next-release.outputs.head_sha }}"
-            echo "Trusted CI dispatched for ${{ steps.next-release.outputs.head_sha }}."
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: gh workflow run ci.yml --ref main -f source_sha="${{ steps.next-release.outputs.head_sha }}"

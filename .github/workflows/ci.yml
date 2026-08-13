@@ -1,4 +1,4 @@
-name: CI
+name: Test
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Optional immutable source SHA to verify with the trusted main-branch CI workflow"
+        description: "Optional immutable source SHA to verify with the trusted main-branch Test workflow"
         required: false
         type: string
 
@@ -132,6 +132,9 @@ jobs:
       - name: Docs structure
         run: pnpm docs:structure:test
 
+      - name: Docs metadata integrity
+        run: node scripts/docs-content-map.mjs integrity
+
       - name: Cache Playwright Chromium
         uses: actions/cache@v5
         with:
@@ -239,3 +242,78 @@ jobs:
           RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: "1"
           RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
         run: pnpm build
+
+  desktop-packaged-smoke:
+    name: Desktop packaged smoke macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 25
+    env:
+      CI: true
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+
+      - name: Require dispatch ref to match exact source
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DISPATCH_REF_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-arm64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-arm64-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-chromium-${{ runner.os }}-arm64-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium
+
+      - name: Cache PostgreSQL runtime payload
+        uses: actions/cache@v5
+        with:
+          path: ~/.rudder/runtime-payloads/postgres-18.4
+          key: postgres-runtime-18.4-${{ runner.os }}-arm64-${{ hashFiles('desktop/scripts/prepare-postgres-runtime.mjs', '.github/workflows/ci.yml') }}
+
+      - name: Prepare PostgreSQL runtime
+        run: |
+          bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
+          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+
+      - name: Build packaged Desktop candidate
+        env:
+          RUDDER_DESKTOP_TARGET_ARCH: arm64
+        run: |
+          ulimit -n 65536 || ulimit -n 10240 || true
+          pnpm desktop:dist
+
+      - name: Smoke packaged account gate
+        run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate

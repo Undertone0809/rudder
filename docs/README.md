@@ -63,23 +63,17 @@ need to check only one deployment channel.
 
 ## Deployment
 
-The docs site has two Vercel-backed channels:
+The docs site has one production delivery workflow:
 
-- `staging.docs.rudderhq.dev`: automatically updated from `main` by
-  `.github/workflows/docs-staging.yml`.
-- `docs.rudderhq.dev`: manually published by
-  `.github/workflows/docs-production.yml`.
+- `docs.rudderhq.dev` is published by the `Docs Release` workflow in
+  `.github/workflows/docs-production.yml`, either manually from an immutable
+  commit/tag or from the matching stable product tag inside `Release`.
 
-Both workflows validate the Mintlify project, export the static site, deploy it
-through the Vercel CLI, assign the channel domain, and verify key public paths
-such as `/contact`, `/home`, `/robots.txt`, `/sitemap.xml`, `/zh`,
-`/llms.txt`, and favicons.
-Production publishes also bind the public Vercel project aliases to the same
-deployment and create a `docs/vYYYY.MM.DD` git tag for the source commit.
-Those aliases are intentionally production-facing public entry points; the
-staging channel uses `staging.docs.rudderhq.dev` only. Staging pages are
-still expected to emit production canonical URLs so preview traffic does not
-compete with the canonical docs host in search indexes.
+`Test` owns docs structure, metadata, export, and search qualification. `Docs
+Release` exports that exact qualified source, deploys it through the Vercel CLI,
+binds the production domain and public aliases, verifies key public paths such
+as `/contact`, `/home`, `/robots.txt`, `/sitemap.xml`, `/zh`, `/llms.txt`, and
+favicons, and creates the immutable docs tag.
 
 ### Production authorization gate
 

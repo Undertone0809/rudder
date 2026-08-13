@@ -8,14 +8,15 @@ Read only what the selected branch needs:
 - `doc/engineering/PUBLISHING.md`: package map and npm internals.
 - `doc/engineering/RELEASE-AUTOMATION-SETUP.md`: one-time setup.
 - `.github/workflows/release.yml`: stable/canary orchestration.
-- `.github/workflows/desktop-release.yml`: Desktop assets.
+- `.github/workflows/ci.yml`: exact-source Test qualification.
+- `.github/workflows/docs-production.yml`: immutable production docs deployment.
 - `.github/workflows/npm-dist-tag.yml`: dist-tag repair.
 - `scripts/release.sh`: version resolution and preflight.
 - `scripts/release-package-map.mjs`: public package set.
 - `scripts/prepare-next-release.mjs`: post-stable handoff.
 - `scripts/create-github-release.sh`: GitHub Release creation.
 - `scripts/promote-npm-dist-tag.mjs` and `scripts/rollback-latest.sh`: dist-tags.
-- `scripts/wait-for-desktop-release-assets.mjs`: Desktop completion.
+- `scripts/collect-desktop-release-assets.mjs`: Desktop candidate collection.
 
 During an active release, workflows and scripts are executable truth. Record
 and repair documentation drift after the locked release is safe.
@@ -38,7 +39,8 @@ Collect remote truth when applicable:
 
 ```bash
 gh run list --workflow release.yml --limit 10
-gh run list --workflow desktop-release.yml --limit 10
+gh run list --workflow ci.yml --limit 10
+gh run list --workflow docs-production.yml --limit 10
 gh run list --workflow npm-dist-tag.yml --limit 5
 gh release list --repo Undertone0809/rudder --limit 100
 git ls-remote --tags origin 'refs/tags/canary/v*'
@@ -71,7 +73,8 @@ early.
 - GitHub concurrency is not FIFO and retains only one pending job. If a stable
   run is superseded, rerun the same locked SHA after the active publish ends.
 - A `GITHUB_TOKEN` tag push does not trigger another workflow automatically;
-  dispatch Desktop explicitly where the workflow requires it.
+  the unified Release uploads its own verified Desktop artifacts and explicitly
+  dispatches only the post-stable Test handoff.
 - After a stable campaign begins, release-only candidate repairs use
   `[skip release]` unless canary publication is explicitly required. Confirm CI
   for the repair SHA and confirm the automatic Release workflow was skipped.
@@ -110,7 +113,8 @@ with human confidence.
 Verify the complete package map, not only the CLI. Verify exact versions and
 the intended dist-tag for every public package.
 
-Expected Desktop asset family:
+Expected Desktop asset family (portable and shell assets where the platform
+produces both):
 
 - Linux x64 AppImage
 - macOS arm64 portable zip

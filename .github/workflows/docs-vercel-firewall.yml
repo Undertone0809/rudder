@@ -1,4 +1,4 @@
-name: Docs Vercel firewall
+name: "Ops: Docs Vercel firewall"
 
 on:
   workflow_dispatch:

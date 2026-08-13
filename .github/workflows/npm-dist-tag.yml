@@ -1,4 +1,4 @@
-name: npm Dist Tag
+name: "Ops: npm Dist Tag"
 
 on:
   workflow_dispatch:

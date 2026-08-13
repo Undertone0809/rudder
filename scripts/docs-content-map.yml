@@ -550,7 +550,7 @@
       "urls": {"en": "/reference/code-signing-policy", "zh": "/zh/reference/code-signing-policy"},
       "anchors": {"en": [], "zh": []},
       "composes": ["installation", "privacy"],
-      "source_docs": [".github/CODEOWNERS", ".github/workflows/desktop-release.yml", "LICENSE", "NOTICE"],
+      "source_docs": [".github/CODEOWNERS", ".github/workflows/release.yml", "LICENSE", "NOTICE"],
       "llms": true,
       "pairing_exception": null,
       "aliases": [],

@@ -4,7 +4,7 @@ Maintainer runbook for shipping Rudder across npm, GitHub, and the website-facin
 
 The release model is now commit-driven:
 
-1. Every successful `CI` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
+1. Every successful `Test` run for a `main` push publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
 2. Stable releases are manually promoted from a chosen tested commit SHA.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
 4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
@@ -37,7 +37,7 @@ Important constraints:
 - canary publishes derive the next prerelease from the committed stable version
 - after publishing stable `X.Y.Z`, the workflow commits the public package
   version bump directly to `main`, for example `X.Y.Z -> X.Y.(Z+1)`, marks the
-  maintenance commit `[skip release]`, and explicitly dispatches CI for it
+   maintenance commit `[skip release]`, and explicitly dispatches Test for it
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
@@ -60,7 +60,7 @@ announcement in scope. If a separate announcement or docs-site publish is
 expected, record the channel and owner in the release issue before closeout. If
 that surface is intentionally skipped, record who made that decision and why.
 
-Docs production deploy failures caused by Vercel account or token access are an
+Docs Release deploy failures caused by Vercel account or token access are an
 external release blocker for docs-site publishing. Do not silently count a
 failed docs workflow as handled; either escalate the credential/account issue to
 the Vercel owner or explicitly scope docs-site publishing out of that release.
@@ -73,7 +73,7 @@ Release preparation and release execution are separate operations:
    prepare release notes/screenshots.
 2. **Release execution** — an explicit release/publish request authorizes
    immediately freezing the reviewed source, committing and pushing any
-   release-only narratives directly to `main`, waiting for exact-source CI,
+   release-only narratives directly to `main`, waiting for exact-source Test,
    running preflight and package validation, and publishing all standard
    surfaces in one production execution.
 3. **Status and verification** — report the exact source ref, version/tag,
@@ -91,7 +91,7 @@ post-release version commit on `main`, without returning PR or authorization
 tasks to the operator.
 
 The workflow still fails closed on machine evidence: the release source must be
-reachable from `main`, have successful exact-source CI, pass stable preflight,
+reachable from `main`, have successful exact-source Test, pass stable preflight,
 and preserve immutable npm/tag semantics. The `npm-stable` environment remains
 main-only and non-interactive, with no reviewer click or wait timer.
 
@@ -105,11 +105,11 @@ Use this model for an explicit stable release:
    to draft `releases/vX.Y.Z.md`, `docs/releases.mdx`, and
    `docs/zh/releases.mdx` from the locked diff while the primary agent runs
    read-only preflight. The primary agent reviews and integrates the drafts.
-3. Require successful exact-source CI, stable preflight, immutable npm/tag
+3. Require successful exact-source Test, stable preflight, immutable npm/tag
    checks, and package validation before publication.
 4. Use `[skip release]` on release-only candidate repair commits after the
    stable campaign starts, unless a canary is explicitly required. This keeps
-   exact-source CI while suppressing a duplicate automatic canary release.
+   exact-source Test while suppressing a duplicate automatic canary release.
 5. Run one production stable execution with the full 40-character source SHA.
    Do not make a separate dry-run workflow
    a human or agent hand-off and then repeat checkout, dependency installation,
@@ -123,7 +123,7 @@ platform; the complete per-platform prepublish gate has a 25-minute ceiling.
 Treat either timeout as a defect in the named stage, not as a reason to extend
 the budget. After two failures at the same stage on unchanged inputs, stop
 dispatching, record both run IDs and the last phase, fix the cause, and rerun one
-new immutable candidate from exact-source CI.
+new immutable candidate from exact-source Test.
 
 The workflow still exposes `dry_run` for read-only preview requests and
 troubleshooting. For an already-authorized release whose equivalent machine
@@ -140,19 +140,14 @@ line, weakening repository protections, or expanding the release scope.
 
 ## Docs Site Releases
 
-The public docs site uses separate staging and production channels:
-
-- `staging.docs.rudderhq.dev` follows the latest `main` docs commit.
-  [`.github/workflows/docs-staging.yml`](../.github/workflows/docs-staging.yml)
-  runs automatically on `main` pushes that touch the docs tree or docs deployment
-  workflow.
-- `docs.rudderhq.dev` is production. It does not auto-follow `main`.
-  An approved stable release invokes
-  [`.github/workflows/docs-production.yml`](../.github/workflows/docs-production.yml)
-  against its immutable `vX.Y.Z` tag after npm, the stable tag, and the GitHub
-  Release succeed. Production docs then run in parallel with the Desktop build;
-  both remain required before the next release base advances. Other docs changes
-  still publish manually from the Actions tab.
+The public docs site has one delivery workflow. `docs.rudderhq.dev` does not
+auto-follow `main`. An approved stable release invokes `Docs Release` from
+[`.github/workflows/docs-production.yml`](../../.github/workflows/docs-production.yml)
+against its immutable `vX.Y.Z` tag after npm, the stable tag, the GitHub Release,
+and verified Desktop assets exist. It runs in parallel with the three-platform
+public install smoke, and both remain required before the next release base
+advances. Other docs changes publish manually from the Actions tab using an
+immutable commit or tag.
 
 Production docs publishes create a git tag in the form `docs/vYYYY.MM.DD`, for
 example `docs/v2026.05.27`. If the default date tag already exists for a
@@ -172,7 +167,7 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
   and `docs/zh/releases.mdx`
 - public changelog entries describe user-visible outcomes, omit empty
   categories, and keep release-engineering details in maintainer documentation
-- stable docs production is promoted from the matching immutable `vX.Y.Z` tag
+- stable Docs Release is promoted from the matching immutable `vX.Y.Z` tag
   only after explicit docs-domain authorization
 - canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
@@ -181,11 +176,11 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 
 ### Canary
 
-Every successful `CI` workflow for a `main` push starts the canary path inside [`.github/workflows/release.yml`](../.github/workflows/release.yml), unless the head commit message contains `[skip release]`.
+Every successful `Test` workflow for a `main` push starts the canary path inside [`.github/workflows/release.yml`](../../.github/workflows/release.yml), unless the head commit message contains `[skip release]`.
 
 It:
 
-- reuses the successful CI result for the exact pushed commit, including docs
+- reuses the successful Test result for the exact pushed commit, including docs
   structure and static-search qualification
 - runs a fast version/tag/npm preflight before installing dependencies
 - derives the next canary prerelease from the committed semver
@@ -193,26 +188,16 @@ It:
 - while no stable npm version exists yet, also points npm dist-tag `latest` at
   the same canary so the alpha `npx @rudderhq/cli@latest start` path works
 - creates a git tag `canary/vX.Y.Z-canary.N`
-- starts the Desktop release workflow for `canary/vX.Y.Z-canary.N`
-- creates or updates the canary GitHub Release with display title `vX.Y.Z-canary.N`
-- releases the shared npm publication lock while Desktop builds, then reacquires
-  it only for the first-ever `latest` promotion when no stable exists
-- waits for the complete checksummed Desktop asset set before the three-platform
-  public install smoke
+- builds and verifies the four-platform Desktop candidates before npm or tag mutation
+- creates or updates the canary GitHub Release with display title
+  `vX.Y.Z-canary.N` and uploads those exact verified assets
+- runs the three-platform public install smoke inside the same Release workflow
 
-The release workflow dispatches the Desktop workflow explicitly after pushing the
-canary tag. Do not rely on a tag push made by `GITHUB_TOKEN` to trigger another
-workflow.
-
-Canary and stable npm/tag publication use the same non-cancelling concurrency
-group, but slow Desktop builds and asset waits run outside that lock. An
-explicit stable release therefore does not queue behind a canary that already
-published npm/tag and started Desktop. It still takes priority over same-base or
-older canary publication after the locked stable source passes exact-source CI
-and preflight. Record whether canary npm/tag mutation completed, then stop only
-obsolete remaining orchestration when needed; do not unpublish the canary npm
-version. Never stop an active next-base canary or a canary whose source is not
-superseded by the stable release.
+Canary and stable publication use the same non-cancelling concurrency group. A
+stable still takes priority over same-base or older canary publication after
+the locked source passes exact-source Test and preflight. Record any completed
+public mutation before stopping obsolete remaining orchestration; never
+unpublish the canary npm version or stop an active next-base canary.
 
 GitHub retains at most one pending job per group rather than a FIFO queue. If a
 pending manual stable is superseded, rerun the same locked stable SHA; do not
@@ -248,7 +233,7 @@ Before running stable:
 3. if narratives are missing, start a bounded release-notes subagent in
    parallel with read-only preflight; review and commit
    `releases/vX.Y.Z.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx`
-4. confirm that exact final source commit has successful `CI`, stable preflight,
+4. confirm that exact final source commit has successful `Test`, stable preflight,
    package validation, and no existing immutable npm version/tag
 5. present the exact source ref, version, checks, targets, data impact, and
    rollback point as a progress update
@@ -270,28 +255,22 @@ Example:
 
 The workflow:
 
-- resolves the source ref to an immutable SHA and requires successful CI for
+- resolves the source ref to an immutable SHA and requires successful Test for
   that exact commit; CI qualifies docs structure and static search once instead
   of repeating those checks in the stable publish job
 - runs release-specific version/tag/npm preflight before dependency install
 - publishes the committed `X.Y.Z` under npm dist-tag `latest`
 - creates git tag `vX.Y.Z`
-- creates or updates the GitHub Release from `releases/vX.Y.Z.md`
-- starts the desktop release workflow for `vX.Y.Z`
-- releases the shared npm publication lock after the tag, GitHub Release, and
-  Desktop dispatch, so unrelated publication recovery is not blocked by the
-  slow Desktop matrix
-- invokes docs production from the same `vX.Y.Z` source in parallel with the
-  Desktop build and verifies the public docs domains before advancing the next
-  release base
-- waits for the complete checksummed Desktop asset set, then runs the real
+- creates or updates the GitHub Release from `releases/vX.Y.Z.md` and uploads
+  the exact checksummed Desktop artifacts already built and verified by this run
+- invokes Docs Release from the same `vX.Y.Z` source in parallel with the real
   Linux, Windows, and macOS public install smoke
 - deletes obsolete `canary/v*` GitHub Releases and git tags whose canary base is
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
 - commits the next canary/stable base directly to `main` with `[skip release]`
-  and dispatches the trusted CI workflow with the immutable bump SHA, unless
+  and dispatches the trusted Test workflow with the immutable bump SHA, unless
   `main` already advanced
 - makes the website changelog deployment a required stable-release surface;
   canary releases never deploy it
@@ -316,17 +295,16 @@ command above. More generally, `npx @rudderhq/cli@latest <command>` and
 version; the `npx` form is mainly the first-run and explicit dist-tag form.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
-The release workflow runs docs production and Desktop packaging concurrently
-after stable npm/tag/Release publication. The public install smoke starts only
-after the checksummed Desktop assets are available, because it executes
-`npx ... start --no-open` on Linux, Windows, and macOS and downloads the real
-portable Desktop artifact. Each lane uses isolated temporary HOME, npm cache,
-npm prefix, output, and Desktop install directories. Maintainers can also run
-it manually from the `Public Install Smoke` workflow with a package spec such as
-`@rudderhq/cli@latest`, `@rudderhq/cli@canary`, or an exact version.
+The Release workflow builds and smokes Desktop artifacts before any public
+mutation. After npm, tag, GitHub Release, and those exact artifacts are public,
+Docs Release and the public install matrix run concurrently. The install lanes
+execute `npx ... start --no-open` on Linux, Windows, and macOS and download the
+real portable Desktop artifact, using isolated temporary HOME, npm cache, npm
+prefix, output, and Desktop install directories. Recovery reruns the original
+Release with `resume_missing: true`; there is no standalone install workflow.
 
 The final next-release handoff is a convergence gate, not a timer: it waits for
-Desktop assets, production docs, the three-platform public install smoke, and
+verified Desktop assets, production docs, the three-platform public install smoke, and
 obsolete-canary cleanup. A failure in any downstream surface leaves the release
 partial and resumable without republishing an immutable npm version.
 
@@ -364,15 +342,16 @@ Desktop assets until a next-base canary is published.
 ./scripts/release.sh stable --dry-run
 ```
 
-### Publish a stable locally
+### Emergency local package and Release creation
 
-This is mainly for emergency/manual use. The normal path is the GitHub workflow.
+This is an incomplete emergency path and does not create validated Desktop
+assets. The normal and only complete product release path is the GitHub Release
+workflow.
 
 ```bash
 ./scripts/release.sh stable
 git push public-gh refs/tags/v0.1.0
 PUBLISH_REMOTE=public-gh ./scripts/create-github-release.sh 0.1.0
-gh workflow run desktop-release.yml --ref v0.1.0 -f release_tag=v0.1.0
 ```
 
 ## Stable Changelog Workflow
@@ -490,12 +469,12 @@ notes through GitHub Actions because:
 - stable notes are the only public narrative surface that needs LLM help
 - maintainer LLM tokens should not live in Actions
 
-If stable npm publication succeeds but the docs-production child workflow
+If stable npm publication succeeds but the Docs Release child workflow
 fails, do not publish the same npm version again. Fix the docs deployment and
 use **Re-run failed jobs** for the original Release workflow so it reuses the
 existing `vX.Y.Z` tag. The next-release-base job remains blocked until the
 matching public changelog deploy passes. For historical releases such as
-`v0.5.1`, which predate this automation, run `Docs production` manually from
+`v0.5.1`, which predate this automation, run `Docs Release` manually from
 the immutable stable tag after explicit docs-domain approval.
 
 ## Smoke Testing

@@ -93,7 +93,7 @@ maintainer records rather than the public changelog.
 After both the stable and public changelog deploy succeed,
 `scripts/prepare-next-release.mjs` idempotently updates current `main` to the
 next patch base with one `[skip release]` maintenance commit pushed directly to
-`main`, then explicitly dispatches CI for that exact SHA.
+`main`, then explicitly dispatches Test for that exact SHA.
 
 ## Version formats
 
@@ -136,8 +136,8 @@ Stable publishes do not create a release commit. Instead:
 - package versions are read from the chosen source commit
 - packages are published from the chosen source commit
 - git tag `vX.Y.Z` points at that original commit
-- portable desktop assets are attached to the matching GitHub Release by
-  `.github/workflows/desktop-release.yml`
+- portable desktop assets are built, verified, and attached to the matching
+  GitHub Release by `.github/workflows/release.yml`
 
 The primary user install path is:
 

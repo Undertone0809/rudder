@@ -1,12 +1,11 @@
-name: Docs production
+name: Docs Release
 
 on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: "Commit SHA, branch, or existing tag to publish"
+        description: "Full commit SHA or existing immutable tag to publish"
         required: true
-        default: "main"
       tag_name:
         description: "Optional docs release tag, for example docs/v2026.05.27"
         required: false
@@ -31,6 +30,7 @@ on:
         type: boolean
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -70,6 +70,35 @@ jobs:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
 
+      - name: Require immutable docs source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          if [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          else
+            git show-ref --verify --quiet "refs/tags/$SOURCE_REF" || {
+              echo "Docs source_ref must be a full commit SHA or an existing tag, not a branch." >&2
+              exit 1
+            }
+            test "$(git rev-list -n 1 "refs/tags/$SOURCE_REF")" = "$(git rev-parse HEAD)"
+          fi
+
+      - name: Require successful Test for exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source_sha="$(git rev-parse HEAD)"
+          count="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f head_sha="$source_sha" \
+            -f status=success \
+            -f per_page=100 \
+            --jq '[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length')"
+          test "$count" -ge 1 || {
+            echo "No successful Test workflow found for exact docs source $source_sha." >&2
+            exit 1
+          }
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -81,12 +110,6 @@ jobs:
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
-
-      - name: Test docs structure
-        run: pnpm docs:structure:test
-
-      - name: Verify generated docs metadata
-        run: node scripts/docs-content-map.mjs integrity
 
       - name: Resolve docs tag
         id: tag

@@ -19,14 +19,16 @@ Repair from the first missing surface without repeating immutable successes.
 
 ### npm published, tag or GitHub Release missing
 
-Do not republish. Verify package-map versions, create/push the missing tag at
-the locked source, create/update the Release from committed notes, then dispatch
-Desktop for that exact tag.
+Do not republish. Rerun the original Release with `resume_missing: true` against
+the locked source. It verifies package-map versions, creates the missing tag or
+Release, and uploads only exact candidate artifacts from the rerun.
 
 ### Release exists, Desktop assets missing
 
-Rerun/dispatch `desktop-release.yml` for the existing stable or canary tag.
-Verify architecture-specific assets and `SHASUMS256.txt`.
+Rerun the original Release with `resume_missing: true` against the same locked
+source. The full candidate gates run again; existing asset bytes must match the
+new candidate and only missing architecture-specific assets are uploaded. Never
+run an independent rebuild that can overwrite previously verified assets.
 
 ### Docs promotion failed
 

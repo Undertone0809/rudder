@@ -2,7 +2,7 @@
 
 ## Normal Canary
 
-Canary normally follows a successful exact `main` CI run:
+Canary normally follows a successful exact `main` Test run:
 
 1. verify the Release workflow consumes that CI head SHA rather than resolving
    a moving branch;

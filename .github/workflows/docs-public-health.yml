@@ -1,4 +1,4 @@
-name: Docs public health
+name: "Ops: Docs public health"
 
 on:
   schedule:

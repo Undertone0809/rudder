@@ -1115,15 +1115,16 @@ test("atomic writer reports restore failures and retains backup and temporary re
   }
 });
 
-test("docs structure test is a gate in exact-source CI and both docs deployment workflows", () => {
+test("docs structure test is a gate in exact-source Test and is not repeated during deployment", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   assert.match(
     packageJson.scripts["docs:structure:test"],
     /scripts\/postprocess-docs-export\.test\.mjs/u,
     "docs:structure:test must include static export and verifier regressions",
   );
-  for (const workflow of ["ci.yml", "docs-staging.yml", "docs-production.yml"]) {
-    const source = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8");
-    assert.match(source, /run: pnpm docs:structure:test/u, `${workflow} must run docs:structure:test`);
-  }
+  const testWorkflow = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+  assert.match(testWorkflow, /run: pnpm docs:structure:test/u);
+  const docsRelease = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/docs-production.yml"), "utf8");
+  assert.doesNotMatch(docsRelease, /run: pnpm docs:structure:test/u);
+  assert.match(docsRelease, /Require successful Test for exact source/u);
 });
