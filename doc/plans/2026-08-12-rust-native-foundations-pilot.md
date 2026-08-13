@@ -85,8 +85,8 @@ identities.
 ### Candidate evidence snapshot (2026-08-13)
 
 Evidence was collected in the isolated macOS arm64 worktree
-`/tmp/rudder-native-pilot-next.u89BHp` at source parent
-`a30c19b738c3f0aff90380b903203a7fb408332a`. The packaged artifact was built
+`/tmp/rudder-native-pilot-next.u89BHp` from candidate
+`063e3f815273f7645f484127ea7ab0bcec366e4f`. The packaged artifact was built
 from that source and reported product version `0.7.4`:
 
 | Evidence | Result | Identity |
@@ -97,7 +97,7 @@ from that source and reported product version `0.7.4`:
 | direct packaged launch | passed; Resident shell stayed alive for 20 seconds | isolated `RUDDER_HOME` and user-data root |
 | packaged account-gate smoke | passed; account-gate and email-code screenshots written | packaged App, isolated ports/data |
 | 100-block Local App Node/Rust A/B after worker-exit fix | correctness passed, 206 observations; sampler marked `not_comparable` | source `690dc4df5cb3257ea3893dd68d1026df057235da`, 25 ms sampler |
-| optimized Node streaming backup comparator | byte-identical ZIPs and `unzip -t` passed; 554 files / 9.54 MB fixture, buffered RSS delta about 32.9 MB versus streaming about 8.8 MB | source `d5e13f60f1735dc6489d550e4f11739a0ac6f81e`, `scripts/perf/workspace-backup-node-streaming.mjs` |
+| optimized Node streaming backup comparator | byte-identical ZIPs and `unzip -t` passed; 554 files / 9.54 MB fixture, buffered RSS delta about 36.3 MB versus streaming about 8.3 MB | source `d5e13f60f1735dc6489d550e4f11739a0ac6f81e`, `scripts/perf/workspace-backup-node-streaming.mjs` |
 
 Packaged artifact hashes from the snapshot:
 

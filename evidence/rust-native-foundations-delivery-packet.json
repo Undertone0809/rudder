@@ -17,14 +17,14 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "0942b6e56080f124db73f54cca1760d857dbcc21",
-    "source_sha": "0942b6e56080f124db73f54cca1760d857dbcc21",
+    "source_ref": "063e3f815273f7645f484127ea7ab0bcec366e4f",
+    "source_sha": "063e3f815273f7645f484127ea7ab0bcec366e4f",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "changed_paths": ["desktop/src/main.ts", "scripts/perf/local-app-native-ab.ts", "doc/plans/2026-08-12-rust-native-foundations-pilot.md"],
-    "build": {"id": "desktop-dist-0.7.4-macos-arm64", "source_sha": "0942b6e56080f124db73f54cca1760d857dbcc21"},
-    "runtime": {"id": "macOS-arm64-packaged-Rudder-0.7.4", "source_sha": "0942b6e56080f124db73f54cca1760d857dbcc21"},
+    "changed_paths": ["doc/plans/2026-08-12-rust-native-foundations-pilot.md", "scripts/perf/workspace-backup-node-streaming.mjs", "scripts/perf/workspace-backup-node-streaming.test.ts"],
+    "build": {"id": "desktop-dist-0.7.4-macos-arm64", "source_sha": "063e3f815273f7645f484127ea7ab0bcec366e4f", "portable_sha256": "500fcc3ebf2d2d28441aceee980e26eb3f0e54f5e086c8dfffa91a95e6f45f61", "native_sha256": {"rudder-process-host": "7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f", "rudder-native": "777cf32e063a6dd22bfff6b53ee2f3544d179ad7a95ee91b0c666d129c9609df", "rudder-update-helper": "d66e9a548a1378690cd554ff3457425b5ed9f5f9ce7ba07a16637264e6c6b4fa"}},
+    "runtime": {"id": "macOS-arm64-packaged-Rudder-0.7.4", "source_sha": "063e3f815273f7645f484127ea7ab0bcec366e4f", "account_gate_smoke": "passed_on_retry", "first_attempt": "failed_provider_handoff_timeout"},
     "organization_data": {"organization_id": "isolated-smoke-org", "data_id": "isolated-packaged-smoke-and-fixture-data"},
-    "workload_fixture": "Local App focused suite; 100-block A/B; packaged account-gate/email-code; Rust archive/evidence unit fixtures",
+    "workload_fixture": "Local App focused suite; 100-block A/B; packaged account-gate/email-code; 554-file/9.54 MB backup comparator; Rust archive/evidence unit fixtures",
     "budget_lease": {"id": "turn-2026-08-13", "fingerprint": "rust-native-foundations-pilot", "expires_at": "2026-08-14T00:00:00+08:00"},
     "acceptance_packet": {
       "version": "1",
@@ -40,9 +40,9 @@
     }
   },
   "receipts": {
-    "reviewer": {"verdict": "pending", "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "source_sha": "0942b6e56080f124db73f54cca1760d857dbcc21", "build_id": "desktop-dist-0.7.4-macos-arm64", "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4", "data_id": "isolated-packaged-smoke-and-fixture-data", "packet_version": "1"},
-    "verifier": {"verdict": "pending", "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "source_sha": "0942b6e56080f124db73f54cca1760d857dbcc21", "build_id": "desktop-dist-0.7.4-macos-arm64", "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4", "data_id": "isolated-packaged-smoke-and-fixture-data", "packet_version": "1"},
-    "final_review": {"verdict": "pending", "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "source_sha": "0942b6e56080f124db73f54cca1760d857dbcc21", "build_id": "desktop-dist-0.7.4-macos-arm64", "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4", "data_id": "isolated-packaged-smoke-and-fixture-data", "packet_version": "1"}
+    "reviewer": {"verdict": "pending", "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "source_sha": "063e3f815273f7645f484127ea7ab0bcec366e4f", "build_id": "desktop-dist-0.7.4-macos-arm64", "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4", "data_id": "isolated-packaged-smoke-and-fixture-data", "packet_version": "1"},
+    "verifier": {"verdict": "pending", "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "source_sha": "063e3f815273f7645f484127ea7ab0bcec366e4f", "build_id": "desktop-dist-0.7.4-macos-arm64", "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4", "data_id": "isolated-packaged-smoke-and-fixture-data", "packet_version": "1"},
+    "final_review": {"verdict": "pending", "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "source_sha": "063e3f815273f7645f484127ea7ab0bcec366e4f", "build_id": "desktop-dist-0.7.4-macos-arm64", "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4", "data_id": "isolated-packaged-smoke-and-fixture-data", "packet_version": "1"}
   },
   "drift": {"active": false, "events": [], "invalidated_receipts": []},
   "integration": {"authorized": false, "mode": "main_first", "target_ref": "refs/heads/main", "base_sha": "ed20b01e717ef620cc2fd172141777abcc755334", "remote_ref": "refs/remotes/origin/main", "observed_remote_sha": "0906539b5b2bc7bcbb04af74e86a8da104647e87", "branch_refs": ["0942b6e56080f124db73f54cca1760d857dbcc21"], "isolation_trigger": "independent_runtime", "isolated_worktree": "/tmp/rudder-native-pilot-next.u89BHp", "patch_tree_sha": "c6209c4b8b87cc4cc40d13c7871a18be89928bf2", "expected_old_sha": "ed20b01e717ef620cc2fd172141777abcc755334", "cas": {"attempted": false, "succeeded": false, "observed_old_sha": null, "delivered_sha": null}, "index_update_mode": "none"},
