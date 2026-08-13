@@ -1793,7 +1793,7 @@ export function workspaceBackupService(db: Db) {
       const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
       const operationId = crypto.randomUUID();
       const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
-      const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${backupId}-${Date.now()}`);
+      const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`);
       const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
       const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
       await fs.rm(stagingRoot, { recursive: true, force: true });
