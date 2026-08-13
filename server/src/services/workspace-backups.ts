@@ -644,11 +644,24 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
   }
   for (const name of names.filter((entry) => entry.endsWith(".json"))) {
     const receiptPath = path.join(receiptRoot, name);
-    const receipt = await readRestoreReceipt(receiptPath);
+    let receipt: WorkspaceRestoreReceipt | null = null;
+    try {
+      receipt = await readRestoreReceipt(receiptPath);
+    } catch (error) {
+      blocked.push({ receiptPath, operationId: "unknown", error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    let canonicalWorkspaceRoot: string | null = null;
+    try {
+      if (receipt?.orgId) canonicalWorkspaceRoot = path.resolve(resolveOrganizationWorkspaceRoot(receipt.orgId));
+    } catch {
+      canonicalWorkspaceRoot = null;
+    }
     if (
       !receipt
+      || !canonicalWorkspaceRoot
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(receipt.operationId)
-      || path.resolve(receipt.workspaceRoot) !== path.resolve(resolveOrganizationWorkspaceRoot(receipt.orgId))
+      || path.resolve(receipt.workspaceRoot) !== canonicalWorkspaceRoot
       || !isOwnedRestoreRoot(receipt.stagingRoot, receipt.workspaceRoot, receipt.operationId, "staging")
       || !isOwnedRestoreRoot(receipt.rollbackRoot, receipt.workspaceRoot, receipt.operationId, "rollback")
     ) {
@@ -678,7 +691,19 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
           const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
           if (receipt.expectedTreeSha256 && publishedTree !== receipt.expectedTreeSha256) throw new Error("published workspace tree does not match receipt");
         } else if (workspace && rollback) {
-          throw new Error("workspace and rollback roots both exist");
+          const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
+          if (receipt.expectedTreeSha256 && publishedTree === receipt.expectedTreeSha256) {
+            await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
+            await syncDirectory(path.dirname(receipt.workspaceRoot));
+          } else if (receipt.liveTreeSha256) {
+            const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
+            if (rollbackTree !== receipt.liveTreeSha256) throw new Error("workspace and rollback roots match neither recorded tree");
+            await fs.rm(receipt.workspaceRoot, { recursive: true, force: true });
+            await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
+            await syncDirectory(path.dirname(receipt.workspaceRoot));
+          } else {
+            throw new Error("workspace and rollback roots both exist without a recorded live tree");
+          }
         } else {
           throw new Error("workspace and rollback roots are both missing");
         }
