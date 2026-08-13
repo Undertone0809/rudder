@@ -6,7 +6,10 @@ fn main() {
     let mut args = std::env::args().skip(1);
     if let Some(flag) = args.next() {
         if flag == "--version" {
-            println!("rudder-update-helper {} protocol=1", env!("CARGO_PKG_VERSION"));
+            println!(
+                "rudder-update-helper {} protocol=1",
+                env!("CARGO_PKG_VERSION")
+            );
             return;
         }
         if flag == "--digest" {
@@ -25,7 +28,10 @@ fn main() {
         }
     }
     if std::env::args().any(|arg| arg == "--version") {
-        println!("rudder-update-helper {} protocol=1", env!("CARGO_PKG_VERSION"));
+        println!(
+            "rudder-update-helper {} protocol=1",
+            env!("CARGO_PKG_VERSION")
+        );
         return;
     }
     let input = match read_request() {
