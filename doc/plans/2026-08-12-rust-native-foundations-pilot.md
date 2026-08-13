@@ -36,18 +36,22 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current release-preparation candidate is `0.7.7` at source
-`8037198f1f3e6a60e3f284844b6138cf62acb7d0`. The exact macOS arm64 packaged
+The current release-preparation implementation candidate is `0.7.7` at source
+`75b4ef82971ceafb0eb0c3896f7fb485616854dc`, descended from remote `main`
+`ead97b74317e12fd2345a4186877bdf7f6297b55`. The exact macOS arm64 packaged
 candidate was rebuilt from that SHA. `desktop:dist`, server-package
 verification, native staging/version checks, and `unzip -t` passed. The
 portable ZIP SHA-256 is
-`d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925`; the
+`b93a0cc5ce14e21b580b3044d9f7d6779d15d5236d870319a4c011eb4818a64b`; the
 packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 The staged binaries report `0.7.7`, with hashes recorded in the delivery
 packet.
 
-The candidate remains blocked for Local App promotion: no authorized hosted
+The packet/evidence commit is `e2aac99ffdf4ed7afd3a40c52bee517dd73f873a`;
+it changes evidence only and does not replace the implementation source used
+to build the artifact. The candidate remains blocked for Local App promotion:
+no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
 cannot run. A live three-trial `rudder-evals native_ab` campaign is also not
 available. The shared foundation remains `accepted_default`, Local App and

@@ -53,7 +53,8 @@
         "cargo_lock": "native/Cargo.lock first-party workspace package entries",
         "javascript": ["desktop/package.json", "server/package.json", "cli/package.json", "packages/shared/package.json"],
         "staged_binaries": ["rudder-native --version", "rudder-process-host --version", "rudder-update-helper --version"],
-        "release_tag": "not_present_for_unreleased_0.7.7_candidate"
+        "release_tag": "not_present_for_unreleased_0.7.7_candidate",
+        "evidence_commit": "e2aac99ffdf4ed7afd3a40c52bee517dd73f873a"
       }
     },
     "runtime": {
@@ -62,10 +63,10 @@
       "artifact_bound_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
-      "account_gate_smoke": "PASS_packaged_account_gate_8037198f1",
-      "server_package_verification": "PASS_packaged_server_8037198f1",
-      "app_builder_smoke": "PASS_packaged_app_builder_8037198f1",
-      "zip_integrity": "PASS_unzip_test_8037198f1",
+      "account_gate_smoke": "PASS_packaged_account_gate_75b4ef829",
+      "server_package_verification": "PASS_packaged_server_75b4ef829",
+      "app_builder_smoke": "PASS_packaged_app_builder_75b4ef829",
+      "zip_integrity": "PASS_unzip_test_75b4ef829",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
