@@ -126,21 +126,21 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "00b7545b297836e0db36422c8004b3784b14ccda",
+    "base_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "00b7545b297836e0db36422c8004b3784b14ccda",
+    "observed_remote_sha": "96cb4fe6a5f09cba266770b854627467bfc854a1",
     "branch_refs": [
       "a08bd880725f9adcfadac72f2097f31695b3e037"
     ],
     "isolation_trigger": "independent_runtime",
-    "isolated_worktree": "/tmp/rudder-native-final-integrate.1jSeVs",
-    "patch_tree_sha": "4d5b33e4096a6b297df4461413fea23022b7be1",
-    "expected_old_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
+    "isolated_worktree": "/tmp/rudder-pilot-integrate.0e3c9b817",
+    "patch_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
+    "expected_old_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
     "cas": {
       "attempted": true,
       "succeeded": true,
-      "observed_old_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
-      "delivered_sha": "702b1099a22a980326157866de4cd093014f4622"
+      "observed_old_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
+      "delivered_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090"
     },
     "index_update_mode": "none"
   },
@@ -162,14 +162,14 @@
   },
   "terminal": {
     "delivered_ref": "refs/heads/main",
-    "delivered_sha": "702b1099a22a980326157866de4cd093014f4622",
-    "delivered_tree_sha": "136465766d53c3d5b66945659aa3bdfd82945158",
-    "timestamp": "2026-08-14T00:44:01+08:00",
+    "delivered_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
+    "delivered_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
+    "timestamp": "2026-08-14T01:48:00+08:00",
     "proof": [
-      "git update-ref refs/heads/main 702b1099a22a980326157866de4cd093014f4622 10a5576d95a307d5660742f6f96a436fd6711ebf",
-      "merge-tree --write-tree 4d5b33e4096a6b297df4461413fea23022b7be1",
+      "git update-ref refs/heads/main 6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090 8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
+      "merge-tree --write-tree 21f2d3937755b8bc1947f22c986a2acfda7cbb70",
       "shared worktree dirty/index state preserved; concurrent index drift recorded outside packet",
-      "prior packaged receipts invalidated because their artifact source was cf26412d3"
+      "prior packaged receipts invalidated because their artifact source was cf26412d3; current remote observed at 96cb4fe6a5f09cba266770b854627467bfc854a1"
     ]
   }
 }
