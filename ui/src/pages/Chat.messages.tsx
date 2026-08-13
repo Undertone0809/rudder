@@ -2623,7 +2623,7 @@ export function ChatMessageItem({
             </div>
           ) : null}
           {isEmptyStreamingAssistant ? (
-            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground md:ml-6">
+            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
               <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
             </div>
           ) : (
@@ -2635,7 +2635,7 @@ export function ChatMessageItem({
                 "data-annotation-surface": "assistant_body",
                 "data-message-id": message.id,
               } : {})}
-              className="relative md:ml-6"
+              className="relative"
             >
               <ChatLongMessageBody
                 body={message.body}
