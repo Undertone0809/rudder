@@ -212,7 +212,7 @@ jobs:
           }
           if ! verify_electron; then
             echo "Electron package cache is missing its platform binary; rebuilding Electron" >&2
-            pnpm rebuild electron
+            pnpm --filter @rudderhq/desktop rebuild electron
           fi
           verify_electron
 

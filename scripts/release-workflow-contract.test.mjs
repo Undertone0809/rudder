@@ -45,7 +45,7 @@ describe("unified delivery workflows", () => {
     expect(testWorkflow).toContain("pnpm product-logic:check");
     expect(testWorkflow).toContain("pnpm test:run --maxWorkers=2");
     expect(testWorkflow).toContain("Ensure Electron runtime dependency");
-    expect(testWorkflow).toContain("pnpm rebuild electron");
+    expect(testWorkflow).toContain("pnpm --filter @rudderhq/desktop rebuild electron");
     expect(testWorkflow.indexOf("Ensure Electron runtime dependency"))
       .toBeLessThan(testWorkflow.indexOf("pnpm test:run --maxWorkers=2"));
     expect(testWorkflow).toContain("pnpm test:docs-search");
