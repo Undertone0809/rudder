@@ -64,9 +64,10 @@ producer. Their focused tests and static checks pass, but they do not close
 the pilot gates. The backup comparator proves manifest/tree/entry/content
 parity, `unzip -t`, and atomic publication recovery on a small real fixture;
 ZIP byte SHA is intentionally recorded as `not_compared` because the two
-implementations use different archive metadata. The measured fixture was
-diagnostic only (Node 127.475 ms and +2,850,816 RSS bytes; Rust 483.247 ms and
-+1,048,576 RSS bytes), not a promotion claim.
+implementations use different archive metadata. The fixture's elapsed times
+were diagnostic only; resource RSS is `not_comparable` because the harness
+does not yet sample the separate native child process and must not use parent
+Node `process.memoryUsage()` deltas as a Rust-vs-Node claim.
 
 The packaged dogfood producer ran against the exact packaged Local App smoke
 surface and observed `0 accepted cycles / 0 UTC dates`. It failed closed

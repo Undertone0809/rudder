@@ -27,14 +27,14 @@ export type WorkspaceBackupRustNodeAbResult = {
   archiveByteParity: "not_compared";
   node: {
     elapsedMs: number;
-    rssDeltaBytes: number;
+    rssDeltaBytes: null;
     byteSize: number;
     sha256: string;
     artifactPath: string;
   };
   native: {
     elapsedMs: number;
-    rssDeltaBytes: number;
+    rssDeltaBytes: null;
     byteSize: number;
     sha256: string;
     artifactPath: string;
@@ -64,10 +64,6 @@ async function sha256File(filePath: string) {
 
 function elapsed(start: number) {
   return Number((performance.now() - start).toFixed(3));
-}
-
-function memoryDelta(before: NodeJS.MemoryUsage, after: NodeJS.MemoryUsage) {
-  return after.rss - before.rss;
 }
 
 async function inspectAndCompare(
@@ -142,13 +138,11 @@ export async function runWorkspaceBackupRustNodeAb(
   const createdAt = options.createdAt ?? new Date("2026-08-14T00:00:00.000Z");
   const nodePath = path.join(outputDir, "node.zip");
   const nativePath = path.join(outputDir, "native.zip");
-  const beforeNode = process.memoryUsage();
   const nodeStart = performance.now();
   const nodeArtifact = await createWorkspaceBackupV2File({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nodePath, createdAt });
-  const nodeResult = { elapsedMs: elapsed(nodeStart), rssDeltaBytes: memoryDelta(beforeNode, process.memoryUsage()) };
+  const nodeResult = { elapsedMs: elapsed(nodeStart), rssDeltaBytes: null as null };
   const previousBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
   process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativeBinary;
-  const beforeNative = process.memoryUsage();
   const nativeStart = performance.now();
   try {
     await createWorkspaceBackupV2Native({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nativePath, createdAt });
@@ -156,7 +150,7 @@ export async function runWorkspaceBackupRustNodeAb(
     if (previousBinary === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH;
     else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousBinary;
   }
-  const nativeResult = { elapsedMs: elapsed(nativeStart), rssDeltaBytes: memoryDelta(beforeNative, process.memoryUsage()) };
+  const nativeResult = { elapsedMs: elapsed(nativeStart), rssDeltaBytes: null as null };
   const nodeIndex = await inspectWorkspaceBackupV2File(nodePath);
   const nativeIndex = await inspectWorkspaceBackupV2File(nativePath);
   await inspectAndCompare(rootPath, nodePath, nativePath, nodeIndex, nativeIndex);
