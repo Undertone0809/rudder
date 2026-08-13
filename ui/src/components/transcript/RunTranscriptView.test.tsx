@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
+import { TranscriptThinkingBlock } from "./RunTranscriptView.blocks";
 import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
@@ -610,6 +611,27 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("No meaningful chat transcript.");
+  });
+
+  it("localizes the shared thinking label without changing the Chat inline presentation", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptThinkingBlock
+          block={{
+            type: "thinking",
+            ts: "2026-07-20T00:00:00.000Z",
+            text: "Inspecting the request.",
+            streaming: false,
+          }}
+          density="comfortable"
+          collapsibleSummary
+          localizeText={(text) => text === "Thinking" ? "思考中" : text}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(">思考中</div>");
+    expect(html).not.toContain(">Thinking</div>");
   });
 
   it("renders assistant and thinking content as markdown in compact mode", () => {
