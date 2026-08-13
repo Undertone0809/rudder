@@ -231,6 +231,8 @@ jobs:
 
       - name: Unit tests
         if: matrix.test == 'full'
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: pnpm test:run --maxWorkers=2
 
       - name: CLI start tests
