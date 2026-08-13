@@ -893,7 +893,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("rudder-update-helper-{label}-{suffix}"));
+        let root = std::env::temp_dir().join(format!(
+            "rudder-update-helper-{label}-{}-{suffix}",
+            std::process::id()
+        ));
         create_dir_all(&root).unwrap();
         root
     }
