@@ -48,7 +48,7 @@ updated_at: 2026-08-13
 
 The foundation candidate now carries Local App ownership attestation,
 listener verification, durable owner and terminal receipts, an output-order
-index, PTY transport, the streaming archive core, and synchronized `0.7.4`
+index, PTY transport, the streaming archive core, and synchronized `0.7.5`
 Rust binary metadata. Agent Run I/O, payload installation, run-evidence
 indexing, and workspace manifest watching are not yet admitted. The
 `rudder-evals` commits `231603f`, `ff6f9b1`, and `4fa9604` provide the strict
@@ -65,7 +65,7 @@ claim that a missing implementation passed its acceptance gate.
 
 | Slice | Decision | Evidence bound to this candidate | Required next transition |
 | --- | --- | --- | --- |
-| Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.4` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
+| Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.5` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
 | Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; exact packaged macOS arm64 build, helper staging, direct launch, and account-gate/email-code smoke pass, while seven-day/100-cycle dogfood and native_ab live evidence are absent | Run dogfood gate and live three-trial native_ab campaign |
 | Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.3 MB RSS delta versus 36.3 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
@@ -77,14 +77,14 @@ claim that a missing implementation passed its acceptance gate.
 operation is promoted to a product default. The four `not_admitted` rows are
 fail-closed scope decisions, not claims of successful native implementations.
 
-The candidate lineage at `cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`
+The historical candidate lineage at `cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`
 passed the focused macOS arm64 Local App native suite
 11/11 using the release `rudder-process-host` binary, and the bounded evidence
 indexer tests pass. The packaged macOS arm64 candidate then built successfully,
 staged all three native binaries, passed the server-package and Computer Use
 package checks, passed a direct packaged Resident-shell launch, and passed the
 packaged account-gate smoke including the email-code interaction. This is
-supporting acceptance evidence only: it does not replace the Local App
+historical supporting acceptance evidence only: it does not replace the Local App
 seven-day/100-cycle dogfood gate or a live `rudder-evals native_ab` campaign.
 The final delivery packet must record the post-proposal commit SHA and receipt
 identities.
@@ -97,15 +97,16 @@ until those wall-clock observations exist.
 
 ### Candidate evidence snapshot (2026-08-13)
 
-Evidence was collected in the isolated macOS arm64 worktree
+Historical evidence was collected in the isolated macOS arm64 worktree
 `/tmp/rudder-native-pilot-next.u89BHp` from candidate
 `cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`. The packaged artifact was built
-from that source and reported product version `0.7.4`:
+from that source and reported product version `0.7.4`; it is not evidence for
+the current `0.7.5` release candidate:
 
 | Evidence | Result | Identity |
 | --- | --- | --- |
 | `pnpm --filter @rudderhq/desktop build` | passed; native staging completed | `aarch64-apple-darwin`, release binaries |
-| `pnpm desktop:dist` | passed; server package verification passed | `Rudder-0.7.4-macos-arm64-portable.zip` |
+| `pnpm desktop:dist` | passed for the historical candidate | `Rudder-0.7.4-macos-arm64-portable.zip` |
 | `verify-computer-use-package.mjs` | passed | packaged `darwin/arm64` runtime |
 | direct packaged launch | passed; Resident shell stayed alive for 20 seconds | isolated `RUDDER_HOME` and user-data root |
 | packaged account-gate smoke | passed; account-gate and email-code screenshots written | packaged App, isolated ports/data |
@@ -135,7 +136,9 @@ establish packaged or native_ab acceptance; the backup slice therefore stays
 Release version alignment is a hard gate: every first-party Rust package,
 Cargo lock entry, staged binary `--version`, Desktop/server package, and
 release tag must resolve to the normal Rudder release version. The current
-candidate is `0.7.4`; an independent Rust `0.1.x` version is not allowed.
+release context is `0.7.5`; an independent Rust `0.1.x` version is not allowed.
+Any new packaged or dogfood receipt must bind to `0.7.5` and the exact
+candidate SHA; historical `0.7.4` artifact hashes cannot be reused.
 
 Introduce a Rust native foundation through six approved, dependency-ordered
 slices:
