@@ -4190,6 +4190,7 @@ export function MessengerContextSidebar() {
                   <div
                     ref={directoryVirtualizer.containerRef}
                     data-testid="messenger-virtual-directory"
+                    className="shrink-0"
                     style={{
                       position: "relative",
                       width: "100%",
@@ -4242,6 +4243,7 @@ export function MessengerContextSidebar() {
             <div
               ref={directoryVirtualizer.containerRef}
               data-testid="messenger-virtual-directory"
+              className="shrink-0"
               style={{
                 position: "relative",
                 width: "100%",
@@ -4286,7 +4288,7 @@ export function MessengerContextSidebar() {
           <div
             ref={loadMoreThreadSummariesRef}
             data-testid="messenger-thread-page-sentinel"
-            className="flex min-h-10 items-center justify-center px-3 py-2 text-[12px] text-muted-foreground"
+            className="flex min-h-10 shrink-0 items-center justify-center px-3 py-2 text-[12px] text-muted-foreground"
           >
             {model.isFetchingMoreThreadSummaries ? (
               <span className="inline-flex items-center gap-1.5">

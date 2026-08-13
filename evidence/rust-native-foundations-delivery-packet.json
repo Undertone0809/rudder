@@ -23,17 +23,18 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
-    "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+    "source_ref": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
+    "source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
-      "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
-      "scripts/perf/workspace-backup-node-streaming.mjs",
-      "scripts/perf/workspace-backup-node-streaming.test.ts"
+      "desktop/src/local-apps-runtime.test.ts",
+      "scripts/perf/local-app-dogfood-ledger.mjs",
+      "scripts/perf/local-app-dogfood-ledger.test.ts"
     ],
     "build": {
       "id": "desktop-dist-0.7.4-macos-arm64",
-      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
+      "artifact_bound_source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
       "portable_sha256": "f0c77b5e17d2b75fce46ed0b64d972d6b2c7a59ccb515566473c4796895721bc",
       "native_sha256": {
         "rudder-process-host": "7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f",
@@ -43,7 +44,8 @@
     },
     "runtime": {
       "id": "macOS-arm64-packaged-Rudder-0.7.4",
-      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
+      "artifact_bound_source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
       "account_gate_smoke": "passed_on_retry",
       "first_attempt": "failed_provider_handoff_timeout"
     },
@@ -78,27 +80,27 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "needs_more_evidence",
+      "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
       "build_id": "desktop-dist-0.7.4-macos-arm64",
       "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "1"
     },
     "verifier": {
-      "verdict": "question",
+      "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
       "build_id": "desktop-dist-0.7.4-macos-arm64",
       "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "1"
     },
     "final_review": {
-      "verdict": "blocked_by_verifier",
+      "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
       "build_id": "desktop-dist-0.7.4-macos-arm64",
       "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -106,29 +108,36 @@
     }
   },
   "drift": {
-    "active": false,
-    "events": [],
-    "invalidated_receipts": []
+    "active": true,
+    "events": [
+      {
+        "type": "candidate_rebased_and_integrated",
+        "before_source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+        "after_source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
+        "reason": "Local main advanced with the dogfood ledger merge; prior packaged receipts are not bound to this candidate."
+      }
+    ],
+    "invalidated_receipts": ["reviewer", "verifier", "final_review"]
   },
   "integration": {
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "ed20b01e717ef620cc2fd172141777abcc755334",
+    "base_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "0906539b5b2bc7bcbb04af74e86a8da104647e87",
+    "observed_remote_sha": "478465d978ac88fb1c6cb8b505ce9850e4b23b03",
     "branch_refs": [
-      "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22"
+      "6094efed8839bc1da1626cf422e5bf8ff06f5e2f"
     ],
     "isolation_trigger": "independent_runtime",
-    "isolated_worktree": "/tmp/rudder-native-pilot-next.u89BHp",
-    "patch_tree_sha": "d5a8478d97f070ff27481bcf26ad1e32895ed33f",
-    "expected_old_sha": "df2faa44c60a0e4433d8223567a9513d35d09893",
+    "isolated_worktree": "/tmp/rudder-native-final-integrate.1jSeVs",
+    "patch_tree_sha": "replace-with-merge-tree-sha",
+    "expected_old_sha": "10a5576d95a307d5660742f6f96a436fd6711ebf",
     "cas": {
-      "attempted": true,
-      "succeeded": true,
-      "observed_old_sha": "df2faa44c60a0e4433d8223567a9513d35d09893",
-    "delivered_sha": "73302dd377b665ee7d5955f3c89de84263fe313e"
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
     },
     "index_update_mode": "none"
   },
@@ -149,15 +158,13 @@
     ]
   },
   "terminal": {
-    "delivered_ref": "refs/heads/main",
-    "delivered_sha": "9baf893daf75d51647faf88bb1b1a85a7b2ac9de",
-    "delivered_tree_sha": "1e890c5c5ecee222db02df0b2d87ccc0ce2be40e",
-    "timestamp": "2026-08-13T23:15:00+08:00",
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
     "proof": [
-      "git update-ref refs/heads/main 73302dd377b665ee7d5955f3c89de84263fe313e df2faa44c60a0e4433d8223567a9513d35d09893",
-      "git update-ref refs/heads/main 9baf893daf75d51647faf88bb1b1a85a7b2ac9de 96c69a50e1afdc89752d5db512f1998fd8358110",
-      "merge-tree --write-tree d5a8478d97f070ff27481bcf26ad1e32895ed33f",
-      "reviewer needs_more_evidence and verifier question block acceptance"
+      "candidate merge cd6b7820d was created in an isolated worktree",
+      "prior packaged receipts were invalidated because their artifact source was cf26412d3"
     ]
   }
 }

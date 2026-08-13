@@ -30,6 +30,13 @@ commit_refs:
   - a30c19b73
   - d5e13f60f
   - rudder-evals:231603f
+  - rudder-evals:ff6f9b1
+  - rudder-evals:4fa9604
+  - 1cf4c985f
+  - fff627179
+  - 23729835e
+  - 6094efed8
+  - 2f3dcdbd2
 updated_at: 2026-08-13
 ---
 
@@ -44,12 +51,12 @@ listener verification, durable owner and terminal receipts, an output-order
 index, PTY transport, the streaming archive core, and synchronized `0.7.4`
 Rust binary metadata. Agent Run I/O, payload installation, run-evidence
 indexing, and workspace manifest watching are not yet admitted. The
-`rudder-evals` commit `231603f` provides the strict Packet V2 `native_ab`
-contract (fixed `node_baseline`/`rust_candidate`, exactly three trials,
-mandatory `nativeIdentity`, and `productPass=false`) plus a sealed synthetic
-three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
-failure recovery, resource measurements, packaged acceptance, and three
-isolated live trials are bound to the same candidate.
+`rudder-evals` commits `231603f`, `ff6f9b1`, and `4fa9604` provide the strict
+Packet V2 `native_ab` contract, a bounded three-trial summary importer, and
+registry/schema preservation for the `native_ab` mode. The importer is
+diagnostic only until real Node/Rust workloads, failure recovery, resource
+measurements, packaged acceptance, and three isolated live trials are bound
+to the same candidate.
 
 ### Decision ledger (candidate lineage parent `12bee9c102dc2a1cae373d93465684a52f70681e`)
 
@@ -81,6 +88,12 @@ supporting acceptance evidence only: it does not replace the Local App
 seven-day/100-cycle dogfood gate or a live `rudder-evals native_ab` campaign.
 The final delivery packet must record the post-proposal commit SHA and receipt
 identities.
+
+The Local App dogfood tooling now includes a persistent atomic ledger and a
+fail-closed verifier. It requires a real packaged cycle command, exact source,
+artifact, and runtime identity, at least 100 accepted lifecycle cycles, and
+seven contiguous UTC dates. It has no synthetic-cycle path and remains pending
+until those wall-clock observations exist.
 
 ### Candidate evidence snapshot (2026-08-13)
 
