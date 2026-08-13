@@ -121,14 +121,14 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/releases",
       title: "Changelog",
-      latestDate: "August 13, 2026",
+      latestDate: "August 14, 2026",
       filterTag: "New",
       tags: ["Improved", "New", "Fixed"],
     },
     {
       route: "/zh/releases",
       title: "更新日志",
-      latestDate: "2026年8月13日",
+      latestDate: "2026年8月14日",
       filterTag: "新功能",
       tags: ["改进", "新功能", "问题修复"],
     },
@@ -139,12 +139,12 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await page.goto(item.route);
 
     await expect(page.getByRole("heading", { level: 1, name: item.title })).toBeVisible();
-    await expect(page.getByText(item.latestDate, { exact: true })).toBeVisible();
-    await expect(page.locator("h2#v0-7-4")).toBeVisible();
-    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(35);
-    const latestUpdate = page.locator("h2#v0-7-4").locator(
+    await expect(page.locator("h2#v0-7-6")).toBeVisible();
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(37);
+    const latestUpdate = page.locator("h2#v0-7-6").locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
+    await expect(latestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
     await expect(latestUpdate.locator('[data-component-part="update-tag-list"]')).toBeHidden();
     await expect(latestUpdate.locator('[data-component-part="update-description"]')).toBeHidden();
     await expect(page.locator("h2#v0-7-2")).toBeVisible();
@@ -161,7 +161,10 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(item.route);
-    await expect(page.getByText(item.latestDate, { exact: true })).toBeVisible();
+    const mobileLatestUpdate = page.locator("h2#v0-7-6").locator(
+      "xpath=ancestor::div[contains(@class, 'update-container')]",
+    );
+    await expect(mobileLatestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
     const overflows = await page.evaluate(() =>
       document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
