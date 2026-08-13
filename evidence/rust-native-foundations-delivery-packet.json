@@ -184,7 +184,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-pilot-integrate.0e3c9b817",
-    "patch_tree_sha": "replace-with-next-docs-commit-tree-sha",
+    "patch_tree_sha": "c757c70013f19590c84228bafd2754a9472343de",
     "expected_old_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
     "cas": {
       "attempted": false,
