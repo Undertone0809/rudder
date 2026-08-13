@@ -8493,6 +8493,7 @@ describe("Chat project context selector", () => {
             role: "working_set",
             note: null,
             sortOrder: 0,
+            isPrimary: false,
             resource: {
               id: "resource-1",
               orgId: "org-1",
