@@ -30,7 +30,23 @@ function acceptedCycle(cycleIndex: number, completedAt: string, overrides: Recor
     runtimeId,
     startedAt: completedAt,
     completedAt,
-    evidence: { packaged: true, ...overrides },
+    evidence: {
+      kind: "rudder_local_app_dogfood_cycle",
+      cycleIndex,
+      packaged: true,
+      activation: "packaged",
+      phase: "start_stop",
+      accepted: true,
+      ownershipVerified: true,
+      cleanupProven: true,
+      listenerLeak: false,
+      descendantLeak: false,
+      unresolvedP1: [],
+      sourceSha,
+      artifactSha256,
+      runtimeId,
+      ...overrides,
+    },
   };
 }
 
@@ -97,6 +113,26 @@ describe("Local App packaged dogfood ledger", () => {
       failures: [{ cycleIndex: 2, reason: "DOGFOOD_CYCLE_NOT_ACCEPTED" }],
       identityFailures: [2],
       missingIndexes: [1, 2],
+    });
+  });
+
+  it("does not trust an accepted row whose packaged evidence was edited", () => {
+    const ledger = createDogfoodLedger({
+      identity: { sourceSha, artifactSha256, runtimeId },
+      target: { requiredCycles: 1, requiredDates: 1 },
+      packagedExecutable: "/tmp/Rudder.app/Contents/MacOS/Rudder",
+      packagedExecutableSha256: artifactSha256,
+      packagedCommand: "/tmp/run-packaged-local-app-cycle",
+      packagedCommandSha256: artifactSha256,
+      now: new Date("2026-08-13T12:00:00.000Z"),
+    });
+    const cycle = acceptedCycle(0, "2026-08-13T12:01:00.000Z");
+    cycle.evidence.cleanupProven = false;
+    ledger.cycles.push(cycle);
+    expect(assessDogfoodLedger(ledger)).toMatchObject({
+      status: "failed",
+      acceptedCycles: 0,
+      failures: [{ cycleIndex: 0, reason: "DOGFOOD_CYCLE_NOT_ACCEPTED" }],
     });
   });
 
@@ -181,5 +217,23 @@ process.stdout.write("RUDDER_LOCAL_APP_DOGFOOD_RESULT=" + JSON.stringify({
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("revalidates persisted accepted evidence before counting a cycle", () => {
+    const ledger = createDogfoodLedger({
+      identity: { sourceSha, artifactSha256, runtimeId },
+      target: { requiredCycles: 1, requiredDates: 1 },
+      packagedExecutable: "/tmp/Rudder.app/Contents/MacOS/Rudder",
+      packagedExecutableSha256: artifactSha256,
+      packagedCommand: "/tmp/run-packaged-local-app-cycle",
+      packagedCommandSha256: artifactSha256,
+      now: new Date("2026-08-13T12:00:00.000Z"),
+    });
+    ledger.cycles.push(acceptedCycle(0, "2026-08-13T12:01:00.000Z", { cleanupProven: false }));
+    expect(assessDogfoodLedger(ledger)).toMatchObject({
+      status: "failed",
+      acceptedCycles: 0,
+      failures: [{ cycleIndex: 0, reason: "DOGFOOD_CYCLE_NOT_ACCEPTED" }],
+    });
   });
 });

@@ -168,8 +168,22 @@ export function assessDogfoodLedger(input) {
       || cycle.runtimeId !== ledger.identity.runtimeId) {
       identityFailures.push(cycle.cycleIndex);
     }
-    if (cycle.status === "accepted") accepted.push(cycle);
-    else failures.push({ cycleIndex: cycle.cycleIndex, reason: cycle.failure?.code ?? "cycle_not_accepted" });
+    if (cycle.status === "accepted") {
+      try {
+        const evidence = validateCycleResult(cycle.evidence, cycle.cycleIndex, ledger.identity);
+        if (cycle.phase !== evidence.phase || cycle.completedAt === undefined) {
+          fail("Accepted cycle record does not match its packaged evidence", "DOGFOOD_CYCLE_RESULT_INVALID");
+        }
+        accepted.push(cycle);
+      } catch (error) {
+        failures.push({
+          cycleIndex: cycle.cycleIndex,
+          reason: error?.code ?? "DOGFOOD_CYCLE_RESULT_INVALID",
+        });
+      }
+    } else {
+      failures.push({ cycleIndex: cycle.cycleIndex, reason: cycle.failure?.code ?? "cycle_not_accepted" });
+    }
   }
   const sortedIndexes = [...indexes].sort((left, right) => left - right);
   const missingIndexes = [];
