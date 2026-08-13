@@ -227,8 +227,12 @@ jobs:
           test "$(wc -l < "$package_map" | xargs)" = "15"
           while IFS=$'\t' read -r pkg_dir pkg_name pkg_version; do
             [ -n "$pkg_dir" ] || continue
-            pack_json="$(cd "$pkg_dir" && npm pack --json --pack-destination "$GITHUB_WORKSPACE/dist/npm-payloads")"
-            filename="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(p[0].filename)' <<< "$pack_json")"
+            pack_dir="$(mktemp -d)"
+            (cd "$pkg_dir" && npm pack --pack-destination "$pack_dir")
+            test "$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' | wc -l | xargs)" = "1"
+            filename="$(basename "$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)")"
+            mv "$pack_dir/$filename" "dist/npm-payloads/$filename"
+            rmdir "$pack_dir"
             digest="$(shasum -a 256 "dist/npm-payloads/$filename" | awk '{print $1}')"
             printf '%s\t%s\t%s\t%s\n' "$pkg_name" "$pkg_version" "$filename" "$digest" >> dist/npm-payloads/manifest.tsv
           done < "$package_map"
