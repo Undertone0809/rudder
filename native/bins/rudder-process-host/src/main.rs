@@ -1,12 +1,11 @@
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use rudder_native_protocol::{
     CAPABILITIES, Command, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_VERSION,
 };
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command as ProcessCommand, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -35,33 +34,20 @@ enum Input {
     Eof,
 }
 
-enum MainEvent {
-    Input(Input),
-    Monitor(MonitorEvent),
-}
-
 enum MonitorCommand {
     Stop,
+    Input(Vec<u8>),
+    Resize { cols: u16, rows: u16 },
 }
 
 enum MonitorEvent {
-    ListenerVerified {
-        port: u16,
-    },
-    ListenerOwnerMismatch,
     Exited {
-        status: ExitStatus,
+        code: Option<i32>,
+        signal: Option<&'static str>,
         was_stopped: bool,
-        listener_owner_mismatch: bool,
         cleanup_proven: bool,
         had_surviving_group: bool,
     },
-}
-
-enum ListenerOwnership {
-    NotListening,
-    Owned,
-    Foreign,
 }
 
 struct Counters {
@@ -71,157 +57,29 @@ struct Counters {
 
 struct ActiveChild {
     control: mpsc::Sender<MonitorCommand>,
+    events: mpsc::Receiver<MonitorEvent>,
     output_done: Vec<mpsc::Receiver<bool>>,
-    evidence: Arc<OperationEvidence>,
 }
 
-struct SpawnSpec {
-    executable: String,
-    argv: Vec<String>,
-    cwd: String,
-    env: BTreeMap<String, String>,
-    owner_token: String,
-    port: u16,
-    runtime_root: PathBuf,
+struct TerminalStartError {
+    code: &'static str,
+    cleanup_proven: bool,
 }
 
-struct OperationEvidence {
-    operation_root: PathBuf,
-    terminal_path: PathBuf,
-    index: Mutex<BufWriter<File>>,
-    sequence: AtomicU64,
-    stdout_offset: AtomicU64,
-    stderr_offset: AtomicU64,
-    owner_token: String,
-    child_pid: u32,
-    process_group: u32,
-    port: u16,
-}
-
-impl OperationEvidence {
-    fn create(
-        runtime_root: &Path,
-        owner_token: String,
-        child_pid: u32,
-        process_group: u32,
-        port: u16,
-    ) -> Result<Arc<Self>, &'static str> {
-        let canonical_root =
-            fs::canonicalize(runtime_root).map_err(|_| "runtime_root_unavailable")?;
-        if !canonical_root.is_dir() {
-            return Err("runtime_root_unavailable");
+impl TerminalStartError {
+    fn before_spawn(code: &'static str) -> Self {
+        Self {
+            code,
+            cleanup_proven: true,
         }
-        let operation_root = canonical_root.join(&owner_token);
-        fs::create_dir(&operation_root).map_err(|_| "operation_root_unavailable")?;
-        let canonical_operation =
-            fs::canonicalize(&operation_root).map_err(|_| "operation_root_unavailable")?;
-        if !canonical_operation.starts_with(&canonical_root) {
-            return Err("unsafe_operation_root");
+    }
+
+    fn after_spawn(code: &'static str, cleanup: CleanupResult) -> Self {
+        Self {
+            code,
+            cleanup_proven: cleanup.proven,
         }
-        let index_path = canonical_operation.join("output-index.jsonl");
-        let index = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&index_path)
-            .map_err(|_| "output_index_unavailable")?;
-        let evidence = Arc::new(Self {
-            terminal_path: canonical_operation.join("terminal-receipt.json"),
-            operation_root: canonical_operation,
-            index: Mutex::new(BufWriter::new(index)),
-            sequence: AtomicU64::new(0),
-            stdout_offset: AtomicU64::new(0),
-            stderr_offset: AtomicU64::new(0),
-            owner_token,
-            child_pid,
-            process_group,
-            port,
-        });
-        evidence.write_owner_descriptor()?;
-        Ok(evidence)
     }
-
-    fn write_owner_descriptor(&self) -> Result<(), &'static str> {
-        atomic_json(
-            &self.operation_root.join("owner-descriptor.json"),
-            &json!({
-                "protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},
-                "ownerKind":"local_app_generation",
-                "opaqueOwnerToken":self.owner_token,
-                "hostPid":std::process::id(),
-                "childPid":self.child_pid,
-                "platformOwnerIdentity":format!("process-group:{}",self.process_group),
-                "port":self.port,
-                "outputIndexPath":"output-index.jsonl",
-                "terminalReceiptPath":"terminal-receipt.json"
-            }),
-        )
-    }
-
-    fn record_output(&self, stream: &str, bytes: &[u8]) -> Result<(), &'static str> {
-        let offset = match stream {
-            "stdout" => self
-                .stdout_offset
-                .fetch_add(bytes.len() as u64, Ordering::SeqCst),
-            "stderr" => self
-                .stderr_offset
-                .fetch_add(bytes.len() as u64, Ordering::SeqCst),
-            _ => return Err("invalid_output_stream"),
-        };
-        let sequence = self.sequence.fetch_add(1, Ordering::SeqCst);
-        let digest = format!("{:x}", Sha256::digest(bytes));
-        let mut index = self.index.lock().map_err(|_| "output_index_unavailable")?;
-        serde_json::to_writer(
-            &mut *index,
-            &json!({"sequence":sequence,"stream":stream,"offset":offset,"length":bytes.len(),"sha256":digest}),
-        )
-        .map_err(|_| "output_index_unavailable")?;
-        index
-            .write_all(b"\n")
-            .map_err(|_| "output_index_unavailable")?;
-        index.flush().map_err(|_| "output_index_unavailable")
-    }
-
-    fn write_terminal(&self, terminal: &Value) -> Result<(), &'static str> {
-        self.index
-            .lock()
-            .map_err(|_| "output_index_unavailable")?
-            .flush()
-            .map_err(|_| "output_index_unavailable")?;
-        atomic_json(
-            &self.terminal_path,
-            &json!({
-                "protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},
-                "opaqueOwnerToken":self.owner_token,
-                "childPid":self.child_pid,
-                "processGroup":self.process_group,
-                "port":self.port,
-                "terminal":terminal
-            }),
-        )
-    }
-}
-
-fn atomic_json(path: &Path, value: &Value) -> Result<(), &'static str> {
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or("receipt_write_failed")?;
-    let temporary = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)
-        .map_err(|_| "receipt_write_failed")?;
-    serde_json::to_writer(&mut file, value).map_err(|_| "receipt_write_failed")?;
-    file.write_all(b"\n").map_err(|_| "receipt_write_failed")?;
-    file.sync_all().map_err(|_| "receipt_write_failed")?;
-    fs::rename(&temporary, path).map_err(|_| "receipt_write_failed")?;
-    if let Some(parent) = path.parent() {
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| "receipt_write_failed")?;
-    }
-    Ok(())
 }
 
 fn main() {
@@ -269,8 +127,7 @@ fn main() {
         }),
     );
 
-    let (event_tx, event_rx) = mpsc::channel();
-    let input_tx = event_tx.clone();
+    let (input_tx, input_rx) = mpsc::channel();
     thread::spawn(move || read_commands(input_tx));
 
     let started_at = Instant::now();
@@ -279,28 +136,19 @@ fn main() {
         bytes_written: AtomicU64::new(0),
     });
     let mut active: Option<ActiveChild> = None;
-    let mut stop_admitted = false;
     let mut terminal_sent = false;
     let mut process_exit_code = 0;
 
     while !terminal_sent {
-        match event_rx.recv() {
-            Ok(MainEvent::Monitor(event)) => match event {
-                MonitorEvent::ListenerVerified { port } => {
-                    send(&lifecycle, json!({"type":"listener-verified","port":port}));
-                }
-                MonitorEvent::ListenerOwnerMismatch => {
-                    if let Some(child) = active.as_ref() {
-                        let _ = child.control.send(MonitorCommand::Stop);
-                    }
-                }
-                MonitorEvent::Exited {
-                    status,
+        if let Some(child) = active.as_ref() {
+            match child.events.try_recv() {
+                Ok(MonitorEvent::Exited {
+                    code,
+                    signal,
                     was_stopped,
-                    listener_owner_mismatch,
                     cleanup_proven,
                     had_surviving_group,
-                } => {
+                }) => {
                     let mut output_relay_proven = true;
                     if let Some(child) = active.as_ref() {
                         for output_done in &child.output_done {
@@ -308,25 +156,21 @@ fn main() {
                                 matches!(output_done.recv_timeout(TERM_TIMEOUT), Ok(true));
                         }
                     }
-                    let code = status.code();
                     send(
                         &lifecycle,
                         json!({
                             "type": "app-exit",
                             "code": code,
-                            "signal": signal_name(&status),
+                            "signal": signal,
                         }),
                     );
-                    if was_stopped && cleanup_proven && !listener_owner_mismatch {
+                    if was_stopped && cleanup_proven {
                         send(&lifecycle, json!({"type":"stopped"}));
                     }
                     let terminal_succeeded = cleanup_proven
                         && output_relay_proven
-                        && !listener_owner_mismatch
                         && (was_stopped || (code == Some(0) && !had_surviving_group));
-                    let error_code = if listener_owner_mismatch {
-                        Some("listener_owner_mismatch")
-                    } else if !cleanup_proven {
+                    let error_code = if !cleanup_proven {
                         Some("process_group_cleanup_unproven")
                     } else if !output_relay_proven {
                         Some("output_relay_failed")
@@ -337,41 +181,47 @@ fn main() {
                     } else {
                         Some("child_exit")
                     };
-                    let mut terminal = terminal_message(
-                        if terminal_succeeded {
-                            "succeeded"
-                        } else {
-                            "failed"
-                        },
-                        error_code,
-                        cleanup_proven,
-                        started_at,
-                        &counters,
-                    );
-                    terminal["receiptWritten"] = Value::Bool(true);
-                    let receipt_written = active
-                        .as_ref()
-                        .is_some_and(|child| child.evidence.write_terminal(&terminal).is_ok());
-                    if !receipt_written {
-                        terminal = terminal_message(
-                            "failed",
-                            Some("receipt_write_failed"),
+                    send(
+                        &lifecycle,
+                        terminal_message(
+                            if terminal_succeeded {
+                                "succeeded"
+                            } else {
+                                "failed"
+                            },
+                            error_code,
                             cleanup_proven,
                             started_at,
                             &counters,
-                        );
-                        terminal["receiptWritten"] = Value::Bool(false);
-                    }
-                    send(&lifecycle, terminal);
-                    process_exit_code = if terminal_succeeded && receipt_written {
-                        0
-                    } else {
-                        1
-                    };
+                        ),
+                    );
+                    process_exit_code = if terminal_succeeded { 0 } else { 1 };
                     terminal_sent = true;
                 }
-            },
-            Ok(MainEvent::Input(Input::Command(Command::Start {
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    send(
+                        &lifecycle,
+                        terminal_message(
+                            "failed",
+                            Some("monitor_lost"),
+                            false,
+                            started_at,
+                            &counters,
+                        ),
+                    );
+                    process_exit_code = 1;
+                    terminal_sent = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        if terminal_sent {
+            break;
+        }
+
+        match input_rx.recv_timeout(POLL_INTERVAL) {
+            Ok(Input::Command(Command::Start {
                 protocol_version,
                 request_id,
                 executable,
@@ -380,8 +230,7 @@ fn main() {
                 env,
                 owner_token,
                 port,
-                runtime_root,
-            }))) => {
+            })) => {
                 if active.is_some() {
                     send_error(&lifecycle, "already_started");
                     continue;
@@ -395,7 +244,6 @@ fn main() {
                     env,
                     owner_token,
                     port,
-                    runtime_root,
                 };
                 set_request_id(
                     &lifecycle,
@@ -420,33 +268,24 @@ fn main() {
                     env,
                     owner_token,
                     port,
-                    runtime_root,
                 } = command
                 else {
                     unreachable!();
                 };
                 let owner_token = owner_token.expect("validated owner token");
-                let port = port.expect("validated port");
-                let runtime_root = runtime_root.expect("validated runtime root");
                 set_owner_token(&lifecycle, owner_token.clone());
                 send(
                     &lifecycle,
                     json!({"type":"accepted","ownerToken":owner_token,"port":port}),
                 );
                 match spawn_child(
-                    SpawnSpec {
-                        executable,
-                        argv,
-                        cwd,
-                        env,
-                        owner_token: owner_token.clone(),
-                        port,
-                        runtime_root: PathBuf::from(runtime_root),
-                    },
+                    executable,
+                    argv,
+                    cwd,
+                    env,
                     stdout.clone(),
                     stderr.clone(),
                     counters.clone(),
-                    event_tx.clone(),
                 ) {
                     Ok((active_child, pid, pgid)) => {
                         send(
@@ -472,10 +311,135 @@ fn main() {
                     }
                 }
             }
-            Ok(MainEvent::Input(Input::Command(command @ Command::Stop { .. }))) => {
+            Ok(Input::Command(Command::StartTerminal {
+                protocol_version,
+                request_id,
+                executable,
+                argv,
+                cwd,
+                env,
+                owner_token,
+                cols,
+                rows,
+            })) => {
+                if active.is_some() {
+                    send_error(&lifecycle, "already_started");
+                    continue;
+                }
+                let command = Command::StartTerminal {
+                    protocol_version,
+                    request_id,
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    owner_token,
+                    cols,
+                    rows,
+                };
                 set_request_id(
                     &lifecycle,
-                    command_request_id(&command).unwrap_or_else(|| "local-app".to_string()),
+                    command_request_id(&command).unwrap_or_else(|| "terminal".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    send(
+                        &lifecycle,
+                        terminal_message("failed", Some(code), true, started_at, &counters),
+                    );
+                    process_exit_code = 3;
+                    terminal_sent = true;
+                    continue;
+                }
+                let Command::StartTerminal {
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    owner_token,
+                    cols,
+                    rows,
+                    ..
+                } = command
+                else {
+                    unreachable!()
+                };
+                let owner_token = owner_token.expect("validated owner token");
+                set_owner_token(&lifecycle, owner_token.clone());
+                send(
+                    &lifecycle,
+                    json!({"type":"accepted","ownerToken":owner_token,"mode":"pty"}),
+                );
+                match spawn_terminal(
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    cols,
+                    rows,
+                    stdout.clone(),
+                    counters.clone(),
+                ) {
+                    Ok((active_child, pid)) => {
+                        send(
+                            &lifecycle,
+                            json!({"type":"spawned","pid":pid,"ownerToken":owner_token,"mode":"pty"}),
+                        );
+                        active = Some(active_child);
+                    }
+                    Err(error) => {
+                        send_error(&lifecycle, error.code);
+                        send(
+                            &lifecycle,
+                            terminal_message(
+                                "failed",
+                                Some(error.code),
+                                error.cleanup_proven,
+                                started_at,
+                                &counters,
+                            ),
+                        );
+                        process_exit_code = 1;
+                        terminal_sent = true;
+                    }
+                }
+            }
+            Ok(Input::Command(ref command @ Command::Input { ref data, .. })) => {
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(command).unwrap_or_else(|| "terminal".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if let Some(child) = active.as_ref() {
+                    let _ = child
+                        .control
+                        .send(MonitorCommand::Input(data.as_bytes().to_vec()));
+                } else {
+                    send_error(&lifecycle, "not_started");
+                }
+            }
+            Ok(Input::Command(ref command @ Command::Resize { cols, rows, .. })) => {
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(command).unwrap_or_else(|| "terminal".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if let Some(child) = active.as_ref() {
+                    let _ = child.control.send(MonitorCommand::Resize { cols, rows });
+                } else {
+                    send_error(&lifecycle, "not_started");
+                }
+            }
+            Ok(Input::Command(ref command @ Command::Stop { .. })) => {
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(command).unwrap_or_else(|| "local-app".to_string()),
                 );
                 if let Err(code) = command.validate() {
                     send_error(&lifecycle, code);
@@ -488,11 +452,7 @@ fn main() {
                     continue;
                 }
                 if let Some(child) = active.as_ref() {
-                    if !stop_admitted {
-                        stop_admitted = true;
-                        send(&lifecycle, json!({"type":"stop-accepted"}));
-                        let _ = child.control.send(MonitorCommand::Stop);
-                    }
+                    let _ = child.control.send(MonitorCommand::Stop);
                 } else {
                     send(
                         &lifecycle,
@@ -508,7 +468,7 @@ fn main() {
                     terminal_sent = true;
                 }
             }
-            Ok(MainEvent::Input(Input::Invalid(code))) => {
+            Ok(Input::Invalid(code)) => {
                 send_error(&lifecycle, code);
                 send(
                     &lifecycle,
@@ -517,7 +477,7 @@ fn main() {
                 process_exit_code = 2;
                 terminal_sent = true;
             }
-            Ok(MainEvent::Input(Input::Eof)) => {
+            Ok(Input::Eof) => {
                 if let Some(child) = active.as_ref() {
                     let _ = child.control.send(MonitorCommand::Stop);
                 } else {
@@ -528,7 +488,8 @@ fn main() {
                     terminal_sent = true;
                 }
             }
-            Err(_) => {
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if let Some(child) = active.as_ref() {
                     let _ = child.control.send(MonitorCommand::Stop);
                 } else {
@@ -550,7 +511,7 @@ fn handle_metadata_args() -> bool {
     let argument = std::env::args().nth(1);
     match argument.as_deref() {
         Some("--version") => {
-            println!("rudder-process-host {}", env!("CARGO_PKG_VERSION"));
+            println!("rudder-process-host 0.1.0");
             true
         }
         Some("--protocol-version") => {
@@ -568,37 +529,34 @@ fn handle_metadata_args() -> bool {
     }
 }
 
-fn read_commands(sender: mpsc::Sender<MainEvent>) {
+fn read_commands(sender: mpsc::Sender<Input>) {
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
     loop {
         match read_bounded_frame(&mut reader) {
             Ok(Some(frame)) => match serde_json::from_slice::<Command>(&frame) {
                 Ok(command) => {
-                    if sender
-                        .send(MainEvent::Input(Input::Command(command)))
-                        .is_err()
-                    {
+                    if sender.send(Input::Command(command)).is_err() {
                         return;
                     }
                 }
                 Err(_) => {
-                    let _ = sender.send(MainEvent::Input(Input::Invalid("invalid_command")));
+                    let _ = sender.send(Input::Invalid("invalid_command"));
                     return;
                 }
             },
             Err(FrameError::TooLarge) => {
-                let _ = sender.send(MainEvent::Input(Input::Invalid("command_too_large")));
+                let _ = sender.send(Input::Invalid("command_too_large"));
                 return;
             }
             Err(FrameError::Io) => {
-                let _ = sender.send(MainEvent::Input(Input::Invalid("command_read_failed")));
+                let _ = sender.send(Input::Invalid("command_read_failed"));
                 return;
             }
             Ok(None) => break,
         }
     }
-    let _ = sender.send(MainEvent::Input(Input::Eof));
+    let _ = sender.send(Input::Eof);
 }
 
 enum FrameError {
@@ -632,21 +590,19 @@ fn read_bounded_frame(reader: &mut impl Read) -> Result<Option<Vec<u8>>, FrameEr
 }
 
 fn spawn_child(
-    spec: SpawnSpec,
+    executable: String,
+    argv: Vec<String>,
+    cwd: String,
+    env: BTreeMap<String, String>,
     stdout: RawOutput,
     stderr: RawOutput,
     counters: Arc<Counters>,
-    events: mpsc::Sender<MainEvent>,
 ) -> Result<(ActiveChild, u32, u32), &'static str> {
-    if !Path::new(&spec.executable).exists() || !Path::new(&spec.cwd).is_dir() {
+    if !Path::new(&executable).exists() || !Path::new(&cwd).is_dir() {
         return Err("launch_path_unavailable");
     }
-    let mut command = ProcessCommand::new(spec.executable);
-    command
-        .args(spec.argv)
-        .current_dir(spec.cwd)
-        .env_clear()
-        .envs(spec.env);
+    let mut command = ProcessCommand::new(executable);
+    command.args(argv).current_dir(cwd).env_clear().envs(env);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -656,51 +612,280 @@ fn spawn_child(
     let mut child = command.spawn().map_err(|_| "spawn_failed")?;
     let pid = child.id();
     let pgid = pid;
-    let evidence =
-        match OperationEvidence::create(&spec.runtime_root, spec.owner_token, pid, pgid, spec.port)
-        {
-            Ok(evidence) => evidence,
-            Err(error) => {
-                let _ = terminate_owned_process(&mut child, pgid);
-                return Err(error);
-            }
-        };
     let child_stdout = child.stdout.take().ok_or("stdout_unavailable")?;
     let child_stderr = child.stderr.take().ok_or("stderr_unavailable")?;
-    let stdout_done = relay(
-        child_stdout,
-        stdout,
-        counters.clone(),
-        evidence.clone(),
-        "stdout",
-    );
-    let stderr_done = relay(
-        child_stderr,
-        stderr,
-        counters.clone(),
-        evidence.clone(),
-        "stderr",
-    );
+    let stdout_done = relay(child_stdout, stdout, counters.clone());
+    let stderr_done = relay(child_stderr, stderr, counters.clone());
 
     let (control_tx, control_rx) = mpsc::channel();
-    thread::spawn(move || monitor_child(&mut child, control_rx, events, pgid, spec.port));
+    let (event_tx, event_rx) = mpsc::channel();
+    thread::spawn(move || monitor_child(&mut child, control_rx, event_tx, pgid));
     Ok((
         ActiveChild {
             control: control_tx,
+            events: event_rx,
             output_done: vec![stdout_done, stderr_done],
-            evidence,
         },
         pid,
         pgid,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_terminal(
+    executable: String,
+    argv: Vec<String>,
+    cwd: String,
+    env: BTreeMap<String, String>,
+    cols: u16,
+    rows: u16,
+    stdout: RawOutput,
+    counters: Arc<Counters>,
+) -> Result<(ActiveChild, u32), TerminalStartError> {
+    if !Path::new(&executable).exists() || !Path::new(&cwd).is_dir() {
+        return Err(TerminalStartError::before_spawn("launch_path_unavailable"));
+    }
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|_| TerminalStartError::before_spawn("pty_open_failed"))?;
+    let mut command = CommandBuilder::new(executable);
+    command.args(argv);
+    command.cwd(cwd);
+    command.env_clear();
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|_| TerminalStartError::before_spawn("spawn_failed"))?;
+    let pid = child.process_id().filter(|pid| *pid >= 2);
+    drop(pair.slave);
+    #[cfg(debug_assertions)]
+    let pid = if injected_pty_setup_failure("missing_pid") {
+        None
+    } else {
+        pid
+    };
+    let Some(pid) = pid else {
+        let cleanup = cleanup_spawned_pty_child(&mut child, None);
+        return Err(TerminalStartError::after_spawn(
+            "process_identity_unavailable",
+            cleanup,
+        ));
+    };
+    #[cfg(debug_assertions)]
+    if injected_pty_setup_failure("reader") {
+        let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+        return Err(TerminalStartError::after_spawn(
+            "stdout_unavailable",
+            cleanup,
+        ));
+    }
+    let reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(_) => {
+            let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+            return Err(TerminalStartError::after_spawn(
+                "stdout_unavailable",
+                cleanup,
+            ));
+        }
+    };
+    let writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(_) => {
+            let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+            return Err(TerminalStartError::after_spawn(
+                "stdin_unavailable",
+                cleanup,
+            ));
+        }
+    };
+    let output_done = relay(reader, stdout, counters);
+    let (control_tx, control_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut writer = writer;
+        let mut stopping = false;
+        let mut requested_cleanup = None;
+        loop {
+            while let Ok(control) = control_rx.try_recv() {
+                match control {
+                    MonitorCommand::Stop => {
+                        stopping = true;
+                        requested_cleanup = Some(request_pty_tree_termination(pid));
+                        let _ = child.kill();
+                    }
+                    MonitorCommand::Input(data) => {
+                        let _ = writer.write_all(&data);
+                        let _ = writer.flush();
+                    }
+                    MonitorCommand::Resize { cols, rows } => {
+                        let _ = pair.master.resize(PtySize {
+                            rows,
+                            cols,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        });
+                    }
+                }
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let cleanup = if stopping {
+                        finish_pty_tree_cleanup(
+                            pid,
+                            requested_cleanup.unwrap_or(CleanupResult {
+                                proven: false,
+                                had_surviving_group: false,
+                            }),
+                        )
+                    } else {
+                        cleanup_pty_descendants(pid)
+                    };
+                    let _ = event_tx.send(MonitorEvent::Exited {
+                        code: status.exit_code().try_into().ok(),
+                        signal: None,
+                        was_stopped: stopping,
+                        cleanup_proven: cleanup.proven,
+                        had_surviving_group: cleanup.had_surviving_group,
+                    });
+                    return;
+                }
+                Ok(None) => thread::sleep(POLL_INTERVAL),
+                Err(_) => {
+                    let _ = event_tx.send(MonitorEvent::Exited {
+                        code: Some(1),
+                        signal: None,
+                        was_stopped: stopping,
+                        cleanup_proven: false,
+                        had_surviving_group: false,
+                    });
+                    return;
+                }
+            }
+        }
+    });
+    Ok((
+        ActiveChild {
+            control: control_tx,
+            events: event_rx,
+            output_done: vec![output_done],
+        },
+        pid,
+    ))
+}
+
+#[cfg(debug_assertions)]
+fn injected_pty_setup_failure(stage: &str) -> bool {
+    if std::env::var("RUDDER_PROCESS_HOST_TEST_PTY_SETUP_FAILURE")
+        .ok()
+        .as_deref()
+        != Some(stage)
+    {
+        return false;
+    }
+    let delay = std::env::var("RUDDER_PROCESS_HOST_TEST_PTY_SETUP_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(1_000);
+    if delay > 0 {
+        thread::sleep(Duration::from_millis(delay));
+    }
+    true
+}
+
+fn cleanup_spawned_pty_child(
+    child: &mut Box<dyn portable_pty::Child + Send + Sync>,
+    pid: Option<u32>,
+) -> CleanupResult {
+    let Some(pid) = pid.filter(|pid| *pid >= 2) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return CleanupResult {
+            // The child handle proves the root exited, but without a PID the
+            // host cannot prove that an owned descendant group is empty.
+            proven: false,
+            had_surviving_group: false,
+        };
+    };
+    let requested = request_pty_tree_termination(pid);
+    let _ = child.kill();
+    let waited = child.wait().is_ok();
+    let finished = finish_pty_tree_cleanup(pid, requested);
+    CleanupResult {
+        proven: waited && finished.proven,
+        had_surviving_group: finished.had_surviving_group,
+    }
+}
+
+fn request_pty_tree_termination(pid: u32) -> CleanupResult {
+    if pid < 2 {
+        return CleanupResult {
+            proven: false,
+            had_surviving_group: false,
+        };
+    }
+    #[cfg(unix)]
+    {
+        let had_surviving_group = process_group_exists(pid).unwrap_or(true);
+        if had_surviving_group {
+            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+        }
+        CleanupResult {
+            proven: true,
+            had_surviving_group,
+        }
+    }
+    #[cfg(windows)]
+    {
+        let status = ProcessCommand::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+        CleanupResult {
+            proven: status.is_ok_and(|status| status.success()),
+            had_surviving_group: true,
+        }
+    }
+}
+
+fn cleanup_pty_descendants(pid: u32) -> CleanupResult {
+    let requested = request_pty_tree_termination(pid);
+    finish_pty_tree_cleanup(pid, requested)
+}
+
+fn finish_pty_tree_cleanup(pid: u32, requested: CleanupResult) -> CleanupResult {
+    if pid < 2 {
+        return CleanupResult {
+            proven: false,
+            had_surviving_group: requested.had_surviving_group,
+        };
+    }
+    #[cfg(unix)]
+    {
+        if !requested.proven {
+            return requested;
+        }
+        wait_for_process_group_cleanup(pid, requested.had_surviving_group)
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        requested
+    }
+}
+
 fn relay<R: Read + Send + 'static>(
     mut input: R,
     output: RawOutput,
     counters: Arc<Counters>,
-    evidence: Arc<OperationEvidence>,
-    stream: &'static str,
 ) -> mpsc::Receiver<bool> {
     let (done_tx, done_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -718,10 +903,6 @@ fn relay<R: Read + Send + 'static>(
             counters
                 .bytes_read
                 .fetch_add(read as u64, Ordering::Relaxed);
-            if evidence.record_output(stream, &buffer[..read]).is_err() {
-                successful = false;
-                break;
-            }
             let Ok(mut writer) = output.lock() else {
                 successful = false;
                 break;
@@ -742,96 +923,45 @@ fn relay<R: Read + Send + 'static>(
 fn monitor_child(
     child: &mut Child,
     control: mpsc::Receiver<MonitorCommand>,
-    events: mpsc::Sender<MainEvent>,
+    events: mpsc::Sender<MonitorEvent>,
     pgid: u32,
-    port: u16,
 ) {
     let mut stopping = false;
-    let mut listener_owner_mismatch = false;
     let mut cleanup = None;
-    let mut listener_verified = false;
     loop {
-        if matches!(control.try_recv(), Ok(MonitorCommand::Stop)) {
-            stopping = true;
-            cleanup = Some(terminate_owned_process(child, pgid));
-        }
-        if !stopping && !listener_verified {
-            match listener_owned_by_process_group(port, pgid) {
-                Ok(ListenerOwnership::Owned) => {
-                    listener_verified = true;
-                    let _ =
-                        events.send(MainEvent::Monitor(MonitorEvent::ListenerVerified { port }));
-                }
-                Ok(ListenerOwnership::Foreign) => {
-                    stopping = true;
-                    listener_owner_mismatch = true;
-                    cleanup = Some(terminate_owned_process(child, pgid));
-                    let _ = events.send(MainEvent::Monitor(MonitorEvent::ListenerOwnerMismatch));
-                }
-                Ok(ListenerOwnership::NotListening) | Err(_) => {}
+        match control.try_recv() {
+            Ok(MonitorCommand::Stop) => {
+                stopping = true;
+                cleanup = Some(terminate_owned_process(child, pgid));
             }
+            Ok(MonitorCommand::Input(_)) | Ok(MonitorCommand::Resize { .. }) => {}
+            Err(_) => {}
         }
         match child.try_wait() {
             Ok(Some(status)) => {
                 let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid));
-                let _ = events.send(MainEvent::Monitor(MonitorEvent::Exited {
-                    status,
+                let _ = events.send(MonitorEvent::Exited {
+                    code: status.code(),
+                    signal: signal_name(&status),
                     was_stopped: stopping,
-                    listener_owner_mismatch,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
-                }));
+                });
                 return;
             }
             Ok(None) => thread::sleep(POLL_INTERVAL),
             Err(_) => {
                 let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid));
-                let _ = events.send(MainEvent::Monitor(MonitorEvent::Exited {
-                    status: synthetic_failure_status(),
+                let _ = events.send(MonitorEvent::Exited {
+                    code: Some(1),
+                    signal: None,
                     was_stopped: stopping,
-                    listener_owner_mismatch,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
-                }));
+                });
                 return;
             }
         }
-    }
-}
-
-fn listener_owned_by_process_group(port: u16, expected_pgid: u32) -> io::Result<ListenerOwnership> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = ProcessCommand::new("/usr/sbin/lsof")
-            .args(["-nP", "-Fpg", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
-            .output()?;
-        if !output.status.success() && output.stdout.is_empty() {
-            return Ok(ListenerOwnership::NotListening);
-        }
-        let mut pids = Vec::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some(pid) = line
-                .strip_prefix('p')
-                .and_then(|value| value.parse::<u32>().ok())
-            {
-                pids.push(pid);
-            }
-        }
-        if pids.is_empty() {
-            return Ok(ListenerOwnership::NotListening);
-        }
-        for pid in pids {
-            let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
-            if pgid < 0 || pgid as u32 != expected_pgid {
-                return Ok(ListenerOwnership::Foreign);
-            }
-        }
-        Ok(ListenerOwnership::Owned)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (port, expected_pgid);
-        Ok(ListenerOwnership::NotListening)
     }
 }
 
@@ -897,6 +1027,12 @@ fn cleanup_after_child_exit(pgid: u32) -> CleanupResult {
 
 #[cfg(unix)]
 fn process_group_exists(pgid: u32) -> io::Result<bool> {
+    if pgid < 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "process group identity is invalid",
+        ));
+    }
     let result = unsafe { libc::kill(-(pgid as libc::pid_t), 0) };
     if result == 0 {
         return Ok(true);
@@ -951,15 +1087,6 @@ fn wait_for_process_group_cleanup(pgid: u32, had_surviving_group: bool) -> Clean
         proven: !process_group_exists(pgid).unwrap_or(true),
         had_surviving_group,
     }
-}
-
-fn synthetic_failure_status() -> ExitStatus {
-    // A monitor failure cannot provide a real child status. The process host
-    // reports the failure through its terminal frame; this value only keeps
-    // the event shape total on platforms where ExitStatus cannot be built.
-    ProcessCommand::new(if cfg!(windows) { "cmd" } else { "/bin/false" })
-        .status()
-        .expect("system failure command must be available")
 }
 
 fn lifecycle_writer() -> io::Result<Lifecycle> {
@@ -1038,7 +1165,11 @@ fn set_owner_token(writer: &Lifecycle, owner_token: String) {
 
 fn command_request_id(command: &Command) -> Option<String> {
     match command {
-        Command::Start { request_id, .. } | Command::Stop { request_id, .. } => request_id.clone(),
+        Command::Start { request_id, .. }
+        | Command::StartTerminal { request_id, .. }
+        | Command::Input { request_id, .. }
+        | Command::Resize { request_id, .. }
+        | Command::Stop { request_id, .. } => request_id.clone(),
     }
 }
 
