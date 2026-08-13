@@ -16,7 +16,7 @@
     "branch": "main",
     "source_ref": "refs/heads/main",
     "source_sha": "697604436a4b781a1162b379446e1375d39edee3",
-    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "dirty_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0",
     "changed_paths": [
       "cli/src/commands/start.ts",
       "cli/src/program.ts",
