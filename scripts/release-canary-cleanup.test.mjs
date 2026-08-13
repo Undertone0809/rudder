@@ -65,18 +65,24 @@ describe("obsolete canary cleanup", () => {
 
   it("wires stable releases to canary cleanup after desktop assets are available", () => {
     const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
-    const desktopWaitIndex = workflow.indexOf("Wait for desktop release assets");
-    const cleanupIndex = workflow.indexOf("Clean up obsolete canary releases");
+    const desktopJobIndex = workflow.indexOf("\n  stable-desktop:\n");
+    const cleanupJobIndex = workflow.indexOf("\n  stable-canary-cleanup:\n");
+    const cleanupJob = workflow.slice(
+      cleanupJobIndex,
+      workflow.indexOf("\n  next-release-base:\n", cleanupJobIndex),
+    );
 
-    expect(cleanupIndex).toBeGreaterThan(desktopWaitIndex);
-    expect(workflow).toContain("node scripts/cleanup-obsolete-canaries.mjs");
-    expect(workflow).toContain('--stable-version "${{ steps.publish.outputs.version }}"');
+    expect(cleanupJobIndex).toBeGreaterThan(desktopJobIndex);
+    expect(cleanupJob).toContain("- stable-desktop");
+    expect(cleanupJob).toContain("needs.stable-desktop.result == 'success'");
+    expect(cleanupJob).toContain("node scripts/cleanup-obsolete-canaries.mjs");
+    expect(cleanupJob).toContain('--stable-version "$RELEASE_VERSION"');
   });
 
   it("runs the real stable job without a second authorization input", () => {
     const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
     const stableJobStart = workflow.indexOf("\n  stable:\n");
-    const stableJobEnd = workflow.indexOf("\n  public-install-smoke:\n", stableJobStart);
+    const stableJobEnd = workflow.indexOf("\n  stable-desktop:\n", stableJobStart);
     const stableJob = workflow.slice(stableJobStart, stableJobEnd);
     const canaryJob = workflow.slice(
       workflow.indexOf("\n  canary:\n"),

@@ -154,6 +154,17 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
           npm install --global npm@10.9.8
 
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - name: Build resumable publish payloads
         run: |
           pnpm install --frozen-lockfile
@@ -215,25 +226,6 @@ jobs:
           PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "$RELEASE_VERSION"
           gh workflow run desktop-release.yml --ref main -f release_tag="$tag" -f source_ref="$tag"
 
-      - name: Wait for desktop release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
-        run: |
-          node scripts/wait-for-desktop-release-assets.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --tag "v${RELEASE_VERSION}" \
-            --version "$RELEASE_VERSION"
-
-      - name: Clean up obsolete canary releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node scripts/cleanup-obsolete-canaries.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --remote origin \
-            --stable-version "$RELEASE_VERSION"
-
   canary:
     name: Publish npm canary
     needs: preflight
@@ -276,6 +268,17 @@ jobs:
           npm install --global npm@10.9.8
           npm --version
 
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -304,23 +307,62 @@ jobs:
             -f release_tag="$tag" \
             -f source_ref="$tag"
 
+  canary-desktop:
+    name: Wait for canary Desktop assets
+    needs:
+      - preflight
+      - canary
+    if: needs.canary.result == 'success'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
       - name: Wait for desktop release assets
         env:
           GH_TOKEN: ${{ github.token }}
           DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
         run: |
-          tag="canary/v${{ steps.publish.outputs.version }}"
+          tag="canary/v${{ needs.canary.outputs.version }}"
           node scripts/wait-for-desktop-release-assets.mjs \
             --repo "$GITHUB_REPOSITORY" \
             --tag "$tag" \
-            --version "${{ steps.publish.outputs.version }}"
+            --version "${{ needs.canary.outputs.version }}"
+
+  canary-promote-latest:
+    name: Promote first canary to npm latest
+    needs:
+      - preflight
+      - canary
+      - canary-desktop
+    if: needs.canary.result == 'success' && needs.canary-desktop.result == 'success'
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: npm-canary
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: Promote canary to npm latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           node scripts/promote-npm-dist-tag.mjs \
-            --version "${{ steps.publish.outputs.version }}" \
+            --version "${{ needs.canary.outputs.version }}" \
             --tag latest \
             --only-if-no-stable
 
@@ -350,6 +392,17 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
           npm install --global npm@10.9.8
           npm --version
+
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -392,17 +445,19 @@ jobs:
           npm install --global npm@10.9.8
           npm --version
 
+      - name: Resolve pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Docs structure
-        run: pnpm docs:structure:test
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Docs search E2E
-        run: pnpm test:docs-search
 
       - name: Configure git identity
         run: |
@@ -431,25 +486,31 @@ jobs:
             -f release_tag="$tag" \
             -f source_ref="$tag"
 
+  stable-desktop:
+    name: Wait for stable Desktop assets
+    needs:
+      - preflight
+      - stable
+      - resume-stable
+    if: always() && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
       - name: Wait for desktop release assets
         env:
           GH_TOKEN: ${{ github.token }}
           DESKTOP_RELEASE_VERIFY_ATTEMPTS: "360"
+          RELEASE_VERSION: ${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
         run: |
-          tag="v${{ steps.publish.outputs.version }}"
           node scripts/wait-for-desktop-release-assets.mjs \
             --repo "$GITHUB_REPOSITORY" \
-            --tag "$tag" \
-            --version "${{ steps.publish.outputs.version }}"
-
-      - name: Clean up obsolete canary releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          node scripts/cleanup-obsolete-canaries.mjs \
-            --repo "$GITHUB_REPOSITORY" \
-            --remote origin \
-            --stable-version "${{ steps.publish.outputs.version }}"
+            --tag "v${RELEASE_VERSION}" \
+            --version "$RELEASE_VERSION"
 
   stable-docs:
     name: Publish stable changelog to docs production
@@ -467,14 +528,83 @@ jobs:
       release_docs_approved: true
     secrets: inherit
 
+  canary-public-install:
+    name: Canary public install smoke
+    needs:
+      - canary
+      - canary-desktop
+    if: needs.canary.result == 'success' && needs.canary-desktop.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/public-install-smoke.yml
+    with:
+      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version }}"
+      repo: ${{ github.repository }}
+
+  stable-public-install:
+    name: Stable public install smoke
+    needs:
+      - stable
+      - resume-stable
+      - stable-desktop
+    if: >-
+      always() &&
+      needs.stable-desktop.result == 'success' &&
+      (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/public-install-smoke.yml
+    with:
+      package_spec: "@rudderhq/cli@${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
+      repo: ${{ github.repository }}
+
+  stable-canary-cleanup:
+    name: Clean up obsolete canary releases
+    needs:
+      - preflight
+      - stable
+      - resume-stable
+      - stable-desktop
+    if: >-
+      always() &&
+      needs.stable-desktop.result == 'success' &&
+      (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+
+      - name: Clean up obsolete canary releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.stable.outputs.version || needs.resume-stable.outputs.version }}
+        run: |
+          node scripts/cleanup-obsolete-canaries.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --remote origin \
+            --stable-version "$RELEASE_VERSION"
+
   next-release-base:
     name: Advance next release base
     needs:
       - preflight
       - stable
       - resume-stable
+      - stable-desktop
       - stable-docs
-    if: always() && needs.stable-docs.result == 'success' && (needs.stable.result == 'success' || needs.resume-stable.result == 'success')
+      - stable-public-install
+      - stable-canary-cleanup
+    if: >-
+      always() &&
+      (needs.stable.result == 'success' || needs.resume-stable.result == 'success') &&
+      needs.stable-desktop.result == 'success' &&
+      needs.stable-docs.result == 'success' &&
+      needs.stable-public-install.result == 'success' &&
+      needs.stable-canary-cleanup.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -510,17 +640,3 @@ jobs:
             echo "Commit: ${{ steps.next-release.outputs.head_sha }}"
             echo "Trusted CI dispatched for ${{ steps.next-release.outputs.head_sha }}."
           } >> "$GITHUB_STEP_SUMMARY"
-
-  public-install-smoke:
-    name: Public install smoke
-    needs:
-      - canary
-      - stable
-      - resume-stable
-    if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success' || needs.resume-stable.result == 'success')
-    permissions:
-      contents: read
-    uses: ./.github/workflows/public-install-smoke.yml
-    with:
-      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version || needs.resume-stable.outputs.version }}"
-      repo: ${{ github.repository }}

@@ -14,6 +14,14 @@ const desktopWorkflow = readFileSync(join(repoRoot, ".github/workflows/desktop-r
 const releaseScript = readFileSync(join(repoRoot, "scripts/release.sh"), "utf8");
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
 
+function workflowJob(source, jobName) {
+  const start = source.indexOf(`\n  ${jobName}:\n`);
+  if (start === -1) throw new Error(`Workflow job not found: ${jobName}`);
+  const remaining = source.slice(start + 1);
+  const next = remaining.slice(1).search(/^  [a-zA-Z0-9_-]+:\n/m);
+  return next === -1 ? source.slice(start) : source.slice(start, start + next + 2);
+}
+
 describe("release workflow latency contracts", () => {
   it("starts canaries from successful CI instead of repeating the verification matrix", () => {
     expect(releaseWorkflow).toContain("workflow_run:");
@@ -57,22 +65,15 @@ describe("release workflow latency contracts", () => {
   });
 
   it("retries transient dependency installation failures in every verification lane", () => {
-    const fullInstall = ciWorkflow.slice(
-      ciWorkflow.indexOf("      - name: Install dependencies\n"),
-      ciWorkflow.indexOf("      - name: Install dependencies without Electron binary\n"),
-    );
-    const lightweightInstall = ciWorkflow.slice(
-      ciWorkflow.indexOf("      - name: Install dependencies without Electron binary\n"),
-      ciWorkflow.indexOf("      - name: Product logic registry\n"),
-    );
-    expect(fullInstall).not.toHaveLength(0);
-    expect(lightweightInstall).not.toHaveLength(0);
-    expect(fullInstall).toContain("if: matrix.test == 'full'");
-    expect(fullInstall).toContain("for attempt in 1 2 3");
-    expect(lightweightInstall).toContain("if: matrix.test != 'full'");
-    expect(lightweightInstall).toContain("for attempt in 1 2 3");
-    expect(ciWorkflow.match(/pnpm install --frozen-lockfile/g)).toHaveLength(2);
-    expect(ciWorkflow.match(/sleep \$\(\(attempt \* 10\)\)/g)).toHaveLength(2);
+    const docsJob = workflowJob(ciWorkflow, "docs");
+    const verifyJob = workflowJob(ciWorkflow, "verify");
+
+    expect(docsJob).toContain("for attempt in 1 2 3");
+    expect(verifyJob).toContain("if: matrix.test == 'full'");
+    expect(verifyJob).toContain("if: matrix.test != 'full'");
+    expect(verifyJob.match(/for attempt in 1 2 3/g)).toHaveLength(2);
+    expect(ciWorkflow.match(/pnpm install --frozen-lockfile/g)).toHaveLength(3);
+    expect(ciWorkflow.match(/sleep \$\(\(attempt \* 10\)\)/g)).toHaveLength(3);
   });
 
   it("deduplicates automatic canary and stable work for the same locked source", () => {
@@ -85,10 +86,9 @@ describe("release workflow latency contracts", () => {
   });
 
   it("resumes partial stable releases from the locked source version", () => {
-    const resumeJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("\n  resume-stable:\n"),
-      releaseWorkflow.indexOf("\n  canary:\n"),
-    );
+    const resumeJob = workflowJob(releaseWorkflow, "resume-stable");
+    const stableDesktopJob = workflowJob(releaseWorkflow, "stable-desktop");
+    const cleanupJob = workflowJob(releaseWorkflow, "stable-canary-cleanup");
 
     expect(resumeJob).toContain("Require locked stable source");
     expect(resumeJob).toContain("needs: preflight");
@@ -102,8 +102,11 @@ describe("release workflow latency contracts", () => {
     expect(resumeJob).toContain("publish completed but npm never exposed");
     expect(resumeJob).toContain('tag="v${RELEASE_VERSION}"');
     expect(resumeJob).toContain('test "$remote_tag_sha" = "$SOURCE_REF"');
-    expect(resumeJob).toContain("Wait for desktop release assets");
-    expect(resumeJob).toContain("Clean up obsolete canary releases");
+    expect(resumeJob).not.toContain("Wait for desktop release assets");
+    expect(resumeJob).not.toContain("Clean up obsolete canary releases");
+    expect(stableDesktopJob).toContain("- resume-stable");
+    expect(cleanupJob).toContain("- resume-stable");
+    expect(cleanupJob).toContain("- stable-desktop");
     expect(releaseWorkflow).toContain("needs.resume-stable.result == 'success'");
     expect(releaseWorkflow).toContain("needs.resume-stable.outputs.version");
     expect(resumeJob).not.toContain("v0.7.2");
@@ -111,14 +114,10 @@ describe("release workflow latency contracts", () => {
   });
 
   it("keeps publication behind the immutable-source preflight without the legacy upgrade gate", () => {
-    const canaryJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("\n  canary:\n"),
-      releaseWorkflow.indexOf("\n  stable-dry-run:\n"),
-    );
-    const stableJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("\n  stable:\n"),
-      releaseWorkflow.indexOf("\n  stable-docs:\n"),
-    );
+    const canaryJob = workflowJob(releaseWorkflow, "canary");
+    const canaryDesktopJob = workflowJob(releaseWorkflow, "canary-desktop");
+    const stableJob = workflowJob(releaseWorkflow, "stable");
+    const stableDesktopJob = workflowJob(releaseWorkflow, "stable-desktop");
 
     expect(releaseWorkflow).not.toContain("prepublish-upgrade-gate");
     expect(releaseWorkflow).not.toContain("release-compatibility-matrix.mjs");
@@ -132,6 +131,9 @@ describe("release workflow latency contracts", () => {
     expect(canaryPreflightIndex).toBeGreaterThan(-1);
     expect(canaryPublishIndex).toBeGreaterThan(canaryPreflightIndex);
     expect(canaryDesktopIndex).toBeGreaterThan(canaryPublishIndex);
+    expect(canaryJob).not.toContain("Wait for desktop release assets");
+    expect(canaryDesktopJob).toContain("Wait for desktop release assets");
+    expect(canaryDesktopJob).toContain("- canary");
 
     const stableCheckoutIndex = stableJob.indexOf("ref: ${{ needs.preflight.outputs.source_sha }}");
     const stablePublishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
@@ -139,26 +141,26 @@ describe("release workflow latency contracts", () => {
     expect(stableCheckoutIndex).toBeGreaterThan(-1);
     expect(stablePublishIndex).toBeGreaterThan(stableCheckoutIndex);
     expect(stableDesktopIndex).toBeGreaterThan(stablePublishIndex);
+    expect(stableJob).not.toContain("Wait for desktop release assets");
+    expect(stableDesktopJob).toContain("Wait for desktop release assets");
+    expect(stableDesktopJob).toContain("- stable");
+    expect(stableDesktopJob).toContain("- resume-stable");
   });
 
-  it("runs documentation qualification only in the stable release path", () => {
-    const stableJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("\n  stable:\n"),
-      releaseWorkflow.indexOf("\n  stable-docs:\n"),
-    );
-    const docsStructureIndex = stableJob.indexOf("\n      - name: Docs structure\n");
-    const playwrightIndex = stableJob.indexOf("\n      - name: Install Playwright Chromium\n");
-    const docsSearchIndex = stableJob.indexOf("\n      - name: Docs search E2E\n");
-    const publishIndex = stableJob.indexOf("\n      - name: Publish stable\n");
+  it("qualifies docs once in exact-source CI instead of repeating it during stable publication", () => {
+    const docsJob = workflowJob(ciWorkflow, "docs");
+    const stableJob = workflowJob(releaseWorkflow, "stable");
+    const docsStructureIndex = docsJob.indexOf("\n      - name: Docs structure\n");
+    const playwrightIndex = docsJob.indexOf("\n      - name: Install Playwright Chromium\n");
+    const docsSearchIndex = docsJob.indexOf("\n      - name: Docs search E2E\n");
 
     expect(docsStructureIndex).toBeGreaterThan(-1);
     expect(playwrightIndex).toBeGreaterThan(docsStructureIndex);
     expect(docsSearchIndex).toBeGreaterThan(playwrightIndex);
-    expect(publishIndex).toBeGreaterThan(docsSearchIndex);
+    expect(stableJob).not.toContain("Docs structure");
+    expect(stableJob).not.toContain("Install Playwright Chromium");
+    expect(stableJob).not.toContain("Docs search E2E");
     expect(ciWorkflow).not.toContain("Typecheck");
-    expect(ciWorkflow).not.toContain("Docs structure");
-    expect(ciWorkflow).not.toContain("Docs search E2E");
-    expect(ciWorkflow).not.toContain("Install Playwright Chromium");
     expect(ciWorkflow).not.toContain("Core work-loop smoke");
     expect(ciWorkflow).not.toContain("pnpm test:smoke");
     expect(ciWorkflow).toContain("pnpm test:run --maxWorkers=2");
@@ -181,7 +183,7 @@ describe("release workflow latency contracts", () => {
   });
 
   it("serializes publication and advances the next patch base directly", () => {
-    expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(3);
+    expect(releaseWorkflow.match(/group: release-publish/g)).toHaveLength(4);
     expect(releaseWorkflow).toMatch(/^  next-release-base:/m);
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
     expect(releaseWorkflow).toContain("Advance main to the next patch version");
@@ -195,6 +197,49 @@ describe("release workflow latency contracts", () => {
     expect(nextReleaseScript).toContain("[skip release]");
     expect(nextReleaseScript).toContain("HEAD:refs/heads/${options.base}");
     expect(releaseWorkflow).not.toContain("continue-on-error: true");
+  });
+
+  it("releases the publish lock before slow Desktop work and converges every stable surface", () => {
+    const canaryJob = workflowJob(releaseWorkflow, "canary");
+    const promoteJob = workflowJob(releaseWorkflow, "canary-promote-latest");
+    const stableJob = workflowJob(releaseWorkflow, "stable");
+    const stableDesktopJob = workflowJob(releaseWorkflow, "stable-desktop");
+    const stableDocsJob = workflowJob(releaseWorkflow, "stable-docs");
+    const stableInstallJob = workflowJob(releaseWorkflow, "stable-public-install");
+    const cleanupJob = workflowJob(releaseWorkflow, "stable-canary-cleanup");
+    const nextReleaseJob = workflowJob(releaseWorkflow, "next-release-base");
+
+    expect(canaryJob).toContain("group: release-publish");
+    expect(canaryJob).not.toContain("Wait for desktop release assets");
+    expect(promoteJob).toContain("group: release-publish");
+    expect(promoteJob).toContain("- canary-desktop");
+    expect(stableJob).toContain("group: release-publish");
+    expect(stableJob).not.toContain("Wait for desktop release assets");
+    expect(stableDesktopJob).not.toContain("group: release-publish");
+    expect(stableDocsJob).toContain("- stable");
+    expect(stableDocsJob).toContain("- resume-stable");
+    expect(stableDocsJob).not.toContain("- stable-desktop");
+    expect(stableInstallJob).toContain("- stable-desktop");
+    expect(cleanupJob).toContain("- stable-desktop");
+    expect(nextReleaseJob).toContain("- stable-desktop");
+    expect(nextReleaseJob).toContain("- stable-docs");
+    expect(nextReleaseJob).toContain("- stable-public-install");
+    expect(nextReleaseJob).toContain("- stable-canary-cleanup");
+    expect(nextReleaseJob).toContain("needs.stable-desktop.result == 'success'");
+    expect(nextReleaseJob).toContain("needs.stable-docs.result == 'success'");
+    expect(nextReleaseJob).toContain("needs.stable-public-install.result == 'success'");
+    expect(nextReleaseJob).toContain("needs.stable-canary-cleanup.result == 'success'");
+  });
+
+  it("caches dependency and browser downloads in CI, publish, and Desktop jobs", () => {
+    const releaseJobsWithInstalls = ["resume-stable", "canary", "stable-dry-run", "stable"];
+    expect(workflowJob(ciWorkflow, "docs")).toContain("Cache Playwright Chromium");
+    expect(workflowJob(ciWorkflow, "verify")).toContain("Cache pnpm store");
+    for (const jobName of releaseJobsWithInstalls) {
+      expect(workflowJob(releaseWorkflow, jobName)).toContain("Cache pnpm store");
+    }
+    expect(desktopWorkflow).toContain("Cache pnpm store");
+    expect(desktopWorkflow).toContain("Cache Playwright Chromium");
   });
 
   it("caches prepared Desktop PostgreSQL payloads and builds a relocatable Linux runtime", () => {
@@ -234,6 +279,7 @@ describe("release workflow latency contracts", () => {
     );
 
     expect(desktopWorkflow).toContain("Install Playwright Chromium");
+    expect(desktopWorkflow).toMatch(/- name: Install Playwright Chromium\n\s+if: matrix\.platform != 'windows'/);
     expect(desktopWorkflow).toContain("pnpm exec playwright install --with-deps chromium");
     expect(desktopWorkflow).toContain("pnpm exec playwright install chromium");
     expect(appBuilderSmoke).toContain("if: matrix.platform != 'windows'");
