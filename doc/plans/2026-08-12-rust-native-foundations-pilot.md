@@ -62,7 +62,9 @@ the Rust-versus-optimized-Node Workspace backup comparator, a packaged Local
 App dogfood cycle producer, and a strict Local App `native_ab` summary
 producer. Their focused tests and static checks pass, but they do not close
 the pilot gates. The backup comparator proves manifest/tree/entry/content
-parity, `unzip -t`, and atomic publication recovery on a small real fixture;
+parity, `unzip -t`, and destination-collision preservation on a small real
+fixture; the comparator does not yet inject link/sync-parent/temp-cleanup
+failures, so it makes no broader atomic-publication recovery claim;
 ZIP byte SHA is intentionally recorded as `not_compared` because the two
 implementations use different archive metadata. The fixture's elapsed times
 were diagnostic only; resource RSS is `not_comparable` because the harness
