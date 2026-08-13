@@ -1,8 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/archive-core",
   "crates/native-protocol",
   "crates/update-helper-core",
+  "bins/rudder-native",
   "bins/rudder-process-host",
+  "bins/rudder-process-tree-sampler",
   "bins/rudder-update-helper",
 ]
+
+[workspace.package]
+version = "0.7.4"
+edition = "2024"
+publish = false
