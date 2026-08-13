@@ -2799,8 +2799,20 @@ Product model:
   has one consistent toolbar and exit path across Chat surfaces.
 - Side Panel targets are typed objects: issue, Chat Issue Proposal, automation,
   Library file, Library directory, structured transcript local file, chat,
-  browser tab, and explicit placeholders for target classes that need a
+  browser tab, Desktop Agent-workspace Terminal, and explicit placeholders for target classes that need a
   link/search before loading a concrete object.
+- Rudder Desktop exposes `Terminal` in `Open a panel` for a Messenger Chat.
+  Each Terminal tab binds its opaque renderer session identity to the Chat's
+  selected Agent and organization. The renderer never supplies a cwd: Desktop
+  resolves the Agent's immutable workspace key and validates the canonical
+  `$AGENT_HOME` directory before starting the user's login shell. A missing or
+  cross-organization Agent, missing workspace, or PTY failure stays visible as
+  an actionable error and never falls back to a Project or arbitrary directory.
+- Terminal tabs are session-only and are excluded from Saved Views, Messenger
+  promotion, and restart restoration. Hiding the panel, switching tabs, or
+  resizing keeps the PTY alive and synchronizes its dimensions. Explicit tab
+  close terminates the owned shell process tree; Desktop shutdown closes all
+  remaining sessions. Web does not expose the Terminal picker entry.
 - A Chat Issue Proposal target is a temporary, message-scoped review tab. It is
   not a Saved View and has no independent full-page route. Its identity is the
   source conversation plus proposal message, and its content remains owned by

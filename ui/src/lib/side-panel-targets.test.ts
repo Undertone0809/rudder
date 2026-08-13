@@ -97,6 +97,13 @@ describe("side panel targets", () => {
   });
 
   it("generates stable keys and full page hrefs", () => {
+    expect(sidePanelTargetKey({
+      kind: "terminal",
+      organizationId: "org-1",
+      agentId: "agent-1",
+      sessionId: "session-1",
+      label: "Terminal",
+    })).toBe("terminal:org-1:agent-1:session-1");
     const issueTarget = sidePanelTargetFromHref(buildIssueMentionHref("issue-1", "RUD-1", "comment-1"), "RUD-1")!;
     expect(sidePanelTargetKey(issueTarget)).toBe("issue:issue-1:comment-1");
     expect(sidePanelFullPageHref(issueTarget)).toBe("/issues/issue-1#comment-comment-1");

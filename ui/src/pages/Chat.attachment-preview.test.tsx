@@ -73,6 +73,7 @@ const mockState = vi.hoisted(() => ({
   abortChatStream: vi.fn(),
   conversationId: "chat-1" as string | null,
   conversations: [] as ChatConversation[],
+  failedConversationList: false,
   failAgents: false,
   messagesByChatId: {} as Record<string, ChatMessage[]>,
   pendingMessageChatIds: new Set<string>(),
@@ -174,7 +175,12 @@ vi.mock("@tanstack/react-query", () => ({
     }
     mockState.queryKeys.push([...queryKey]);
     if (queryKey[0] === "chats" && queryKey[2] === "active") {
-      return { data: mockState.conversations, isPending: false, isLoading: false, error: null };
+      return {
+        data: mockState.conversations,
+        isPending: false,
+        isLoading: false,
+        error: mockState.failedConversationList ? new Error("Chat list failed to refresh") : null,
+      };
     }
     if (queryKey[0] === "chats" && queryKey[2] === "detail") {
       const chatId = String(queryKey[3]);
@@ -1583,6 +1589,7 @@ beforeEach(() => {
     chat({ id: "chat-1", title: "Pending proposal chat" }),
     chat({ id: "chat-2", title: "Other chat", lastMessageAt: new Date("2026-05-12T09:10:00.000Z") }),
   ];
+  mockState.failedConversationList = false;
   mockState.projects = [
     project(),
     project({
@@ -7256,6 +7263,14 @@ describe("Chat attachment previews", () => {
 
   it("keeps cached chat content visible when a detail refresh fails", () => {
     mockState.failedChatDetailIds.add("chat-1");
+    const { container } = renderChat();
+
+    expect(container.querySelector("[data-testid='chat-load-error']")).toBeNull();
+    expect(container.textContent).toContain("Pending proposal chat");
+  });
+
+  it("keeps cached chat content visible when the conversation list refresh fails", () => {
+    mockState.failedConversationList = true;
     const { container } = renderChat();
 
     expect(container.querySelector("[data-testid='chat-load-error']")).toBeNull();
