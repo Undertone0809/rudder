@@ -34,7 +34,7 @@
     "build": {
       "id": "desktop-dist-0.7.4-macos-arm64",
       "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
-      "portable_sha256": "500fcc3ebf2d2d28441aceee980e26eb3f0e54f5e086c8dfffa91a95e6f45f61",
+      "portable_sha256": "f0c77b5e17d2b75fce46ed0b64d972d6b2c7a59ccb515566473c4796895721bc",
       "native_sha256": {
         "rudder-process-host": "7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f",
         "rudder-native": "777cf32e063a6dd22bfff6b53ee2f3544d179ad7a95ee91b0c666d129c9609df",

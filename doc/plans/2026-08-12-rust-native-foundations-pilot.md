@@ -60,7 +60,7 @@ claim that a missing implementation passed its acceptance gate.
 | --- | --- | --- | --- |
 | Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.4` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
 | Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; exact packaged macOS arm64 build, helper staging, direct launch, and account-gate/email-code smoke pass, while seven-day/100-cycle dogfood and native_ab live evidence are absent | Run dogfood gate and live three-trial native_ab campaign |
-| Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.8 MB RSS delta versus 32.9 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
+| Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.3 MB RSS delta versus 36.3 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
 | Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
 | Run evidence offset indexer/parser | `not_admitted` | A bounded `rudder-run-evidence-core` prototype now builds a rebuildable NDJSON offset sidecar and has CLI/unit coverage, but production full-response removal, provider-parity, and real-run acceptance are not satisfied | Remove full materialization from the default path, then run bounded index/read and Node parity acceptance |
@@ -70,7 +70,7 @@ claim that a missing implementation passed its acceptance gate.
 operation is promoted to a product default. The four `not_admitted` rows are
 fail-closed scope decisions, not claims of successful native implementations.
 
-The candidate lineage at `d5e13f60f1735dc6489d550e4f11739a0ac6f81e`
+The candidate lineage at `cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`
 passed the focused macOS arm64 Local App native suite
 11/11 using the release `rudder-process-host` binary, and the bounded evidence
 indexer tests pass. The packaged macOS arm64 candidate then built successfully,
@@ -86,7 +86,7 @@ identities.
 
 Evidence was collected in the isolated macOS arm64 worktree
 `/tmp/rudder-native-pilot-next.u89BHp` from candidate
-`063e3f815273f7645f484127ea7ab0bcec366e4f`. The packaged artifact was built
+`cf26412d3a9a8abd0f5eb3044c213cae2da8cf22`. The packaged artifact was built
 from that source and reported product version `0.7.4`:
 
 | Evidence | Result | Identity |
@@ -101,7 +101,7 @@ from that source and reported product version `0.7.4`:
 
 Packaged artifact hashes from the snapshot:
 
-- portable ZIP: `5b16122a621f17f2b51a231bee42b0b6cae3b781968312875917a2b012df0ade`
+- portable ZIP: `f0c77b5e17d2b75fce46ed0b64d972d6b2c7a59ccb515566473c4796895721bc`
 - `rudder-process-host`: `7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f`
 - `rudder-native`: `777cf32e063a6dd22bfff6b53ee2f3544d179ad7a95ee91b0c666d129c9609df`
 - `rudder-update-helper`: `d66e9a548a1378690cd554ff3457425b5ed9f5f9ce7ba07a16637264e6c6b4fa`
