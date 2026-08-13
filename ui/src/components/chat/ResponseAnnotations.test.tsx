@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ChatAttachment, ChatInlineAnnotation } from "@rudderhq/shared";
-import { act, type ReactElement } from "react";
+import { act, useRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,7 +12,10 @@ import {
   ResponseAnnotationMarker,
   SentResponseAnnotationsCard,
   avoidResponseAnnotationMarkerCollisions,
+  placeResponseAnnotationEditor,
   placeResponseAnnotationMarker,
+  useResponseAnnotationEditorController,
+  type ResponseAnnotationAnchorRect,
 } from "./ResponseAnnotations";
 
 vi.mock("../../pages/Chat.attachments", () => ({
@@ -550,6 +553,142 @@ describe("response annotation components", () => {
 
     HTMLElement.prototype.getBoundingClientRect = originalRect;
     focusReturn.remove();
+  });
+
+  it("keeps the editor inside the viewport when a clipped boundary cannot contain it", () => {
+    expect(placeResponseAnnotationEditor(
+      { left: 918, right: 970, top: 220, bottom: 240, width: 52, height: 20 },
+      { width: 352, height: 224 },
+      {
+        width: 1080,
+        height: 760,
+        padding: 8,
+        gap: 8,
+        boundaryRect: {
+          left: 910,
+          right: 1400,
+          top: 100,
+          bottom: 800,
+          width: 490,
+          height: 700,
+        },
+      },
+    )).toEqual({ left: 720, top: 248, placement: "bottom" });
+  });
+
+  it("does not compress the editor to a stale clipped boundary", async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperties(window, {
+      innerWidth: { configurable: true, value: 1080 },
+      innerHeight: { configurable: true, value: 760 },
+    });
+    let liveBoundary: ResponseAnnotationAnchorRect | null = {
+      left: 910,
+      right: 1400,
+      top: 100,
+      bottom: 800,
+      width: 490,
+      height: 700,
+    };
+
+    render(
+      <ResponseAnnotationEditor
+        annotation={annotation}
+        ordinal={1}
+        pendingFiles={[]}
+        anchorRect={{ left: 918, right: 970, top: 220, bottom: 240, width: 52, height: 20 }}
+        boundaryRect={liveBoundary}
+        getBoundaryRect={() => liveBoundary}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const editor = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-editor']",
+    )!;
+    expect(editor.style.left).toBe("720px");
+    expect(editor.style.maxWidth).toBe("");
+
+    liveBoundary = null;
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await Promise.resolve();
+    });
+    expect(editor.style.maxWidth).toBe("");
+
+    Object.defineProperties(window, {
+      innerWidth: { configurable: true, value: originalWidth },
+      innerHeight: { configurable: true, value: originalHeight },
+    });
+  });
+
+  it("clears a disappeared live boundary through the editor controller", async () => {
+    const initialBoundary: ResponseAnnotationAnchorRect = {
+      left: 300,
+      right: 700,
+      top: 100,
+      bottom: 600,
+      width: 400,
+      height: 500,
+    };
+    let liveBoundary: ResponseAnnotationAnchorRect | null = initialBoundary;
+
+    function ControllerHarness() {
+      const fallbackFocusRef = useRef<HTMLButtonElement>(null);
+      const controller = useResponseAnnotationEditorController(fallbackFocusRef);
+      return (
+        <>
+          <button
+            ref={fallbackFocusRef}
+            type="button"
+            onClick={() => controller.openFromSelection(annotation.id, {
+              anchorRect: {
+                left: 420,
+                right: 440,
+                top: 220,
+                bottom: 240,
+                width: 20,
+                height: 20,
+              },
+              boundaryRect: initialBoundary,
+              getBoundaryRect: () => liveBoundary,
+            })}
+          >
+            Open editor
+          </button>
+          {controller.annotationId ? (
+            <ResponseAnnotationEditor
+              annotation={annotation}
+              ordinal={1}
+              pendingFiles={[]}
+              {...controller.editorPlacement}
+              onSave={vi.fn()}
+              onCancel={controller.close}
+              onDelete={vi.fn()}
+            />
+          ) : null}
+        </>
+      );
+    }
+
+    render(<ControllerHarness />);
+    click(Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Open editor",
+    )!);
+    const editor = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-editor']",
+    )!;
+    expect(editor.style.maxWidth).toBe("384px");
+
+    liveBoundary = null;
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await Promise.resolve();
+    });
+    expect(editor.style.maxWidth).toBe("");
   });
 
   it("keeps the last anchor position when the source button is replaced", async () => {

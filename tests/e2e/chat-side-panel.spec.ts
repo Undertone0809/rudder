@@ -657,6 +657,164 @@ test.describe("Chat Side Panel", () => {
     });
   });
 
+  test("runs local TypeScript annotation actions and keeps unsaved selections inert", async ({ page }, testInfo) => {
+    const localFilePath = "/Users/zeeland/projects/rudder-oss/ui/src/annotation-e2e.ts";
+    const source = [
+      "export const alpha = 1;",
+      "export const beta = 2;",
+      "export const gamma = 3;",
+      "export const delta = 4;",
+      "export const epsilon = 5;",
+    ].join("\n");
+    await installDesktopShellLocalFilePreviewStub(
+      page,
+      localFilePath,
+      "annotation-e2e.ts",
+      undefined,
+      source,
+    );
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Local-Annotation-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Local Annotation Agent",
+    });
+    const createChat = async (title: string) => {
+      const response = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          preferredAgentId: agent.id,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          initialMessage: { body: "Review the local TypeScript source." },
+        },
+      });
+      expect(response.ok(), await response.text()).toBe(true);
+      return await response.json() as { id: string };
+    };
+    const chat = await createChat("Local annotation host");
+    const otherChat = await createChat("Other annotation host");
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Inspect [annotation-e2e.ts](${localFilePath}).`,
+      structuredPayload: null,
+      replyingAgentId: agent.id,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-assistant-message").last()
+      .getByRole("link", { name: "annotation-e2e.ts" }).click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const sourceEditor = sidePanel.getByTestId("chat-side-panel-local-file-source-editor");
+    await expect(sourceEditor).toHaveAttribute("data-workspace-code-language", "TypeScript");
+    const lines = sourceEditor.locator(".cm-line");
+    const lineTextRect = async (index: number) => await lines.nth(index).evaluate((element) => {
+        const textNode = Array.from(element.childNodes).find((node) => (
+          node.nodeType === Node.TEXT_NODE && node.textContent
+        )) ?? element.firstChild;
+        if (!textNode) throw new Error("Expected a CodeMirror line text node");
+        const range = document.createRange();
+        range.selectNodeContents(textNode);
+        const rect = range.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, height: rect.height };
+      });
+    const dragLineSelection = async (startIndex: number) => {
+      const [startRect, endRect] = await Promise.all([
+        lineTextRect(startIndex),
+        lineTextRect(startIndex + 1),
+      ]);
+      const start = { x: startRect.left + 2, y: startRect.top + startRect.height / 2 };
+      const end = { x: endRect.right - 2, y: endRect.top + endRect.height / 2 };
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.waitForTimeout(75);
+      await page.mouse.move(end.x, end.y, { steps: 12 });
+      await page.waitForTimeout(75);
+      await page.mouse.up();
+      await expect(sourceEditor.locator(".cm-selectionBackground")).not.toHaveCount(0);
+    };
+
+    await dragLineSelection(0);
+    const toolbar = page.getByRole("toolbar", { name: "Response annotation actions" });
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByRole("button", { name: "Add to chat" }).click();
+    const annotationEditor = page.getByTestId("chat-response-annotation-editor");
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByLabel("Comment").fill("Check alpha.");
+    await annotationEditor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Show 1 annotation" })).toBeVisible();
+
+    await dragLineSelection(2);
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByRole("button", { name: "Ask in side chat" }).click();
+    const sideChatTab = sidePanel.locator(
+      '[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="side_chat"]',
+    );
+    await expect(sideChatTab).toBeVisible();
+    await expect(sidePanel.getByTestId("side-chat-composer")).toBeVisible();
+    const sideChatAnnotations = sidePanel.getByRole("button", { name: "Show 1 annotation" });
+    await sideChatAnnotations.click();
+    await expect(page.getByTestId("chat-response-annotation-card")).toContainText(
+      "const gamma = 3;",
+    );
+
+    await sidePanel.locator(
+      '[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="local_file"]',
+    ).click();
+    await dragLineSelection(3);
+    await expect(toolbar).toBeVisible();
+    const oldAddAction = toolbar.getByRole("button", { name: "Add to chat" });
+    const otherChatRow = page.locator(`[data-messenger-thread-key="chat:${otherChat.id}"]`);
+    await expect(otherChatRow).toBeVisible();
+    await otherChatRow.getByRole("link").focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}(?:[?#]|$)`));
+    await expect(page.getByRole("group", { name: /Other annotation host/ })).toBeVisible();
+    await oldAddAction.click();
+    await expect(page.getByText("File selection belongs to another chat", { exact: true })).toBeVisible();
+    await expect(toolbar).toBeVisible();
+    await expect(page.getByTestId("chat-response-annotation-editor")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Show 1 annotation" })).toHaveCount(0);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.getByTestId("chat-assistant-message").last()
+      .getByRole("link", { name: "annotation-e2e.ts" }).click();
+    const reopenedEditor = page.getByTestId("chat-side-panel-local-file-source-editor");
+    await reopenedEditor.getByRole("textbox", { name: "annotation-e2e.ts source editor" }).click();
+    await page.evaluate(() => {
+      const shell = (window as typeof window & { desktopShell?: { updateLocalFile?: (...args: unknown[]) => Promise<never> } }).desktopShell;
+      if (shell) shell.updateLocalFile = async () => await new Promise<never>(() => {});
+    });
+    await page.keyboard.press("End");
+    await page.keyboard.type(" changed");
+    await dragLineSelection(3);
+    await expect(toolbar).toHaveCount(0);
+
+    await page.screenshot({
+      path: testInfo.outputPath("chat-local-typescript-annotation-actions.png"),
+      fullPage: true,
+    });
+  });
+
   test("resolves a relative command-read file against the recorded command cwd", async ({ page }, testInfo) => {
     const commandCwd = "/Users/zeeland/projects/rudder-oss";
     const relativePath = "doc/README.md";

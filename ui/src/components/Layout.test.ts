@@ -220,6 +220,23 @@ describe("side panel route context", () => {
       preserveHold: false,
     });
   });
+
+  it("keeps a file annotation hold while navigating to another chat in the same organization", () => {
+    const hold = {
+      organizationId: "org-a",
+      contextKey: "chat:chat-1",
+      reason: "file_annotation" as const,
+    };
+
+    expect(resolveDisplayedSidePanelContext("/messenger/chat/chat-2", "org-a", hold)).toEqual({
+      contextKey: "chat:chat-1",
+      preserveHold: true,
+    });
+    expect(resolveDisplayedSidePanelContext("/messenger/chat/chat-2", "org-b", hold)).toEqual({
+      contextKey: "chat:chat-2",
+      preserveHold: false,
+    });
+  });
 });
 
 describe("workspace main card framing", () => {

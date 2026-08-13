@@ -28,6 +28,7 @@ export type SidePanelOpenOptions = {
 export type DisplayedSidePanelContextHold = {
   organizationId: string;
   contextKey: string;
+  reason?: "promotion" | "file_annotation";
 };
 
 export type SidePanelDetachResult =
@@ -55,7 +56,7 @@ type SidePanelContextValue = {
   contextKey: string;
   displayedContextHold: DisplayedSidePanelContextHold | null;
   clearCurrentContext: () => void;
-  clearDisplayedContextHold: () => void;
+  clearDisplayedContextHold: (reason?: DisplayedSidePanelContextHold["reason"]) => void;
   detachTargetForContext: (
     contextKey: string | null,
     exactKey: string,
@@ -63,7 +64,11 @@ type SidePanelContextValue = {
   ) => SidePanelDetachResult;
   getTargetRevisionForContext: (contextKey: string | null, exactKey: string) => number | null;
   hidePanel: () => void;
-  holdDisplayedContext: (organizationId: string, contextKey?: string | null) => boolean;
+  holdDisplayedContext: (
+    organizationId: string,
+    contextKey?: string | null,
+    reason?: DisplayedSidePanelContextHold["reason"],
+  ) => boolean;
   openTarget: (target: SidePanelTarget, options?: SidePanelOpenOptions) => SidePanelOpenResult;
   openTargetInNewTab: (target: SidePanelTarget, options?: SidePanelOpenOptions) => SidePanelOpenResult;
   openTargetForContext: (
@@ -494,13 +499,19 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
 
   const closePanel = hidePanel;
 
-  const clearDisplayedContextHold = useCallback(() => {
-    setDisplayedContextHold(null);
+  const clearDisplayedContextHold = useCallback((reason?: DisplayedSidePanelContextHold["reason"]) => {
+    const normalizedReason = reason === "promotion" || reason === "file_annotation"
+      ? reason
+      : undefined;
+    setDisplayedContextHold((current) => (
+      normalizedReason && current?.reason !== normalizedReason ? current : null
+    ));
   }, []);
 
   const holdDisplayedContext = useCallback((
     organizationId: string,
     nextContextKey: string | null = currentContextKeyRef.current,
+    reason: DisplayedSidePanelContextHold["reason"] = "promotion",
   ) => {
     const normalizedOrganizationId = organizationId.trim();
     const normalizedContextKey = normalizeContextKey(nextContextKey);
@@ -513,6 +524,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     setDisplayedContextHold({
       organizationId: normalizedOrganizationId,
       contextKey: normalizedContextKey,
+      reason,
     });
     return true;
   }, []);

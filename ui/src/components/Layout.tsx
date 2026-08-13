@@ -456,7 +456,11 @@ export function resolveDisplayedSidePanelContext(
   const isHoldableContext = hold?.contextKey.startsWith("chat:")
     || hold?.contextKey.startsWith("issue:");
   if (
-    (isWorkbenchRoute || routeContextKey === hold?.contextKey)
+    (
+      isWorkbenchRoute
+      || routeContextKey === hold?.contextKey
+      || (hold?.reason === "file_annotation" && routeContextKey.startsWith("chat:"))
+    )
     && isHoldableContext
     && hold?.organizationId === organizationId
   ) {

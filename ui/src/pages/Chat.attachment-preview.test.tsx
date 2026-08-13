@@ -899,6 +899,32 @@ const persistedResponseAnnotation = {
   attachmentIds: [],
 };
 
+function requestFileAnnotation(
+  action: "add_to_chat" | "ask_in_side_chat",
+  sourceConversationId = "chat-1",
+) {
+  return requestChatFileAnnotation({
+    action,
+    annotation: {
+      id: "30000000-0000-4000-8000-000000000010",
+      selectedText: "Queue this excerpt",
+      comment: null,
+      sourceConversationId,
+      surface: "local_file",
+      sourceFilePath: "/tmp/example.ts",
+      sourceRenderMode: "text",
+      sourceHash: "a".repeat(64),
+      start: 0,
+      end: 18,
+      prefix: "",
+      suffix: "",
+      attachmentIds: [],
+    },
+    anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+    boundaryRect: null,
+  });
+}
+
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
     id: "issue-1",
@@ -5874,6 +5900,115 @@ describe("Chat streaming controls", () => {
     );
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
     expect(mockState.pushToast).not.toHaveBeenCalled();
+  });
+
+  it("accepts Add to chat from the active route while its conversation snapshot is unavailable", async () => {
+    mockState.conversations = [chat({ id: "chat-2", title: "Other chat" })];
+    mockState.messagesByChatId = { "chat-1": [] };
+
+    const { container } = renderChat();
+    let result: ReturnType<typeof requestChatFileAnnotation> | undefined;
+    await act(async () => {
+      result = requestFileAnnotation("add_to_chat");
+      await Promise.resolve();
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-editor']"))
+      .not.toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
+    expect(mockState.pushToast).not.toHaveBeenCalled();
+  });
+
+  it("rejects a file selection from another Chat without opening an editor", async () => {
+    const { container } = renderChat();
+    let result: ReturnType<typeof requestChatFileAnnotation> | undefined;
+    await act(async () => {
+      result = requestFileAnnotation("add_to_chat", "chat-2");
+      await Promise.resolve();
+    });
+
+    expect(result).toEqual({ status: "rejected", reason: "conversation_mismatch" });
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-editor']"))
+      .toBeNull();
+    expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "File selection belongs to another chat",
+    }));
+  });
+
+  it("keeps Side Chat pending while the active conversation snapshot is unavailable", async () => {
+    mockState.conversations = [chat({ id: "chat-2", title: "Other chat" })];
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "assistant-file-anchor",
+        role: "assistant",
+        body: "Completed answer",
+        status: "completed",
+      })],
+    };
+    const { container } = renderChat();
+    let result: ReturnType<typeof requestChatFileAnnotation> | undefined;
+    await act(async () => {
+      result = requestFileAnnotation("ask_in_side_chat");
+      await Promise.resolve();
+    });
+
+    expect(result).toEqual({ status: "rejected", reason: "conversation_not_ready" });
+    expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Chat is still loading",
+    }));
+  });
+
+  it("accepts Side Chat only with a completed assistant anchor in the current Chat", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({
+        id: "assistant-file-anchor",
+        role: "assistant",
+        body: "Completed answer",
+        status: "completed",
+      })],
+    };
+    const { container } = renderChat();
+    let result: ReturnType<typeof requestChatFileAnnotation> | undefined;
+    await act(async () => {
+      result = requestFileAnnotation("ask_in_side_chat");
+      await Promise.resolve();
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(container.querySelector(
+      "[data-testid='chat-side-panel-tab'][data-side-panel-tab-kind='side_chat']",
+    )).not.toBeNull();
+    const annotationButton = container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Show 1 annotation']",
+    );
+    expect(annotationButton).not.toBeNull();
+    await act(async () => {
+      annotationButton?.click();
+      await Promise.resolve();
+    });
+    expect(document.body.querySelector("[data-testid='chat-response-annotation-card']")?.textContent)
+      .toContain("Queue this excerpt");
+  });
+
+  it("rejects Side Chat without a completed assistant anchor and explains why", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-file-anchor", role: "user" })],
+    };
+    const { container } = renderChat();
+    let result: ReturnType<typeof requestChatFileAnnotation> | undefined;
+    await act(async () => {
+      result = requestFileAnnotation("ask_in_side_chat");
+      await Promise.resolve();
+    });
+
+    expect(result).toEqual({ status: "rejected", reason: "side_chat_unavailable" });
+    expect(container.querySelector("[data-testid='chat-side-panel']")).toBeNull();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Side Chat is not available",
+    }));
   });
 
   it("blocks an annotation Queue submission while the observed development runtime requires restart", async () => {

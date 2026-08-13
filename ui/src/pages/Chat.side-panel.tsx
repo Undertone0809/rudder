@@ -931,12 +931,14 @@ function ChatSidePanelTextFileEditor({
   sourceConversationId,
   markdown,
   sourceToolbar,
+  onAnnotationSelectionPendingChange,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
   organizationId: string;
   sourceConversationId: string | null;
   markdown: boolean;
   sourceToolbar?: ReactNode;
+  onAnnotationSelectionPendingChange?: (pending: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const filePath = libraryFile.filePath;
@@ -1272,6 +1274,7 @@ function ChatSidePanelTextFileEditor({
         sourceRenderMode={markdown ? "markdown" : "text"}
         renderedSource={markdown ? markdownParts.body : draftContent}
         renderedSourceOffset={markdown ? draftContent.length - markdownParts.body.length : 0}
+        onPendingChange={onAnnotationSelectionPendingChange}
       />
 
       <div className="pointer-events-none absolute inset-x-3 bottom-3 flex min-w-0 items-end justify-between gap-3">
@@ -1369,10 +1372,12 @@ function ChatSidePanelLibraryFileView({
   libraryFile,
   organizationId,
   sourceConversationId,
+  onAnnotationSelectionPendingChange,
 }: {
   libraryFile: OrganizationWorkspaceFileDetail;
   organizationId: string;
   sourceConversationId: string | null;
+  onAnnotationSelectionPendingChange?: (pending: boolean) => void;
 }) {
   const { pushToast } = useToast();
   const { selectedOrganization } = useOrganization();
@@ -1593,6 +1598,7 @@ function ChatSidePanelLibraryFileView({
           libraryFile={libraryFile}
           organizationId={organizationId}
           sourceConversationId={sourceConversationId}
+          onAnnotationSelectionPendingChange={onAnnotationSelectionPendingChange}
           markdown={markdown}
           sourceToolbar={html ? (
             <WorkspaceHtmlPreviewToolbar
@@ -2047,6 +2053,23 @@ export function ChatSidePanel({
   const sourceConversationId = sidePanel.contextKey.startsWith("chat:")
     ? sidePanel.contextKey.slice("chat:".length) || null
     : null;
+  const handleAnnotationSelectionPendingChange = useCallback((pending: boolean) => {
+    if (!selectedOrganizationId || !sourceConversationId) return;
+    if (pending) {
+      sidePanel.holdDisplayedContext(
+        selectedOrganizationId,
+        `chat:${sourceConversationId}`,
+        "file_annotation",
+      );
+      return;
+    }
+    sidePanel.clearDisplayedContextHold("file_annotation");
+  }, [
+    selectedOrganizationId,
+    sidePanel.clearDisplayedContextHold,
+    sidePanel.holdDisplayedContext,
+    sourceConversationId,
+  ]);
 
   const handleSidePanelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     if (readDesktopShell()?.onBrowserShortcut || !activeBrowserTargetKey) return;
@@ -2817,6 +2840,7 @@ export function ChatSidePanel({
               libraryFile={libraryFile}
               organizationId={selectedOrganizationId}
               sourceConversationId={sourceConversationId}
+              onAnnotationSelectionPendingChange={handleAnnotationSelectionPendingChange}
             />
           ) : localFileTarget ? (
             <TranscriptLocalFilePreview
@@ -2824,6 +2848,7 @@ export function ChatSidePanel({
               targetPath={localFileTarget.filePath}
               label={localFileTarget.label}
               sourceConversationId={sourceConversationId}
+              onAnnotationSelectionPendingChange={handleAnnotationSelectionPendingChange}
             />
           ) : organizationSkillFileTarget && organizationSkillFile ? (
             <ChatSidePanelSkillFileView
