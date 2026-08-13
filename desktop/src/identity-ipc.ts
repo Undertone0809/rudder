@@ -1,5 +1,6 @@
 import type { IdentityAccount, IdentityDevice } from "./identity-client.js";
 import type { IdentityCredentialVault, IdentityDeviceCredential } from "./identity-credential-vault.js";
+import { readFileSync } from "node:fs";
 
 export const DESKTOP_IDENTITY_PRODUCTION_ORIGIN = "https://accounts.rudderhq.dev";
 
@@ -94,9 +95,23 @@ type DesktopIdentityClient = {
 export function resolveDesktopIdentityOrigin(options: {
   isPackaged: boolean;
   override?: string | null;
+  packagedTestMarkerPath?: string | null;
 }): string {
   const override = options.override?.trim();
-  if (options.isPackaged || !override) return DESKTOP_IDENTITY_PRODUCTION_ORIGIN;
+  const packagedTestArtifact = Boolean(
+    options.isPackaged
+    && options.packagedTestMarkerPath
+    && (() => {
+      try {
+        return readFileSync(options.packagedTestMarkerPath, "utf8") === "rudder-packaged-test-identity-v1\n";
+      } catch {
+        return false;
+      }
+    })(),
+  );
+  if ((options.isPackaged && !packagedTestArtifact) || !override) {
+    return DESKTOP_IDENTITY_PRODUCTION_ORIGIN;
+  }
 
   let url: URL;
   try {
