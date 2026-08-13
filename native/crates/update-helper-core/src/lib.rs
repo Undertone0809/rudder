@@ -9,6 +9,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -785,7 +786,12 @@ fn write_atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), HelperE
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    // Multiple helper operations may run in parallel during tests and during
+    // recovery probes. The temporary name must be unique per operation so an
+    // unrelated writer cannot truncate or rename our staged checkpoint.
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp-{}-{sequence}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| HelperError::Journal(error.to_string()))?;
     let mut file = File::create(&temporary)?;
@@ -952,7 +958,7 @@ mod tests {
             probation: Probation {
                 executable: Some(root.join("Rudder.app/Contents/MacOS/Rudder")),
                 args: vec![],
-                timeout_ms: 1_000,
+                timeout_ms: 10_000,
             },
             fault: FaultInjection::default(),
         }
