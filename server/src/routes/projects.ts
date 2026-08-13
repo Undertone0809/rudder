@@ -172,6 +172,7 @@ export function projectRoutes(db: Db) {
         projectId: project.id,
         resourceId: attachment.resourceId,
         role: attachment.role,
+        isPrimary: attachment.isPrimary,
       },
     });
 

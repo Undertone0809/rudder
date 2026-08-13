@@ -196,6 +196,7 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
     "",
   ];
   appendMarkdownTable(lines, [
+    "Priority",
     "Role",
     "Name",
     "Source",
@@ -206,6 +207,7 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
   ], resources.map((attachment) => {
       const sourceType = attachment.resource.sourceType ?? "external";
       return [
+        attachment.isPrimary ? "Primary" : "",
         markdownTableCell(attachment.role),
         markdownTableCell(attachment.resource.name),
         markdownTableCell(sourceType),

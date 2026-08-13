@@ -1,5 +1,6 @@
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
+import { AddSourcesDialog, isValidLibrarySourcePath } from "@/components/AddSourcesDialog";
 import { DraftInput } from "@/components/agent-config-primitives";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "@/components/ResourceLocatorField";
 import { Button } from "@/components/ui/button";
@@ -12,16 +13,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/context/ToastContext";
-import { libraryCopy } from "@/lib/library-copy";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   organizationResourceKindLabel,
   organizationResourceSourceTypeLabel,
 } from "@/lib/resource-options";
+import { cn } from "@/lib/utils";
 import type {
   OrganizationResource,
   OrganizationWorkspaceFileEntry,
@@ -29,7 +28,7 @@ import type {
   ProjectResourceAttachmentRole,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, FileText, Folder, FolderPlus, Link2, Loader2, Pencil, Trash2, X } from "lucide-react";
+import { Boxes, FileText, Folder, FolderPlus, Link2, Loader2, Pencil, Star, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 type ProjectResourceAttachment = Project["resources"][number];
@@ -52,18 +51,8 @@ function createNewResourceDraft() {
   };
 }
 
-const LIBRARY_PATH_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
-
 function isValidLibraryProjectPath(locator: string, kind: OrganizationResource["kind"] = "file") {
-  const trimmed = locator.trim();
-  if (!trimmed) return false;
-  if (LIBRARY_PATH_SCHEME_RE.test(trimmed)) return false;
-  if (trimmed.startsWith("/") || trimmed.startsWith("\\") || trimmed.startsWith("~")) return false;
-  if (trimmed.includes("\\")) return false;
-  const parts = trimmed.split("/");
-  if (!parts.every((part) => part.length > 0 && part !== "." && part !== "..")) return false;
-  if (parts[0] !== "projects") return false;
-  return kind === "directory" ? parts.length >= 2 : parts.length >= 3;
+  return isValidLibrarySourcePath(locator, kind === "directory");
 }
 
 function libraryNameFromPath(locator: string) {
@@ -96,13 +85,10 @@ function createResourceEditDraft(attachment: ProjectResourceAttachment): Project
 
 export function ProjectResourcesPanel({ project }: { project: Project }) {
   const { pushToast } = useToast();
-  const { locale } = useI18n();
   const queryClient = useQueryClient();
-  const [attachPopoverOpen, setAttachPopoverOpen] = useState(false);
+  const [addSourcesOpen, setAddSourcesOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newResourceDraft, setNewResourceDraft] = useState(createNewResourceDraft());
-  const [librarySearch, setLibrarySearch] = useState("");
-  const [resourceSearch, setResourceSearch] = useState("");
   const [editingAttachmentId, setEditingAttachmentId] = useState<string | null>(null);
   const [resourceEditDraft, setResourceEditDraft] = useState<ProjectResourceEditDraft | null>(null);
 
@@ -117,33 +103,6 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     enabled: !!project.orgId,
   });
 
-  const availableResources = useMemo(
-    () => (organizationResources ?? []).filter(
-      (resource) => !project.resources.some((attachment) => attachment.resourceId === resource.id),
-    ),
-    [organizationResources, project.resources],
-  );
-  const visibleAvailableResources = useMemo(() => {
-    const query = resourceSearch.trim().toLowerCase();
-    if (!query) return availableResources;
-    return availableResources.filter((resource) => [
-      resource.name,
-      resource.locator,
-      resource.description ?? "",
-      organizationResourceSourceTypeLabel(resource.sourceType),
-      organizationResourceKindLabel(resource.kind),
-    ].some((value) => value.toLowerCase().includes(query)));
-  }, [availableResources, resourceSearch]);
-
-  const { data: libraryMentionFiles } = useQuery({
-    queryKey: queryKeys.organizations.workspaceMentionFiles(project.orgId, librarySearch),
-    queryFn: () => organizationsApi.listWorkspaceMentionFiles(project.orgId, {
-      query: librarySearch,
-      limit: 24,
-    }),
-    enabled: !!project.orgId && attachPopoverOpen,
-  });
-
   const libraryResourceByLocator = useMemo(
     () => new Map(
       (organizationResources ?? [])
@@ -153,19 +112,6 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     [organizationResources],
   );
 
-  const availableLibraryFiles = useMemo(() => {
-    const attachedLibraryLocators = new Set(
-      project.resources
-        .filter((attachment) => attachment.resource.sourceType === "library")
-        .map((attachment) => attachment.resource.locator),
-    );
-    const entries = Array.isArray(libraryMentionFiles?.entries) ? libraryMentionFiles.entries : [];
-    return entries.filter((entry) =>
-      isValidLibraryProjectPath(entry.path, entry.isDirectory ? "directory" : "file")
-      && !attachedLibraryLocators.has(entry.path),
-    );
-  }, [libraryMentionFiles?.entries, project.resources]);
-  const normalizedLibrarySearch = librarySearch.trim();
   const attachedLibraryLocators = useMemo(
     () => new Set(
       project.resources
@@ -174,11 +120,6 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     ),
     [project.resources],
   );
-  const canAddLibrarySearchPath =
-    isValidLibraryProjectPath(normalizedLibrarySearch)
-    && !attachedLibraryLocators.has(normalizedLibrarySearch)
-    && !availableLibraryFiles.some((entry) => entry.path === normalizedLibrarySearch);
-
   const invalidateProjectResourceQueries = () => {
     queryClient.invalidateQueries({ queryKey: ["projects", "detail"] });
     queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(project.orgId) });
@@ -192,6 +133,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       role: ProjectResourceAttachmentRole;
       note?: string | null;
       sortOrder?: number;
+      isPrimary?: boolean;
     }) => projectsApi.attachResource(project.id, payload, project.orgId),
     onSuccess: () => {
       invalidateProjectResourceQueries();
@@ -211,11 +153,12 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       role?: ProjectResourceAttachmentRole;
       note?: string | null;
       sortOrder?: number;
+      isPrimary?: boolean;
     }) =>
       projectsApi.updateResourceAttachment(
         project.id,
         payload.attachmentId,
-        { role: payload.role, note: payload.note, sortOrder: payload.sortOrder },
+        { role: payload.role, note: payload.note, sortOrder: payload.sortOrder, isPrimary: payload.isPrimary },
         project.orgId,
       ),
     onSuccess: () => {
@@ -327,7 +270,6 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     },
     onSuccess: () => {
       invalidateProjectResourceQueries();
-      setAttachPopoverOpen(false);
       pushToast({ title: "Library resource attached", tone: "success" });
     },
     onError: (error) => {
@@ -357,8 +299,6 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     },
     onSuccess: () => {
       invalidateProjectResourceQueries();
-      setAttachPopoverOpen(false);
-      setLibrarySearch("");
       pushToast({ title: "Library resource attached", tone: "success" });
     },
     onError: (error) => {
@@ -368,6 +308,26 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       });
     },
   });
+
+  async function createAndAttachLocalFile(locator: string) {
+    const created = await organizationsApi.createResource(project.orgId, {
+      name: suggestResourceNameFromLocator(locator),
+      kind: "file",
+      sourceType: "external",
+      locator,
+    });
+    await attachResource.mutateAsync({ resourceId: created.id, role: "reference", sortOrder: project.resources.length });
+  }
+
+  async function createAndAttachUrl(locator: string) {
+    const created = await organizationsApi.createResource(project.orgId, {
+      name: suggestResourceNameFromLocator(locator),
+      kind: "url",
+      sourceType: "external",
+      locator,
+    });
+    await attachResource.mutateAsync({ resourceId: created.id, role: "reference", sortOrder: project.resources.length });
+  }
 
   return (
     <div className="space-y-5">
@@ -380,164 +340,21 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Popover
-              open={attachPopoverOpen}
-              onOpenChange={(open) => {
-                setAttachPopoverOpen(open);
-                if (!open) {
-                  setLibrarySearch("");
-                  setResourceSearch("");
-                }
-              }}
+            <Button
+              size="sm"
+              onClick={() => setAddSourcesOpen(true)}
+              disabled={attachResource.isPending || createAndAttachLibraryResource.isPending || createAndAttachLibraryPath.isPending}
             >
-              <PopoverTrigger asChild>
-                <Button
-                  size="sm"
-                  disabled={attachResource.isPending || createAndAttachLibraryResource.isPending || createAndAttachLibraryPath.isPending}
-                >
-                  <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
-                  Add sources
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="max-h-[460px] w-[22rem] overflow-y-auto p-2">
-                <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  {libraryCopy("addFromLibrary", locale)}
-                </div>
-                <div className="px-2 pb-2">
-                  <Input
-                    value={librarySearch}
-                    onChange={(event) => setLibrarySearch(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && canAddLibrarySearchPath) {
-                        event.preventDefault();
-                        createAndAttachLibraryPath.mutate(normalizedLibrarySearch);
-                      }
-                    }}
-                    className="h-8 text-xs"
-                    placeholder={libraryCopy("searchLibraryPlaceholder", locale)}
-                  />
-                </div>
-                {availableLibraryFiles.length === 0 ? (
-                  <div className="px-2 py-3 text-sm text-muted-foreground">
-                    {librarySearch.trim() ? libraryCopy("noMatchingLibraryFiles", locale) : libraryCopy("noLibraryFiles", locale)}
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {availableLibraryFiles.map((file) => {
-                      const Icon = file.isDirectory ? Folder : FileText;
-                      return (
-                        <button
-                          key={file.path}
-                          type="button"
-                          className="flex w-full items-start gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/35"
-                          onClick={() => createAndAttachLibraryResource.mutate(file)}
-                        >
-                          <div className="mt-0.5 rounded-md border border-border/70 bg-background/80 p-1.5 text-muted-foreground">
-                            <Icon className="h-3.5 w-3.5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-foreground">{file.displayLabel ?? file.name}</div>
-                            <div className="truncate font-mono text-[11px] text-muted-foreground">{file.path}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {canAddLibrarySearchPath ? (
-                  <button
-                    type="button"
-                    className="mt-1 flex w-full items-start gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/35"
-                    onClick={() => createAndAttachLibraryPath.mutate(normalizedLibrarySearch)}
-                    disabled={createAndAttachLibraryPath.isPending}
-                  >
-                    <div className="mt-0.5 rounded-md border border-border/70 bg-background/80 p-1.5 text-muted-foreground">
-                      <FileText className="h-3.5 w-3.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">{libraryCopy("useThisLibraryPath", locale)}</div>
-                      <div className="truncate font-mono text-[11px] text-muted-foreground">
-                        {normalizedLibrarySearch}
-                      </div>
-                    </div>
-                  </button>
-                ) : null}
-
-                <div className="my-2 h-px bg-border" />
-                <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  Existing resources
-                </div>
-                <div className="px-2 pb-2">
-                  <Input
-                    value={resourceSearch}
-                    onChange={(event) => setResourceSearch(event.target.value)}
-                    className="h-8 text-xs"
-                    placeholder="Search existing resources"
-                  />
-                </div>
-                {visibleAvailableResources.length === 0 ? (
-                  <div className="px-2 py-3 text-sm text-muted-foreground">
-                    {resourceSearch.trim() ? "No matching resources." : "All resources are already attached to this project."}
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {visibleAvailableResources.map((resource) => {
-                      const Icon = resourceKindIcon(resource.kind);
-                      return (
-                        <button
-                          key={resource.id}
-                          type="button"
-                          className="flex w-full items-start gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/35"
-                          onClick={() => {
-                            attachResource.mutate({
-                              resourceId: resource.id,
-                              role: "reference",
-                              sortOrder: project.resources.length,
-                            });
-                            setAttachPopoverOpen(false);
-                          }}
-                        >
-                          <div className="mt-0.5 rounded-md border border-border/70 bg-background/80 p-1.5 text-muted-foreground">
-                            <Icon className="h-3.5 w-3.5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-foreground">{resource.name}</div>
-                            <div className="truncate text-[11px] text-muted-foreground">
-                              {organizationResourceSourceTypeLabel(resource.sourceType)} · {organizationResourceKindLabel(resource.kind)} · {resource.locator}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <div className="my-2 h-px bg-border" />
-                <button
-                  type="button"
-                  className="flex w-full items-start gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/35"
-                  onClick={() => {
-                    setCreateDialogOpen(true);
-                    setAttachPopoverOpen(false);
-                  }}
-                >
-                  <div className="mt-0.5 rounded-md border border-border/70 bg-background/80 p-1.5 text-muted-foreground">
-                    <Link2 className="h-3.5 w-3.5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-foreground">Create external resource</div>
-                    <div className="text-xs text-muted-foreground">Add a URL, local path, repo path, or connector reference.</div>
-                  </div>
-                </button>
-              </PopoverContent>
-            </Popover>
+              <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
+              Add sources
+            </Button>
           </div>
         </div>
 
         <div>
           {attachedResources.length === 0 ? (
             <div className="px-5 py-5 text-sm text-muted-foreground">
-              No context attached yet. Add the repo, spec, or URLs agents need for this project.
+              No sources attached yet. Add the repo, spec, or URLs agents need for this project.
             </div>
           ) : (
             <div className="divide-y divide-border">
@@ -555,6 +372,12 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="truncate text-sm font-medium text-foreground">{attachment.resource.name}</span>
+                              {attachment.isPrimary ? (
+                                <span className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-1px)] border border-primary/30 bg-primary/8 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                                  <Star className="h-2.5 w-2.5 fill-current" />
+                                  Primary
+                                </span>
+                              ) : null}
                               <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
                                 {organizationResourceSourceTypeLabel(attachment.resource.sourceType)} · {organizationResourceKindLabel(attachment.resource.kind)}
                               </span>
@@ -569,6 +392,21 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                         ) : null}
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-muted-foreground"
+                          aria-label={attachment.isPrimary ? `Clear ${attachment.resource.name} as primary source` : `Make ${attachment.resource.name} primary source`}
+                          onClick={() => updateAttachment.mutate({
+                            attachmentId: attachment.id,
+                            isPrimary: !attachment.isPrimary,
+                          })}
+                          disabled={updateAttachment.isPending}
+                        >
+                          <Star className={cn("h-3.5 w-3.5", attachment.isPrimary && "fill-current text-primary")} />
+                          {attachment.isPrimary ? "Clear primary" : "Make primary"}
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"
@@ -676,6 +514,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                             role: attachment.role,
                             note,
                             sortOrder: attachment.sortOrder,
+                            isPrimary: attachment.isPrimary,
                           })}
                           immediate
                           className="h-10 w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-3 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
@@ -690,6 +529,31 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           )}
         </div>
       </section>
+
+      <AddSourcesDialog
+        open={addSourcesOpen}
+        orgId={project.orgId}
+        resources={organizationResources ?? []}
+        excludedResourceIds={new Set(project.resources.map((attachment) => attachment.resourceId))}
+        excludedLibraryLocators={attachedLibraryLocators}
+        testId="project-add-sources-dialog"
+        onOpenChange={setAddSourcesOpen}
+        onAddExisting={async (resources) => {
+          await Promise.all(resources.map((resource, index) => attachResource.mutateAsync({
+            resourceId: resource.id,
+            role: resource.kind === "directory" ? "working_set" : "reference",
+            sortOrder: project.resources.length + index,
+          })));
+        }}
+        onAddLibraryFile={async (file) => {
+          await createAndAttachLibraryResource.mutateAsync(file);
+        }}
+        onAddLibraryPath={async (locator) => {
+          await createAndAttachLibraryPath.mutateAsync(locator);
+        }}
+        onAddLocalFile={createAndAttachLocalFile}
+        onAddUrl={createAndAttachUrl}
+      />
 
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent className="sm:max-w-2xl">

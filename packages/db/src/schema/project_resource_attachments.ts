@@ -1,4 +1,5 @@
-import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizationResources } from "./organization_resources.js";
 import { organizations } from "./organizations.js";
 import { projects } from "./projects.js";
@@ -13,6 +14,7 @@ export const projectResourceAttachments = pgTable(
     role: text("role").notNull().default("reference"),
     note: text("note"),
     sortOrder: integer("sort_order").notNull().default(0),
+    isPrimary: boolean("is_primary").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -23,6 +25,8 @@ export const projectResourceAttachments = pgTable(
       table.projectId,
       table.resourceId,
     ),
+    projectPrimaryUniqueIdx: uniqueIndex("project_resource_attachments_project_primary_idx")
+      .on(table.projectId)
+      .where(sql`${table.isPrimary} = true`),
   }),
 );
-

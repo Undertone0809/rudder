@@ -302,7 +302,7 @@ export function ProjectDetail() {
         <PageTabBar
           items={[
             { value: "configuration", label: "Configuration" },
-            { value: "resources", label: "Context" },
+            { value: "resources", label: "Source" },
             { value: "issues", label: "Issues" },
           ]}
           align="start"

@@ -43,6 +43,7 @@ function toProjectResourceAttachment(
     role: row.role as ProjectResourceAttachment["role"],
     note: row.note ?? null,
     sortOrder: row.sortOrder,
+    isPrimary: row.isPrimary,
     resource,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -230,11 +231,15 @@ export async function replaceProjectResourceAttachments(
       role: resource.role,
       note: resource.note,
       sortOrder: resource.sortOrder,
+      isPrimary: resource.isPrimary,
     })),
   ];
   const dedupedAttachments = combinedAttachments.filter((attachment, index, attachments) =>
     attachments.findIndex((candidate) => candidate.resourceId === attachment.resourceId) === index,
   );
+  if (dedupedAttachments.filter((attachment) => attachment.isPrimary).length > 1) {
+    throw badRequest("A project can have at most one primary source.");
+  }
 
   await dbOrTx
     .delete(projectResourceAttachments)
@@ -254,6 +259,7 @@ export async function replaceProjectResourceAttachments(
         role: attachment.role ?? "reference",
         note: normalizeNullableText(attachment.note) ?? null,
         sortOrder: attachment.sortOrder ?? index,
+        isPrimary: attachment.isPrimary ?? false,
       })),
     );
   }
@@ -387,18 +393,30 @@ export function resourceCatalogService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (existing) {
-        const updated = await db
+        return db.transaction(async (tx) => {
+          if (input.isPrimary) {
+            await tx
+              .update(projectResourceAttachments)
+              .set({ isPrimary: false, updatedAt: new Date() })
+              .where(and(
+                eq(projectResourceAttachments.projectId, projectId),
+                eq(projectResourceAttachments.isPrimary, true),
+              ));
+          }
+          const updated = await tx
           .update(projectResourceAttachments)
           .set({
             role: input.role ?? existing.role,
             note: normalizeNullableText(input.note) ?? existing.note ?? null,
             sortOrder: input.sortOrder ?? existing.sortOrder,
+            isPrimary: input.isPrimary ?? existing.isPrimary,
             updatedAt: new Date(),
           })
           .where(eq(projectResourceAttachments.id, existing.id))
           .returning()
           .then((rows) => rows[0] ?? null);
-        return updated ? toProjectResourceAttachment(updated, toOrganizationResource(resource)) : null;
+          return updated ? toProjectResourceAttachment(updated, toOrganizationResource(resource)) : null;
+        });
       }
 
       const nextSortOrder = input.sortOrder ?? await db
@@ -413,19 +431,31 @@ export function resourceCatalogService(db: Db) {
         .orderBy(desc(projectResourceAttachments.sortOrder))
         .then((rows) => (rows[0]?.sortOrder ?? -1) + 1);
 
-      const row = await db
-        .insert(projectResourceAttachments)
-        .values({
-          orgId,
-          projectId,
-          resourceId: input.resourceId,
-          role: input.role ?? "reference",
-          note: normalizeNullableText(input.note) ?? null,
-          sortOrder: nextSortOrder,
-        })
-        .returning()
-        .then((rows) => rows[0] ?? null);
-      return row ? toProjectResourceAttachment(row, toOrganizationResource(resource)) : null;
+      return db.transaction(async (tx) => {
+        if (input.isPrimary) {
+          await tx
+            .update(projectResourceAttachments)
+            .set({ isPrimary: false, updatedAt: new Date() })
+            .where(and(
+              eq(projectResourceAttachments.projectId, projectId),
+              eq(projectResourceAttachments.isPrimary, true),
+            ));
+        }
+        const row = await tx
+          .insert(projectResourceAttachments)
+          .values({
+            orgId,
+            projectId,
+            resourceId: input.resourceId,
+            role: input.role ?? "reference",
+            note: normalizeNullableText(input.note) ?? null,
+            sortOrder: nextSortOrder,
+            isPrimary: input.isPrimary ?? false,
+          })
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        return row ? toProjectResourceAttachment(row, toOrganizationResource(resource)) : null;
+      });
     },
 
     updateProjectResourceAttachment: async (
@@ -447,18 +477,30 @@ export function resourceCatalogService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!resource) return null;
 
-      const row = await db
-        .update(projectResourceAttachments)
-        .set({
-          role: input.role ?? existing.role,
-          note: input.note !== undefined ? normalizeNullableText(input.note) ?? null : existing.note ?? null,
-          sortOrder: input.sortOrder ?? existing.sortOrder,
-          updatedAt: new Date(),
-        })
-        .where(eq(projectResourceAttachments.id, existing.id))
-        .returning()
-        .then((rows) => rows[0] ?? null);
-      return row ? toProjectResourceAttachment(row, toOrganizationResource(resource)) : null;
+      return db.transaction(async (tx) => {
+        if (input.isPrimary) {
+          await tx
+            .update(projectResourceAttachments)
+            .set({ isPrimary: false, updatedAt: new Date() })
+            .where(and(
+              eq(projectResourceAttachments.projectId, projectId),
+              eq(projectResourceAttachments.isPrimary, true),
+            ));
+        }
+        const row = await tx
+          .update(projectResourceAttachments)
+          .set({
+            role: input.role ?? existing.role,
+            note: input.note !== undefined ? normalizeNullableText(input.note) ?? null : existing.note ?? null,
+            sortOrder: input.sortOrder ?? existing.sortOrder,
+            isPrimary: input.isPrimary ?? existing.isPrimary,
+            updatedAt: new Date(),
+          })
+          .where(eq(projectResourceAttachments.id, existing.id))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        return row ? toProjectResourceAttachment(row, toOrganizationResource(resource)) : null;
+      });
     },
 
     removeProjectResourceAttachment: async (

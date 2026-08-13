@@ -80,6 +80,7 @@ export const projectResourceAttachmentInputSchema = z.object({
   role: projectResourceAttachmentRoleSchema.optional(),
   note: z.string().optional().nullable(),
   sortOrder: z.number().int().nonnegative().optional(),
+  isPrimary: z.boolean().optional(),
 }).strict();
 
 export type ProjectResourceAttachmentInputPayload = z.infer<typeof projectResourceAttachmentInputSchema>;
@@ -88,6 +89,7 @@ export const updateProjectResourceAttachmentSchema = z.object({
   role: projectResourceAttachmentRoleSchema.optional(),
   note: z.string().optional().nullable(),
   sortOrder: z.number().int().nonnegative().optional(),
+  isPrimary: z.boolean().optional(),
 }).strict();
 
 export type UpdateProjectResourceAttachment = z.infer<typeof updateProjectResourceAttachmentSchema>;
@@ -96,6 +98,7 @@ export const createProjectInlineResourceSchema = createOrganizationResourceBaseS
   role: projectResourceAttachmentRoleSchema.optional(),
   note: z.string().optional().nullable(),
   sortOrder: z.number().int().nonnegative().optional(),
+  isPrimary: z.boolean().optional(),
 }).strict().superRefine(validateLibraryResourceContract);
 
 export type CreateProjectInlineResource = z.infer<typeof createProjectInlineResourceSchema>;

@@ -1012,6 +1012,7 @@ describe("agentRunContextService buildSceneContext", () => {
         role: "working_set",
         note: "Work here first",
         sortOrder: 0,
+        isPrimary: true,
         resource: {
           id: "resource-1",
           orgId: "organization-1",
@@ -1054,9 +1055,9 @@ describe("agentRunContextService buildSceneContext", () => {
 
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Project Context Resources");
     expect(context.rudderWorkspace.resourcesPrompt).toContain("## Project Context Resources");
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("| Role | Name | Source | Kind | Locator | Description | Project note |");
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("| --- | --- | --- | --- | --- | --- | --- |");
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("| working_set | Rudder \\| repo | library | directory | `projects/product/brief'v1'.md` | Main monorepo checkout | Work here first |");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("| Priority | Role | Name | Source | Kind | Locator | Description | Project note |");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("| --- | --- | --- | --- | --- | --- | --- | --- |");
+    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("| Primary | working_set | Rudder \\| repo | library | directory | `projects/product/brief'v1'.md` | Main monorepo checkout | Work here first |");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Library resource guidance:");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("`library:projects/product/brief'v1'.md`");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("`$RUDDER_ORG_WORKSPACE_ROOT/projects/product/brief'v1'.md`");

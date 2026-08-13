@@ -296,6 +296,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       role: "reference",
       note: "Read before editing",
       sortOrder: 0,
+      isPrimary: true,
       resource: {
         id: "11111111-1111-4111-8111-111111111111",
         orgId: "organization-1",
@@ -323,6 +324,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
         resourceId: "11111111-1111-4111-8111-111111111111",
         role: "reference",
         note: "Read before editing",
+        isPrimary: true,
       });
 
     expect(res.status).toBe(201);
@@ -330,6 +332,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       resourceId: "11111111-1111-4111-8111-111111111111",
       role: "reference",
       note: "Read before editing",
+      isPrimary: true,
     });
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
@@ -338,6 +341,12 @@ describe("POST /api/orgs/:orgId/projects", () => {
         action: "project.resource.attached",
         entityType: "project_resource_attachment",
         entityId: "attachment-1",
+        details: {
+          projectId: "project-1",
+          resourceId: "11111111-1111-4111-8111-111111111111",
+          role: "reference",
+          isPrimary: true,
+        },
       }),
     );
   });

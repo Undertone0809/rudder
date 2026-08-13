@@ -945,6 +945,7 @@ describe("applyPendingMigrations", () => {
           "0152_unified_requests_block_audit.sql",
           "0153_goal_result_ready_unique.sql",
           "0154_goal_owner_runtime_overrides.sql",
+          "0155_project_resource_primary.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1120,6 +1121,7 @@ describe("applyPendingMigrations", () => {
           "0152_unified_requests_block_audit.sql",
           "0153_goal_result_ready_unique.sql",
           "0154_goal_owner_runtime_overrides.sql",
+          "0155_project_resource_primary.sql",
         ],
         reason: "pending-migrations",
       });

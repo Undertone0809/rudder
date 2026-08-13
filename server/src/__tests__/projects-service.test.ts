@@ -578,4 +578,76 @@ describe("project service workspace resolution", () => {
       .where(eq(organizationResources.orgId, orgId));
     expect(persistedOrgResources).toHaveLength(1);
   });
+
+  it("preserves the primary source when an update only adds inline resources", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Primary Resource Org",
+      urlKey: deriveOrganizationUrlKey("Primary Resource Org"),
+      issuePrefix: "PRO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const primaryResource = await db.insert(organizationResources).values({
+      orgId,
+      name: "Primary repo",
+      kind: "directory",
+      sourceType: "external",
+      locator: "/tmp/primary-repo",
+    }).returning().then((rows) => rows[0]!);
+    const created = await projectSvc.create(orgId, {
+      name: "Primary Resource Project",
+      status: "planned",
+      resourceAttachments: [{
+        resourceId: primaryResource.id,
+        role: "working_set",
+        isPrimary: true,
+      }],
+    });
+
+    const updated = await projectSvc.update(created.id, {
+      newResources: [{
+        name: "Supporting URL",
+        kind: "url",
+        sourceType: "external",
+        locator: "https://example.com/supporting",
+        role: "reference",
+      }],
+    });
+
+    expect(updated?.resources).toHaveLength(2);
+    expect(updated?.resources.filter((attachment) => attachment.isPrimary).map((attachment) => attachment.resourceId))
+      .toEqual([primaryResource.id]);
+    const reloaded = await projectSvc.getById(created.id);
+    expect(reloaded?.resources.filter((attachment) => attachment.isPrimary).map((attachment) => attachment.resourceId))
+      .toEqual([primaryResource.id]);
+  });
+
+  it("rejects project resource replacement with more than one primary source", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Primary Invariant Org",
+      urlKey: deriveOrganizationUrlKey("Primary Invariant Org"),
+      issuePrefix: "PIO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const resources = await db.insert(organizationResources).values([
+      { orgId, name: "Repo A", kind: "directory", sourceType: "external", locator: "/tmp/repo-a" },
+      { orgId, name: "Repo B", kind: "directory", sourceType: "external", locator: "/tmp/repo-b" },
+    ]).returning();
+
+    await expect(projectSvc.create(orgId, {
+      name: "Invalid Primary Project",
+      status: "planned",
+      resourceAttachments: resources.map((resource) => ({
+        resourceId: resource.id,
+        role: "working_set" as const,
+        isPrimary: true,
+      })),
+    })).rejects.toMatchObject({
+      status: 400,
+      message: "A project can have at most one primary source.",
+    });
+  });
 });

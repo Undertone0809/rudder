@@ -43,6 +43,7 @@ export interface ProjectResourceAttachment {
   role: ProjectResourceAttachmentRole;
   note: string | null;
   sortOrder: number;
+  isPrimary: boolean;
   resource: OrganizationResource;
   createdAt: Date;
   updatedAt: Date;
@@ -53,16 +54,19 @@ export interface ProjectResourceAttachmentInput {
   role?: ProjectResourceAttachmentRole;
   note?: string | null;
   sortOrder?: number;
+  isPrimary?: boolean;
 }
 
 export interface UpdateProjectResourceAttachmentRequest {
   role?: ProjectResourceAttachmentRole;
   note?: string | null;
   sortOrder?: number;
+  isPrimary?: boolean;
 }
 
 export interface CreateProjectInlineResourceInput extends CreateOrganizationResourceRequest {
   role?: ProjectResourceAttachmentRole;
   note?: string | null;
   sortOrder?: number;
+  isPrimary?: boolean;
 }

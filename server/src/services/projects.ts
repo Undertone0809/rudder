@@ -646,6 +646,7 @@ export function projectService(db: Db) {
               role: attachment.role,
               note: attachment.note,
               sortOrder: attachment.sortOrder,
+              isPrimary: attachment.isPrimary,
             })),
             newResources,
           });

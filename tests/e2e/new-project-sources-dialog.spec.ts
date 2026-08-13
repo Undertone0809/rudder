@@ -216,3 +216,64 @@ test("adds a URL in its own focused source step", async ({ page }) => {
     locator: "https://example.com/reference",
   }));
 });
+
+test("reuses the Sources dialog and persists an optional primary source", async ({ page }) => {
+  await page.setViewportSize({ width: 1_440, height: 960 });
+  const uniqueSuffix = Date.now().toString(36).slice(-6).toUpperCase();
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Project-Primary-Source-${Date.now()}`, issuePrefix: `PP${uniqueSuffix}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+    data: { name: "Primary Source Project", status: "in_progress" },
+  });
+  expect(projectRes.ok()).toBe(true);
+  const project = await projectRes.json() as { id: string; urlKey: string };
+
+  const firstResourceRes = await page.request.post(`/api/orgs/${organization.id}/resources`, {
+    data: { name: "Main repository", kind: "directory", locator: "/tmp/main-repository" },
+  });
+  expect(firstResourceRes.ok()).toBe(true);
+  const firstResource = await firstResourceRes.json() as { id: string };
+  const firstAttachmentRes = await page.request.post(`/api/projects/${project.id}/resources?orgId=${organization.id}`, {
+    data: { resourceId: firstResource.id, role: "working_set" },
+  });
+  expect(firstAttachmentRes.ok()).toBe(true);
+
+  await page.goto("/");
+  await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
+  await page.goto(`/${organization.issuePrefix}/projects/${project.urlKey}/resources`);
+
+  await expect(page.getByRole("tab", { name: "Source", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Context", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Add sources", exact: true }).click();
+  const dialog = page.getByTestId("project-add-sources-dialog");
+  await expect(dialog.getByRole("button", { name: /Add from library/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Select from local/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Add from URL/ })).toBeVisible();
+  await dialog.getByRole("button", { name: /Add from URL/ }).click();
+  await dialog.getByLabel("URL").fill("https://example.com/product-spec");
+  await dialog.getByRole("button", { name: "Add source", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("product-spec", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Make Main repository primary source" }).click();
+  await expect(page.getByText("Primary", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Make product-spec primary source" }).click();
+  await expect(page.getByRole("button", { name: "Make Main repository primary source" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear product-spec as primary source" })).toBeVisible();
+
+  let readback = await (await page.request.get(`/api/projects/${project.id}?orgId=${organization.id}`)).json() as {
+    resources: Array<{ resource: { name: string }; isPrimary: boolean }>;
+  };
+  expect(readback.resources.filter((attachment) => attachment.isPrimary).map((attachment) => attachment.resource.name)).toEqual(["product-spec"]);
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Clear product-spec as primary source" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear product-spec as primary source" }).click();
+  await expect(page.getByText("Primary", { exact: true })).toHaveCount(0);
+  readback = await (await page.request.get(`/api/projects/${project.id}?orgId=${organization.id}`)).json() as typeof readback;
+  expect(readback.resources.some((attachment) => attachment.isPrimary)).toBe(false);
+});
