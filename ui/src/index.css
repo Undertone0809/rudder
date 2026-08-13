@@ -6072,6 +6072,23 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   --control-hover-core: var(--surface-elevated);
 }
 
+/* Light outline actions start quiet and darken across the full control on interaction. */
+:root:not(.dark) .control-hover[data-variant="outline"] {
+  background: var(--surface-elevated);
+}
+
+:root:not(.dark) .control-hover[data-variant="outline"]::before {
+  content: none;
+}
+
+:root:not(.dark) .control-hover[data-variant="outline"]:is(:hover, :focus-visible, [data-state="open"]):not(:disabled):not([aria-disabled="true"]) {
+  background: color-mix(in oklab, var(--surface-elevated) 94%, black);
+}
+
+:root:not(.dark) .control-hover[data-variant="outline"]:is(:active, [data-state="open"]):not(:disabled):not([aria-disabled="true"]) {
+  background: color-mix(in oklab, var(--surface-elevated) 89%, black);
+}
+
 .control-hover[data-variant="quiet"] {
   --control-hover-core: color-mix(in oklab, var(--surface-inset) 84%, white);
 }
