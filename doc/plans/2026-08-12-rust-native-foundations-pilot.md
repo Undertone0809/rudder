@@ -58,7 +58,7 @@ updated_at: 2026-08-14
 ### Continuation status (2026-08-14)
 
 The current `0.7.5` continuation is frozen at source
-`49b01cb24661361e2cac82dc2e598e0b1fddb93a`. It carries three fail-closed
+`2797e4588770b5b5caacb26b9233e27fe5d7adc3`. It carries three fail-closed
 evidence producers: the Rust-versus-optimized-Node Workspace backup
 comparator, a packaged Local App dogfood cycle producer, and a strict Local
 App `native_ab` summary producer. Their focused tests and static checks pass,
@@ -73,7 +73,8 @@ The fixture's elapsed times were diagnostic only; resource RSS is
 child process and must not use parent Node `process.memoryUsage()` deltas as a
 Rust-vs-Node claim.
 
-The exact candidate produced a valid macOS arm64 portable package:
+The preceding exact candidate `49b01cb24661361e2cac82dc2e598e0b1fddb93a`
+produced a valid macOS arm64 portable package:
 `unzip -t` passed, portable SHA-256 is
 `7e97e5c21bae2eb969c9bb94c1a831d75508db1e5d473bcb7e7c861b3010a35e`, and the
 packaged server and App Builder checks passed. The staged binaries report
@@ -85,10 +86,13 @@ packaged server and App Builder checks passed. The staged binaries report
 2382810d194103e006a32f6d0be4c97b0dcf36531f49390fde1d9ae576fc685c`.
 The packaged executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
-The real packaged Local App smoke still fails before a ready board window and
-active IPC bridge (`expected exactly one ready Desktop board window with an
-active IPC bridge`); an earlier attempt terminated the renderer with signal
-15. No synthetic ledger row or dogfood cycle was written. The native A/B
+The packaged Local App smoke then exposed a missing acceptance fixture: a
+packaged Desktop correctly requires an authenticated account, while the
+dogfood command had no authenticated packaged fixture. The smoke and dogfood
+producer now fail fast with `DOGFOOD_ACCOUNT_REQUIRED` before launching
+Electron; they do not bypass the account gate or write a synthetic ledger row.
+The new source has not yet been rebuilt into a packaged artifact, so the old
+ZIP is supporting evidence only. The native A/B
 producer emits exactly three measured trials per arm (six observations), but
 the live campaign remains blocked without real release-host/process-tree
 sampler binaries. Therefore the decision ledger stays `accepted_default` for
@@ -124,7 +128,7 @@ claim that a missing implementation passed its acceptance gate.
 | Slice | Decision | Evidence bound to this candidate | Required next transition |
 | --- | --- | --- | --- |
 | Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.5` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
-| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; exact packaged macOS arm64 package, native staging, server-package, and App Builder checks pass, but the current real Local App smoke fails before board IPC readiness; account-gate/email-code evidence is historical-only, and seven-day/100-cycle dogfood plus native_ab live evidence are absent | Fix the packaged board/IPC startup failure, then run the dogfood gate and live three-trial native_ab campaign |
+| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; the preceding packaged macOS arm64 package, native staging, server-package, and App Builder checks pass, but the new source is not rebuilt and no authenticated packaged Local App fixture exists; seven-day/100-cycle dogfood plus native_ab live evidence are absent | Provide an authorized authenticated packaged fixture, rebuild the exact source, then run the dogfood gate and live three-trial native_ab campaign |
 | Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.3 MB RSS delta versus 36.3 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
 | Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
