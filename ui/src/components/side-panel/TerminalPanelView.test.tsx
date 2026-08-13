@@ -18,8 +18,11 @@ const mocks = vi.hoisted(() => ({
   write: vi.fn(),
   reset: vi.fn(),
   focus: vi.fn(),
+  terminalDispose: vi.fn(),
+  fitDispose: vi.fn(),
   fit: vi.fn(),
   proposedDimensions: { cols: 80, rows: 24 } as { cols: number; rows: number } | undefined,
+  setupError: null as Error | null,
   resizeObserverCallback: null as ResizeObserverCallback | null,
 }));
 
@@ -52,7 +55,7 @@ vi.mock("@xterm/xterm", () => ({
     write = mocks.write;
     reset = mocks.reset;
     focus = mocks.focus;
-    dispose() {}
+    dispose = mocks.terminalDispose;
     onData(listener: (data: string) => void) {
       mocks.onData = listener;
       return { dispose: () => { mocks.onData = null; } };
@@ -66,7 +69,11 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class FitAddon {
+    constructor() {
+      if (mocks.setupError) throw mocks.setupError;
+    }
     fit = mocks.fit;
+    dispose = mocks.fitDispose;
     proposeDimensions = () => mocks.proposedDimensions;
   },
 }));
@@ -98,8 +105,11 @@ describe("TerminalPanelView", () => {
     mocks.write.mockReset();
     mocks.reset.mockReset();
     mocks.focus.mockReset();
+    mocks.terminalDispose.mockReset();
+    mocks.fitDispose.mockReset();
     mocks.fit.mockReset();
     mocks.proposedDimensions = { cols: 80, rows: 24 };
+    mocks.setupError = null;
     mocks.resizeObserverCallback = null;
     vi.stubGlobal("ResizeObserver", class ResizeObserver {
       constructor(callback: ResizeObserverCallback) {
@@ -173,6 +183,28 @@ describe("TerminalPanelView", () => {
     });
     expect(mocks.create).toHaveBeenCalledTimes(2);
     expect(container.textContent).not.toContain("Terminal unavailable");
+  });
+
+  it("shows a recoverable failure when xterm setup fails", async () => {
+    mocks.setupError = new Error("Terminal renderer failed to initialize.");
+    await act(async () => {
+      root.render(<TerminalPanelView active target={target} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Terminal unavailable");
+    expect(container.textContent).toContain("Terminal renderer failed to initialize.");
+    expect(mocks.terminalDispose).toHaveBeenCalledTimes(1);
+
+    mocks.setupError = null;
+    const restart = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Restart terminal"));
+    await act(async () => {
+      restart?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.create).toHaveBeenCalledTimes(1);
   });
 
   it("normalizes Desktop transport errors without hiding the actionable cause", () => {

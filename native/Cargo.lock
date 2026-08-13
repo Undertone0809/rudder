@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-protocol"
-version = "0.1.0"
+version = "0.7.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -188,12 +188,39 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-host"
-version = "0.1.0"
+version = "0.7.4"
 dependencies = [
  "libc",
  "portable-pty",
  "rudder-native-protocol",
  "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "rudder-process-tree-sampler"
+version = "0.7.4"
+dependencies = [
+ "libc",
+ "serde_json",
+]
+
+[[package]]
+name = "rudder-update-helper"
+version = "0.1.0"
+dependencies = [
+ "rudder-update-helper-core",
+ "serde_json",
+]
+
+[[package]]
+name = "rudder-update-helper-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

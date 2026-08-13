@@ -179,5 +179,5 @@
     "index_preserved": true,
     "evidence": ["scoped git status captured before and after acceptance edits", "current packaged artifact and helper hashes recorded"]
   },
-    "terminal": {"delivered_ref": null, "delivered_sha": null, "delivered_tree_sha": null, "timestamp": null, "proof": ["git push origin 42dd81aac:main succeeded", "remote main advanced from eff06b747e6a02e821065065bea67781cf9826e5b30"]}
+  "terminal": {"delivered_ref": null, "delivered_sha": null, "delivered_tree_sha": null, "timestamp": null, "proof": []}
 }

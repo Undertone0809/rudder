@@ -511,7 +511,10 @@ fn handle_metadata_args() -> bool {
     let argument = std::env::args().nth(1);
     match argument.as_deref() {
         Some("--version") => {
-            println!("rudder-process-host 0.1.0");
+            println!(
+                "rudder-process-host {env_version}",
+                env_version = env!("CARGO_PKG_VERSION")
+            );
             true
         }
         Some("--protocol-version") => {

@@ -1,8 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
+import type { FitAddon } from "@xterm/addon-fit";
+import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { RotateCw, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -27,16 +27,18 @@ export function TerminalPanelView({ active, target }: { active: boolean; target:
   const activeRef = useRef(active);
   const [state, setState] = useState<"starting" | "running" | "exited" | "failed">("starting");
   const [error, setError] = useState<string | null>(null);
+  const [setupAttempt, setSetupAttempt] = useState(0);
 
   const start = useCallback(async () => {
     const desktop = readDesktopShell()?.terminal;
     const terminal = terminalRef.current;
     const fit = fitRef.current;
-    if (!desktop?.supported || !terminal || !fit) {
+    if (!desktop?.supported) {
       setState("failed");
       setError("Terminal is available only in Rudder Desktop.");
       return;
     }
+    if (!terminal || !fit) return;
     if (!target.agentId) {
       setState("failed");
       setError("Select an Agent for this Chat before starting a terminal.");
@@ -78,52 +80,93 @@ export function TerminalPanelView({ active, target }: { active: boolean; target:
       setError("Terminal is available only in Rudder Desktop.");
       return undefined;
     }
-    const terminal = new Terminal({
-      cursorBlink: true,
-      convertEol: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      fontSize: 13,
-      lineHeight: 1.25,
-      scrollback: 5_000,
-      theme: { background: "#111315", foreground: "#e7e9ea", cursor: "#f4f4f5", selectionBackground: "#3f4650" },
-    });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
-    terminal.open(host);
-    terminalRef.current = terminal;
-    fitRef.current = fit;
-    const inputSubscription = terminal.onData((data) => void desktop.input(target.sessionId, data).catch(() => undefined));
-    const resizeSubscription = terminal.onResize(({ cols, rows }) => void desktop.resize(target.sessionId, cols, rows).catch(() => undefined));
-    const removeOutput = desktop.onOutput((event) => {
-      if (event.sessionId === target.sessionId) terminal.write(event.data);
-    });
-    const removeExit = desktop.onExit((event) => {
-      if (event.sessionId !== target.sessionId) return;
-      setState(event.error ? "failed" : "exited");
-      setError(event.error);
-    });
-    const observer = new ResizeObserver(() => {
-      fit.fit();
-      if (activeRef.current && !sessionRequestedRef.current) void start();
-    });
-    observer.observe(host);
-    const frame = requestAnimationFrame(() => {
-      if (activeRef.current) void start();
-    });
-    return () => {
+    setState("starting");
+    setError(null);
+    let disposed = false;
+    let terminal: Terminal | null = null;
+    let fit: FitAddon | null = null;
+    let inputSubscription: { dispose: () => void } | undefined;
+    let resizeSubscription: { dispose: () => void } | undefined;
+    let removeOutput: (() => void) | undefined;
+    let removeExit: (() => void) | undefined;
+    let observer: ResizeObserver | undefined;
+    let frame: number | undefined;
+    const cleanup = () => {
       generationRef.current += 1;
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      inputSubscription.dispose();
-      resizeSubscription.dispose();
-      removeOutput();
-      removeExit();
-      terminal.dispose();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      observer?.disconnect();
+      inputSubscription?.dispose();
+      resizeSubscription?.dispose();
+      removeOutput?.();
+      removeExit?.();
+      fit?.dispose();
+      terminal?.dispose();
       sessionRequestedRef.current = false;
       terminalRef.current = null;
       fitRef.current = null;
+      frame = undefined;
+      observer = undefined;
+      inputSubscription = undefined;
+      resizeSubscription = undefined;
+      removeOutput = undefined;
+      removeExit = undefined;
+      fit = null;
+      terminal = null;
     };
-  }, [start, target.sessionId]);
+    const setup = async () => {
+      // xterm's browser-oriented UMD addon must not load during Node/SSR module collection.
+      const [{ Terminal: TerminalConstructor }, { FitAddon: FitAddonConstructor }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+      if (disposed) return;
+
+      terminal = new TerminalConstructor({
+        cursorBlink: true,
+        convertEol: false,
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        fontSize: 13,
+        lineHeight: 1.25,
+        scrollback: 5_000,
+        theme: { background: "#111315", foreground: "#e7e9ea", cursor: "#f4f4f5", selectionBackground: "#3f4650" },
+      });
+      fit = new FitAddonConstructor();
+      const activeTerminal = terminal;
+      const activeFit = fit;
+      activeTerminal.loadAddon(activeFit);
+      activeTerminal.open(host);
+      terminalRef.current = activeTerminal;
+      fitRef.current = activeFit;
+      inputSubscription = activeTerminal.onData((data) => void desktop.input(target.sessionId, data).catch(() => undefined));
+      resizeSubscription = activeTerminal.onResize(({ cols, rows }) => void desktop.resize(target.sessionId, cols, rows).catch(() => undefined));
+      removeOutput = desktop.onOutput((event) => {
+        if (event.sessionId === target.sessionId) activeTerminal.write(event.data);
+      });
+      removeExit = desktop.onExit((event) => {
+        if (event.sessionId !== target.sessionId) return;
+        setState(event.error ? "failed" : "exited");
+        setError(event.error);
+      });
+      observer = new ResizeObserver(() => {
+        activeFit.fit();
+        if (activeRef.current && !sessionRequestedRef.current) void start();
+      });
+      observer.observe(host);
+      frame = requestAnimationFrame(() => {
+        if (activeRef.current) void start();
+      });
+    };
+    void setup().catch((cause: unknown) => {
+      if (disposed) return;
+      cleanup();
+      setState("failed");
+      setError(terminalErrorMessage(cause));
+    });
+    return () => {
+      disposed = true;
+      cleanup();
+    };
+  }, [setupAttempt, start, target.sessionId]);
 
   useEffect(() => {
     activeRef.current = active;
@@ -155,7 +198,7 @@ export function TerminalPanelView({ active, target }: { active: boolean; target:
                 className="mt-4 border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
                 onClick={() => {
                   sessionRequestedRef.current = false;
-                  void start();
+                  setSetupAttempt((attempt) => attempt + 1);
                 }}
               >
                 <RotateCw className="h-3.5 w-3.5" />

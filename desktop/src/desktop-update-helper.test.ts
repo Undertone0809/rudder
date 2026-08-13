@@ -6,8 +6,8 @@ import {
   attestExternalDesktopUpdateHelper,
   ensureExternalDesktopUpdateHelper,
   handoffDesktopUpdateToExternalHelper,
-  resolveExternalDesktopUpdateHelperPath,
   resolveDesktopUpdateTransactionPaths,
+  resolveExternalDesktopUpdateHelperPath,
 } from "./desktop-update-helper.js";
 
 describe("external Desktop update helper attestation", () => {
@@ -18,11 +18,11 @@ describe("external Desktop update helper attestation", () => {
     fs.mkdirSync(path.dirname(helper), { recursive: true });
     fs.writeFileSync(helper, "#!/bin/sh\necho rudder-update-helper 0.1.0 protocol=1\n");
     fs.chmodSync(helper, 0o755);
-    expect(resolveExternalDesktopUpdateHelperPath({ userDataPath: root, resourcesPath: resources })).toBeNull();
+    expect(resolveExternalDesktopUpdateHelperPath({ userDataPath: root, resourcesPath: resources, platform: "darwin" })).toBeNull();
     const external = path.join(root, "update-helper", "rudder-update-helper");
     fs.mkdirSync(path.dirname(external), { recursive: true });
     fs.symlinkSync(helper, external);
-    expect(resolveExternalDesktopUpdateHelperPath({ userDataPath: root, resourcesPath: resources })).toBeNull();
+    expect(resolveExternalDesktopUpdateHelperPath({ userDataPath: root, resourcesPath: resources, platform: "darwin" })).toBeNull();
   });
 
   it("attests an installed helper only after protocol and executable checks", () => {
@@ -31,7 +31,7 @@ describe("external Desktop update helper attestation", () => {
     fs.mkdirSync(path.dirname(helper), { recursive: true });
     fs.writeFileSync(helper, "#!/bin/sh\nprintf '%s\\n' 'rudder-update-helper 0.1.0 protocol=1'\n");
     fs.chmodSync(helper, 0o755);
-    expect(attestExternalDesktopUpdateHelper({ userDataPath: root, resourcesPath: path.join(root, "Resources") })).toMatchObject({ path: helper });
+    expect(attestExternalDesktopUpdateHelper({ userDataPath: root, resourcesPath: path.join(root, "Resources"), platform: "darwin" })).toMatchObject({ path: helper });
   });
 
   it("copies a packaged helper outside the replaceable App bundle", () => {
@@ -41,7 +41,7 @@ describe("external Desktop update helper attestation", () => {
     fs.mkdirSync(path.dirname(bundled), { recursive: true });
     fs.writeFileSync(bundled, "#!/bin/sh\nprintf '%s\\n' 'rudder-update-helper 0.1.0 protocol=1'\n");
     fs.chmodSync(bundled, 0o755);
-    const result = ensureExternalDesktopUpdateHelper({ userDataPath: root, resourcesPath: resources });
+    const result = ensureExternalDesktopUpdateHelper({ userDataPath: root, resourcesPath: resources, platform: "darwin" });
     expect(result?.path).toBe(path.join(root, "update-helper", "rudder-update-helper"));
     expect(fs.lstatSync(result!.path).isSymbolicLink()).toBe(false);
     expect(result!.path.startsWith(resources)).toBe(false);

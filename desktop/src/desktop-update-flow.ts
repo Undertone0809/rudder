@@ -4,11 +4,33 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { DESKTOP_CLI_FLAG } from "./cli-link.js";
+import {
+  clearAutomaticCandidate,
+  DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS,
+  DESKTOP_AUTO_UPDATE_INTERVAL_MS,
+  hasExactStagedAutomaticArtifact,
+  markAutomaticCandidateStatus,
+  markAutomaticCheckStarted,
+  readDesktopAutoUpdateState,
+  resolveDesktopAutoUpdateStatePath,
+  scheduleNextAutomaticCheck,
+  stageAutomaticCandidate,
+  writeDesktopAutoUpdateState,
+  type DesktopAutoUpdateCandidate,
+} from "./desktop-auto-update-state.js";
 import { createDesktopSupportMailtoUrl, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import {
   appendBoundedDesktopUpdateOutput,
   summarizeDesktopUpdateChildOutput,
 } from "./desktop-update-diagnostics.js";
+import {
+  attestExternalDesktopUpdateHelper,
+  DESKTOP_UPDATE_HELPER_PROTOCOL,
+  handoffDesktopUpdateToExternalHelper,
+  readDesktopUpdateJournal,
+  resolveDesktopUpdateTransactionPaths,
+  type DesktopUpdateHelperRequest,
+} from "./desktop-update-helper.js";
 import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
@@ -24,28 +46,6 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
-import {
-  DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS,
-  DESKTOP_AUTO_UPDATE_INTERVAL_MS,
-  clearAutomaticCandidate,
-  hasExactStagedAutomaticArtifact,
-  markAutomaticCheckStarted,
-  markAutomaticCandidateStatus,
-  readDesktopAutoUpdateState,
-  resolveDesktopAutoUpdateStatePath,
-  scheduleNextAutomaticCheck,
-  stageAutomaticCandidate,
-  writeDesktopAutoUpdateState,
-  type DesktopAutoUpdateCandidate,
-} from "./desktop-auto-update-state.js";
-import {
-  attestExternalDesktopUpdateHelper,
-  DESKTOP_UPDATE_HELPER_PROTOCOL,
-  handoffDesktopUpdateToExternalHelper,
-  readDesktopUpdateJournal,
-  resolveDesktopUpdateTransactionPaths,
-  type DesktopUpdateHelperRequest,
-} from "./desktop-update-helper.js";
 
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
@@ -104,6 +104,8 @@ type DesktopUpdateRunSummary = {
 
 export function createDesktopUpdateFlow(context: {
   appName: string;
+  /** Optional platform override for cross-platform tests; defaults to the host platform. */
+  platform?: NodeJS.Platform;
   getMainWindow: () => BrowserWindow | null;
   getServerHandle: () => any;
   getBootState: () => any;
@@ -141,6 +143,7 @@ export function createDesktopUpdateFlow(context: {
   /** Optional explicit helper attestation for tests or an embedding shell. */
   getExternalUpdateHelper?: () => { path: string; protocol: string } | null;
 }) {
+  const platform = context.platform ?? process.platform;
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
   const activeDesktopUpdates = new Map<string, {
     version: string;
@@ -189,7 +192,7 @@ export function createDesktopUpdateFlow(context: {
   }
 
   async function applyPreparedAutomaticCandidate(): Promise<"handled" | "continue"> {
-    if (!app.isPackaged || process.platform !== "darwin" || context.isAutomaticUpdateAllowed?.() === false) return "continue";
+    if (!app.isPackaged || platform !== "darwin" || context.isAutomaticUpdateAllowed?.() === false) return "continue";
     if (context.hasSignedUpdatePolicyCapability?.() !== true) {
       console.warn("[rudder-desktop] automatic update deferred: signed release policy is unavailable");
       return "continue";
@@ -218,7 +221,7 @@ export function createDesktopUpdateFlow(context: {
       writeAutomaticState(clearAutomaticCandidate(state, candidate.updateId));
       return "continue";
     }
-    if (candidate.platform !== "darwin" || candidate.arch !== process.arch) return "continue";
+    if (candidate.platform !== platform || candidate.arch !== process.arch) return "continue";
     if (candidate.installId !== automaticInstallId()) return "continue";
     if (!hasExactStagedAutomaticArtifact(candidate)) {
       console.warn("[rudder-desktop] automatic update deferred: staged artifact proof is missing or invalid");
@@ -325,7 +328,7 @@ export function createDesktopUpdateFlow(context: {
     clearAutomaticTimer();
     if (
       !app.isPackaged
-      || process.platform !== "darwin"
+      || platform !== "darwin"
       || context.isAutomaticUpdateAllowed?.() === false
     ) return;
     let state = readAutomaticState();
@@ -518,7 +521,7 @@ export function createDesktopUpdateFlow(context: {
     const bootState = context.getBootState();
     return createDesktopSupportMailtoUrl({
       version: resolveRudderAppVersion(),
-      platform: process.platform,
+      platform,
       arch: process.arch,
       failure: bootState.stage === "error" ? bootState.failure : null,
       profile: bootState.runtime?.localEnv,
