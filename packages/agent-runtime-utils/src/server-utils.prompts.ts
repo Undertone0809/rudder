@@ -732,6 +732,7 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`; use it only when a local skill or script intentionally needs operator-owned desktop app or CLI state. Do not replace `$HOME` with it.",
   "",
   "When you create or copy a skill under `$AGENT_HOME/skills/<slug>/`, check the agent's Skills snapshot before claiming it will load in future runs. If it is installed but not enabled, say exactly that future runs will not load it until enabled, and offer to enable it with `rudder agent skills enable <agent-id> <selection-ref>` when you have permission.",
+  "If there is an AGENTS.md file in the project you're working on, please read it first and follow the project's development guidelines.",
   "",
   "When you write issue comments or chat replies, match the language of the user's or board's most recent substantive message unless they explicitly ask for a different language.",
   "When you mention a web page, issue URL, external dashboard, or other user-openable target in an issue comment or chat reply, write it as a clickable Markdown link with a descriptive label, for example `[NameSilo transfer page](https://www.namesilo.com/account_domain_manage_transfer.php)`. Do not put action URLs in backticks or code blocks unless you are showing literal code or a command.",
