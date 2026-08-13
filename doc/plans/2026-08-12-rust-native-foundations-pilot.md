@@ -2,7 +2,7 @@
 title: Rust Native Foundations Pilot
 date: 2026-08-12
 kind: implementation
-status: planned
+status: completed
 area: agent_runtimes
 entities:
   - native_runtime
@@ -45,7 +45,7 @@ three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
 failure recovery, resource measurements, packaged acceptance, and three
 isolated live trials are bound to the same candidate.
 
-### Decision ledger (candidate `af18cc76e`)
+### Decision ledger (candidate `84fa3c53d0a3ad93e2f768338f1ad135ad663a1a`)
 
 These decisions are terminal for this candidate's evidence scope. They do not
 claim that a missing implementation passed its acceptance gate.
