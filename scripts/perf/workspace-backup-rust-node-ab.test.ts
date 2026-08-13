@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,10 +7,10 @@ import { describe, it } from "vitest";
 import { runWorkspaceBackupRustNodeAb } from "./workspace-backup-rust-node-ab.js";
 
 describe("workspace backup Rust/Node formal comparator", () => {
-  it("compares contract parity and publication recovery without byte-SHA parity", async () => {
+  const nativeBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH ?? path.resolve("native/target/debug/rudder-native");
+  it.skipIf(!existsSync(nativeBinary))("compares contract parity and publication recovery without byte-SHA parity", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-ab-fixture-"));
     const outputDir = await mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-ab-output-"));
-    const nativeBinary = path.resolve("native/target/debug/rudder-native");
     try {
       await mkdir(path.join(root, "nested"), { recursive: true });
       await writeFile(path.join(root, "README.md"), "# Backup\n");
