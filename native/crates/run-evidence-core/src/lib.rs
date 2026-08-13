@@ -217,7 +217,10 @@ mod tests {
     use tempfile::tempdir;
 
     fn limits() -> IndexLimits {
-        IndexLimits { max_record_bytes: 1024, max_records: 10 }
+        IndexLimits {
+            max_record_bytes: 1024,
+            max_records: 10,
+        }
     }
 
     #[test]
@@ -226,15 +229,20 @@ mod tests {
         let input = root.path().join("run.ndjson");
         let output = root.path().join("run.index.ndjson");
         let body = concat!(
-            r#"{"ts":"2026-08-13T00:00:00Z","stream":"stdout","chunk":"hello"}"#, "\n",
-            r#"{"ts":"2026-08-13T00:00:01Z","stream":"stderr","chunk":"world"}"#, "\n"
+            r#"{"ts":"2026-08-13T00:00:00Z","stream":"stdout","chunk":"hello"}"#,
+            "\n",
+            r#"{"ts":"2026-08-13T00:00:01Z","stream":"stderr","chunk":"world"}"#,
+            "\n"
         );
         std::fs::write(&input, body).unwrap();
         let summary = index_run_log(&input, &output, limits()).unwrap();
         assert_eq!(summary.record_count, 2);
         assert_eq!(summary.source_bytes, body.len() as u64);
         let entries: Vec<EvidenceIndexEntry> = std::fs::read_to_string(output)
-            .unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
         assert_eq!(entries[0].source_offset, 0);
         assert_eq!(entries[1].source_offset, entries[0].source_length);
         assert_eq!(entries[0].chunk_bytes, 5);
@@ -247,9 +255,21 @@ mod tests {
         let root = tempdir().unwrap();
         let input = root.path().join("run.ndjson");
         let output = root.path().join("run.index.ndjson");
-        std::fs::write(&input, r#"{"ts":"2026-08-13","stream":"stdout","chunk":"0123456789"}
-"#).unwrap();
-        let error = index_run_log(&input, &output, IndexLimits { max_record_bytes: 10, max_records: 10 }).unwrap_err();
+        std::fs::write(
+            &input,
+            r#"{"ts":"2026-08-13","stream":"stdout","chunk":"0123456789"}
+"#,
+        )
+        .unwrap();
+        let error = index_run_log(
+            &input,
+            &output,
+            IndexLimits {
+                max_record_bytes: 10,
+                max_records: 10,
+            },
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("maxRecordBytes"));
         assert!(!output.exists());
     }
@@ -259,11 +279,32 @@ mod tests {
         let root = tempdir().unwrap();
         let input = root.path().join("run.ndjson");
         let output = root.path().join("run.index.ndjson");
-        std::fs::write(&input, r#"{"ts":"2026-08-13","stream":"other","chunk":"x"}
-"#).unwrap();
-        assert!(index_run_log(&input, &output, limits()).unwrap_err().to_string().contains("stream"));
-        std::fs::write(&input, r#"{"ts":"2026-08-13","stream":"stdout","chunk":"x"}
-"#).unwrap();
-        assert!(index_run_log(&input, &output, limits()).unwrap_err().to_string().contains("carriage"));
+        std::fs::write(
+            &input,
+            r#"{"ts":"2026-08-13","stream":"other","chunk":"x"}
+"#,
+        )
+        .unwrap();
+        assert!(
+            index_run_log(&input, &output, limits())
+                .unwrap_err()
+                .to_string()
+                .contains("stream")
+        );
+        std::fs::write(
+            &input,
+            [
+                br#"{"ts":"2026-08-13","stream":"stdout","chunk":"x"}"# as &[u8],
+                b"\r\n",
+            ]
+            .concat(),
+        )
+        .unwrap();
+        assert!(
+            index_run_log(&input, &output, limits())
+                .unwrap_err()
+                .to_string()
+                .contains("carriage")
+        );
     }
 }
