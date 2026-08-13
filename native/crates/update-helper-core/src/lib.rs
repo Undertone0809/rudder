@@ -884,6 +884,8 @@ impl Drop for OwnershipFence {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     use super::*;
     use std::fs::{create_dir_all, write};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -893,9 +895,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "rudder-update-helper-{label}-{}-{suffix}",
-            std::process::id()
+            "rudder-update-helper-{label}-{}-{suffix}-{sequence}",
+            std::process::id(),
         ));
         create_dir_all(&root).unwrap();
         root
