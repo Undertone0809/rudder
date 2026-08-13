@@ -283,4 +283,74 @@ test.describe("Chat message layout", () => {
       fullPage: true,
     });
   });
+
+  test("aligns the final assistant result with the reasoning text column", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Result-Reasoning-Alignment-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Alignment Agent",
+    });
+
+    const chat = await seedLayoutChat({
+      orgId: organization.id,
+      title: "Result and reasoning alignment",
+      summary: "Regression coverage for assistant result alignment.",
+      preferredAgentId: chatAgent.id,
+    });
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final result text starts here.",
+      structuredPayload: {
+        __chatTranscript: [
+          {
+            kind: "thinking",
+            ts: "2026-08-14T00:00:01.000Z",
+            text: "Reasoning text starts here.",
+          },
+        ],
+      },
+      replyingAgentId: chatAgent.id,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText("Final result text starts here.", { timeout: 15_000 });
+
+    const transcript = page.getByTestId("chat-transcript-item");
+    await transcript.getByRole("button").click();
+    const reasoning = transcript.getByText("Reasoning text starts here.", { exact: true });
+    const result = assistantMessage.getByText("Final result text starts here.", { exact: true });
+    await expect(reasoning).toBeVisible();
+    await expect(result).toBeVisible();
+
+    const [reasoningBox, resultBox] = await Promise.all([
+      reasoning.boundingBox(),
+      result.boundingBox(),
+    ]);
+    expect(reasoningBox).not.toBeNull();
+    expect(resultBox).not.toBeNull();
+    expect(Math.abs(reasoningBox!.x - resultBox!.x)).toBeLessThanOrEqual(1);
+
+    await page.screenshot({ path: "/tmp/rudder-chat-result-reasoning-alignment.png", fullPage: true });
+  });
 });

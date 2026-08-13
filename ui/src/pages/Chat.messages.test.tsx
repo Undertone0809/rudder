@@ -746,7 +746,7 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
-  it("keeps agent attribution left while nudging the assistant body toward center", () => {
+  it("aligns the final assistant body with the process reading column", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",
       kind: "message",
@@ -760,7 +760,7 @@ describe("assistant chat message rendering", () => {
     expect(messageColumn?.classList.contains("mx-auto")).toBe(false);
     expect(
       container.querySelector('[data-annotation-surface="assistant_body"]')?.classList.contains("md:ml-6"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("marks only stable visible assistant bodies as response annotation sources", () => {
