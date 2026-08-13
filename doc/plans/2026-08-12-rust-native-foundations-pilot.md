@@ -37,12 +37,54 @@ commit_refs:
   - 23729835e
   - 6094efed8
   - 2f3dcdbd2
+  - 822ad3bc1
+  - 46eeeb010
+  - 19aef3ed5
+  - 63901e606
+  - b47578d15
+  - 9233861da
+  - 63aeb0101
+  - ca43d6124
+  - d456356cf
+  - 657890cd4
+  - 4df397e96
 updated_at: 2026-08-14
 ---
 
 # Rust Native Foundations Pilot
 
 ## Executive Decision
+
+### Continuation status (2026-08-14)
+
+The current `0.7.5` continuation adds three fail-closed evidence producers:
+the Rust-versus-optimized-Node Workspace backup comparator, a packaged Local
+App dogfood cycle producer, and a strict Local App `native_ab` summary
+producer. Their focused tests and static checks pass, but they do not close
+the pilot gates. The backup comparator proves manifest/tree/entry/content
+parity, `unzip -t`, and atomic publication recovery on a small real fixture;
+ZIP byte SHA is intentionally recorded as `not_compared` because the two
+implementations use different archive metadata. The measured fixture was
+diagnostic only (Node 127.475 ms and +2,850,816 RSS bytes; Rust 483.247 ms and
++1,048,576 RSS bytes), not a promotion claim.
+
+The packaged dogfood producer ran against the exact packaged Local App smoke
+surface and observed `0 accepted cycles / 0 UTC dates`. It failed closed
+because `desktop/dist/local-apps-registry.js` was absent; an isolated rebuild
+was separately blocked by existing `agent-runtime-utils` TypeScript
+`ChildProcess.on` errors. No synthetic ledger row was produced. The native A/B
+producer now emits exactly three measured trials per arm (six observations),
+but the live campaign remains blocked because the required release host and
+process-tree sampler binaries are absent. Therefore the decision ledger stays
+`accepted_default` for the shared foundation, `opt-in` for Local App and
+streaming backup, and `not_admitted` for the remaining four slices.
+
+This continuation does not authorize edits to `doc/product/**`, does not treat
+the summary importer as live evaluation evidence, and does not claim the pilot
+complete. The next valid transition is a newly frozen packaged `0.7.5`
+candidate with 100 accepted Local App lifecycle cycles spanning seven
+consecutive UTC dates, followed by a real three-trial `rudder-evals native_ab`
+campaign on the same source/artifact/runtime/workload identity.
 
 ### Current implementation status (2026-08-13)
 

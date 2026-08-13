@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "delivery_id": "rust-native-foundations-pilot-2026-08-13",
+  "delivery_id": "rust-native-foundations-pilot-2026-08-14-continuation",
   "status": "blocked",
   "owner": {
     "root_id": "codex-root",
@@ -23,60 +23,67 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-    "source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
+    "source_ref": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+    "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
+      "scripts/perf/local-app-dogfood-cycle.mjs",
+      "scripts/perf/local-app-dogfood-cycle.test.ts",
+      "scripts/perf/local-app-native-ab.summary.ts",
+      "scripts/perf/workspace-backup-rust-node-ab.ts",
+      "scripts/perf/workspace-backup-rust-node-ab.test.ts",
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
       "packages/identity-core/src/offline-grant.test.ts",
       "evidence/rust-native-foundations-delivery-packet.json"
     ],
     "build": {
-      "id": "desktop-dist-0.7.5-macos-arm64",
-      "source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "artifact_bound_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "portable_sha256": "233317fe692a400be173fe047e24d79da881ceb69018a3f68dd05ef0582dd7ff",
+      "id": "not_rebuilt_after_evidence_producers-0.7.5",
+      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "artifact_bound_source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "portable_sha256": "not_rebuilt_for_continuation",
       "native_sha256": {
-        "rudder-process-host": "0a70802dd7a946ad74c3a0d2007a642a2a48ea222f174311bb95ba112d84a82a",
-        "rudder-native": "287f92dceb9f8a71dd08456e07f50708a7a19ed7d694083527360fc718ce6fe1",
-        "rudder-update-helper": "2382810d194103e006a32f6d0be4c97b0dcf36531f49390fde1d9ae576fc685c"
+        "rudder-process-host": "not_rebuilt_for_continuation",
+        "rudder-native": "not_rebuilt_for_continuation",
+        "rudder-update-helper": "not_rebuilt_for_continuation"
       }
     },
     "runtime": {
-      "id": "macOS-arm64-packaged-Rudder-0.7.5",
-      "source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "artifact_bound_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "account_gate_smoke": "passed",
-      "email_code_smoke": "passed",
-      "app_builder_smoke": "not_run_with_native_opt_in",
+      "id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
+      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "artifact_bound_source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "account_gate_smoke": "historical_only_source_0e3c9b8",
+      "email_code_smoke": "historical_only_source_0e3c9b8",
+      "app_builder_smoke": "not_run_with_evidence_producer_candidate",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "Local App focused suite; packaged account-gate/email-code; 554-file/9.54 MB backup comparator; Rust archive/evidence unit fixtures",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); Rust/optimized-Node backup comparator small fixture (manifest/content/recovery parity, archiveByteParity=not_compared); native_ab summary producer (six rows, live campaign blocked)",
     "budget_lease": {
       "id": "turn-2026-08-13",
-      "fingerprint": "rust-native-foundations-pilot",
-      "expires_at": "2026-08-14T00:00:00+08:00"
+      "fingerprint": "rust-native-foundations-pilot-continuation",
+      "expires_at": "2026-08-15T00:00:00+08:00"
     },
     "acceptance_packet": {
-      "version": "1",
-      "fingerprint": "rust-native-foundations-pilot-packet-v1",
+      "version": "2",
+      "fingerprint": "rust-native-foundations-pilot-packet-v2-continuation",
       "criteria": [
         "Rust foundation format/clippy/tests and synchronized 0.7.5 metadata pass",
         "Local App focused native suite passes and Node fallback remains available",
         "macOS arm64 packaged Desktop builds, stages binaries, and account-gate smoke passes",
-        "Every slice has an evidence-backed accepted_default, opt-in, or not_admitted decision",
-        "No promotion claim uses the non-comparable 100-block sampler result or missing native_ab/live evidence"
+        "Rust/optimized-Node backup comparison records contract parity and recovery without claiming ZIP byte parity",
+        "Packaged Local App dogfood records real cycle/date counts and fails closed below 100 cycles across 7 UTC dates",
+        "native_ab producer emits exactly 3 trials per arm, while live evaluation remains blocked without real binaries"
       ],
       "state_inventory": [
         "implementation",
         "review_ready",
         "packaged acceptance",
-        "native_ab pending",
+        "dogfood blocked (0/100 cycles, 0/7 dates)",
+        "native_ab live blocked",
         "final decision ledger"
       ]
     }
@@ -85,29 +92,29 @@
     "reviewer": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "build_id": "desktop-dist-0.7.5-macos-arm64",
-      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.5",
+      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
+      "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "1"
+      "packet_version": "2"
     },
     "verifier": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "build_id": "desktop-dist-0.7.5-macos-arm64",
-      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.5",
+      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
+      "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "1"
+      "packet_version": "2"
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
-      "build_id": "desktop-dist-0.7.5-macos-arm64",
-      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.5",
+      "source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+      "build_id": "not_rebuilt_after_evidence_producers-0.7.5",
+      "runtime_id": "not_restarted_after_evidence_producers-macOS-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "1"
+      "packet_version": "2"
     }
   },
   "drift": {
@@ -118,6 +125,12 @@
         "before_source_sha": "cd6b7820d09f10aabf7f7822786beb8fec6ab093",
         "after_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
         "reason": "The 0.7.5 candidate adds release-version alignment and packaged native runtime configuration; prior 0.7.4 receipts are invalid."
+      },
+      {
+        "type": "candidate_drift_after_prior_delivery",
+        "before_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
+        "after_source_sha": "63901e60658463e843aefd1c6eabc1ea32a2b1e4",
+        "reason": "Evidence producers and comparator tests were integrated after the prior receipt; packaged artifacts and all prior reviewer/verifier/final receipts are stale for this continuation."
       }
     ],
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
@@ -161,15 +174,14 @@
     ]
   },
   "terminal": {
-    "delivered_ref": "refs/heads/main",
-    "delivered_sha": "db55044a299d57a92cf43df9c95f9ba03b744b6f",
-    "delivered_tree_sha": "2f04a3a265fab25687a875e2c0eb5b32aaf91c08",
-    "timestamp": "2026-08-14T01:52:00+08:00",
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
     "proof": [
-      "git update-ref refs/heads/main db55044a299d57a92cf43df9c95f9ba03b744b6f 6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
-      "merge-tree --write-tree 2f04a3a265fab25687a875e2c0eb5b32aaf91c08",
-      "shared worktree dirty/index state preserved; concurrent index drift recorded outside packet",
-      "prior packaged receipts invalidated because their artifact source was cf26412d3; current remote observed at 96cb4fe6a5f09cba266770b854627467bfc854a1"
+      "prior main receipt db55044a299d57a92cf43df9c95f9ba03b744b6f is superseded by candidate drift",
+      "continuation remains blocked until exact current candidate is rebuilt, reviewed, and independently verified",
+      "shared worktree dirty/index state remains preserved"
     ]
   }
 }
