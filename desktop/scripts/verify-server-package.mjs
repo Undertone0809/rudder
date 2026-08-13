@@ -415,6 +415,7 @@ async function verifyVersionCompatibility(serverPackageDir) {
   const target = resolveNativeTarget(process.platform, process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch);
   const binaryPaths = target
     ? [
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-native.exe" : "rudder-native"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper"),
       ]
