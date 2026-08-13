@@ -61,6 +61,7 @@ import { useOptionalSavedViewPromotion } from "@/context/SavedViewPromotionConte
 import { MAX_BROWSER_TABS_PER_CONTEXT, useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useBrowserSavedViewMetadataPersister } from "@/hooks/useBrowserSavedViewMetadataPersister";
+import { useCurrentUserAvatar } from "@/hooks/useCurrentUserAvatar";
 import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { createBrowserSidePanelTarget as createChatSidePanelBrowserTarget } from "@/lib/browser-side-panel";
 import { requestChatFileAnnotationLocation } from "@/lib/chat-file-annotation-events";
@@ -517,6 +518,7 @@ function ChatIssueSidePanelView({
   updating,
   addingComment,
   currentUserId,
+  currentUserAvatarUrl,
   agentMap,
   operatorDisplayName,
   expanded = false,
@@ -529,6 +531,7 @@ function ChatIssueSidePanelView({
   updating: boolean;
   addingComment: boolean;
   currentUserId: string | null;
+  currentUserAvatarUrl: string | null;
   agentMap: Map<string, Agent>;
   operatorDisplayName: string | null;
   expanded?: boolean;
@@ -651,6 +654,7 @@ function ChatIssueSidePanelView({
               )}
               agentMap={agentMap}
               currentUserId={currentUserId}
+              currentUserAvatarUrl={currentUserAvatarUrl}
               operatorDisplayName={operatorDisplayName}
               hideHeading
               emptyMessage="No comments yet."
@@ -2155,6 +2159,7 @@ export function ChatSidePanel({
   const issue = issueTarget ? issueQuery.data : null;
   const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;
+  const currentUserAvatarUrl = useCurrentUserAvatar();
   const agentMap = new Map((agentsQuery.data ?? []).map((agent) => [agent.id, agent]));
   const chat = chatTarget ? chatQuery.data : null;
   const sourceConversation = sourceConversationId ? sourceConversationQuery.data : null;
@@ -2741,6 +2746,7 @@ export function ChatSidePanel({
                 updating={updateIssueMutation.isPending}
                 addingComment={addIssueCommentMutation.isPending}
                 currentUserId={currentUserId}
+                currentUserAvatarUrl={currentUserAvatarUrl}
                 agentMap={agentMap}
                 operatorDisplayName={operatorDisplayName}
                 expanded={expanded}

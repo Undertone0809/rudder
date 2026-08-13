@@ -1,3 +1,4 @@
+import { useCurrentUserAvatar } from "@/hooks/useCurrentUserAvatar";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { useLocation, useSearchParams } from "@/lib/router";
 import type { Agent, Issue, IssueSearchField, Project, ReorderIssue } from "@rudderhq/shared";
@@ -13,6 +14,7 @@ import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { PriorityBarsIcon } from "../components/PriorityIcon";
+import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -103,6 +105,7 @@ function DraftIssuesView({
   agents,
   projects,
   currentUserId,
+  currentUserAvatarUrl,
   deletingDraftIds,
   onOpenDraft,
   onDeleteDraft,
@@ -111,6 +114,7 @@ function DraftIssuesView({
   agents?: Agent[];
   projects?: Project[];
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   deletingDraftIds?: Set<string>;
   onOpenDraft: (draft: IssueDraftSummary) => void;
   onDeleteDraft: (draft: IssueDraftSummary) => void;
@@ -137,6 +141,7 @@ function DraftIssuesView({
           const isDeleting = deletingDraftIds?.has(draft.id) ?? false;
           const projectName = resolveDraftProjectName(draft, projects);
           const assigneeLabel = resolveDraftAssigneeLabel(draft, agents, currentUserId);
+          const draftAssignee = parseAssigneeValue(draft.assigneeValue || draft.assigneeId || "");
           const metadataItems = [
             draft.status
               ? { key: "status", icon: <CircleDot className="h-3 w-3 shrink-0" />, label: formatDraftMetadataValue(draft.status) }
@@ -149,7 +154,18 @@ function DraftIssuesView({
                 }
               : null,
             projectName ? { key: "project", icon: <FolderKanban className="h-3 w-3 shrink-0" />, label: projectName } : null,
-            assigneeLabel ? { key: "assignee", icon: <UserRound className="h-3 w-3 shrink-0" />, label: assigneeLabel } : null,
+            assigneeLabel ? {
+              key: "assignee",
+              icon: draftAssignee.assigneeUserId === currentUserId && currentUserAvatarUrl
+                ? (
+                  <Avatar size="xs" data-avatar-url={currentUserAvatarUrl} className="h-3.5 w-3.5">
+                    <AvatarImage src={currentUserAvatarUrl} alt={assigneeLabel} />
+                    <AvatarFallback><UserRound className="h-3 w-3" /></AvatarFallback>
+                  </Avatar>
+                )
+                : <UserRound className="h-3 w-3 shrink-0" />,
+              label: assigneeLabel,
+            } : null,
             { key: "updated", icon: <Clock3 className="h-3 w-3 shrink-0" />, label: relativeTime(draft.updatedAt) },
           ].filter((item): item is DraftMetadataItem => Boolean(item));
 
@@ -294,6 +310,7 @@ export function Issues() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const currentUserAvatarUrl = useCurrentUserAvatar();
   const [issueDraftSummaries, setIssueDraftSummaries] = useState<IssueDraftSummary[]>(() =>
     summarizeIssueDrafts(selectedOrganizationId),
   );
@@ -445,6 +462,7 @@ export function Issues() {
         agents={agents}
         projects={projects}
         currentUserId={currentUserId}
+        currentUserAvatarUrl={currentUserAvatarUrl}
         deletingDraftIds={deletingDraftIds}
         onOpenDraft={(draft) => {
           openNewIssue({ draftId: draft.id });

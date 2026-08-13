@@ -17,6 +17,11 @@ const dialogState = vi.hoisted(() => ({
     { id: "label-1", orgId: "org-1", name: "backend", color: "#2563eb", createdAt: "", updatedAt: "" },
   ],
 }));
+const avatarState = vi.hoisted(() => ({ value: "https://example.test/me.png" as string | null }));
+
+vi.mock("../hooks/useCurrentUserAvatar", () => ({
+  useCurrentUserAvatar: () => avatarState.value,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => {
@@ -300,6 +305,7 @@ vi.mock("../api/assets", () => ({
 
 describe("NewIssueDialog", () => {
   beforeEach(() => {
+    avatarState.value = "https://example.test/me.png";
     capturedMentions = [];
     capturedMarkdownEditorProps = null;
     dialogState.newIssueDefaults = { assigneeAgentId: "agent-1" };
@@ -379,6 +385,14 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("flex-col text-left");
     expect(html).toContain("Chief Technology Officer");
     expect(html).not.toContain("Ella (Chief Technology Officer)");
+  });
+
+  it("uses the account avatar for current-user assignee and reviewer choices", () => {
+    dialogState.newIssueDefaults = { assigneeUserId: "user-1", reviewerUserId: "user-1" };
+
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect((html.match(/data-avatar-url="https:\/\/example\.test\/me\.png"/g) ?? [])).toHaveLength(2);
   });
 
   it("uses a wider dialog with a compact description editor", () => {

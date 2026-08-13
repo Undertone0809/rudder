@@ -15,6 +15,7 @@ const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
 const mockProjects = vi.hoisted(() => ({ current: [] as Project[] }));
 const mockAgents = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }));
 const mockGoalsEnabled = vi.hoisted(() => ({ current: true }));
+const mockCurrentUserAvatar = vi.hoisted(() => ({ current: "https://example.test/current.png" as string | null }));
 const longAgentName = "ZST Runtime Smoke Agent With A Very Long Operational Name";
 
 vi.mock("@tanstack/react-query", () => ({
@@ -99,6 +100,10 @@ vi.mock("../hooks/useExperimentalGoalsEnabled", () => ({
   }),
 }));
 
+vi.mock("../hooks/useCurrentUserAvatar", () => ({
+  useCurrentUserAvatar: () => mockCurrentUserAvatar.current,
+}));
+
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
     <a href={to} {...props}>{children}</a>
@@ -114,6 +119,7 @@ beforeEach(() => {
   mockProjects.current = [];
   mockAgents.current = [];
   mockGoalsEnabled.current = true;
+  mockCurrentUserAvatar.current = "https://example.test/current.png";
 });
 
 afterEach(() => {
@@ -225,6 +231,42 @@ function project(overrides: Partial<Project> = {}): Project {
 }
 
 describe("IssueProperties", () => {
+  it("uses the current account avatar for current-user identity rows", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{ ...baseIssue, assigneeAgentId: null, assigneeUserId: "user-1" }}
+          onUpdate={vi.fn()}
+        />,
+      );
+    });
+
+    const avatars = container.querySelectorAll('[data-avatar-url="https://example.test/current.png"]');
+    expect(avatars).toHaveLength(2);
+  });
+
+  it("does not use the current account avatar for another user", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{ ...baseIssue, assigneeAgentId: null, assigneeUserId: "user-2", createdByUserId: "user-2" }}
+          onUpdate={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-avatar-url="https://example.test/current.png"]')).toBeNull();
+  });
   it("hides Goal relationships while the experimental feature is disabled", () => {
     mockGoalsEnabled.current = false;
     const container = document.createElement("div");

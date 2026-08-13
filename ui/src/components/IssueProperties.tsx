@@ -4,7 +4,7 @@ import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor 
 import { Link } from "@/lib/router";
 import type { Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target, User } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -14,6 +14,7 @@ import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -179,6 +180,9 @@ export function IssueProperties({
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId;
+  const currentUserAvatarUrl = useCurrentUserAvatar();
+  const avatarForUser = (userId: string | null | undefined) =>
+    userId && userId === currentUserId ? currentUserAvatarUrl : null;
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(orgId!),
@@ -487,7 +491,7 @@ export function IssueProperties({
       className="w-full"
     />
   ) : assigneeUserLabel ? (
-    <AssigneeLabel kind="user" label={assigneeUserLabel} />
+    <AssigneeLabel kind="user" label={assigneeUserLabel} avatarUrl={avatarForUser(issue.assigneeUserId)} />
   ) : (
     <AssigneeLabel kind="unassigned" label="Unassigned" muted />
   );
@@ -529,7 +533,7 @@ export function IssueProperties({
               setAssigneeOpen(false);
             }}
           >
-            <AssigneeSelfActionLabel />
+            <AssigneeSelfActionLabel avatarUrl={currentUserAvatarUrl} />
           </button>
         )}
         {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
@@ -546,6 +550,7 @@ export function IssueProperties({
             <AssigneeLabel
               kind="user"
               label={creatorUserLabel ? `Assign to ${creatorUserLabel}` : "Assign to requester"}
+              avatarUrl={avatarForUser(issue.createdByUserId)}
             />
           </button>
         )}
@@ -598,7 +603,7 @@ export function IssueProperties({
       className="w-full"
     />
   ) : reviewerUserLabel ? (
-    <AssigneeLabel kind="user" label={reviewerUserLabel} />
+    <AssigneeLabel kind="user" label={reviewerUserLabel} avatarUrl={avatarForUser(issue.reviewerUserId)} />
   ) : (
     <AssigneeLabel kind="unassigned" label="No reviewer" muted />
   );
@@ -637,7 +642,7 @@ export function IssueProperties({
               setReviewerOpen(false);
             }}
           >
-            <AssigneeSelfActionLabel />
+            <AssigneeSelfActionLabel avatarUrl={currentUserAvatarUrl} />
           </button>
         )}
         {sortedAgents
@@ -1190,10 +1195,11 @@ export function IssueProperties({
                     />
                   </Link>
                 ) : (
-                  <>
-                    <User className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-sm">{creatorUserLabel ?? "User"}</span>
-                  </>
+                  <AssigneeLabel
+                    kind="user"
+                    label={creatorUserLabel ?? "User"}
+                    avatarUrl={avatarForUser(issue.createdByUserId)}
+                  />
                 )}
               </PropertyRow>
             )}

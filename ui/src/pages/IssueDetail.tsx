@@ -77,6 +77,7 @@ import { useImagePreview } from "../context/ImagePreviewContext";
 import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useIssueFollows } from "../hooks/useIssueFollows";
 import { useIssueTimelineQueries } from "../hooks/useIssueTimelineQueries";
 import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
@@ -996,6 +997,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const { confirm } = useDialog();
   const { locale } = useI18n();
   const operatorDisplayName = useOperatorDisplayName();
+  const currentUserAvatarUrl = useCurrentUserAvatar();
   const relativePath = toOrganizationRelativePath(location.pathname);
   const issueRouteBasePath = relativePath.startsWith("/messenger/issues") ? "/messenger/issues" : "/issues";
   const [desktopMoreOpen, setDesktopMoreOpen] = useState(false);
@@ -2311,7 +2313,11 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                           <span className="font-mono text-xs text-muted-foreground">{child.assigneeAgentId.slice(0, 8)}</span>
                         )
                       ) : child.assigneeUserId ? (
-                        <Identity name={resolveBoardActorLabel("user", child.assigneeUserId, currentBoardUserId, operatorDisplayName)} size="sm" />
+                        <Identity
+                          name={resolveBoardActorLabel("user", child.assigneeUserId, currentBoardUserId, operatorDisplayName)}
+                          avatarUrl={child.assigneeUserId === currentBoardUserId ? currentUserAvatarUrl : null}
+                          size="sm"
+                        />
                       ) : null}
                     </div>
                   </Link>
@@ -2466,6 +2472,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           onMentionQueryChange={setLibraryFileMentionQuery}
           operatorDisplayName={operatorDisplayName}
           currentUserId={currentBoardUserId}
+          currentUserAvatarUrl={currentUserAvatarUrl}
           hideHeading
           emptyMessage="No activity yet."
           escapeBackWhenEmpty

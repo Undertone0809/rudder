@@ -42,6 +42,7 @@ import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -85,7 +86,7 @@ import {
 } from "../lib/runtime-thinking-effort";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
 import { cn } from "../lib/utils";
-import { AgentMenuLabel } from "./AssigneeLabel";
+import { AgentMenuLabel, AssigneeLabel } from "./AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
@@ -297,6 +298,7 @@ export function NewIssueDialog() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const currentUserAvatarUrl = useCurrentUserAvatar();
   const activeProjects = useMemo(
     () => (projects ?? []).filter((p) => !p.archivedAt),
     [projects],
@@ -1654,7 +1656,7 @@ export function NewIssueDialog() {
                     currentAssignee ? (
                       <AgentMenuLabel agent={currentAssignee} agentAvatarStyle="bare" />
                     ) : (
-                      <span className="truncate">{option.label}</span>
+                      <AssigneeLabel kind="user" label={option.label} avatarUrl={selectedAssigneeUserId === currentUserId ? currentUserAvatarUrl : null} />
                     )
                   ) : (
                     <span className="text-muted-foreground">No assignee</span>
@@ -1667,7 +1669,7 @@ export function NewIssueDialog() {
                     : null;
                   return assignee
                     ? <AgentMenuLabel agent={assignee} agentAvatarStyle="bare" />
-                    : <span className="truncate">{option.label}</span>;
+                    : <AssigneeLabel kind="user" label={option.label} avatarUrl={parseAssigneeValue(option.id).assigneeUserId === currentUserId ? currentUserAvatarUrl : null} />;
                 }}
               />
             </div>
@@ -1737,7 +1739,7 @@ export function NewIssueDialog() {
                     currentReviewer ? (
                       <AgentMenuLabel agent={currentReviewer} agentAvatarStyle="bare" />
                     ) : (
-                      <span className="truncate">{option.label}</span>
+                      <AssigneeLabel kind="user" label={option.label} avatarUrl={selectedReviewerUserId === currentUserId ? currentUserAvatarUrl : null} />
                     )
                   ) : (
                     <span className="text-muted-foreground">No reviewer</span>
@@ -1750,7 +1752,7 @@ export function NewIssueDialog() {
                     : null;
                   return reviewer
                     ? <AgentMenuLabel agent={reviewer} agentAvatarStyle="bare" />
-                    : <span className="truncate">{option.label}</span>;
+                    : <AssigneeLabel kind="user" label={option.label} avatarUrl={parseAssigneeValue(option.id).assigneeUserId === currentUserId ? currentUserAvatarUrl : null} />;
                 }}
               />
             </div>

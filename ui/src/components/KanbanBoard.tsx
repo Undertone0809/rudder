@@ -1,3 +1,4 @@
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
@@ -166,6 +167,7 @@ interface KanbanBoardProps {
   issues: Issue[];
   agents?: Agent[];
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   displayProperties?: IssueDisplayProperty[];
   sortState?: IssueSortState;
   liveIssueIds?: Set<string>;
@@ -208,6 +210,7 @@ function KanbanPersonMeta({
   userId,
   fallbackId,
   currentUserId,
+  currentUserAvatarUrl,
   showRole = true,
 }: {
   relationship: "assignee" | "reviewer";
@@ -215,6 +218,7 @@ function KanbanPersonMeta({
   userId?: string | null;
   fallbackId?: string | null;
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   showRole?: boolean;
 }) {
   const roleLabel = relationship === "assignee" ? "Assignee" : "Reviewer";
@@ -247,6 +251,14 @@ function KanbanPersonMeta({
       {agent ? (
         <span className="inline-flex min-w-0 max-w-full flex-1 items-center gap-1 text-xs">
           <AgentIcon icon={agent.icon} role={agent.role} className="h-3 w-3 shrink-0" />
+          <span className="truncate">{displayName}</span>
+        </span>
+      ) : userId === currentUserId && currentUserAvatarUrl ? (
+        <span className="inline-flex min-w-0 max-w-full flex-1 items-center gap-1 text-xs">
+          <Avatar size="xs" data-avatar-url={currentUserAvatarUrl}>
+            <AvatarImage src={currentUserAvatarUrl} alt={displayName} />
+            <AvatarFallback><Icon className="h-3 w-3" /></AvatarFallback>
+          </Avatar>
           <span className="truncate">{displayName}</span>
         </span>
       ) : (
@@ -286,6 +298,7 @@ function KanbanColumn({
   issues,
   agents,
   currentUserId,
+  currentUserAvatarUrl,
   displayProperties = DEFAULT_ISSUE_DISPLAY_PROPERTIES,
   liveIssueIds,
   issueLinkState,
@@ -300,6 +313,7 @@ function KanbanColumn({
   issues: Issue[];
   agents?: Agent[];
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   displayProperties?: IssueDisplayProperty[];
   liveIssueIds?: Set<string>;
   issueLinkState?: unknown;
@@ -351,6 +365,7 @@ function KanbanColumn({
               issue={issue}
               agents={agents}
               currentUserId={currentUserId}
+              currentUserAvatarUrl={currentUserAvatarUrl}
               displayProperties={displayProperties}
               isLive={liveIssueIds?.has(issue.id)}
               issueLinkState={issueLinkState}
@@ -407,6 +422,7 @@ function KanbanCard({
   issue,
   agents,
   currentUserId,
+  currentUserAvatarUrl,
   displayProperties = DEFAULT_ISSUE_DISPLAY_PROPERTIES,
   isLive,
   issueLinkState,
@@ -420,6 +436,7 @@ function KanbanCard({
   issue: Issue;
   agents?: Agent[];
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   displayProperties?: IssueDisplayProperty[];
   isLive?: boolean;
   issueLinkState?: unknown;
@@ -470,6 +487,7 @@ function KanbanCard({
       userId={issue.assigneeUserId}
       fallbackId={!agent && issue.assigneeAgentId ? issue.assigneeAgentId : null}
       currentUserId={currentUserId}
+      currentUserAvatarUrl={currentUserAvatarUrl}
       showRole={false}
     />
   ) : null;
@@ -480,6 +498,7 @@ function KanbanCard({
       userId={issue.reviewerUserId}
       fallbackId={!reviewerAgent && issue.reviewerAgentId ? issue.reviewerAgentId : null}
       currentUserId={currentUserId}
+      currentUserAvatarUrl={currentUserAvatarUrl}
       showRole={false}
     />
   ) : null;
@@ -626,6 +645,7 @@ export function KanbanBoard({
   issues,
   agents,
   currentUserId,
+  currentUserAvatarUrl,
   displayProperties,
   sortState,
   liveIssueIds,
@@ -812,6 +832,7 @@ export function KanbanBoard({
                 issues={columnIssues[status] ?? []}
                 agents={agents}
                 currentUserId={currentUserId}
+                currentUserAvatarUrl={currentUserAvatarUrl}
                 displayProperties={displayProperties}
                 liveIssueIds={liveIssueIds}
                 issueLinkState={issueLinkState}
@@ -857,6 +878,7 @@ export function KanbanBoard({
             issue={activeIssue}
             agents={agents}
             currentUserId={currentUserId}
+            currentUserAvatarUrl={currentUserAvatarUrl}
             displayProperties={displayProperties}
             isOverlay
             projects={projects}

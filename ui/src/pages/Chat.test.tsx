@@ -629,7 +629,7 @@ function renderProposalCard(
   chat: ChatConversation = conversation({}),
   agents?: Agent[],
   decisionNote = "",
-  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "actionPending" | "currentUserId" | "issueProposalOverride" | "onIssueProposalChange" | "issueCreatedMessage">> = {},
+  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "actionPending" | "currentUserId" | "currentUserAvatarUrl" | "issueProposalOverride" | "onIssueProposalChange" | "issueCreatedMessage">> = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -1084,6 +1084,35 @@ describe("chat empty state heading", () => {
 });
 
 describe("ProposalCard", () => {
+  it("uses the account avatar only for current-user proposal principals", () => {
+    const currentHtml = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      structuredPayload: {
+        title: "Current owner",
+        description: "Use the signed-in account avatar.",
+        assigneeUserId: "local-board",
+      },
+    }), conversation({}), [], "", {
+      currentUserId: "local-board",
+      currentUserAvatarUrl: "https://example.test/current.png",
+    });
+    const otherHtml = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      structuredPayload: {
+        title: "Other owner",
+        description: "Keep another user's fallback.",
+        assigneeUserId: "other-user",
+      },
+    }), conversation({}), [], "", {
+      currentUserId: "local-board",
+      currentUserAvatarUrl: "https://example.test/current.png",
+    });
+
+    expect(currentHtml).toContain('data-avatar-url="https://example.test/current.png"');
+    expect(otherHtml).not.toContain('data-avatar-url="https://example.test/current.png"');
+  });
   it("keeps assistant rationale outside the structured review card", () => {
     const assistantBody = "结论：不通过，需要修。这个应该作为普通回复正文。";
     const issueTitle = "Fix issue Chat entry";

@@ -1,4 +1,4 @@
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import { cn } from "@/lib/utils";
 import type { Agent, AgentRole } from "@rudderhq/shared";
@@ -14,6 +14,7 @@ interface AssigneeLabelProps {
   badgeLabel?: string | null;
   agentIcon?: string | null;
   agentRole?: AgentRole | null;
+  avatarUrl?: string | null;
   className?: string;
   layout?: "inline" | "stacked";
   muted?: boolean;
@@ -50,6 +51,7 @@ export function AssigneeLabel({
   badgeLabel,
   agentIcon,
   agentRole,
+  avatarUrl,
   className,
   layout = "inline",
   muted = false,
@@ -76,7 +78,8 @@ export function AssigneeLabel({
           </span>
         )
       ) : (
-        <Avatar size="sm">
+        <Avatar size="sm" data-avatar-url={kind === "user" && avatarUrl ? avatarUrl : undefined}>
+          {kind === "user" && avatarUrl ? <AvatarImage src={avatarUrl} alt={label} /> : null}
           <AvatarFallback
             className={cn(
               kind === "unassigned" && "border border-dashed border-muted-foreground/35 bg-muted/30",
@@ -136,12 +139,21 @@ export function AgentMenuLabel({
   );
 }
 
-export function AssigneeSelfActionLabel({ label = "Assign to me" }: { label?: string }) {
+export function AssigneeSelfActionLabel({
+  label = "Assign to me",
+  avatarUrl,
+}: {
+  label?: string;
+  avatarUrl?: string | null;
+}) {
   return (
     <span data-slot="assignee-self-action-label" className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
-        <User className="h-3.5 w-3.5" />
-      </span>
+      <Avatar size="sm" data-avatar-url={avatarUrl ?? undefined}>
+        {avatarUrl ? <AvatarImage src={avatarUrl} alt={label} /> : null}
+        <AvatarFallback className="border border-border/70 bg-muted/40">
+          <User className="h-3.5 w-3.5" />
+        </AvatarFallback>
+      </Avatar>
       <span className="truncate text-xs font-medium leading-4 text-foreground">{label}</span>
     </span>
   );
