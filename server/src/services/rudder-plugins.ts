@@ -175,6 +175,7 @@ function normalizeFiles(input: InspectRudderPlugin): {
       || normalized.startsWith("../")
       || normalized.includes("/../")
       || path.posix.isAbsolute(normalized)
+      || path.win32.isAbsolute(slashPath)
       || normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")
     ) {
       throw unprocessable(`Unsafe Plugin file path: ${inputFile.path}`);

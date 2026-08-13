@@ -1333,6 +1333,42 @@ describe("CommentThread", () => {
     expect(html).not.toContain("You");
   });
 
+  it("uses the account avatar only for the current user's comments", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThread
+          comments={[
+            {
+              id: "comment-current",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-1",
+              authorAgentId: null,
+              body: "Current user comment",
+              createdAt: new Date("2026-05-07T00:00:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+            },
+            {
+              id: "comment-other",
+              issueId: "issue-1",
+              orgId: "org-1",
+              authorUserId: "user-2",
+              authorAgentId: null,
+              body: "Other user comment",
+              createdAt: new Date("2026-05-07T00:01:00.000Z"),
+              updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+            },
+          ]}
+          onAdd={async () => undefined}
+          currentUserId="user-1"
+          currentUserAvatarUrl="https://example.test/current.png"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html.match(/data-avatar-url="https:\/\/example\.test\/current\.png"/g)).toHaveLength(1);
+  });
+
   it("falls back to You for board-authored comments without a nickname", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

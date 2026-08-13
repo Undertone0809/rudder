@@ -3,6 +3,7 @@ import {
   applyRudderBrowserCapabilityEnv,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
+  resolveManagedExternalMcpBindings,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
   type AgentRuntimeControlHandleLease,
@@ -58,6 +59,7 @@ import {
 } from "./codex-home.js";
 import { estimateCodexCostUsd } from "./cost.js";
 import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
+import { buildCodexLoadedMcpServers } from "./mcp-evidence.js";
 import {
   isCodexTransportDisconnectError,
   isCodexUnknownSessionError,
@@ -545,6 +547,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     rudderMcpPreflight.available,
     computerMcpCommand ?? undefined,
   );
+  const loadedMcpServers = buildCodexLoadedMcpServers({
+    coreEnabled: rudderMcpPreflight.available,
+    browserEnabled,
+    computerEnabled,
+    externalBindings: resolveManagedExternalMcpBindings(config, runtimeEnv),
+  });
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   const executableCommand = await resolveCodexCommand(command, cwd, runtimeEnv);
@@ -711,6 +719,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         prompt,
         agentInstructionStack: prompt,
         promptMetrics,
+        loadedMcpServers,
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
@@ -859,6 +868,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         promptMetrics: isTransportContinuation
           ? { ...promptMetrics, promptChars: attemptPrompt.length }
           : promptMetrics,
+        loadedMcpServers,
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),

@@ -3,6 +3,7 @@ import { Link } from "@/lib/router";
 import type { Agent, ChatConversation, IssueLabel, Project } from "@rudderhq/shared";
 import { Check, ChevronDown, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck, Tag, UserPlus } from "lucide-react";
 import type { ReactNode } from "react";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { formatPriorityLabel } from "../lib/priorities";
@@ -14,6 +15,7 @@ import {
   ApprovalInlineCode,
   ApprovalTag,
 } from "./approval-ui";
+import { AssigneeLabel } from "./AssigneeLabel";
 import { MarkdownBody } from "./MarkdownBody";
 
 export interface ApprovalPayloadContext {
@@ -365,6 +367,8 @@ function AssigneeField({
   agents?: Agent[] | null;
   currentUserId?: string | null;
 }) {
+  const currentUserAvatarUrl = useCurrentUserAvatar();
+
   if (typeof agentId === "string" && agentId.trim()) {
     const agent = lookupAgent(agentId, agents);
     return (
@@ -384,7 +388,11 @@ function AssigneeField({
     const readableLabel = userLabel === userId.slice(0, 5) ? fallbackLabel : userLabel;
     return (
       <ApprovalField label={fieldLabel}>
-        <span className="font-medium">{readableLabel}</span>
+        <AssigneeLabel
+          kind="user"
+          label={readableLabel}
+          avatarUrl={userId === currentUserId ? currentUserAvatarUrl : null}
+        />
       </ApprovalField>
     );
   }

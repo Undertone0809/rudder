@@ -107,6 +107,11 @@ export interface AgentRuntimeLoadedSkillMeta {
   description?: string | null;
 }
 
+export interface AgentRuntimeLoadedMcpServerMeta {
+  serverName: string;
+  source: "built_in" | "managed_external";
+}
+
 export interface AgentRuntimeInvocationMeta {
   agentRuntimeType: string;
   command: string;
@@ -124,6 +129,12 @@ export interface AgentRuntimeInvocationMeta {
    */
   agentInstructionStack?: string;
   promptMetrics?: Record<string, number>;
+  /**
+   * MCP servers realized in the isolated runtime configuration for this
+   * invocation attempt. This is configuration evidence, not proof that a tool
+   * from every server was called successfully.
+   */
+  loadedMcpServers?: AgentRuntimeLoadedMcpServerMeta[];
   /**
    * Skills made available to the runtime for this invocation.
    * This is availability evidence, not proof the model used the skill.

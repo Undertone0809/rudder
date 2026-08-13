@@ -21,9 +21,10 @@ import {
 } from "@rudderhq/shared";
 import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import {
   ensureOrganizationWorkspaceLayout,
   resolveDefaultBackupDir,
@@ -31,6 +32,16 @@ import {
   resolveRudderInstanceId,
 } from "../home-paths.js";
 import { organizationService } from "./orgs.js";
+import {
+  createWorkspaceBackupV2,
+  createWorkspaceBackupV2File,
+  createWorkspaceBackupV2Native,
+  formatWorkspaceBackupV2NativeFallback,
+  inspectWorkspaceBackupV2File,
+  readWorkspaceBackupV2File,
+  workspaceBackupV2NativeDiagnostic,
+  type WorkspaceBackupV2ArchiveIndex,
+} from "./workspace-backup-v2.js";
 
 const ARTIFACT_VERSION = 1;
 const MAX_PREVIEW_BYTES = 200_000;
@@ -64,6 +75,14 @@ const MAX_WARNING_COUNT = 200;
 const SPARSE_WORKSPACE_RECOVERY_MAX_CURRENT_FILES = 25;
 const SPARSE_WORKSPACE_RECOVERY_MAX_RATIO = 0.25;
 const SPARSE_WORKSPACE_RECOVERY_MIN_BACKUP_FILES = 10;
+
+export function isWorkspaceBackupV2Enabled() {
+  return process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED === "true";
+}
+
+export function isWorkspaceBackupV2NativeEnabled() {
+  return isWorkspaceBackupV2Enabled() && process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE === "true";
+}
 
 type WorkspaceBackupArtifactEntry = {
   path: string;
@@ -126,8 +145,76 @@ export type WorkspaceBackupDownload = {
   contentType: "application/json" | "application/zip";
   byteSize: number;
   archiveSha256: string | null;
-  content: Buffer;
+  content?: Buffer;
+  contentStream?: ReturnType<typeof createReadStream>;
 };
+
+type WorkspaceBackupV2Payload = {
+  filePath: string;
+  index: WorkspaceBackupV2ArchiveIndex;
+};
+
+type WorkspaceBackupPayload = {
+  raw: Buffer | null;
+  artifact: WorkspaceBackupArtifact;
+  v2?: WorkspaceBackupV2Payload;
+};
+
+export type WorkspaceRestoreReceiptPhase =
+  | "prepared"
+  | "live_moved"
+  | "committed"
+  | "rolled_back"
+  | "recovery_required";
+
+export type WorkspaceRestoreReceipt = {
+  version: 1;
+  operationId: string;
+  orgId: string;
+  backupId: string;
+  phase: WorkspaceRestoreReceiptPhase;
+  workspaceRoot: string;
+  stagingRoot: string;
+  rollbackRoot: string;
+  liveTreeSha256: string | null;
+  stagingTreeSha256: string;
+  expectedTreeSha256: string | null;
+  publishedTreeSha256?: string;
+  preRestoreBackupId: string;
+  recoveryCode?: string;
+  recoveryDetail?: string;
+};
+
+export type WorkspaceRestoreRecoveryResult = {
+  operationId: string;
+  orgId: string;
+  phase: WorkspaceRestoreReceiptPhase;
+  recovered: boolean;
+  action: "completed" | "rolled_back" | "deferred" | "discarded";
+  recoveryCode?: string;
+};
+
+export class WorkspaceRestoreRecoveryRequiredError extends HttpError {
+  readonly operationId: string;
+  readonly recoveryCode: string;
+
+  constructor(receipt: Pick<WorkspaceRestoreReceipt, "operationId" | "orgId" | "backupId" | "workspaceRoot" | "stagingRoot" | "rollbackRoot">, recoveryCode: string, detail: string) {
+    super(409, "Workspace restore requires recovery before another restore can run.", {
+      code: "restore_recovery_required",
+      operationId: receipt.operationId,
+      orgId: receipt.orgId,
+      backupId: receipt.backupId,
+      recoveryCode,
+      detail,
+      workspaceRoot: receipt.workspaceRoot,
+      stagingRoot: receipt.stagingRoot,
+      rollbackRoot: receipt.rollbackRoot,
+    });
+    this.name = "WorkspaceRestoreRecoveryRequiredError";
+    this.operationId = receipt.operationId;
+    this.recoveryCode = recoveryCode;
+  }
+}
 
 export type SparseWorkspaceRecoveryResult = {
   orgId: string;
@@ -472,6 +559,240 @@ async function removeDirectoryIfEmpty(directoryPath: string): Promise<void> {
       return;
     }
     throw error;
+  }
+}
+
+async function writeRestoreReceipt(filePath: string, value: Record<string, unknown>) {
+  const temporary = `${filePath}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  const handle = await fs.open(temporary, "r+");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(temporary, filePath);
+  await syncDirectory(path.dirname(filePath));
+}
+
+async function workspaceTreeSha256(rootPath: string) {
+  const warnings: string[] = [];
+  const entries = await walkWorkspace(rootPath, rootPath, warnings);
+  return buildTreeHash(entries);
+}
+
+async function syncDirectory(directoryPath: string) {
+  const handle = await fs.open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+function restoreRecoveryRequired(message: string, receipt: WorkspaceRestoreReceipt, cause?: unknown) {
+  const detail = cause instanceof Error ? cause.message : cause ? String(cause) : undefined;
+  return new WorkspaceRestoreRecoveryRequiredError(receipt, "rollback_failed", `${message}${detail ? `: ${detail}` : ""}`);
+}
+
+async function readRestoreReceipt(filePath: string): Promise<WorkspaceRestoreReceipt | null> {
+  try {
+    const value = JSON.parse(await fs.readFile(filePath, "utf8")) as Partial<WorkspaceRestoreReceipt>;
+    if (
+      value.version !== 1
+      || typeof value.operationId !== "string"
+      || typeof value.orgId !== "string"
+      || typeof value.backupId !== "string"
+      || !["prepared", "live_moved", "committed", "rolled_back", "recovery_required"].includes(value.phase ?? "")
+      || typeof value.workspaceRoot !== "string"
+      || typeof value.stagingRoot !== "string"
+      || typeof value.rollbackRoot !== "string"
+      || (value.liveTreeSha256 !== null && typeof value.liveTreeSha256 !== "string")
+      || typeof value.stagingTreeSha256 !== "string"
+      || (value.expectedTreeSha256 !== null && typeof value.expectedTreeSha256 !== "string")
+      || typeof value.preRestoreBackupId !== "string"
+    ) {
+      return null;
+    }
+    return value as WorkspaceRestoreReceipt;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function isOwnedRestoreRoot(root: string, workspaceRoot: string, operationId: string, kind: "staging" | "rollback") {
+  const parent = path.dirname(workspaceRoot);
+  return path.resolve(root) !== path.resolve(workspaceRoot)
+    && path.resolve(root) === path.resolve(parent, `.rudder-workspace-restore-${kind}-${operationId}`);
+}
+
+/** Reconcile only validated receipts and their exact operation-owned roots. */
+export async function reconcileWorkspaceRestoreReceipts(): Promise<{
+  recovered: string[];
+  blocked: Array<{ receiptPath: string; operationId: string; error: string }>;
+}> {
+  const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+  const recovered: string[] = [];
+  const blocked: Array<{ receiptPath: string; operationId: string; error: string }> = [];
+  let names: string[];
+  try {
+    names = await fs.readdir(receiptRoot);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return { recovered, blocked };
+    throw error;
+  }
+  for (const name of names.filter((entry) => entry.endsWith(".json"))) {
+    const receiptPath = path.join(receiptRoot, name);
+    let receipt: WorkspaceRestoreReceipt | null = null;
+    try {
+      receipt = await readRestoreReceipt(receiptPath);
+    } catch (error) {
+      blocked.push({ receiptPath, operationId: "unknown", error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    let canonicalWorkspaceRoot: string | null = null;
+    try {
+      if (receipt?.orgId) canonicalWorkspaceRoot = path.resolve(resolveOrganizationWorkspaceRoot(receipt.orgId));
+    } catch {
+      canonicalWorkspaceRoot = null;
+    }
+    if (
+      !receipt
+      || !canonicalWorkspaceRoot
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(receipt.operationId)
+      || path.resolve(receipt.workspaceRoot) !== canonicalWorkspaceRoot
+      || !isOwnedRestoreRoot(receipt.stagingRoot, receipt.workspaceRoot, receipt.operationId, "staging")
+      || !isOwnedRestoreRoot(receipt.rollbackRoot, receipt.workspaceRoot, receipt.operationId, "rollback")
+    ) {
+      blocked.push({ receiptPath, operationId: receipt?.operationId ?? "unknown", error: "invalid_or_unowned_receipt" });
+      continue;
+    }
+    try {
+      const workspace = await pathExists(receipt.workspaceRoot);
+      const rollback = await pathExists(receipt.rollbackRoot);
+      if (receipt.phase === "prepared") {
+        if (workspace && rollback) throw new Error("prepared receipt has conflicting live and rollback roots");
+        if (!workspace && rollback) {
+          // Crash window: workspace was renamed before the phase receipt advanced.
+          await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
+          await syncDirectory(path.dirname(receipt.workspaceRoot));
+        }
+        await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
+        await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
+      } else if (receipt.phase === "committed" || receipt.phase === "rolled_back") {
+        await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
+        await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
+      } else if (receipt.phase === "live_moved" || receipt.phase === "recovery_required") {
+        if (!workspace && rollback) {
+          await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
+          await syncDirectory(path.dirname(receipt.workspaceRoot));
+        } else if (workspace && !rollback) {
+          const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
+          if (receipt.expectedTreeSha256 && publishedTree !== receipt.expectedTreeSha256) throw new Error("published workspace tree does not match receipt");
+        } else if (workspace && rollback) {
+          const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
+          if (receipt.expectedTreeSha256 && publishedTree === receipt.expectedTreeSha256) {
+            await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
+            await syncDirectory(path.dirname(receipt.workspaceRoot));
+          } else if (receipt.liveTreeSha256) {
+            const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
+            if (rollbackTree !== receipt.liveTreeSha256) throw new Error("workspace and rollback roots match neither recorded tree");
+            await fs.rm(receipt.workspaceRoot, { recursive: true, force: true });
+            await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
+            await syncDirectory(path.dirname(receipt.workspaceRoot));
+          } else {
+            throw new Error("workspace and rollback roots both exist without a recorded live tree");
+          }
+        } else {
+          throw new Error("workspace and rollback roots are both missing");
+        }
+        await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
+        await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
+      }
+      await fs.rm(receiptPath, { force: true });
+      await syncDirectory(receiptRoot);
+      recovered.push(receipt.operationId);
+    } catch (error) {
+      blocked.push({ receiptPath, operationId: receipt.operationId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { recovered, blocked };
+}
+
+async function assertNoUnresolvedRestoreReceipt(orgId: string) {
+  const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+  let names: string[];
+  try {
+    names = await fs.readdir(receiptRoot);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  const prefix = `${orgId}-`;
+  for (const name of names.filter((entry) => entry.startsWith(prefix) && entry.endsWith(".json"))) {
+    const receiptPath = path.join(receiptRoot, name);
+    let receipt: WorkspaceRestoreReceipt | null = null;
+    try {
+      receipt = await readRestoreReceipt(receiptPath);
+    } catch (error) {
+      throw conflict("Workspace restore requires recovery before another restore can run.", {
+        code: "restore_recovery_required",
+        orgId,
+        receiptPath,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (receipt && receipt.orgId === orgId && ["prepared", "live_moved", "recovery_required"].includes(receipt.phase)) {
+      throw new WorkspaceRestoreRecoveryRequiredError(receipt, "unresolved_receipt", "An earlier workspace restore has not reached a recoverable terminal state.");
+    }
+    if (!receipt) {
+      throw conflict("Workspace restore requires recovery before another restore can run.", {
+        code: "restore_recovery_required",
+        orgId,
+        receiptPath,
+        detail: "invalid_or_unowned_receipt",
+      });
+    }
+  }
+}
+
+async function withWorkspaceRestoreLock<T>(orgId: string, operation: () => Promise<T>): Promise<T> {
+  const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+  const lockPath = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-lock-${orgId}`);
+  await fs.mkdir(path.dirname(workspaceRoot), { recursive: true });
+  const deadline = Date.now() + 30_000;
+  while (true) {
+    try {
+      await fs.mkdir(lockPath, { recursive: false, mode: 0o700 });
+      await fs.writeFile(path.join(lockPath, "owner.json"), `${JSON.stringify({ orgId, pid: process.pid, acquiredAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) {
+        throw conflict("Workspace restore is busy for this organization.", { code: "restore_lock_unavailable", orgId });
+      }
+      try {
+        const owner = JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")) as { pid?: unknown };
+        if (typeof owner.pid === "number" && Number.isInteger(owner.pid) && owner.pid > 0) {
+          try {
+            process.kill(owner.pid, 0);
+          } catch (probeError) {
+            if ((probeError as NodeJS.ErrnoException).code === "ESRCH") {
+              await fs.rm(lockPath, { recursive: true, force: true });
+              continue;
+            }
+          }
+        }
+      } catch {
+        // An unreadable owner is treated as held until the bounded timeout.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  try {
+    return await operation();
+  } finally {
+    await fs.rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -850,10 +1171,35 @@ export function workspaceBackupService(db: Db) {
     }
   }
 
-  async function readArtifactPayload(row: WorkspaceBackupRow): Promise<{ raw: Buffer; artifact: WorkspaceBackupArtifact }> {
+  async function readArtifactPayload(row: WorkspaceBackupRow): Promise<WorkspaceBackupPayload> {
     assertReadableBackup(row);
     if (!(await fileExists(row.artifactRef))) {
       throw notFound("Workspace backup artifact not found");
+    }
+    if (path.extname(row.artifactRef).toLowerCase() === ".zip") {
+      try {
+        const index = await inspectWorkspaceBackupV2File(row.artifactRef);
+        if (row.archiveSha256 && await sha256File(row.artifactRef) !== row.archiveSha256) {
+          throw new Error("Workspace backup artifact checksum does not match the recorded backup metadata");
+        }
+        const manifest = index.manifest;
+        const artifact: WorkspaceBackupArtifact = {
+          version: ARTIFACT_VERSION,
+          orgId: manifest.identity.orgId,
+          instanceId: manifest.identity.instanceId,
+          createdAt: manifest.createdAt,
+          rootPath: manifest.identity.rootPath,
+          entries: manifest.entries.map((entry) => ({
+            ...entry,
+            dataBase64: undefined,
+          })),
+          warnings: manifest.warnings,
+        };
+        if (artifact.orgId !== row.orgId) throw new Error("organization identity mismatch");
+        return { raw: null, artifact, v2: { filePath: row.artifactRef, index } };
+      } catch (error) {
+        throw unprocessable(error instanceof Error ? `Workspace backup v2 artifact is invalid: ${error.message}` : "Workspace backup v2 artifact is invalid");
+      }
     }
     const raw = await fs.readFile(row.artifactRef);
     if (row.archiveSha256 && sha256Buffer(raw) !== row.archiveSha256) {
@@ -871,6 +1217,14 @@ export function workspaceBackupService(db: Db) {
 
   async function readArtifact(row: WorkspaceBackupRow): Promise<WorkspaceBackupArtifact> {
     const payload = await readArtifactPayload(row);
+    if (payload.v2) {
+      const entries = await Promise.all(payload.artifact.entries.map(async (entry) => {
+        if (entry.kind !== "file") return entry;
+        const data = await readWorkspaceBackupV2File(payload.v2!.filePath, payload.v2!.index, entry.path);
+        return { ...entry, dataBase64: data.toString("base64") };
+      }));
+      return { ...payload.artifact, entries };
+    }
     return payload.artifact;
   }
 
@@ -995,7 +1349,8 @@ export function workspaceBackupService(db: Db) {
     const triggerSource = input.triggerSource ?? "manual";
     const organizationStorageKey = resolveOrganizationStorageKey(input.orgId);
     const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", organizationStorageKey);
-    const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}.json`);
+    const artifactExtension = isWorkspaceBackupV2Enabled() ? ".zip" : ".json";
+    const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}${artifactExtension}`);
     const [runningRow] = await db
       .insert(workspaceBackups)
       .values({
@@ -1023,6 +1378,89 @@ export function workspaceBackupService(db: Db) {
     try {
       await fs.mkdir(path.dirname(artifactRef), { recursive: true });
       const layout = await ensureOrganizationWorkspaceLayout(runningRow.orgId);
+      if (path.extname(artifactRef).toLowerCase() === ".zip") {
+        let nativeFallbackWarning: string | null = null;
+        if (isWorkspaceBackupV2NativeEnabled()) {
+          try {
+            const artifact = await createWorkspaceBackupV2Native({
+              rootPath: layout.root,
+              orgId: runningRow.orgId,
+              instanceId: resolveRudderInstanceId(),
+              artifactPath: artifactRef,
+              createdAt: runningRow.startedAt ?? runningRow.createdAt,
+            });
+            const stat = await fs.stat(artifact.artifactPath);
+            const finishedAt = new Date();
+            const [row] = await db
+              .update(workspaceBackups)
+              .set({
+                status: "succeeded",
+                archiveSha256: artifact.archiveSha256,
+                treeSha256: artifact.treeSha256,
+                fileCount: artifact.fileCount,
+                byteSize: artifact.byteSize,
+                compressedSize: stat.size,
+                manifest: artifact.manifest,
+                warnings: artifact.warnings,
+                finishedAt,
+                updatedAt: finishedAt,
+              })
+              .where(and(eq(workspaceBackups.id, backupId), eq(workspaceBackups.status, "running")))
+              .returning();
+            if (row) return mapBackupRow(row);
+            const [currentRow] = await db.select().from(workspaceBackups).where(eq(workspaceBackups.id, backupId)).limit(1);
+            if (currentRow) return mapBackupRow(currentRow);
+            throw new Error("Workspace backup row was not updated.");
+          } catch (error) {
+            // Native is opt-in and never changes the default Node comparator. A
+            // failed native operation falls through to the same contract-equivalent
+            // Node writer while retaining the DB row and TypeScript decisions.
+            const diagnostic = workspaceBackupV2NativeDiagnostic(error);
+            if (!diagnostic.fallbackAllowed || await fs.stat(artifactRef).then(() => true).catch(() => false)) {
+              throw new Error(`Native workspace backup cannot fall back [${diagnostic.category}/${diagnostic.code}]: ${diagnostic.detail}`);
+            }
+            nativeFallbackWarning = formatWorkspaceBackupV2NativeFallback(error);
+          }
+        }
+        const artifact = await createWorkspaceBackupV2File({
+          rootPath: layout.root,
+          orgId: runningRow.orgId,
+          instanceId: resolveRudderInstanceId(),
+          artifactPath: artifactRef,
+          createdAt: runningRow.startedAt ?? runningRow.createdAt,
+          additionalWarnings: nativeFallbackWarning ? [nativeFallbackWarning] : undefined,
+        });
+        const archiveSha256 = artifact.archiveSha256;
+        const stat = await fs.stat(artifact.artifactPath);
+        const finishedAt = new Date();
+        const [row] = await db
+          .update(workspaceBackups)
+          .set({
+            status: "succeeded",
+            archiveSha256,
+            treeSha256: artifact.treeSha256,
+            fileCount: artifact.fileCount,
+            byteSize: artifact.byteSize,
+            compressedSize: stat.size,
+            manifest: artifact.manifest,
+            warnings: artifact.warnings,
+            finishedAt,
+            updatedAt: finishedAt,
+          })
+          .where(and(
+            eq(workspaceBackups.id, backupId),
+            eq(workspaceBackups.status, "running"),
+          ))
+          .returning();
+        if (row) return mapBackupRow(row);
+        const [currentRow] = await db
+          .select()
+          .from(workspaceBackups)
+          .where(eq(workspaceBackups.id, backupId))
+          .limit(1);
+        if (currentRow) return mapBackupRow(currentRow);
+        throw new Error("Workspace backup row was not updated.");
+      }
       const warnings: string[] = [];
       const entries = await walkWorkspace(layout.root, layout.root, warnings);
       const fileCount = entries.filter((entry) => entry.kind === "file").length;
@@ -1124,7 +1562,8 @@ export function workspaceBackupService(db: Db) {
 
     async listFiles(orgId: string, backupId: string, directoryPath = ""): Promise<OrganizationWorkspaceFileList> {
       const row = await getBackupRow(orgId, backupId);
-      const artifact = await readArtifact(row);
+      const payload = await readArtifactPayload(row);
+      const artifact = payload.artifact;
       const normalizedPath = assertSafeRelativePath(directoryPath);
       const entries = directChildrenFromArtifact(artifact, normalizedPath);
       return {
@@ -1140,11 +1579,15 @@ export function workspaceBackupService(db: Db) {
 
     async readFile(orgId: string, backupId: string, filePath: string): Promise<OrganizationWorkspaceFileDetail> {
       const row = await getBackupRow(orgId, backupId);
-      const artifact = await readArtifact(row);
+      const payload = await readArtifactPayload(row);
+      const artifact = payload.artifact;
       const normalizedPath = assertSafeRelativePath(filePath);
       const file = findArtifactFile(artifact, normalizedPath);
-      if (!file?.dataBase64) throw notFound("File not found inside the workspace backup");
-      const buffer = Buffer.from(file.dataBase64, "base64");
+      if (!file) throw notFound("File not found inside the workspace backup");
+      const buffer = payload.v2
+        ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, normalizedPath)
+        : file.dataBase64 ? Buffer.from(file.dataBase64, "base64") : null;
+      if (!buffer) throw notFound("File not found inside the workspace backup");
       if (isBinaryBuffer(buffer)) {
         return {
           source: "org_root",
@@ -1185,6 +1628,16 @@ export function workspaceBackupService(db: Db) {
     async getDownload(orgId: string, backupId: string): Promise<WorkspaceBackupDownload> {
       const row = await getBackupRow(orgId, backupId);
       const payload = await readArtifactPayload(row);
+      if (payload.v2) {
+        return {
+          artifactRef: row.artifactRef,
+          filename: `${path.basename(row.artifactRef, path.extname(row.artifactRef))}.zip`,
+          contentType: "application/zip",
+          byteSize: payload.v2.index.archiveSize,
+          archiveSha256: row.archiveSha256,
+          contentStream: createReadStream(row.artifactRef),
+        };
+      }
       const zip = buildWorkspaceBackupZip(payload.artifact, backupDownloadRootFolderName(payload.artifact));
       return {
         artifactRef: row.artifactRef,
@@ -1400,13 +1853,16 @@ export function workspaceBackupService(db: Db) {
     },
 
     async restore(orgId: string, backupId: string, input?: { createdByUserId?: string | null }): Promise<WorkspaceBackupRestoreResult> {
+      return withWorkspaceRestoreLock(orgId, async () => {
+      await assertNoUnresolvedRestoreReceipt(orgId);
       const row = await getBackupRow(orgId, backupId);
       const activeRunCount = await countActiveRuns(orgId);
       if (activeRunCount > 0) {
         throw conflict("Workspace restore is blocked while this organization has active runs.", { activeRunCount });
       }
 
-      const artifact = await readArtifact(row);
+      const payload = await readArtifactPayload(row);
+      const artifact = payload.artifact;
       const preRestoreBackup = await service.create({
         orgId,
         triggerSource: "pre_restore",
@@ -1425,7 +1881,11 @@ export function workspaceBackupService(db: Db) {
       }
 
       const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-      const stagingRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-staging", `${orgId}-${backupId}-${Date.now()}`);
+      const operationId = crypto.randomUUID();
+      const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
+      const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`);
+      const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+      const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
       await fs.rm(stagingRoot, { recursive: true, force: true });
       await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
 
@@ -1439,13 +1899,107 @@ export function workspaceBackupService(db: Db) {
         for (const entry of files) {
           const { resolvedTarget } = resolveWithinRoot(stagingRoot, entry.path);
           await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
-          await fs.writeFile(resolvedTarget, Buffer.from(entry.dataBase64 ?? "", "base64"), { mode: entry.mode ?? 0o600 });
+          const data = payload.v2
+            ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, entry.path)
+            : Buffer.from(entry.dataBase64 ?? "", "base64");
+          await fs.writeFile(resolvedTarget, data, { mode: entry.mode ?? 0o600 });
         }
 
-        await fs.rm(workspaceRoot, { recursive: true, force: true });
         await fs.mkdir(path.dirname(workspaceRoot), { recursive: true });
-        await fs.rename(stagingRoot, workspaceRoot);
+        await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+        const stagingTreeSha256 = await workspaceTreeSha256(stagingRoot);
+        const liveTreeSha256 = await pathExists(workspaceRoot) ? await workspaceTreeSha256(workspaceRoot) : null;
+        await writeRestoreReceipt(receiptPath, {
+          version: 1,
+          operationId,
+          orgId,
+          backupId,
+          phase: "prepared",
+          workspaceRoot,
+          stagingRoot,
+          rollbackRoot,
+          liveTreeSha256,
+          stagingTreeSha256,
+          expectedTreeSha256: row.treeSha256,
+          preRestoreBackupId: preRestoreBackup.id,
+        });
+        if (await countActiveRuns(orgId) > 0) {
+          throw conflict("Workspace restore is blocked while this organization has active runs.");
+        }
+        const liveExists = await pathExists(workspaceRoot);
+        if (liveExists && !liveExists.isDirectory()) {
+          throw conflict("Workspace restore is blocked because the organization workspace root is not a directory.");
+        }
+        if (liveExists) {
+          await fs.rename(workspaceRoot, rollbackRoot);
+          await syncDirectory(path.dirname(workspaceRoot));
+          await writeRestoreReceipt(receiptPath, {
+            version: 1, operationId, orgId, backupId, phase: "live_moved", workspaceRoot, stagingRoot, rollbackRoot,
+            expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+            liveTreeSha256, stagingTreeSha256,
+          });
+        }
+        try {
+          await fs.rename(stagingRoot, workspaceRoot);
+          await syncDirectory(path.dirname(workspaceRoot));
+        } catch (error) {
+          if (liveExists) {
+            try {
+              await fs.rename(rollbackRoot, workspaceRoot);
+              await syncDirectory(path.dirname(workspaceRoot));
+              await writeRestoreReceipt(receiptPath, {
+                version: 1, operationId, orgId, backupId, phase: "rolled_back", workspaceRoot, stagingRoot, rollbackRoot,
+                expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+                liveTreeSha256, stagingTreeSha256,
+              });
+              throw conflict("Workspace restore failed and was rolled back.", { code: "restore_rolled_back", operationId });
+            } catch (rollbackError) {
+              if (rollbackError instanceof Error && "status" in rollbackError && (rollbackError as { status?: unknown }).status === 409) throw rollbackError;
+              const receipt: WorkspaceRestoreReceipt = {
+                version: 1, operationId, orgId, backupId, phase: "recovery_required", workspaceRoot, stagingRoot, rollbackRoot,
+                expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+                liveTreeSha256, stagingTreeSha256,
+              };
+              await writeRestoreReceipt(receiptPath, receipt);
+              throw restoreRecoveryRequired("Workspace restore requires recovery after a failed rollback.", receipt, rollbackError);
+            }
+          }
+          throw error;
+        }
         await ensureOrganizationWorkspaceLayout(orgId);
+        const publishedTreeSha256 = await workspaceTreeSha256(workspaceRoot);
+        if (row.treeSha256 && publishedTreeSha256 !== row.treeSha256) {
+          await fs.rm(workspaceRoot, { recursive: true, force: true });
+          if (liveExists) {
+            try {
+              await fs.rename(rollbackRoot, workspaceRoot);
+              await syncDirectory(path.dirname(workspaceRoot));
+              await writeRestoreReceipt(receiptPath, {
+                version: 1, operationId, orgId, backupId, phase: "rolled_back", workspaceRoot, stagingRoot, rollbackRoot,
+                expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+                liveTreeSha256, stagingTreeSha256, publishedTreeSha256,
+              });
+              throw conflict("Workspace restore failed published tree verification and was rolled back.", { code: "restore_rolled_back", operationId });
+            } catch (rollbackError) {
+              if (rollbackError instanceof Error && "status" in rollbackError && (rollbackError as { status?: unknown }).status === 409) throw rollbackError;
+              const receipt: WorkspaceRestoreReceipt = {
+                version: 1, operationId, orgId, backupId, phase: "recovery_required", workspaceRoot, stagingRoot, rollbackRoot,
+                expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+                liveTreeSha256, stagingTreeSha256, publishedTreeSha256,
+              };
+              await writeRestoreReceipt(receiptPath, receipt);
+              throw restoreRecoveryRequired("Workspace restore requires recovery after published-tree verification failed.", receipt, rollbackError);
+            }
+          }
+          throw conflict("Workspace restore failed published tree verification.", { code: "restore_rolled_back", operationId });
+        }
+        await writeRestoreReceipt(receiptPath, {
+          version: 1, operationId, orgId, backupId, phase: "committed", workspaceRoot, stagingRoot, rollbackRoot,
+          expectedTreeSha256: row.treeSha256, liveTreeSha256, stagingTreeSha256, publishedTreeSha256, preRestoreBackupId: preRestoreBackup.id,
+        });
+        await syncDirectory(path.dirname(workspaceRoot));
+        if (liveExists) await fs.rm(rollbackRoot, { recursive: true, force: true });
+        await fs.rm(receiptPath, { force: true });
       } finally {
         await fs.rm(stagingRoot, { recursive: true, force: true });
       }
@@ -1462,6 +2016,7 @@ export function workspaceBackupService(db: Db) {
         restoredBackup: mapBackupRow(restoredRow),
         preRestoreBackup,
       };
+      });
     },
   };
 

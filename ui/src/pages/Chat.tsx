@@ -207,6 +207,7 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
+import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import {
   ChatComposerFileDropOverlay,
@@ -491,6 +492,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const currentUserAvatarUrl = useCurrentUserAvatar();
   const intelligenceProfilesQuery = useQuery({
     queryKey: queryKeys.organizations.intelligenceProfiles(selectedOrganizationId ?? "__none__"),
     queryFn: () => organizationsApi.listIntelligenceProfiles(selectedOrganizationId!),
@@ -3947,6 +3949,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   message={message}
                                   agents={agents}
                                   currentUserId={currentUserId}
+                                  currentUserAvatarUrl={currentUserAvatarUrl}
                                   issueProposalOverride={issueProposalOverridesByMessageId[message.id]}
                                   onIssueProposalChange={setIssueProposalOverrideForMessage}
                                   actionPending={

@@ -127,6 +127,7 @@ describe("managed external MCP runtime bindings", () => {
       [binding({ provider: "supabase" })],
       [binding({ bindingId: "not-a-uuid" })],
       [binding({ serverName: "rudder-tools" })],
+      [binding({ serverName: "rudder-computer" })],
       [binding({ toolPolicy: { mode: "allowlist", allowedToolNames: ["same", "same"] } })],
       [binding({ toolPolicy: { mode: "allowlist", allowedToolNames: ["rudder_issue_get"] } })],
     ]) {
@@ -139,7 +140,7 @@ describe("managed external MCP runtime bindings", () => {
         { onFailure: (_serverName, error) => failures.push(error) },
       )).toEqual([]);
     }
-    expect(failures).toHaveLength(5);
+    expect(failures).toHaveLength(6);
 
     expect(resolveManagedExternalMcpBindings(
       {

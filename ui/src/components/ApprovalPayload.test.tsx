@@ -15,6 +15,12 @@ import {
   chatIssueApprovalNeedsLabelSelection,
 } from "./ApprovalPayload";
 
+const avatarState = vi.hoisted(() => ({ value: null as string | null }));
+
+vi.mock("../hooks/useCurrentUserAvatar", () => ({
+  useCurrentUserAvatar: () => avatarState.value,
+}));
+
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => <a href={to} {...props}>{children}</a>,
 }));
@@ -65,6 +71,7 @@ Object.defineProperty(window, "matchMedia", {
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
+  avatarState.value = null;
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
@@ -254,6 +261,21 @@ function renderLabelPickerDom({
 }
 
 describe("ApprovalPayloadRenderer", () => {
+  it("uses the account avatar only for the current user in approval principals", () => {
+    avatarState.value = "https://example.test/me.png";
+    const currentUserHtml = renderChatIssueApproval(
+      { title: "Current user", assigneeUserId: "user-1" },
+      { currentUserId: "user-1" },
+    );
+    const otherUserHtml = renderChatIssueApproval(
+      { title: "Other user", assigneeUserId: "user-2" },
+      { currentUserId: "user-1" },
+    );
+
+    expect(currentUserHtml).toContain('data-avatar-url="https://example.test/me.png"');
+    expect(otherUserHtml).not.toContain("data-avatar-url");
+  });
+
   it("renders Goal changes as plain-language outcome, change, and boundary summaries", () => {
     const html = renderGoalChangeApproval();
 

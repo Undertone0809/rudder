@@ -45,6 +45,7 @@ import {
   isWorkspacePermissionPreflightError,
   preflightManagedAgentWorkspace,
 } from "../managed-workspace-preflight.js";
+import { listProjectResourceAttachments } from "../resource-catalog.js";
 import { type RunLogHandle } from "../run-log-store.js";
 import {
   buildWorkspaceReadyComment,
@@ -54,6 +55,12 @@ import {
   realizeExecutionWorkspace,
   releaseRuntimeServicesForRun
 } from "../workspace-runtime.js";
+import {
+  createAssignmentRunFailureBudget,
+  inspectAssignmentRunWorkspace,
+  resolveProjectWorkingSetCwd,
+  type AssignmentRunGuardrailCheckpoint,
+} from "./assignment-run-guardrail.js";
 import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
@@ -260,6 +267,15 @@ export function createHeartbeatExecuteHandlers(context: any) {
     await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     delete context.rudderGitIdentity;
+    const assignmentContinuationAttempt = Math.max(
+      0,
+      Math.floor(Number(context.assignmentGuardrailContinuationAttempt) || 0),
+    );
+    const assignmentGuardrailEnabled = run.invocationSource === "assignment"
+      || context.wakeSource === "assignment"
+      || assignmentContinuationAttempt > 0;
+    const assignmentFailureBudget = assignmentGuardrailEnabled ? createAssignmentRunFailureBudget() : null;
+    let assignmentGuardrailCheckpoint: AssignmentRunGuardrailCheckpoint | null = null;
     const taskKey = deriveTaskKey(context, null);
     const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
     const issueId = readNonEmptyString(context.issueId);
@@ -370,12 +386,32 @@ export function createHeartbeatExecuteHandlers(context: any) {
       issueSettings: issueExecutionWorkspaceSettings,
       legacyUseProjectWorkspace: runtimeOverrides?.useProjectWorkspace ?? null,
     });
-    const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
+    let resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
       agent,
       context,
       previousSessionParams,
       { useProjectWorkspace: executionWorkspaceMode !== "agent_default" },
     );
+    let configuredProjectWorkingSetCwd: string | null = null;
+    if (assignmentGuardrailEnabled && executionProjectId) {
+      const projectResources = await listProjectResourceAttachments(db, agent.orgId, executionProjectId);
+      const projectWorkingSetCwd = resolveProjectWorkingSetCwd(projectResources);
+      configuredProjectWorkingSetCwd = projectWorkingSetCwd;
+      if (projectWorkingSetCwd) {
+        const workingSetAvailable = await inspectAssignmentRunWorkspace({
+          actualCwd: projectWorkingSetCwd,
+          projectWorkingSetCwd,
+        }).then((result) => result.cwdPresent);
+        if (workingSetAvailable) {
+          resolvedWorkspace = {
+            ...resolvedWorkspace,
+            cwd: projectWorkingSetCwd,
+            source: "project_primary",
+            projectId: executionProjectId,
+          };
+        }
+      }
+    }
     const workspaceManagedConfig = buildExecutionWorkspaceAdapterConfig({
       agentConfig: config,
       projectPolicy: projectExecutionWorkspacePolicy,
@@ -721,6 +757,28 @@ export function createHeartbeatExecuteHandlers(context: any) {
         level: "info",
         message: "run started",
       });
+      if (assignmentGuardrailEnabled) {
+        const workspacePreflight = await inspectAssignmentRunWorkspace({
+          actualCwd: executionWorkspace.cwd,
+          projectWorkingSetCwd: configuredProjectWorkingSetCwd ?? resolvedWorkspace.cwd,
+        });
+        await appendRunEvent(currentRun, {
+          eventType: "runtime.assignment_preflight",
+          stream: "system",
+          level: workspacePreflight.cwdMatchesProjectWorkingSet ? "info" : "warn",
+          message: workspacePreflight.cwdMatchesProjectWorkingSet
+            ? "assignment run workspace preflight passed"
+            : "assignment run workspace differs from project working set",
+          payload: workspacePreflight,
+        });
+        if (!workspacePreflight.ready) {
+          throw new Error(
+            workspacePreflight.recoveryCommand
+              ? `Assignment startup preflight failed in ${workspacePreflight.actualCwd}. Run this recovery command once before retrying: ${workspacePreflight.recoveryCommand}`
+              : `Assignment project working set is not available: ${workspacePreflight.projectWorkingSetCwd}. Restore or remount that directory before retrying.`,
+          );
+        }
+      }
 
       handle = await runLogStore.begin({
         orgId: run.orgId,
@@ -788,6 +846,28 @@ export function createHeartbeatExecuteHandlers(context: any) {
             parser: stdoutTranscriptParser,
             kind: "stdout",
           });
+          const checkpoint = assignmentFailureBudget?.observe(executionTranscript) ?? null;
+          if (checkpoint && !assignmentGuardrailCheckpoint) {
+            const completedWorkSummary = [...executionTranscript]
+              .reverse()
+              .find((entry) => entry.kind === "assistant" && entry.text.trim())?.text
+              .trim()
+              .slice(0, 2_000)
+              ?? "No reliable completed-work summary was emitted before the guardrail stopped this run.";
+            assignmentGuardrailCheckpoint = { ...checkpoint, completedWorkSummary };
+            const continuationRequired = assignmentContinuationAttempt < 1;
+            await appendRunEvent(currentRun, {
+              eventType: "runtime.assignment_guardrail",
+              stream: "system",
+              level: "warn",
+              message: "assignment run failure budget reached; checkpoint requested",
+              payload: {
+                ...assignmentGuardrailCheckpoint,
+                continuationRequired,
+              },
+            });
+            executionAbortController.abort("assignment_run_failure_budget");
+          }
           return;
         }
 
@@ -924,7 +1004,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
         runId: run.id,
         agent,
         runtime: runtimeForAdapter,
-        config: runtimeConfig,
+        config: {
+          ...runtimeConfig,
+          cwd: executionWorkspace.cwd,
+        },
         context,
         onLog,
         onMeta: onAdapterMeta,
@@ -943,6 +1026,15 @@ export function createHeartbeatExecuteHandlers(context: any) {
           stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
         },
       });
+      if (assignmentGuardrailCheckpoint) {
+        adapterResult.errorMessage = "Assignment run stopped after reaching its tool failure budget";
+        adapterResult.errorCode = "assignment_run_failure_budget";
+        adapterResult.exitCode = adapterResult.exitCode ?? 1;
+        adapterResult.resultJson = {
+          ...(adapterResult.resultJson ?? {}),
+          assignmentGuardrailCheckpoint,
+        };
+      }
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
             db,
@@ -1222,6 +1314,39 @@ export function createHeartbeatExecuteHandlers(context: any) {
       if (finalizedRun) {
         if (ownsTerminalState || finalizedRun.terminalEffectsPending) {
           shouldCompleteTerminalEffects = true;
+        }
+        if (ownsTerminalState && assignmentGuardrailCheckpoint) {
+          const continuationRequired = assignmentContinuationAttempt < 1;
+          await appendRunEvent(finalizedRun, {
+            eventType: "runtime.assignment_checkpoint",
+            stream: "system",
+            level: "warn",
+            message: "assignment run checkpoint created",
+            payload: {
+              completed: assignmentGuardrailCheckpoint.completedWorkSummary,
+              unresolvedError: assignmentGuardrailCheckpoint.unresolvedError,
+              nextRecoveryCommand: assignmentGuardrailCheckpoint.nextRecoveryCommand,
+              continuationRequired,
+              failureCount: assignmentGuardrailCheckpoint.failureCount,
+              fingerprint: assignmentGuardrailCheckpoint.fingerprint,
+            },
+          });
+          if (continuationRequired) {
+            await enqueueRecoveryRun(finalizedRun, agent, {
+              recoveryTrigger: "automatic",
+              source: "automation",
+              triggerDetail: "system",
+              wakeReason: "assignment_failure_budget_continuation",
+              requestedByActorType: "system",
+              requestedByActorId: null,
+              contextPatch: {
+                assignmentGuardrailContinuationAttempt: assignmentContinuationAttempt + 1,
+                assignmentGuardrailCheckpoint,
+              },
+              startImmediately: false,
+              now: new Date(),
+            });
+          }
         }
       }
     } catch (err) {

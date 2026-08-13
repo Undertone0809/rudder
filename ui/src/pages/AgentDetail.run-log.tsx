@@ -38,7 +38,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
-import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
+import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
 
 export function mergeRunEvents(
   currentEvents: HeartbeatRunEvent[],
@@ -477,10 +477,11 @@ export function LogViewer({
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
   }).data?.censorUsernameInLogs === true;
-  const adapterInvokePayload = useMemo(() => {
-    const evt = events.find((e) => e.eventType === "adapter.invoke");
-    return redactPathValue(asRecord(evt?.payload ?? null), censorUsernameInLogs);
-  }, [censorUsernameInLogs, events]);
+  const adapterInvokePayloads = useMemo(() => events
+    .filter((event) => event.eventType === "adapter.invoke")
+    .map((event) => redactPathValue(asRecord(event.payload ?? null), censorUsernameInLogs))
+    .filter((payload): payload is Record<string, unknown> => payload !== null), [censorUsernameInLogs, events]);
+  const adapterInvokePayload = adapterInvokePayloads[0] ?? null;
   const adapterSkillUsagePayload = useMemo(() => {
     const evt = events.find((e) => e.eventType === "adapter.skill_usage");
     return redactPathValue(asRecord(evt?.payload ?? null), censorUsernameInLogs);
@@ -714,6 +715,7 @@ export function LogViewer({
                 </div>
               )}
               <InvocationSkillEvidence invocationPayload={adapterInvokePayload} usagePayload={adapterSkillUsagePayload} />
+              <InvocationMcpEvidence invocationPayloads={adapterInvokePayloads} />
               {invocationPromptText !== null && (
                 <div>
                   <div className="mb-1 text-xs text-muted-foreground">Agent Instruction Stack</div>

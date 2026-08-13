@@ -3,10 +3,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useCurrentUserAvatar } from "@/hooks/useCurrentUserAvatar";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Loader2, Pin, Plus, Search, SlidersHorizontal, User, X } from "lucide-react";
+import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Loader2, Pin, Plus, Search, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
@@ -326,6 +327,7 @@ export function IssuesList({
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const currentUserAvatarUrl = useCurrentUserAvatar();
 
   // Scope the storage key per organization so folding/view state is independent across organizations.
   const scopedKey = selectedOrganizationId ? `${viewStateKey}:${selectedOrganizationId}` : viewStateKey;
@@ -844,8 +846,7 @@ export function IssuesList({
                               checked={viewState.assignees.includes("__me")}
                               onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, "__me") })}
                             />
-                            <User className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="text-sm">Me</span>
+                            <AssigneeLabel kind="user" label="Me" avatarUrl={currentUserAvatarUrl} />
                           </label>
                         )}
                         {(agents ?? []).map((agent) => (
@@ -1039,6 +1040,7 @@ export function IssuesList({
             issues={filtered}
             agents={agents}
             currentUserId={currentUserId}
+            currentUserAvatarUrl={currentUserAvatarUrl}
             displayProperties={viewState.displayProperties}
             sortState={{ sortField: viewState.sortField, sortDir: viewState.sortDir }}
             liveIssueIds={liveIssueIds}
@@ -1207,6 +1209,7 @@ export function IssuesList({
                               <AssigneeLabel
                                 kind="user"
                                 label={formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? "User"}
+                                avatarUrl={issue.assigneeUserId === currentUserId ? currentUserAvatarUrl : null}
                               />
                             ) : (
                               <AssigneeLabel kind="unassigned" label="Assignee" muted />
@@ -1256,7 +1259,7 @@ export function IssuesList({
                                   assignIssue(issue.id, null, currentUserId);
                                 }}
                               >
-                                <AssigneeLabel kind="user" label="Me" />
+                                <AssigneeLabel kind="user" label="Me" avatarUrl={currentUserAvatarUrl} />
                               </button>
                             )}
                             {(agents ?? [])

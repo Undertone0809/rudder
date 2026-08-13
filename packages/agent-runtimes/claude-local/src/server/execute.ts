@@ -58,6 +58,7 @@ import {
   resolveClaudePermissionMode,
   sanitizeClaudeExtraArgs,
 } from "./cli-args.js";
+import { readClaudeLoadedMcpServers } from "./mcp-evidence.js";
 import {
   describeClaudeFailure,
   detectClaudeLoginRequired,
@@ -801,6 +802,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       name: entry.name ?? null,
       description: entry.description ?? null,
     }));
+  const loadedMcpServers = await readClaudeLoadedMcpServers(mcpConfigPath);
   const skillBoundaryPrompt = renderClaudeRudderSkillBoundaryPrompt(loadedSkills);
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionRuntimeContext = prepareAgentInstructionRuntimeContext(context as Record<string, unknown>);
@@ -982,6 +984,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         prompt,
         agentInstructionStack,
         promptMetrics,
+        ...(loadedMcpServers ? { loadedMcpServers } : {}),
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),

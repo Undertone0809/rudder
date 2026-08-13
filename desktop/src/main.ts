@@ -1792,11 +1792,10 @@ function installApplicationMenu(appName: string): void {
   const quitIndex = appMenu.items.findIndex((item) => item.role === "quit" || item.label === `Quit ${appName}`);
   if (quitIndex >= 0 && !appMenu.getMenuItemById("rudder-quit")) {
     const quitItem = appMenu.items[quitIndex];
-    // Electron does not expose removal for application-menu items after the
-    // default menu is created, but instance properties remain mutable.
+    // Electron 37 exposes the default MenuItem role as read-only. Keep the
+    // native quit role and override only the mutable identity and callback so
+    // the resident-shell quit flow remains owned by Rudder.
     quitItem.id = "rudder-quit";
-    quitItem.role = undefined;
-    quitItem.accelerator = quitItem.accelerator || "Command+Q";
     quitItem.click = () => requestQuit();
   }
 

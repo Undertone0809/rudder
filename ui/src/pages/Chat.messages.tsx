@@ -168,7 +168,7 @@ export function ChatAssistantAttributionRow({
 
 type ProposalPrincipalDisplay =
   | { kind: "agent"; label: string; agent?: Agent | null }
-  | { kind: "user"; label: string }
+  | { kind: "user"; label: string; userId?: string | null }
   | null;
 
 type ProposalPrincipalRole = "assignee" | "reviewer";
@@ -286,6 +286,7 @@ function issueProposalPrincipalDisplay(
   if (userId) {
     return {
       kind: "user",
+      userId,
       label: formatAssigneeUserLabel(userId, currentUserId) ?? (role === "assignee" ? "Human assignee" : "Human reviewer"),
     };
   }
@@ -311,6 +312,7 @@ function proposalPrincipalOptionDisplay(
   if (selection.assigneeUserId) {
     return {
       kind: "user",
+      userId: selection.assigneeUserId,
       label: formatAssigneeUserLabel(selection.assigneeUserId, currentUserId) ?? option.label,
     };
   }
@@ -334,7 +336,15 @@ function ProposalFactRow({
   );
 }
 
-function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDisplay }) {
+function ProposalPrincipalLabel({
+  principal,
+  currentUserAvatarUrl,
+  currentUserId,
+}: {
+  principal: ProposalPrincipalDisplay;
+  currentUserAvatarUrl?: string | null;
+  currentUserId?: string | null;
+}) {
   if (!principal) return <span className="text-muted-foreground">None</span>;
   if (principal.kind === "agent") {
     return (
@@ -347,7 +357,13 @@ function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDis
       />
     );
   }
-  return <AssigneeLabel kind="user" label={principal.label} />;
+  return (
+    <AssigneeLabel
+      kind="user"
+      label={principal.label}
+      avatarUrl={principal.userId === currentUserId ? currentUserAvatarUrl : null}
+    />
+  );
 }
 
 function ProposalPrincipalSelector({
@@ -355,12 +371,14 @@ function ProposalPrincipalSelector({
   role,
   agents,
   currentUserId,
+  currentUserAvatarUrl,
   onChange,
 }: {
   proposal: Record<string, unknown>;
   role: ProposalPrincipalRole;
   agents: Agent[] | undefined;
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   onChange: (nextProposal: Record<string, unknown>) => void;
 }) {
   const value = issueProposalPrincipalSelectionValue(proposal, role);
@@ -404,7 +422,11 @@ function ProposalPrincipalSelector({
       onChange={(nextValue) => onChange(issueProposalWithPrincipalSelection(proposal, role, nextValue))}
       renderTriggerValue={(option) =>
         option ? (
-          <ProposalPrincipalLabel principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)} />
+          <ProposalPrincipalLabel
+            principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)}
+            currentUserAvatarUrl={currentUserAvatarUrl}
+            currentUserId={currentUserId}
+          />
         ) : (
           <AssigneeLabel kind="unassigned" label={noneLabel} muted />
         )
@@ -416,7 +438,13 @@ function ProposalPrincipalSelector({
           ? (agents ?? []).find((candidate) => candidate.id === selection.assigneeAgentId) ?? null
           : null;
         if (agent) return <AgentMenuLabel agent={agent} />;
-        return <ProposalPrincipalLabel principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)} />;
+        return (
+          <ProposalPrincipalLabel
+            principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)}
+            currentUserAvatarUrl={currentUserAvatarUrl}
+            currentUserId={currentUserId}
+          />
+        );
       }}
     />
   );
@@ -465,6 +493,7 @@ export function ProposalCard({
   message,
   agents,
   currentUserId,
+  currentUserAvatarUrl,
   issueProposalOverride,
   onIssueProposalChange,
   decisionNote,
@@ -485,6 +514,7 @@ export function ProposalCard({
   message: ChatMessage;
   agents: Agent[] | undefined;
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   issueProposalOverride?: Record<string, unknown>;
   onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   decisionNote: string;
@@ -818,10 +848,15 @@ export function ProposalCard({
                             role="assignee"
                             agents={agents}
                             currentUserId={currentUserId}
+                            currentUserAvatarUrl={currentUserAvatarUrl}
                             onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
                           />
                         ) : (
-                          <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
+                          <ProposalPrincipalLabel
+                            principal={proposalAssigneeDisplay}
+                            currentUserAvatarUrl={currentUserAvatarUrl}
+                            currentUserId={currentUserId}
+                          />
                         )}
                         {!proposalAssigneeDisplay && proposalAssigneeUnassignedReason ? (
                           <span className="max-w-full text-xs font-normal leading-5 text-muted-foreground">
@@ -842,10 +877,15 @@ export function ProposalCard({
                           role="reviewer"
                           agents={agents}
                           currentUserId={currentUserId}
+                          currentUserAvatarUrl={currentUserAvatarUrl}
                           onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
                         />
                       ) : (
-                        <ProposalPrincipalLabel principal={proposalReviewerDisplay} />
+                        <ProposalPrincipalLabel
+                          principal={proposalReviewerDisplay}
+                          currentUserAvatarUrl={currentUserAvatarUrl}
+                          currentUserId={currentUserId}
+                        />
                       )}
                     </ProposalFactRow>
                   </div>
@@ -2340,6 +2380,7 @@ export function ChatMessageItem({
   message,
   agents,
   currentUserId,
+  currentUserAvatarUrl,
   issueProposalOverride,
   decisionNote,
   onDecisionNoteChange,
@@ -2379,6 +2420,7 @@ export function ChatMessageItem({
   message: ChatMessage;
   agents: Agent[] | undefined;
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   issueProposalOverride?: Record<string, unknown>;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
@@ -2440,6 +2482,7 @@ export function ChatMessageItem({
         message={message}
         agents={agents}
         currentUserId={currentUserId}
+        currentUserAvatarUrl={currentUserAvatarUrl}
         issueProposalOverride={issueProposalOverride}
         onIssueProposalChange={onIssueProposalChange}
         decisionNote={decisionNote}
@@ -2609,7 +2652,11 @@ export function ChatMessageItem({
               />
             </div>
           )}
-          <ChatRichReferences message={message} />
+          <ChatRichReferences
+            message={message}
+            currentUserId={currentUserId}
+            currentUserAvatarUrl={currentUserAvatarUrl}
+          />
           <ChatAttachmentList
             attachments={visibleMessageAttachments}
             onOpenFile={onOpenFile}

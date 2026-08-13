@@ -58,6 +58,7 @@ import {
   discoverPiManagedExternalMcpBindings,
   renderPiManagedExternalMcpExtension,
 } from "./managed-external-mcp.js";
+import { readPiLoadedMcpServers } from "./mcp-evidence.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 import {
   ensurePiOpenCodeAnonymousModelsConfig,
@@ -1052,6 +1053,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         prompt: userPrompt,
         agentInstructionStack,
         promptMetrics,
+        loadedMcpServers: readPiLoadedMcpServers(),
         loadedSkills,
         realizedSkills: loadedSkills,
         rudderMcp: rudderMcpRuntimeMetadata({

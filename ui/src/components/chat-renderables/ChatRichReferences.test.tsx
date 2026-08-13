@@ -10,6 +10,12 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRichReferences, markdownPreview } from "./ChatRichReferences";
 
+const identityState = vi.hoisted(() => ({
+  currentUserId: "user-1" as string | null,
+  avatarUrl: "https://example.test/me.png" as string | null,
+}));
+
+
 vi.mock("@/api/issues", () => ({
   issuesApi: {
     get: vi.fn(),
@@ -121,7 +127,11 @@ function renderHarness(message: ChatMessage) {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <ChatRichReferences message={message} />
+        <ChatRichReferences
+          message={message}
+          currentUserId={identityState.currentUserId}
+          currentUserAvatarUrl={identityState.avatarUrl}
+        />
       </QueryClientProvider>,
     );
   });
@@ -155,6 +165,8 @@ async function waitFor(predicate: () => boolean, debugElement?: Element) {
 }
 
 beforeEach(() => {
+  identityState.currentUserId = "user-1";
+  identityState.avatarUrl = "https://example.test/me.png";
   vi.mocked(issuesApi.get).mockReset();
   vi.mocked(issuesApi.getComment).mockReset();
 });
@@ -166,6 +178,24 @@ afterEach(() => {
 });
 
 describe("ChatRichReferences", () => {
+  it("uses the account avatar only for matching user principals", async () => {
+    vi.mocked(issuesApi.get)
+      .mockResolvedValueOnce(baseIssue({ assigneeAgentId: null, assigneeUserId: "user-1" }))
+      .mockResolvedValueOnce(baseIssue({ assigneeAgentId: null, assigneeUserId: "user-2" }));
+
+    const container = renderHarness(baseMessage({
+      structuredPayload: {
+        richReferences: [
+          { type: "issue", identifier: "ZST-153", display: "card" },
+          { type: "issue", identifier: "ZST-154", display: "card" },
+        ],
+      },
+    }));
+
+    await waitFor(() => container.querySelectorAll('a[aria-label^="Open issue"]').length === 2, container);
+    expect(container.querySelectorAll('[data-avatar-url="https://example.test/me.png"]')).toHaveLength(1);
+  });
+
   it("renders issue and issue comment cards for explicit card references", async () => {
     vi.mocked(issuesApi.get).mockResolvedValue(baseIssue());
     vi.mocked(issuesApi.getComment).mockResolvedValue(baseComment({

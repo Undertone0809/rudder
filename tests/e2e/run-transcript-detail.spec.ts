@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import { chatConversations, createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -227,6 +228,7 @@ test.describe("Run transcript detail", () => {
   });
 
   test("merges transcript and invocation into one card with tabs on the real run detail page", async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Detail-Agent-${Date.now()}`);
 
@@ -295,7 +297,62 @@ test.describe("Run transcript detail", () => {
       const runDetailRes = await page.request.get(`/api/agent-runs/${run.id}`);
       if (!runDetailRes.ok()) return null;
       return ((await runDetailRes.json()) as { status?: string }).status ?? null;
-    }, { timeout: 15_000 }).toBe("succeeded");
+    }, { timeout: 30_000 }).toBe("succeeded");
+
+    const [firstInvocation] = await e2eDb
+      .select()
+      .from(heartbeatRunEvents)
+      .where(and(
+        eq(heartbeatRunEvents.runId, run.id),
+        eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+      ));
+    expect(firstInvocation).toBeTruthy();
+    expect(firstInvocation?.payload).toMatchObject({
+      loadedMcpServers: expect.arrayContaining([
+        { serverName: "rudder-tools", source: "built_in" },
+      ]),
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${run.id}`);
+    const nativeDetailPane = page.getByTestId("agent-runs-detail-pane");
+    await page.getByRole("tab", { name: "Invocation" }).click();
+    await expect(nativeDetailPane.getByTestId("invocation-mcp-evidence").getByText("rudder-tools", { exact: true })).toBeVisible();
+    await expect(nativeDetailPane.getByText("adapter invocation", { exact: true })).toHaveCount(1);
+
+    await e2eDb
+      .update(heartbeatRunEvents)
+      .set({
+        payload: {
+          ...(firstInvocation?.payload as Record<string, unknown>),
+          loadedMcpServers: [
+            { serverName: "rudder-tools", source: "built_in" },
+            { serverName: "rudder-browser", source: "built_in" },
+            { serverName: "rudder-computer", source: "built_in" },
+            { serverName: "external.supabase-production-with-a-long-name", source: "managed_external" },
+          ],
+        },
+      })
+      .where(eq(heartbeatRunEvents.id, firstInvocation!.id));
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId: run.id,
+      agentId: agent.id,
+      seq: 9_000,
+      eventType: "adapter.invoke",
+      stream: "system",
+      level: "info",
+      message: "adapter invocation",
+      payload: {
+        ...(firstInvocation?.payload as Record<string, unknown>),
+        loadedMcpServers: [],
+      },
+      createdAt: new Date(transcriptStartedAt - 1),
+    });
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -401,9 +458,36 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("Runtime:", { exact: false })).toBeVisible();
     await expect(page.getByText("Command:", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
-    await expect(page.getByText("adapter invocation", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("adapter invocation", { exact: true })).toHaveCount(2);
     await expect(detailPane.getByText("chat transcript entry", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "nice" })).toBeHidden();
+    const mcpEvidence = detailPane.getByTestId("invocation-mcp-evidence");
+    await expect(mcpEvidence).toBeVisible();
+    await expect(mcpEvidence.getByText("MCP servers", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("Attempt 1 · Loaded for run", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("Attempt 2 · Loaded for run", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("rudder-tools", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("rudder-browser", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("rudder-computer", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("external.supabase-production-with-a-long-name", { exact: true })).toBeVisible();
+    await expect(mcpEvidence.getByText("None loaded", { exact: true })).toBeVisible();
+    await expect(mcpEvidence).not.toContainText("bindingId");
+    await expect(mcpEvidence).not.toContainText("proxyUrl");
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("tab", { name: "Invocation" }).click();
+    await expect(detailPane.getByTestId("invocation-mcp-evidence").getByText("None loaded", { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await detailPane.locator("select").selectOption({ label: "Invocation" });
+    const narrowMcpEvidence = detailPane.getByTestId("invocation-mcp-evidence");
+    await expect(narrowMcpEvidence).toBeVisible();
+    expect(await narrowMcpEvidence.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.screenshot({ path: "/tmp/rudder-run-invocation-mcp-narrow-dark.png", fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    await page.getByRole("tab", { name: "Invocation" }).click();
 
     const promptBlock = page.getByTestId("invocation-prompt");
     await expect(promptBlock).toBeVisible();

@@ -1,6 +1,6 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SERVER_NAME_RE = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/;
-const RESERVED_SERVER_NAMES = new Set(["rudder-tools", "rudder-browser"]);
+const RESERVED_SERVER_NAMES = new Set(["rudder-tools", "rudder-browser", "rudder-computer"]);
 const MAX_BINDINGS = 100;
 const MAX_TOOLS = 500;
 const MAX_PREFLIGHT_RESPONSE_BYTES = 2 * 1024 * 1024;

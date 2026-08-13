@@ -139,6 +139,10 @@ async function sendFirstSideChatMessage(
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${sourceConversationId}/side-chats`)
   ));
+  const messageResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().includes("/messages/stream")
+  ));
   await sideComposerEditor(panel).fill("What is the rollback trigger?");
   await sideComposerSendButton(panel).click();
   const userMessage = panel.getByTestId("chat-user-message-bubble").filter({
@@ -147,20 +151,22 @@ async function sendFirstSideChatMessage(
   await expect(userMessage).toBeVisible();
   const streamingReply = panel.getByTestId("side-chat-streaming-reply");
   await expect(streamingReply).toBeVisible();
+  await expect(streamingReply).toContainText("Streaming reply", { timeout: 15_000 });
+  const assistantElement = await streamingReply.locator(":scope > div.flex.justify-start").last().elementHandle();
+  expect(assistantElement).not.toBeNull();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
   const sideChat = await createResponse.json() as { id: string };
   const creationPayload = createResponse.request().postDataJSON() as {
     preferredAgentId?: string;
+  };
+  const messageResponse = await messageResponsePromise;
+  expect(messageResponse.ok(), await messageResponse.text()).toBe(true);
+  const messagePayload = messageResponse.request().postDataJSON() as {
     modelOverride?: string | null;
     effortOverride?: string | null;
   };
   await expect(panel.getByTestId("side-chat-messages")).toContainText("What is the rollback trigger?", { timeout: 15_000 });
-  await expect(panel.getByTestId("side-chat-streaming-reply")).toContainText("Streaming reply", { timeout: 15_000 });
-  const assistantDraft = streamingReply.getByText("Streaming reply", { exact: true });
-  await expect(assistantDraft).toBeVisible();
-  const assistantElement = await assistantDraft.elementHandle();
-  expect(assistantElement).not.toBeNull();
   expect(await userMessage.evaluate((element, assistant) => (
     Boolean(element.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING)
   ), assistantElement!)).toBe(true);
@@ -173,7 +179,7 @@ async function sendFirstSideChatMessage(
   await expect(panel.getByTestId("side-chat-messages").getByTestId("chat-transcript-item")).toHaveCount(1);
   await expect(panel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toBeVisible({ timeout: 20_000 });
   await expect(panel.getByRole("button", { name: "Done & return" })).toHaveCount(0);
-  return { ...sideChat, creationPayload };
+  return { ...sideChat, creationPayload, messagePayload };
 }
 
 test("Side Chat preserves the main draft, streams like Chat, and is destroyed when closed", async ({ page }, testInfo) => {
@@ -300,6 +306,10 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId, testInfo);
   expect(sideChat.creationPayload).toMatchObject({
     preferredAgentId: source.alternateAgent.id,
+  });
+  expect(sideChat.creationPayload).not.toHaveProperty("modelOverride");
+  expect(sideChat.creationPayload).not.toHaveProperty("effortOverride");
+  expect(sideChat.messagePayload).toMatchObject({
     modelOverride: "gpt-5.6-terra",
     effortOverride: null,
   });

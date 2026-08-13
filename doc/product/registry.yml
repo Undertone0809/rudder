@@ -571,6 +571,7 @@ contracts:
       - doc/plans/2026-07-12-built-in-browser.md
       - doc/plans/2026-07-15-chat-steer-and-immediate-stop.md
       - doc/plans/2026-07-23-chat-conversation-model-selector.md
+      - doc/plans/2026-08-12-chat-per-message-runtime-selection.md
       - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
   AGENT.RUNTIME.PERMISSIONS.001:
     owner: product
@@ -628,42 +629,6 @@ contracts:
       - doc/plans/2026-07-23-managed-mcp-oauth-integrations.md
       - doc/plans/2026-07-25-managed-mcp-access-and-interactions.md
       - doc/plans/2026-07-29-rudder-account-production-login.md
-  ANALYTICS.TELEMETRY.001:
-    owner: product
-    domain: governance-and-visibility
-    status: active
-    spec_depth: logic_contract
-    docs:
-      - doc/product/domains/governance-and-visibility/product-analytics-telemetry.md
-    related_code:
-      - packages/db/src/schema/product_analytics_events.ts
-      - packages/db/src/schema/product_analytics_consent.ts
-      - packages/db/src/schema/product_analytics_installations.ts
-      - packages/db/src/schema/product_analytics_outbox.ts
-      - packages/db/src/schema/product_analytics_work_cycles.ts
-      - packages/identity-db/src/product-analytics.ts
-      - server/src/services/product-analytics.ts
-      - server/src/services/product-analytics-collector.ts
-      - server/src/routes/product-analytics.ts
-      - server/src/routes/product-analytics-collector.ts
-      - server/src/routes/instance-settings.ts
-      - desktop/src/product-analytics-telemetry.ts
-      - desktop/src/product-analytics-uploader.ts
-      - ui/src/pages/InstancePrivacyTelemetrySettings.tsx
-      - ui/src/api/instanceSettings.ts
-      - ui/src/lib/settings-prefetch.ts
-    related_tests:
-      - server/src/services/product-analytics.test.ts
-      - server/src/services/product-analytics-collector.test.ts
-      - server/src/__tests__/product-analytics-routes.test.ts
-      - server/src/__tests__/product-analytics-collector-routes.test.ts
-      - desktop/src/product-analytics-telemetry.test.ts
-      - desktop/src/product-analytics-uploader.test.ts
-      - ui/src/pages/InstancePrivacyTelemetrySettings.test.tsx
-      - tests/e2e/product-analytics.spec.ts
-      - tests/e2e/settings-layout.spec.ts
-    related_plans:
-      - doc/plans/2026-08-03-product-analytics-telemetry-full-implementation.md
   AGENT.CONTROL.TOOLS.001:
     owner: product
     domain: agents
@@ -1326,6 +1291,7 @@ contracts:
       - doc/plans/2026-07-20-atomic-chat-first-turn.md
       - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
       - doc/plans/2026-07-23-chat-conversation-model-selector.md
+      - doc/plans/2026-08-12-chat-per-message-runtime-selection.md
       - doc/plans/2026-07-23-plan-mode-steer-queue-simplification.md
       - doc/plans/2026-07-23-chat-response-annotations.md
   CHAT.RESPONSE.ANNOTATION.001:

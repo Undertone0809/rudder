@@ -1,0 +1,163 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rust-native-foundations-pilot-2026-08-13",
+  "status": "blocked",
+  "owner": {
+    "root_id": "codex-root",
+    "agent_id": "codex-root"
+  },
+  "intent": {
+    "raw_request": "doc/plans/2026-08-12-rust-native-foundations-pilot.md 完成 Rust Native Foundations Pilot：建立可复用、可打包、可回退的 Rust native foundation，并按依赖顺序推进 Local App process host、流式 Workspace backup、Agent Run process/I/O host、runtime payload installer/extractor、Run evidence offset indexer/parser 和 Workspace manifest/index watcher。每个 slice 都必须保持现有产品语义和 TypeScript 决策边界，与经过优化且契约等价的 Node 实现进行公平对照，完成正确性、故障恢复、资源占用、真实运行、packaged acceptance 和 rudder-evals native_ab 验证，最终分别给出 accepted_default、保持 opt-in 或 not_admitted 的证据化决策。",
+    "corrections": [
+      "先把这个分支 merge into main",
+      "rust 相关 pkgs 的版本号也要和正常发行版本的版本号同步上，可以把这个同步到 proposal 里",
+      "继续推进啊，有问题就修问题，不要把问题抛给我，你来负责完成这个任务",
+      "通过 spawn agent 并发开发适当加速开发流程",
+      "完成一部分功能就 commit 一下"
+    ],
+    "non_goals": [
+      "不编辑 guarded doc/product/**",
+      "不把缺失 native_ab/live evidence 伪装为完成"
+    ],
+    "authorization": "implementation"
+  },
+  "candidate": {
+    "branch": "detached-clean-candidate",
+    "source_ref": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+    "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "changed_paths": [
+      "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
+      "scripts/perf/workspace-backup-node-streaming.mjs",
+      "scripts/perf/workspace-backup-node-streaming.test.ts"
+    ],
+    "build": {
+      "id": "desktop-dist-0.7.4-macos-arm64",
+      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "portable_sha256": "f0c77b5e17d2b75fce46ed0b64d972d6b2c7a59ccb515566473c4796895721bc",
+      "native_sha256": {
+        "rudder-process-host": "7fede47048a85c6d2440e7103c0d3b988ee60ee816ff2f94eed436be8e71e83f",
+        "rudder-native": "777cf32e063a6dd22bfff6b53ee2f3544d179ad7a95ee91b0c666d129c9609df",
+        "rudder-update-helper": "d66e9a548a1378690cd554ff3457425b5ed9f5f9ce7ba07a16637264e6c6b4fa"
+      }
+    },
+    "runtime": {
+      "id": "macOS-arm64-packaged-Rudder-0.7.4",
+      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "account_gate_smoke": "passed_on_retry",
+      "first_attempt": "failed_provider_handoff_timeout"
+    },
+    "organization_data": {
+      "organization_id": "isolated-smoke-org",
+      "data_id": "isolated-packaged-smoke-and-fixture-data"
+    },
+    "workload_fixture": "Local App focused suite; 100-block A/B; packaged account-gate/email-code; 554-file/9.54 MB backup comparator; Rust archive/evidence unit fixtures",
+    "budget_lease": {
+      "id": "turn-2026-08-13",
+      "fingerprint": "rust-native-foundations-pilot",
+      "expires_at": "2026-08-14T00:00:00+08:00"
+    },
+    "acceptance_packet": {
+      "version": "1",
+      "fingerprint": "rust-native-foundations-pilot-packet-v1",
+      "criteria": [
+        "Rust foundation format/clippy/tests and synchronized 0.7.4 metadata pass",
+        "Local App focused native suite passes and Node fallback remains available",
+        "macOS arm64 packaged Desktop builds, stages binaries, and account-gate smoke passes",
+        "Every slice has an evidence-backed accepted_default, opt-in, or not_admitted decision",
+        "No promotion claim uses the non-comparable 100-block sampler result or missing native_ab/live evidence"
+      ],
+      "state_inventory": [
+        "implementation",
+        "review_ready",
+        "packaged acceptance",
+        "native_ab pending",
+        "final decision ledger"
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "needs_more_evidence",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "build_id": "desktop-dist-0.7.4-macos-arm64",
+      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4",
+      "data_id": "isolated-packaged-smoke-and-fixture-data",
+      "packet_version": "1"
+    },
+    "verifier": {
+      "verdict": "question",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "build_id": "desktop-dist-0.7.4-macos-arm64",
+      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4",
+      "data_id": "isolated-packaged-smoke-and-fixture-data",
+      "packet_version": "1"
+    },
+    "final_review": {
+      "verdict": "blocked_by_verifier",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22",
+      "build_id": "desktop-dist-0.7.4-macos-arm64",
+      "runtime_id": "macOS-arm64-packaged-Rudder-0.7.4",
+      "data_id": "isolated-packaged-smoke-and-fixture-data",
+      "packet_version": "1"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "ed20b01e717ef620cc2fd172141777abcc755334",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "0906539b5b2bc7bcbb04af74e86a8da104647e87",
+    "branch_refs": [
+      "cf26412d3a9a8abd0f5eb3044c213cae2da8cf22"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/tmp/rudder-native-pilot-next.u89BHp",
+    "patch_tree_sha": "d5a8478d97f070ff27481bcf26ad1e32895ed33f",
+    "expected_old_sha": "df2faa44c60a0e4433d8223567a9513d35d09893",
+    "cas": {
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "df2faa44c60a0e4433d8223567a9513d35d09893",
+    "delivered_sha": "73302dd377b665ee7d5955f3c89de84263fe313e"
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "shared main worktree changes preserved outside isolated candidate"
+    ],
+    "index_fingerprint_before": "not_applicable-isolated-worktree",
+    "index_fingerprint_after": "not_applicable-isolated-worktree",
+    "worktree_fingerprint_before": "isolated-clean",
+    "worktree_fingerprint_after": "isolated-clean",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "shared main checkout was not reset/stashed/cleaned",
+      "candidate worktree has zero tracked/untracked changes"
+    ]
+  },
+  "terminal": {
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "9baf893daf75d51647faf88bb1b1a85a7b2ac9de",
+    "delivered_tree_sha": "1e890c5c5ecee222db02df0b2d87ccc0ce2be40e",
+    "timestamp": "2026-08-13T23:15:00+08:00",
+    "proof": [
+      "git update-ref refs/heads/main 73302dd377b665ee7d5955f3c89de84263fe313e df2faa44c60a0e4433d8223567a9513d35d09893",
+      "git update-ref refs/heads/main 9baf893daf75d51647faf88bb1b1a85a7b2ac9de 96c69a50e1afdc89752d5db512f1998fd8358110",
+      "merge-tree --write-tree d5a8478d97f070ff27481bcf26ad1e32895ed33f",
+      "reviewer needs_more_evidence and verifier question block acceptance"
+    ]
+  }
+}

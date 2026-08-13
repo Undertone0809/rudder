@@ -1689,6 +1689,30 @@ test.describe("Messenger unified threads contract", () => {
       return payload.groups.find((candidate) => candidate.id === group.id)?.entries.map((entry) => entry.threadKey) ?? [];
     }).not.toContain(`chat:${movableChat.id}`);
 
+    const separateRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}/separate`)
+        && request.method() === "POST"
+      ) {
+        separateRequests.push(request.url());
+      }
+    });
+
+    await page.getByTestId(groupSectionId).hover();
+    await page.getByRole("button", { name: "Group actions" }).click();
+    await page.getByRole("menuitem", { name: "Separate items" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(separateRequests).toHaveLength(0);
+
+    await page.getByTestId(groupSectionId).hover();
+    await page.getByRole("button", { name: "Group actions" }).click();
+    await page.getByRole("menuitem", { name: "Separate items" }).click();
+    await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 8, y: 8 } });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(separateRequests).toHaveLength(0);
+
     const separateResponse = page.waitForResponse((response) =>
       response.url().endsWith(`/api/orgs/${organization.id}/messenger/groups/${group.id}/separate`) &&
       response.request().method() === "POST",
@@ -1696,8 +1720,16 @@ test.describe("Messenger unified threads contract", () => {
     await page.getByTestId(groupSectionId).hover();
     await page.getByRole("button", { name: "Group actions" }).click();
     await page.getByRole("menuitem", { name: "Separate items" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "Separate items" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Separate items" }).evaluate((button) => {
+      (button as HTMLButtonElement).click();
+      (button as HTMLButtonElement).click();
+    });
+    const closingDialog = page.locator('[data-slot="dialog-content"][data-state="closed"]');
+    await expect(closingDialog).toContainText("Separate items");
+    await expect(closingDialog).toContainText(`Move the items in "${group.name}" back into the main list?`);
+    await expect(closingDialog.getByRole("button", { name: "Confirm", exact: true })).toHaveCount(0);
     expect((await separateResponse).ok()).toBe(true);
+    expect(separateRequests).toHaveLength(1);
     await expect(page.getByTestId(groupSectionId)).toHaveCount(0);
     const firstMainRow = page.getByTestId(threadTestId(`chat:${untouchedChat.id}`));
     const secondMainRow = page.getByTestId(threadTestId(`chat:${movableChat.id}`));

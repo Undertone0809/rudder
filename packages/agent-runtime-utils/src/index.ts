@@ -98,6 +98,7 @@ export type {
   AgentRuntimeExecutionContext,
   AgentRuntimeExecutionResult,
   AgentRuntimeInvocationMeta,
+  AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeLoadedSkillMeta,
   AgentRuntimeMediaAttachment,
   AgentRuntimeModel,

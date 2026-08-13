@@ -63,6 +63,7 @@ interface CommentThreadProps {
   onUpdate?: (commentId: string, body: string) => Promise<void>;
   onDelete?: (commentId: string) => Promise<void>;
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   issueStatus?: string;
   locale?: InstanceLocale;
   reopenWillWakeAgent?: boolean;
@@ -465,6 +466,7 @@ const TimelineList = memo(function TimelineList({
   mentions,
   emptyMessage,
   currentUserId,
+  currentUserAvatarUrl,
   onUpdate,
   onDelete,
   imageUploadHandler,
@@ -494,6 +496,7 @@ const TimelineList = memo(function TimelineList({
   mentions: MentionOption[];
   emptyMessage: string;
   currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
   onUpdate?: (commentId: string, body: string) => Promise<void>;
   onDelete?: (commentId: string) => Promise<void>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -792,6 +795,7 @@ const TimelineList = memo(function TimelineList({
         ) : (
           <Identity
             name={resolveOperatorDisplayName(operatorDisplayName)}
+            avatarUrl={comment.authorUserId === currentUserId ? currentUserAvatarUrl : null}
             size="sm"
             className={commentCollapsed ? "max-w-full min-w-0 overflow-hidden" : undefined}
           />
@@ -993,6 +997,7 @@ export function CommentThread({
   onUpdate,
   onDelete,
   currentUserId,
+  currentUserAvatarUrl,
   issueStatus,
   locale = "en",
   reopenWillWakeAgent = false,
@@ -1354,6 +1359,7 @@ export function CommentThread({
       mentions={mentions}
       emptyMessage={emptyMessage}
       currentUserId={currentUserId}
+      currentUserAvatarUrl={currentUserAvatarUrl}
       onUpdate={onUpdate}
       onDelete={onDelete}
       imageUploadHandler={imageUploadHandler}

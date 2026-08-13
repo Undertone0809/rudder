@@ -1,5 +1,6 @@
 import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
+import { Identity } from "@/components/Identity";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { formatPriorityLabel } from "@/lib/priorities";
@@ -14,7 +15,15 @@ import { useMemo } from "react";
 
 type CardReference = ChatRichReference & { display: "card" };
 
-export function ChatRichReferences({ message }: { message: ChatMessage }) {
+export function ChatRichReferences({
+  message,
+  currentUserId = null,
+  currentUserAvatarUrl = null,
+}: {
+  message: ChatMessage;
+  currentUserId?: string | null;
+  currentUserAvatarUrl?: string | null;
+}) {
   const references = useMemo(
     () => chatRichReferencesFromStructuredPayload(message.structuredPayload)
       .filter((reference): reference is CardReference => reference.display === "card"),
@@ -29,20 +38,22 @@ export function ChatRichReferences({ message }: { message: ChatMessage }) {
         <ChatRichReferenceCard
           key={`${reference.type}:${reference.issueId ?? reference.identifier ?? "issue"}:${reference.type === "issue_comment" ? reference.commentId : index}`}
           reference={reference}
+          currentUserId={currentUserId}
+          currentUserAvatarUrl={currentUserAvatarUrl}
         />
       ))}
     </div>
   );
 }
 
-function ChatRichReferenceCard({ reference }: { reference: CardReference }) {
+function ChatRichReferenceCard({ reference, currentUserId, currentUserAvatarUrl }: { reference: CardReference; currentUserId: string | null; currentUserAvatarUrl: string | null }) {
   if (reference.type === "issue") {
-    return <IssueReferenceCard reference={reference} />;
+    return <IssueReferenceCard reference={reference} currentUserId={currentUserId} currentUserAvatarUrl={currentUserAvatarUrl} />;
   }
-  return <IssueCommentReferenceCard reference={reference} />;
+  return <IssueCommentReferenceCard reference={reference} currentUserId={currentUserId} currentUserAvatarUrl={currentUserAvatarUrl} />;
 }
 
-function IssueReferenceCard({ reference }: { reference: Extract<CardReference, { type: "issue" }> }) {
+function IssueReferenceCard({ reference, currentUserId, currentUserAvatarUrl }: { reference: Extract<CardReference, { type: "issue" }>; currentUserId: string | null; currentUserAvatarUrl: string | null }) {
   const issueRef = issueReferenceKey(reference);
   const query = useQuery({
     queryKey: queryKeys.issues.detail(issueRef),
@@ -61,10 +72,10 @@ function IssueReferenceCard({ reference }: { reference: Extract<CardReference, {
     return <ReferenceFallbackCard icon="issue" title="Issue unavailable" detail="The issue could not be loaded." tone="muted" />;
   }
 
-  return <IssueCard issue={query.data} />;
+  return <IssueCard issue={query.data} currentUserId={currentUserId} currentUserAvatarUrl={currentUserAvatarUrl} />;
 }
 
-function IssueCommentReferenceCard({ reference }: { reference: Extract<CardReference, { type: "issue_comment" }> }) {
+function IssueCommentReferenceCard({ reference, currentUserId, currentUserAvatarUrl }: { reference: Extract<CardReference, { type: "issue_comment" }>; currentUserId: string | null; currentUserAvatarUrl: string | null }) {
   const issueRef = issueReferenceKey(reference);
   const issueQuery = useQuery({
     queryKey: queryKeys.issues.detail(issueRef),
@@ -92,10 +103,10 @@ function IssueCommentReferenceCard({ reference }: { reference: Extract<CardRefer
     return <ReferenceFallbackCard icon="comment" title="Comment unavailable" detail="The comment could not be loaded." tone="muted" />;
   }
 
-  return <IssueCommentCard issue={issueQuery.data} comment={commentQuery.data} />;
+  return <IssueCommentCard issue={issueQuery.data} comment={commentQuery.data} currentUserId={currentUserId} currentUserAvatarUrl={currentUserAvatarUrl} />;
 }
 
-function IssueCard({ issue }: { issue: Issue }) {
+function IssueCard({ issue, currentUserId, currentUserAvatarUrl }: { issue: Issue; currentUserId: string | null; currentUserAvatarUrl: string | null }) {
   const issueLabel = issue.identifier ?? issue.id.slice(0, 8);
   const assigneeLabel = issue.assigneeAgentId
     ? issue.assigneeAgentId.slice(0, 8)
@@ -123,7 +134,7 @@ function IssueCard({ issue }: { issue: Issue }) {
             {issue.title}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>{assigneeLabel}</span>
+            {issue.assigneeUserId ? <Identity name={assigneeLabel} avatarUrl={issue.assigneeUserId === currentUserId ? currentUserAvatarUrl : null} size="xs" /> : <span>{assigneeLabel}</span>}
             <span>Updated {relativeTime(issue.updatedAt)}</span>
           </div>
         </div>
@@ -132,7 +143,7 @@ function IssueCard({ issue }: { issue: Issue }) {
   );
 }
 
-function IssueCommentCard({ issue, comment }: { issue: Issue; comment: IssueComment }) {
+function IssueCommentCard({ issue, comment, currentUserId, currentUserAvatarUrl }: { issue: Issue; comment: IssueComment; currentUserId: string | null; currentUserAvatarUrl: string | null }) {
   const issueLabel = issue.identifier ?? issue.id.slice(0, 8);
   const author = comment.authorAgentId
     ? comment.authorAgentId.slice(0, 8)
@@ -154,7 +165,7 @@ function IssueCommentCard({ issue, comment }: { issue: Issue; comment: IssueComm
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="font-mono text-[11px] font-medium text-foreground">{issueLabel}</span>
-            <span>{author}</span>
+            {comment.authorUserId ? <Identity name={author} avatarUrl={comment.authorUserId === currentUserId ? currentUserAvatarUrl : null} size="xs" /> : <span>{author}</span>}
             <span>{relativeTime(comment.createdAt)}</span>
           </div>
           <div className="mt-1 truncate text-sm font-medium leading-5 text-foreground">

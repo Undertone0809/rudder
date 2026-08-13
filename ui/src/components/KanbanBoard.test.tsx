@@ -177,6 +177,7 @@ describe("KanbanBoard", () => {
           updatedAt: new Date(2026, 4, 18, 9, 30),
         }]}
         currentUserId="user-1"
+        currentUserAvatarUrl="https://example.test/me.png"
         projects={[{ id: "project-1", name: "Rudder dev" }]}
         displayProperties={["identifier", "priority", "assignee", "reviewer", "labels", "project", "updated", "created"]}
         onUpdateIssue={() => undefined}
@@ -188,6 +189,7 @@ describe("KanbanBoard", () => {
     const primaryAssignee = card?.querySelector('[data-slot="kanban-card-primary-assignee"]');
     const metadata = card?.querySelector('[data-slot="kanban-card-metadata"]');
     const rows = Array.from(card?.querySelectorAll('[data-slot="kanban-card-metadata-row"]') ?? []);
+    expect(card?.querySelectorAll('[data-avatar-url="https://example.test/me.png"]')).toHaveLength(2);
     const assignee = card?.querySelector('[data-slot="kanban-card-assignee"]');
     const reviewer = card?.querySelector('[data-slot="kanban-card-reviewer"]');
 

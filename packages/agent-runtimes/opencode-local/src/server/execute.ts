@@ -57,6 +57,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readOpenCodeLoadedMcpServers } from "./mcp-evidence.js";
 import { validateOpenCodeModelConfig } from "./models.js";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl, parseOpenCodeJsonlLine } from "./parse.js";
 import { resolveManagedOpenCodeHomeDir } from "./skills.js";
@@ -700,6 +701,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     includeCoreMcp: rudderMcpPreflight.available,
     onLog,
   });
+  const loadedMcpServers = await readOpenCodeLoadedMcpServers(runConfigPath);
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   validateOpenCodeModelConfig({ model });
@@ -871,6 +873,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         prompt,
         agentInstructionStack: prompt,
         promptMetrics,
+        ...(loadedMcpServers ? { loadedMcpServers } : {}),
         loadedSkills,
         realizedSkills: loadedSkills,
         promptInjectedSkills: loadedSkills,

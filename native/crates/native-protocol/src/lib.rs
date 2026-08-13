@@ -8,6 +8,9 @@ pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
     "process_group_cleanup",
     "parent_eof_cleanup",
+    "listener_owner_attestation",
+    "owner_receipt",
+    "output_order_index",
     "pty",
     "pty_input",
     "pty_resize",
@@ -18,6 +21,9 @@ pub const CAPABILITIES: &[&str] = &[
 pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
     "parent_eof_cleanup",
+    "listener_owner_attestation",
+    "owner_receipt",
+    "output_order_index",
     "pty",
     "pty_input",
     "pty_resize",
@@ -60,6 +66,8 @@ pub enum Command {
         owner_token: Option<String>,
         #[serde(default)]
         port: Option<u16>,
+        #[serde(rename = "runtimeRoot", default)]
+        runtime_root: Option<String>,
     },
     Stop {
         #[serde(rename = "protocolVersion", default)]
@@ -112,6 +120,8 @@ impl Command {
                 cwd,
                 env,
                 owner_token,
+                port,
+                runtime_root,
                 ..
             } => {
                 if protocol_version.is_none() {
@@ -160,8 +170,27 @@ impl Command {
                 let Some(owner_token) = owner_token.as_ref() else {
                     return Err("owner_token_required");
                 };
-                if owner_token.is_empty() || owner_token.len() > 256 {
+                if owner_token.is_empty()
+                    || owner_token.len() > 256
+                    || owner_token == "."
+                    || owner_token == ".."
+                    || owner_token.contains('/')
+                    || owner_token.contains('\\')
+                    || owner_token.contains('\0')
+                {
                     return Err("invalid_owner_token");
+                }
+                if port.is_none() {
+                    return Err("port_required");
+                }
+                let Some(runtime_root) = runtime_root.as_ref() else {
+                    return Err("runtime_root_required");
+                };
+                if runtime_root.is_empty()
+                    || runtime_root.len() > 4_096
+                    || !std::path::Path::new(runtime_root).is_absolute()
+                {
+                    return Err("invalid_runtime_root");
                 }
                 Ok(())
             }
@@ -287,7 +316,7 @@ mod tests {
     #[test]
     fn parses_start_with_camel_case_fields() {
         let command: Command = serde_json::from_str(
-            r#"{"type":"start","protocolVersion":{"major":1,"minor":0},"requestId":"test","executable":"/bin/sh","argv":["-c","exit 0"],"cwd":"/tmp","env":{"RUDDER_TEST":"1"},"ownerToken":"opaque","port":43123}"#,
+            r#"{"type":"start","protocolVersion":{"major":1,"minor":0},"requestId":"test","executable":"/bin/sh","argv":["-c","exit 0"],"cwd":"/tmp","env":{"RUDDER_TEST":"1"},"ownerToken":"opaque","port":43123,"runtimeRoot":"/tmp/rudder-runtime"}"#,
         )
         .expect("valid command");
         assert!(command.validate().is_ok());
@@ -311,6 +340,7 @@ mod tests {
             env: Default::default(),
             owner_token: None,
             port: None,
+            runtime_root: None,
         };
         assert_eq!(command.validate(), Err("paths_must_be_absolute"));
     }
@@ -353,6 +383,7 @@ mod tests {
             env: Default::default(),
             owner_token,
             port: None,
+            runtime_root: Some("/tmp/rudder-runtime".into()),
         };
         assert_eq!(base(None).validate(), Err("owner_token_required"));
         assert_eq!(

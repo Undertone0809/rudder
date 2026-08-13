@@ -146,8 +146,6 @@ export const chatsApi = {
       sourceMessageId: string;
       clientMutationId: string;
       preferredAgentId?: string;
-      modelOverride?: string | null;
-      effortOverride?: string | null;
     },
   ) => api.post<ChatConversation>(`/chats/${chatId}/side-chats`, data),
   destroySideChat: (chatId: string) =>
