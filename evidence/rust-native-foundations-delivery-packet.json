@@ -111,7 +111,7 @@
     "invalidated_receipts": []
   },
   "integration": {
-    "authorized": false,
+    "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
     "base_sha": "ed20b01e717ef620cc2fd172141777abcc755334",
@@ -128,7 +128,7 @@
       "attempted": true,
       "succeeded": true,
       "observed_old_sha": "df2faa44c60a0e4433d8223567a9513d35d09893",
-      "delivered_sha": "73302dd377b665ee7d5955f3c89de84263fe313e"
+    "delivered_sha": "73302dd377b665ee7d5955f3c89de84263fe313e"
     },
     "index_update_mode": "none"
   },
@@ -150,11 +150,12 @@
   },
   "terminal": {
     "delivered_ref": "refs/heads/main",
-    "delivered_sha": "73302dd377b665ee7d5955f3c89de84263fe313e",
-    "delivered_tree_sha": "d5a8478d97f070ff27481bcf26ad1e32895ed33f",
+    "delivered_sha": "9baf893daf75d51647faf88bb1b1a85a7b2ac9de",
+    "delivered_tree_sha": "1e890c5c5ecee222db02df0b2d87ccc0ce2be40e",
     "timestamp": "2026-08-13T23:15:00+08:00",
     "proof": [
       "git update-ref refs/heads/main 73302dd377b665ee7d5955f3c89de84263fe313e df2faa44c60a0e4433d8223567a9513d35d09893",
+      "git update-ref refs/heads/main 9baf893daf75d51647faf88bb1b1a85a7b2ac9de 96c69a50e1afdc89752d5db512f1998fd8358110",
       "merge-tree --write-tree d5a8478d97f070ff27481bcf26ad1e32895ed33f",
       "reviewer needs_more_evidence and verifier question block acceptance"
     ]
