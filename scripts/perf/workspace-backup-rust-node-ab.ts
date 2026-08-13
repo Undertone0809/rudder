@@ -24,7 +24,7 @@ export type WorkspaceBackupRustNodeAbResult = {
   manifestParity: boolean;
   entryParity: boolean;
   contentParity: boolean;
-  archiveFormatParity: false;
+  archiveByteParity: "not_compared";
   node: {
     elapsedMs: number;
     rssDeltaBytes: number;
@@ -184,7 +184,7 @@ export async function runWorkspaceBackupRustNodeAb(
     manifestParity: JSON.stringify(nodeIndex.manifest) === JSON.stringify(nativeIndex.manifest),
     entryParity: nodeIndex.entries.size === nativeIndex.entries.size,
     contentParity: true,
-    archiveFormatParity: false,
+    archiveByteParity: "not_compared",
     node: { ...nodeResult, byteSize: nodeStat.size, sha256: nodeSha256, artifactPath: nodePath },
     native: { ...nativeResult, byteSize: nativeStat.size, sha256: nativeSha256, artifactPath: nativePath },
     recovery,

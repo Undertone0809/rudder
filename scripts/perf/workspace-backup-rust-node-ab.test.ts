@@ -22,7 +22,7 @@ describe("workspace backup Rust/Node formal comparator", () => {
       assert.equal(result.manifestParity, true);
       assert.equal(result.entryParity, true);
       assert.equal(result.contentParity, true);
-      assert.equal(result.archiveFormatParity, false);
+      assert.equal(result.archiveByteParity, "not_compared");
       assert.equal(result.node.byteSize, result.native.byteSize);
       assert.match(result.node.sha256, /^[a-f0-9]{64}$/);
       assert.match(result.native.sha256, /^[a-f0-9]{64}$/);
