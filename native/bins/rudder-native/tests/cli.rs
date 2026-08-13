@@ -132,7 +132,8 @@ fn reports_version_protocol_and_capabilities_metadata() {
         serde_json::json!([
             "archive.create",
             "archive.inspectManifest",
-            "archive.extractFile"
+            "archive.extractFile",
+            "evidence.index"
         ])
     );
     assert!(stderr.is_empty());
@@ -143,6 +144,39 @@ fn reports_version_protocol_and_capabilities_metadata() {
         serde_json::from_str::<Value>(&stdout).unwrap(),
         archive_capabilities["capabilities"]
     );
+}
+
+#[test]
+fn indexes_run_evidence_without_materializing_the_source() {
+    let root = tempdir().unwrap();
+    let input = root.path().join("run.ndjson");
+    let output = root.path().join("run.index.ndjson");
+    fs::write(
+        &input,
+        concat!(
+            r#"{"ts":"2026-08-13T00:00:00Z","stream":"stdout","chunk":"hello"}"#,
+            "\n",
+            r#"{"ts":"2026-08-13T00:00:01Z","stream":"stderr","chunk":"world"}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let (code, result, stderr) = run(&[
+        "evidence",
+        "index",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "1024",
+        "10",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(result["operation"], "indexEvidence");
+    assert_eq!(result["recordCount"], 2);
+    assert_eq!(result["sourceBytes"], fs::metadata(&input).unwrap().len());
+    let lines = fs::read_to_string(output).unwrap();
+    assert_eq!(lines.lines().count(), 2);
+    assert!(lines.contains("\"sourceOffset\":0"));
+    assert!(lines.contains("\"stream\":\"stderr\""));
 }
 
 #[test]

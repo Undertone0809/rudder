@@ -4,6 +4,7 @@ members = [
   "crates/archive-core",
   "crates/native-protocol",
   "crates/update-helper-core",
+  "crates/run-evidence-core",
   "bins/rudder-native",
   "bins/rudder-process-host",
   "bins/rudder-process-tree-sampler",

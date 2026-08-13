@@ -1,6 +1,7 @@
 use rudder_archive_core::{
     ArchiveLimits, CREATE_PROTOCOL_VERSION, create_archive, extract_file, inspect_manifest,
 };
+use rudder_run_evidence_core::{INDEX_PROTOCOL_VERSION, IndexLimits, index_run_log};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -8,6 +9,7 @@ const CAPABILITIES: &[&str] = &[
     "archive.create",
     "archive.inspectManifest",
     "archive.extractFile",
+    "evidence.index",
 ];
 
 fn required(
@@ -36,11 +38,13 @@ fn number(value: String) -> Result<u64, &'static str> {
 
 fn run() -> Result<serde_json::Value, &'static str> {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("archive") {
+    let namespace = args.next();
+    let operation = args.next();
+    if namespace.as_deref() != Some("archive") && namespace.as_deref() != Some("evidence") {
         return Err("usage");
     }
-    match args.next().as_deref() {
-        Some("capabilities") => {
+    match (namespace.as_deref(), operation.as_deref()) {
+        (Some("archive"), Some("capabilities")) => {
             if args.next().is_some() {
                 return Err("usage");
             }
@@ -51,7 +55,7 @@ fn run() -> Result<serde_json::Value, &'static str> {
                 "capabilities": CAPABILITIES
             }))
         }
-        Some("create") => {
+        (Some("archive"), Some("create")) => {
             let plan = absolute(required(&mut args, "plan_required")?)?;
             let output = absolute(required(&mut args, "output_required")?)?;
             let max_archive_bytes = number(required(&mut args, "max_archive_bytes_required")?)?;
@@ -80,7 +84,7 @@ fn run() -> Result<serde_json::Value, &'static str> {
                 "entryCount": result.entry_count
             }))
         }
-        Some("inspect-manifest") => {
+        (Some("archive"), Some("inspect-manifest")) => {
             let input = absolute(required(&mut args, "input_required")?)?;
             let max_archive_bytes = number(required(&mut args, "max_archive_bytes_required")?)?;
             let max_manifest_bytes = number(required(&mut args, "max_manifest_bytes_required")?)?;
@@ -99,7 +103,7 @@ fn run() -> Result<serde_json::Value, &'static str> {
                 json!({ "ok": true, "operation": "inspectManifest", "protocolVersion": CREATE_PROTOCOL_VERSION, "manifestBase64": result.manifest_base64, "byteSize": result.byte_size, "sha256": result.sha256, "entryCount": result.entry_count }),
             )
         }
-        Some("extract-file") => {
+        (Some("archive"), Some("extract-file")) => {
             let input = absolute(required(&mut args, "input_required")?)?;
             let entry = required(&mut args, "entry_required")?;
             let output = absolute(required(&mut args, "output_required")?)?;
@@ -113,6 +117,33 @@ fn run() -> Result<serde_json::Value, &'static str> {
             Ok(
                 json!({ "ok": true, "operation": "extractFile", "protocolVersion": CREATE_PROTOCOL_VERSION, "byteSize": result.byte_size, "sha256": result.sha256 }),
             )
+        }
+        (Some("evidence"), Some("index")) => {
+            let input = absolute(required(&mut args, "input_required")?)?;
+            let output = absolute(required(&mut args, "output_required")?)?;
+            let max_record_bytes = number(required(&mut args, "max_record_bytes_required")?)?;
+            let max_records = number(required(&mut args, "max_records_required")?)?;
+            if args.next().is_some() {
+                return Err("usage");
+            }
+            let result = index_run_log(
+                &input,
+                &output,
+                IndexLimits {
+                    max_record_bytes,
+                    max_records,
+                },
+            )
+            .map_err(|_| "evidence_index_failed")?;
+            Ok(json!({
+                "ok": true,
+                "operation": "indexEvidence",
+                "protocolVersion": INDEX_PROTOCOL_VERSION,
+                "sourceBytes": result.source_bytes,
+                "recordCount": result.record_count,
+                "sourceSha256": result.source_sha256,
+                "indexPath": result.index_path,
+            }))
         }
         _ => Err("usage"),
     }
