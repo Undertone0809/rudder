@@ -74,7 +74,7 @@
         "Rust foundation format/clippy/tests and synchronized 0.7.5 metadata pass",
         "Local App focused native suite passes and Node fallback remains available",
         "macOS arm64 packaged Desktop builds, stages binaries, and account-gate smoke passes",
-        "Rust/optimized-Node backup comparison records contract parity and recovery without claiming ZIP byte parity",
+        "Rust/optimized-Node backup comparison records contract parity and destination-collision preservation without claiming ZIP byte parity",
         "Packaged Local App dogfood records real cycle/date counts and fails closed below 100 cycles across 7 UTC dates",
         "native_ab producer emits exactly 3 trials per arm, while live evaluation remains blocked without real binaries"
       ],
