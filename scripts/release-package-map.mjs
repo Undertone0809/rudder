@@ -197,20 +197,17 @@ function prepareCargoWorkspaceVersion(version) {
   const nextManifest = manifest.replace(workspacePackageSection, nextSection);
 
   const packageNames = new Set();
-  for (const relativeRoot of ["native/crates", "native/bins"]) {
-    const absoluteRoot = join(repoRoot, relativeRoot);
-    if (!existsSync(absoluteRoot)) continue;
-    for (const entry of readdirSync(absoluteRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const packageManifestPath = join(absoluteRoot, entry.name, "Cargo.toml");
-      if (!existsSync(packageManifestPath)) continue;
-      const packageManifest = readFileSync(packageManifestPath, "utf8");
-      const packageName = packageManifest.match(/^name\s*=\s*"([^"]+)"\s*$/m)?.[1];
-      if (!packageName) {
-        throw new Error(`native package manifest is missing a name: ${packageManifestPath}`);
-      }
-      packageNames.add(packageName);
+  const memberList = manifest.match(/^members\s*=\s*\[([\s\S]*?)\]/m)?.[1] ?? "";
+  for (const relativeMember of memberList.matchAll(/^[ \t]*"([^"]+)"\s*,?\s*$/gmu)) {
+    const packageManifestPath = join(repoRoot, "native", relativeMember[1], "Cargo.toml");
+    if (!existsSync(packageManifestPath)) throw new Error(`native workspace member is missing: ${packageManifestPath}`);
+    const packageManifest = readFileSync(packageManifestPath, "utf8");
+    const packageName = packageManifest.match(/^name\s*=\s*"([^"]+)"\s*$/m)?.[1];
+    if (!packageName) throw new Error(`native package manifest is missing a name: ${packageManifestPath}`);
+    if (!/^version\.workspace\s*=\s*true\s*$/m.test(packageManifest)) {
+      throw new Error(`native package ${packageName} must inherit version.workspace`);
     }
+    packageNames.add(packageName);
   }
 
   const lockPath = join(repoRoot, "native", "Cargo.lock");
