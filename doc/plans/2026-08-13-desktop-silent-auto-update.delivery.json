@@ -15,7 +15,7 @@
   "candidate": {
     "branch": "main",
     "source_ref": "refs/heads/main",
-    "source_sha": "697604436a4b781a1162b379446e1375d39edee3",
+    "source_sha": "42dd81aaccd858dcfe3d950be39e68dee7236671",
     "dirty_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0",
     "changed_paths": [
       "cli/src/commands/start.ts",
@@ -45,7 +45,7 @@
     ],
     "build": {
       "id": "desktop-dist-mac-arm64-0.7.4",
-      "source_sha": "697604436a4b781a1162b379446e1375d39edee3",
+      "source_sha": "42dd81aaccd858dcfe3d950be39e68dee7236671",
       "current_packaged_artifact": {
         "version": "0.7.4",
         "path": "desktop/release/mac-arm64/Rudder.app",
@@ -77,7 +77,7 @@
         "usable_as_current_candidate_proof": false
       }
     },
-    "runtime": {"id": "packaged-macos-arm64-prod-local-default-0.7.4", "source_sha": "697604436a4b781a1162b379446e1375d39edee3"},
+    "runtime": {"id": "packaged-macos-arm64-prod-local-default-0.7.4", "source_sha": "42dd81aaccd858dcfe3d950be39e68dee7236671"},
     "organization_data": {"organization_id": "not_applicable", "data_id": "isolated-helper-fixtures"},
     "workload_fixture": "packaged-macos-prod-local-default",
     "acceptance_packet": {
@@ -133,9 +133,9 @@
     {"command": "node desktop/scripts/smoke.mjs --mode=packaged --scenario=auto-update", "result": "pass", "summary": "the helper binary bundled in the current 0.7.4 artifact passed an isolated fixture matrix for commit, rollback, dual failure, interruption recovery, tamper, and admission; this does not prove stable external installation or Desktop-to-helper handoff"}
   ],
   "receipts": {
-    "reviewer": {"verdict": "needs more evidence", "candidate_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0", "source_sha": "697604436a4b781a1162b379446e1375d39edee3", "build_id": "desktop-dist-mac-arm64-0.7.4", "runtime_id": "packaged-macos-arm64-prod-local-default-0.7.4", "data_id": "isolated-helper-fixtures", "packet_version": "4", "reason": "component and packaged helper evidence pass, but public OS lifecycle and stable helper identity evidence remain missing"},
-    "verifier": {"verdict": "QUESTION", "candidate_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0", "source_sha": "697604436a4b781a1162b379446e1375d39edee3", "build_id": "desktop-dist-mac-arm64-0.7.4", "runtime_id": "packaged-macos-arm64-prod-local-default-0.7.4", "data_id": "isolated-helper-fixtures", "packet_version": "4", "reason": "packaged helper fixture passed; no independent public Desktop natural-Quit/OS-shutdown terminal receipt"},
-    "final_review": {"verdict": "pending", "candidate_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0", "source_sha": "697604436a4b781a1162b379446e1375d39edee3", "build_id": "desktop-dist-mac-arm64-0.7.4", "runtime_id": "packaged-macos-arm64-prod-local-default-0.7.4", "data_id": "isolated-helper-fixtures", "packet_version": "4"}
+    "reviewer": {"verdict": "needs more evidence", "candidate_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0", "source_sha": "42dd81aaccd858dcfe3d950be39e68dee7236671", "build_id": "desktop-dist-mac-arm64-0.7.4", "runtime_id": "packaged-macos-arm64-prod-local-default-0.7.4", "data_id": "isolated-helper-fixtures", "packet_version": "4", "reason": "component and packaged helper evidence pass, but public OS lifecycle and stable helper identity evidence remain missing"},
+    "verifier": {"verdict": "QUESTION", "candidate_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0", "source_sha": "42dd81aaccd858dcfe3d950be39e68dee7236671", "build_id": "desktop-dist-mac-arm64-0.7.4", "runtime_id": "packaged-macos-arm64-prod-local-default-0.7.4", "data_id": "isolated-helper-fixtures", "packet_version": "4", "reason": "packaged helper fixture passed; no independent public Desktop natural-Quit/OS-shutdown terminal receipt"},
+    "final_review": {"verdict": "pending", "candidate_fingerprint": "c37ab1a624aea7ef5c53fbdf049ec986870feeb1b744dda90ee18990ea9681b0", "source_sha": "42dd81aaccd858dcfe3d950be39e68dee7236671", "build_id": "desktop-dist-mac-arm64-0.7.4", "runtime_id": "packaged-macos-arm64-prod-local-default-0.7.4", "data_id": "isolated-helper-fixtures", "packet_version": "4"}
   },
   "blockers": [
     "Install and upgrade rudder-update-helper at a stable installation-scoped path outside Rudder.app; attest owner, mode, non-symlink path, protocol, and digest, then bind that helper identity into the journal.",
@@ -161,14 +161,14 @@
     "authorized": false,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "697604436a4b781a1162b379446e1375d39edee3",
+    "base_sha": "eff06b747e6a02e821065bea67781cf9826e5b30",
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "a943d0938a32da3184504ca32f1388b6f7d2213c",
     "branch_refs": ["refs/heads/main"],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": null,
     "patch_tree_sha": "93b6031588b62aa8d0686b0869808a3d0f91e976",
-    "expected_old_sha": "697604436a4b781a1162b379446e1375d39edee3",
+    "expected_old_sha": "eff06b747e6a02e821065bea67781cf9826e5b30",
     "cas": {"attempted": false, "succeeded": false, "observed_old_sha": null, "delivered_sha": null},
     "index_update_mode": "none"
   },
