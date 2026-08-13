@@ -524,6 +524,15 @@ async function workspaceTreeSha256(rootPath: string) {
   return buildTreeHash(entries);
 }
 
+async function syncDirectory(directoryPath: string) {
+  const handle = await fs.open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function reconcileWorkspaceBackupArtifactStorage(
   db: Db,
   liveOrgIds: readonly string[],
@@ -1607,10 +1616,11 @@ export function workspaceBackupService(db: Db) {
       }
 
       const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-      const stagingRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-staging", `${orgId}-${backupId}-${Date.now()}`);
+      const operationId = crypto.randomUUID();
+      const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
       const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${backupId}-${Date.now()}`);
       const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
-      const receiptPath = path.join(receiptRoot, `${orgId}-${backupId}.json`);
+      const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
       await fs.rm(stagingRoot, { recursive: true, force: true });
       await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
 
@@ -1632,14 +1642,19 @@ export function workspaceBackupService(db: Db) {
 
         await fs.mkdir(path.dirname(workspaceRoot), { recursive: true });
         await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+        const stagingTreeSha256 = await workspaceTreeSha256(stagingRoot);
+        const liveTreeSha256 = await pathExists(workspaceRoot) ? await workspaceTreeSha256(workspaceRoot) : null;
         await writeRestoreReceipt(receiptPath, {
           version: 1,
+          operationId,
           orgId,
           backupId,
           phase: "prepared",
           workspaceRoot,
           stagingRoot,
           rollbackRoot,
+          liveTreeSha256,
+          stagingTreeSha256,
           expectedTreeSha256: row.treeSha256,
           preRestoreBackupId: preRestoreBackup.id,
         });
@@ -1653,8 +1668,9 @@ export function workspaceBackupService(db: Db) {
         if (liveExists) {
           await fs.rename(workspaceRoot, rollbackRoot);
           await writeRestoreReceipt(receiptPath, {
-            version: 1, orgId, backupId, phase: "live_moved", workspaceRoot, stagingRoot, rollbackRoot,
+            version: 1, operationId, orgId, backupId, phase: "live_moved", workspaceRoot, stagingRoot, rollbackRoot,
             expectedTreeSha256: row.treeSha256, preRestoreBackupId: preRestoreBackup.id,
+            liveTreeSha256, stagingTreeSha256,
           });
         }
         try {
@@ -1671,9 +1687,10 @@ export function workspaceBackupService(db: Db) {
           throw conflict("Workspace restore failed published tree verification.");
         }
         await writeRestoreReceipt(receiptPath, {
-          version: 1, orgId, backupId, phase: "committed", workspaceRoot, stagingRoot, rollbackRoot,
-          expectedTreeSha256: row.treeSha256, publishedTreeSha256, preRestoreBackupId: preRestoreBackup.id,
+          version: 1, operationId, orgId, backupId, phase: "committed", workspaceRoot, stagingRoot, rollbackRoot,
+          expectedTreeSha256: row.treeSha256, liveTreeSha256, stagingTreeSha256, publishedTreeSha256, preRestoreBackupId: preRestoreBackup.id,
         });
+        await syncDirectory(path.dirname(workspaceRoot));
         if (liveExists) await fs.rm(rollbackRoot, { recursive: true, force: true });
         await fs.rm(receiptPath, { force: true });
       } finally {
