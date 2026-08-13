@@ -1215,17 +1215,7 @@ function powershellQuote(value: string): string {
 }
 
 export function buildWindowsZipExtractCommand(zipPath: string, outputDir: string): { command: string; args: string[] } {
-  return {
-    command: "powershell.exe",
-    args: [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      `Expand-Archive -LiteralPath ${powershellQuote(zipPath)} -DestinationPath ${powershellQuote(outputDir)} -Force`,
-    ],
-  };
+  return { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", `Expand-Archive -LiteralPath ${powershellQuote(zipPath)} -DestinationPath ${powershellQuote(outputDir)} -Force`] };
 }
 
 export function buildWindowsRobocopyMirrorCommand(sourcePath: string, destinationPath: string): { command: string; args: string[] } {
