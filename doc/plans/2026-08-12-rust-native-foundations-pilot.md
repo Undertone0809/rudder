@@ -45,7 +45,7 @@ three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
 failure recovery, resource measurements, packaged acceptance, and three
 isolated live trials are bound to the same candidate.
 
-### Decision ledger (candidate `1c4a318107fa773337232b585a92988ad9a7d437`)
+### Decision ledger (candidate `6a4bdc8b6cdce3788f7faf730eef49932b608364`)
 
 These decisions are terminal for this candidate's evidence scope. They do not
 claim that a missing implementation passed its acceptance gate.
@@ -57,7 +57,7 @@ claim that a missing implementation passed its acceptance gate.
 | Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node A/B, packaged acceptance, and native_ab live trials are absent | Run real workspace E2E and comparable Node/Rust pressure campaign |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
 | Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
-| Run evidence offset indexer/parser | `not_admitted` | No production implementation exists and the full-response removal/output-contract gate is not satisfied | Remove full materialization from the default path, then implement bounded index/read acceptance |
+| Run evidence offset indexer/parser | `not_admitted` | A bounded `rudder-run-evidence-core` prototype now builds a rebuildable NDJSON offset sidecar and has CLI/unit coverage, but production full-response removal, provider-parity, and real-run acceptance are not satisfied | Remove full materialization from the default path, then run bounded index/read and Node parity acceptance |
 | Workspace manifest/index watcher | `not_admitted` | No production implementation exists and the traversal-versus-DB baseline/freshness contract is absent | Measure 1k/100k/1m fixtures before deciding whether a native watcher is justified |
 
 `accepted_default` is deliberately limited to the reusable foundation; no
