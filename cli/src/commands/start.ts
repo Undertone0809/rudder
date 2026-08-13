@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
-import { access, chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -75,6 +75,12 @@ interface StartCommandOptions {
   waitForActiveRuns?: boolean;
   desktopProgressJson?: boolean;
   desktopWaitForApply?: boolean;
+  desktopPrepareOnly?: boolean;
+  desktopAssetPath?: string;
+  desktopAssetChecksum?: string;
+  desktopAssetName?: string;
+  desktopAssetKind?: "full" | "shell";
+  desktopReleaseDigest?: string;
   dryRun?: boolean;
   versionCheck?: boolean;
 }
@@ -125,6 +131,7 @@ type DesktopUpdateProgressPhase =
   | "downloading_checksums"
   | "downloading_asset"
   | "verifying_checksum"
+  | "prepared"
   | "ready_to_install"
   | "waiting_for_active_runs"
   | "preparing_restart"
@@ -140,6 +147,11 @@ type DesktopUpdateProgressEvent = {
   totalBytes?: number;
   totalRuns?: number;
   error?: string;
+  assetName?: string;
+  assetChecksum?: string;
+  releaseDigest?: string;
+  stagedArtifactPath?: string;
+  stagedArtifactDigest?: string;
   at: string;
 };
 
@@ -1749,6 +1761,21 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
   const desktopProgressJson = opts.desktopProgressJson === true;
+  const exactDesktopAssetPath = opts.desktopAssetPath?.trim() || null;
+  const exactDesktopAssetChecksum = opts.desktopAssetChecksum?.trim() || null;
+  const exactDesktopAssetName = opts.desktopAssetName?.trim() || null;
+  const exactDesktopReleaseDigest = opts.desktopReleaseDigest?.trim() || null;
+  if (exactDesktopAssetPath || exactDesktopAssetChecksum || exactDesktopAssetName || exactDesktopReleaseDigest) {
+    if (!exactDesktopAssetPath || !exactDesktopAssetChecksum || !exactDesktopAssetName || !exactDesktopReleaseDigest) {
+      throw new Error("Exact Desktop asset mode requires path, checksum, asset name, and release digest.");
+    }
+    if (!path.isAbsolute(exactDesktopAssetPath) || exactDesktopAssetName.includes("/") || !/^[a-f0-9]{64}$/iu.test(exactDesktopAssetChecksum) || !/^[a-f0-9]{64}$/iu.test(exactDesktopReleaseDigest)) {
+      throw new Error("Exact Desktop asset mode received invalid candidate identity.");
+    }
+    if (opts.desktopAssetKind && opts.desktopAssetKind !== "full" && opts.desktopAssetKind !== "shell") {
+      throw new Error("Exact Desktop asset mode received an invalid asset kind.");
+    }
+  }
   let runtimeSupportsShellAssets = false;
 
   if (desktopProgressJson) {
@@ -1851,59 +1878,93 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     }
 
     await withDesktopInstallLock(installPaths, async () => {
-      const directReleaseVersion = resolveDesktopReleaseVersion(tag);
       const progressFactory: ProgressReporterFactory = desktopProgressJson
         ? createDesktopProgressFactory()
         : createByteProgress;
-      let release: GithubRelease | null = null;
-      try {
-        release = await runStartPhase(
-          "Resolving Desktop release...",
-          "Desktop release resolved.",
-          () => fetchGithubRelease(repo, tag),
-          desktopProgressJson ? "resolving_release" : null,
-        );
-      } catch (error) {
-        if (!directReleaseVersion) throw error;
-        p.log.warn(
-          `Desktop release metadata could not be resolved; falling back to deterministic download URLs. ${formatFetchError(error)}`,
-        );
-      }
+      let releaseTag: string;
+      let selectedAsset: GithubReleaseAsset;
+      let selectedAssetKind: "full" | "shell";
+      let expectedChecksum: string;
+      let cachedAsset: Awaited<ReturnType<typeof downloadDesktopAssetWithCache>> | null = null;
+      let assetCandidates: DesktopAssetCandidate[] = [];
+      let checksums = new Map<string, string>();
 
-      const releaseTag = release?.tag_name ?? (directReleaseVersion ? tag : null);
-      if (!releaseTag) {
-        throw new Error(`Unable to resolve Rudder Desktop release tag for ${repo}@${tag}.`);
-      }
-
-      const assetCandidates = resolveDesktopAssetCandidates({
-        releaseAssets: release?.assets ?? [],
-        target,
-        repo,
-        tag,
-        directReleaseVersion,
-        allowShellAssets: runtimeSupportsShellAssets,
-      });
-      if (assetCandidates.length === 0) {
-        throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
-      }
-
-      const checksumAsset = selectChecksumAsset(release?.assets ?? [])
-        ?? (
-          directReleaseVersion
-            ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME)
-            : null
+      if (exactDesktopAssetPath) {
+        releaseTag = tag;
+        selectedAsset = {
+          name: exactDesktopAssetName!,
+          browser_download_url: "",
+        };
+        selectedAssetKind = opts.desktopAssetKind ?? "full";
+        expectedChecksum = normalizeDesktopAssetChecksum(exactDesktopAssetChecksum!);
+        const computedReleaseDigest = createHash("sha256")
+          .update(JSON.stringify({
+            releaseTag,
+            assetName: selectedAsset.name,
+            assetChecksum: expectedChecksum,
+            assetKind: selectedAssetKind,
+            platform: target.platform,
+            arch: target.arch,
+          }))
+          .digest("hex");
+        if (computedReleaseDigest !== exactDesktopReleaseDigest!.toLowerCase()) {
+          throw new Error("Exact Desktop asset release digest does not match the candidate identity.");
+        }
+        const descriptor = await stat(exactDesktopAssetPath);
+        if (!descriptor.isFile()) throw new Error("Exact Desktop asset must be a regular file.");
+        const linkDescriptor = await lstat(exactDesktopAssetPath);
+        if (linkDescriptor.isSymbolicLink()) throw new Error("Exact Desktop asset must not be a symbolic link.");
+        const checksum = await runStartPhase(
+          "Verifying staged Desktop checksum...",
+          `Verified ${pc.cyan(path.basename(exactDesktopAssetPath))}.`,
+          () => assertChecksumMatch(exactDesktopAssetPath, expectedChecksum),
+          desktopProgressJson ? "verifying_checksum" : null,
         );
-      const checksums = await downloadChecksums(checksumAsset, outputDir, progressFactory);
-      let selectedCandidate: ChecksummedDesktopAssetCandidate;
-      try {
-        selectedCandidate = selectChecksummedDesktopAssetCandidate(assetCandidates, checksums);
-      } catch (error) {
-        throw new Error(`No checksummed Rudder Desktop asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
+        cachedAsset = { path: exactDesktopAssetPath, checksum, cacheStatus: "hit" };
+      } else {
+        const directReleaseVersion = resolveDesktopReleaseVersion(tag);
+        let release: GithubRelease | null = null;
+        try {
+          release = await runStartPhase(
+            "Resolving Desktop release...",
+            "Desktop release resolved.",
+            () => fetchGithubRelease(repo, tag),
+            desktopProgressJson ? "resolving_release" : null,
+          );
+        } catch (error) {
+          if (!directReleaseVersion) throw error;
+          p.log.warn(
+            `Desktop release metadata could not be resolved; falling back to deterministic download URLs. ${formatFetchError(error)}`,
+          );
+        }
+
+        releaseTag = release?.tag_name ?? (directReleaseVersion ? tag : "");
+        if (!releaseTag) throw new Error(`Unable to resolve Rudder Desktop release tag for ${repo}@${tag}.`);
+        assetCandidates = resolveDesktopAssetCandidates({
+          releaseAssets: release?.assets ?? [],
+          target,
+          repo,
+          tag,
+          directReleaseVersion,
+          allowShellAssets: runtimeSupportsShellAssets,
+        });
+        if (assetCandidates.length === 0) {
+          throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
+        }
+        const checksumAsset = selectChecksumAsset(release?.assets ?? [])
+          ?? (directReleaseVersion ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME) : null);
+        checksums = await downloadChecksums(checksumAsset, outputDir, progressFactory);
+        let selectedCandidate: ChecksummedDesktopAssetCandidate;
+        try {
+          selectedCandidate = selectChecksummedDesktopAssetCandidate(assetCandidates, checksums);
+        } catch {
+          throw new Error(`No checksummed Rudder Desktop asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
+        }
+        for (const warning of selectedCandidate.warnings) p.log.warn(warning);
+        selectedAsset = selectedCandidate.asset;
+        selectedAssetKind = selectedCandidate.kind;
+        expectedChecksum = selectedCandidate.expectedChecksum;
       }
-      for (const warning of selectedCandidate.warnings) p.log.warn(warning);
-      let selectedAsset = selectedCandidate.asset;
-      let selectedAssetKind = selectedCandidate.kind;
-      let expectedChecksum = selectedCandidate.expectedChecksum;
 
       const metadata = await readInstallMetadata(installPaths.metadataPath);
       if (
@@ -1921,8 +1982,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           desktopProgressJson ? "preparing_restart" : null,
         );
       } else {
-        let cachedAsset: Awaited<ReturnType<typeof downloadDesktopAssetWithCache>>;
-        try {
+        if (!exactDesktopAssetPath) try {
           cachedAsset = await downloadDesktopAssetWithCache(selectedAsset, expectedChecksum, {
             outputDir,
             progressFactory,
@@ -1941,8 +2001,10 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
             progressFactory,
           });
         }
-        if (cachedAsset.cacheStatus === "hit") {
-          p.log.success(`Desktop asset cache hit at ${pc.cyan(cachedAsset.path)}.`);
+        if (!cachedAsset) throw new Error("Desktop update did not produce a verified asset.");
+        const verifiedAsset = cachedAsset;
+        if (verifiedAsset.cacheStatus === "hit") {
+          p.log.success(`Desktop asset cache hit at ${pc.cyan(verifiedAsset.path)}.`);
           if (desktopProgressJson) {
             writeDesktopProgress({
               phase: "downloading_asset",
@@ -1953,10 +2015,33 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         }
         const checksum = await runStartPhase(
           "Verifying Desktop checksum...",
-          `Verified ${pc.cyan(path.basename(cachedAsset.path))}.`,
-          () => assertChecksumMatch(cachedAsset.path, expectedChecksum),
+          `Verified ${pc.cyan(path.basename(verifiedAsset.path))}.`,
+          () => assertChecksumMatch(verifiedAsset.path, expectedChecksum),
           desktopProgressJson ? "verifying_checksum" : null,
         );
+
+        if (opts.desktopPrepareOnly === true) {
+          writeDesktopProgress({
+            phase: "prepared",
+            message: "Desktop update is downloaded and verified.",
+            percent: 100,
+            assetName: selectedAsset.name,
+            assetChecksum: checksum,
+            stagedArtifactPath: path.resolve(verifiedAsset.path),
+            stagedArtifactDigest: checksum,
+            releaseDigest: createHash("sha256")
+              .update(JSON.stringify({
+                releaseTag,
+                assetName: selectedAsset.name,
+                assetChecksum: checksum,
+                assetKind: selectedAssetKind,
+                platform: target.platform,
+                arch: target.arch,
+              }))
+              .digest("hex"),
+          });
+          return;
+        }
 
         let applySignal: { force: boolean } | null = null;
         let applySignalController: ReturnType<typeof createDesktopApplySignalController> | null = null;
@@ -2000,7 +2085,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         await runStartPhase(
           "Installing portable Desktop app...",
           `Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`,
-          () => installPortableDesktop(cachedAsset.path, installPaths, target),
+            () => installPortableDesktop(verifiedAsset.path, installPaths, target),
           desktopProgressJson ? "preparing_restart" : null,
         );
         await runStartPhase(

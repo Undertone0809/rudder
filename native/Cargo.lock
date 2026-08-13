@@ -206,6 +206,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-update-helper"
+version = "0.1.0"
+dependencies = [
+ "rudder-update-helper-core",
+ "serde_json",
+]
+
+[[package]]
+name = "rudder-update-helper-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"

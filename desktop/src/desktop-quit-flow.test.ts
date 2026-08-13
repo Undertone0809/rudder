@@ -110,6 +110,27 @@ describe("desktop quit flow update handoff", () => {
     expect(appQuitMock).toHaveBeenCalledOnce();
   });
 
+  it("hands a natural quit to automatic apply before stopping the runtime", async () => {
+    const beforeFinalizeQuit = vi.fn(async () => "handled" as const);
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => null,
+      setMainWindow: vi.fn(),
+      getServerHandle: () => null,
+      fetchApi: globalThis.fetch,
+      beforeFinalizeQuit,
+      stopLocalRudder,
+      destroyResidentTray: vi.fn(),
+    });
+
+    await quitFlow.beginQuitFlow();
+
+    expect(beforeFinalizeQuit).toHaveBeenCalledTimes(1);
+    expect(stopLocalRudder).not.toHaveBeenCalled();
+    expect(appQuitMock).not.toHaveBeenCalled();
+  });
+
   it("logs Local App cleanup failures distinctly and continues the watchdog-backed quit fallback", async () => {
     const cleanupError = new AggregateError([new Error("binding-a: still alive")], "Local App cleanup failed");
     const prepareForQuit = vi.fn(async () => undefined);

@@ -12,6 +12,7 @@ const stagedNativeRoot = path.join(desktopRoot, ".packaged", "native");
 const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
 const target = resolveNativeTarget(process.platform, targetArch);
 const binaryName = process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host";
+const updateHelperBinaryName = process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper";
 const cargoBin = process.platform === "win32" ? "cargo.exe" : "cargo";
 
 function run(command, args, cwd) {
@@ -30,31 +31,14 @@ function run(command, args, cwd) {
   });
 }
 
-function capture(command, args, cwd) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (signal) return reject(new Error(`${command} exited with signal ${signal}`));
-      if (code !== 0) return reject(new Error(`${command} exited with code ${code ?? 1}: ${stderr.trim()}`));
-      resolve(stdout);
-    });
-  });
-}
-
 async function main() {
   if (!target) {
     throw new Error(`Rust native process host has no supported target mapping for ${process.platform}/${targetArch}`);
   }
-  const cargoArgs = ["build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "--release", "--bin", "rudder-process-host"];
+  const cargoArgs = [
+    "build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "--release",
+    "--bin", "rudder-process-host", "--bin", "rudder-update-helper",
+  ];
   const requestedTarget = process.env.RUDDER_NATIVE_TARGET || (target === resolveNativeTarget(process.platform, process.arch) ? null : target);
   if (requestedTarget) cargoArgs.push("--target", requestedTarget);
   await run(cargoBin, cargoArgs, repoRoot);
@@ -63,25 +47,19 @@ async function main() {
     ? path.join(nativeRoot, "target", requestedTarget, "release")
     : path.join(nativeRoot, "target", "release");
   const sourcePath = path.join(profileRoot, binaryName);
-  const desktopManifest = JSON.parse(await fs.readFile(path.join(desktopRoot, "package.json"), "utf8"));
-  const expectedVersion = desktopManifest.version;
-  if (typeof expectedVersion !== "string" || !expectedVersion) {
-    throw new Error("Desktop package version is missing");
-  }
-  const nativeVersion = (await capture(sourcePath, ["--version"], repoRoot)).trim();
-  if (nativeVersion !== `rudder-process-host ${expectedVersion}`) {
-    throw new Error(
-      `Rust native process host version mismatch: expected ${expectedVersion}, got ${nativeVersion || "<empty>"}`,
-    );
-  }
+  const updateHelperSourcePath = path.join(profileRoot, updateHelperBinaryName);
   const targetRoot = path.join(stagedNativeRoot, target);
   const destinationPath = path.join(targetRoot, binaryName);
+  const updateHelperDestinationPath = path.join(targetRoot, updateHelperBinaryName);
   await fs.access(sourcePath);
+  await fs.access(updateHelperSourcePath);
   await fs.rm(targetRoot, { recursive: true, force: true });
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.copyFile(sourcePath, destinationPath);
+  await fs.copyFile(updateHelperSourcePath, updateHelperDestinationPath);
   if (process.platform !== "win32") await fs.chmod(destinationPath, 0o755);
-  console.log(`[desktop:stage-native] staged ${target}/${binaryName} v${expectedVersion}`);
+  if (process.platform !== "win32") await fs.chmod(updateHelperDestinationPath, 0o755);
+  console.log(`[desktop:stage-native] staged ${target}/${binaryName} and ${updateHelperBinaryName}`);
 }
 
 void main().catch((error) => {

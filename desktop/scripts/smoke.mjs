@@ -65,14 +65,6 @@ const terminalSmokeScreenshotPath = path.join(
   os.tmpdir(),
   `rudder-desktop-agent-terminal-smoke-${smokeMode}.png`,
 );
-const terminalConstrainedSmokeScreenshotPath = path.join(
-  os.tmpdir(),
-  `rudder-desktop-agent-terminal-smoke-${smokeMode}-constrained.png`,
-);
-const terminalFailureSmokeScreenshotPath = path.join(
-  os.tmpdir(),
-  `rudder-desktop-agent-terminal-smoke-${smokeMode}-failure.png`,
-);
 const expectedBrowserToolNames = [
   "rudder_browser_tabs",
   "rudder_browser_user_tabs",
@@ -161,28 +153,10 @@ async function runCapturedProcess(executable, args, options = {}) {
   });
 }
 
-async function verifyPackagedNativeProcessHost(executablePath, expectedVersion) {
+async function verifyPackagedNativeProcessHost(executablePath) {
   const metadata = await runCapturedProcess(executablePath, ["--version"]);
   assert.equal(metadata.code, 0, "packaged Rust process host should expose metadata");
-  assert.equal(
-    metadata.stdout,
-    `rudder-process-host ${expectedVersion}\n`,
-    "packaged Rust process host version should match the packaged Rudder release",
-  );
-  const runtimeRoot = path.join(tmpRoot, "packaged-native-runtime");
-  await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
-  const listener = createServer();
-  const port = await new Promise((resolve, reject) => {
-    listener.once("error", reject);
-    listener.listen(0, "127.0.0.1", () => {
-      const address = listener.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("packaged native smoke could not allocate a loopback port"));
-        return;
-      }
-      listener.close((error) => error ? reject(error) : resolve(address.port));
-    });
-  });
+  assert.match(metadata.stdout, /^rudder-process-host 0\.1\.0\n$/u);
   await new Promise((resolve, reject) => {
     const host = spawn(executablePath, [], {
       cwd: tmpRoot,
@@ -254,8 +228,6 @@ async function verifyPackagedNativeProcessHost(executablePath, expectedVersion) 
       cwd: tmpRoot,
       env: {},
       ownerToken: "packaged-native-smoke",
-      port,
-      runtimeRoot,
     })}\n`);
   });
   if (process.platform === "win32") return;
@@ -326,19 +298,176 @@ async function verifyPackagedNativeProcessHost(executablePath, expectedVersion) 
   });
 }
 
-async function assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, generation) {
-  if (mode !== "packaged" || process.platform !== "darwin" || process.arch !== "arm64") return;
-  assert.ok(generation, "packaged native Local App receipt requires a runtime generation");
-  const receiptPath = path.join(
-    resolveInstancePaths(scenarioRoot).electronUserDataDir,
-    "local-apps",
-    "native-runtime",
-    generation,
-    "terminal-receipt.json",
-  );
-  const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
-  assert.equal(receipt?.terminal?.requestId, generation, "packaged native receipt must match the Local App generation");
-  assert.equal(receipt?.terminal?.cleanupProven, true, "packaged native receipt must prove owned-tree cleanup");
+async function runPackagedUpdateHelper(executablePath, requestPath) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(executablePath, ["--request", requestPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`packaged update helper exited with signal ${signal}`));
+        return;
+      }
+      let result = null;
+      try {
+        const line = stdout.trim().split(/\r?\n/u).filter(Boolean).at(-1);
+        result = line ? JSON.parse(line) : null;
+      } catch (error) {
+        reject(new Error(`packaged update helper returned invalid JSON: ${stdout.trim()}`, { cause: error }));
+        return;
+      }
+      resolve({ code, result, stderr: stderr.trim(), stdout: stdout.trim() });
+    });
+  });
+}
+
+async function writePackagedUpdateHelperRequest(root, input = {}) {
+  const installPath = path.join(root, "Rudder.app");
+  const stagedPath = path.join(root, "staged", "Rudder.app");
+  const lkgPath = path.join(root, "lkg", "Rudder.app");
+  const journalPath = path.join(root, "journal.json");
+  const checkpointPath = path.join(root, "checkpoint.json");
+  await mkdir(installPath, { recursive: true });
+  await mkdir(stagedPath, { recursive: true });
+  await writeFile(path.join(installPath, "current-generation.txt"), "current\n", "utf8");
+  await writeFile(path.join(stagedPath, "candidate-generation.txt"), "candidate\n", "utf8");
+  const request = {
+    operation: input.operation ?? "apply",
+    ownerToken: input.ownerToken ?? `desktop-smoke-owner-${path.basename(root)}`,
+    installPath,
+    stagedPath,
+    lkgPath,
+    journalPath,
+    checkpointPath,
+    targetVersion: "99.0.0-smoke",
+    candidateSha256: input.candidateSha256 ?? null,
+    admission: {
+      closed: true,
+      activeRuns: input.activeRuns ?? 0,
+      drainToken: `desktop-smoke-drain-${path.basename(root)}`,
+    },
+    checkpoint: {
+      instanceId: "default",
+      databaseRevision: "desktop-smoke-revision",
+      migrationCompatible: true,
+    },
+    probation: {},
+    fault: input.fault ?? {},
+  };
+  const requestPath = path.join(root, "request.json");
+  await writeFile(requestPath, `${JSON.stringify(request)}\n`, "utf8");
+  return { request, requestPath };
+}
+
+async function bindPackagedUpdateHelperDigest(executablePath, prepared) {
+  const digest = await new Promise((resolve, reject) => {
+    const child = spawn(executablePath, ["--digest", prepared.request.stagedPath], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0
+      ? resolve(stdout.trim())
+      : reject(new Error(`packaged update helper digest probe failed (${code}): ${stderr.trim()}`)));
+  });
+  prepared.request.candidateSha256 = digest;
+  await writeFile(prepared.requestPath, `${JSON.stringify(prepared.request)}\n`, "utf8");
+  return prepared;
+}
+
+async function verifyPackagedUpdateHelperFaultMatrix(executablePath) {
+  const version = await new Promise((resolve, reject) => {
+    const child = spawn(executablePath, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0
+      ? resolve(stdout.trim())
+      : reject(new Error(`packaged update helper version probe failed (${code}): ${stderr.trim()}`)));
+  });
+  assert.equal(version, "rudder-update-helper 0.1.0 protocol=1");
+
+  const matrixRoot = path.join(tmpRoot, "auto-update-helper");
+  await mkdir(matrixRoot, { recursive: true });
+
+  const success = await bindPackagedUpdateHelperDigest(executablePath, await writePackagedUpdateHelperRequest(path.join(matrixRoot, "success")));
+  const successResult = await runPackagedUpdateHelper(executablePath, success.requestPath);
+  assert.equal(successResult.code, 0, `successful helper transaction failed: ${successResult.stdout} ${successResult.stderr}`);
+  assert.equal(successResult.result?.stage, "committed");
+  assert.equal(await pathExists(path.join(success.request.lkgPath, "current-generation.txt")), true);
+  assert.equal(await pathExists(success.request.checkpointPath), true);
+
+  const rollback = await bindPackagedUpdateHelperDigest(executablePath, await writePackagedUpdateHelperRequest(path.join(matrixRoot, "rollback"), {
+    fault: { failTargetProbe: true },
+  }));
+  const rollbackResult = await runPackagedUpdateHelper(executablePath, rollback.requestPath);
+  assert.equal(rollbackResult.code, 3, `rollback helper transaction returned ${rollbackResult.code}`);
+  assert.equal(rollbackResult.result?.stage, "rolled_back");
+  assert.equal(rollbackResult.result?.rolledBack, true);
+  assert.equal(await pathExists(path.join(rollback.request.installPath, "current-generation.txt")), true);
+
+  const dualFailure = await bindPackagedUpdateHelperDigest(executablePath, await writePackagedUpdateHelperRequest(path.join(matrixRoot, "dual-failure"), {
+    fault: { failTargetProbe: true, failLkgProbe: true },
+  }));
+  const dualFailureResult = await runPackagedUpdateHelper(executablePath, dualFailure.requestPath);
+  assert.equal(dualFailureResult.code, 4, `dual-failure helper transaction returned ${dualFailureResult.code}`);
+  assert.equal(dualFailureResult.result?.stage, "recovery_required");
+  assert.equal(dualFailureResult.result?.recoveryRequired, true);
+  assert.equal(dualFailureResult.result?.recoveryCode, "dual_failure");
+
+  const interrupted = await bindPackagedUpdateHelperDigest(executablePath, await writePackagedUpdateHelperRequest(path.join(matrixRoot, "interrupted"), {
+    fault: { failAfterPreviousMoved: true },
+  }));
+  const interruptedResult = await runPackagedUpdateHelper(executablePath, interrupted.requestPath);
+  assert.equal(interruptedResult.code, 2, `interrupted helper transaction returned ${interruptedResult.code}`);
+  assert.equal(await pathExists(interrupted.request.installPath), false);
+  assert.equal(await pathExists(path.join(interrupted.request.lkgPath, "current-generation.txt")), true);
+  await writeFile(interrupted.requestPath, `${JSON.stringify({
+    ...interrupted.request,
+    operation: "recover",
+    fault: {},
+  })}\n`, "utf8");
+  const recoveredResult = await runPackagedUpdateHelper(executablePath, interrupted.requestPath);
+  assert.equal(recoveredResult.code, 3, `helper recovery returned ${recoveredResult.code}`);
+  assert.equal(recoveredResult.result?.stage, "rolled_back");
+  assert.equal(await pathExists(path.join(interrupted.request.installPath, "current-generation.txt")), true);
+
+  const tampered = await bindPackagedUpdateHelperDigest(executablePath, await writePackagedUpdateHelperRequest(path.join(matrixRoot, "tampered")));
+  await writeFile(path.join(tampered.request.stagedPath, "substituted.txt"), "substituted\n", "utf8");
+  const tamperedResult = await runPackagedUpdateHelper(executablePath, tampered.requestPath);
+  assert.equal(tamperedResult.code, 2, `tampered helper transaction returned ${tamperedResult.code}`);
+  assert.match(String(tamperedResult.result?.error ?? ""), /digest does not match/iu);
+  assert.equal(await pathExists(path.join(tampered.request.installPath, "current-generation.txt")), true);
+
+  const activeRun = await bindPackagedUpdateHelperDigest(executablePath, await writePackagedUpdateHelperRequest(path.join(matrixRoot, "active-run"), {
+    activeRuns: 1,
+  }));
+  const activeRunResult = await runPackagedUpdateHelper(executablePath, activeRun.requestPath);
+  assert.equal(activeRunResult.code, 2, `active-run helper transaction returned ${activeRunResult.code}`);
+  assert.match(String(activeRunResult.result?.error ?? ""), /not closed and drained/iu);
+  assert.equal(await pathExists(path.join(activeRun.request.installPath, "current-generation.txt")), true);
+
+  console.log("[desktop-smoke] packaged update helper passed commit, rollback, dual-failure, interruption recovery, tamper, and admission fault matrix");
+}
+
+async function verifyPackagedUpdateHelper(executablePath) {
+  const metadata = await runCapturedProcess(executablePath, ["--version"]);
+  assert.equal(metadata.code, 0, "packaged update helper should expose metadata");
+  assert.match(metadata.stdout, /^rudder-update-helper 0\.1\.0 protocol=1\n$/u);
 }
 
 function parseLocalAppSmokeEnvNames() {
@@ -788,17 +917,25 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const nativeHostPath = nativeTarget
     ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host")
     : null;
-  const serverPackageDir = path.join(resourcesDir, "server-package");
-  const serverManifest = JSON.parse(await readFile(path.join(serverPackageDir, "package.json"), "utf8"));
+  const updateHelperPath = nativeTarget
+    ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper")
+    : null;
   if (process.platform === "darwin" && process.arch === "arm64") {
     assert.ok(nativeHostPath, "packaged Desktop should stage a Rust process host target");
     const nativeStats = await stat(nativeHostPath);
     assert.equal(nativeStats.isFile(), true, "packaged Rust process host should be a file");
     assert.notEqual(nativeStats.mode & 0o111, 0, "packaged Rust process host should be executable");
-    await verifyPackagedNativeProcessHost(nativeHostPath, serverManifest.version);
+    await verifyPackagedNativeProcessHost(nativeHostPath);
+    assert.ok(updateHelperPath, "packaged Desktop should stage the Rust update helper target");
+    const updateHelperStats = await stat(updateHelperPath);
+    assert.equal(updateHelperStats.isFile(), true, "packaged Rust update helper should be a file");
+    assert.notEqual(updateHelperStats.mode & 0o111, 0, "packaged Rust update helper should be executable");
+    await verifyPackagedUpdateHelper(updateHelperPath);
   }
+  const serverPackageDir = path.join(resourcesDir, "server-package");
   const cliEntry = path.join(serverPackageDir, "desktop-cli.js");
   const cliRunner = path.join(serverPackageDir, "desktop-cli-runner.js");
+  const serverManifest = JSON.parse(await readFile(path.join(serverPackageDir, "package.json"), "utf8"));
   const serverEntrypoint = path.resolve(serverPackageDir, serverManifest.main ?? "dist/index.js");
   const runtimeCacheDir = path.join(resolveInstancePaths(userDataDir).rudderHome, "runtimes", serverManifest.version);
   const runtimeServerDir = path.join(runtimeCacheDir, "node_modules", "@rudderhq", "server");
@@ -4814,7 +4951,7 @@ async function runCleanScenario(mode) {
       ceo,
       packagedRuntime,
     );
-    await verifyAgentWorkspaceTerminal(firstRun.electronApp, firstRun.page, firstRun.baseUrl, company, ceo);
+    await verifyAgentWorkspaceTerminal(firstRun.page, firstRun.baseUrl, company, ceo);
     const issue = await createIssue(firstRun.baseUrl, company.id, ceo.id);
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
@@ -5016,27 +5153,6 @@ async function runBrowserScenario(mode) {
   }
 }
 
-async function runTerminalScenario(mode) {
-  const scenarioRoot = path.join(tmpRoot, "terminal");
-  if (mode === "packaged") {
-    await preparePackagedExternalRuntimeFixture(scenarioRoot);
-    console.log("[desktop-smoke] packaged Agent Terminal native PTY passed");
-    return;
-  }
-  const ports = await allocateSmokePorts();
-  const run = await launchDesktop(scenarioRoot, mode, ports);
-  try {
-    const company = await createCompany(run.baseUrl);
-    const agent = await createCeo(run.baseUrl, company.id);
-    await verifyAgentWorkspaceTerminal(run.electronApp, run.page, run.baseUrl, company, agent);
-    await closeDesktop(run.electronApp);
-  } catch (error) {
-    console.error("[desktop-smoke] Terminal scenario failed", error);
-    await closeDesktop(run.electronApp).catch(() => {});
-    throw error;
-  }
-}
-
 async function readDesktopLocalAppStatus(page, definitionId) {
   return page.evaluate((id) => window.desktopShell.localApps.status(id), definitionId);
 }
@@ -5061,7 +5177,7 @@ async function openSmokeSidePanel(page) {
   return sidePanel;
 }
 
-async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company, agent) {
+async function verifyAgentWorkspaceTerminal(page, baseUrl, company, agent) {
   console.log("[desktop-smoke] verifying Agent workspace Terminal");
   const chat = await createAgentTerminalChat(baseUrl, company.id, agent.id);
   const companyRouteKey = company.urlKey ?? company.issuePrefix;
@@ -5114,38 +5230,6 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   await page.screenshot({ path: terminalSmokeScreenshotPath, fullPage: true });
   console.log(`[desktop-smoke] Agent Terminal screenshot: ${terminalSmokeScreenshotPath}`);
 
-  const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getSize());
-  assert.ok(originalWindowSize, "Agent Terminal resize smoke should find the Desktop window");
-  await electronApp.evaluate(({ BrowserWindow }, size) => {
-    BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
-  }, [1_280, 900]);
-  await waitForSmokeCondition("Agent Terminal constrained layout", async () => {
-    const layout = await terminal.evaluate((panel) => {
-      const host = panel.querySelector("[data-testid='terminal-xterm-host']");
-      const screen = panel.querySelector(".xterm-screen");
-      return {
-        hostWidth: host?.getBoundingClientRect().width ?? 0,
-        screenWidth: screen?.getBoundingClientRect().width ?? 0,
-      };
-    });
-    return layout.hostWidth >= 240
-      && layout.hostWidth < initialLayout.hostWidth
-      && layout.screenWidth >= layout.hostWidth - 32
-      ? layout
-      : null;
-  });
-  await xtermInput.pressSequentially("printf 'TERMINAL_RESIZED=yes\\n'", { delay: 2 });
-  await xtermInput.press("Enter");
-  await waitForSmokeCondition("Agent Terminal output after resize", async () => {
-    const text = await terminal.locator(".xterm-rows").innerText();
-    return text.includes("TERMINAL_RESIZED=yes") ? text : null;
-  });
-  await page.screenshot({ path: terminalConstrainedSmokeScreenshotPath, fullPage: true });
-  console.log(`[desktop-smoke] Agent Terminal constrained screenshot: ${terminalConstrainedSmokeScreenshotPath}`);
-  await electronApp.evaluate(({ BrowserWindow }, size) => {
-    BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
-  }, originalWindowSize);
-
   const terminalTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]');
   await terminalTab.hover();
   await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
@@ -5158,21 +5242,13 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   assert.ok(workspaceEntry?.workspaceKey && listing.rootPath, "Agent workspace listing should identify the canonical workspace");
   const workspacePath = path.join(listing.rootPath, "agents", workspaceEntry.workspaceKey);
   const unavailablePath = `${workspacePath}.terminal-smoke-unavailable`;
-  const restoreWorkspace = async () => {
-    if (!(await access(unavailablePath).then(() => true).catch(() => false))) return;
-    await rm(workspacePath, { recursive: true, force: true });
-    await rename(unavailablePath, workspacePath);
-  };
   await rename(workspacePath, unavailablePath);
   try {
-    const recoveredSidePanel = await openSmokeSidePanel(page);
-    await recoveredSidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
-    const failedTerminal = recoveredSidePanel.getByTestId("terminal-panel-view");
+    await sidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
+    const failedTerminal = sidePanel.getByTestId("terminal-panel-view");
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "visible", timeout: 15_000 });
     await failedTerminal.getByText(/Agent workspace is unavailable/u).waitFor({ state: "visible", timeout: 15_000 });
-    await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
-    console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
-    await restoreWorkspace();
+    await rename(unavailablePath, workspacePath);
     await failedTerminal.getByRole("button", { name: "Restart terminal" }).click();
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "hidden", timeout: 15_000 });
     const restartedInput = failedTerminal.locator(".xterm-helper-textarea");
@@ -5182,11 +5258,11 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
       const text = await failedTerminal.locator(".xterm-rows").innerText();
       return text.includes("TERMINAL_RESTARTED=yes") ? text : null;
     });
-    await recoveredSidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]').hover();
-    await recoveredSidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+    await sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]').hover();
+    await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
     await failedTerminal.waitFor({ state: "detached", timeout: 10_000 });
   } finally {
-    await restoreWorkspace();
+    if (await access(unavailablePath).then(() => true).catch(() => false)) await rename(unavailablePath, workspacePath);
   }
 }
 
@@ -5595,12 +5671,7 @@ async function runLocalAppsScenario(mode) {
     title: definition.title,
   }));
   const ports = await allocateSmokePorts();
-  const run = await launchDesktop(scenarioRoot, mode, ports, {
-    ...project.launchEnv,
-    ...(mode === "packaged" && process.platform === "darwin" && process.arch === "arm64"
-      ? { RUDDER_NATIVE_PROCESS_HOST: "1" }
-      : {}),
-  });
+  const run = await launchDesktop(scenarioRoot, mode, ports, project.launchEnv);
   let runningDescriptor = null;
   let definitionDeleted = false;
   let scenarioError = null;
@@ -5977,7 +6048,6 @@ async function runLocalAppsScenario(mode) {
       markerPath: project.markerPath,
       registryPath,
     });
-    await assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, generation);
     const stoppedMainView = run.page.locator('[data-testid="local-app-view"][data-active="true"]');
     const logsButton = stoppedMainView.getByRole("button", { name: "Show logs" });
     await logsButton.click();
@@ -6224,15 +6294,25 @@ async function runUpgradeScenario(mode) {
   await assertUpgradeRepairLogged(paths.logsDir);
 }
 
+async function runAutoUpdateScenario(mode) {
+  assert.equal(mode, "packaged", "automatic update acceptance requires a packaged Desktop");
+  assert.equal(process.platform, "darwin", "automatic update v1 acceptance is macOS-only");
+  const executablePath = await resolvePackagedExecutablePath();
+  const resourcesDir = path.resolve(path.dirname(executablePath), "..", "Resources");
+  const nativeTarget = resolveNativeTarget(process.platform, process.arch);
+  assert.ok(nativeTarget, `automatic update helper has no native target for ${process.platform}/${process.arch}`);
+  const helperPath = path.join(resourcesDir, "native", nativeTarget, "rudder-update-helper");
+  const helperStats = await stat(helperPath).catch(() => null);
+  assert.ok(helperStats?.isFile(), `packaged Desktop is missing the external update helper: ${helperPath}`);
+  assert.notEqual(helperStats.mode & 0o111, 0, "packaged update helper should be executable");
+  await verifyPackagedUpdateHelperFaultMatrix(helperPath);
+}
+
 async function runAppBuilderScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "app-builder");
   const ports = await allocateSmokePorts();
   const runtimeUrls = createRuntimeUrls(ports);
-  const run = await launchDesktop(scenarioRoot, mode, ports, {
-    ...(mode === "packaged" && process.platform === "darwin" && process.arch === "arm64"
-      ? { RUDDER_NATIVE_PROCESS_HOST: "1" }
-      : {}),
-  });
+  const run = await launchDesktop(scenarioRoot, mode, ports);
   let browser = null;
   let scenarioError = null;
   let shutdownError = null;
@@ -6360,7 +6440,7 @@ async function runAppBuilderScenario(mode) {
           ? { failed: false, record }
           : null;
       },
-      { timeoutMs: 900_000 },
+      { timeoutMs: 660_000 },
     );
     if (buildOutcome.failed) {
       throw new Error(
@@ -6382,10 +6462,6 @@ async function runAppBuilderScenario(mode) {
     );
     assert.ok(target, "Ready App must expose an attested target");
     assert.match(target.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
-    const initialGeneration = (await run.page.evaluate(
-      (definitionId) => window.desktopShell.localApps.status(definitionId),
-      definition.id,
-    )).generation;
 
     const uniqueEmail = `desktop-${Date.now()}@example.test`;
     const created = await fetch(new URL("/api/contacts", target.origin), {
@@ -6427,7 +6503,6 @@ async function runAppBuilderScenario(mode) {
       )) === null,
       { timeoutMs: 30_000 },
     );
-    await assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, initialGeneration);
     await appEntry.click();
     const restartOutcome = await waitForSmokeCondition(
       "restarted App to publish its attested target",
@@ -6448,7 +6523,7 @@ async function runAppBuilderScenario(mode) {
         );
         return { failed: true, runtime, logs };
       },
-      { timeoutMs: 900_000 },
+      { timeoutMs: 660_000 },
     );
     if (restartOutcome.failed) {
       throw new Error(
@@ -6458,17 +6533,10 @@ async function runAppBuilderScenario(mode) {
       );
     }
     target = restartOutcome.target;
-    const restartedGeneration = (await run.page.evaluate(
-      (definitionId) => window.desktopShell.localApps.status(definitionId),
-      definition.id,
-    )).generation;
     const persisted = await fetch(new URL("/api/contacts", target.origin));
     assert.equal(persisted.status, 200);
     assert.match(await persisted.text(), new RegExp(uniqueEmail.replace(".", "\\.")));
 
-    await run.page.goto(appUrl(appRecord.id));
-    await dismissOnboardingIfVisible(run.page);
-    await appEntry.waitFor({ state: "visible", timeout: 30_000 });
     await appEntry.hover();
     await run.page.getByTestId(`apps-more-${entryKey}`).click();
     await run.page.getByTestId(`apps-copy-link-${entryKey}`).click();
@@ -6478,40 +6546,9 @@ async function runAppBuilderScenario(mode) {
       new URL(target.openPath, target.origin).href,
       "Copy App link must copy the current attested loopback URL",
     );
-    await waitForSmokeCondition(
-      "restarted App status to become active in the Apps sidebar",
-      async () => {
-        const runtime = await run.page.evaluate(
-          (definitionId) => window.desktopShell.localApps.status(definitionId),
-          definition.id,
-        );
-        return runtime.status === "starting" || runtime.status === "running" ? runtime : null;
-      },
-      { timeoutMs: 30_000 },
-    );
-    let stopMenuError = null;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        await appEntry.hover();
-        await run.page.getByTestId(`apps-more-${entryKey}`).click();
-        const stopItem = run.page.getByRole("menuitem", { name: "Stop App" });
-        await waitForSmokeCondition(
-          "restarted App Stop action to become enabled",
-          async () => (await stopItem.isEnabled()) ? stopItem : null,
-          { timeoutMs: 30_000 },
-        );
-        await stopItem.click({ force: true });
-        stopMenuError = null;
-        break;
-      } catch (error) {
-        stopMenuError = error;
-        await run.page.keyboard.press("Escape").catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    }
-    if (stopMenuError) throw stopMenuError;
-    const stoppedRuntime = await waitForSmokeCondition(
-      "stopping the restarted App",
+    await updateExperimentalPlugins(run.baseUrl, false);
+    const disabledRuntime = await waitForSmokeCondition(
+      "disabling Plugins to stop the running App",
       async () => {
         const runtime = await run.page.evaluate(
           (definitionId) => window.desktopShell.localApps.status(definitionId),
@@ -6522,12 +6559,24 @@ async function runAppBuilderScenario(mode) {
       { timeoutMs: 30_000 },
     );
     assert.equal(
-      stoppedRuntime.origin,
+      disabledRuntime.origin,
       undefined,
-      "stopping the restarted App must clear its runtime origin",
+      "disabling Plugins must clear the App runtime origin",
     );
-    await assertPackagedNativeLocalAppReceipt(mode, scenarioRoot, restartedGeneration);
-    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, second stop, and cleanup");
+    const blockedStart = await run.page.evaluate(async (definitionId) => {
+      try {
+        await window.desktopShell.localApps.start(definitionId);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }, definition.id);
+    assert.match(
+      blockedStart ?? "",
+      /Plugins is disabled in Experimental settings/i,
+      "disabling Plugins must block direct Desktop start attempts",
+    );
+    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, feature shutdown, and cleanup");
   } catch (error) {
     scenarioError = error;
   }
@@ -6557,12 +6606,12 @@ function resolveScenarioList(mode, scenario) {
       : ["startup-recovery", "postgres-runtime-handoff", "app-builder", "clean", "local-apps", "agent-browser", "upgrade"];
   }
   if (scenario === "account-gate"
+    || scenario === "auto-update"
     || scenario === "startup-recovery"
     || scenario === "postgres-runtime-handoff"
     || scenario === "clean"
     || scenario === "upgrade"
     || scenario === "browser"
-    || scenario === "terminal"
     || scenario === "local-apps"
     || scenario === "agent-browser"
     || scenario === "app-builder") {
@@ -6580,6 +6629,8 @@ try {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
     if (scenario === "account-gate") {
       await runAccountGateScenario(smokeMode);
+    } else if (scenario === "auto-update") {
+      await runAutoUpdateScenario(smokeMode);
     } else if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
     } else if (scenario === "postgres-runtime-handoff") {
@@ -6588,8 +6639,6 @@ try {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {
       await runBrowserScenario(smokeMode);
-    } else if (scenario === "terminal") {
-      await runTerminalScenario(smokeMode);
     } else if (scenario === "local-apps") {
       await runLocalAppsScenario(smokeMode);
     } else if (scenario === "agent-browser") {

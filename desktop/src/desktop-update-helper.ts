@@ -1,4 +1,4 @@
-import { accessSync, chmodSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, copyFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
@@ -38,6 +38,13 @@ export type DesktopUpdateTransactionPaths = {
   lkgPath: string;
   journalPath: string;
   checkpointPath: string;
+};
+
+export type DesktopUpdateJournalSnapshot = {
+  transactionId: string;
+  stage: string;
+  recoveryRequired: boolean;
+  recoveryCode?: string | null;
 };
 
 function executableName(platform: NodeJS.Platform): string {
@@ -105,6 +112,9 @@ export function resolveDesktopUpdateTransactionPaths(options: {
 }): DesktopUpdateTransactionPaths {
   const userDataPath = path.resolve(options.userDataPath);
   const transactionId = options.transactionId.trim();
+  if (!/^[A-Za-z0-9_-]{8,128}$/u.test(transactionId)) {
+    throw new Error("Invalid automatic update transaction identity.");
+  }
   const installPath = options.resourcesPath
     ? path.resolve(options.resourcesPath, "..", "..")
     : path.resolve(options.execPath ?? process.execPath, "..", "..", "..");
@@ -115,6 +125,25 @@ export function resolveDesktopUpdateTransactionPaths(options: {
     journalPath: path.join(transactionRoot, `${transactionId}.journal.json`),
     checkpointPath: path.join(transactionRoot, `${transactionId}.checkpoint.json`),
   };
+}
+
+export function readDesktopUpdateJournal(
+  userDataPath: string,
+  transactionId: string,
+): DesktopUpdateJournalSnapshot | null {
+  try {
+    const journalPath = resolveDesktopUpdateTransactionPaths({ userDataPath, transactionId }).journalPath;
+    const parsed = JSON.parse(readFileSync(journalPath, "utf8")) as Record<string, unknown>;
+    if (parsed.transactionId !== transactionId || typeof parsed.stage !== "string") return null;
+    return {
+      transactionId,
+      stage: parsed.stage,
+      recoveryRequired: parsed.recoveryRequired === true,
+      ...(typeof parsed.recoveryCode === "string" ? { recoveryCode: parsed.recoveryCode } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -82,6 +82,14 @@ import {
 import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
+  clearAutomaticCandidate,
+  readDesktopAutoUpdateState,
+  resolveDesktopAutoUpdateStatePath,
+  writeDesktopAutoUpdateState,
+} from "./desktop-auto-update-state.js";
+import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
+import { ensureExternalDesktopUpdateHelper, readDesktopUpdateJournal } from "./desktop-update-helper.js";
+import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
 } from "./desktop-workspace-launch-payload.js";
@@ -155,6 +163,7 @@ import {
 import {
   type DesktopUpdateChannel
 } from "./update-check.js";
+import { readDesktopUpdateChannel } from "./update-channel-preference.js";
 import { resolveInitialDesktopWindowSize } from "./window-size.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_BUILDER_RUNNER_PATH = path.join(MODULE_DIR, "app-builder-runner.mjs");
@@ -495,6 +504,7 @@ if (desktopUserDataOverride) {
 const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
 
 let mainWindow: BrowserWindow | null = null;
+let desktopUserQuitIntent = false;
 let currentMainRenderer: WebContents | null = null;
 let currentMainWindowKind: "app" | "boot" = "boot";
 let residentTray: Tray | null = null;
@@ -600,6 +610,17 @@ function promptRendererForDeferredUpdate(
   });
 }
 
+let applyPreparedAutomaticCandidateForQuit: (() => Promise<"handled" | "continue">) | null = null;
+const desktopUpdatePolicyLoader = createDesktopUpdatePolicyLoader({
+  userDataPath: app.getPath("userData"),
+  channel: () => readDesktopUpdateChannel(app.getPath("userData")),
+  arch: process.arch,
+});
+const desktopUpdateHelperAttestation = ensureExternalDesktopUpdateHelper({
+  userDataPath: app.getPath("userData"),
+  resourcesPath: process.resourcesPath,
+  env: process.env,
+});
 const desktopQuitFlow = createDesktopQuitFlow({
   appName: APP_NAME,
   getMainWindow: () => mainWindow,
@@ -616,6 +637,9 @@ const desktopQuitFlow = createDesktopQuitFlow({
   prepareLocalAppsForQuit: async () => {
     await (localAppsController?.shutdown() ?? Promise.resolve());
   },
+  beforeFinalizeQuit: async () => desktopUserQuitIntent
+    ? (applyPreparedAutomaticCandidateForQuit?.() ?? "continue")
+    : "continue",
   stopLocalRudder,
   destroyResidentTray: () => { residentTray?.destroy(); residentTray = null; },
 });
@@ -641,12 +665,30 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   formatUpdateRunDetail,
   promptForDeferredUpdate: promptRendererForDeferredUpdate,
   showMainWindow,
+  hasExternalUpdateHelperCapability: () => desktopUpdateHelperAttestation !== null,
+  getExternalUpdateHelper: () => desktopUpdateHelperAttestation,
+  hasSignedUpdatePolicyCapability: () => desktopUpdatePolicyLoader.hasUsablePolicy(),
+  refreshSignedUpdatePolicy: async () => {
+    const result = await desktopUpdatePolicyLoader.refresh();
+    if (!result.ok) {
+      console.warn("[rudder-desktop] signed update policy unavailable", result.reason);
+      return false;
+    }
+    return true;
+  },
+  authorizeSignedUpdateRelease: (input) => desktopUpdatePolicyLoader.authorizeRelease(input) !== null,
+  isSignedUpdateVersionAuthorized: (version) => {
+    const policy = desktopUpdatePolicyLoader.getPolicy();
+    return Boolean(policy?.releases.some((release) => release.version === version && !release.revoked));
+  },
 });
 const {
   checkForUpdates, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
   maybeShowStartupUpdateNotice, showManualUpdateCheckDialog, installUpdate, applyUpdate,
   createFeedbackMailtoUrl, getDesktopUpdateProgress,
+  applyPreparedAutomaticCandidate,
 } = desktopUpdateFlow;
+applyPreparedAutomaticCandidateForQuit = applyPreparedAutomaticCandidate;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
   return DESKTOP_WINDOW_BACKGROUND[appearance];
@@ -1745,7 +1787,23 @@ function installApplicationMenu(appName: string): void {
 
   const menu = Menu.getApplicationMenu();
   const appMenu = menu?.items[0]?.submenu;
-  if (!menu || !appMenu || appMenu.getMenuItemById("rudder-settings")) return;
+  if (!menu || !appMenu) return;
+
+  const quitIndex = appMenu.items.findIndex((item) => item.role === "quit" || item.label === `Quit ${appName}`);
+  if (quitIndex >= 0 && !appMenu.getMenuItemById("rudder-quit")) {
+    const quitItem = appMenu.items[quitIndex];
+    // Electron does not expose removal for application-menu items after the
+    // default menu is created, but instance properties remain mutable.
+    quitItem.id = "rudder-quit";
+    quitItem.role = undefined;
+    quitItem.accelerator = quitItem.accelerator || "Command+Q";
+    quitItem.click = () => requestQuit();
+  }
+
+  if (appMenu.getMenuItemById("rudder-settings")) {
+    Menu.setApplicationMenu(menu);
+    return;
+  }
 
   const aboutIndex = appMenu.items.findIndex((item) => item.label === `About ${appName}`);
   let insertIndex = aboutIndex >= 0 ? aboutIndex + 1 : 0;
@@ -1939,7 +1997,10 @@ async function retryStartupFromBootScreen(): Promise<void> {
 }
 
 function requestQuit(): void {
-  void beginQuitFlow();
+  desktopUserQuitIntent = true;
+  void beginQuitFlow().finally(() => {
+    if (!isQuitting()) desktopUserQuitIntent = false;
+  });
 }
 
 function serverRuntimeOptions(): StartServerOptions {
@@ -2775,6 +2836,61 @@ async function bootstrap(): Promise<void> {
     if (desktopDebugEnabled()) {
       console.info("[rudder-desktop] bootstrap:boot-only");
     }
+    return;
+  }
+  try {
+    const autoUpdateStatePath = resolveDesktopAutoUpdateStatePath(app.getPath("userData"));
+    let autoUpdateState = readDesktopAutoUpdateState(autoUpdateStatePath);
+    if (autoUpdateState.candidate) {
+      const journal = readDesktopUpdateJournal(app.getPath("userData"), autoUpdateState.candidate.updateId);
+      if (journal?.recoveryRequired) {
+        autoUpdateState = {
+          ...autoUpdateState,
+          recoveryRequired: true,
+          recoveryCode: journal.recoveryCode ?? "automatic_update_recovery_required",
+        };
+        writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+      } else if (journal && ["committed", "rolled_back"].includes(journal.stage)) {
+        // A terminal helper journal is authoritative. Clear the durable
+        // candidate so a successful install or rollback cannot be claimed on
+        // every subsequent launch.
+        autoUpdateState = clearAutomaticCandidate(autoUpdateState, autoUpdateState.candidate.updateId);
+        writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+      }
+    }
+    if (autoUpdateState.recoveryRequired) {
+      updateBootState({
+        stage: "error",
+        message: "Rudder could not start safely after an automatic update.",
+        detail: "Open Technical details or contact support before attempting manual repair.",
+        error: autoUpdateState.recoveryCode ?? "automatic_update_recovery_required",
+        failure: {
+          id: `auto-update-${autoUpdateState.generation}`,
+          occurredAt: new Date().toISOString(),
+          stage: "automatic_update_recovery",
+          attempt: 1,
+          category: "runtime",
+          summary: "Rudder could not start safely after an automatic update.",
+        },
+      });
+      return;
+    }
+  } catch (error) {
+    console.error("[rudder-desktop] automatic update state recovery check failed", error);
+    updateBootState({
+      stage: "error",
+      message: "Rudder could not verify automatic update state safely.",
+      detail: "Open Technical details or contact support before attempting manual repair.",
+      error: "automatic_update_state_unreadable",
+      failure: {
+        id: `auto-update-state-${Date.now()}`,
+        occurredAt: new Date().toISOString(),
+        stage: "automatic_update_recovery",
+        attempt: 1,
+        category: "runtime",
+        summary: "Rudder could not verify automatic update state safely.",
+      },
+    });
     return;
   }
   if (desktopDebugEnabled()) {
