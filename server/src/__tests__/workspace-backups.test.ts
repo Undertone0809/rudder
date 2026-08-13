@@ -224,6 +224,70 @@ describe("workspace backup service", () => {
     }
   });
 
+  it("uses the bounded v2 file-backed path only when explicitly opted in", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "v2.txt"), "v2 content\n", "utf8");
+    const previousFlag = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
+    try {
+      const backup = await service.create({ orgId });
+      expect(path.extname(backup.artifactRef)).toBe(".zip");
+      expect(backup.manifest).toMatchObject({
+        version: 2,
+        policyVersion: expect.any(String),
+        identity: expect.objectContaining({ orgId }),
+        treeSha256: backup.treeSha256,
+      });
+      await expect(service.listFiles(orgId, backup.id)).resolves.toMatchObject({
+        entries: expect.arrayContaining([expect.objectContaining({ path: "v2.txt", isDirectory: false })]),
+      });
+      await expect(service.readFile(orgId, backup.id, "v2.txt")).resolves.toMatchObject({ content: "v2 content\n" });
+      const download = await service.getDownload(orgId, backup.id);
+      expect(download.content).toBeUndefined();
+      expect(download.contentStream).toBeDefined();
+      const chunks: Buffer[] = [];
+      for await (const chunk of download.contentStream!) chunks.push(Buffer.from(chunk));
+      expect(Buffer.concat(chunks)).toEqual(await fs.readFile(backup.artifactRef));
+    } finally {
+      if (previousFlag === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+      else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousFlag;
+    }
+  });
+
+  it("records a bounded native fallback diagnostic before using the Node writer", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "fallback.txt"), "fallback\n", "utf8");
+    const fakeNative = path.join(rudderHome, "fake-native-no-create.mjs");
+    await fs.writeFile(fakeNative, `#!/usr/bin/env node
+console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
+`, { mode: 0o755 });
+    const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    const previousNative = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
+    const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = "true";
+    process.env.RUDDER_NATIVE_ARCHIVE_PATH = fakeNative;
+    try {
+      const backup = await service.create({ orgId });
+      expect(backup.status).toBe("succeeded");
+      expect(backup.warnings).toContainEqual(expect.stringMatching(/^Native archive fallback \[capability\/create_unavailable\]:/));
+      expect(backup.manifest).toMatchObject({
+        warnings: expect.arrayContaining([expect.stringMatching(/^Native archive fallback \[capability\/create_unavailable\]:/)]),
+      });
+      const inspected = await import("../services/workspace-backup-v2.js").then(({ inspectWorkspaceBackupV2File }) => inspectWorkspaceBackupV2File(backup.artifactRef));
+      expect(inspected.manifest).toEqual(backup.manifest);
+      await expect(service.readFile(orgId, backup.id, "fallback.txt")).resolves.toMatchObject({ content: "fallback\n" });
+    } finally {
+      if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED; else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
+      if (previousNative === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE; else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousNative;
+      if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
+    }
+  });
+
   it("migrates legacy full UUID backup artifact paths and metadata to the short storage key", async () => {
     const orgId = await createOrganization();
     const storageKey = resolveOrganizationStorageKey(orgId);

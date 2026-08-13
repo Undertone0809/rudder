@@ -21,6 +21,7 @@ import {
 } from "@rudderhq/shared";
 import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -31,6 +32,16 @@ import {
   resolveRudderInstanceId,
 } from "../home-paths.js";
 import { organizationService } from "./orgs.js";
+import {
+  createWorkspaceBackupV2,
+  createWorkspaceBackupV2File,
+  createWorkspaceBackupV2Native,
+  formatWorkspaceBackupV2NativeFallback,
+  inspectWorkspaceBackupV2File,
+  readWorkspaceBackupV2File,
+  workspaceBackupV2NativeDiagnostic,
+  type WorkspaceBackupV2ArchiveIndex,
+} from "./workspace-backup-v2.js";
 
 const ARTIFACT_VERSION = 1;
 const MAX_PREVIEW_BYTES = 200_000;
@@ -64,6 +75,14 @@ const MAX_WARNING_COUNT = 200;
 const SPARSE_WORKSPACE_RECOVERY_MAX_CURRENT_FILES = 25;
 const SPARSE_WORKSPACE_RECOVERY_MAX_RATIO = 0.25;
 const SPARSE_WORKSPACE_RECOVERY_MIN_BACKUP_FILES = 10;
+
+export function isWorkspaceBackupV2Enabled() {
+  return process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED === "true";
+}
+
+export function isWorkspaceBackupV2NativeEnabled() {
+  return isWorkspaceBackupV2Enabled() && process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE === "true";
+}
 
 type WorkspaceBackupArtifactEntry = {
   path: string;
@@ -126,7 +145,19 @@ export type WorkspaceBackupDownload = {
   contentType: "application/json" | "application/zip";
   byteSize: number;
   archiveSha256: string | null;
-  content: Buffer;
+  content?: Buffer;
+  contentStream?: ReturnType<typeof createReadStream>;
+};
+
+type WorkspaceBackupV2Payload = {
+  filePath: string;
+  index: WorkspaceBackupV2ArchiveIndex;
+};
+
+type WorkspaceBackupPayload = {
+  raw: Buffer | null;
+  artifact: WorkspaceBackupArtifact;
+  v2?: WorkspaceBackupV2Payload;
 };
 
 export type SparseWorkspaceRecoveryResult = {
@@ -850,10 +881,35 @@ export function workspaceBackupService(db: Db) {
     }
   }
 
-  async function readArtifactPayload(row: WorkspaceBackupRow): Promise<{ raw: Buffer; artifact: WorkspaceBackupArtifact }> {
+  async function readArtifactPayload(row: WorkspaceBackupRow): Promise<WorkspaceBackupPayload> {
     assertReadableBackup(row);
     if (!(await fileExists(row.artifactRef))) {
       throw notFound("Workspace backup artifact not found");
+    }
+    if (path.extname(row.artifactRef).toLowerCase() === ".zip") {
+      try {
+        const index = await inspectWorkspaceBackupV2File(row.artifactRef);
+        if (row.archiveSha256 && await sha256File(row.artifactRef) !== row.archiveSha256) {
+          throw new Error("Workspace backup artifact checksum does not match the recorded backup metadata");
+        }
+        const manifest = index.manifest;
+        const artifact: WorkspaceBackupArtifact = {
+          version: ARTIFACT_VERSION,
+          orgId: manifest.identity.orgId,
+          instanceId: manifest.identity.instanceId,
+          createdAt: manifest.createdAt,
+          rootPath: manifest.identity.rootPath,
+          entries: manifest.entries.map((entry) => ({
+            ...entry,
+            dataBase64: undefined,
+          })),
+          warnings: manifest.warnings,
+        };
+        if (artifact.orgId !== row.orgId) throw new Error("organization identity mismatch");
+        return { raw: null, artifact, v2: { filePath: row.artifactRef, index } };
+      } catch (error) {
+        throw unprocessable(error instanceof Error ? `Workspace backup v2 artifact is invalid: ${error.message}` : "Workspace backup v2 artifact is invalid");
+      }
     }
     const raw = await fs.readFile(row.artifactRef);
     if (row.archiveSha256 && sha256Buffer(raw) !== row.archiveSha256) {
@@ -871,6 +927,14 @@ export function workspaceBackupService(db: Db) {
 
   async function readArtifact(row: WorkspaceBackupRow): Promise<WorkspaceBackupArtifact> {
     const payload = await readArtifactPayload(row);
+    if (payload.v2) {
+      const entries = await Promise.all(payload.artifact.entries.map(async (entry) => {
+        if (entry.kind !== "file") return entry;
+        const data = await readWorkspaceBackupV2File(payload.v2!.filePath, payload.v2!.index, entry.path);
+        return { ...entry, dataBase64: data.toString("base64") };
+      }));
+      return { ...payload.artifact, entries };
+    }
     return payload.artifact;
   }
 
@@ -995,7 +1059,8 @@ export function workspaceBackupService(db: Db) {
     const triggerSource = input.triggerSource ?? "manual";
     const organizationStorageKey = resolveOrganizationStorageKey(input.orgId);
     const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", organizationStorageKey);
-    const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}.json`);
+    const artifactExtension = isWorkspaceBackupV2Enabled() ? ".zip" : ".json";
+    const artifactRef = path.resolve(backupDir, `workspace-${organizationStorageKey}-${timestamp(startedAt)}-${backupId.slice(0, 8)}${artifactExtension}`);
     const [runningRow] = await db
       .insert(workspaceBackups)
       .values({
@@ -1023,6 +1088,89 @@ export function workspaceBackupService(db: Db) {
     try {
       await fs.mkdir(path.dirname(artifactRef), { recursive: true });
       const layout = await ensureOrganizationWorkspaceLayout(runningRow.orgId);
+      if (path.extname(artifactRef).toLowerCase() === ".zip") {
+        let nativeFallbackWarning: string | null = null;
+        if (isWorkspaceBackupV2NativeEnabled()) {
+          try {
+            const artifact = await createWorkspaceBackupV2Native({
+              rootPath: layout.root,
+              orgId: runningRow.orgId,
+              instanceId: resolveRudderInstanceId(),
+              artifactPath: artifactRef,
+              createdAt: runningRow.startedAt ?? runningRow.createdAt,
+            });
+            const stat = await fs.stat(artifact.artifactPath);
+            const finishedAt = new Date();
+            const [row] = await db
+              .update(workspaceBackups)
+              .set({
+                status: "succeeded",
+                archiveSha256: artifact.archiveSha256,
+                treeSha256: artifact.treeSha256,
+                fileCount: artifact.fileCount,
+                byteSize: artifact.byteSize,
+                compressedSize: stat.size,
+                manifest: artifact.manifest,
+                warnings: artifact.warnings,
+                finishedAt,
+                updatedAt: finishedAt,
+              })
+              .where(and(eq(workspaceBackups.id, backupId), eq(workspaceBackups.status, "running")))
+              .returning();
+            if (row) return mapBackupRow(row);
+            const [currentRow] = await db.select().from(workspaceBackups).where(eq(workspaceBackups.id, backupId)).limit(1);
+            if (currentRow) return mapBackupRow(currentRow);
+            throw new Error("Workspace backup row was not updated.");
+          } catch (error) {
+            // Native is opt-in and never changes the default Node comparator. A
+            // failed native operation falls through to the same contract-equivalent
+            // Node writer while retaining the DB row and TypeScript decisions.
+            const diagnostic = workspaceBackupV2NativeDiagnostic(error);
+            if (!diagnostic.fallbackAllowed || await fs.stat(artifactRef).then(() => true).catch(() => false)) {
+              throw new Error(`Native workspace backup cannot fall back [${diagnostic.category}/${diagnostic.code}]: ${diagnostic.detail}`);
+            }
+            nativeFallbackWarning = formatWorkspaceBackupV2NativeFallback(error);
+          }
+        }
+        const artifact = await createWorkspaceBackupV2File({
+          rootPath: layout.root,
+          orgId: runningRow.orgId,
+          instanceId: resolveRudderInstanceId(),
+          artifactPath: artifactRef,
+          createdAt: runningRow.startedAt ?? runningRow.createdAt,
+          additionalWarnings: nativeFallbackWarning ? [nativeFallbackWarning] : undefined,
+        });
+        const archiveSha256 = artifact.archiveSha256;
+        const stat = await fs.stat(artifact.artifactPath);
+        const finishedAt = new Date();
+        const [row] = await db
+          .update(workspaceBackups)
+          .set({
+            status: "succeeded",
+            archiveSha256,
+            treeSha256: artifact.treeSha256,
+            fileCount: artifact.fileCount,
+            byteSize: artifact.byteSize,
+            compressedSize: stat.size,
+            manifest: artifact.manifest,
+            warnings: artifact.warnings,
+            finishedAt,
+            updatedAt: finishedAt,
+          })
+          .where(and(
+            eq(workspaceBackups.id, backupId),
+            eq(workspaceBackups.status, "running"),
+          ))
+          .returning();
+        if (row) return mapBackupRow(row);
+        const [currentRow] = await db
+          .select()
+          .from(workspaceBackups)
+          .where(eq(workspaceBackups.id, backupId))
+          .limit(1);
+        if (currentRow) return mapBackupRow(currentRow);
+        throw new Error("Workspace backup row was not updated.");
+      }
       const warnings: string[] = [];
       const entries = await walkWorkspace(layout.root, layout.root, warnings);
       const fileCount = entries.filter((entry) => entry.kind === "file").length;
@@ -1124,7 +1272,8 @@ export function workspaceBackupService(db: Db) {
 
     async listFiles(orgId: string, backupId: string, directoryPath = ""): Promise<OrganizationWorkspaceFileList> {
       const row = await getBackupRow(orgId, backupId);
-      const artifact = await readArtifact(row);
+      const payload = await readArtifactPayload(row);
+      const artifact = payload.artifact;
       const normalizedPath = assertSafeRelativePath(directoryPath);
       const entries = directChildrenFromArtifact(artifact, normalizedPath);
       return {
@@ -1140,11 +1289,15 @@ export function workspaceBackupService(db: Db) {
 
     async readFile(orgId: string, backupId: string, filePath: string): Promise<OrganizationWorkspaceFileDetail> {
       const row = await getBackupRow(orgId, backupId);
-      const artifact = await readArtifact(row);
+      const payload = await readArtifactPayload(row);
+      const artifact = payload.artifact;
       const normalizedPath = assertSafeRelativePath(filePath);
       const file = findArtifactFile(artifact, normalizedPath);
-      if (!file?.dataBase64) throw notFound("File not found inside the workspace backup");
-      const buffer = Buffer.from(file.dataBase64, "base64");
+      if (!file) throw notFound("File not found inside the workspace backup");
+      const buffer = payload.v2
+        ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, normalizedPath)
+        : file.dataBase64 ? Buffer.from(file.dataBase64, "base64") : null;
+      if (!buffer) throw notFound("File not found inside the workspace backup");
       if (isBinaryBuffer(buffer)) {
         return {
           source: "org_root",
@@ -1185,6 +1338,16 @@ export function workspaceBackupService(db: Db) {
     async getDownload(orgId: string, backupId: string): Promise<WorkspaceBackupDownload> {
       const row = await getBackupRow(orgId, backupId);
       const payload = await readArtifactPayload(row);
+      if (payload.v2) {
+        return {
+          artifactRef: row.artifactRef,
+          filename: `${path.basename(row.artifactRef, path.extname(row.artifactRef))}.zip`,
+          contentType: "application/zip",
+          byteSize: payload.v2.index.archiveSize,
+          archiveSha256: row.archiveSha256,
+          contentStream: createReadStream(row.artifactRef),
+        };
+      }
       const zip = buildWorkspaceBackupZip(payload.artifact, backupDownloadRootFolderName(payload.artifact));
       return {
         artifactRef: row.artifactRef,
@@ -1406,7 +1569,8 @@ export function workspaceBackupService(db: Db) {
         throw conflict("Workspace restore is blocked while this organization has active runs.", { activeRunCount });
       }
 
-      const artifact = await readArtifact(row);
+      const payload = await readArtifactPayload(row);
+      const artifact = payload.artifact;
       const preRestoreBackup = await service.create({
         orgId,
         triggerSource: "pre_restore",
@@ -1439,7 +1603,10 @@ export function workspaceBackupService(db: Db) {
         for (const entry of files) {
           const { resolvedTarget } = resolveWithinRoot(stagingRoot, entry.path);
           await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
-          await fs.writeFile(resolvedTarget, Buffer.from(entry.dataBase64 ?? "", "base64"), { mode: entry.mode ?? 0o600 });
+          const data = payload.v2
+            ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, entry.path)
+            : Buffer.from(entry.dataBase64 ?? "", "base64");
+          await fs.writeFile(resolvedTarget, data, { mode: entry.mode ?? 0o600 });
         }
 
         await fs.rm(workspaceRoot, { recursive: true, force: true });
