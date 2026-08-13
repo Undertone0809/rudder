@@ -16,8 +16,11 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  organizationResources,
   organizationSkills,
   organizations,
+  projectResourceAttachments,
+  projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -89,16 +92,39 @@ vi.mock("../services/budgets.ts", async () => {
 
 vi.mock("../agent-runtimes/index.ts", async () => {
   const actual = await vi.importActual("../agent-runtimes/index.ts");
+  const parseTestToolResult = (line: string, ts: string) => {
+    if (!line.startsWith("TEST_TOOL_ERROR:")) return [];
+    const [, toolUseId, ...contentParts] = line.split(":");
+    return [
+      {
+        kind: "tool_call" as const,
+        ts,
+        name: "exec_command",
+        toolUseId,
+        input: { cmd: "pnpm test" },
+      },
+      {
+        kind: "tool_result" as const,
+        ts,
+        toolUseId,
+        toolName: "exec_command",
+        content: contentParts.join(":"),
+        isError: true,
+      },
+    ];
+  };
   return {
     ...actual,
     getServerAdapter: vi.fn(() => ({
       type: "codex_local",
       supportsLocalAgentJwt: false,
+      parseStdoutLine: parseTestToolResult,
       execute: mockRuntimeAdapter.execute,
     })),
     findServerAdapter: vi.fn(() => ({
       type: "codex_local",
       supportsLocalAgentJwt: false,
+      parseStdoutLine: parseTestToolResult,
       execute: mockRuntimeAdapter.execute,
     })),
     runningProcesses: new Map(),
@@ -276,6 +302,9 @@ describe("heartbeat managed workspace preflight", () => {
     await db.delete(organizationSkills);
     await db.delete(issues);
     await db.delete(goals);
+    await db.delete(projectResourceAttachments);
+    await db.delete(organizationResources);
+    await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
     if (rudderHome) await fs.rm(rudderHome, { recursive: true, force: true });
@@ -583,6 +612,195 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "memory")).then((stat) => stat.isDirectory())).resolves.toBe(true);
     await expect(fs.stat(path.join(agentHome, "life")).then((stat) => stat.isDirectory())).resolves.toBe(true);
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
+  });
+
+  it("records assignment workspace preflight before adapter invocation", async () => {
+    const { agentId } = await seedAgentFixture();
+    let preflightObservedByAdapter = false;
+    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const events = await getRunEvents(ctx.runId);
+      preflightObservedByAdapter = events.some((event) => event.eventType === "runtime.assignment_preflight");
+      return {
+        summary: "preflight observed",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: { taskKey: "assignment:preflight", wakeSource: "assignment" },
+    });
+
+    await waitForCondition(async () => {
+      const current = await getRun(run!.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+    const events = await getRunEvents(run!.id);
+    const preflightIndex = events.findIndex((event) => event.eventType === "runtime.assignment_preflight");
+    expect(preflightIndex).toBeGreaterThanOrEqual(0);
+    expect(preflightObservedByAdapter).toBe(true);
+    expect(events[preflightIndex]?.payload).toMatchObject({
+      cwdMatchesProjectWorkingSet: true,
+      actualCwd: expect.any(String),
+      projectWorkingSetCwd: expect.any(String),
+    });
+  });
+
+  it("uses an attached external working set as the assignment execution cwd", async () => {
+    const { orgId, agentId } = await seedAgentFixture();
+    const projectId = randomUUID();
+    const issueId = randomUUID();
+    const workingSetCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-working-set-"));
+    const resourceId = randomUUID();
+    await db.insert(projects).values({ id: projectId, orgId, name: "Assignment guardrail" });
+    await db.insert(organizationResources).values({
+      id: resourceId,
+      orgId,
+      name: "Source repository",
+      kind: "directory",
+      sourceType: "external",
+      locator: workingSetCwd,
+    });
+    await db.insert(projectResourceAttachments).values({
+      orgId,
+      projectId,
+      resourceId,
+      role: "working_set",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      projectId,
+      title: "Use curated working set",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      identifier: "RD-WS-1",
+    });
+    let adapterCwd: string | null = null;
+    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
+      adapterCwd = ctx.config.cwd;
+      return {
+        summary: "working set selected",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: { issueId, projectId, taskKey: `issue:${issueId}`, wakeSource: "assignment" },
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(run!.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+    expect(adapterCwd).toBe(workingSetCwd);
+    const events = await getRunEvents(run!.id);
+    expect(events.find((event) => event.eventType === "runtime.assignment_preflight")?.payload).toMatchObject({
+      actualCwd: workingSetCwd,
+      projectWorkingSetCwd: workingSetCwd,
+      cwdMatchesProjectWorkingSet: true,
+      cwdPresent: true,
+    });
+    await fs.rm(workingSetCwd, { recursive: true, force: true });
+  });
+
+  it("checkpoints repeated assignment failures and queues one continuation", async () => {
+    const { agentId } = await seedAgentFixture();
+    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Cannot find module /tmp/a\n");
+      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Cannot find module /tmp/b\n");
+      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Cannot find module /tmp/c\n");
+      return {
+        summary: "adapter returned after abort",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: { taskKey: "assignment:failure-budget", wakeSource: "assignment" },
+    });
+
+    await waitForCondition(async () => {
+      const source = await getRun(run!.id);
+      const continuations = await db.select().from(heartbeatRuns);
+      const continuation = continuations.find((candidate) => candidate.retryOfRunId === run!.id);
+      return source?.status === "failed"
+        && source.terminalEffectsPending === false
+        && continuation?.status === "succeeded"
+        && continuation.terminalEffectsPending === false;
+    });
+    const source = await getRun(run!.id);
+    expect(source).toMatchObject({
+      status: "failed",
+      errorCode: "assignment_run_failure_budget",
+    });
+    const events = await getRunEvents(run!.id);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventType: "runtime.assignment_guardrail" }),
+      expect.objectContaining({ eventType: "runtime.assignment_checkpoint" }),
+    ]));
+    const continuations = (await db.select().from(heartbeatRuns)).filter((candidate) => candidate.retryOfRunId === run!.id);
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0]?.contextSnapshot).toMatchObject({
+      assignmentGuardrailContinuationAttempt: 1,
+      recovery: expect.objectContaining({ originalRunId: run!.id }),
+    });
+  });
+
+  it("does not recursively queue another continuation after the guarded recovery fails", async () => {
+    const { agentId } = await seedAgentFixture();
+    const failWithRepeatedTools = async (ctx: any) => {
+      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Cannot find module /tmp/a\n");
+      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Cannot find module /tmp/b\n");
+      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Cannot find module /tmp/c\n");
+      return {
+        summary: "guarded failure",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    };
+    mockRuntimeAdapter.execute
+      .mockImplementationOnce(failWithRepeatedTools)
+      .mockImplementationOnce(failWithRepeatedTools);
+
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: { taskKey: "assignment:bounded-continuation", wakeSource: "assignment" },
+    });
+    await waitForCondition(async () => {
+      const runs = await db.select().from(heartbeatRuns);
+      const continuation = runs.find((candidate) => candidate.retryOfRunId === run!.id);
+      return continuation?.status === "failed" && continuation.terminalEffectsPending === false;
+    });
+
+    const runs = await db.select().from(heartbeatRuns);
+    const continuation = runs.find((candidate) => candidate.retryOfRunId === run!.id);
+    expect(continuation).toBeTruthy();
+    expect(runs.filter((candidate) => candidate.retryOfRunId === continuation!.id)).toHaveLength(0);
+    const continuationEvents = await getRunEvents(continuation!.id);
+    expect(continuationEvents.find((event) => event.eventType === "runtime.assignment_checkpoint")?.payload).toMatchObject({
+      continuationRequired: false,
+    });
   });
 
   it("keeps consecutive ordinary taskless invocations fresh", async () => {
