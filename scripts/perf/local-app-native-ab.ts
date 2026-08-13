@@ -126,6 +126,13 @@ async function runOperation(input: {
       (error) => { clearTimeout(timeout); reject(error); },
     );
   });
+  const waitForExit = (child: ReturnType<typeof spawn>) => {
+    if (child.exitCode !== null) return Promise.resolve(child.exitCode);
+    return new Promise<number | null>((resolve) => child.once("exit", resolve)).then((code) => {
+      if (code === null && child.signalCode !== null) return code;
+      return code;
+    });
+  };
   const operationRoot = path.join(input.root, `${input.warmup ? "warmup" : "block"}-${input.block}-${input.order}-${input.arm}`);
   const worker = spawn(process.execPath, [tsxPath, workerPath,
     "--arm", input.arm,
@@ -187,10 +194,10 @@ async function runOperation(input: {
   worker.stdin.write("go\n");
   worker.stdin.end();
   const result = await bounded(resultPromise, "worker result");
-  const workerExit = await bounded(new Promise<number | null>((resolve) => worker.once("exit", resolve)), "worker exit");
+  const workerExit = await bounded(waitForExit(worker), "worker exit");
   sampler.stdin.write("stop\n");
   sampler.stdin.end();
-  const samplerExit = await bounded(new Promise<number | null>((resolve) => sampler.once("exit", resolve)), "sampler exit");
+  const samplerExit = await bounded(waitForExit(sampler), "sampler exit");
   if (workerExit !== 0) throw new Error(`worker failed (${workerExit}): ${Buffer.concat(workerErrors).toString("utf8")}`);
   if (samplerExit !== 0) throw new Error(`sampler failed (${samplerExit}): ${Buffer.concat(samplerErrors).toString("utf8")}`);
   if (result.stopAdmissionMs === null) throw new Error(`${input.arm} did not emit Stop admission evidence`);
