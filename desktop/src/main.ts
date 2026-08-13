@@ -1,10 +1,11 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, OpenDialogOptions, Session, WebContents } from "electron";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, safeStorage, screen, session, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, nativeTheme, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, Tray } from "electron";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { AppBuilderDataManager } from "./app-builder-data.js";
 import {
   AppBuilderController,
@@ -67,6 +68,12 @@ import {
 import { createDesktopComputerRuntimeLifecycle } from "./computer-runtime-lifecycle.js";
 import { createComputerRuntime } from "./computer-runtime.js";
 import { createCuaComputerDriver } from "./cua-computer-driver.js";
+import {
+  clearAutomaticCandidate,
+  readDesktopAutoUpdateState,
+  resolveDesktopAutoUpdateStatePath,
+  writeDesktopAutoUpdateState,
+} from "./desktop-auto-update-state.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
 import { resolveDesktopLocalEnvProfile, resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
@@ -82,13 +89,16 @@ import {
 import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
-  clearAutomaticCandidate,
-  readDesktopAutoUpdateState,
-  resolveDesktopAutoUpdateStatePath,
-  writeDesktopAutoUpdateState,
-} from "./desktop-auto-update-state.js";
+  ensureExternalDesktopUpdateHelper,
+  isDesktopUpdateRequestFresh,
+  quarantineDesktopUpdateRequest,
+  readDesktopUpdateJournal,
+  recoverDesktopUpdateWithExternalHelper,
+  resolveDesktopUpdateTransactionPaths,
+  type DesktopUpdateHelperRequest,
+} from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
-import { ensureExternalDesktopUpdateHelper, readDesktopUpdateJournal } from "./desktop-update-helper.js";
+import { resolveDesktopUpdateTrustKeys } from "./desktop-update-trust.js";
 import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
@@ -110,8 +120,6 @@ import { registerLocalAppsIpcHandlers } from "./local-apps-ipc.js";
 import { createDesktopLocalAppsRuntime } from "./local-apps-main-runtime.js";
 import { registerLocalFileIpcHandlers } from "./local-file-ipc.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
-import { buildDesktopApiRequestUrl } from "./api-url.js";
-import { createTerminalController, registerTerminalIpcHandlers, resolveTerminalWorkspaceFromApi } from "./terminal-ipc.js";
 import {
   canOpenBlockedNavigationExternally,
   classifyBlockedDesktopNavigation,
@@ -154,16 +162,17 @@ import {
   resolveSystemPermissionSettingsUrl,
   type DesktopSystemPermissions,
 } from "./system-permissions.js";
+import { createTerminalController, registerTerminalIpcHandlers, resolveTerminalWorkspaceFromApi } from "./terminal-ipc.js";
 import {
   applyThemePreferenceToNativeTheme,
   resolveAppearanceForThemePreference,
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
+import { readDesktopUpdateChannel } from "./update-channel-preference.js";
 import {
   type DesktopUpdateChannel
 } from "./update-check.js";
-import { readDesktopUpdateChannel } from "./update-channel-preference.js";
 import { resolveInitialDesktopWindowSize } from "./window-size.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_BUILDER_RUNNER_PATH = path.join(MODULE_DIR, "app-builder-runner.mjs");
@@ -412,6 +421,83 @@ function writeResidentShellSmokeStatus(status: Record<string, unknown>): void {
   fs.writeFileSync(resolvedPath, `${JSON.stringify(status, null, 2)}\n`, "utf8");
 }
 
+function writeLifecycleSmokeEvent(event: string, details: Record<string, unknown> = {}): void {
+  const targetPath = process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH?.trim();
+  if (!targetPath || !app.getName().startsWith("Rudder-smoke-")) return;
+  const resolvedPath = path.resolve(targetPath);
+  fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+  fs.appendFileSync(resolvedPath, `${JSON.stringify({ event, at: new Date().toISOString(), pid: process.pid, ...details })}\n`, "utf8");
+}
+
+function resolveLifecycleSmokeAction(): string | null {
+  if (!app.isPackaged || !app.getName().startsWith("Rudder-smoke-")) return null;
+  const action = process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION?.trim().toLowerCase();
+  return action && ["close", "menu-quit", "tray-quit", "shutdown", "auto-update-quit"].includes(action) ? action : null;
+}
+
+function scheduleLifecycleSmokeAction(): void {
+  const action = resolveLifecycleSmokeAction();
+  if (!action) return;
+  const configuredDelayMs = Number.parseInt(process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_DELAY_MS ?? "", 10);
+  const delayMs = Number.isFinite(configuredDelayMs) && configuredDelayMs >= 0
+    ? configuredDelayMs
+    : action === "auto-update-quit" ? 8_000 : 2_000;
+  const trigger = () => {
+    if (action === "close") {
+      writeLifecycleSmokeEvent("close-requested");
+      mainWindow?.close();
+      return;
+    }
+    if (action === "menu-quit") {
+      const item = Menu.getApplicationMenu()?.items[0]?.submenu?.getMenuItemById("rudder-quit");
+      writeLifecycleSmokeEvent("application-menu-quit-requested", { found: Boolean(item) });
+      item?.click?.();
+      return;
+    }
+    if (action === "tray-quit") {
+      writeLifecycleSmokeEvent("tray-quit-requested", { found: Boolean(residentTrayQuitAction), trayAvailable: Boolean(residentTray) });
+      residentTrayQuitAction?.();
+      return;
+    }
+    if (action === "auto-update-quit") {
+      writeLifecycleSmokeEvent("natural-quit-requested", { source: "auto-update-public" });
+      requestQuit();
+      return;
+    }
+    writeLifecycleSmokeEvent("system-shutdown-requested");
+    desktopSystemShutdown = true;
+    powerMonitor.emit("shutdown");
+    // The shutdown event owns the non-blocking runtime cleanup. Calling
+    // app.quit() here races that cleanup and leaves the managed API/Postgres
+    // listeners behind in packaged lifecycle verification.
+  };
+  if (action === "auto-update-quit" && process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1") {
+    const statePath = resolveDesktopAutoUpdateStatePath(app.getPath("userData"));
+    const deadline = Date.now() + 90_000;
+    const waitForPolicy = () => {
+      let acceptedPolicySequence = -1;
+      try {
+        acceptedPolicySequence = readDesktopAutoUpdateState(statePath).acceptedPolicySequence;
+      } catch {
+        // Keep polling until the packaged bootstrap has created the state.
+      }
+      if ((acceptedPolicySequence >= 42 && currentBootState.stage === "ready") || Date.now() >= deadline) {
+        writeLifecycleSmokeEvent("auto-update-policy-ready", {
+          acceptedPolicySequence,
+          statePath,
+          runtimeReady: currentBootState.stage === "ready",
+        });
+        trigger();
+        return;
+      }
+      setTimeout(waitForPolicy, 250).unref?.();
+    };
+    setTimeout(waitForPolicy, delayMs).unref?.();
+    return;
+  }
+  setTimeout(trigger, delayMs).unref?.();
+}
+
 function createResidentTrayIcon(): ResidentTrayIcon {
   if (process.platform === "darwin") {
     const templatePath = resolveResidentTrayTemplatePath();
@@ -505,9 +591,11 @@ const initialPaths = resolveSharedInstancePaths(initialProfile.instanceId);
 
 let mainWindow: BrowserWindow | null = null;
 let desktopUserQuitIntent = false;
+let desktopSystemShutdown = false;
 let currentMainRenderer: WebContents | null = null;
 let currentMainWindowKind: "app" | "boot" = "boot";
 let residentTray: Tray | null = null;
+let residentTrayQuitAction: (() => void) | null = null;
 let sidePanelCloseShortcutActive = false;
 let browserSurfaceShortcutActive = false;
 let browserSurfaceShortcutOwner: "main_workbench" | "side_panel" | null = null;
@@ -611,16 +699,39 @@ function promptRendererForDeferredUpdate(
 }
 
 let applyPreparedAutomaticCandidateForQuit: (() => Promise<"handled" | "continue">) | null = null;
-const desktopUpdatePolicyLoader = createDesktopUpdatePolicyLoader({
-  userDataPath: app.getPath("userData"),
-  channel: () => readDesktopUpdateChannel(app.getPath("userData")),
-  arch: process.arch,
-});
-const desktopUpdateHelperAttestation = ensureExternalDesktopUpdateHelper({
-  userDataPath: app.getPath("userData"),
-  resourcesPath: process.resourcesPath,
-  env: process.env,
-});
+let handoffPreparedAutomaticCandidateForQuit: (() => Promise<"handled" | "continue">) | null = null;
+type DesktopUpdatePolicyLoader = ReturnType<typeof createDesktopUpdatePolicyLoader>;
+let desktopUpdatePolicyLoader: DesktopUpdatePolicyLoader | null = null;
+function getDesktopUpdatePolicyLoader(): DesktopUpdatePolicyLoader {
+  // Resolve this after bootstrap applies the smoke/profile userData path and
+  // app identity. Electron can return its default path before ready even when
+  // a launch-specific path was supplied through the environment.
+  if (!desktopUpdatePolicyLoader) {
+    desktopUpdatePolicyLoader = createDesktopUpdatePolicyLoader({
+      userDataPath: app.getPath("userData"),
+      channel: () => readDesktopUpdateChannel(app.getPath("userData")),
+      arch: process.arch,
+      keys: resolveDesktopUpdateTrustKeys(),
+      policyUrl: process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1"
+        ? process.env.RUDDER_DESKTOP_UPDATE_POLICY_URL?.trim()
+        : undefined,
+    });
+  }
+  return desktopUpdatePolicyLoader;
+}
+/**
+ * Resolve the helper at the point of use. Packaged resources can finish
+ * staging after Electron has initialized; a one-shot module-level probe would
+ * otherwise disable silent updates for the entire session after a transient
+ * filesystem or process failure.
+ */
+function getDesktopUpdateHelperAttestation() {
+  return ensureExternalDesktopUpdateHelper({
+    userDataPath: app.getPath("userData"),
+    resourcesPath: process.resourcesPath,
+    env: process.env,
+  });
+}
 const desktopQuitFlow = createDesktopQuitFlow({
   appName: APP_NAME,
   getMainWindow: () => mainWindow,
@@ -637,9 +748,30 @@ const desktopQuitFlow = createDesktopQuitFlow({
   prepareLocalAppsForQuit: async () => {
     await (localAppsController?.shutdown() ?? Promise.resolve());
   },
-  beforeFinalizeQuit: async () => desktopUserQuitIntent
-    ? (applyPreparedAutomaticCandidateForQuit?.() ?? "continue")
-    : "continue",
+  beforeFinalizeQuit: async () => {
+    if (!desktopUserQuitIntent || desktopSystemShutdown) return "continue";
+    const before = readDesktopAutoUpdateState(resolveDesktopAutoUpdateStatePath(app.getPath("userData")));
+    writeLifecycleSmokeEvent("auto-update-before-quit", {
+      candidateStatus: before.candidate?.status ?? null,
+      helperAvailable: getDesktopUpdateHelperAttestation() !== null,
+      policyAvailable: getDesktopUpdatePolicyLoader().hasUsablePolicy(),
+      runtimeReady: currentBootState.stage === "ready",
+    });
+    await applyPreparedAutomaticCandidateForQuit?.();
+    const after = readDesktopAutoUpdateState(resolveDesktopAutoUpdateStatePath(app.getPath("userData")));
+    writeLifecycleSmokeEvent("auto-update-after-claim", {
+      candidateStatus: after.candidate?.status ?? null,
+      recoveryRequired: after.recoveryRequired,
+    });
+    return "continue";
+  },
+  afterRuntimeDrain: async () => {
+    if (!desktopUserQuitIntent || desktopSystemShutdown) return;
+    writeLifecycleSmokeEvent("auto-update-after-runtime-drain");
+    await handoffPreparedAutomaticCandidateForQuit?.();
+    writeLifecycleSmokeEvent("auto-update-after-helper-handoff");
+  },
+  isSystemShutdown: () => desktopSystemShutdown,
   stopLocalRudder,
   destroyResidentTray: () => { residentTray?.destroy(); residentTray = null; },
 });
@@ -665,20 +797,33 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   formatUpdateRunDetail,
   promptForDeferredUpdate: promptRendererForDeferredUpdate,
   showMainWindow,
-  hasExternalUpdateHelperCapability: () => desktopUpdateHelperAttestation !== null,
-  getExternalUpdateHelper: () => desktopUpdateHelperAttestation,
-  hasSignedUpdatePolicyCapability: () => desktopUpdatePolicyLoader.hasUsablePolicy(),
+  getUpdateInstallPath: () => (
+    app.getName().startsWith("Rudder-smoke-")
+      ? process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH?.trim()
+      : undefined
+  ),
+  hasExternalUpdateHelperCapability: () => getDesktopUpdateHelperAttestation() !== null,
+  getExternalUpdateHelper: () => getDesktopUpdateHelperAttestation(),
+  hasSignedUpdatePolicyCapability: () => getDesktopUpdatePolicyLoader().hasUsablePolicy(),
   refreshSignedUpdatePolicy: async () => {
-    const result = await desktopUpdatePolicyLoader.refresh();
+    const policyLoader = getDesktopUpdatePolicyLoader();
+    const result = await policyLoader.refresh();
+    if (process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1") {
+      writeLifecycleSmokeEvent("auto-update-policy-refresh", {
+        ok: result.ok,
+        reason: result.ok ? null : result.reason,
+        acceptedPolicySequence: readDesktopAutoUpdateState(resolveDesktopAutoUpdateStatePath(app.getPath("userData"))).acceptedPolicySequence,
+      });
+    }
     if (!result.ok) {
       console.warn("[rudder-desktop] signed update policy unavailable", result.reason);
       return false;
     }
     return true;
   },
-  authorizeSignedUpdateRelease: (input) => desktopUpdatePolicyLoader.authorizeRelease(input) !== null,
+  authorizeSignedUpdateRelease: (input) => getDesktopUpdatePolicyLoader().authorizeRelease(input) !== null,
   isSignedUpdateVersionAuthorized: (version) => {
-    const policy = desktopUpdatePolicyLoader.getPolicy();
+    const policy = getDesktopUpdatePolicyLoader().getPolicy();
     return Boolean(policy?.releases.some((release) => release.version === version && !release.revoked));
   },
 });
@@ -686,9 +831,13 @@ const {
   checkForUpdates, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
   maybeShowStartupUpdateNotice, showManualUpdateCheckDialog, installUpdate, applyUpdate,
   createFeedbackMailtoUrl, getDesktopUpdateProgress,
+  scheduleAutomaticUpdateCheck,
   applyPreparedAutomaticCandidate,
+  prepareAutomaticCandidateForQuit,
+  handoffPreparedAutomaticCandidate,
 } = desktopUpdateFlow;
-applyPreparedAutomaticCandidateForQuit = applyPreparedAutomaticCandidate;
+applyPreparedAutomaticCandidateForQuit = prepareAutomaticCandidateForQuit;
+handoffPreparedAutomaticCandidateForQuit = handoffPreparedAutomaticCandidate;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
   return DESKTOP_WINDOW_BACKGROUND[appearance];
@@ -1281,6 +1430,9 @@ function initializeBrowserProfile(instanceRoot: string): void {
 }
 
 function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage" | "message">): void {
+  if (nextState.stage !== currentBootState.stage && process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1") {
+    writeLifecycleSmokeEvent("boot-state", { stage: nextState.stage, message: nextState.message });
+  }
   currentBootState = {
     ...currentBootState,
     ...nextState,
@@ -1613,7 +1765,10 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
   }
 
   window.on("close", (event) => {
-    if (!shouldHideToResidentShell() || isQuitRequested() || isQuitting()) return;
+    writeLifecycleSmokeEvent("window-close", {
+      hiddenToResident: shouldHideToResidentShell() && !isQuitRequested() && !isQuitting() && !desktopSystemShutdown,
+    });
+    if (!shouldHideToResidentShell() || isQuitRequested() || isQuitting() || desktopSystemShutdown) return;
     event.preventDefault();
     hideMainWindowToResident();
   });
@@ -1792,9 +1947,8 @@ function installApplicationMenu(appName: string): void {
   const quitIndex = appMenu.items.findIndex((item) => item.role === "quit" || item.label === `Quit ${appName}`);
   if (quitIndex >= 0 && !appMenu.getMenuItemById("rudder-quit")) {
     const quitItem = appMenu.items[quitIndex];
-    // Electron 37 exposes the default MenuItem role as read-only. Keep the
-    // native quit role and override only the mutable identity and callback so
-    // the resident-shell quit flow remains owned by Rudder.
+    // Electron 37 exposes role as read-only on MenuItem. Keep the native quit
+    // role and attach the guarded handler through the menu item's click hook.
     quitItem.id = "rudder-quit";
     quitItem.click = () => requestQuit();
   }
@@ -1864,6 +2018,7 @@ function updateResidentShellMenu(): void {
   if (!residentTray) return;
   const windowVisible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
   residentTray.setToolTip(`${APP_NAME}\n${runtimeStatusLabel()}`);
+  residentTrayQuitAction = () => requestQuit();
   const menu = Menu.buildFromTemplate([
     {
       label: windowVisible ? `Hide ${APP_NAME}` : `Show ${APP_NAME}`,
@@ -1888,9 +2043,7 @@ function updateResidentShellMenu(): void {
     { type: "separator" },
     {
       label: `Quit ${APP_NAME}`,
-      click: () => {
-        requestQuit();
-      },
+      click: residentTrayQuitAction,
     },
   ]);
   residentTray.setContextMenu(menu);
@@ -1996,6 +2149,7 @@ async function retryStartupFromBootScreen(): Promise<void> {
 }
 
 function requestQuit(): void {
+  writeLifecycleSmokeEvent("natural-quit-requested");
   desktopUserQuitIntent = true;
   void beginQuitFlow().finally(() => {
     if (!isQuitting()) desktopUserQuitIntent = false;
@@ -2166,6 +2320,10 @@ async function startLocalRudder(): Promise<void> {
           apiUrl: baseUrl,
         },
       });
+      // The silent updater's initial five-second slot is anchored to a usable
+      // Desktop launch, not merely Electron's boot window. This also prevents
+      // policy/download work from racing local runtime ownership or migrations.
+      scheduleAutomaticUpdateCheck();
       if (desktopSkipAppLoad()) {
         if (desktopDebugEnabled()) {
           console.info("[rudder-desktop] startLocalRudder:skip-app-load", { baseUrl });
@@ -2489,7 +2647,15 @@ function registerIpc(): void {
         version,
       }),
     });
-    return notes ? { status: "available", notes } : { status: "unavailable" };
+    if (!notes) return { status: "unavailable" };
+    // Consume the one-shot release-note entitlement before handing the notes
+    // to the renderer. A renderer crash or force quit after this IPC response
+    // must not make the next launch show the same notes again.
+    markReleaseNotesShown({
+      version,
+      statePath,
+    });
+    return { status: "available", notes };
   });
   ipcMain.handle("desktop:mark-release-notes-shown", async (_event, version: string) => {
     markReleaseNotesShown({
@@ -2752,6 +2918,20 @@ async function captureDesktopWindowIfRequested(): Promise<void> {
 async function bootstrap(): Promise<void> {
   const profile = applyDesktopEnvironment();
   const appName = applyDesktopAppIdentity(profile);
+  // Install and attest the helper while the packaged resources are known to be
+  // present. Natural quit must only consume a capability that was already
+  // verified during bootstrap; doing the copy lazily at quit can race with
+  // shutdown and makes the public update path appear unavailable.
+  if (app.isPackaged && process.platform === "darwin") {
+    const helper = getDesktopUpdateHelperAttestation();
+    if (process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1") {
+      writeLifecycleSmokeEvent("auto-update-helper-ready", {
+        available: helper !== null,
+        path: helper?.path ?? null,
+        sha256: helper?.sha256 ?? null,
+      });
+    }
+  }
   const instancePaths = resolveSharedInstancePaths(profile.instanceId);
   const instanceRoot = instancePaths.instanceRoot
     ?? path.resolve(resolveSharedRudderHomeDir(), "instances", profile.instanceId);
@@ -2828,6 +3008,7 @@ async function bootstrap(): Promise<void> {
   installApplicationMenu(appName);
   createResidentShellControls();
   await openBootWindow();
+  scheduleLifecycleSmokeAction();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:window-created");
   }
@@ -2841,14 +3022,92 @@ async function bootstrap(): Promise<void> {
     const autoUpdateStatePath = resolveDesktopAutoUpdateStatePath(app.getPath("userData"));
     let autoUpdateState = readDesktopAutoUpdateState(autoUpdateStatePath);
     if (autoUpdateState.candidate) {
-      const journal = readDesktopUpdateJournal(app.getPath("userData"), autoUpdateState.candidate.updateId);
-      if (journal?.recoveryRequired) {
-        autoUpdateState = {
-          ...autoUpdateState,
-          recoveryRequired: true,
-          recoveryCode: journal.recoveryCode ?? "automatic_update_recovery_required",
-        };
-        writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+      const candidate = autoUpdateState.candidate;
+      const journal = readDesktopUpdateJournal(app.getPath("userData"), candidate.updateId);
+      if (candidate.status === "claimed" && !journal) {
+        const requestPath = `${resolveDesktopUpdateTransactionPaths({
+          userDataPath: app.getPath("userData"),
+          transactionId: candidate.updateId,
+          resourcesPath: process.resourcesPath,
+          execPath: process.execPath,
+        }).journalPath}.request.json`;
+        const requestPending = isDesktopUpdateRequestFresh(requestPath);
+        if (!requestPending) {
+          quarantineDesktopUpdateRequest(requestPath);
+          autoUpdateState = {
+            ...autoUpdateState,
+            recoveryRequired: true,
+            recoveryCode: "automatic_update_claim_request_stale",
+          };
+          writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+        }
+      } else if (journal && (journal.recoveryRequired || journal.stage === "previous_moved")) {
+        const helper = getDesktopUpdateHelperAttestation();
+        const journalHelper = journal.helper;
+        const expectedTransactionPaths = resolveDesktopUpdateTransactionPaths({
+          userDataPath: app.getPath("userData"),
+          transactionId: journal.transactionId,
+          resourcesPath: process.resourcesPath,
+          execPath: process.execPath,
+        });
+        const helperMatchesJournal = Boolean(helper && journalHelper
+          && helper.path === journalHelper.path
+          && helper.ownerUid === journalHelper.ownerUid
+          && helper.mode === journalHelper.mode
+          && helper.sha256 === journalHelper.sha256);
+        const journalPathsMatch = journal.installPath === expectedTransactionPaths.installPath
+          && journal.lkgPath === expectedTransactionPaths.lkgPath
+          && journal.checkpointPath === expectedTransactionPaths.checkpointPath
+          && journal.stagedPath === candidate.stagedArtifactPath;
+        const journalCandidateMatch = journal.candidateSha256 === candidate.stagedArtifactDigest
+          && journal.targetVersion === candidate.version;
+        if (!helper || !helperMatchesJournal || !journalPathsMatch || !journalCandidateMatch || !journal.ownerToken
+          || !journal.admission || !journal.checkpoint || !journal.installPath
+          || !journal.stagedPath || !journal.lkgPath || !journal.checkpointPath
+          || !journal.targetVersion || !journal.candidateSha256) {
+          autoUpdateState = {
+            ...autoUpdateState,
+            recoveryRequired: true,
+            recoveryCode: "automatic_update_recovery_identity_unavailable",
+          };
+          writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+        } else {
+          const recoveryRequest: DesktopUpdateHelperRequest = {
+            operation: "recover",
+            ownerToken: journal.ownerToken,
+            transactionId: journal.transactionId,
+            ...{
+              installPath: journal.installPath,
+              stagedPath: journal.stagedPath,
+              lkgPath: journal.lkgPath,
+              journalPath: expectedTransactionPaths.journalPath,
+            checkpointPath: journal.checkpointPath,
+            ...(journal.statePath ? { statePath: journal.statePath } : {}),
+            },
+            targetVersion: journal.targetVersion,
+            candidateSha256: journal.candidateSha256,
+            admission: journal.admission,
+            checkpoint: journal.checkpoint,
+            helper: journalHelper!,
+            probation: {
+              executable: path.join(journal.installPath, "Contents", "MacOS", "Rudder"),
+              args: ["--rudder-update-probation"],
+              timeoutMs: 10_000,
+            },
+          };
+          const recovery = recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });
+          if (recovery.recoveryRequired || !recovery.stage || !["rolled_back", "committed"].includes(recovery.stage)) {
+            autoUpdateState = {
+              ...autoUpdateState,
+              recoveryRequired: true,
+              recoveryCode: recovery.recoveryCode ?? recovery.error ?? "automatic_update_recovery_failed",
+            };
+            writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+          } else {
+            autoUpdateState = clearAutomaticCandidate({ ...autoUpdateState, recoveryRequired: false, recoveryCode: undefined }, candidate.updateId);
+            writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+          }
+        }
       } else if (journal && ["committed", "rolled_back"].includes(journal.stage)) {
         // A terminal helper journal is authoritative. Clear the durable
         // candidate so a successful install or rollback cannot be claimed on
@@ -2901,6 +3160,97 @@ async function bootstrap(): Promise<void> {
   }
 }
 
+async function runAutomaticUpdateProbation(): Promise<void> {
+  // The helper launches the exact replacement binary with this flag. Probe the
+  // same managed local runtime and served renderer as a normal boot, then hold
+  // the runtime through a bounded stability window. The hidden BrowserWindow
+  // below makes renderer/preload readiness an observed gate instead of a raw
+  // HTTP shell check.
+  // No normal Desktop window is created and the managed runtime is always
+  // stopped before this process exits.
+  if (!process.argv.includes("--rudder-update-probation")) return;
+  let handle: StartedServer | null = null;
+  let probationWindow: BrowserWindow | null = null;
+  const probationVersionChannel = "desktop:get-app-version";
+  try {
+    const profile = applyDesktopEnvironment();
+    const serverModule = await importServerModule();
+    handle = await serverModule.startManagedLocalServer({
+      ownerKind: "desktop",
+      takeoverOnVersionMismatch: true,
+      preferredOwner: true,
+      ...serverRuntimeOptions(),
+    });
+    if (handle.runtime.mode !== "owned"
+      || handle.runtime.instanceId !== profile.instanceId
+      || handle.runtime.localEnv !== profile.name
+      || (handle.runtime.version !== app.getVersion()
+        && !(app.getName().startsWith("Rudder-smoke-")
+          && process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1"))) {
+      throw new Error("probation runtime identity or ownership mismatch");
+    }
+    const healthUrl = new URL("/api/health", handle.apiUrl);
+    const rendererUrl = new URL("/", handle.apiUrl);
+    const readHealth = async () => {
+      const healthResponse = await fetch(healthUrl, {
+        signal: AbortSignal.timeout(8_000),
+        headers: { Accept: "application/json" },
+      });
+      if (!healthResponse.ok) throw new Error(`probation health returned ${healthResponse.status}`);
+      const health = await healthResponse.json() as {
+        instanceId?: unknown;
+        localEnv?: unknown;
+        status?: unknown;
+        bootstrapStatus?: unknown;
+      };
+      if (health.status !== "ok"
+        || health.instanceId !== profile.instanceId
+        || health.localEnv !== profile.name) {
+        throw new Error("probation health identity mismatch");
+      }
+      if (health.bootstrapStatus === "bootstrap_pending") {
+        throw new Error("probation database bootstrap is incomplete");
+      }
+    };
+    await readHealth();
+    ipcMain.handle(probationVersionChannel, () => app.getVersion());
+    probationWindow = new BrowserWindow({
+      show: false,
+      webPreferences: createDesktopWebPreferences(path.resolve(MODULE_DIR, "preload.js")),
+    });
+    await probationWindow.loadURL(rendererUrl.toString());
+    const rendererReady = await probationWindow.webContents.executeJavaScript(
+      "Boolean(window.desktopShell && typeof window.desktopShell.getAppVersion === 'function')",
+      true,
+    );
+    if (rendererReady !== true) throw new Error("probation renderer/preload bridge is unavailable");
+    const rendererVersion = await probationWindow.webContents.executeJavaScript(
+      "window.desktopShell.getAppVersion()",
+      true,
+    );
+    if (rendererVersion !== app.getVersion()) throw new Error("probation renderer IPC version mismatch");
+    const stabilityWindowMs = 1_500;
+    const stabilityDeadline = Date.now() + stabilityWindowMs;
+    while (Date.now() < stabilityDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await readHealth();
+    }
+    ipcMain.removeHandler(probationVersionChannel);
+    probationWindow.destroy();
+    probationWindow = null;
+    await handle.stop();
+    handle = null;
+    process.stdout.write("rudder-update-probation ready\n");
+    app.exit(0);
+  } catch (error) {
+    ipcMain.removeHandler(probationVersionChannel);
+    probationWindow?.destroy();
+    await handle?.stop().catch(() => undefined);
+    console.error("[rudder-desktop] update probation failed", error);
+    app.exit(1);
+  }
+}
+
 const desktopCliArgv = resolveDesktopCliArgv(process.argv);
 const updateQuitResponsePath = resolveUpdateQuitResponsePath(process.argv);
 
@@ -2946,13 +3296,28 @@ if (desktopCliArgv) {
       app.quit();
     });
 
+    powerMonitor.on("shutdown", () => {
+      desktopSystemShutdown = true;
+      // OS shutdown must never wait for update installation or a user prompt,
+      // but an already-owned local runtime still gets a best-effort drain so
+      // the process does not strand its loopback listeners during logoff.
+      void stopLocalRudder()
+        .catch((error) => {
+          console.warn("[rudder-desktop] failed to drain local runtime during OS shutdown", error);
+        })
+        .finally(() => app.quit());
+    });
     app.on("before-quit", (event) => {
+      if (desktopSystemShutdown) return;
       if (isQuitting()) return;
       event.preventDefault();
       void beginQuitFlow();
     });
 
-    void app.whenReady().then(() => bootstrap()).catch((error) => {
+    void app.whenReady().then(async () => {
+      if (process.argv.includes("--rudder-update-probation")) return runAutomaticUpdateProbation();
+      return bootstrap();
+    }).catch((error) => {
       console.error("[rudder-desktop] Failed to bootstrap desktop app", error);
       app.exit(1);
     });

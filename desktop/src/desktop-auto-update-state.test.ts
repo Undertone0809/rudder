@@ -1,7 +1,7 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS,
@@ -10,14 +10,14 @@ import {
   acceptAutomaticUpdatePolicySequenceAtPath,
   claimAutomaticCandidate,
   createInitialDesktopAutoUpdateState,
-  markAutomaticCheckStarted,
+  hasExactStagedAutomaticArtifact,
   markAutomaticCandidateStatus,
+  markAutomaticCheckStarted,
   markAutomaticRecoveryRequired,
   readDesktopAutoUpdateState,
   scheduleNextAutomaticCheck,
   shouldRunAutomaticCheck,
   stageAutomaticCandidate,
-  hasExactStagedAutomaticArtifact,
   writeDesktopAutoUpdateState,
   type DesktopAutoUpdateCandidate,
 } from "./desktop-auto-update-state.js";

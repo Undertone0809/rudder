@@ -99,7 +99,9 @@ export function verifyDesktopUpdatePolicy(
   if (!key || !signature) return { ok: false, reason: "unknown_policy_key_or_signature" };
   let publicKey: ReturnType<typeof createPublicKey>;
   try {
-    publicKey = createPublicKey(key);
+    publicKey = Buffer.isBuffer(key)
+      ? createPublicKey({ key, format: "der", type: "spki" })
+      : createPublicKey(key);
   } catch {
     return { ok: false, reason: "invalid_policy_key" };
   }

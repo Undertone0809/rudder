@@ -1,7 +1,7 @@
+import { generateKeyPairSync, sign } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { generateKeyPairSync, sign } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { readDesktopAutoUpdateState, resolveDesktopAutoUpdateStatePath } from "./desktop-auto-update-state.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
@@ -77,6 +77,23 @@ describe("desktop signed update policy loader", () => {
       assetSha256: "c".repeat(64),
       releaseDigest: "b".repeat(64),
     })).toBeNull();
+  });
+
+  it("accepts the DER/SPKI trust-key form shipped in the packaged app", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-policy-loader-der-"));
+    roots.push(root);
+    const signed = envelope(9);
+    const policyLoader = createDesktopUpdatePolicyLoader({
+      userDataPath: root,
+      channel: "stable",
+      arch: "arm64",
+      now: () => new Date("2026-08-13T12:00:00.000Z"),
+      keys: { "test-key": signed.keys.publicKey.export({ type: "spki", format: "der" }) },
+      fetchImpl: async () => new Response(JSON.stringify(signed.envelope), { status: 200 }),
+    });
+
+    await expect(policyLoader.refresh()).resolves.toMatchObject({ ok: true, source: "network" });
+    expect(readDesktopAutoUpdateState(resolveDesktopAutoUpdateStatePath(root)).acceptedPolicySequence).toBe(9);
   });
 
   it("uses only the accepted authenticated cache after network failure", async () => {

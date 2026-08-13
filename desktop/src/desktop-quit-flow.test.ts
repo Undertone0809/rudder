@@ -110,8 +110,8 @@ describe("desktop quit flow update handoff", () => {
     expect(appQuitMock).toHaveBeenCalledOnce();
   });
 
-  it("hands a natural quit to automatic apply before stopping the runtime", async () => {
-    const beforeFinalizeQuit = vi.fn(async () => "handled" as const);
+  it("hands a natural quit to automatic apply after stopping the runtime", async () => {
+    const afterRuntimeDrain = vi.fn(async () => undefined);
     const stopLocalRudder = vi.fn(async () => undefined);
     const quitFlow = createDesktopQuitFlow({
       appName: "Rudder",
@@ -119,16 +119,38 @@ describe("desktop quit flow update handoff", () => {
       setMainWindow: vi.fn(),
       getServerHandle: () => null,
       fetchApi: globalThis.fetch,
-      beforeFinalizeQuit,
+      afterRuntimeDrain,
       stopLocalRudder,
       destroyResidentTray: vi.fn(),
     });
 
     await quitFlow.beginQuitFlow();
 
-    expect(beforeFinalizeQuit).toHaveBeenCalledTimes(1);
-    expect(stopLocalRudder).not.toHaveBeenCalled();
-    expect(appQuitMock).not.toHaveBeenCalled();
+    expect(afterRuntimeDrain).toHaveBeenCalledTimes(1);
+    expect(stopLocalRudder).toHaveBeenCalledTimes(1);
+    expect(appQuitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never invokes automatic apply for an OS shutdown", async () => {
+    const afterRuntimeDrain = vi.fn(async () => undefined);
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => null,
+      setMainWindow: vi.fn(),
+      getServerHandle: () => null,
+      fetchApi: globalThis.fetch,
+      afterRuntimeDrain,
+      isSystemShutdown: () => true,
+      stopLocalRudder,
+      destroyResidentTray: vi.fn(),
+    });
+
+    await quitFlow.beginQuitFlow();
+
+    expect(stopLocalRudder).toHaveBeenCalledOnce();
+    expect(afterRuntimeDrain).not.toHaveBeenCalled();
+    expect(appQuitMock).toHaveBeenCalledOnce();
   });
 
   it("logs Local App cleanup failures distinctly and continues the watchdog-backed quit fallback", async () => {

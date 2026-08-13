@@ -31,6 +31,8 @@ export function createDesktopQuitFlow(context: {
   prepareForQuit?: () => Promise<void>;
   prepareLocalAppsForQuit?: () => Promise<void>;
   beforeFinalizeQuit?: () => Promise<"handled" | "continue">;
+  afterRuntimeDrain?: () => Promise<void>;
+  isSystemShutdown?: () => boolean;
   stopLocalRudder: () => Promise<void>;
   destroyResidentTray: () => void;
 }) {
@@ -283,6 +285,9 @@ export function createDesktopQuitFlow(context: {
       ]);
       stopRendererRequestsBeforeRuntimeShutdown();
       await context.stopLocalRudder();
+      if (!context.isSystemShutdown?.()) {
+        await context.afterRuntimeDrain?.();
+      }
     } finally {
       context.destroyResidentTray();
       if (options.forceExit) {
@@ -302,6 +307,10 @@ export function createDesktopQuitFlow(context: {
 
     quitInFlight = (async () => {
       try {
+        if (context.isSystemShutdown?.()) {
+          await finalizeQuit();
+          return;
+        }
         let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
         try {
           activeRuns = await listActiveRunsForQuit();
@@ -319,6 +328,8 @@ export function createDesktopQuitFlow(context: {
           }
         }
 
+        // Automatic update claiming must happen while the owned runtime is
+        // still available for the final protected blocker inspection.
         if (context.beforeFinalizeQuit) {
           const updateDecision = await context.beforeFinalizeQuit();
           if (updateDecision === "handled") return;

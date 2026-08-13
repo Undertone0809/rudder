@@ -1,6 +1,6 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
 
 export const DESKTOP_AUTO_UPDATE_STATE_VERSION = 1;
 export const DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS = 5_000;
@@ -246,6 +246,44 @@ function isSha256Digest(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
 }
 
+function bundleManifestDigest(root: string): string {
+  const entries: Array<{ relative: string; digest: string; mode: number }> = [];
+  const collect = (current: string): void => {
+    const children = fs.readdirSync(current, { withFileTypes: true })
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const child of children) {
+      const absolute = path.join(current, child.name);
+      const relative = path.relative(root, absolute).split(path.sep).join("/");
+      const metadata = fs.lstatSync(absolute);
+      if (metadata.isSymbolicLink()) throw new Error(`bundle contains symlink: ${relative}`);
+      if (metadata.isDirectory()) {
+        entries.push({ relative: `${relative}/`, digest: "dir", mode: 0 });
+        collect(absolute);
+      } else if (metadata.isFile()) {
+        entries.push({
+          relative,
+          digest: createHash("sha256").update(fs.readFileSync(absolute)).digest("hex"),
+          mode: metadata.mode,
+        });
+      }
+    }
+  };
+  collect(root);
+  entries.sort((left, right) => left.relative < right.relative ? -1 : left.relative > right.relative ? 1 : 0);
+  const hasher = createHash("sha256");
+  for (const entry of entries) {
+    hasher.update(entry.relative);
+    hasher.update(Buffer.from([0]));
+    hasher.update(entry.digest);
+    hasher.update(Buffer.from([0]));
+    const mode = Buffer.allocUnsafe(4);
+    mode.writeUInt32LE(entry.mode >>> 0, 0);
+    hasher.update(mode);
+    hasher.update(Buffer.from([0]));
+  }
+  return hasher.digest("hex");
+}
+
 /**
  * Automatic apply is allowed only for the exact immutable payload that was
  * staged. This deliberately fails closed for legacy state and symlinked paths.
@@ -259,10 +297,13 @@ export function hasExactStagedAutomaticArtifact(candidate: DesktopAutoUpdateCand
 
   try {
     const descriptor = fs.lstatSync(artifactPath);
-    if (!descriptor.isFile() || descriptor.isSymbolicLink()) return false;
-    const actualDigest = createHash("sha256")
-      .update(fs.readFileSync(artifactPath))
-      .digest("hex");
+    if (descriptor.isSymbolicLink()) return false;
+    const actualDigest = descriptor.isDirectory()
+      ? bundleManifestDigest(artifactPath)
+      : descriptor.isFile()
+        ? createHash("sha256").update(fs.readFileSync(artifactPath)).digest("hex")
+        : null;
+    if (!actualDigest) return false;
     return actualDigest === expectedDigest.toLowerCase();
   } catch {
     return false;

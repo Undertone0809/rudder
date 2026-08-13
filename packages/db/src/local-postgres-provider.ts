@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn, type SpawnOptions } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -279,6 +279,48 @@ async function stopSpawnedPostgres(child: ReturnType<typeof spawn> | null): Prom
   await waitForExit(2_000);
 }
 
+async function stopPostgresByPidFile(databaseDir: string): Promise<boolean> {
+  let pid: number;
+  const expectedDataDir = path.resolve(databaseDir);
+  try {
+    const pidLines = readFileSync(path.join(expectedDataDir, "postmaster.pid"), "utf8").split(/\r?\n/u);
+    const firstLine = pidLines[0]?.trim();
+    const recordedDataDir = pidLines[1]?.trim();
+    pid = Number(firstLine);
+    if (!Number.isSafeInteger(pid) || pid <= 1 || path.resolve(recordedDataDir ?? "") !== expectedDataDir) return false;
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+
+  if (process.platform !== "win32") {
+    try {
+      const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
+      if (!command.includes(expectedDataDir)) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
+    return false;
+  }
+
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 export function createOfficialPostgresInstance(
   binDir: string,
   options: LocalPostgresInstanceOptions,
@@ -398,7 +440,16 @@ export function createOfficialPostgresInstance(
       }
     },
     async stop() {
-      await run(binaries.pgCtl, ["-D", options.databaseDir, "-m", "fast", "-w", "stop"], "stop");
+      try {
+        await run(binaries.pgCtl, ["-D", options.databaseDir, "-m", "fast", "-w", "stop"], "stop");
+      } catch (error) {
+        // A packaged binary can disappear during a runtime handoff even though
+        // the owned postmaster is still live. Only fall back to the PID recorded
+        // by that exact data directory, and report the original error if no
+        // verified process can be stopped.
+        const stopped = await stopPostgresByPidFile(options.databaseDir);
+        if (!stopped) throw error;
+      }
     },
   };
 }

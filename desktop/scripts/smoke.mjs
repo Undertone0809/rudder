@@ -2,8 +2,8 @@ import { chromium, _electron as electron } from "@playwright/test";
 import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { access, chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
+import { access, chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -65,6 +65,14 @@ const terminalSmokeScreenshotPath = path.join(
   os.tmpdir(),
   `rudder-desktop-agent-terminal-smoke-${smokeMode}.png`,
 );
+const terminalConstrainedSmokeScreenshotPath = path.join(
+  os.tmpdir(),
+  `rudder-desktop-agent-terminal-smoke-${smokeMode}-constrained.png`,
+);
+const terminalFailureSmokeScreenshotPath = path.join(
+  os.tmpdir(),
+  `rudder-desktop-agent-terminal-smoke-${smokeMode}-failure.png`,
+);
 const expectedBrowserToolNames = [
   "rudder_browser_tabs",
   "rudder_browser_user_tabs",
@@ -105,6 +113,12 @@ const REQUIRED_BUNDLED_SKILLS = [
 const PREFERRED_INITIAL_WINDOW_SIZE = [1620, 1020];
 const MINIMUM_INITIAL_WINDOW_SIZE = [1080, 720];
 const INITIAL_WINDOW_WORK_AREA_RATIO = 0.9;
+const desktopPackage = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8"));
+const expectedReleaseVersion = String(desktopPackage.version);
+const escapedReleaseVersion = expectedReleaseVersion.replace(/[.*+?^${}()|[\]\\]/gu, "\\\\$&");
+const expectedProcessHostVersion = new RegExp(`^rudder-process-host ${escapedReleaseVersion}\\n$`, "u");
+const expectedUpdateHelperVersion = new RegExp(`^rudder-update-helper ${escapedReleaseVersion} protocol=1\\n$`, "u");
+const expectedUpdateHelperProtocol = `rudder-update-helper ${expectedReleaseVersion} protocol=1`;
 console.log(`[desktop-smoke] temp root: ${tmpRoot}`);
 
 async function pathExists(targetPath) {
@@ -156,7 +170,7 @@ async function runCapturedProcess(executable, args, options = {}) {
 async function verifyPackagedNativeProcessHost(executablePath) {
   const metadata = await runCapturedProcess(executablePath, ["--version"]);
   assert.equal(metadata.code, 0, "packaged Rust process host should expose metadata");
-  assert.match(metadata.stdout, /^rudder-process-host 0\.1\.0\n$/u);
+  assert.match(metadata.stdout, expectedProcessHostVersion);
   await new Promise((resolve, reject) => {
     const host = spawn(executablePath, [], {
       cwd: tmpRoot,
@@ -338,6 +352,15 @@ async function writePackagedUpdateHelperRequest(root, input = {}) {
   await mkdir(stagedPath, { recursive: true });
   await writeFile(path.join(installPath, "current-generation.txt"), "current\n", "utf8");
   await writeFile(path.join(stagedPath, "candidate-generation.txt"), "candidate\n", "utf8");
+  const stagedProbationExecutable = path.join(stagedPath, "Contents", "MacOS", "Rudder");
+  await mkdir(path.dirname(stagedProbationExecutable), { recursive: true });
+  await writeFile(stagedProbationExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const probationExecutable = path.join(installPath, "Contents", "MacOS", "Rudder");
+  await mkdir(path.dirname(probationExecutable), { recursive: true });
+  await writeFile(probationExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  // A rollback is only meaningful when the fixture starts with a known-good
+  // install. The helper moves this bundle to LKG during the exchange.
+  await cp(installPath, lkgPath, { recursive: true });
   const request = {
     operation: input.operation ?? "apply",
     ownerToken: input.ownerToken ?? `desktop-smoke-owner-${path.basename(root)}`,
@@ -358,11 +381,12 @@ async function writePackagedUpdateHelperRequest(root, input = {}) {
       databaseRevision: "desktop-smoke-revision",
       migrationCompatible: true,
     },
-    probation: {},
+    helper: input.helper ?? { path: input.helperPath ?? process.env.RUDDER_DESKTOP_SMOKE_EXECUTABLE ?? "", ownerUid: 0, mode: 0o755, sha256: "" },
+    probation: { executable: probationExecutable, args: [], timeoutMs: 10_000 },
     fault: input.fault ?? {},
   };
   const requestPath = path.join(root, "request.json");
-  await writeFile(requestPath, `${JSON.stringify(request)}\n`, "utf8");
+  await writeFile(requestPath, `${JSON.stringify(request)}\n`, { encoding: "utf8", mode: 0o600 });
   return { request, requestPath };
 }
 
@@ -380,6 +404,14 @@ async function bindPackagedUpdateHelperDigest(executablePath, prepared) {
       ? resolve(stdout.trim())
       : reject(new Error(`packaged update helper digest probe failed (${code}): ${stderr.trim()}`)));
   });
+  const helperStat = await stat(executablePath);
+  const helperBytes = await readFile(executablePath);
+  prepared.request.helper = {
+    path: executablePath,
+    ownerUid: helperStat.uid,
+    mode: helperStat.mode & 0o7777,
+    sha256: createHash("sha256").update(helperBytes).digest("hex"),
+  };
   prepared.request.candidateSha256 = digest;
   await writeFile(prepared.requestPath, `${JSON.stringify(prepared.request)}\n`, "utf8");
   return prepared;
@@ -399,7 +431,7 @@ async function verifyPackagedUpdateHelperFaultMatrix(executablePath) {
       ? resolve(stdout.trim())
       : reject(new Error(`packaged update helper version probe failed (${code}): ${stderr.trim()}`)));
   });
-  assert.equal(version, "rudder-update-helper 0.1.0 protocol=1");
+  assert.equal(version, expectedUpdateHelperProtocol);
 
   const matrixRoot = path.join(tmpRoot, "auto-update-helper");
   await mkdir(matrixRoot, { recursive: true });
@@ -440,7 +472,7 @@ async function verifyPackagedUpdateHelperFaultMatrix(executablePath) {
     ...interrupted.request,
     operation: "recover",
     fault: {},
-  })}\n`, "utf8");
+  })}\n`, { encoding: "utf8", mode: 0o600 });
   const recoveredResult = await runPackagedUpdateHelper(executablePath, interrupted.requestPath);
   assert.equal(recoveredResult.code, 3, `helper recovery returned ${recoveredResult.code}`);
   assert.equal(recoveredResult.result?.stage, "rolled_back");
@@ -467,7 +499,69 @@ async function verifyPackagedUpdateHelperFaultMatrix(executablePath) {
 async function verifyPackagedUpdateHelper(executablePath) {
   const metadata = await runCapturedProcess(executablePath, ["--version"]);
   assert.equal(metadata.code, 0, "packaged update helper should expose metadata");
-  assert.match(metadata.stdout, /^rudder-update-helper 0\.1\.0 protocol=1\n$/u);
+  assert.match(metadata.stdout, expectedUpdateHelperVersion);
+}
+
+async function verifyPackagedExternalUpdateHelperHandoff(packagedExecutablePath, helperPath) {
+  const helperModule = await import(pathToFileURL(path.join(desktopDir, "dist", "desktop-update-helper.js")).href);
+  const handoffRoot = path.join(tmpRoot, "external-helper-handoff");
+  const userDataPath = path.join(handoffRoot, "user-data");
+  const resourcesPath = path.resolve(path.dirname(packagedExecutablePath), "..", "Resources");
+  await mkdir(handoffRoot, { recursive: true });
+  const attestation = helperModule.ensureExternalDesktopUpdateHelper({
+    userDataPath,
+    resourcesPath,
+    platform: "darwin",
+    env: process.env,
+  });
+  assert.ok(attestation, "packaged Desktop should install and attest an external update helper");
+  assert.equal(path.relative(resourcesPath, attestation.path).startsWith(".."), true);
+  assert.equal(attestation.mode, 0o755);
+  assert.equal(attestation.protocol, helperModule.DESKTOP_UPDATE_HELPER_PROTOCOL);
+  assert.equal(attestation.sha256, createHash("sha256").update(await readFile(attestation.path)).digest("hex"));
+
+  const prepared = await writePackagedUpdateHelperRequest(path.join(handoffRoot, "transaction"), {
+    helperPath: attestation.path,
+  });
+  prepared.request.helper = {
+    path: attestation.path,
+    ownerUid: attestation.ownerUid,
+    mode: attestation.mode,
+    sha256: attestation.sha256,
+  };
+  prepared.request.transactionId = randomUUID().replaceAll("-", "");
+  const digest = await new Promise((resolve, reject) => {
+    const child = spawn(helperPath, ["--digest", prepared.request.stagedPath], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr.trim())));
+  });
+  prepared.request.candidateSha256 = digest;
+  await writeFile(prepared.requestPath, `${JSON.stringify(prepared.request)}\n`, { encoding: "utf8", mode: 0o600 });
+  const child = helperModule.handoffDesktopUpdateToExternalHelper({
+    request: prepared.request,
+    helperPath: attestation.path,
+  });
+  assert.equal(typeof child.pid, "number");
+  const journal = await waitForSmokeCondition(
+    "external update helper handoff journal",
+    async () => {
+      if (!(await pathExists(prepared.request.journalPath))) return null;
+      const journal = JSON.parse(await readFile(prepared.request.journalPath, "utf8"));
+      return journal.stage === "committed" ? journal : null;
+    },
+    { timeoutMs: 15_000 },
+  );
+  assert.equal(journal.stage, "committed");
+  assert.equal(journal.transactionId, prepared.request.transactionId);
+  assert.equal(journal.helper.path, attestation.path);
+  assert.equal(await pathExists(path.join(prepared.request.installPath, "candidate-generation.txt")), true);
+  console.log("[desktop-smoke] packaged external helper installed, attested, and completed an immutable detached handoff");
 }
 
 function parseLocalAppSmokeEnvNames() {
@@ -2433,6 +2527,10 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
 
 async function runAccountGateScenario(mode) {
   assert.equal(mode, "packaged", "the release account gate must be verified against a packaged Desktop");
+  if (process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION?.trim()) {
+    await runPackagedLifecycleScenario(mode);
+    return;
+  }
   const scenarioRoot = path.join(tmpRoot, "account-gate");
   const residentStatusPath = path.join(scenarioRoot, "resident-shell-status.json");
   const ports = await allocateSmokePorts();
@@ -2717,6 +2815,178 @@ async function runAccountGateScenario(mode) {
     console.log(`[desktop-smoke] email-code interaction screenshot: ${emailCodeScreenshotPath}`);
   } finally {
     await closeDesktop(electronApp);
+  }
+}
+
+async function runPackagedLifecycleScenario(mode) {
+  assert.equal(mode, "packaged", "Desktop lifecycle acceptance requires a packaged Desktop");
+  assert.equal(process.platform, "darwin", "Desktop lifecycle v1 acceptance is macOS-only");
+  const action = process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION.trim().toLowerCase();
+  const scenarioRoot = path.join(tmpRoot, `lifecycle-${action}`);
+  const ports = await allocateSmokePorts();
+  const lifecyclePath = process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH?.trim()
+    ? path.resolve(process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH)
+    : path.join(scenarioRoot, "lifecycle.jsonl");
+  await mkdir(scenarioRoot, { recursive: true });
+  const run = await launchDesktopWindow(scenarioRoot, mode, ports, {
+    RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION: action,
+    RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: lifecyclePath,
+  });
+  try {
+    const events = await waitForSmokeCondition(
+      `${action} lifecycle event`,
+      async () => {
+        if (!(await pathExists(lifecyclePath))) return null;
+        const lines = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean);
+        const events = lines.map((line) => JSON.parse(line));
+        const terminalEvent = action === "auto-update-quit"
+          ? "auto-update-after-helper-handoff"
+          : action === "close"
+            ? "window-close"
+            : action === "menu-quit"
+              ? "application-menu-quit-requested"
+              : action === "tray-quit"
+                ? "tray-quit-requested"
+                : "system-shutdown-requested";
+        return events.some((event) => event.event === terminalEvent) ? events : null;
+      },
+      { timeoutMs: 30_000 },
+    );
+    const expectedLifecycleEvent = action === "menu-quit"
+      ? "application-menu-quit-requested"
+      : action === "tray-quit"
+        ? "tray-quit-requested"
+        : action === "shutdown"
+          ? "system-shutdown-requested"
+          : action === "auto-update-quit"
+            ? "natural-quit-requested"
+            : "close-requested";
+    assert.ok(events.some((event) => event.event === expectedLifecycleEvent));
+    if (action === "close") {
+      assert.equal(events.some((event) => event.event === "window-close" && event.hiddenToResident === true), true);
+      assert.equal(await run.electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible() ?? false), false);
+    }
+    if (action === "menu-quit") {
+      assert.equal(events.some((event) => event.event === "application-menu-quit-requested" && event.found === true), true);
+      assert.equal(events.some((event) => event.event === "natural-quit-requested"), true);
+    }
+    if (action === "tray-quit") {
+      assert.equal(events.some((event) => event.event === "tray-quit-requested" && event.found === true), true);
+      assert.equal(events.some((event) => event.event === "natural-quit-requested"), true);
+    }
+    if (action === "shutdown") {
+      assert.equal(events.some((event) => event.event === "system-shutdown-requested"), true);
+      assert.equal(events.some((event) => event.event === "natural-quit-requested"), false);
+    }
+    if (action === "auto-update-quit") {
+      assert.equal(events.some((event) => event.event === "natural-quit-requested"), true);
+      assert.equal(events.some((event) => event.event === "auto-update-after-runtime-drain"), true);
+      assert.equal(events.some((event) => event.event === "auto-update-after-helper-handoff"), true);
+    }
+    console.log(`[desktop-smoke] packaged lifecycle passed: ${action}`);
+  } finally {
+    await closeDesktop(run.electronApp).catch(() => {});
+  }
+}
+
+function canonicalizeSmokePolicy(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalizeSmokePolicy).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalizeSmokePolicy(value[key])}`).join(",")}}`;
+}
+
+async function runPackagedPublicAutoUpdateScenario(mode) {
+  assert.equal(mode, "packaged", "public automatic update acceptance requires a packaged Desktop app");
+  assert.equal(process.platform, "darwin", "public automatic update acceptance is macOS-only");
+  const scenarioRoot = path.join(tmpRoot, "auto-update-public");
+  const paths = resolveInstancePaths(scenarioRoot);
+  const executablePath = await resolvePackagedExecutablePath();
+  const resourcesDir = path.resolve(path.dirname(executablePath), "..", "Resources");
+  const nativeTarget = resolveNativeTarget(process.platform, process.arch);
+  assert.ok(nativeTarget);
+  const helperPath = path.join(resourcesDir, "native", nativeTarget, "rudder-update-helper");
+  const helperModule = await import(pathToFileURL(path.join(desktopDir, "dist", "desktop-update-helper.js")).href);
+  const stateModule = await import(pathToFileURL(path.join(desktopDir, "dist", "desktop-auto-update-state.js")).href);
+  const policyKeys = generateKeyPairSync("ed25519");
+  const publicKeyDer = policyKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const updateId = `smoke-update-${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+  const transactionRoot = path.join(paths.electronUserDataDir, "update-helper", "transactions");
+  const installPath = path.join(scenarioRoot, "installed", "Rudder.app");
+  const stagedPath = path.join(scenarioRoot, "staged", "Rudder.app");
+  const candidateVersion = "99.0.0";
+  await mkdir(path.join(stagedPath, "Contents", "MacOS"), { recursive: true });
+  await writeFile(path.join(stagedPath, "Contents", "MacOS", "Rudder"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(path.join(stagedPath, "candidate-generation.txt"), "public-candidate\n", "utf8");
+  const helperDigest = createHash("sha256").update(await readFile(helperPath)).digest("hex");
+  const stagedDigest = await new Promise((resolve, reject) => {
+    const child = spawn(helperPath, ["--digest", stagedPath], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = ""; let stderr = "";
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject); child.once("exit", (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr)));
+  });
+  const assetChecksum = "a".repeat(64);
+  const releaseDigest = createHash("sha256").update(JSON.stringify({ releaseTag: `v${candidateVersion}`, assetName: "Rudder-99.0.0-macos-arm64-portable.zip", assetChecksum, assetKind: "full", platform: "darwin", arch: "arm64" })).digest("hex");
+  const policy = {
+    schema: 1, sequence: 42, keyId: "rudder-desktop-smoke", issuedAt: new Date(Date.now() - 60_000).toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), channel: "stable", platform: "darwin", arch: "arm64",
+    releases: [{ version: candidateVersion, assetName: "Rudder-99.0.0-macos-arm64-portable.zip", assetSha256: assetChecksum, releaseDigest }],
+  };
+  const policyEnvelope = { payload: policy, signature: sign(null, Buffer.from(canonicalizeSmokePolicy(policy)), policyKeys.privateKey).toString("base64url") };
+  const policyServer = http.createServer((_request, response) => {
+    response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(policyEnvelope));
+  });
+  await new Promise((resolve, reject) => { policyServer.once("error", reject); policyServer.listen(0, "127.0.0.1", resolve); });
+  const policyAddress = policyServer.address();
+  const policyUrl = `http://127.0.0.1:${policyAddress.port}/policy.json`;
+  const lifecyclePath = path.join(scenarioRoot, "lifecycle.jsonl");
+  const extraEnv = {
+    RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+    RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: publicKeyDer,
+    RUDDER_DESKTOP_UPDATE_POLICY_URL: policyUrl,
+    RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION: "auto-update-quit",
+    // Packaged bootstrap starts the local runtime and refreshes the signed
+    // policy asynchronously. Give that public path time to persist the
+    // accepted policy sequence before exercising natural Quit.
+    RUDDER_DESKTOP_SMOKE_LIFECYCLE_DELAY_MS: "20000",
+    RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: lifecyclePath,
+    RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH: installPath,
+  };
+  const transactionPaths = helperModule.resolveDesktopUpdateTransactionPaths({ userDataPath: paths.electronUserDataDir, transactionId: updateId, resourcesPath: resourcesDir, execPath: executablePath, installPath });
+  await mkdir(path.dirname(transactionPaths.installPath), { recursive: true });
+  const candidate = { channel: "stable", version: candidateVersion, platform: "darwin", arch: "arm64", installId: path.resolve(paths.electronUserDataDir), profile: "prod_local", instanceId: "default", sourceReleaseDigest: releaseDigest, updateId, assetName: "Rudder-99.0.0-macos-arm64-portable.zip", assetChecksum, stagedArtifactPath: stagedPath, stagedArtifactDigest: stagedDigest, stagedAt: new Date().toISOString(), status: "staged", generation: 1 };
+  const statePath = stateModule.resolveDesktopAutoUpdateStatePath(paths.electronUserDataDir);
+  await mkdir(path.dirname(statePath), { recursive: true });
+  await writeFile(statePath, `${JSON.stringify({ ...stateModule.createInitialDesktopAutoUpdateState(), nextCheckAt: new Date(Date.now() - 1_000).toISOString(), candidate }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  const run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), extraEnv);
+  try {
+    const events = await waitForSmokeCondition("public natural quit", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.some((event) => event.event === "natural-quit-requested" && event.source === "auto-update-public") ? events : null;
+    }, { timeoutMs: 75_000 });
+    assert.equal(events.some((event) => event.event === "natural-quit-requested"), true);
+    const requestPath = `${transactionPaths.journalPath}.request.json`;
+    await waitForSmokeCondition("public helper journal", async () => {
+      if (!(await pathExists(transactionPaths.journalPath))) return null;
+      const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
+      return journal.stage === "committed" ? journal : null;
+    }, { timeoutMs: 30_000 });
+    const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
+    assert.equal(journal.transactionId, updateId);
+    assert.equal(journal.candidateSha256, stagedDigest);
+    assert.equal(journal.helper.sha256, helperDigest);
+    await waitForSmokeCondition("public helper request consumption", async () => (
+      (await pathExists(requestPath)) ? null : true
+    ), { timeoutMs: 15_000 });
+    assert.equal(await pathExists(requestPath), false, "helper request should be consumed");
+    assert.equal(await pathExists(transactionPaths.installPath), true, "install remains present after helper commit");
+    assert.equal(await pathExists(path.join(transactionPaths.installPath, "candidate-generation.txt")), true);
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    assert.equal(state.candidate, null, "committed candidate is cleared from durable state");
+    console.log(`[desktop-smoke] public automatic update committed ${updateId}; state, request, journal, helper identity, and install read back`);
+  } finally {
+    policyServer.close();
+    await closeDesktop(run.electronApp).catch(() => {});
   }
 }
 
@@ -4951,7 +5221,7 @@ async function runCleanScenario(mode) {
       ceo,
       packagedRuntime,
     );
-    await verifyAgentWorkspaceTerminal(firstRun.page, firstRun.baseUrl, company, ceo);
+    await verifyAgentWorkspaceTerminal(firstRun.electronApp, firstRun.page, firstRun.baseUrl, company, ceo);
     const issue = await createIssue(firstRun.baseUrl, company.id, ceo.id);
     if (mode === "packaged") {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
@@ -5153,6 +5423,27 @@ async function runBrowserScenario(mode) {
   }
 }
 
+async function runTerminalScenario(mode) {
+  const scenarioRoot = path.join(tmpRoot, "terminal");
+  if (mode === "packaged") {
+    await preparePackagedExternalRuntimeFixture(scenarioRoot);
+    console.log("[desktop-smoke] packaged Agent Terminal native PTY passed");
+    return;
+  }
+  const ports = await allocateSmokePorts();
+  const run = await launchDesktop(scenarioRoot, mode, ports);
+  try {
+    const company = await createCompany(run.baseUrl);
+    const agent = await createCeo(run.baseUrl, company.id);
+    await verifyAgentWorkspaceTerminal(run.electronApp, run.page, run.baseUrl, company, agent);
+    await closeDesktop(run.electronApp);
+  } catch (error) {
+    console.error("[desktop-smoke] Terminal scenario failed", error);
+    await closeDesktop(run.electronApp).catch(() => {});
+    throw error;
+  }
+}
+
 async function readDesktopLocalAppStatus(page, definitionId) {
   return page.evaluate((id) => window.desktopShell.localApps.status(id), definitionId);
 }
@@ -5177,7 +5468,7 @@ async function openSmokeSidePanel(page) {
   return sidePanel;
 }
 
-async function verifyAgentWorkspaceTerminal(page, baseUrl, company, agent) {
+async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company, agent) {
   console.log("[desktop-smoke] verifying Agent workspace Terminal");
   const chat = await createAgentTerminalChat(baseUrl, company.id, agent.id);
   const companyRouteKey = company.urlKey ?? company.issuePrefix;
@@ -5230,6 +5521,38 @@ async function verifyAgentWorkspaceTerminal(page, baseUrl, company, agent) {
   await page.screenshot({ path: terminalSmokeScreenshotPath, fullPage: true });
   console.log(`[desktop-smoke] Agent Terminal screenshot: ${terminalSmokeScreenshotPath}`);
 
+  const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getSize());
+  assert.ok(originalWindowSize, "Agent Terminal resize smoke should find the Desktop window");
+  await electronApp.evaluate(({ BrowserWindow }, size) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
+  }, [1_280, 900]);
+  await waitForSmokeCondition("Agent Terminal constrained layout", async () => {
+    const layout = await terminal.evaluate((panel) => {
+      const host = panel.querySelector("[data-testid='terminal-xterm-host']");
+      const screen = panel.querySelector(".xterm-screen");
+      return {
+        hostWidth: host?.getBoundingClientRect().width ?? 0,
+        screenWidth: screen?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    return layout.hostWidth >= 240
+      && layout.hostWidth < initialLayout.hostWidth
+      && layout.screenWidth >= layout.hostWidth - 32
+      ? layout
+      : null;
+  });
+  await xtermInput.pressSequentially("printf 'TERMINAL_RESIZED=yes\\n'", { delay: 2 });
+  await xtermInput.press("Enter");
+  await waitForSmokeCondition("Agent Terminal output after resize", async () => {
+    const text = await terminal.locator(".xterm-rows").innerText();
+    return text.includes("TERMINAL_RESIZED=yes") ? text : null;
+  });
+  await page.screenshot({ path: terminalConstrainedSmokeScreenshotPath, fullPage: true });
+  console.log(`[desktop-smoke] Agent Terminal constrained screenshot: ${terminalConstrainedSmokeScreenshotPath}`);
+  await electronApp.evaluate(({ BrowserWindow }, size) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
+  }, originalWindowSize);
+
   const terminalTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]');
   await terminalTab.hover();
   await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
@@ -5242,13 +5565,21 @@ async function verifyAgentWorkspaceTerminal(page, baseUrl, company, agent) {
   assert.ok(workspaceEntry?.workspaceKey && listing.rootPath, "Agent workspace listing should identify the canonical workspace");
   const workspacePath = path.join(listing.rootPath, "agents", workspaceEntry.workspaceKey);
   const unavailablePath = `${workspacePath}.terminal-smoke-unavailable`;
+  const restoreWorkspace = async () => {
+    if (!(await access(unavailablePath).then(() => true).catch(() => false))) return;
+    await rm(workspacePath, { recursive: true, force: true });
+    await rename(unavailablePath, workspacePath);
+  };
   await rename(workspacePath, unavailablePath);
   try {
-    await sidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
-    const failedTerminal = sidePanel.getByTestId("terminal-panel-view");
+    const recoveredSidePanel = await openSmokeSidePanel(page);
+    await recoveredSidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
+    const failedTerminal = recoveredSidePanel.getByTestId("terminal-panel-view");
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "visible", timeout: 15_000 });
     await failedTerminal.getByText(/Agent workspace is unavailable/u).waitFor({ state: "visible", timeout: 15_000 });
-    await rename(unavailablePath, workspacePath);
+    await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
+    console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
+    await restoreWorkspace();
     await failedTerminal.getByRole("button", { name: "Restart terminal" }).click();
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "hidden", timeout: 15_000 });
     const restartedInput = failedTerminal.locator(".xterm-helper-textarea");
@@ -5258,11 +5589,11 @@ async function verifyAgentWorkspaceTerminal(page, baseUrl, company, agent) {
       const text = await failedTerminal.locator(".xterm-rows").innerText();
       return text.includes("TERMINAL_RESTARTED=yes") ? text : null;
     });
-    await sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]').hover();
-    await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+    await recoveredSidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]').hover();
+    await recoveredSidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
     await failedTerminal.waitFor({ state: "detached", timeout: 10_000 });
   } finally {
-    if (await access(unavailablePath).then(() => true).catch(() => false)) await rename(unavailablePath, workspacePath);
+    await restoreWorkspace();
   }
 }
 
@@ -6306,6 +6637,7 @@ async function runAutoUpdateScenario(mode) {
   assert.ok(helperStats?.isFile(), `packaged Desktop is missing the external update helper: ${helperPath}`);
   assert.notEqual(helperStats.mode & 0o111, 0, "packaged update helper should be executable");
   await verifyPackagedUpdateHelperFaultMatrix(helperPath);
+  await verifyPackagedExternalUpdateHelperHandoff(executablePath, helperPath);
 }
 
 async function runAppBuilderScenario(mode) {
@@ -6607,11 +6939,13 @@ function resolveScenarioList(mode, scenario) {
   }
   if (scenario === "account-gate"
     || scenario === "auto-update"
+    || scenario === "auto-update-public"
     || scenario === "startup-recovery"
     || scenario === "postgres-runtime-handoff"
     || scenario === "clean"
     || scenario === "upgrade"
     || scenario === "browser"
+    || scenario === "terminal"
     || scenario === "local-apps"
     || scenario === "agent-browser"
     || scenario === "app-builder") {
@@ -6631,6 +6965,8 @@ try {
       await runAccountGateScenario(smokeMode);
     } else if (scenario === "auto-update") {
       await runAutoUpdateScenario(smokeMode);
+    } else if (scenario === "auto-update-public") {
+      await runPackagedPublicAutoUpdateScenario(smokeMode);
     } else if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
     } else if (scenario === "postgres-runtime-handoff") {
@@ -6639,6 +6975,8 @@ try {
       await runCleanScenario(smokeMode);
     } else if (scenario === "browser") {
       await runBrowserScenario(smokeMode);
+    } else if (scenario === "terminal") {
+      await runTerminalScenario(smokeMode);
     } else if (scenario === "local-apps") {
       await runLocalAppsScenario(smokeMode);
     } else if (scenario === "agent-browser") {

@@ -12,5 +12,21 @@ export const DESKTOP_UPDATE_TRUST_KEYS: Readonly<Record<string, Buffer>> = {
   ),
 };
 
+/**
+ * Packaged smoke runs use a locally generated key so the public lifecycle can
+ * exercise the same verifier and cache path without depending on the network.
+ * The override is deliberately gated by the smoke application identity and a
+ * dedicated environment variable; production installs retain the shipped key.
+ */
+export function resolveDesktopUpdateTrustKeys(
+  env: NodeJS.ProcessEnv = process.env,
+): Readonly<Record<string, string | Buffer>> {
+  const smokeKey = env.RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY?.trim();
+  if (env.RUDDER_DESKTOP_APP_NAME?.startsWith("Rudder-smoke-") && smokeKey) {
+    return { "rudder-desktop-smoke": Buffer.from(smokeKey, "base64") };
+  }
+  return DESKTOP_UPDATE_TRUST_KEYS;
+}
+
 export const DESKTOP_UPDATE_POLICY_URL =
   "https://updates.rudderhq.dev/desktop/policy.json";
