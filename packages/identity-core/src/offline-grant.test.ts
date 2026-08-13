@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createOfflineGrantProof,
@@ -21,7 +21,7 @@ function stableJson(value: unknown): string {
 
 function asLegacyGrant(
   grant: string,
-  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+  privateKey: KeyObject,
 ): string {
   const [header, payload] = grant.split(".");
   const claims = JSON.parse(
