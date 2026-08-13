@@ -204,6 +204,18 @@ jobs:
             sleep $((attempt * 10))
           done
 
+      - name: Ensure Electron runtime dependency
+        if: matrix.test == 'full'
+        run: |
+          verify_electron() {
+            pnpm --filter @rudderhq/desktop exec node -e "const fs = require('node:fs'); const electronPath = require('electron'); fs.accessSync(electronPath, fs.constants.X_OK)"
+          }
+          if ! verify_electron; then
+            echo "Electron package cache is missing its platform binary; rebuilding Electron" >&2
+            pnpm rebuild electron
+          fi
+          verify_electron
+
       - name: Install dependencies without Electron binary
         if: matrix.test != 'full'
         env:
