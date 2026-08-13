@@ -48,6 +48,34 @@ const ORDERED_LIST_BODY = [
   "4. 决定 Goal 系统是否成为下一条产品主线。",
   "5. 给现金流/兼职事项一个明确状态：继续、已解决或延期。",
 ].join("\n");
+const LONG_MIXED_BLOCK_BODY = [
+  "## Done",
+  "",
+  "- 完成 Chat transcript 中文思考中、密度对齐及 debug/JSON 清理。",
+  "- 完成 Aident 竞品档案、每日信息流和 Agent Run 效率复盘。",
+  "- 复盘识别到单次 Assignment Run 消耗约 1.30 亿 tokens，并创建了改进项。",
+  "",
+  "## In progress",
+  "",
+  "- [R6Z-73 为 Assignment Run 增加启动预检与重复失败预算](https://example.test/issues/R6Z-73) 当前唯一 Assignment Run 正在执行。",
+  "- 正在分析 Terminal 验收 Run 失败后为何没有自动 retry 或 follow-up。",
+  "",
+  "## Unfinished or not started",
+  "",
+  "- [R6Z-72 在 Side Panel 增加 Agent Workspace Terminal](https://example.test/issues/R6Z-72) 需要定位 Desktop 不显示 Terminal 的实际运行环境或发布链路问题。",
+  "- 创建内容为 `hello` 的文档仍在 backlog，未开始。",
+  "",
+  "## Blockers or risks",
+  "",
+  "- Terminal 的代码级验证通过，但用户可见验收失败。",
+  "- 两个关联 Run 以 `adapter_failed` 结束，系统没有自动续跑。",
+  "",
+  "## Recommended next tasks",
+  "",
+  "- 等 R6Z-73 Run 终态后立即验收 guardrail、retry/checkpoint 和 continuation 行为。",
+  "- 对 R6Z-72 核对当前 Desktop 实际 commit/build/version。",
+  "- 将失败 Run 的自动 retry/follow-up 缺口纳入现有改进项。",
+].join("\n");
 const FIRST_PROCESS_TEXT = "可见 Thinking 过程：先核对数据与用户约束。";
 const SECOND_PROCESS_TEXT = "第二个 Thinking 区块：再比较稳定证据。";
 
@@ -1024,6 +1052,61 @@ test.describe("Chat response annotations", () => {
     expect(sentUserMessage!.body).toBe("");
     expect(sentUserMessage!.structuredPayload!.inlineAnnotations!.map((annotation) => annotation.selectedText))
       .toEqual([...orderedItems, "现在必须由你做的"]);
+  });
+
+  test("sends and restores one long annotation across mixed Markdown blocks", async ({ page }) => {
+    const seeded = await seedAnnotationChat(
+      page,
+      `Response-Annotation-Long-Mixed-Blocks-${Date.now()}`,
+      { finalBody: LONG_MIXED_BLOCK_BODY, readyText: "复盘识别到单次" },
+    );
+    const finalSource = annotationSource(page, {
+      messageId: seeded.assistantMessageId,
+      surface: "assistant_body",
+    });
+    await selectVisibleText(page, finalSource, "复盘识别到单次", "纳入现有改进项");
+    await addSelectionToChat(page);
+    await expect(draftAnnotationChip(page, 1)).toBeVisible();
+
+    const streamRequest = page.waitForRequest((request) => (
+      request.method() === "POST"
+      && request.url().includes(`/api/chats/${seeded.conversationId}/messages/stream`)
+    ));
+    await page.getByRole("button", { name: "Send" }).click();
+    await streamRequest;
+    await expect(page.getByText("Failed to send message")).toHaveCount(0);
+
+    const sentTurn = page.getByTestId("chat-user-message-turn").last();
+    await expect(sentTurn.getByRole("button", { name: "Show 1 annotation" })).toBeVisible({
+      timeout: 15_000,
+    });
+    const messagesRes = await page.request.get(
+      `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
+    );
+    expect(messagesRes.ok(), await messagesRes.text()).toBe(true);
+    const messages = await messagesRes.json() as Array<{
+      id: string;
+      role: string;
+      structuredPayload: { inlineAnnotations?: Array<{ selectedText: string }> } | null;
+    }>;
+    const sentUserMessage = [...messages].reverse().find((message) => (
+      message.role === "user" && message.structuredPayload?.inlineAnnotations?.length === 1
+    ));
+    expect(sentUserMessage).toBeTruthy();
+    const selectedText = sentUserMessage!.structuredPayload!.inlineAnnotations![0]!.selectedText;
+    expect(selectedText).toContain("复盘识别到单次 Assignment Run");
+    expect(selectedText).toContain("R6Z-73 为 Assignment Run 增加启动预检与重复失败预算");
+    expect(selectedText).toContain("创建内容为 hello 的文档");
+    expect(selectedText).toContain("两个关联 Run 以 adapter_failed 结束");
+    expect(selectedText).toContain("纳入现有改进项");
+    expect(selectedText).not.toContain("\n\n");
+
+    await page.reload();
+    const reloadedTurn = page.locator(
+      `[data-testid="chat-user-message-turn"][data-message-id="${sentUserMessage!.id}"]`,
+    );
+    await expect(reloadedTurn.getByRole("button", { name: "Show 1 annotation" }))
+      .toBeVisible({ timeout: 15_000 });
   });
 
   test("maps a rich CJK selection across a Markdown link and inline code", async ({ page }) => {

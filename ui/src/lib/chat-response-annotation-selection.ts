@@ -123,11 +123,39 @@ const SEMANTIC_LINE_BREAK_ELEMENTS = new Set([
   "TR",
 ]);
 
+const SEMANTIC_BLOCK_CONTAINER_ELEMENTS = new Set([
+  ...SEMANTIC_LINE_BREAK_ELEMENTS,
+  "DD",
+  "DL",
+  "DT",
+  "OL",
+  "TABLE",
+  "TBODY",
+  "TFOOT",
+  "THEAD",
+  "UL",
+]);
+
 export type ChatAnnotationSemanticTextSpan = {
   node: Text;
   start: number;
   end: number;
 };
+
+function isInterBlockFormattingWhitespace(node: Node) {
+  if (
+    node.nodeType !== Node.TEXT_NODE
+    || !/^[\p{White_Space}\u200b\ufeff]+$/u.test(node.textContent ?? "")
+    || !/[\r\n]/u.test(node.textContent ?? "")
+  ) {
+    return false;
+  }
+  const isBlockElement = (candidate: ChildNode | null) => (
+    candidate instanceof HTMLElement
+    && SEMANTIC_BLOCK_CONTAINER_ELEMENTS.has(candidate.tagName)
+  );
+  return isBlockElement(node.previousSibling) || isBlockElement(node.nextSibling);
+}
 
 function semanticVisibleText(
   node: Node,
@@ -143,6 +171,11 @@ function semanticVisibleText(
   ) {
     return "";
   }
+  // react-markdown preserves formatting newlines between block siblings as DOM
+  // text nodes. The block elements below already contribute the semantic line
+  // break, so counting both produces a client-only blank line and a false 422
+  // when the server validates the same immutable Markdown range.
+  if (isInterBlockFormattingWhitespace(node)) return "";
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
     if (text && spans) {

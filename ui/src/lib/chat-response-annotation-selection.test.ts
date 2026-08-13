@@ -5,6 +5,7 @@ import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
+  chatAnnotationSemanticText,
   hashChatAnnotationSource,
   resolveChatAnnotationRange,
   restoreChatAnnotationRange,
@@ -21,6 +22,32 @@ function sourceRoot(sourceId: string, blockId: string) {
 }
 
 describe("chat response annotation selection", () => {
+  it("deduplicates renderer formatting newlines between semantic blocks", () => {
+    const root = document.createElement("div");
+    root.append(
+      Object.assign(document.createElement("p"), { textContent: "First paragraph." }),
+      "\n",
+      Object.assign(document.createElement("h2"), { textContent: "Next heading" }),
+      "\n",
+      Object.assign(document.createElement("p"), { textContent: "Last paragraph." }),
+    );
+
+    expect(chatAnnotationSemanticText(root)).toBe(
+      "First paragraph.\nNext heading\nLast paragraph.",
+    );
+  });
+
+  it("preserves ordinary whitespace and soft breaks inside one paragraph", () => {
+    const root = document.createElement("div");
+    const paragraph = document.createElement("p");
+    paragraph.append("first line", "\n", "second line", " ", "third line");
+    root.append(paragraph);
+
+    expect(chatAnnotationSemanticText(root)).toBe(
+      "first line\nsecond line third line",
+    );
+  });
+
   it("autofocuses annotation actions only for keyboard range selection", () => {
     expect(shouldAutoFocusChatAnnotationToolbar(
       new KeyboardEvent("keyup", { key: "ArrowRight", shiftKey: true }),

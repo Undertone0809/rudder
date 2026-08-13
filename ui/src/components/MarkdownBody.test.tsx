@@ -485,6 +485,114 @@ describe("MarkdownBody", () => {
     expect(spanning?.selectedText).not.toContain("Tooltip-only");
   });
 
+  it("maps a long production-shaped selection across lists, headings, code, and issue links", () => {
+    const terminalIssueId = "1664b23e-1111-4111-8111-111111111111";
+    const retryIssueId = "2664b23e-1111-4111-8111-111111111111";
+    const terminalLink = `[R6Z-72 在 Side Panel 增加 Agent Workspace Terminal](${buildIssueMentionHref(terminalIssueId, "R6Z-72")})`;
+    const retryLink = `[R6Z-73 为 Assignment Run 增加启动预检与重复失败预算](${buildIssueMentionHref(retryIssueId, "R6Z-73")})`;
+    const source = [
+      "## Done",
+      "",
+      "- 完成 Chat transcript 中文思考中、密度对齐及 debug/JSON 清理。",
+      "- 完成 Aident 竞品档案、每日信息流和 Agent Run 效率复盘。",
+      "- 复盘识别到单次 Assignment Run 消耗约 1.30 亿 tokens，并创建了改进项。",
+      "",
+      "## In progress",
+      "",
+      `- ${retryLink} 当前唯一 Assignment Run 正在执行。`,
+      "- 正在分析 Terminal 验收 Run 失败后为何没有自动 retry 或 follow-up。",
+      "",
+      "## Unfinished or not started",
+      "",
+      `- ${terminalLink} 需要定位 Desktop 不显示 Terminal 的实际运行环境或发布链路问题。`,
+      "- 创建内容为 `hello` 的文档仍在 backlog，未开始。",
+      "",
+      "## Blockers or risks",
+      "",
+      "- Terminal 的代码级验证通过，但用户可见验收失败。",
+      "- 两个关联 Run 以 `adapter_failed` 结束，系统没有自动续跑。",
+      "",
+      "## Recommended next tasks",
+      "",
+      `- 等 ${retryLink} Run 终态后立即验收 guardrail、retry/checkpoint 和 continuation 行为。`,
+      `- 对 ${terminalLink} 核对当前 Desktop 实际 commit/build/version。`,
+      "- 将失败 Run 的自动 retry/follow-up 缺口纳入现有改进项。",
+    ].join("\n");
+    markdownMentionsMock.mentions = [
+      {
+        id: `issue:${terminalIssueId}`,
+        name: "R6Z-72 在 Side Panel 增加 Agent Workspace Terminal",
+        kind: "issue",
+        issueId: terminalIssueId,
+        issueIdentifier: "R6Z-72",
+        issueStatus: "todo",
+      },
+      {
+        id: `issue:${retryIssueId}`,
+        name: "R6Z-73 为 Assignment Run 增加启动预检与重复失败预算",
+        kind: "issue",
+        issueId: retryIssueId,
+        issueIdentifier: "R6Z-73",
+        issueStatus: "in_progress",
+      },
+    ];
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:long-selection");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "long-selection");
+    const findTextBoundary = (needle: string, edge: "start" | "end") => {
+      const walker = document.createTreeWalker(sourceRoot, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node.textContent ?? "";
+        const index = text.indexOf(needle);
+        if (index >= 0) {
+          return { node, offset: index + (edge === "end" ? needle.length : 0) };
+        }
+      }
+      throw new Error(`Missing rendered selection text: ${needle}`);
+    };
+    const startBoundary = findTextBoundary("复盘识别到", "start");
+    const endBoundary = findTextBoundary("纳入现有改进项", "end");
+    const range = document.createRange();
+    range.setStart(startBoundary.node, startBoundary.offset);
+    range.setEnd(endBoundary.node, endBoundary.offset);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(result).toMatchObject({
+      selectedText: [
+        "复盘识别到单次 Assignment Run 消耗约 1.30 亿 tokens，并创建了改进项。",
+        "In progress",
+        "R6Z-73 为 Assignment Run 增加启动预检与重复失败预算 当前唯一 Assignment Run 正在执行。",
+        "正在分析 Terminal 验收 Run 失败后为何没有自动 retry 或 follow-up。",
+        "Unfinished or not started",
+        "R6Z-72 在 Side Panel 增加 Agent Workspace Terminal 需要定位 Desktop 不显示 Terminal 的实际运行环境或发布链路问题。",
+        "创建内容为 hello 的文档仍在 backlog，未开始。",
+        "Blockers or risks",
+        "Terminal 的代码级验证通过，但用户可见验收失败。",
+        "两个关联 Run 以 adapter_failed 结束，系统没有自动续跑。",
+        "Recommended next tasks",
+        "等 R6Z-73 为 Assignment Run 增加启动预检与重复失败预算 Run 终态后立即验收 guardrail、retry/checkpoint 和 continuation 行为。",
+        "对 R6Z-72 在 Side Panel 增加 Agent Workspace Terminal 核对当前 Desktop 实际 commit/build/version。",
+        "将失败 Run 的自动 retry/follow-up 缺口纳入现有改进项",
+      ].join("\n"),
+      start: source.indexOf("复盘识别到"),
+      end: source.indexOf("纳入现有改进项") + "纳入现有改进项".length,
+    });
+  });
+
   it("maps a partial selection in a soft-break skill list to the exact raw source range", () => {
     const source = [
       "para-memory-files",
