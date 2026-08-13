@@ -45,7 +45,7 @@ three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
 failure recovery, resource measurements, packaged acceptance, and three
 isolated live trials are bound to the same candidate.
 
-### Decision ledger (candidate `6a4bdc8b6cdce3788f7faf730eef49932b608364`)
+### Decision ledger (candidate lineage parent `12bee9c102dc2a1cae373d93465684a52f70681e`)
 
 These decisions are terminal for this candidate's evidence scope. They do not
 claim that a missing implementation passed its acceptance gate.
@@ -64,9 +64,11 @@ claim that a missing implementation passed its acceptance gate.
 operation is promoted to a product default. The four `not_admitted` rows are
 fail-closed scope decisions, not claims of successful native implementations.
 
-The exact candidate also passed the focused macOS arm64 Local App native suite
-11/11 using the staged `rudder-process-host` binary; this is supporting
-evidence only and does not replace packaged Desktop acceptance.
+The candidate lineage also passed the focused macOS arm64 Local App native
+suite 11/11 using the release `rudder-process-host` binary, and the bounded
+evidence indexer tests pass. This is supporting evidence only and does not
+replace packaged Desktop acceptance. The final delivery packet records the
+post-proposal commit SHA and receipt identities.
 
 Release version alignment is a hard gate: every first-party Rust package,
 Cargo lock entry, staged binary `--version`, Desktop/server package, and
