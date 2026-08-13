@@ -21,7 +21,7 @@
   "candidate": {
     "branch": "main",
     "source_ref": "refs/heads/main",
-    "source_sha": "168dbcb1f9b9f6a343442e90db2582038b0c9dd7",
+    "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
     "dirty_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
     "changed_paths": [
       "desktop/scripts/smoke.mjs",
@@ -43,8 +43,8 @@
       "packages/db/src/local-postgres-provider.ts"
     ],
     "build": {
-      "id": "packaged-current-head-d9ed2d4b-2026-08-14T07:15:54+0800",
-      "source_sha": "168dbcb1f9b9f6a343442e90db2582038b0c9dd7",
+      "id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
+      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
       "current_packaged_artifact": {
         "version": "0.7.4",
         "path": "desktop/release/mac-arm64/Rudder.app",
@@ -77,8 +77,8 @@
       }
     },
     "runtime": {
-      "id": "packaged-smoke-current-head-d9ed2d4b-2026-08-14",
-      "source_sha": "168dbcb1f9b9f6a343442e90db2582038b0c9dd7"
+      "id": "packaged-smoke-candidate-699981767-2026-08-14",
+      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814"
     },
     "organization_data": {
       "organization_id": "not_applicable",
@@ -338,9 +338,9 @@
     "reviewer": {
       "verdict": "pending",
       "candidate_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
-      "source_sha": "168dbcb1f9b9f6a343442e90db2582038b0c9dd7",
-      "build_id": "packaged-current-head-d9ed2d4b-2026-08-14T07:15:54+0800",
-      "runtime_id": "packaged-smoke-current-head-d9ed2d4b-2026-08-14",
+      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
+      "build_id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
+      "runtime_id": "packaged-smoke-candidate-699981767-2026-08-14",
       "data_id": "isolated-packaged-smoke-2026-08-14",
       "packet_version": "8",
       "reason": "fresh review required after unrelated CI ref drift"
@@ -348,9 +348,9 @@
     "verifier": {
       "verdict": "pending",
       "candidate_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
-      "source_sha": "168dbcb1f9b9f6a343442e90db2582038b0c9dd7",
-      "build_id": "packaged-current-head-d9ed2d4b-2026-08-14T07:15:54+0800",
-      "runtime_id": "packaged-smoke-current-head-d9ed2d4b-2026-08-14",
+      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
+      "build_id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
+      "runtime_id": "packaged-smoke-candidate-699981767-2026-08-14",
       "data_id": "isolated-packaged-smoke-2026-08-14",
       "packet_version": "8",
       "reason": "fresh black-box verification required on exact current candidate"
@@ -358,9 +358,9 @@
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
-      "source_sha": "168dbcb1f9b9f6a343442e90db2582038b0c9dd7",
-      "build_id": "packaged-current-head-d9ed2d4b-2026-08-14T07:15:54+0800",
-      "runtime_id": "packaged-smoke-current-head-d9ed2d4b-2026-08-14",
+      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
+      "build_id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
+      "runtime_id": "packaged-smoke-candidate-699981767-2026-08-14",
       "data_id": "isolated-packaged-smoke-2026-08-14",
       "packet_version": "8"
     }
