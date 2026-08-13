@@ -22,6 +22,7 @@ const projectRoot = path.join(
 );
 const registryPath = path.join(testRoot, "desktop", "local-apps.json");
 const appStateRoot = path.join(testRoot, "desktop", "app-builder");
+const nativeRuntimeRoot = path.join(testRoot, "desktop", "local-apps", "native-runtime");
 const runnerPath = packaged
   ? path.join(desktopRoot, ".packaged", "app", "dist", "app-builder-runner.mjs")
   : path.join(desktopRoot, "src", "app-builder-runner.mjs");
@@ -142,6 +143,7 @@ const registry = new LocalAppRegistry({
 const runtime = new LocalAppRuntimeManager({
   registry,
   maxLogBytes: 2 * 1024 * 1024,
+  nativeRuntimeRoot,
   ...(process.platform === "win32" ? { cleanupTimeoutMs: 30_000 } : {}),
 });
 const localApps = new LocalAppsController({
