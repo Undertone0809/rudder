@@ -20,6 +20,7 @@ import {
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
 import { resolveNativeTarget } from "./native-target.mjs";
+import { assertSmokeScenarioSupported } from "./smoke-scenario-policy.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -6600,6 +6601,7 @@ async function runAppBuilderScenario(mode) {
 }
 
 function resolveScenarioList(mode, scenario) {
+  assertSmokeScenarioSupported(mode, scenario);
   if (!scenario || scenario === "default") {
     const localApps = process.platform === "darwin" ? ["local-apps"] : [];
     return mode === "packaged"

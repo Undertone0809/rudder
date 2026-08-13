@@ -134,7 +134,12 @@ export async function runPackagedLocalAppCycle(options = {}) {
   const stdoutSha256 = sha256(result.stdout);
   const stderrSha256 = sha256(result.stderr);
   if (result.timedOut || result.exitCode !== 0 || result.signal) {
-    throw new Error(`packaged Local App smoke failed (exit=${result.exitCode ?? "null"}, signal=${result.signal ?? "none"}, timedOut=${result.timedOut}, stdoutSha256=${stdoutSha256}, stderrSha256=${stderrSha256})`);
+    const accountRequired = `${result.stdout}\n${result.stderr}`.includes("DOGFOOD_ACCOUNT_REQUIRED");
+    const error = new Error(accountRequired
+      ? "packaged Local App smoke requires an authenticated Desktop account (DOGFOOD_ACCOUNT_REQUIRED)"
+      : `packaged Local App smoke failed (exit=${result.exitCode ?? "null"}, signal=${result.signal ?? "none"}, timedOut=${result.timedOut}, stdoutSha256=${stdoutSha256}, stderrSha256=${stderrSha256})`);
+    if (accountRequired) error.code = "DOGFOOD_ACCOUNT_REQUIRED";
+    throw error;
   }
   const lifecycleMarker = result.stdout.includes(LOCAL_APP_SUCCESS_MARKER);
   const packagedMarker = result.stdout.includes(PACKAGED_SUCCESS_MARKER);
