@@ -65,6 +65,9 @@ async function main() {
   if (process.platform !== "win32") await fs.chmod(destinationPath, 0o755);
   if (process.platform !== "win32") await fs.chmod(archiveDestinationPath, 0o755);
   if (process.platform !== "win32") await fs.chmod(updateHelperDestinationPath, 0o755);
+  if (process.env.RUDDER_DESKTOP_PACKAGED_TEST_IDENTITY === "1") {
+    await fs.writeFile(path.join(stagedNativeRoot, "packaged-test-identity.marker"), "rudder-packaged-test-identity-v1\n", { mode: 0o600 });
+  }
   console.log(`[desktop:stage-native] staged ${target}/${binaryName} and ${updateHelperBinaryName}`);
 }
 
