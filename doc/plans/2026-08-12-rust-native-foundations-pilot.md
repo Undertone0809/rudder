@@ -28,6 +28,8 @@ related_code:
 commit_refs:
   - 690dc4df5
   - a30c19b73
+  - d5e13f60f
+  - rudder-evals:231603f
 updated_at: 2026-08-13
 ---
 
@@ -42,7 +44,9 @@ listener verification, durable owner and terminal receipts, an output-order
 index, PTY transport, the streaming archive core, and synchronized `0.7.4`
 Rust binary metadata. Agent Run I/O, payload installation, run-evidence
 indexing, and workspace manifest watching are not yet admitted. The
-`rudder-evals` `native_ab` branch currently provides a sealed synthetic
+`rudder-evals` commit `231603f` provides the strict Packet V2 `native_ab`
+contract (fixed `node_baseline`/`rust_candidate`, exactly three trials,
+mandatory `nativeIdentity`, and `productPass=false`) plus a sealed synthetic
 three-trial rehearsal only; it is diagnostic until real Node/Rust workloads,
 failure recovery, resource measurements, packaged acceptance, and three
 isolated live trials are bound to the same candidate.
@@ -55,8 +59,8 @@ claim that a missing implementation passed its acceptance gate.
 | Slice | Decision | Evidence bound to this candidate | Required next transition |
 | --- | --- | --- | --- |
 | Foundation | `accepted_default` for the shared native foundation only | Cargo workspace, protocol metadata, synchronized `0.7.4` package/binary versions, Clippy, and repeated all-target test runs pass | Keep release-version and protocol checks in CI |
-| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; packaged acceptance and seven-day/100-cycle dogfood evidence are absent | Run exact packaged macOS arm64 acceptance and dogfood gate |
-| Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node A/B, packaged acceptance, and native_ab live trials are absent | Run real workspace E2E and comparable Node/Rust pressure campaign |
+| Local App process host | `opt-in` | Focused native suite passes ownership, Stop, foreign-listener, unsafe-token, receipt, output-order, and PTY cases; exact packaged macOS arm64 build, helper staging, direct launch, and account-gate/email-code smoke pass, while seven-day/100-cycle dogfood and native_ab live evidence are absent | Run dogfood gate and live three-trial native_ab campaign |
+| Streaming Workspace backup | `opt-in` | Archive create/inspect/extract correctness, bounded output, path safety, and recovery tests pass; optimized Node comparator is byte-identical and measured at about 8.8 MB RSS delta versus 32.9 MB buffered on a 554-file/9.54 MB fixture; packaged acceptance, Rust/Node formal A/B, and native_ab live trials are absent | Run real workspace E2E, Rust/Node pressure campaign, and recovery matrix |
 | Agent Run process/I/O host | `not_admitted` | No production implementation or contract-equivalent real-run evidence exists; the Local App packaged/dogfood dependency is not satisfied | Complete the dependency gate, then implement and run real Agent Run acceptance |
 | Runtime payload installer/extractor | `not_admitted` | No production implementation or production-shaped installer/recovery evidence exists | Implement after the streaming archive gate and run checksum/publish recovery matrix |
 | Run evidence offset indexer/parser | `not_admitted` | A bounded `rudder-run-evidence-core` prototype now builds a rebuildable NDJSON offset sidecar and has CLI/unit coverage, but production full-response removal, provider-parity, and real-run acceptance are not satisfied | Remove full materialization from the default path, then run bounded index/read and Node parity acceptance |
@@ -66,7 +70,8 @@ claim that a missing implementation passed its acceptance gate.
 operation is promoted to a product default. The four `not_admitted` rows are
 fail-closed scope decisions, not claims of successful native implementations.
 
-The candidate lineage passed the focused macOS arm64 Local App native suite
+The candidate lineage at `d5e13f60f1735dc6489d550e4f11739a0ac6f81e`
+passed the focused macOS arm64 Local App native suite
 11/11 using the release `rudder-process-host` binary, and the bounded evidence
 indexer tests pass. The packaged macOS arm64 candidate then built successfully,
 staged all three native binaries, passed the server-package and Computer Use
@@ -92,6 +97,7 @@ from that source and reported product version `0.7.4`:
 | direct packaged launch | passed; Resident shell stayed alive for 20 seconds | isolated `RUDDER_HOME` and user-data root |
 | packaged account-gate smoke | passed; account-gate and email-code screenshots written | packaged App, isolated ports/data |
 | 100-block Local App Node/Rust A/B after worker-exit fix | correctness passed, 206 observations; sampler marked `not_comparable` | source `690dc4df5cb3257ea3893dd68d1026df057235da`, 25 ms sampler |
+| optimized Node streaming backup comparator | byte-identical ZIPs and `unzip -t` passed; 554 files / 9.54 MB fixture, buffered RSS delta about 32.9 MB versus streaming about 8.8 MB | source `d5e13f60f1735dc6489d550e4f11739a0ac6f81e`, `scripts/perf/workspace-backup-node-streaming.mjs` |
 
 Packaged artifact hashes from the snapshot:
 
@@ -105,6 +111,13 @@ cadence/observer-overhead errors, so no p95 promotion claim is made from that
 run. Earlier 20-block comparable evidence showed approximately 37% idle-
 adjusted process-tree RSS improvement but latency confidence intervals crossed
 zero; Local App therefore remains `opt-in` pending dogfood and live eval proof.
+
+The backup comparator result is deliberately scoped: it compares the strongest
+safe Node streaming implementation with the existing materialized Node
+comparator and proves byte parity plus a fixture-level RSS reduction. It does
+not compare Rust against Node, prove a real backup/restore workflow, or
+establish packaged or native_ab acceptance; the backup slice therefore stays
+`opt-in`.
 
 Release version alignment is a hard gate: every first-party Rust package,
 Cargo lock entry, staged binary `--version`, Desktop/server package, and
