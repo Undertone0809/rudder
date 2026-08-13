@@ -93,13 +93,14 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
+      "verdict": "needs more evidence",
       "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
       "source_sha": "e0d1fd97224153a7a4d2f032757601708c7d9827",
       "build_id": "packaged-rebuild-e0d1fd972-macos-arm64-0.7.5",
       "runtime_id": "packaged-runtime-e0d1fd972-macos-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2"
+      "packet_version": "2",
+      "reason": "Exact e0d1fd972 artifact identity is consistent and packaged server/account-gate/App Builder checks pass; Local App lifecycle remains unobserved because the legitimate packaged account gate has no authorized authenticated fixture."
     },
     "verifier": {
       "verdict": "QUESTION",
@@ -109,7 +110,7 @@
       "runtime_id": "packaged-runtime-e0d1fd972-macos-arm64-0.7.5",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Packaged artifact and account-gate/App Builder smoke are current, but Local App dogfood still requires a real authenticated packaged fixture and fails fast with DOGFOOD_ACCOUNT_REQUIRED before Electron launch."
+      "reason": "Immutable e0d1fd972 artifact was checked with ZIP/native/version identity; packaged Local Apps fail closed with DOGFOOD_ACCOUNT_REQUIRED before Electron and no authorized authenticated fixture exists, so lifecycle and 100-cycle/7-date dogfood cannot be observed."
     },
     "final_review": {
       "verdict": "pending",
