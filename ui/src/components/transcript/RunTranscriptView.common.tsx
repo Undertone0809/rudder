@@ -491,6 +491,16 @@ export function isProviderProtocolEnvelopeLine(trimmed: string): boolean {
     const payload = asRecord(JSON.parse(trimmed));
     if (!payload || typeof payload.type !== "string") return false;
 
+    if (
+      payload.type === "session"
+      && typeof payload.id === "string"
+      && (typeof payload.version === "number" || typeof payload.version === "string")
+    ) {
+      return true;
+    }
+
+    if (payload.type === "auto_retry_start") return true;
+
     const message = asRecord(payload.message);
     const hasProviderEventIdentity = typeof payload.session_id === "string"
       && (typeof payload.uuid === "string" || typeof payload.timestamp === "string");
@@ -572,7 +582,7 @@ export function isAnalyticsForbiddenHtmlStart(line: string): boolean {
 
 export function filterRenderableTranscriptEntries(
   entries: TranscriptEntry[],
-  options?: { showDeveloperDiagnostics?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; presentation?: TranscriptPresentation },
 ): TranscriptEntry[] {
   if (options?.showDeveloperDiagnostics) return entries;
   let suppressingWarningHtml = false;
@@ -581,6 +591,10 @@ export function filterRenderableTranscriptEntries(
   for (const entry of entries) {
     if (entry.kind === "init") continue;
     if (entry.kind === "user" && isInternalAgentInstructionText(entry.text)) continue;
+
+    // Chat is an operator-facing work surface. Raw process diagnostics remain
+    // available in Run Detail instead of being serialized into the conversation.
+    if (options?.presentation === "chat" && entry.kind === "stderr") continue;
 
     if (entry.kind === "stdout") {
       const text = filterRoutineStdout(entry.text, false);
