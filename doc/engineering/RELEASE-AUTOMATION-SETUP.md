@@ -190,6 +190,16 @@ Attach a resource policy granting only `name/cos:GetObject` and
 `name/cos:PutObject` on
 `qcs::cos:ap-shanghai:uid/<APPID>:rudder-releases-cn-<APPID>/releases/*`.
 Do not grant bucket listing, deletion, ACL mutation, or overwrite management.
+The mirror's signed `HEAD` existence check is covered by COS's `GetObject`
+permission; verify that operation with the real STS session before accepting a
+new environment or role configuration.
+
+The `publish-canary` and `publish-stable` jobs also request GitHub's
+`id-token: write` permission solely for npm provenance used by
+`npm publish --provenance`. They run in the npm environments and do not receive
+Tencent variables or call Tencent STS. Only `mirror-canary` and
+`mirror-stable`, both in `desktop-release-mirror`, use that permission for the
+Tencent OIDC exchange.
 
 Create `rudder-releases-cn-<APPID>` in Shanghai using single-AZ standard
 storage. Keep its ACL private, enable SSE-COS, and leave versioning, access logs,

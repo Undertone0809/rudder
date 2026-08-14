@@ -2,6 +2,14 @@
   "maxLines": 1500,
   "oversizedFiles": [
     {
+      "path": "desktop/src/desktop-update-flow.ts",
+      "lines": 1501,
+      "owner": "desktop-runtime",
+      "rationale": "The silent Desktop update lifecycle remains concentrated while native helper and replacement phases stabilize.",
+      "target": "Extract update lifecycle phases behind focused modules and reduce the flow below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "ui/src/pages/OrganizationWorkspaces.tsx",
       "lines": 2982,
       "owner": "workspace-ui",

@@ -724,7 +724,6 @@ jobs:
     if: needs.publish-canary.result == 'success' && needs.canary-install.result == 'success'
     permissions:
       contents: read
-      id-token: write
     runs-on: ubuntu-latest
     environment: npm-canary
     steps:
