@@ -51,9 +51,12 @@
       "server/src/services/workspace-backup-v2.ts"
     ],
     "evidence": {
-      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-1a76ec93-100m-10k-clean.json",
-      "backup_comparator_receipt_sha256": "60b96797da5aedd2a9c77210bba11f2407dfb12034059f483b86e38328869f37",
-      "backup_comparator_status": "not_comparable"
+      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json",
+      "backup_comparator_receipt_sha256": "27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123",
+      "backup_comparator_status": "not_comparable",
+      "backup_comparator_node_mean_elapsed_ms": 6591.234,
+      "backup_comparator_native_mean_elapsed_ms": 3772.708,
+      "backup_comparator_sampler_positive_boundaries": "200/200"
     },
     "build": {
       "id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
@@ -149,14 +152,14 @@
       "reason": "Exact packaged candidate and 100 MiB/10,000-file comparator are current, but authorized hosted fixture, seven-day/100-cycle dogfood, and live native_ab evidence remain unavailable; comparator metrics are descriptive not_comparable."
     },
     "final_review": {
-      "verdict": "pending",
+      "verdict": "needs_more_evidence",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
       "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Final review is pending reviewer disposition and verifier terminal evidence for the exact candidate; missing hosted dogfood and live native_ab keep the packet blocked."
+      "reason": "Reviewer final handoff verdict is needs_more_evidence; hosted dogfood and live native_ab remain unavailable, so final acceptance cannot pass."
     }
   },
   "drift": {

@@ -65,9 +65,9 @@ Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `d8303913cc9194f2149a72da76b7e897bda45ebb80e09c739f3b2981db43081a`.
 
 The fresh 100 MiB/10,000-file Rust versus optimized-Node backup receipt is
-`/tmp/rudder-native-backup-comparator-1a76ec93-100m-10k-clean.json` with
-receipt SHA-256
-`60b96797da5aedd2a9c77210bba11f2407dfb12034059f483b86e38328869f37`. Fixture
+`/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json` with receipt
+SHA-256
+`27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123`. Fixture
 tree/content SHA-256 values are
 `1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22` and
 `0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13`.
@@ -76,8 +76,8 @@ sentinel on final-exists rejection and left no temporary artifacts. The
 external process sampler recorded 200/200 positive operation boundaries. Node
 and native archive bytes are intentionally `not_compared`, and the harness
 marks elapsed/RSS measurements `not_comparable` because it lacks randomized
-paired arm order and warmup trials. Descriptive means were Node 5452.932 ms and
-native 3600.208 ms; they are not causal promotion evidence.
+paired arm order and warmup trials. Descriptive means were Node 6591.234 ms and
+native 3772.708 ms; they are not causal promotion evidence.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
