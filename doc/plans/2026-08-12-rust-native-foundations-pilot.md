@@ -43,6 +43,8 @@ commit_refs:
   - 72005f4b3
   - d7f891d17
   - 2161b2b6b
+  - 86a2f7fa6
+  - 86f5d9953
 updated_at: 2026-08-14
 ---
 
@@ -52,10 +54,11 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current final main candidate is `2161b2b6b12954c577bd10aceb9685909e7a4f6a`.
+The current final main wrapper is `86f5d99538e11aaef0bc9e037907fb06292a4064`.
 Its packaged/runtime artifacts are bound to merge source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the only descendant change is a
-test-import organization commit, verified not to change runtime paths. The
+sequence of docs/test-import descendants is verified not to change runtime
+paths. The
 clean artifact worktree is `/private/tmp/rudder-native-main-merge`.
 The clean candidate fingerprint is
 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (the
@@ -95,6 +98,16 @@ the declared 100-sample promotion gate, and the recorded 300-second bounded
 operation/native timeout is diagnostic configuration only. The predecessor
 `22f` receipt and its `88e` predecessor remain source-invalidated historical
 evidence and must not be reused by a current packet.
+
+The fair Node arm is explicit: the harness is
+`scripts/perf/workspace-backup-rust-node-ab.ts`, the contract-equivalent
+implementation is
+`server/src/services/workspace-backup-v2.ts#createWorkspaceBackupV2File`, and
+the recorded runtime is Node.js `v22.23.1` via `pnpm exec tsx`. The case identity
+is `workspace-backup-v2-100MiB-10000-files-rust-node-ab-v1`, with node-first
+then native arm order, zero warmups, one descriptive paired sample, and the
+external process-tree sampler at 5 ms. These details make the receipt
+reproducible while keeping its `not_comparable` status honest.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
