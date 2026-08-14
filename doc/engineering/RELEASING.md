@@ -43,16 +43,18 @@ Important constraints:
 
 ## Release Surfaces
 
-Every stable release has five separate surfaces:
+Every stable release has six separate surfaces:
 
 1. **Verification** — the exact git SHA passes typecheck, tests, and build
 2. **npm** — `@rudderhq/cli` and public workspace packages are published
 3. **GitHub** — the stable release gets a git tag and GitHub Release record
 4. **Desktop** — macOS, Windows, and Linux portable assets are attached to the stable GitHub Release
-5. **Website / announcements** — the release is publicly announced, and any
+5. **China mirror** — the same frozen Desktop assets are immutable and
+   byte-verified in Tencent COS before the GitHub checksum completion marker
+6. **Website / announcements** — the release is publicly announced, and any
    in-scope website/docs content is published
 
-A stable release is done only when all five surfaces are handled.
+A stable release is done only when all six surfaces are handled.
 
 For the announcement surface, the public GitHub Release notes may be the
 announcement channel when there is no separate website post or social/customer
@@ -190,8 +192,11 @@ It:
 - creates a git tag `canary/vX.Y.Z-canary.N`
 - builds and verifies the four-platform Desktop candidates before npm or tag mutation
 - creates or updates the canary GitHub Release with display title
-  `vX.Y.Z-canary.N` and uploads those exact verified assets
-- runs the three-platform public install smoke inside the same Release workflow
+  `vX.Y.Z-canary.N` and uploads only those exact verified binaries
+- runs `mirror-canary` in Environment `desktop-release-mirror`, using GitHub
+  OIDC and Tencent STS to mirror and verify all eight COS objects
+- uploads GitHub `SHASUMS256.txt` only after that mirror succeeds, then runs the
+  three-platform public install smoke
 
 Canary and stable publication use the same non-cancelling concurrency group. A
 stable still takes priority over same-base or older canary publication after
@@ -262,7 +267,9 @@ The workflow:
 - publishes the committed `X.Y.Z` under npm dist-tag `latest`
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md` and uploads
-  the exact checksummed Desktop artifacts already built and verified by this run
+  the exact Desktop binaries already built and verified by this run
+- runs `mirror-stable` against the same frozen Actions artifacts, then publishes
+  GitHub `SHASUMS256.txt` as the completion marker
 - invokes Docs Release from the same `vX.Y.Z` source in parallel with the real
   Linux, Windows, and macOS public install smoke
 - deletes obsolete `canary/v*` GitHub Releases and git tags whose canary base is
@@ -288,7 +295,8 @@ semantics and canaries remain on `@canary`.
 
 By default this checks for newer Rudder CLI releases, prepares the matching
 persistent `rudder` CLI globally, and downloads/opens the matching Rudder
-Desktop portable app from the GitHub Release when needed.
+Desktop portable app from Tencent COS or GitHub when needed. GitHub always
+supplies the trusted `SHASUMS256.txt`; COS is only a byte transport.
 After the persistent CLI exists, `rudder start` is equivalent to the `npx`
 command above. More generally, `npx @rudderhq/cli@latest <command>` and
 `rudder <command>` are the same CLI surface when they resolve to the same
@@ -296,16 +304,19 @@ version; the `npx` form is mainly the first-run and explicit dist-tag form.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
 The Release workflow builds and smokes Desktop artifacts before any public
-mutation. After npm, tag, GitHub Release, and those exact artifacts are public,
-Docs Release and the public install matrix run concurrently. The install lanes
+mutation. It uploads immutable GitHub binaries, completes the OIDC/STS-backed
+COS mirror, and uploads GitHub `SHASUMS256.txt` last. Only then may the public
+install matrix run. Docs Release may run after stable publication while the
+mirror completes. The install lanes
 execute `npx ... start --no-open` on Linux, Windows, and macOS and download the
 real portable Desktop artifact, using isolated temporary HOME, npm cache, npm
 prefix, output, and Desktop install directories. Recovery reruns the original
 Release with `resume_missing: true`; there is no standalone install workflow.
 
 The final next-release handoff is a convergence gate, not a timer: it waits for
-verified Desktop assets, production docs, the three-platform public install smoke, and
-obsolete-canary cleanup. A failure in any downstream surface leaves the release
+the verified COS mirror, completed GitHub Desktop assets, production docs, the
+three-platform public install smoke, and obsolete-canary cleanup. A failure in
+any downstream surface leaves the release
 partial and resumable without republishing an immutable npm version.
 
 Each Desktop asset is also gated before collection by a packaged `upgrade` smoke.
@@ -553,6 +564,15 @@ Do this immediately:
 3. verify the GitHub Release notes point at `releases/v0.1.0.md`
 
 Do not republish the same version.
+
+### If GitHub binaries exist but the COS mirror fails
+
+Do not upload or overwrite `SHASUMS256.txt` manually and do not republish npm.
+Fix the OIDC/STS, CAM policy, COS availability, or immutable-object conflict,
+then re-run the failed `mirror-stable` or `mirror-canary` job. Stable partial
+recovery must use the original Release `candidate_run_id`, which downloads the
+same frozen Desktop artifacts. Identical existing GitHub/COS bytes are accepted;
+any same-name content conflict blocks completion.
 
 ### If `latest` is broken after stable publish
 

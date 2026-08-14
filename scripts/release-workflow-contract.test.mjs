@@ -88,6 +88,10 @@ describe("unified delivery workflows", () => {
       expect(publish).toContain("pattern: desktop-*");
       expect(publish).not.toContain("pnpm desktop:dist");
       expect(publish).not.toContain("gh workflow run desktop-release.yml");
+      expect(publish).toContain("publish-github-release-assets-immutable.mjs");
+      expect(publish).toContain("--phase binaries");
+      expect(publish).not.toContain("--phase checksum");
+      expect(publish).not.toContain("gh release upload");
     }
     expect(releaseWorkflow).not.toContain("desktop-release.yml");
     expect(releaseWorkflow).not.toContain("public-install-smoke.yml");
@@ -95,15 +99,63 @@ describe("unified delivery workflows", () => {
     expect(stable).toContain('test "$(find . -maxdepth 1 -type f -name \'Rudder-*\' | wc -l | xargs)" = "7"');
   });
 
+  it("requires Tencent COS mirror jobs before publishing the GitHub checksum marker", () => {
+    const canaryPublish = workflowJob(releaseWorkflow, "publish-canary");
+    const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
+    const canaryMirror = workflowJob(releaseWorkflow, "mirror-canary");
+    const stableMirror = workflowJob(releaseWorkflow, "mirror-stable");
+    for (const [publish, mirror] of [
+      [canaryPublish, canaryMirror],
+      [stablePublish, stableMirror],
+    ]) {
+      expect(publish).toContain("--phase binaries");
+      expect(publish).not.toContain("--phase checksum");
+      expect(mirror).toContain("environment: desktop-release-mirror");
+      expect(mirror).toContain("id-token: write");
+      expect(mirror).toContain("timeout-minutes: 60");
+      expect(mirror).toContain("pattern: desktop-*");
+      expect(mirror).toContain("mirror-desktop-release-to-cos.mjs");
+      expect(mirror).toContain("TENCENT_CLOUD_OIDC_PROVIDER_ID");
+      expect(mirror).toContain("TENCENT_CLOUD_ROLE_ARN");
+      expect(mirror).toContain("TENCENT_COS_BUCKET");
+      expect(mirror).toContain("TENCENT_COS_REGION");
+      const cosIndex = mirror.indexOf("mirror-desktop-release-to-cos.mjs");
+      const markerIndex = mirror.indexOf("--phase checksum");
+      expect(cosIndex).toBeGreaterThan(-1);
+      expect(markerIndex).toBeGreaterThan(cosIndex);
+    }
+    expect(canaryMirror).toContain("- publish-canary");
+    expect(stableMirror).toContain("- publish-stable");
+    expect(stableMirror).toContain("run-id: ${{ needs.preflight.outputs.candidate_run_id }}");
+    expect(stableMirror).toContain("github-token: ${{ github.token }}");
+  });
+
+  it("prevents canary and stable install gates from bypassing the COS mirror", () => {
+    const canaryInstall = workflowJob(releaseWorkflow, "canary-install");
+    const stableInstall = workflowJob(releaseWorkflow, "stable-install");
+    const stableSurfaces = workflowJob(releaseWorkflow, "stable-surfaces");
+    expect(canaryInstall).toContain("- mirror-canary");
+    expect(canaryInstall).toContain("needs.mirror-canary.result == 'success'");
+    expect(stableInstall).toContain("- mirror-stable");
+    expect(stableInstall).toContain("needs.mirror-stable.result == 'success'");
+    expect(stableSurfaces).toContain("- mirror-stable");
+    expect(stableSurfaces).toContain("needs.mirror-stable.result == 'success'");
+  });
+
   it("waits for the exact manifest versions before creating public release surfaces", () => {
     for (const jobName of ["publish-canary", "publish-stable"]) {
       const publish = workflowJob(releaseWorkflow, jobName);
       const waitIndex = publish.indexOf("wait_for_npm_package_versions");
       const tagIndex = publish.indexOf("git tag");
-      const releaseIndex = publish.indexOf("gh release");
+      const releaseIndexes = [
+        publish.indexOf("gh release"),
+        publish.indexOf("create-github-release.sh"),
+      ].filter((index) => index >= 0);
+      const releaseIndex = Math.min(...releaseIndexes);
       expect(publish).toContain("awk -F '\\t' 'NF == 4");
       expect(waitIndex).toBeGreaterThan(-1);
       expect(tagIndex).toBeGreaterThan(waitIndex);
+      expect(releaseIndexes).not.toHaveLength(0);
       expect(releaseIndex).toBeGreaterThan(waitIndex);
     }
   });
@@ -149,6 +201,7 @@ describe("unified delivery workflows", () => {
     const desktopCandidate = workflowJob(releaseWorkflow, "desktop-candidate");
     const candidateComplete = workflowJob(releaseWorkflow, "candidate-complete");
     const stable = workflowJob(releaseWorkflow, "publish-stable");
+    const stableMirror = workflowJob(releaseWorkflow, "mirror-stable");
     expect(releaseWorkflow).toContain('description: "Original Release run ID containing the verified candidate artifacts (required for resume)"');
     expect(releaseWorkflow).toContain('candidate_run_id is required when resume_missing is true.');
     expect(releaseWorkflow).toContain("Require matching verified candidate run for recovery");
@@ -163,8 +216,13 @@ describe("unified delivery workflows", () => {
     expect(stable).toContain('run-id: ${{ needs.preflight.outputs.candidate_run_id }}');
     expect(stable).toContain('github-token: ${{ github.token }}');
     expect(stable).toContain('test "$RESUME_MISSING" = "true"');
-    expect(stable).toContain("Existing release asset $asset does not match the verified candidate.");
-    expect(stable).toContain('gh release upload "$RELEASE_TAG" SHASUMS256.txt --clobber');
+    expect(stable).toContain("publish-github-release-assets-immutable.mjs");
+    expect(stable).toContain("--phase binaries");
+    expect(stableMirror).toContain('run-id: ${{ needs.preflight.outputs.candidate_run_id }}');
+    expect(stableMirror).toContain("--allow-existing-checksum-marker");
+    expect(stableMirror).toContain("--phase checksum");
+    expect(stable).not.toContain("--clobber");
+    expect(stableMirror).not.toContain("--clobber");
     expect(stable).not.toContain("--force");
   });
 

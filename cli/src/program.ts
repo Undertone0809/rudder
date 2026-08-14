@@ -91,6 +91,7 @@ export function createProgram(): Command {
     .option("--version <version>", "Rudder version to start (default: current CLI version)")
     .option("--target-version <version>", "Rudder version to start; avoids the root CLI version flag")
     .option("--repo <owner/repo>", "GitHub repository that hosts desktop releases")
+    .option("--download-source <source>", "Desktop download source: auto, cn, or global")
     .option("--output-dir <path>", "Directory for downloaded desktop release assets")
     .option("--desktop-install-dir <path>", "Directory for the portable Desktop install")
     .option("--no-open", "Install Desktop without launching it")

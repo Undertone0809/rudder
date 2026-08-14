@@ -11,6 +11,7 @@ import {
   assertChecksumMatch,
   buildGithubReleaseAssetDownloadUrl,
   buildLinuxDesktopEntry,
+  buildReleaseMirrorAssetDownloadUrl,
   buildWindowsRobocopyMirrorCommand,
   buildWindowsZipExtractCommand,
   compareStableSemver,
@@ -34,6 +35,8 @@ import {
   resolveDesktopAssetCandidates,
   resolveDesktopAssetName,
   resolveDesktopAssetTarget,
+  resolveDesktopDownloadOrigins,
+  resolveDesktopDownloadSource,
   resolveDesktopInstallLockPath,
   resolveDesktopInstallPaths,
   resolveDesktopReleaseTag,
@@ -46,6 +49,7 @@ import {
   selectDesktopShellAsset,
   startCommand,
   waitForProcessExit,
+  withDesktopDownloadOrigins,
   withDesktopInstallLock,
 } from "../commands/start.js";
 import {
@@ -190,10 +194,14 @@ async function writeDesktopAssetCacheEntry(
   return { cacheDir, checksum, path: assetPath };
 }
 
-function responseFromChunks(chunks: string[], headers: Record<string, string> = {}): Response {
+function responseFromChunks(
+  chunks: string[],
+  headers: Record<string, string> = {},
+  status = 200,
+): Response {
   return {
-    ok: true,
-    status: 200,
+    ok: status >= 200 && status < 300,
+    status,
     headers: new Headers(headers),
     body: new ReadableStream({
       start(controller) {
@@ -492,6 +500,31 @@ describe("desktop start command helpers", () => {
     expect(output).not.toContain("Would resolve, download, verify, install");
   });
 
+  it("does not parse Desktop download configuration for server-only start", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const previousSource = process.env.RUDDER_DOWNLOAD_SOURCE;
+    process.env.RUDDER_DOWNLOAD_SOURCE = "invalid-for-desktop";
+    try {
+      await expect(runCli([
+        process.execPath,
+        "rudder",
+        "start",
+        "--server-only",
+        "--no-cli",
+        "--target-version",
+        "0.3.1",
+        "--dry-run",
+        "--no-version-check",
+      ])).resolves.toBe(0);
+    } finally {
+      if (previousSource === undefined) delete process.env.RUDDER_DOWNLOAD_SOURCE;
+      else process.env.RUDDER_DOWNLOAD_SOURCE = previousSource;
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
   it("uses the explicit desktop target version before the legacy start version option", async () => {
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -767,6 +800,123 @@ describe("desktop start command helpers", () => {
         "SHASUMS256.txt",
       ),
     ).toBe("https://github.com/Undertone0809/rudder/releases/download/canary/v0.3.1-canary.2/SHASUMS256.txt");
+    expect(
+      buildReleaseMirrorAssetDownloadUrl(
+        "https://rudder-releases-cn-12345.cos.ap-shanghai.myqcloud.com/",
+        "canary/v0.3.1-canary.2",
+        "SHASUMS256.txt",
+      ),
+    ).toBe("https://rudder-releases-cn-12345.cos.ap-shanghai.myqcloud.com/releases/canary/v0.3.1-canary.2/SHASUMS256.txt");
+  });
+
+  it("resolves desktop download source from options and environment", () => {
+    expect(resolveDesktopDownloadSource(undefined, {})).toBe("auto");
+    expect(resolveDesktopDownloadSource(undefined, { RUDDER_DOWNLOAD_SOURCE: "cn" })).toBe("cn");
+    expect(resolveDesktopDownloadSource("global", { RUDDER_DOWNLOAD_SOURCE: "cn" })).toBe("global");
+    expect(() => resolveDesktopDownloadSource("china", {})).toThrow("must be auto, cn, or global");
+  });
+
+  it("adds the release mirror before GitHub for China downloads without changing release metadata", () => {
+    const asset = {
+      name: "Rudder-0.3.1-linux-x64.AppImage",
+      browser_download_url: "https://github.com/example/rudder/releases/download/v0.3.1/Rudder.AppImage",
+      url: "https://api.github.com/repos/example/rudder/releases/assets/123",
+    };
+
+    expect(withDesktopDownloadOrigins(asset, ["mirror", "github"], {
+      mirrorBaseUrl: "https://mirror.example.test",
+      tag: "v0.3.1",
+    })).toEqual({
+      ...asset,
+      download_urls: [
+        "https://mirror.example.test/releases/v0.3.1/Rudder-0.3.1-linux-x64.AppImage",
+        asset.browser_download_url,
+        asset.url,
+      ],
+    });
+  });
+
+  it("keeps the release mirror as a binary fallback in global mode", async () => {
+    await expect(resolveDesktopDownloadOrigins({
+      source: "global",
+      checksumAsset: {
+        name: "SHASUMS256.txt",
+        browser_download_url: "https://github.example.test/SHASUMS256.txt",
+      },
+      tag: "v0.3.1",
+      mirrorBaseUrl: "https://mirror.example.test",
+    })).resolves.toEqual(["github", "mirror"]);
+  });
+
+  it("auto source selection prefers the faster healthy checksum path", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const value = String(url);
+      await new Promise((resolve) => setTimeout(resolve, value.includes("mirror") ? 1 : 20));
+      return responseFromChunks(["x"], {}, 206);
+    }) as never;
+
+    try {
+      await expect(resolveDesktopDownloadOrigins({
+        source: "auto",
+        checksumAsset: {
+          name: "SHASUMS256.txt",
+          browser_download_url: "https://github.example.test/SHASUMS256.txt",
+        },
+        tag: "v0.3.1",
+        mirrorBaseUrl: "https://mirror.example.test",
+      })).resolves.toEqual(["mirror", "github"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("auto source selection skips an unavailable release mirror checksum path", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      return String(url).includes("mirror")
+        ? responseFromChunks(["missing"], {}, 404)
+        : responseFromChunks(["x"], {}, 206);
+    }) as never;
+
+    try {
+      await expect(resolveDesktopDownloadOrigins({
+        source: "auto",
+        checksumAsset: {
+          name: "SHASUMS256.txt",
+          browser_download_url: "https://github.example.test/SHASUMS256.txt",
+        },
+        tag: "v0.3.1",
+        mirrorBaseUrl: "https://mirror.example.test",
+      })).resolves.toEqual(["github"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("auto source selection times out a stalled release mirror probe", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).includes("mirror")) return Promise.resolve(responseFromChunks(["x"], {}, 206));
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }) as never;
+
+    try {
+      await expect(resolveDesktopDownloadOrigins({
+        source: "auto",
+        checksumAsset: {
+          name: "SHASUMS256.txt",
+          browser_download_url: "https://github.example.test/SHASUMS256.txt",
+        },
+        tag: "v0.3.1",
+        mirrorBaseUrl: "https://mirror.example.test",
+        probeTimeoutMs: 10,
+      })).resolves.toEqual(["github"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("selects the best matching desktop asset by platform and architecture", () => {
@@ -1107,6 +1257,170 @@ describe("desktop start command helpers", () => {
           }),
         }),
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to GitHub when a release mirror response has the wrong checksum", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-mirror-checksum-fallback-test."));
+    const originalFetch = globalThis.fetch;
+    const githubBody = "verified-github-asset";
+    const expectedChecksum = sha256(githubBody);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(responseFromChunks(["corrupt-mirror-asset"]))
+      .mockResolvedValueOnce(responseFromChunks([githubBody])) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          browser_download_url: "https://github.example.test/Rudder.AppImage",
+          download_urls: [
+            "https://mirror.example.test/releases/v0.3.1/Rudder-0.3.1-linux-x64.AppImage",
+            "https://github.example.test/Rudder.AppImage",
+          ],
+        },
+        dir,
+        undefined,
+        expectedChecksum,
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe(githubBody);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to GitHub when the release mirror returns 404", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-mirror-404-fallback-test."));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(responseFromChunks(["missing"], {}, 404))
+      .mockResolvedValueOnce(responseFromChunks(["github-asset"])) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          browser_download_url: "https://github.example.test/Rudder.AppImage",
+          download_urls: [
+            "https://mirror.example.test/releases/v0.3.1/Rudder-0.3.1-linux-x64.AppImage",
+            "https://github.example.test/Rudder.AppImage",
+          ],
+        },
+        dir,
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe("github-asset");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to GitHub when the release mirror stream is interrupted", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-mirror-interrupt-fallback-test."));
+    const originalFetch = globalThis.fetch;
+    const interrupted = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("partial"));
+        controller.error(new Error("mirror connection interrupted"));
+      },
+    }));
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(interrupted)
+      .mockResolvedValueOnce(responseFromChunks(["github-asset"])) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          browser_download_url: "https://github.example.test/Rudder.AppImage",
+          download_urls: [
+            "https://mirror.example.test/releases/v0.3.1/Rudder-0.3.1-linux-x64.AppImage",
+            "https://github.example.test/Rudder.AppImage",
+          ],
+        },
+        dir,
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe("github-asset");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to GitHub when the release mirror stream stops making progress", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-mirror-idle-fallback-test."));
+    const originalFetch = globalThis.fetch;
+    const stalled = new Response(new ReadableStream({ start() {} }));
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(stalled)
+      .mockResolvedValueOnce(responseFromChunks(["github-asset"])) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          browser_download_url: "https://github.example.test/Rudder.AppImage",
+          download_urls: [
+            "https://mirror.example.test/releases/v0.3.1/Rudder-0.3.1-linux-x64.AppImage",
+            "https://github.example.test/Rudder.AppImage",
+          ],
+        },
+        dir,
+        undefined,
+        undefined,
+        { idleMs: 10 },
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe("github-asset");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to GitHub when the release mirror does not return response headers", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-mirror-response-timeout-test."));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).includes("mirror")) return Promise.resolve(responseFromChunks(["github-asset"]));
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          browser_download_url: "https://github.example.test/Rudder.AppImage",
+          download_urls: [
+            "https://mirror.example.test/releases/v0.3.1/Rudder-0.3.1-linux-x64.AppImage",
+            "https://github.example.test/Rudder.AppImage",
+          ],
+        },
+        dir,
+        undefined,
+        undefined,
+        { responseMs: 10 },
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe("github-asset");
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     } finally {
       globalThis.fetch = originalFetch;
       await rm(dir, { recursive: true, force: true });

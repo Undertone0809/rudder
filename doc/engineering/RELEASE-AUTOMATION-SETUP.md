@@ -5,6 +5,7 @@ This document covers the GitHub and npm setup required for the current Rudder re
 - automatic canaries from `main`
 - manual stable promotion from a full locked commit SHA
 - npm trusted publishing via GitHub OIDC
+- Tencent COS Desktop mirroring via GitHub OIDC and Tencent STS
 - direct-main release execution with exact-source Test
 
 Repo-side files that depend on this setup:
@@ -95,13 +96,14 @@ After the workflows are live:
 2. confirm npm publish succeeds without any `NPM_TOKEN`
 3. run a stable dry-run
 4. run one real stable publish
-5. confirm the desktop release workflow attaches portable assets to the stable GitHub Release
+5. confirm the Release workflow attaches portable assets to GitHub, mirrors them
+   to Tencent COS, and publishes `SHASUMS256.txt` only after the mirror succeeds
 
 Only after that should you remove old token-based access.
 
-### 2.4. Desktop portable assets
+### 2.4. Desktop portable assets and COS completion gate
 
-The Desktop workflow publishes checksum-verified portable assets:
+The unified Release workflow publishes checksum-verified portable assets:
 
 - macOS `.zip` containing `Rudder.app`
 - Windows `.zip` containing the unpacked Electron app
@@ -112,6 +114,14 @@ The current Desktop channel is an unsigned portable alpha. Apple Developer ID,
 notarization, and Windows code-signing reputation are intentionally deferred;
 when those credentials exist, signed installer assets can be added as a separate
 release path without changing npm publishing.
+
+GitHub Releases remain authoritative for tags, version metadata, filenames, and
+`SHASUMS256.txt`. The publish job first uploads only the seven `Rudder-*`
+binaries. A separate job using the `desktop-release-mirror` Environment obtains
+GitHub OIDC and Tencent STS credentials, copies the same frozen Actions artifacts
+to COS without overwrite, and verifies authenticated and anonymous reads. Only
+then does it upload GitHub `SHASUMS256.txt` as the completion marker. A COS copy
+of the checksum supports network probing but never becomes the CLI trust root.
 
 Temporary fallback:
 
@@ -135,10 +145,11 @@ Goal:
 
 ## 4. Create GitHub Environments
 
-Create two environments in the GitHub repository:
+Create three environments in the GitHub repository:
 
 - `npm-canary`
 - `npm-stable`
+- `desktop-release-mirror`
 
 Path:
 
@@ -146,6 +157,49 @@ Path:
 2. `Settings`
 3. `Environments`
 4. `New environment`
+
+### 4.1. Configure `desktop-release-mirror`
+
+Store no Tencent SecretId or SecretKey. Add these non-sensitive Environment
+variables:
+
+- `TENCENT_CLOUD_OIDC_PROVIDER_ID`
+- `TENCENT_CLOUD_ROLE_ARN`
+- `TENCENT_COS_BUCKET`
+- `TENCENT_COS_REGION` (`ap-shanghai`)
+
+Allow deployments from `main`, `v*`, and `canary/v*`. The current unified
+workflow executes the mirror jobs from `main`; tag rules preserve a constrained
+recovery path if a future workflow is tag-triggered.
+
+Create Tencent CAM OIDC provider `github-actions-rudder` with:
+
+- issuer: `https://token.actions.githubusercontent.com`
+- audience: `sts.cloud.tencent.com`
+- automatic public-key rotation enabled
+
+Role `rudder-github-release-mirror` must trust only
+`name/sts:AssumeRoleWithWebIdentity` from that provider and require both claims:
+
+```text
+oidc:aud = sts.cloud.tencent.com
+oidc:sub = repo:Undertone0809/rudder:environment:desktop-release-mirror
+```
+
+Attach a resource policy granting only `name/cos:GetObject` and
+`name/cos:PutObject` on
+`qcs::cos:ap-shanghai:uid/<APPID>:rudder-releases-cn-<APPID>/releases/*`.
+Do not grant bucket listing, deletion, ACL mutation, or overwrite management.
+
+Create `rudder-releases-cn-<APPID>` in Shanghai using single-AZ standard
+storage. Keep its ACL private, enable SSE-COS, and leave versioning, access logs,
+and lifecycle deletion disabled. Its bucket policy may grant anonymous
+`name/cos:GetObject` only on `releases/*`; anonymous listing and writes must
+return `403`.
+
+Set a monthly RMB 20 budget with alerts at 50%, 80%, and 100% to the default
+finance contact and Message Center. This budget only alerts. It must not delete
+immutable release objects or bypass the mirror gate.
 
 ## 5. Configure `npm-canary`
 
@@ -214,6 +268,8 @@ These files should always trigger code owner review:
 - `scripts/create-github-release.sh`
 - `scripts/cleanup-obsolete-canaries.mjs`
 - `scripts/collect-desktop-release-assets.mjs`
+- `scripts/mirror-desktop-release-to-cos.mjs`
+- `scripts/publish-github-release-assets-immutable.mjs`
 - `scripts/rollback-latest.sh`
 - `doc/engineering/RELEASING.md`
 - `doc/engineering/PUBLISHING.md`
@@ -247,8 +303,11 @@ After setup:
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
 7. confirm the Release candidate matrix built and smoked all four platform assets before npm publication
 8. confirm the canary GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets from that matrix
-9. confirm the three-platform public install matrix passed inside the same Release run
-10. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
+9. confirm `mirror-canary` used `desktop-release-mirror` and published all eight
+   byte-identical objects under `releases/canary/v0.1.0-canary.N/`
+10. confirm anonymous exact COS reads succeed while listing and writes return `403`
+11. confirm the three-platform public install matrix passed only after `mirror-canary`
+12. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
 
 Start-path check:
 
@@ -283,11 +342,13 @@ After at least one good canary exists:
 11. confirm the GitHub Release was created
 12. confirm the GitHub Release contains macOS, Windows, Linux, and
     `SHASUMS256.txt` assets
-13. confirm the Docs Release child workflow publishes `docs/release/v0.1.0`
+13. confirm `mirror-stable` copied the same frozen Desktop candidate artifacts to
+    `releases/v0.1.0/` and completed before the checksum marker appeared
+14. confirm the Docs Release child workflow publishes `docs/release/v0.1.0`
     from the matching `v0.1.0` source and passes public health checks
-14. confirm Windows, macOS, and Linux public install smoke all pass; do not
+15. confirm Windows, macOS, and Linux public install smoke all pass; do not
     remove a slow Windows smoke because it measures real installation behavior
-15. confirm the workflow commits the next patch version directly to `main` and
+16. confirm the workflow commits the next patch version directly to `main` and
     dispatches Test for that exact commit, or reports that `main` already advanced
 
 Start-path check:
@@ -346,6 +407,22 @@ Check:
 2. the environment has no required reviewers or wait timer
 3. the environment allows only `main`
 4. the workflow is running in the canonical repository, not a fork
+
+### COS mirror fails before the checksum marker
+
+Check:
+
+1. `mirror-canary` or `mirror-stable` uses Environment `desktop-release-mirror`
+2. the job has `id-token: write` and all four Environment variables
+3. Tencent OIDC `aud` and `sub` conditions exactly match the documented values
+4. the CAM role can only get/put this bucket's `releases/*` objects
+5. an existing object is byte-identical; conflicting immutable objects require
+   investigation and must never be overwritten
+
+Re-run the failed mirror job after fixing credentials or network state. The
+GitHub checksum marker remains absent until COS succeeds. For partial stable
+recovery, use the original Release `candidate_run_id`; do not rebuild or
+republish immutable npm versions.
 
 ### Optional CODEOWNERS routing does not trigger
 

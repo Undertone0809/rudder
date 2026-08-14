@@ -42,6 +42,12 @@ npx @rudderhq/cli@latest start
 The first download can take a few minutes. When it finishes, Rudder Desktop
 opens automatically.
 
+Rudder automatically selects between its China release mirror and GitHub for
+the Desktop download. To choose a deterministic route while troubleshooting,
+use `--download-source cn` for the China mirror first or
+`--download-source global` for GitHub first. Either route verifies the asset
+against the checksum published with the authoritative GitHub Release.
+
 ## 2. Check that Rudder opened
 
 Setup is complete when the desktop window asks you to create or choose an

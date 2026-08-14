@@ -6,6 +6,8 @@ scripts/release*.sh @Rudderhq
 scripts/release-*.mjs @Rudderhq
 scripts/create-github-release.sh @Rudderhq
 scripts/collect-desktop-release-assets.mjs @Rudderhq
+scripts/mirror-desktop-release-to-cos.mjs @Rudderhq
+scripts/publish-github-release-assets-immutable.mjs @Rudderhq
 scripts/rollback-latest.sh @Rudderhq
 doc/engineering/RELEASING.md @Rudderhq
 doc/engineering/PUBLISHING.md @Rudderhq

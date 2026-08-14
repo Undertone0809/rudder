@@ -483,11 +483,19 @@ jobs:
           wait_for_npm_package_versions "$(cat "$package_map")" 60 5
           git tag "$RELEASE_TAG" "$SOURCE_SHA"
           git push origin "refs/tags/$RELEASE_TAG"
-          gh release create "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease --notes "Desktop artifacts for $RELEASE_TAG."
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
           shasum -a 256 Rudder-* > SHASUMS256.txt
-          gh release upload "$RELEASE_TAG" Rudder-* SHASUMS256.txt
+          cd "$GITHUB_WORKSPACE"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease --notes "Desktop artifacts for $RELEASE_TAG."
+          else
+            gh release edit "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease
+          fi
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "$RELEASE_TAG" \
+            --asset-dir dist/desktop-assets \
+            --phase binaries
 
   publish-stable:
     name: Publish stable
@@ -572,28 +580,119 @@ jobs:
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
           shasum -a 256 Rudder-* > SHASUMS256.txt
-          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
-          verify_dir="$(mktemp -d)"
-          for asset in Rudder-*; do
-            if grep -Fxq "$asset" <<< "$existing_assets"; then
-              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$verify_dir"
-              test "$(shasum -a 256 "$verify_dir/$asset" | awk '{print $1}')" = "$(shasum -a 256 "$asset" | awk '{print $1}')" || {
-                echo "Existing release asset $asset does not match the verified candidate." >&2
-                exit 1
-              }
-              echo "Verified existing release asset $asset"
-            else
-              gh release upload "$RELEASE_TAG" "$asset"
-            fi
-          done
-          gh release upload "$RELEASE_TAG" SHASUMS256.txt --clobber
+          cd "$GITHUB_WORKSPACE"
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "$RELEASE_TAG" \
+            --asset-dir dist/desktop-assets \
+            --phase binaries
+
+  mirror-canary:
+    name: Mirror canary Desktop release to Tencent COS
+    needs:
+      - preflight
+      - publish-canary
+    if: needs.publish-canary.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: desktop-release-mirror
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Mirror GitHub binaries to Tencent COS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+        run: |
+          node scripts/mirror-desktop-release-to-cos.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --prefix releases \
+            --allow-existing-checksum-marker
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
+
+  mirror-stable:
+    name: Mirror stable Desktop release to Tencent COS
+    needs:
+      - preflight
+      - publish-stable
+    if: needs.publish-stable.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: desktop-release-mirror
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Mirror GitHub binaries to Tencent COS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+        run: |
+          node scripts/mirror-desktop-release-to-cos.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --prefix releases \
+            --allow-existing-checksum-marker
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
 
   canary-install:
     name: Canary public install ${{ matrix.label }}
     needs:
       - preflight
       - publish-canary
-    if: needs.publish-canary.result == 'success'
+      - mirror-canary
+    if: needs.publish-canary.result == 'success' && needs.mirror-canary.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -662,7 +761,8 @@ jobs:
     needs:
       - preflight
       - publish-stable
-    if: needs.publish-stable.result == 'success'
+      - mirror-stable
+    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -690,9 +790,10 @@ jobs:
     needs:
       - preflight
       - publish-stable
+      - mirror-stable
       - stable-docs
       - stable-install
-    if: needs.publish-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
+    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
     permissions:
       contents: read
     runs-on: ubuntu-latest

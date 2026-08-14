@@ -39,6 +39,11 @@ npx @rudderhq/cli@latest start
 
 第一次下载可能需要几分钟。完成后，Rudder Desktop 会自动打开。
 
+Rudder 会自动在国内发布镜像和 GitHub 之间选择桌面安装包的下载线路。排查网络
+问题时，可以使用 `--download-source cn` 优先国内镜像，或使用
+`--download-source global` 优先 GitHub。无论走哪条线路，安装包都会按照 GitHub
+Release 中的权威校验和进行验证。
+
 ## 2. 确认 Rudder 已经打开
 
 当桌面窗口让你创建或选择组织时，安装就完成了。Rudder 把团队工作空间称为
