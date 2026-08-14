@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createDesktopIdentityIpcController,
@@ -98,6 +101,29 @@ describe("Desktop Rudder Account IPC", () => {
       isPackaged: true,
       override: "http://127.0.0.1:4111",
     })).toBe("https://accounts.rudderhq.dev");
+    expect(resolveDesktopIdentityOrigin({
+      isPackaged: true,
+      override: "http://127.0.0.1:4111",
+      packagedTestMarkerPath: "/tmp/definitely-missing-rudder-test-marker",
+    })).toBe("https://accounts.rudderhq.dev");
+    const root = mkdtempSync(path.join(os.tmpdir(), "rudder-packaged-test-marker-"));
+    const marker = path.join(root, "packaged-test-identity.marker");
+    try {
+      writeFileSync(marker, "rudder-packaged-test-identity-v1\n", { mode: 0o600 });
+      expect(resolveDesktopIdentityOrigin({
+        isPackaged: true,
+        override: "http://127.0.0.1:4111",
+        packagedTestMarkerPath: marker,
+      })).toBe("http://127.0.0.1:4111");
+      writeFileSync(marker, "not-a-rudder-packaged-test-marker\n", { mode: 0o600 });
+      expect(resolveDesktopIdentityOrigin({
+        isPackaged: true,
+        override: "http://127.0.0.1:4111",
+        packagedTestMarkerPath: marker,
+      })).toBe("https://accounts.rudderhq.dev");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
     expect(resolveDesktopIdentityOrigin({
       isPackaged: false,
       override: "http://127.0.0.1:4111/path",

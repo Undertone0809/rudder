@@ -966,6 +966,59 @@ async function allocateSmokePorts() {
   return { appPort, dbPort };
 }
 
+async function createPackagedIdentitySmokeExecutable(scenarioRoot) {
+  const sourceExecutable = await resolvePackagedExecutablePath();
+  const sourceRoot = process.platform === "darwin"
+    ? path.resolve(sourceExecutable, "..", "..", "..")
+    : path.dirname(sourceExecutable);
+  const copiedRoot = path.join(scenarioRoot, "packaged-identity-smoke");
+  await cp(sourceRoot, copiedRoot, { recursive: true, dereference: true });
+  const resourcesDir = process.platform === "darwin"
+    ? path.join(copiedRoot, "Contents", "Resources")
+    : path.join(copiedRoot, "resources");
+  await mkdir(path.join(resourcesDir, "native"), { recursive: true });
+  await writeFile(
+    path.join(resourcesDir, "native", "packaged-test-identity.marker"),
+    "rudder-packaged-test-identity-v1\n",
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return process.platform === "darwin"
+    ? path.join(copiedRoot, "Contents", "MacOS", path.basename(sourceExecutable))
+    : path.join(copiedRoot, path.basename(sourceExecutable));
+}
+
+async function createDegradedIdentitySmokeServer() {
+  const requests = [];
+  const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    requests.push(`${request.method ?? "GET"} ${requestUrl.pathname}`);
+    if (requestUrl.pathname === "/api/health") {
+      response.statusCode = 503;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ error: "identity temporarily unavailable" }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end("not found");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Identity smoke fixture failed to bind loopback");
+  }
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    requests,
+    stop: () => new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    }),
+  };
+}
+
 async function resolvePackagedExecutablePath() {
   const explicitExecutable = process.env.RUDDER_DESKTOP_SMOKE_EXECUTABLE?.trim();
   if (explicitExecutable) {
@@ -2705,6 +2758,8 @@ async function runAccountGateScenario(mode) {
   await verifyProviderHandoff("Google");
   await verifyProviderHandoff("GitHub");
 
+  const degradedIdentity = await createDegradedIdentitySmokeServer();
+  const degradedExecutable = await createPackagedIdentitySmokeExecutable(scenarioRoot);
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
     // Electron safeStorage must use the active macOS login keychain. A synthetic
     // HOME can leave the synchronous keychain probe waiting for a keychain that
@@ -2714,8 +2769,9 @@ async function runAccountGateScenario(mode) {
       : {}),
     // A packaged release must ignore this development-only escape hatch.
     RUDDER_DESKTOP_AUTH_BYPASS: "1",
+    RUDDER_IDENTITY_ORIGIN: degradedIdentity.origin,
     RUDDER_DESKTOP_SMOKE_RESIDENT_STATUS_PATH: residentStatusPath,
-  });
+  }, degradedExecutable);
   try {
     await page.waitForFunction(
       () => document.body.dataset.bootView === "account_required",
@@ -2725,6 +2781,22 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.getByRole("button", { name: "Continue with email" }).waitFor();
+    assert.equal(
+      degradedIdentity.requests.includes("GET /api/health"),
+      true,
+      "packaged Desktop must probe the configured Identity health endpoint",
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "Continue with Google" }).isVisible(),
+      true,
+      "packaged Desktop must keep Google sign in visible when the provider probe is temporarily unavailable",
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "Continue with GitHub" }).isVisible(),
+      true,
+      "packaged Desktop must keep GitHub sign in visible when the provider probe is temporarily unavailable",
+    );
+    await page.screenshot({ path: screenshotPath, fullPage: true });
     assert.equal(
       await page.getByText("Secure credential storage is unavailable on this device.", { exact: true }).count(),
       0,
@@ -2812,11 +2884,11 @@ async function runAccountGateScenario(mode) {
         "macOS menu bar icon must include both standard and Retina representations",
       );
     }
-    await page.screenshot({ path: screenshotPath, fullPage: true });
     console.log(`[desktop-smoke] packaged account gate screenshot: ${screenshotPath}`);
     console.log(`[desktop-smoke] email-code interaction screenshot: ${emailCodeScreenshotPath}`);
   } finally {
     await closeDesktop(electronApp);
+    await degradedIdentity.stop();
   }
 }
 

@@ -120,6 +120,7 @@ export function createDesktopIdentityRuntime(options: {
   const origin = resolveDesktopIdentityOrigin({
     isPackaged: app.isPackaged,
     override: process.env.RUDDER_IDENTITY_ORIGIN,
+    packagedTestMarkerPath: path.join(process.resourcesPath, "native", "packaged-test-identity.marker"),
   });
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
@@ -148,6 +149,9 @@ export function createDesktopIdentityRuntime(options: {
     issuer: origin,
     installationId: options.installationId,
   });
+  const authProviderFallback: DesktopIdentityAuthProviders = app.isPackaged
+    ? { google: true, github: true }
+    : { google: false, github: false };
   if (debug) console.info("[rudder-desktop] identity-runtime:create-client");
   let controller: ReturnType<typeof createDesktopIdentityIpcController>;
   const client = createDesktopIdentityClient({
@@ -157,6 +161,8 @@ export function createDesktopIdentityRuntime(options: {
     vault,
     offlineGrantStore,
     openExternal: openDesktopIdentityExternal,
+    fetch: (input, init) => session.defaultSession.fetch(input instanceof URL ? input.toString() : input, init),
+    authProviderFallback,
     onDeviceAuthorizationPrompt: (prompt) => controller.showDeviceAuthorizationPrompt(prompt),
   });
   if (debug) console.info("[rudder-desktop] identity-runtime:create-controller");
@@ -201,6 +207,10 @@ export function createDesktopIdentityRuntime(options: {
     controller,
     getAuthProviders(): Promise<DesktopIdentityAuthProviders> {
       return client.getAuthProviders();
+    },
+
+    getAuthProvidersFallback(): DesktopIdentityAuthProviders {
+      return { ...authProviderFallback };
     },
 
     registerIpc(): void {

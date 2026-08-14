@@ -48,6 +48,7 @@ export type DesktopIdentityClientOptions = {
   vault: Pick<IdentityCredentialVault, "read" | "write" | "clear">;
   openExternal(url: string): Promise<void>;
   fetch?: typeof globalThis.fetch;
+  authProviderFallback?: DesktopIdentityAuthProviders;
   devicePublicKeyThumbprint?: string;
   offlineGrantStore?: Pick<
     ReturnType<typeof createDesktopOfflineGrantStore>,
@@ -160,6 +161,14 @@ function identityFallbackError(
 export function createDesktopIdentityClient(options: DesktopIdentityClientOptions) {
   const identityOrigin = normalizedIdentityOrigin(options.identityOrigin);
   const request = options.fetch ?? globalThis.fetch;
+  const authProviderFallback = {
+    google: options.authProviderFallback?.google === true,
+    github: options.authProviderFallback?.github === true,
+  };
+  const fallbackAuthProviders = (): DesktopIdentityAuthProviders => ({
+    google: authProviderFallback.google,
+    github: authProviderFallback.github,
+  });
   let accessToken: string | null = null;
   let refreshInFlight: Promise<string> | null = null;
   const offlineMaterial = () => options.offlineGrantStore?.prepareDeviceKey() ?? null;
@@ -388,16 +397,29 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
           headers: { accept: "application/json" },
           signal: AbortSignal.timeout(5_000),
         });
-        if (!response.ok) return { google: false, github: false };
+        if (!response.ok) {
+          console.warn(
+            `[rudder-desktop] Identity provider capability probe returned ${response.status}; using fallback`,
+          );
+          return fallbackAuthProviders();
+        }
         const value = await response.json() as {
           providers?: { google?: unknown; github?: unknown };
         };
         return {
-          google: value.providers?.google === true,
-          github: value.providers?.github === true,
+          google: typeof value.providers?.google === "boolean"
+            ? value.providers.google
+            : authProviderFallback.google,
+          github: typeof value.providers?.github === "boolean"
+            ? value.providers.github
+            : authProviderFallback.github,
         };
-      } catch {
-        return { google: false, github: false };
+      } catch (error) {
+        console.warn(
+          "[rudder-desktop] Identity provider capability probe unavailable; using fallback",
+          error,
+        );
+        return fallbackAuthProviders();
       }
     },
 

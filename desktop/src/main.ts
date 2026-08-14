@@ -2195,7 +2195,10 @@ async function startLocalRudder(): Promise<void> {
   const pendingProfile = resolveDesktopLocalEnvProfile();
   const identityRuntime = requireDesktopIdentityRuntime();
   if (identityRuntime.accountRequired && identityRuntime.controller.getState().status !== "signed-in") {
-    const identityProviders = await identityRuntime.getAuthProviders();
+    // The account gate must not wait on a remote capability probe. A transient
+    // network failure should preserve the production sign-in choices, then a
+    // successful probe may hide only providers explicitly reported disabled.
+    const identityProviders = identityRuntime.getAuthProvidersFallback();
     updateBootState({
       stage: "account_required",
       message: "Sign in to Rudder Account",
@@ -2212,6 +2215,19 @@ async function startLocalRudder(): Promise<void> {
         apiUrl: undefined,
       },
       identityProviders,
+    });
+    void identityRuntime.getAuthProviders().then((resolvedProviders) => {
+      if (
+        currentBootState.stage !== "account_required"
+        || identityRuntime.controller.getState().status !== "signed-out"
+      ) return;
+      updateBootState({
+        stage: "account_required",
+        message: "Sign in to Rudder Account",
+        identityProviders: resolvedProviders,
+      });
+    }).catch((error) => {
+      console.warn("[rudder-desktop] Identity provider capability refresh failed", error);
     });
     return;
   }

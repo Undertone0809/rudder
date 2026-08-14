@@ -59,6 +59,55 @@ describe("Desktop Identity client", () => {
     );
   });
 
+  it("keeps production provider choices visible when the capability probe is unavailable", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetch = vi.fn(async () => {
+      throw new Error("network unavailable");
+    });
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+      authProviderFallback: { google: true, github: true },
+    });
+
+    await expect(client.getAuthProviders()).resolves.toEqual({ google: true, github: true });
+  });
+
+  it("keeps providers visible when a health response omits capability fields", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ providers: { emailOtp: true } }), { status: 200 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+      authProviderFallback: { google: true, github: true },
+    });
+
+    await expect(client.getAuthProviders()).resolves.toEqual({ google: true, github: true });
+  });
+
+  it("uses the production fallback for an unavailable health response", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetch = vi.fn(async () => new Response("service unavailable", { status: 503 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: "https://accounts.rudderhq.dev",
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: vi.fn(() => null), write: vi.fn(), clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+      authProviderFallback: { google: true, github: true },
+    });
+
+    await expect(client.getAuthProviders()).resolves.toEqual({ google: true, github: true });
+  });
+
   it("binds account-linked telemetry assertions to the consented local user", async () => {
     const stored = {
       version: 1 as const,
