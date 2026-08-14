@@ -2389,6 +2389,7 @@ describe("runtime install helpers", () => {
     const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
     const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
     const previousArchiveUrl = process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+    const previousArchiveSha256 = process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256;
     try {
       delete process.env.RUDDER_POSTGRES_BIN_DIR;
       delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
@@ -2412,6 +2413,7 @@ describe("runtime install helpers", () => {
       });
       expect(archiveResult.status).toBe(0);
       process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = pathToFileURL(archivePath).href;
+      process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256 = createHash("sha256").update(await readFile(archivePath)).digest("hex");
       const install = (version: string) => ensureRuntimeInstalled({
         version,
         homeDir: path.join(root, "home"),
@@ -2451,6 +2453,8 @@ describe("runtime install helpers", () => {
       else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
       if (previousArchiveUrl === undefined) delete process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
       else process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = previousArchiveUrl;
+      if (previousArchiveSha256 === undefined) delete process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256;
+      else process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256 = previousArchiveSha256;
       await rm(root, { recursive: true, force: true });
     }
   });
