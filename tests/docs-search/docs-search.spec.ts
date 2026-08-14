@@ -141,6 +141,10 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await page.goto(item.route);
 
     await expect(page.getByRole("heading", { level: 1, name: item.title })).toBeVisible();
+    const updateFor = (version: string) =>
+      page.locator(`h2#${version}`).locator(
+        "xpath=ancestor::div[contains(@class, 'update-container')]",
+      );
     await expect(page.locator("h2#v0-7-7")).toBeVisible();
     await expect(page.locator('h2[id^="v0-"]')).toHaveCount(38);
     const latestUpdate = page.locator("h2#v0-7-7").locator(
@@ -155,19 +159,19 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     }
     await page.getByRole("button", { name: item.filterTag, exact: true }).click();
     await expect(page.locator("h2#v0-7-7")).toBeVisible();
-    await expect(page.locator("h2#v0-7-5")).toBeHidden();
-    await expect(page.locator("h2#v0-7-4")).toBeHidden();
-    await expect(page.locator("h2#v0-7-3")).toBeHidden();
+    await expect(updateFor("v0-7-5")).toBeHidden();
+    await expect(updateFor("v0-7-4")).toBeHidden();
+    await expect(updateFor("v0-7-3")).toBeHidden();
     await expect(page.locator("h2#v0-7-2")).toBeVisible();
 
     await page.getByRole("button", { name: item.filterTag, exact: true }).click();
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
 
     await page.getByRole("button", { name: item.statusTag, exact: true }).click();
-    await expect(page.locator("h2#v0-7-7")).toBeHidden();
-    await expect(page.locator("h2#v0-7-5")).toBeVisible();
-    await expect(page.locator("h2#v0-7-4")).toBeVisible();
-    await expect(page.locator("h2#v0-7-3")).toBeHidden();
+    await expect(updateFor("v0-7-7")).toBeHidden();
+    await expect(updateFor("v0-7-5")).toBeVisible();
+    await expect(updateFor("v0-7-4")).toBeVisible();
+    await expect(updateFor("v0-7-3")).toBeHidden();
     await page.getByRole("button", { name: item.statusTag, exact: true }).click();
 
     await page.setViewportSize({ width: 390, height: 844 });
