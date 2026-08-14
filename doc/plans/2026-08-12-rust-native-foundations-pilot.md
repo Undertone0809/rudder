@@ -38,6 +38,7 @@ commit_refs:
   - 474ae030e
   - 2a470a382
   - b707c9254
+  - 88e257044
 updated_at: 2026-08-14
 ---
 
@@ -47,40 +48,33 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The exact runtime candidate is source `b707c925434afb34f36ab2faae8a23f6a7bf26dc`
-(`main`), with a clean tracked tree and dirty fingerprint
-`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
-This candidate adds three separately committed bounded improvements: explicit
-opt-in Rust Run evidence sidecar indexing with Node fallback, streaming
-PostgreSQL payload downloads with an optional SHA-256 pin and byte ceiling, and
-cleanup of invalid native sidecars. The macOS arm64 packaged candidate was
-rebuilt from this exact SHA. `desktop:dist`, all 14 server-package checks,
-native staging/version checks, standalone server-package verification, account
+The exact runtime candidate is source `88e257044d33cbcc19feb4de65db57a82b367a16`
+(`main`), with the shared-main tracked dirty fingerprint recorded in the
+delivery packet. The exact macOS arm64 packaged candidate was rebuilt from
+this SHA. `desktop:dist`, all 14 server-package checks, native
+staging/version checks, standalone server-package verification, account
 gate/App Builder smoke, and `unzip -t` passed. The portable ZIP SHA-256 is
-`ef2c49a9b4c04a1adb8f7ff4ba522a6f75fcf78ab775cad31aea91b85e45b715`; the
+`db7c028a97dc91112ec72071ba884a787bb3629581365e1f460f3cd2df2a4ac4`; the
 shell ZIP SHA-256 is
-`48e9df42dc18f53af490982b55b16bba7cc7448162448aeaee89599c6f5162af`; the
-packaged app executable SHA-256 remains
+`cf1cdf03a843b1931fca1f6d13c629c23b8c4e850514c0347f96f934d4d7ec4b`; the
+packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9`,
 `rudder-process-host`
-`02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf`,
+`02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf`, and
 `rudder-update-helper`
-`72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b`, and
-`rudder-process-tree-sampler`
-`d8303913cc9194f2149a72da76b7e897bda45ebb80e09c739f3b2981db43081a`.
+`72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b`.
 
-The current exact-main backup diagnostic receipt is
-`/tmp/rudder-native-backup-comparator-b707-1sample.json` with receipt SHA-256
-`5c4b3026357e2a0e5e0153302ca126855e9a02bcfb69baaedcb991a19078752c`. It uses
-one paired sample, records 2/2 positive external sampler boundaries, and passes
-manifest, entry, content, and recovery parity with no temporary artifacts. It
-is explicitly `not_comparable` and cannot satisfy the 100 MiB/10,000-file
-promotion gate. The predecessor 100 MiB/10,000-file receipt remains at
-`/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json` (SHA-256
-`27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123`) but is
-source-invalidated and is retained only as historical evidence.
+The current exact-88e backup scale receipt is
+`/tmp/rudder-native-backup-comparator-88e-100m-10k.json` with receipt
+SHA-256 `f2e1cb806c2e339a9baeb84def027572ca85766f0bebc09186aec5c24af198a4`.
+It uses a 100 MiB/10,000-file fixture, one paired sample, 2/2 positive
+external sampler boundaries, and passes manifest, entry, content, and
+recovery parity. It is explicitly `not_comparable`: one sample cannot satisfy
+the declared 100-sample promotion gate, and the recorded 300-second bounded
+operation/native timeout is diagnostic configuration only. The predecessor
+100 MiB/10,000-file receipt remains source-invalidated historical evidence.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate

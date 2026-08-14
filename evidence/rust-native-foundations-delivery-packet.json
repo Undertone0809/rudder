@@ -19,13 +19,19 @@
       "不编辑 guarded doc/product/**",
       "不把缺失 native_ab/live evidence 伪装为完成"
     ],
-    "authorization": "local_integration"
+    "authorization": "implementation"
   },
   "candidate": {
     "branch": "main",
-    "source_ref": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-    "source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "source_ref": "88e257044d33cbcc19feb4de65db57a82b367a16",
+    "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+    "metadata_only_wrapper": {
+      "wrapper_ref": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "code_candidate_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
+      "runtime_paths_changed": false,
+      "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are now directly rebuilt/bound to 88e."
+    },
+    "dirty_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
     "changed_paths": [
       "desktop/scripts/smoke.mjs",
       "desktop/src/boot-preload.ts",
@@ -55,60 +61,88 @@
       "cli/src/__tests__/start.test.ts"
     ],
     "evidence": {
-      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-b707-1sample.json",
-      "backup_comparator_receipt_sha256": "5c4b3026357e2a0e5e0153302ca126855e9a02bcfb69baaedcb991a19078752c",
+      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-88e-100m-10k.json",
+      "backup_comparator_receipt_sha256": "f2e1cb806c2e339a9baeb84def027572ca85766f0bebc09186aec5c24af198a4",
       "backup_comparator_status": "not_comparable",
       "backup_comparator_sample_count": 1,
-      "backup_comparator_node_elapsed_ms": 17.001,
-      "backup_comparator_native_elapsed_ms": 31.088,
+      "backup_comparator_node_elapsed_ms": 5527.419,
+      "backup_comparator_native_elapsed_ms": 14538.114,
       "backup_comparator_sampler_positive_boundaries": "2/2",
+      "backup_comparator_sampler_mode": "external",
+      "backup_comparator_sampler_interval_ms": 5,
+      "backup_comparator_sampler_overhead_p95_ms": 0.237916,
       "backup_comparator_contract_parity": "manifest_entry_content_recovery_pass",
+      "backup_comparator_fixture_file_count": 10000,
+      "backup_comparator_fixture_byte_size": 104857600,
+      "backup_comparator_fixture_tree_sha256": "bf25e3fa6ca1fa28ac8b4fc35ef64100542a445ce0c3b2ac91306885e099777d",
+      "backup_comparator_fixture_content_sha256": "9514e8fb08d42f70d93aad9d6ceeccbd06109e65c298aa04b07cb5e8b19b6b7a",
+      "backup_comparator_native_binary_sha256": "97d0a91e0e2d77572df7283afe5f44f85a013ec3685d29d0f6e24cdeb80ac4b9",
+      "backup_comparator_native_binary_version": "rudder-native 0.7.7",
+      "backup_comparator_native_binary_target": "aarch64-apple-darwin",
+      "backup_comparator_operation_timeout_ms": 300000,
+      "backup_comparator_native_archive_timeout_ms": 300000,
       "backup_comparator_predecessor_receipt": "/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json",
       "backup_comparator_predecessor_receipt_sha256": "27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123",
-      "backup_comparator_predecessor_status": "invalidated_source_drift"
+      "backup_comparator_predecessor_status": "invalidated_source_drift",
+      "backup_comparator_prior_small_receipt": "/tmp/rudder-native-backup-comparator-88e-1sample.json",
+      "backup_comparator_prior_small_receipt_sha256": "6440d76e7bb21a4888640216351b99c5a35373ee5195800290dd1e89f567c437",
+      "backup_comparator_prior_small_status": "superseded_by_current_scale_fixture"
     },
     "build": {
-      "id": "packaged-rebuild-b707c9-0.7.7-macos-arm64",
-      "source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-      "artifact_bound_source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-      "portable_sha256": "ef2c49a9b4c04a1adb8f7ff4ba522a6f75fcf78ab775cad31aea91b85e45b715",
-      "shell_sha256": "48e9df42dc18f53af490982b55b16bba7cc7448162448aeaee89599c6f5162af",
+      "id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
+      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "artifact_bound_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "portable_sha256": "db7c028a97dc91112ec72071ba884a787bb3629581365e1f460f3cd2df2a4ac4",
+      "shell_sha256": "cf1cdf03a843b1931fca1f6d13c629c23b8c4e850514c0347f96f934d4d7ec4b",
+      "server_package_sha256": "b529f9af73d28ef1fee9117009d6add967d2130225b7dca12805261281173046",
       "native_sha256": {
-        "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
         "rudder-native": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
-        "rudder-update-helper": "72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b",
-        "rudder-process-tree-sampler": "d8303913cc9194f2149a72da76b7e897bda45ebb80e09c739f3b2981db43081a"
+        "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
+        "rudder-update-helper": "72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b"
       },
       "version": "0.7.7",
       "version_sources": {
         "cargo_workspace": "native/Cargo.toml [workspace.package].version",
         "cargo_lock": "native/Cargo.lock first-party workspace package entries",
-        "javascript": ["desktop/package.json", "server/package.json", "cli/package.json", "packages/shared/package.json"],
-        "staged_binaries": ["rudder-native --version", "rudder-process-host --version", "rudder-update-helper --version"],
+        "javascript": [
+          "desktop/package.json",
+          "server/package.json",
+          "cli/package.json",
+          "packages/shared/package.json"
+        ],
+        "staged_binaries": [
+          "rudder-native --version",
+          "rudder-process-host --version",
+          "rudder-update-helper --version"
+        ],
         "release_tag": "not_present_for_unreleased_0.7.7_candidate"
       }
     },
     "runtime": {
-      "id": "packaged-runtime-b707c9-macos-arm64-0.7.7",
-      "source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-      "artifact_bound_source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
+      "id": "packaged-runtime-88e257-macos-arm64-0.7.7",
+      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "artifact_bound_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
-      "account_gate_smoke": "PASS_packaged_account_gate_b707c9",
-      "server_package_verification": "PASS_packaged_server_b707c9",
-      "app_builder_smoke": "PASS_packaged_app_builder_b707c9",
-      "zip_integrity": "PASS_unzip_test_b707c9",
+      "account_gate_smoke": "PASS_packaged_account_gate_88e257",
+      "server_package_verification": "PASS_packaged_server_88e257",
+      "app_builder_smoke": "PASS_packaged_app_builder_88e257",
+      "zip_integrity": "PASS_unzip_test_88e257",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator fixture with tree SHA 1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22 and content SHA 0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13; native_ab summary producer (six rows, live campaign blocked)",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator fixture with tree SHA bf25e3fa6ca1fa28ac8b4fc35ef64100542a445ce0c3b2ac91306885e099777d and content SHA 9514e8fb08d42f70d93aad9d6ceeccbd06109e65c298aa04b07cb5e8b19b6b7a; native_ab summary producer (six rows, live campaign blocked)",
     "post_receipt_fix": {
-      "source_commits": ["97a28e80b", "21271318c", "44e875564", "1a76ec93e", "474ae030e", "2a470a382", "b707c9254"],
-      "summary": "Rebuilt exact main after the opt-in run-evidence sidecar integration, bounded PostgreSQL payload download, and invalid-sidecar cleanup; synchronized all first-party Rust package and Cargo.lock versions to the normal product version.",
-      "validation": "Current b707 diagnostic comparator passed manifest/entry/content/recovery parity with 2/2 positive external sampler boundaries and is explicitly not_comparable at one sample; the predecessor 100 MiB/10,000-file receipt remains source-invalidated and is retained only as historical evidence."
+      "source_commits": [
+        "7df802c81",
+        "1e9002df5",
+        "88e257044"
+      ],
+      "summary": "Rebuilt the exact 88e candidate and reran the scale fixture after the archive entry-overhead fix; the packaged artifact is directly bound to 88e and all first-party Rust package versions remain synchronized at 0.7.7.",
+      "validation": "The current 100 MiB/10,000-file one-sample comparator passed manifest/entry/content/recovery parity with 2/2 positive external sampler boundaries and is explicitly not_comparable; the 100-sample promotion gate remains unclaimed."
     },
     "budget_lease": {
       "id": "turn-2026-08-13",
@@ -143,32 +177,33 @@
   "receipts": {
     "reviewer": {
       "verdict": "needs_more_evidence",
-      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-      "build_id": "packaged-rebuild-b707c9-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-b707c9-macos-arm64-0.7.7",
+      "candidate_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2"
+      "packet_version": "2",
+      "reason": "Direct 88e packaged proof and current 100 MiB/10,000-file one-sample parity/recovery are current, but the scale receipt is not_comparable and hosted Local App dogfood/live native_ab evidence remain unavailable."
     },
     "verifier": {
       "verdict": "QUESTION",
-      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-      "build_id": "packaged-rebuild-b707c9-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-b707c9-macos-arm64-0.7.7",
+      "candidate_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Exact b707 packaged candidate and one-sample diagnostic comparator are current, but the required 100 MiB/10,000-file current comparator, authorized hosted fixture, seven-day/100-cycle dogfood, and live native_ab evidence remain unavailable; diagnostic metrics are descriptive not_comparable."
+      "reason": "Direct 88e packaged acceptance passes and the current scale fixture has parity/recovery PASS, but one sample cannot satisfy the 100-sample promotion gate; authorized hosted Local App dogfood and live native_ab remain unavailable."
     },
     "final_review": {
-      "verdict": "needs_more_evidence",
-      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
-      "build_id": "packaged-rebuild-b707c9-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-b707c9-macos-arm64-0.7.7",
+      "verdict": "pending",
+      "candidate_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Exact b707 packaged evidence is current, but reviewer verdict is needs_more_evidence and hosted dogfood/live native_ab remain unavailable, so final acceptance cannot pass."
+      "reason": "Final review is pending a fresh reviewer/verifier reconciliation; hosted dogfood and native_ab blockers still prevent acceptance."
     }
   },
   "drift": {
@@ -201,7 +236,7 @@
       {
         "type": "candidate_refreshed_after_stale_receipt",
         "before_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "after_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
+        "after_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
         "reason": "Exact 0.7.7 packaged receipts, synchronized Rust package versions, and the fresh 100 MiB/10,000-file comparator are now bound to the current candidate; unresolved hosted dogfood and live native_ab evidence keep the delivery blocked."
       },
       {
@@ -215,9 +250,19 @@
         "before_source_sha": "53c5f9be85888c76e205bdd6e476017ca650ff4b",
         "after_source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
         "reason": "Added the explicit opt-in Run evidence sidecar index, bounded PostgreSQL payload download, and invalid-sidecar cleanup as separate commits; predecessor packaged and comparator receipts were invalidated and rebuilt or marked diagnostic for b707."
+      },
+      {
+        "type": "candidate_refreshed_after_direct_88e_packaging_and_scale_receipt",
+        "before_source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
+        "after_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+        "reason": "The exact 88e packaged artifact and current 100 MiB/10,000-file one-sample comparator are now bound to the direct candidate; prior b707 receipts are historical, while hosted dogfood/live native_ab remain unavailable."
       }
     ],
-    "invalidated_receipts": ["reviewer", "verifier", "final_review"]
+    "invalidated_receipts": [
+      "reviewer",
+      "verifier",
+      "final_review"
+    ]
   },
   "integration": {
     "authorized": true,
@@ -227,7 +272,7 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
     "branch_refs": [
-      "b707c925434afb34f36ab2faae8a23f6a7bf26dc"
+      "88e257044d33cbcc19feb4de65db57a82b367a16"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-integration-a3",
@@ -237,11 +282,17 @@
       "attempted": true,
       "succeeded": true,
       "observed_old_sha": "53c5f9be85888c76e205bdd6e476017ca650ff4b",
-      "delivered_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc"
+      "delivered_sha": "88e257044d33cbcc19feb4de65db57a82b367a16"
     },
     "cas_history": [
-      { "expected_old_sha": "53c5f9be85888c76e205bdd6e476017ca650ff4b", "delivered_sha": "2a470a382aab5a0001a428610efd31c03895a5e4" },
-      { "expected_old_sha": "2a470a382aab5a0001a428610efd31c03895a5e4", "delivered_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc" }
+      {
+        "expected_old_sha": "53c5f9be85888c76e205bdd6e476017ca650ff4b",
+        "delivered_sha": "2a470a382aab5a0001a428610efd31c03895a5e4"
+      },
+      {
+        "expected_old_sha": "2a470a382aab5a0001a428610efd31c03895a5e4",
+        "delivered_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc"
+      }
     ],
     "index_update_mode": "none"
   },
@@ -268,10 +319,10 @@
     "delivered_tree_sha": null,
     "timestamp": null,
     "proof": [
-    "predecessor 6c363bf8 packaged/comparator receipts are source-invalidated; exact b707 packaged artifact is rebuilt and version-checked, while the current one-sample comparator is diagnostic not_comparable",
-      "exact b707 packaged acceptance passed desktop:dist, all 14 server-package checks, native staging/version checks, standalone server-package verification, and ZIP integrity",
-    "hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
-    "terminal delivered_ref/delivered_sha/delivered_tree_sha/timestamp intentionally remain null because status=blocked: verifier is QUESTION, reviewer needs_more_evidence, hosted dogfood/native_ab are absent, and index_preserved=false"
+      "The exact 88e candidate is directly packaged and version-checked on macOS arm64; the portable/shell/server/native hashes are recorded above.",
+      "The current 100 MiB/10,000-file one-sample comparator passes manifest/entry/content/recovery parity with positive external sampler boundaries; its status is explicitly not_comparable and no promotion metric is claimed.",
+      "Authorized hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent; terminal delivery remains blocked.",
+      "Shared main dirty/index state remains preserved outside the isolated candidate worktree."
     ]
   }
 }
