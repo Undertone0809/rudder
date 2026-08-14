@@ -1285,20 +1285,23 @@ Experiment, Observation, artifact, registry, API, report, and Dashboard flow.
 
 ### Current `rudder-evals` gap and implementation work
 
-The 2026-08-12 inspection of `rudder-evals` found zero `native_ab` occurrences
-outside these proposal/plan artifacts. The inspected worktree was not an
-immutable candidate (`HEAD 1b2a23b` plus an uncommitted Rust rewrite), so these
-facts are a gap inventory, not an acceptance lease:
+The native_ab foundation is now implemented in the separate `rudder-evals`
+worktree by commits `208cd50` (fail-closed mode/flat native observation
+ingest) and `96216c2` (completed Packet V2 validation at registry ingest).
+That worktree passed `cargo fmt --check`, 66 Rust tests with one ignored test,
+release validation, and an 8/8 offline routing rehearsal. These are foundation
+and rehearsal receipts only: no live three-trial native_ab campaign has been
+run, so none of them is promotion evidence.
 
 | Required stage | Current state | Required work |
 | --- | --- | --- |
-| native case/cohort definitions | missing | add lifecycle, workspace-integrity, pressure, and protected-regression schemas/cases |
-| isolated/counterbalanced runner | missing | start two exact-source Rudder instances, verify effective flags/health, randomize recorded arm order, and tear down exact roots |
-| immutable packet identity | partial | add baseline/product/bundle/Node/Rust binary/protocol/capability, instance/org/data/workspace, arm-order, metric-distribution, and correctness identities |
-| native-aware ingestor | missing | accept `native_ab` explicitly and fail closed; unknown mode must never downgrade to `probe_preflight` |
-| registry model | partial | persist native campaign/arm/trial metrics and comparable/not-comparable reasons without changing product-pass counts |
-| API and artifacts | present generically | prove native campaign, observations, reports, artifacts, and `/static-dashboard` route round-trip |
-| Dashboard comparison | partial | replace hard-coded `c0`/`c5` assumptions with `node_baseline`/`rust_candidate`; show correctness, process-tree RSS, latency distribution, package cost, and failures |
+| native case/cohort definitions | partial | complete lifecycle, workspace-integrity, pressure, and protected-regression live cases |
+| isolated/counterbalanced runner | partial | run two exact-source Rudder instances, verify effective flags/health, randomize arm order, and tear down exact roots |
+| immutable packet identity | implemented | seal baseline/product/bundle/Node/Rust binary/protocol/capability, instance/org/data/workspace, arm-order, metric-distribution, and correctness identities |
+| native-aware ingestor | implemented | `native_ab` is explicit and unknown/unsupported modes fail closed |
+| registry model | implemented | native campaign/arm/trial metrics and comparable/not-comparable reasons remain separate from product-pass counts |
+| API and artifacts | rehearsal-verified | native packet -> registry -> API/Dashboard round-trip passes offline; live campaign proof remains pending |
+| Dashboard comparison | implemented | flat imported native observations render in the native comparison path; final three-trial live evidence remains pending |
 
 Implement this in dependency order:
 
