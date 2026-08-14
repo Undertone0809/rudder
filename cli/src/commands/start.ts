@@ -8,6 +8,7 @@ import path from "node:path";
 import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import pc from "picocolors";
+import { parseChecksumFile } from "../checksum-manifest.js";
 import { resolveRudderHomeDir } from "../config/home.js";
 import {
   DEFAULT_DESKTOP_RELEASE_REPO,
@@ -41,6 +42,7 @@ export {
   type DesktopDownloadSource
 } from "../desktop-download.js";
 export type { GithubReleaseAsset } from "../desktop-download.js";
+export { parseChecksumFile } from "../checksum-manifest.js";
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 
@@ -719,24 +721,6 @@ function checksumForFile(filePath: string): string {
   const hash = createHash("sha256");
   hash.update(readFileSync(filePath));
   return hash.digest("hex");
-}
-
-export function parseChecksumFile(contents: string): Map<string, string> {
-  const checksums = new Map<string, string>();
-  for (const [index, line] of contents.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue;
-    const match = line.match(/^([a-fA-F0-9]{64})[ \t]+\*?(\S+)[ \t]*$/);
-    if (!match) {
-      throw new Error(`Invalid SHA-256 checksum manifest line ${index + 1}.`);
-    }
-    const assetName = match[2];
-    if (checksums.has(assetName)) {
-      throw new Error(`Duplicate SHA-256 checksum manifest entry for ${assetName}.`);
-    }
-    checksums.set(assetName, match[1].toLowerCase());
-  }
-  if (checksums.size === 0) throw new Error("Desktop release checksum manifest is empty.");
-  return checksums;
 }
 
 export function resolveAssetChecksum(checksums: Map<string, string>, assetName: string): string {
