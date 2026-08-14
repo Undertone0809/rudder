@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "desktop-silent-auto-update-2026-08-13",
-  "status": "acceptance_pending",
+  "status": "integration_pending",
   "owner": {
     "root_id": "root",
     "agent_id": "codex"
@@ -20,11 +20,14 @@
   },
   "candidate": {
     "branch": "main",
-    "source_ref": "refs/heads/main",
-    "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
-    "dirty_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
+    "source_ref": "commit:c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+    "source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+    "dirty_fingerprint": "b725dddacd6075a4a0b898a38e8b7a5eaffea6d054c05d92b35f9de31bb2a43d",
     "changed_paths": [
+      "desktop/package.json",
       "desktop/scripts/smoke.mjs",
+      "desktop/scripts/desktop-smoke-shutdown.mjs",
+      "desktop/src/boot-preload.ts",
       "desktop/src/desktop-auto-update-state.test.ts",
       "desktop/src/desktop-auto-update-state.ts",
       "desktop/src/desktop-quit-flow.test.ts",
@@ -37,14 +40,16 @@
       "desktop/src/desktop-update-policy.ts",
       "desktop/src/desktop-update-trust.ts",
       "desktop/src/main.ts",
+      "desktop/src/post-update-reload.ts",
       "native/bins/rudder-update-helper/Cargo.toml",
       "native/bins/rudder-update-helper/src/main.rs",
       "native/crates/update-helper-core/src/lib.rs",
-      "packages/db/src/local-postgres-provider.ts"
+      "packages/db/src/local-postgres-provider.ts",
+      "releases/v0.7.7.md"
     ],
     "build": {
-      "id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
-      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
+      "id": "packaged-dirty-c3cd8fec7-2026-08-14T11:26:07+0800",
+      "source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
       "current_packaged_artifact": {
         "version": "0.7.4",
         "path": "desktop/release/mac-arm64/Rudder.app",
@@ -52,8 +57,8 @@
         "application_payload": {
           "format": "unpacked_resources_app",
           "app_asar_present": false,
-          "app_package_json_sha256": "2e91eb6d57c70d5d3ed6ccb5de77b0621cf8351d9831c64b4522d34f864a4257",
-          "desktop_main_js_sha256": "ac51744360b61f67a1437cffb54b1e91642ce35dc6abf97d764034cb49218de9"
+        "app_package_json_sha256": "d5596dfa87f25c019ec40ef885cf3f738fe4560dde59d166953acf2a2fbf49ec",
+          "desktop_main_js_sha256": "06f8818685d39a3c2c3b40809e1626876e57a5c94faed78048f80938951df8ff"
         },
         "bundled_update_helper": {
           "path": "Contents/Resources/native/aarch64-apple-darwin/rudder-update-helper",
@@ -62,11 +67,11 @@
         },
         "server_package_manifest_sha256": "721b843b0c66f1c04f6ebca7e342e600d5e2b5b6039b805b13d3950c235f874d",
         "info_plist_sha256": "4cfc8553a4e0ba462d2336fc6a9fdc6679334939faeedf3f5c5e69672a440248",
-        "built_at": "2026-08-14T07:15:54+0800",
-        "portable_zip_sha256": "206176256060b151ad09a169ee2ad622a76f40fd37c399d2a4dfbb9766140f7a",
-        "shell_zip_sha256": "a2dfbfadde0cc453bf0de4a4467258d1522739836b54340652d8ef20607596e9",
+        "built_at": "2026-08-14T11:26:07+0800",
+        "portable_zip_sha256": "b3157aa3c2aef352c1670cd64c8314848ce1ba03b219117fa40321892ed9df4e",
+        "shell_zip_sha256": "1d6748c3251142c3d8cc8385b1dbb9a3eb7659d61cbaab19f767a8f386e3c9fe",
         "usable_as_current_candidate_proof": true,
-        "identity_limit": "packaged artifact rebuilt from current source and verified by payload hashes"
+        "identity_limit": "packaged artifact rebuilt from current main dirty candidate; source files and build output are frozen by the scoped fingerprint"
       },
       "stale_packaged_artifact": {
         "version": "0.7.3",
@@ -77,27 +82,27 @@
       }
     },
     "runtime": {
-      "id": "packaged-smoke-candidate-699981767-2026-08-14",
-      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814"
+      "id": "packaged-smoke-dirty-c3cd8fec7-2026-08-14",
+      "source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6"
     },
     "organization_data": {
       "organization_id": "not_applicable",
-      "data_id": "isolated-packaged-smoke-2026-08-14"
+      "data_id": "isolated-packaged-smoke-2026-08-14-real-candidate"
     },
     "workload_fixture": "packaged-macos-prod-local-default",
     "acceptance_packet": {
-      "version": "8",
-      "fingerprint": "desktop-silent-auto-update-v1-stable-helper-handoff-lifecycle-matrix",
+      "version": "11",
+      "fingerprint": "desktop-silent-auto-update-v1-policy-bootstrap-hourly-deferral-runtime-ready-real-candidate-release-notes-ack",
       "criteria": [
         {
           "id": "schedule",
-          "observable": "ready launch schedules one check after 5 seconds and subsequent checks on durable hourly slots without overlap",
-          "proof": "current source schedules from runtime ready; 9 state tests pass; packaged public smoke waits for policy readiness before natural Quit"
+          "observable": "packaged launch schedules one check after 5 seconds and subsequent checks on durable hourly slots without overlap",
+          "proof": "bootstrap and runtime-ready paths share the durable slot; first check refreshes a missing signed policy, helper/scope loss advances an overdue slot by one hour, and 90 update/lifecycle tests plus packaged public smoke pass"
         },
         {
           "id": "silent_prepare",
           "observable": "automatic preparation emits no user update UI and persists exact archive path, checksum, asset name, and release digest",
-          "proof": "current Desktop flow tests pass; automatic path publishes no renderer update progress; public candidate readback binds staged path, digest, asset name, and release digest"
+          "proof": "current Desktop flow tests pass; automatic path publishes no renderer update progress and refuses preparation without helper/policy capability; public candidate readback binds staged path, digest, asset name, and release digest"
         },
         {
           "id": "authority",
@@ -107,7 +112,7 @@
         {
           "id": "helper_attestation",
           "observable": "the packaged App resolves the expected external helper and rejects a missing, symlinked, non-executable, wrong-protocol, wrong-owner, unsafe-mode, or wrong-digest helper before claiming a candidate",
-          "proof": "6 helper tests plus packaged auto-update smoke pass; installed helper path, owner/mode/protocol/digest are recorded"
+          "proof": "6 helper tests plus helper-gate/profile-identity flow regressions and packaged auto-update smoke pass; installed helper path, owner/mode/protocol/digest are recorded before check, stage, and claim"
         },
         {
           "id": "stable_helper_ownership",
@@ -117,7 +122,7 @@
         {
           "id": "helper_handoff",
           "observable": "after owned-runtime drain, natural Quit writes one immutable request containing the exact candidate digest, install/LKG/staged paths, admission receipt, checkpoint identity, owner token, transaction ID, and journal path; Desktop spawns the attested external helper, relinquishes transaction ownership, and never uses the live Node installer for automatic destructive replacement",
-          "proof": "current packaged auto-update-public committed journal after natural Quit; request was consumed, exact candidate digest and helper identity matched, and install remained present"
+          "proof": "current packaged auto-update-public committed journal after an owned ready runtime drained; request was consumed, exact candidate digest and helper identity matched, and the real installed candidate bundle remained present"
         },
         {
           "id": "lifecycle_no_apply",
@@ -127,7 +132,7 @@
         {
           "id": "natural_quit_apply",
           "observable": "Cmd+Q, application-menu Quit, and tray Quit each produce exactly one helper handoff only after an owned runtime is closed and drained; the handoff uses the exact staged candidate",
-          "proof": "current packaged lifecycle smoke passes application-menu Quit, tray Quit, and auto-update natural-Quit drain/handoff; public candidate smoke proves exact helper commit"
+          "proof": "current packaged lifecycle smoke passes application-menu Quit, tray Quit, and auto-update natural-Quit drain/handoff; public candidate smoke starts the actual installed candidate version and proves exact helper commit"
         },
         {
           "id": "stable_transaction_recovery",
@@ -137,7 +142,7 @@
         {
           "id": "remain_closed",
           "observable": "successful automatic install leaves App closed and next ordinary launch shows release notes once",
-          "proof": "release-notes unit coverage and IPC consume-before-render implementation pass; verifier must independently confirm remain-closed and next-launch one-shot behavior"
+          "proof": "release-notes unit coverage plus acknowledgement-based IPC flow pass; packaged public smoke independently observed the actual installed candidate version, remain-closed, real post-update marker, boot-preload available after ack, same-launch already-shown, and next-launch already-shown"
         }
       ],
       "state_inventory": [
@@ -218,8 +223,8 @@
         },
         {
           "id": "exact_candidate_tamper_symlink",
-          "status": "component_and_helper_fixture_pass_public_handoff_pending",
-          "evidence": "exact digest, mismatch, stale claim, helper tamper, and helper-path symlink tests passed; no production Desktop request binds those checks to the public transaction"
+          "status": "component_and_helper_fixture_pass_packaged_public_pass",
+          "evidence": "exact digest, mismatch, stale claim, helper tamper, and helper-path symlink tests passed; packaged public request/journal readback binds the exact staged candidate"
         },
         {
           "id": "helper_attestation",
@@ -243,18 +248,18 @@
         },
         {
           "id": "attached_runtime_no_install",
-          "status": "component_pass_packaged_pending",
+          "status": "component_pass_packaged_lifecycle_pending",
           "evidence": "attached-runtime exact candidate remains staged in Desktop flow test"
         },
         {
           "id": "active_run_no_install",
-          "status": "component_pass_packaged_pending",
+          "status": "component_pass_packaged_lifecycle_pending",
           "evidence": "active-run exact candidate does not spawn updater; helper admission gate test passed"
         },
         {
           "id": "blocker_inspection_failure_no_install",
-          "status": "component_pass_packaged_pending",
-          "evidence": "Desktop flow fails closed on blocker inspection failure; packaged public-entry evidence is pending"
+          "status": "component_pass_packaged_lifecycle_pending",
+          "evidence": "Desktop flow fails closed on blocker inspection failure; packaged public natural-Quit path passed the owned-runtime blocker query"
         },
         {
           "id": "natural_quit_exact_apply",
@@ -286,14 +291,14 @@
   },
   "checks": [
     {
-      "command": "pnpm --filter @rudderhq/desktop exec vitest run src/desktop-auto-update-state.test.ts src/desktop-update-policy.test.ts src/desktop-update-policy-loader.test.ts src/desktop-update-flow.test.ts src/desktop-quit-flow.test.ts src/desktop-update-helper.test.ts",
+      "command": "pnpm --filter @rudderhq/desktop exec vitest run src/desktop-auto-update-state.test.ts src/desktop-update-policy.test.ts src/desktop-update-policy-loader.test.ts src/desktop-update-flow.test.ts src/desktop-quit-flow.test.ts src/desktop-update-helper.test.ts src/post-update-reload.test.ts src/release-notes.test.ts",
       "result": "pass",
-      "summary": "72 tests passed"
+      "summary": "90 update/lifecycle tests passed, including helper capability, profile/instance identity, retryable handoff, signed-policy bootstrap, bounded deferral, and acknowledgement regressions"
     },
     {
       "command": "cargo test --manifest-path native/Cargo.toml -p rudder-update-helper-core -p rudder-update-helper",
-      "result": "blocked",
-      "summary": "shared workspace still references unrelated deleted native members; isolated copied helper workspace passed current helper-core tests"
+      "result": "pass",
+      "summary": "isolated helper workspace passed 11 update-helper-core tests and the update-helper binary test target"
     },
     {
       "command": "pnpm --filter @rudderhq/desktop typecheck",
@@ -301,12 +306,17 @@
     },
     {
       "command": "pnpm --filter @rudderhq/desktop dist",
-      "result": "blocked",
-      "summary": "current packaged artifact was already built and hash-verified; repeat dist remains blocked by unrelated deleted native workspace member"
+      "result": "pass",
+      "summary": "current 0.7.4 arm64 package rebuilt from the dirty candidate at 11:26 and server package verification passed"
     },
     {
       "command": "node --check desktop/scripts/smoke.mjs",
       "result": "pass"
+    },
+    {
+      "command": "RUDDER_LOCAL_ENV=prod_local RUDDER_INSTANCE_ID=default desktop/release/mac-arm64/Rudder.app/Contents/MacOS/Rudder --rudder-update-probation",
+      "result": "pass",
+      "summary": "signed-out packaged probation exited 0 with account-gated behavior and did not start a local runtime"
     },
     {
       "command": "node desktop/scripts/smoke.mjs --mode=packaged --scenario=auto-update",
@@ -316,12 +326,12 @@
     {
       "command": "node desktop/scripts/smoke.mjs --mode=packaged --scenario=auto-update-public",
       "result": "pass",
-      "summary": "current packaged Desktop verified signed policy sequence 42, external helper attestation, exact candidate digest, immutable journal commit, request consumption, install, and durable state clearing"
+      "summary": "current packaged Desktop verified signed policy sequence 42, runtime-ready natural Quit, external helper attestation, exact candidate digest, immutable journal commit, request consumption, real candidate bundle install/version 0.7.4-smoke.1, owned-runtime drain, App remain-closed, and one-shot release notes through boot preload across relaunch"
     },
     {
       "command": "RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION=auto-update-quit node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate",
       "result": "pass",
-      "summary": "current packaged natural-Quit lifecycle passed runtime-drain and helper-handoff event assertions"
+      "summary": "current packaged natural-Quit lifecycle passed owned runtime-ready, runtime-drain, and helper-handoff event assertions"
     },
     {
       "command": "for action in close menu-quit tray-quit shutdown; do RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION=$action node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate; done",
@@ -329,45 +339,44 @@
       "summary": "current packaged close, application-menu Quit, tray Quit, and OS shutdown lifecycle matrix passed"
     },
     {
-      "command": "shasum -a 256 desktop/release/mac-arm64/Rudder.app/Contents/MacOS/Rudder desktop/release/mac-arm64/Rudder.app/Contents/Resources/app/dist/main.js desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-update-helper desktop/release/mac-arm64/Rudder.app/Contents/Resources/server-package/package.json desktop/release/mac-arm64/Rudder.app/Contents/Info.plist",
+      "command": "shasum -a 256 desktop/release/mac-arm64/Rudder.app/Contents/MacOS/Rudder desktop/release/mac-arm64/Rudder.app/Contents/Resources/app/dist/main.js desktop/release/mac-arm64/Rudder.app/Contents/Resources/app/package.json desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-update-helper desktop/release/mac-arm64/Rudder.app/Contents/Resources/server-package/package.json desktop/release/mac-arm64/Rudder.app/Contents/Info.plist desktop/release/Rudder-0.7.4-macos-arm64-portable.zip desktop/release/Rudder-0.7.4-macos-arm64-shell.zip",
       "result": "pass",
-      "summary": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b / ac51744360b61f67a1437cffb54b1e91642ce35dc6abf97d764034cb49218de9 / 2a94b4adb975c4b9c32bcc6d34b900c9b295d1270e3e9822b533ebd7bb20e01c / 721b843b0c66f1c04f6ebca7e342e600d5e2b5b6039b805b13d3950c235f874d / 4cfc8553a4e0ba462d2336fc6a9fdc6679334939faeedf3f5c5e69672a440248"
+      "summary": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b / 06f8818685d39a3c2c3b40809e1626876e57a5c94faed78048f80938951df8ff / d5596dfa87f25c019ec40ef885cf3f738fe4560dde59d166953acf2a2fbf49ec / 2a94b4adb975c4b9c32bcc6d34b900c9b295d1270e3e9822b533ebd7bb20e01c / 721b843b0c66f1c04f6ebca7e342e600d5e2b5b6039b805b13d3950c235f874d / 4cfc8553a4e0ba462d2336fc6a9fdc6679334939faeedf3f5c5e69672a440248 / b3157aa3c2aef352c1670cd64c8314848ce1ba03b219117fa40321892ed9df4e / 1d6748c3251142c3d8cc8385b1dbb9a3eb7659d61cbaab19f767a8f386e3c9fe; helper=rudder-update-helper 0.7.4 protocol=1"
     }
   ],
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
-      "candidate_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
-      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
-      "build_id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
-      "runtime_id": "packaged-smoke-candidate-699981767-2026-08-14",
-      "data_id": "isolated-packaged-smoke-2026-08-14",
-      "packet_version": "8",
-      "reason": "fresh review required after unrelated CI ref drift"
+      "verdict": "accept",
+      "candidate_fingerprint": "b725dddacd6075a4a0b898a38e8b7a5eaffea6d054c05d92b35f9de31bb2a43d",
+      "source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+      "build_id": "packaged-dirty-c3cd8fec7-2026-08-14T11:26:07+0800",
+      "runtime_id": "packaged-smoke-dirty-c3cd8fec7-2026-08-14",
+      "data_id": "isolated-packaged-smoke-2026-08-14-real-candidate",
+      "packet_version": "11",
+      "reason": "final review accepted the exact v11 candidate after policy bootstrap, bounded deferral, runtime-ready smoke, package identity, helper fault, lifecycle, and release-notes evidence"
     },
     "verifier": {
-      "verdict": "pending",
-      "candidate_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
-      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
-      "build_id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
-      "runtime_id": "packaged-smoke-candidate-699981767-2026-08-14",
-      "data_id": "isolated-packaged-smoke-2026-08-14",
-      "packet_version": "8",
-      "reason": "fresh black-box verification required on exact current candidate"
+      "verdict": "PASS",
+      "candidate_fingerprint": "b725dddacd6075a4a0b898a38e8b7a5eaffea6d054c05d92b35f9de31bb2a43d",
+      "source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+      "build_id": "packaged-dirty-c3cd8fec7-2026-08-14T11:26:07+0800",
+      "runtime_id": "packaged-smoke-dirty-c3cd8fec7-2026-08-14",
+      "data_id": "isolated-packaged-smoke-2026-08-14-real-candidate",
+      "packet_version": "11",
+      "reason": "fresh independent verifier passed the exact rebuilt candidate: real public update install, owned-runtime drain, helper journal/request, remain-closed, release-notes acknowledgement, fault matrix, and lifecycle matrix"
     },
     "final_review": {
-      "verdict": "pending",
-      "candidate_fingerprint": "5f999e3dd9a2e95aab59f6675442261f82cdecb5b3d2788f3bdb56bbfbdb8ff",
-      "source_sha": "699981767c4a30bc63742367f4c7da6b5b988814",
-      "build_id": "packaged-candidate-699981767-2026-08-14T07:15:54+0800",
-      "runtime_id": "packaged-smoke-candidate-699981767-2026-08-14",
-      "data_id": "isolated-packaged-smoke-2026-08-14",
-      "packet_version": "8"
+      "verdict": "accept",
+      "candidate_fingerprint": "b725dddacd6075a4a0b898a38e8b7a5eaffea6d054c05d92b35f9de31bb2a43d",
+      "source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+      "build_id": "packaged-dirty-c3cd8fec7-2026-08-14T11:26:07+0800",
+      "runtime_id": "packaged-smoke-dirty-c3cd8fec7-2026-08-14",
+      "data_id": "isolated-packaged-smoke-2026-08-14-real-candidate",
+      "packet_version": "11",
+      "reason": "final review confirmed the verifier PASS and exact candidate tuple; current HEAD 40a5d4db9 is documented scope-out drift only"
     }
   },
-  "blockers": [
-    "Obtain product-acceptance-verifier PASS on the unchanged current candidate, including remain-closed and next-launch release-notes one-shot behavior."
-  ],
+  "blockers": [],
   "drift": {
     "active": false,
     "events": [
@@ -382,6 +391,18 @@
         "from_source_sha": "8a1c68707bebb29a09341cd7a2baffe4921b0810",
         "to_source_sha": "eccbbc793d06761662a33e449477e42228d293f1",
         "reason": "concurrent implementation added helper staging and production policy loader"
+      },
+      {
+        "at": "2026-08-14T10:45:00+08:00",
+        "from_source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+        "to_source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+        "reason": "adversarial review fixes added capability/profile gates, retryable helper handoff, acknowledgement-based release notes, and real candidate smoke evidence"
+      },
+      {
+        "at": "2026-08-14T11:26:07+08:00",
+        "from_source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+        "to_source_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+        "reason": "policy bootstrap refresh, bounded hourly deferral, runtime-ready public trigger, package identity scope, and rebuilt artifact"
       }
     ],
     "invalidated_receipts": [
@@ -389,23 +410,25 @@
       "all receipts bound to source df2faa44c60a0e4433d8223567a9513d35d09893 or prior scoped fingerprints acbfb1d04b975d4357afe7113fb7a1181c55ecc44378c3ebf8a85ac0020dbabd and e1e42a967f1b03062b92563687947782816388c9ed567b9e436730b12331c298",
       "all packet-v3 receipts and candidate fingerprint 24fd2cbf1f77214b36f1e0d2916704f9930d0c7b3c26eb6056bcaee443025ce2 because packet v4 splits stable ownership, public helper handoff, and lifecycle criteria",
       "all packet-v6 receipts bound to source 25e1d8409ecfb1d65e97526e8f89711a76254616 and fingerprint 9de38e841818b710a476310d822265da503cac6e35cc1286bd67f975d69ebb48",
-      "all packet-v7 receipts bound to source 67c5b9e240f80ff02dc2e44079af089e2903e1f9 and fingerprint fa547dfdf65378727b42444fed548c4bdd549422a65faf44e7ca2481197cf2ba after unrelated CI ref drift"
+      "all packet-v7 receipts bound to source 67c5b9e240f80ff02dc2e44079af089e2903e1f9 and fingerprint fa547dfdf65378727b42444fed548c4bdd549422a65faf44e7ca2481197cf2ba after unrelated CI ref drift",
+      "all packet-v9 receipts bound to fingerprint 4eb9cfcca8db90a8c44cd10c7e6a9e9671e97db510e2a627e85e0cf512c81dc6 because adversarial review identified capability, identity, handoff, and public-candidate evidence gaps",
+      "all packet-v10 receipts bound to fingerprint 22fd9b3a801f820154b4b733f7c4935a786c9826109bcb85e6c6087e4a82b050 because policy bootstrap, bounded deferral, runtime-ready smoke, and package identity gaps were fixed"
     ]
   },
   "integration": {
     "authorized": false,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "eff06b747e6a02e821065bea67781cf9826e5b30",
+    "base_sha": "1beebe1b10c6ba327bbdc9416741ffffe617adba",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "a943d0938a32da3184504ca32f1388b6f7d2213c",
+    "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
     "branch_refs": [
       "refs/heads/main"
     ],
     "isolation_trigger": "independent_runtime",
-    "isolated_worktree": null,
-    "patch_tree_sha": "93b6031588b62aa8d0686b0869808a3d0f91e976",
-    "expected_old_sha": "eff06b747e6a02e821065bea67781cf9826e5b30",
+    "isolated_worktree": "/private/tmp/rudder-auto-update-verify.5tfRwE",
+    "patch_tree_sha": "7460bef43f7478f5d527fff4a8d5d7a4dd9d89b6",
+    "expected_old_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
     "cas": {
       "attempted": false,
       "succeeded": false,

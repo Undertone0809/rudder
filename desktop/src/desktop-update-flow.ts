@@ -27,12 +27,12 @@ import {
 import {
   attestExternalDesktopUpdateHelper,
   handoffDesktopUpdateToExternalHelper,
-  spawnDesktopUpdateHelper,
-  writeDesktopUpdateHelperRequest,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
   readDesktopUpdateJournal,
   resolveDesktopUpdateTransactionPaths,
+  spawnDesktopUpdateHelper,
+  writeDesktopUpdateHelperRequest,
   type DesktopUpdateHelperRequest
 } from "./desktop-update-helper.js";
 import {
@@ -172,7 +172,35 @@ export function createDesktopUpdateFlow(context: {
   let startupUpdateNoticeShown = false;
   let automaticUpdateTimer: NodeJS.Timeout | null = null;
   let automaticCheckInFlight: Promise<void> | null = null;
-  let pendingAutomaticHelperHandoff: { requestPath: string; helperPath: string } | null = null;
+  let pendingAutomaticHelperHandoff: { requestPath: string; helperPath: string; transactionId: string } | null = null;
+
+  function automaticRuntimeIdentity(): { profile: string | null; instanceId: string | null } {
+    const runtime = context.getBootState()?.runtime ?? {};
+    return {
+      profile: typeof runtime.localEnv === "string"
+        ? runtime.localEnv
+        : (process.env.RUDDER_LOCAL_ENV?.trim() || null),
+      instanceId: typeof runtime.instanceId === "string"
+        ? runtime.instanceId
+        : (process.env.RUDDER_INSTANCE_ID?.trim() || null),
+    };
+  }
+
+  function automaticUpdateScopeAllowed(): boolean {
+    if (!app.isPackaged || platform !== "darwin" || context.isAutomaticUpdateAllowed?.() === false) return false;
+    const identity = automaticRuntimeIdentity();
+    return identity.profile === "prod_local" && identity.instanceId === "default";
+  }
+
+  function automaticUpdatePrerequisitesAvailable(): boolean {
+    return automaticUpdateScopeAllowed()
+      && context.hasExternalUpdateHelperCapability?.() === true;
+  }
+
+  function automaticUpdateCapabilityAvailable(): boolean {
+    return automaticUpdatePrerequisitesAvailable()
+      && context.hasSignedUpdatePolicyCapability?.() === true;
+  }
 
   function autoUpdateStatePath(): string {
     return resolveDesktopAutoUpdateStatePath(context.getUserDataPath?.() ?? app.getPath("userData"));
@@ -203,7 +231,7 @@ export function createDesktopUpdateFlow(context: {
       if (!targetPath) return;
       appendFileSync(path.resolve(targetPath), `${JSON.stringify({ event: "auto-update-claim-trace", at: new Date().toISOString(), ...details })}\n`, "utf8");
     };
-    if (!app.isPackaged || platform !== "darwin" || context.isAutomaticUpdateAllowed?.() === false) {
+    if (!automaticUpdateScopeAllowed()) {
       trace({ blocked: "platform_or_permission" });
       return "continue";
     }
@@ -232,13 +260,13 @@ export function createDesktopUpdateFlow(context: {
       execPath: process.execPath,
       installPath: context.getUpdateInstallPath?.(),
     });
-    const requestPath = `${transactionPaths.journalPath}.request.json`;
+    const existingRequestPath = `${transactionPaths.journalPath}.request.json`;
     if (candidate.status === "claimed" && !journal) {
       // A claimed transaction may already be owned by a detached helper. Never
       // mint a new owner token or spawn a second destructive transaction.
-      if (existsSync(requestPath)) {
-        if (isDesktopUpdateRequestFresh(requestPath)) return "continue";
-        const quarantinedPath = quarantineDesktopUpdateRequest(requestPath);
+      if (existsSync(existingRequestPath)) {
+        if (isDesktopUpdateRequestFresh(existingRequestPath)) return "continue";
+        const quarantinedPath = quarantineDesktopUpdateRequest(existingRequestPath);
         console.warn("[rudder-desktop] automatic update blocked: stale claimed request quarantined", quarantinedPath);
         writeAutomaticState({
           ...state,
@@ -266,7 +294,19 @@ export function createDesktopUpdateFlow(context: {
       writeAutomaticState(clearAutomaticCandidate(state, candidate.updateId));
       return "continue";
     }
-    if (candidate.platform !== platform || candidate.arch !== process.arch) { trace({ blocked: "runtime_identity" }); return "continue"; }
+    const runtimeIdentity = automaticRuntimeIdentity();
+    if (candidate.platform !== platform || candidate.arch !== process.arch
+      || candidate.profile !== runtimeIdentity.profile
+      || candidate.instanceId !== runtimeIdentity.instanceId) {
+      trace({
+        blocked: "runtime_identity",
+        candidateProfile: candidate.profile,
+        candidateInstanceId: candidate.instanceId,
+        runtimeProfile: runtimeIdentity.profile,
+        runtimeInstanceId: runtimeIdentity.instanceId,
+      });
+      return "continue";
+    }
     if (candidate.installId !== automaticInstallId()) { trace({ blocked: "install_identity", expected: automaticInstallId(), actual: candidate.installId }); return "continue"; }
     if (!hasExactStagedAutomaticArtifact(candidate)) {
       console.warn("[rudder-desktop] automatic update deferred: staged artifact proof is missing or invalid");
@@ -361,17 +401,18 @@ export function createDesktopUpdateFlow(context: {
       generation: state.generation + 1,
       candidate: { ...candidate, status: "claimed", generation: state.generation + 1 },
     });
+    let requestPath: string | null = null;
     try {
       if (options.deferHandoff) {
-        const requestPath = writeDesktopUpdateHelperRequest(request);
-        pendingAutomaticHelperHandoff = { requestPath, helperPath: effectiveHelper.path };
+        requestPath = writeDesktopUpdateHelperRequest(request);
+        pendingAutomaticHelperHandoff = { requestPath, helperPath: effectiveHelper.path, transactionId };
         return "continue";
       }
       handoffDesktopUpdateToExternalHelper({ request, helperPath: effectiveHelper.path });
       return "continue";
     } catch (error) {
       clearPendingPostUpdateReloadMarker(candidate.updateId);
-      rmSync(requestPath, { force: true });
+      if (requestPath) rmSync(requestPath, { force: true });
       const current = readAutomaticState();
       if (current.candidate?.updateId === candidate.updateId) {
         writeAutomaticState({ ...current, candidate: { ...candidate, status: "staged", generation: current.generation + 1 } });
@@ -389,10 +430,32 @@ export function createDesktopUpdateFlow(context: {
     const pending = pendingAutomaticHelperHandoff;
     pendingAutomaticHelperHandoff = null;
     if (!pending) return "continue";
+    const restoreStagedCandidate = (reason: unknown) => {
+      try {
+        rmSync(pending.requestPath, { force: true });
+        const state = readAutomaticState();
+        if (state.candidate?.updateId !== pending.transactionId || state.candidate.status !== "claimed") return;
+        clearPendingPostUpdateReloadMarker(pending.transactionId);
+        writeAutomaticState({
+          ...state,
+          generation: state.generation + 1,
+          candidate: { ...state.candidate, status: "staged", generation: state.generation + 1 },
+        });
+        console.warn("[rudder-desktop] automatic update helper handoff failed; candidate returned to staged", reason);
+      } catch (restoreError) {
+        console.error("[rudder-desktop] automatic update helper handoff recovery failed", restoreError);
+      }
+    };
     try {
-      spawnDesktopUpdateHelper(pending);
+      const child = spawnDesktopUpdateHelper(pending);
+      child.once("error", restoreStagedCandidate);
+      child.once("exit", (code) => {
+        if (code !== 0 && !readDesktopUpdateJournal(context.getUserDataPath?.() ?? app.getPath("userData"), pending.transactionId)) {
+          restoreStagedCandidate(new Error(`helper exited with code ${code ?? "unknown"}`));
+        }
+      });
     } catch (error) {
-      console.warn("[rudder-desktop] automatic update helper handoff failed after runtime drain", error);
+      restoreStagedCandidate(error);
     }
     return "continue";
   }
@@ -403,6 +466,7 @@ export function createDesktopUpdateFlow(context: {
       !app.isPackaged
       || platform !== "darwin"
       || context.isAutomaticUpdateAllowed?.() === false
+      || context.hasExternalUpdateHelperCapability?.() !== true
     ) return;
     let state = readAutomaticState();
     const now = new Date();
@@ -419,8 +483,24 @@ export function createDesktopUpdateFlow(context: {
     automaticUpdateTimer.unref?.();
   }
 
+  function deferAutomaticUpdateCheck(): void {
+    const state = readAutomaticState();
+    const now = new Date();
+    const nextAt = state.nextCheckAt ? Date.parse(state.nextCheckAt) : Number.NaN;
+    if (!Number.isFinite(nextAt) || nextAt <= now.getTime()) {
+      writeAutomaticState({
+        ...state,
+        nextCheckAt: new Date(now.getTime() + DESKTOP_AUTO_UPDATE_INTERVAL_MS).toISOString(),
+      });
+    }
+    scheduleAutomaticUpdateCheck();
+  }
+
   async function prepareAutomaticUpdate(version: string, channel: DesktopUpdateChannel): Promise<void> {
-    if (context.hasSignedUpdatePolicyCapability?.() !== true) return;
+    if (!automaticUpdateCapabilityAvailable()) {
+      console.warn("[rudder-desktop] automatic update preparation deferred: capability or scope is unavailable");
+      return;
+    }
     if (context.isSignedUpdateVersionAuthorized && !context.isSignedUpdateVersionAuthorized(version)) {
       console.warn("[rudder-desktop] automatic update deferred: version is absent from the signed release policy");
       return;
@@ -521,6 +601,10 @@ export function createDesktopUpdateFlow(context: {
   async function runAutomaticUpdateCheck(): Promise<void> {
     if (automaticCheckInFlight) return automaticCheckInFlight;
     automaticCheckInFlight = (async () => {
+      if (!automaticUpdatePrerequisitesAvailable()) {
+        deferAutomaticUpdateCheck();
+        return;
+      }
       const now = new Date();
       let state = readAutomaticState();
       // A staged or claimed candidate is already the durable transaction for

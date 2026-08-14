@@ -214,8 +214,14 @@ export function createDesktopSmokeShutdownRegistry(options = {}) {
     async close(electronApp) {
       const target = targets.get(electronApp);
       if (!target) throw new Error("Desktop smoke must retain the launched instance shutdown target");
-      await closeTarget({ electronApp, ...target });
-      targets.delete(electronApp);
+      try {
+        await closeTarget({ electronApp, ...target });
+      } finally {
+        // closeTarget performs the force-close and residue probes itself. Do
+        // not retain an already-attempted target for drain after Playwright
+        // has disposed its Electron connection.
+        targets.delete(electronApp);
+      }
     },
     get size() {
       return targets.size;

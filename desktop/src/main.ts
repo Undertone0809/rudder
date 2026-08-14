@@ -482,7 +482,7 @@ function scheduleLifecycleSmokeAction(): void {
       } catch {
         // Keep polling until the packaged bootstrap has created the state.
       }
-      if (acceptedPolicySequence >= 42 || Date.now() >= deadline) {
+      if ((acceptedPolicySequence >= 42 && currentBootState.stage === "ready") || Date.now() >= deadline) {
         writeLifecycleSmokeEvent("auto-update-policy-ready", {
           acceptedPolicySequence,
           statePath,
@@ -672,6 +672,7 @@ let pendingDesktopNavigationPath: string | null = null;
 let lastKnownAppUrl: string | null = null;
 let rendererRecoveryInFlight = false;
 let externalServerRuntimeCacheDir: string | null = null;
+let releaseNotesPresentedVersion: string | null = null;
 let deferredUpdatePromptRendererReady = false;
 const pendingDeferredUpdatePrompts = new Map<string, {
   resolve: (decision: DeferredUpdatePromptDecision | null) => void;
@@ -2324,9 +2325,9 @@ async function startLocalRudder(): Promise<void> {
           apiUrl: baseUrl,
         },
       });
-      // The silent updater's initial five-second slot is anchored to a usable
-      // Desktop launch, not merely Electron's boot window. This also prevents
-      // policy/download work from racing local runtime ownership or migrations.
+      // Keep the bootstrap-anchored silent-update timer active after the local
+      // runtime is ready; policy/download work still runs through its durable
+      // slot and never races runtime ownership or migrations.
       scheduleAutomaticUpdateCheck();
       if (desktopSkipAppLoad()) {
         if (desktopDebugEnabled()) {
@@ -2638,6 +2639,9 @@ function registerIpc(): void {
   ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
   ipcMain.handle("desktop:get-release-notes", async (): Promise<DesktopReleaseNotesResult> => {
     const version = resolveRudderAppVersion();
+    if (releaseNotesPresentedVersion === version) {
+      return { status: "already-shown" };
+    }
     const statePath = resolveReleaseNotesStatePath(app.getPath("userData"));
     const updatedAfterInstall = latestPostUpdateReloadMarker?.targetVersion === version;
     if (!shouldShowReleaseNotes({ statePath, version, updatedAfterInstall })) {
@@ -2656,21 +2660,20 @@ function registerIpc(): void {
       clearPostUpdateReloadMarker(app.getPath("userData"));
       return { status: "unavailable" };
     }
-    // Consume the one-shot release-note entitlement before handing the notes
-    // to the renderer. A renderer crash or force quit after this IPC response
-    // must not make the next launch show the same notes again.
-    markReleaseNotesShown({
-      version,
-      statePath,
-    });
-    clearPostUpdateReloadMarker(app.getPath("userData"));
+    // Reserve the entitlement for this process so repeated renderer mounts do
+    // not duplicate the dialog. Durable consumption happens only after the
+    // renderer acknowledges the notes, allowing a crash to retry on next boot.
+    releaseNotesPresentedVersion = version;
     return { status: "available", notes };
   });
   ipcMain.handle("desktop:mark-release-notes-shown", async (_event, version: string) => {
+    if (typeof version !== "string" || version.trim().length === 0) return;
     markReleaseNotesShown({
       version,
       statePath: resolveReleaseNotesStatePath(app.getPath("userData")),
     });
+    releaseNotesPresentedVersion = null;
+    clearPostUpdateReloadMarker(app.getPath("userData"));
   });
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
@@ -3187,6 +3190,16 @@ async function runAutomaticUpdateProbation(): Promise<void> {
   const probationVersionChannel = "desktop:get-app-version";
   try {
     const profile = applyDesktopEnvironment();
+    initializeDesktopIdentity(profile.instanceId);
+    if (desktopIdentityRuntime?.accountRequired
+      && desktopIdentityRuntime.controller.getState().status !== "signed-in") {
+      // A signed-out installation cannot safely start or migrate the local
+      // workspace during a hidden replacement probe. The normal boot will
+      // enforce the account gate after the candidate is installed.
+      process.stdout.write("rudder-update-probation account-gated\n");
+      app.exit(0);
+      return;
+    }
     const serverModule = await importServerModule();
     handle = await serverModule.startManagedLocalServer({
       ownerKind: "desktop",
