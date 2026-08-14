@@ -13447,6 +13447,17 @@ describe("messengerService and issue follows", () => {
     await messengerSvc.assignThreadToCustomGroup(orgId, userId, group.id, `saved-view:${grouped.id}`);
 
     await expect(messengerSvc.deleteCustomGroup(orgId, userId, group.id)).resolves.toMatchObject({ id: group.id });
+    expect(await db.select().from(activityLog).where(and(
+      eq(activityLog.action, "messenger.custom_group_removed"),
+      eq(activityLog.entityId, group.id),
+    ))).toMatchObject([{
+      orgId,
+      actorType: "user",
+      actorId: userId,
+      entityType: "messenger_custom_group",
+      entityId: group.id,
+      details: { source: "group_delete" },
+    }]);
     const groupedRemovalEvents = await db
       .select()
       .from(activityLog)

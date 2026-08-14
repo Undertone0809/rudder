@@ -36,7 +36,7 @@ async function availablePort() {
 }
 
 test("repairs an already-claimed Canary workspace before Messenger renders", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-account-upgrade-e2e-"));
   const instanceId = "account-upgrade";
   const instanceRoot = path.join(homeDir, "instances", instanceId);
@@ -99,6 +99,7 @@ test("repairs an already-claimed Canary workspace before Messenger renders", asy
     "RUDDER_CONFIG",
     "RUDDER_INSTANCE_ID",
     "RUDDER_LOCAL_ENV",
+    "RUDDER_EMBEDDED_POSTGRES_PORT",
     "RUDDER_UI_DEV_MIDDLEWARE",
   ] as const;
   const priorEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -106,6 +107,7 @@ test("repairs an already-claimed Canary workspace before Messenger renders", asy
   process.env.RUDDER_CONFIG = configPath;
   process.env.RUDDER_INSTANCE_ID = instanceId;
   process.env.RUDDER_LOCAL_ENV = "e2e-account-upgrade";
+  process.env.RUDDER_EMBEDDED_POSTGRES_PORT = String(dbPort);
   process.env.RUDDER_UI_DEV_MIDDLEWARE = "true";
 
   const started = await startServer({
@@ -277,6 +279,28 @@ test("repairs an already-claimed Canary workspace before Messenger renders", asy
     await expect(
       page.getByRole("button", { name: "Recovered priority", exact: true }),
     ).toBeVisible();
+
+    const recoveredGroup = page.getByRole("button", { name: "Recovered priority", exact: true });
+    await recoveredGroup.hover();
+    await page.getByRole("button", { name: "Group actions" }).click();
+    await page.getByRole("menuitem", { name: "Separate items" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Separate items" }).click();
+    await expect(recoveredGroup).toHaveCount(0);
+
+    const restartClaim = await page.request.post(`${started.apiUrl}/api/auth/local-claim`, {
+      headers: {
+        cookie: cookieHeader!.split(";")[0]!,
+        origin: started.apiUrl,
+      },
+    });
+    expect(restartClaim.ok()).toBe(true);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Recovered priority", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Previously read history/ })).toBeVisible();
+    await page.screenshot({
+      path: path.join(os.tmpdir(), "rudder-custom-group-removed-after-restart.png"),
+      fullPage: true,
+    });
   } finally {
     await db.$client.end({ timeout: 5 }).catch(() => undefined);
     await started.stop();
