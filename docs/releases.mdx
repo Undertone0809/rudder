@@ -18,6 +18,29 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="August 14, 2026" description="v0.7.7" tags={["New","Improved","Fixed"]}>
+
+## v0.7.7
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.7)
+
+This release adds safer silent Desktop updates and faster first-run downloads for mainland-China users through a COS mirror with GitHub fallback.
+
+### New
+
+- Added silent packaged Desktop updates that download in the background and install after a natural app quit, with one-shot release notes on the next launch.
+
+### Improved
+
+- Desktop update transactions now verify the signed update policy, exact staged candidate, and recovery helper before replacement.
+- Desktop downloads can use the mainland-China release mirror when it is available, while retaining GitHub fallback and SHA-256 verification.
+
+### Fixed
+
+- Prevented window close, resident hide, and operating-system shutdown from applying a staged update unexpectedly.
+
+</Update>
+
 <Update label="August 14, 2026" description="v0.7.6" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.6
