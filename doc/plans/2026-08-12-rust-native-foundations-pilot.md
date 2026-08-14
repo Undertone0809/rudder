@@ -48,16 +48,17 @@ commit_refs:
   - dd88ffaca
   - bfab54182
   - d30138587
-updated_at: 2026-08-14
+  - 2b4a25c13
+updated_at: 2026-08-15
 ---
 
 # Rust Native Foundations Pilot
 
 ## Executive Decision
 
-### Continuation status (2026-08-14)
+### Continuation status (2026-08-15)
 
-The current main wrapper is `d30138587a4265f2af498bb175ce24a96fd8b600`.
+The current main wrapper is `2b4a25c13a07798c6f4f4bb097aadc6dd2c6630b`.
 Its native/runtime paths are unchanged from the clean packaged source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the wrapper contains only
 metadata and unrelated descendant changes. The exact macOS arm64 packaged
