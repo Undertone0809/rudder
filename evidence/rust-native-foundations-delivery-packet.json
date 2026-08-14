@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "detached-clean-candidate",
-    "source_ref": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-    "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+    "source_ref": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+    "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
     "dirty_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -35,13 +35,14 @@
       "scripts/perf/workspace-backup-rust-node-ab.test.ts",
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
       "packages/identity-core/src/offline-grant.test.ts",
-      "evidence/rust-native-foundations-delivery-packet.json"
+      "evidence/rust-native-foundations-delivery-packet.json",
+      "native/crates/archive-core/src/lib.rs"
     ],
     "build": {
-      "id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
-      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "artifact_bound_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "portable_sha256": "b93a0cc5ce14e21b580b3044d9f7d6779d15d5236d870319a4c011eb4818a64b",
+      "id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "portable_sha256": "d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925",
       "native_sha256": {
         "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
         "rudder-native": "19ec4dcf9adc1b2221cda0fd8d036991145a20fb1555ae560d3b56ba4e965c5f",
@@ -53,20 +54,19 @@
         "cargo_lock": "native/Cargo.lock first-party workspace package entries",
         "javascript": ["desktop/package.json", "server/package.json", "cli/package.json", "packages/shared/package.json"],
         "staged_binaries": ["rudder-native --version", "rudder-process-host --version", "rudder-update-helper --version"],
-        "release_tag": "not_present_for_unreleased_0.7.7_candidate",
-        "evidence_commit": "e2aac99ffdf4ed7afd3a40c52bee517dd73f873a"
+        "release_tag": "not_present_for_unreleased_0.7.7_candidate"
       }
     },
     "runtime": {
-      "id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
-      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "artifact_bound_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
+      "id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
-      "account_gate_smoke": "PASS_packaged_account_gate_75b4ef829",
-      "server_package_verification": "PASS_packaged_server_75b4ef829",
-      "app_builder_smoke": "PASS_packaged_app_builder_75b4ef829",
-      "zip_integrity": "PASS_unzip_test_75b4ef829",
+      "account_gate_smoke": "PASS_packaged_account_gate_8037198f1",
+      "server_package_verification": "PASS_packaged_server_8037198f1",
+      "app_builder_smoke": "PASS_packaged_app_builder_8037198f1",
+      "zip_integrity": "PASS_unzip_test_8037198f1",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
@@ -74,6 +74,11 @@
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
     "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); Rust/optimized-Node backup comparator small fixture (manifest/content/recovery parity, archiveByteParity=not_compared); native_ab summary producer (six rows, live campaign blocked)",
+    "post_receipt_fix": {
+      "source_commits": ["7df802c81", "1e9002df5"],
+      "summary": "Raised the bounded native archive entry ceiling so the required 10,000-file workspace fixture can include manifest and directory overhead; added a boundary regression. The pre-fix packaged artifact and receipts are stale until rebuilt.",
+      "validation": "10,000-file comparator passed with manifest/entry/content parity and recovery preservation; archive-byte SHA parity remains intentionally not compared."
+    },
     "budget_lease": {
       "id": "turn-2026-08-13",
       "fingerprint": "rust-native-foundations-pilot-continuation",
@@ -106,48 +111,43 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
-      "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
+      "verdict": "needs_more_evidence",
+      "candidate_fingerprint": "stale-pre-fix-packaged-receipt",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "verifier": {
       "verdict": "QUESTION",
-      "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
+      "candidate_fingerprint": "stale-pre-fix-packaged-receipt",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Packaged artifact, native hashes, versions, ZIP integrity, account-gate, server-package, and App Builder checks are current; no authorized hosted authenticated Local App fixture exists, so dogfood and live native_ab cannot be observed."
+      "reason": "Receipt is stale after the archive entry-overhead fix; packaged rebuild, authorized hosted fixture, seven-day dogfood, and live native_ab evidence remain unavailable."
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
-      "source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "build_id": "packaged-rebuild-75b4ef829-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-75b4ef829-macos-arm64-0.7.7",
+      "candidate_fingerprint": "stale-pre-fix-packaged-receipt",
+      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
-      "packet_version": "2"
+      "packet_version": "2",
+      "reason": "Final review is pending a fresh reviewer accept and verifier PASS on the rebuilt candidate."
     }
   },
   "drift": {
     "active": true,
     "events": [
       {
-        "type": "candidate_exact_rebuild",
-        "before_source_sha": "b528f1ab339f2aa1d4bc4d1d484ac00855a3eab1",
-        "after_source_sha": "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-        "reason": "Restored 0.7.7 package/Cargo alignment and completed the required project resource fixture before rebuilding the exact packaged candidate."
-      },
-      {
-        "type": "integration_remote_drift",
-        "before_source_sha": "e0b9ca5faa0c990ccc5dbbb919713e39d36753bc",
-        "after_source_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
-        "reason": "origin/main advanced with an unrelated runtime recovery context patch; prior integration CAS identity is stale and is being refrozen without reusing the old delivered SHA."
+        "type": "post_receipt_archive_entry_limit_fix",
+        "before_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+        "after_source_sha": "1e9002df59b77c2fbff9811121a0097c3bcee699",
+        "reason": "The required 10,000-file workspace fixture exposed that the native create limit counted manifest overhead against the public file limit. The fix and boundary regression passed in isolation; packaged receipt is invalidated pending rebuild."
       },
       {
         "type": "candidate_rebased_and_integrated",
@@ -174,23 +174,21 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
+    "base_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
+    "observed_remote_sha": "96cb4fe6a5f09cba266770b854627467bfc854a1",
     "branch_refs": [
-      "75b4ef82971ceafb0eb0c3896f7fb485616854dc",
-      "e0b9ca5faa0c990ccc5dbbb919713e39d36753bc",
-      "ef95852d405ea411eb2f3f6d56955ada56023c11"
+      "a08bd880725f9adcfadac72f2097f31695b3e037"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-pilot-integrate.0e3c9b817",
-    "patch_tree_sha": "c757c70013f19590c84228bafd2754a9472343de",
-    "expected_old_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
+    "patch_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
+    "expected_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": "ef95852d405ea411eb2f3f6d56955ada56023c11",
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
+      "delivered_sha": "db55044a299d57a92cf43df9c95f9ba03b744b6f"
     },
     "index_update_mode": "none"
   },

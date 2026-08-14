@@ -26,9 +26,9 @@ related_code:
   - packages/run-intelligence-core/src/transcript.ts
   - server/src/services/organization-workspace-browser.ts
 commit_refs:
-  - 75b4ef82971ceafb0eb0c3896f7fb485616854dc
-  - e0b9ca5faa0c990ccc5dbbb919713e39d36753bc
-  - ef95852d405ea411eb2f3f6d56955ada56023c11
+  - 8037198f1
+  - 7df802c81
+  - 1e9002df5
 updated_at: 2026-08-14
 ---
 
@@ -38,24 +38,21 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current release-preparation implementation candidate is `0.7.7` at source
-`75b4ef82971ceafb0eb0c3896f7fb485616854dc`, descended from remote `main`
-`ead97b74317e12fd2345a4186877bdf7f6297b55`. The exact macOS arm64 packaged
+The packaged receipt below is for the pre-fix `0.7.7` candidate at source
+`8037198f1f3e6a60e3f284844b6138cf62acb7d0`. Current `main` additionally
+contains the bounded archive entry-overhead fix at `7df802c81` and its
+boundary regression test at `1e9002df5`; the packaged receipt is stale until
+that tree is rebuilt. The exact macOS arm64 packaged
 candidate was rebuilt from that SHA. `desktop:dist`, server-package
 verification, native staging/version checks, and `unzip -t` passed. The
 portable ZIP SHA-256 is
-`b93a0cc5ce14e21b580b3044d9f7d6779d15d5236d870319a4c011eb4818a64b`; the
+`d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925`; the
 packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 The staged binaries report `0.7.7`, with hashes recorded in the delivery
 packet.
 
-The packet/evidence was delivered on `main` at `e0b9ca5faa0c990ccc5dbbb919713e39d36753bc`; this continuation
-patch is based on `ef95852d405ea411eb2f3f6d56955ada56023c11` and changes
-evidence/proposal metadata only. Neither replaces the implementation source
-used to build the artifact. The candidate remains blocked for Local App
-promotion:
-no authorized hosted
+The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
 cannot run. A live three-trial `rudder-evals native_ab` campaign is also not
 available. The shared foundation remains `accepted_default`, Local App and

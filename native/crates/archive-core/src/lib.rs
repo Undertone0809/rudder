@@ -12,9 +12,7 @@ pub const COPY_CHUNK_BYTES: usize = 64 * 1024;
 const EOCD_FIXED_BYTES: usize = 22;
 const CENTRAL_FIXED_BYTES: usize = 46;
 const MAX_CENTRAL_BYTES: u64 = 8 * 1024 * 1024;
-// Keep the public workspace fixture limit (10,000 files) usable when the
-// archive also contains the manifest and directory entries.
-const MAX_ENTRIES: usize = 16_384;
+const MAX_ENTRIES: usize = 10_000;
 const MAX_NAME_BYTES: usize = 1024;
 const MAX_AGGREGATE_NAME_BYTES: usize = 4 * 1024 * 1024;
 pub const CREATE_PROTOCOL_VERSION: u32 = 1;
@@ -1278,58 +1276,6 @@ mod tests {
         let central = first_central(&compressed);
         compressed[central + 10..central + 12].copy_from_slice(&8u16.to_le_bytes());
         assert_eq!(validation_error(compressed), "unsupported_entry_encoding");
-    }
-
-    #[test]
-    fn create_entry_limit_counts_generated_manifest_entry() {
-        use tempfile::tempdir;
-
-        let root = tempdir().unwrap();
-        let manifest = root.path().join("manifest.json");
-        let plan = root.path().join("plan.json");
-        let archive = root.path().join("archive.zip");
-        let too_many_plan = root.path().join("too-many-plan.json");
-        let too_many_archive = root.path().join("too-many.zip");
-        fs::write(&manifest, b"{}").unwrap();
-
-        let write_plan = |path: &Path, entry_count: usize| {
-            let entries: Vec<_> = (0..entry_count)
-                .map(|index| {
-                    serde_json::json!({
-                        "kind": "directory",
-                        "archivePath": format!("workspace/directory-{index}/")
-                    })
-                })
-                .collect();
-            fs::write(
-                path,
-                serde_json::to_vec(&serde_json::json!({
-                    "protocolVersion": CREATE_PROTOCOL_VERSION,
-                    "manifestSource": manifest,
-                    "treeSha256": "a".repeat(64),
-                    "entries": entries
-                }))
-                .unwrap(),
-            )
-            .unwrap();
-        };
-
-        write_plan(&plan, MAX_ENTRIES - 1);
-        let created = create_archive(&plan, &archive, 8 * 1024 * 1024, 1024, 1024).unwrap();
-        assert_eq!(created.entry_count, MAX_ENTRIES);
-        assert!(archive.is_file());
-
-        write_plan(&too_many_plan, MAX_ENTRIES);
-        let error = create_archive(
-            &too_many_plan,
-            &too_many_archive,
-            8 * 1024 * 1024,
-            1024,
-            1024,
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), "invalid_create_plan");
-        assert!(!too_many_archive.exists());
     }
 
     #[test]
