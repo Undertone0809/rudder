@@ -243,9 +243,10 @@
     "delivered_tree_sha": null,
     "timestamp": null,
     "proof": [
-      "prior packaged receipt is superseded by candidate refresh to 1a76ec93ee97dc0cdbee955a0718658cb511be50",
+    "prior packaged receipt is superseded by candidate refresh to 6c363bf822088f47508db4228e5e3665e75c88b1",
       "current 0.7.7 packaged artifact and exact 100 MiB/10,000-file comparator are rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
-      "local main integration completed via isolated merge worktree and CAS to f54acd8940136a174135f4044bc2856a9947dee4; shared dirty paths were not rewritten, but index preservation is inconclusive after Git status refresh"
+    "local main integration completed via isolated merge worktree and CAS to f54acd8940136a174135f4044bc2856a9947dee4; final refs/heads/main metadata ref is 8c24ba1819cab08e36ad2c8d92215c404f28bf1e",
+    "terminal delivered_ref/delivered_sha/delivered_tree_sha/timestamp intentionally remain null because status=blocked: verifier is QUESTION, hosted dogfood/native_ab are absent, and index_preserved=false after the Git status refresh"
     ]
   }
 }
