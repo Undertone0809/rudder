@@ -34,6 +34,7 @@ commit_refs:
   - 97a28e80b
   - 0691c3850
   - 0d30c8acb
+  - 6c363bf82
 updated_at: 2026-08-14
 ---
 
@@ -43,15 +44,15 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The exact candidate is source `1a76ec93ee97dc0cdbee955a0718658cb511be50`
+The exact runtime candidate is source `6c363bf822088f47508db4228e5e3665e75c88b1`
 (`codex/rust-native-foundations-integration`), with a clean tracked tree and
 dirty fingerprint `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
 The macOS arm64 packaged candidate was rebuilt from that SHA. `desktop:dist`,
 server-package verification, native staging/version checks, account-gate and
 App Builder smoke, and `unzip -t` passed. The portable ZIP SHA-256 is
-`a3ee6f72fee4c2e3a8b64d10df60f955715cc79081662c1269842a01200c3d72`; the
+`a9b5196ca23fbb30b553774a95e68ed8f7a77469284d02bd8dd69d346a0a2678`; the
 shell ZIP SHA-256 is
-`01f3248e7097fe078d4a3680a983d8eae1bf8e055487eba14e570fd502f498c1`; the
+`80582aeda625f59241f9cf9c580e00708931e2e124c7e77196ad3bd76ff39363`; the
 packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 Staged first-party Rust binaries report `0.7.7`: `rudder-native`

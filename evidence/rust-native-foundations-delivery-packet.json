@@ -23,8 +23,8 @@
   },
   "candidate": {
     "branch": "codex/rust-native-foundations-integration",
-    "source_ref": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-    "source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
+    "source_ref": "6c363bf822088f47508db4228e5e3665e75c88b1",
+    "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "desktop/scripts/app-builder-smoke.mjs",
@@ -39,11 +39,11 @@
       "native/crates/archive-core/src/lib.rs"
     ],
     "build": {
-      "id": "packaged-rebuild-1a76ec93e-0.7.7-macos-arm64",
-      "source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-      "artifact_bound_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-      "portable_sha256": "a3ee6f72fee4c2e3a8b64d10df60f955715cc79081662c1269842a01200c3d72",
-      "shell_sha256": "01f3248e7097fe078d4a3680a983d8eae1bf8e055487eba14e570fd502f498c1",
+      "id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "artifact_bound_source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "portable_sha256": "a9b5196ca23fbb30b553774a95e68ed8f7a77469284d02bd8dd69d346a0a2678",
+      "shell_sha256": "80582aeda625f59241f9cf9c580e00708931e2e124c7e77196ad3bd76ff39363",
       "native_sha256": {
         "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
         "rudder-native": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
@@ -60,15 +60,15 @@
       }
     },
     "runtime": {
-      "id": "packaged-runtime-1a76ec93e-macos-arm64-0.7.7",
-      "source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-      "artifact_bound_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
+      "id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "artifact_bound_source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
-      "account_gate_smoke": "PASS_packaged_account_gate_1a76ec93e",
-      "server_package_verification": "PASS_packaged_server_1a76ec93e",
-      "app_builder_smoke": "PASS_packaged_app_builder_1a76ec93e",
-      "zip_integrity": "PASS_unzip_test_1a76ec93e",
+      "account_gate_smoke": "PASS_packaged_account_gate_6c363bf8",
+      "server_package_verification": "PASS_packaged_server_6c363bf8",
+      "app_builder_smoke": "PASS_packaged_app_builder_6c363bf8",
+      "zip_integrity": "PASS_unzip_test_6c363bf8",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
@@ -115,18 +115,18 @@
     "reviewer": {
       "verdict": "needs_more_evidence",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-      "build_id": "packaged-rebuild-1a76ec93e-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-1a76ec93e-macos-arm64-0.7.7",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "verifier": {
       "verdict": "QUESTION",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-      "build_id": "packaged-rebuild-1a76ec93e-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-1a76ec93e-macos-arm64-0.7.7",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
       "reason": "Exact packaged candidate and 100 MiB/10,000-file comparator are current, but authorized hosted fixture, seven-day/100-cycle dogfood, and live native_ab evidence remain unavailable; comparator metrics are descriptive not_comparable."
@@ -134,9 +134,9 @@
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
-      "build_id": "packaged-rebuild-1a76ec93e-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-1a76ec93e-macos-arm64-0.7.7",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
       "reason": "Final review is pending reviewer disposition and verifier terminal evidence for the exact candidate; missing hosted dogfood and live native_ab keep the packet blocked."
