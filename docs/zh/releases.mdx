@@ -18,41 +18,15 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
-<Update label="2026年8月14日" description="v0.7.6" tags={["问题修复"]}>
+<Update label="2026年8月14日" description="v0.7.6" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.6
 
 [GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.6)
 
-这个补丁恢复了通过公开 CLI 安装 Windows Desktop 的能力。
+这个版本新增实验性 Computer Use 和 Plugin V1，为 Agent 提供更清晰的人工协助与恢复路径，改善 Chat、Goal、运行记录和 Issue 时间线，并修复 macOS Desktop 启动和 Windows Desktop 安装的关键问题。
 
-### 问题修复
-
-- 修复 Windows 便携版 Desktop 安装器使用盘符绝对路径时解压失败的问题。
-
-</Update>
-
-<Update label="2026年8月14日" description="v0.7.5" tags={["问题修复"]}>
-
-## v0.7.5
-
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.5)
-
-这个补丁提升了 macOS Desktop 的启动可靠性。
-
-### 问题修复
-
-- 修复打包后的 macOS Desktop 可能在窗口打开前意外退出的问题。
-
-</Update>
-
-<Update label="2026年8月13日" description="v0.7.4" tags={["新功能","改进","问题修复"]}>
-
-## v0.7.4
-
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.4)
-
-这个版本新增实验性 Computer Use 和 Plugin V1，为 Agent 提供更清晰的人工协助与恢复路径，并改善 Chat、Goal、运行记录和 Issue 时间线的连续性。
+v0.7.6 已替代 v0.7.4 和 v0.7.5，是所有用户当前应安装的版本。
 
 ### 新功能
 
@@ -75,6 +49,36 @@ npx @rudderhq/cli@latest start
 - 修复流式回复期间 Chat 输入框闪烁，以及窄屏 Side Panel 的部分状态问题。
 - 修复求助卡片和审批卡片显示与决策类型不匹配操作的问题。
 - 修复加载 Issue 时间线历史时出现活动缺失或重复的问题。
+- 修复打包后的 macOS Desktop 可能在窗口打开前意外退出的问题。
+- 修复 Windows 便携版 Desktop 安装器使用盘符绝对路径时解压失败的问题。
+
+</Update>
+
+<Update label="2026年8月14日" description="v0.7.5" tags={["版本状态"]}>
+
+## v0.7.5
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.5)
+
+**此版本已被 v0.7.6 替代，请勿安装。** 通过公开 CLI 安装 Windows Desktop 时，可能在解压阶段失败。
+
+### 版本状态
+
+- 请升级到 v0.7.6；该版本保留了本版本的 macOS 启动修复，并恢复了 Windows 公开安装。
+
+</Update>
+
+<Update label="2026年8月13日" description="v0.7.4" tags={["版本状态"]}>
+
+## v0.7.4
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.4)
+
+**此版本已被 v0.7.6 替代，请勿安装。** 打包后的 macOS Desktop 可能在首个窗口打开前意外退出。
+
+### 版本状态
+
+- 请升级到 v0.7.6；该版本包含本版本引入的功能，并修复了受影响的 macOS 启动路径和 Windows 公开安装。
 
 </Update>
 

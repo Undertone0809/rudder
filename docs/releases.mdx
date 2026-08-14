@@ -18,41 +18,15 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
-<Update label="August 14, 2026" description="v0.7.6" tags={["Fixed"]}>
+<Update label="August 14, 2026" description="v0.7.6" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.6
 
 [GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.6)
 
-This patch restores Windows Desktop installation from the public CLI.
+This release adds experimental Computer Use and Plugin V1, gives Agents clearer human-help and recovery paths, improves Chat, Goals, transcripts, and Issue timelines, and fixes critical macOS Desktop startup and Windows Desktop installation issues.
 
-### Fixed
-
-- Fixed Windows portable Desktop extraction failing when the installer used absolute drive-letter paths.
-
-</Update>
-
-<Update label="August 14, 2026" description="v0.7.5" tags={["Fixed"]}>
-
-## v0.7.5
-
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.5)
-
-This patch improves macOS Desktop launch reliability.
-
-### Fixed
-
-- Fixed an issue that could cause the packaged macOS Desktop app to quit before opening.
-
-</Update>
-
-<Update label="August 13, 2026" description="v0.7.4" tags={["New","Improved","Fixed"]}>
-
-## v0.7.4
-
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.4)
-
-This release adds experimental Computer Use and Plugin V1, gives Agents clearer human-help and recovery paths, and improves Chat, Goals, transcripts, and Issue timelines.
+v0.7.6 supersedes v0.7.4 and v0.7.5 and is the recommended version for all users.
 
 ### New
 
@@ -75,6 +49,36 @@ This release adds experimental Computer Use and Plugin V1, gives Agents clearer 
 - Fixed Chat composer flicker during streaming and several narrow-layout Side Panel states.
 - Fixed assistance and approval cards showing actions that did not match their decision type.
 - Fixed missing or duplicated activity while loading Issue timeline history.
+- Fixed an issue that could cause the packaged macOS Desktop app to quit before opening.
+- Fixed Windows portable Desktop extraction failing when the installer used absolute drive-letter paths.
+
+</Update>
+
+<Update label="August 14, 2026" description="v0.7.5" tags={["Status"]}>
+
+## v0.7.5
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.5)
+
+**Superseded by v0.7.6. Do not install this version.** Windows Desktop installation through the public CLI could fail during archive extraction.
+
+### Status
+
+- Upgrade to v0.7.6, which retains the macOS launch fix from this release and restores Windows public installation.
+
+</Update>
+
+<Update label="August 13, 2026" description="v0.7.4" tags={["Status"]}>
+
+## v0.7.4
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.4)
+
+**Superseded by v0.7.6. Do not install this version.** The packaged macOS Desktop app could quit before opening its first window.
+
+### Status
+
+- Upgrade to v0.7.6, which includes the features introduced in this release and fixes the affected macOS startup path and Windows public installation.
 
 </Update>
 

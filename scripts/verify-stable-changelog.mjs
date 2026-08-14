@@ -3,10 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PUBLIC_DOC_SECTIONS = {
-  English: ["New", "Improved", "Fixed", "Upgrade notes"],
-  Chinese: ["新功能", "改进", "问题修复", "升级说明"],
+  English: ["New", "Improved", "Fixed", "Upgrade notes", "Status"],
+  Chinese: ["新功能", "改进", "问题修复", "升级说明", "版本状态"],
 };
-const GITHUB_RELEASE_SECTIONS = ["New", "Improved", "Fixed"];
+const GITHUB_RELEASE_SECTIONS = ["New", "Improved", "Fixed", "Status"];
 const FORBIDDEN_INTERNAL_PATTERNS = [
   { label: "canonical repository", pattern: /\bcanonical repository\b/iu },
   { label: "CI / continuous integration", pattern: /\b(?:ci|continuous integration)\b/iu },
