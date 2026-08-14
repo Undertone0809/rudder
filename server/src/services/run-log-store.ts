@@ -183,24 +183,29 @@ async function maybeBuildNativeEvidenceIndex(
     }
     await fs.rm(indexPath, { force: true });
   }
-  const response = await runNativeEvidenceIndex(resolveNativeEvidenceIndexBinary(), sourcePath, indexPath);
-  if (response.ok !== true || response.operation !== "indexEvidence" || response.protocolVersion !== NATIVE_EVIDENCE_PROTOCOL_VERSION) {
-    throw new Error(boundedNativeReason(response.errorCode ?? "native index envelope mismatch"));
+  try {
+    const response = await runNativeEvidenceIndex(resolveNativeEvidenceIndexBinary(), sourcePath, indexPath);
+    if (response.ok !== true || response.operation !== "indexEvidence" || response.protocolVersion !== NATIVE_EVIDENCE_PROTOCOL_VERSION) {
+      throw new Error(boundedNativeReason(response.errorCode ?? "native index envelope mismatch"));
+    }
+    if (response.sourceBytes !== sourceBytes || response.sourceSha256 !== sourceSha256 || response.indexPath !== indexPath) {
+      throw new Error("native evidence index integrity mismatch");
+    }
+    if (!Number.isSafeInteger(response.recordCount) || Number(response.recordCount) < 0) {
+      throw new Error("native evidence index record count is invalid");
+    }
+    return {
+      protocolVersion: 1,
+      status: "native",
+      indexRef: indexRelativePath,
+      sourceBytes,
+      recordCount: Number(response.recordCount),
+      sourceSha256,
+    };
+  } catch (error) {
+    await fs.rm(indexPath, { force: true }).catch(() => undefined);
+    throw error;
   }
-  if (response.sourceBytes !== sourceBytes || response.sourceSha256 !== sourceSha256 || response.indexPath !== indexPath) {
-    throw new Error("native evidence index integrity mismatch");
-  }
-  if (!Number.isSafeInteger(response.recordCount) || Number(response.recordCount) < 0) {
-    throw new Error("native evidence index record count is invalid");
-  }
-  return {
-    protocolVersion: 1,
-    status: "native",
-    indexRef: indexRelativePath,
-    sourceBytes,
-    recordCount: Number(response.recordCount),
-    sourceSha256,
-  };
 }
 
 function createLocalFileRunLogStore(basePath: string): RunLogStore {
