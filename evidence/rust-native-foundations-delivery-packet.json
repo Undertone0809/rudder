@@ -219,10 +219,10 @@
     "patch_tree_sha": "03716596bbeb00159f10aad4af453b446c6ede3c",
     "expected_old_sha": "9b44a82ca0fbd07358d90cb21aafc8d42452619c",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "9b44a82ca0fbd07358d90cb21aafc8d42452619c",
+      "delivered_sha": "e1c3f8355589a844fb2438fab20409d8c9019e37"
     },
     "index_update_mode": "none"
   },
@@ -239,7 +239,7 @@
     "index_preserved": false,
     "evidence": [
       "shared main checkout was not reset/stashed/cleaned before isolated integration",
-      "CAS refs/heads/main c3cd8fec -> f54acd894 succeeded before a concurrent target commit moved main to 9b44a82c; receipts are invalidated and a new CAS is pending",
+      "CAS refs/heads/main c3cd8fec -> f54acd894 succeeded before a concurrent target commit moved main to 9b44a82c; that receipt was invalidated, then CAS refs/heads/main 9b44a82c -> e1c3f835 succeeded without checkout/reset/stash/clean",
       "pre/post status fingerprints differ because HEAD-relative status changed after ref advance; index hash changed during Git status refresh, so index_preserved remains false and delivery stays blocked"
     ]
   },
@@ -251,7 +251,7 @@
     "proof": [
     "prior packaged receipt is superseded by candidate refresh to 6c363bf822088f47508db4228e5e3665e75c88b1",
       "current 0.7.7 packaged artifact and exact 100 MiB/10,000-file comparator are rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
-    "local main integration was refrozen after concurrent target drift; new CAS expected-old is 9b44a82ca0fbd07358d90cb21aafc8d42452619c",
+    "local main integration completed after target refreeze via CAS 9b44a82ca0fbd07358d90cb21aafc8d42452619c -> e1c3f8355589a844fb2438fab20409d8c9019e37; packaged/runtime receipts remain bound to predecessor source 6c363bf8 and are invalid for the newer desktop target",
     "terminal delivered_ref/delivered_sha/delivered_tree_sha/timestamp intentionally remain null because status=blocked: target drift invalidated prior receipts, verifier is QUESTION, hosted dogfood/native_ab are absent, and index_preserved=false after the Git status refresh"
     ]
   }
