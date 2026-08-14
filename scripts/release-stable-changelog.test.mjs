@@ -110,6 +110,47 @@ describe("stable public changelog validation", () => {
     ).toEqual([]);
   });
 
+  it("accepts localized superseded-version status entries", () => {
+    const supersededEnglish = [
+      "## v9.9.9",
+      "",
+      "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v9.9.9)",
+      "",
+      "This version has been superseded. Do not install it.",
+      "",
+      "### Status",
+      "",
+      "- Upgrade to the current stable release.",
+    ].join("\n");
+    const supersededChinese = [
+      "## v9.9.9",
+      "",
+      "[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v9.9.9)",
+      "",
+      "此版本已被替代，请勿安装。",
+      "",
+      "### 版本状态",
+      "",
+      "- 请升级到当前稳定版本。",
+    ].join("\n");
+    const supersededNotes = [
+      "This version has been superseded. Do not install it.",
+      "",
+      "## Status",
+      "",
+      "- Upgrade to the current stable release.",
+    ].join("\n");
+
+    expect(
+      validateStableChangelog({
+        english: supersededEnglish,
+        version: "9.9.9",
+        chinese: supersededChinese,
+        releaseNotes: supersededNotes,
+      }),
+    ).toEqual([]);
+  });
+
   it("rejects unsupported or empty sections", () => {
     expect(
       validateStableChangelog({
@@ -269,7 +310,7 @@ describe("stable public changelog validation", () => {
   });
 
   it("keeps every localized release inside the Mintlify changelog timeline", () => {
-    expectTimelineEntries(english, ["New", "Improved", "Fixed", "Upgrade notes"]);
-    expectTimelineEntries(chinese, ["新功能", "改进", "问题修复", "升级说明"]);
+    expectTimelineEntries(english, ["New", "Improved", "Fixed", "Upgrade notes", "Status"]);
+    expectTimelineEntries(chinese, ["新功能", "改进", "问题修复", "升级说明", "版本状态"]);
   });
 });
