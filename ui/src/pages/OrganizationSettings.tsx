@@ -524,16 +524,7 @@ export function OrganizationSettings() {
                 htmlFor="organization-settings-name"
                 label={t("organizationSettings.general.name.label")}
               >
-                <Input
-                  id="organization-settings-name"
-                  value={organizationName}
-                  onChange={(event) => setOrganizationName(event.target.value)}
-                />
-              </SettingsField>
-              <SettingsField
-                label={t("organizationSettings.appearance.logo.label")}
-              >
-                <div className="flex min-w-0 flex-col items-start gap-2">
+                <div data-testid="organization-identity-row" className="flex min-w-0 flex-col gap-2">
                   <input
                     ref={logoFileInputRef}
                     type="file"
@@ -543,29 +534,37 @@ export function OrganizationSettings() {
                     aria-hidden="true"
                     className="hidden"
                   />
-                  <button
-                    type="button"
-                    aria-label="Change organization logo"
-                    className="rounded-lg outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
-                    onClick={() => logoFileInputRef.current?.click()}
-                    disabled={logoUploadMutation.isPending}
-                  >
-                    <OrganizationPatternIcon
-                      organizationName={organizationName || viewedOrganization.name}
-                      logoUrl={logoUrl || null}
-                      brandColor={viewedOrganization.brandColor}
-                      className="size-14 rounded-lg"
+                  <div className="flex min-w-0 items-center gap-4">
+                    <button
+                      type="button"
+                      aria-label="Change organization logo"
+                      className="rounded-lg outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
+                      onClick={() => logoFileInputRef.current?.click()}
+                      disabled={logoUploadMutation.isPending}
+                    >
+                      <OrganizationPatternIcon
+                        organizationName={organizationName || viewedOrganization.name}
+                        logoUrl={logoUrl || null}
+                        brandColor={viewedOrganization.brandColor}
+                        className="size-14 rounded-lg"
+                      />
+                    </button>
+                    <Input
+                      id="organization-settings-name"
+                      value={organizationName}
+                      onChange={(event) => setOrganizationName(event.target.value)}
+                      className="min-w-0 flex-1"
                     />
-                  </button>
-                  {logoUploadMutation.isError || logoUploadError ? (
-                    <span className="text-xs text-destructive">
-                      {logoUploadError ??
-                        (logoUploadMutation.error instanceof Error
-                          ? logoUploadMutation.error.message
-                          : t("organizationSettings.appearance.logo.uploadFailed"))}
-                    </span>
-                  ) : null}
+                  </div>
                 </div>
+                {logoUploadMutation.isError || logoUploadError ? (
+                  <span className="text-xs text-destructive">
+                    {logoUploadError ??
+                      (logoUploadMutation.error instanceof Error
+                        ? logoUploadMutation.error.message
+                        : t("organizationSettings.appearance.logo.uploadFailed"))}
+                  </span>
+                ) : null}
               </SettingsField>
 
               {generalDirty ? (

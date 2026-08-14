@@ -39,6 +39,12 @@ commit_refs:
   - 2a470a382
   - b707c9254
   - 88e257044
+  - 22fbeedbc
+  - 72005f4b3
+  - d7f891d17
+  - 2161b2b6b
+  - 86a2f7fa6
+  - 86f5d9953
 updated_at: 2026-08-14
 ---
 
@@ -48,15 +54,23 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The exact runtime candidate is source `88e257044d33cbcc19feb4de65db57a82b367a16`
-(`main`), with the shared-main tracked dirty fingerprint recorded in the
-delivery packet. The exact macOS arm64 packaged candidate was rebuilt from
-this SHA. `desktop:dist`, all 14 server-package checks, native
-staging/version checks, standalone server-package verification, account
-gate/App Builder smoke, and `unzip -t` passed. The portable ZIP SHA-256 is
-`db7c028a97dc91112ec72071ba884a787bb3629581365e1f460f3cd2df2a4ac4`; the
+The current final main wrapper is `86f5d99538e11aaef0bc9e037907fb06292a4064`.
+Its packaged/runtime artifacts are bound to merge source
+`72005f4b37df05fbd987fb4c1051c8f21652ad23`; the only descendant change is a
+sequence of docs/test-import descendants is verified not to change runtime
+paths. The
+clean artifact worktree is `/private/tmp/rudder-native-main-merge`.
+The clean candidate fingerprint is
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (the
+SHA-256 of an empty status stream); shared-main dirty/index fingerprints are
+preservation evidence only. The exact macOS arm64 packaged candidate was
+rebuilt from this SHA. `desktop:dist`, server-package checks, native
+staging/version checks, standalone server-package verification, packaged
+Computer Use verification, account-gate smoke, App Builder smoke, and
+`unzip -t` passed. The portable ZIP SHA-256 is
+`5544b24edd5fe15ec6e7ddda03da3faac023919a478002fe0bc802e40cef5866`; the
 shell ZIP SHA-256 is
-`cf1cdf03a843b1931fca1f6d13c629c23b8c4e850514c0347f96f934d4d7ec4b`; the
+`f8b80973abd9f2dcf3c8b659990c0ef628f1c073dd091d54198d45f43b8b942f`; the
 packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 Staged first-party Rust binaries report `0.7.7`: `rudder-native`
@@ -64,17 +78,36 @@ Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `rudder-process-host`
 `02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf`, and
 `rudder-update-helper`
-`72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b`.
+`20cecbf018d62ea578f59019ea1bdae5bc5bc8af25155c5cd310e1b2950dd0e1`.
 
-The current exact-88e backup scale receipt is
-`/tmp/rudder-native-backup-comparator-88e-100m-10k.json` with receipt
-SHA-256 `f2e1cb806c2e339a9baeb84def027572ca85766f0bebc09186aec5c24af198a4`.
-It uses a 100 MiB/10,000-file fixture, one paired sample, 2/2 positive
-external sampler boundaries, and passes manifest, entry, content, and
-recovery parity. It is explicitly `not_comparable`: one sample cannot satisfy
+The benchmark-only `rudder-process-tree-sampler` is compiled at `0.7.7`
+(`b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c`) but
+is not a packaged product binary. `aarch64-apple-darwin` is the only
+packaged-acceptance target; other compiled targets remain
+`compiled_unverified`.
+
+The final-merge-source backup scale receipt is
+`/tmp/rudder-native-backup-comparator-720-100m-10k.json` with receipt SHA-256
+`7103df8647c6aad596e4f731c5a98a93a04ff403a8877dad363c63e7cd6c55ca`.
+It uses a 100 MiB/10,000-file fixture (`tree=1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22`,
+`content=0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13`),
+one paired sample, 2/2 positive external sampler boundaries, and passes
+manifest, entry, content, and recovery parity. It is explicitly
+`not_comparable`: one sample cannot satisfy
 the declared 100-sample promotion gate, and the recorded 300-second bounded
 operation/native timeout is diagnostic configuration only. The predecessor
-100 MiB/10,000-file receipt remains source-invalidated historical evidence.
+`22f` receipt and its `88e` predecessor remain source-invalidated historical
+evidence and must not be reused by a current packet.
+
+The fair Node arm is explicit: the harness is
+`scripts/perf/workspace-backup-rust-node-ab.ts`, the contract-equivalent
+implementation is
+`server/src/services/workspace-backup-v2.ts#createWorkspaceBackupV2File`, and
+the recorded runtime is Node.js `v22.23.1` via `pnpm exec tsx`. The case identity
+is `workspace-backup-v2-100MiB-10000-files-rust-node-ab-v1`, with node-first
+then native arm order, zero warmups, one descriptive paired sample, and the
+external process-tree sampler at 5 ms. These details make the receipt
+reproducible while keeping its `not_comparable` status honest.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
@@ -320,7 +353,8 @@ plan; it requires a concrete Product Logic delta and explicit approval first.
 
 ### Repository layout
 
-Create one Cargo workspace with two binaries and narrowly shared crates:
+Create one Cargo workspace with the product binaries plus one benchmark-only
+sampler and narrowly shared crates:
 
 ```text
 native/
@@ -338,6 +372,8 @@ native/
   bins/
     rudder-process-host/
     rudder-native/
+    rudder-process-tree-sampler/ # benchmark-only; never a product runtime
+    rudder-update-helper/        # packaged Desktop update helper
 ```
 
 `rudder-process-host` is long-lived only relative to one accepted child
@@ -1262,20 +1298,23 @@ Experiment, Observation, artifact, registry, API, report, and Dashboard flow.
 
 ### Current `rudder-evals` gap and implementation work
 
-The 2026-08-12 inspection of `rudder-evals` found zero `native_ab` occurrences
-outside these proposal/plan artifacts. The inspected worktree was not an
-immutable candidate (`HEAD 1b2a23b` plus an uncommitted Rust rewrite), so these
-facts are a gap inventory, not an acceptance lease:
+The native_ab foundation is now implemented in the separate `rudder-evals`
+worktree by commits `208cd50` (fail-closed mode/flat native observation
+ingest) and `96216c2` (completed Packet V2 validation at registry ingest).
+That worktree passed `cargo fmt --check`, 66 Rust tests with one ignored test,
+release validation, and an 8/8 offline routing rehearsal. These are foundation
+and rehearsal receipts only: no live three-trial native_ab campaign has been
+run, so none of them is promotion evidence.
 
 | Required stage | Current state | Required work |
 | --- | --- | --- |
-| native case/cohort definitions | missing | add lifecycle, workspace-integrity, pressure, and protected-regression schemas/cases |
-| isolated/counterbalanced runner | missing | start two exact-source Rudder instances, verify effective flags/health, randomize recorded arm order, and tear down exact roots |
-| immutable packet identity | partial | add baseline/product/bundle/Node/Rust binary/protocol/capability, instance/org/data/workspace, arm-order, metric-distribution, and correctness identities |
-| native-aware ingestor | missing | accept `native_ab` explicitly and fail closed; unknown mode must never downgrade to `probe_preflight` |
-| registry model | partial | persist native campaign/arm/trial metrics and comparable/not-comparable reasons without changing product-pass counts |
-| API and artifacts | present generically | prove native campaign, observations, reports, artifacts, and `/static-dashboard` route round-trip |
-| Dashboard comparison | partial | replace hard-coded `c0`/`c5` assumptions with `node_baseline`/`rust_candidate`; show correctness, process-tree RSS, latency distribution, package cost, and failures |
+| native case/cohort definitions | partial | complete lifecycle, workspace-integrity, pressure, and protected-regression live cases |
+| isolated/counterbalanced runner | partial | run two exact-source Rudder instances, verify effective flags/health, randomize arm order, and tear down exact roots |
+| immutable packet identity | implemented | seal baseline/product/bundle/Node/Rust binary/protocol/capability, instance/org/data/workspace, arm-order, metric-distribution, and correctness identities |
+| native-aware ingestor | implemented | `native_ab` is explicit and unknown/unsupported modes fail closed |
+| registry model | implemented | native campaign/arm/trial metrics and comparable/not-comparable reasons remain separate from product-pass counts |
+| API and artifacts | rehearsal-verified | native packet -> registry -> API/Dashboard round-trip passes offline; live campaign proof remains pending |
+| Dashboard comparison | implemented | flat imported native observations render in the native comparison path; final three-trial live evidence remains pending |
 
 Implement this in dependency order:
 

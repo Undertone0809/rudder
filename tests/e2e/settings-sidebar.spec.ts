@@ -43,6 +43,19 @@ test.describe("Settings sidebar", () => {
     await expect(settingsPage.locator('input[type="color"]')).toHaveCount(0);
     await expect(settingsPage.getByRole("textbox", { name: "Brand color" })).toHaveCount(0);
 
+    const organizationIdentityRow = settingsPage.getByTestId("organization-identity-row");
+    await expect(organizationIdentityRow).toBeVisible();
+    await expect(organizationIdentityRow.getByRole("button", { name: "Change organization logo" })).toBeVisible();
+    await expect(organizationIdentityRow.getByRole("textbox", { name: "Organization name" })).toBeVisible();
+    await expect(await organizationIdentityRow.evaluate((element) => {
+      const logo = element.querySelector<HTMLButtonElement>('button[aria-label="Change organization logo"]');
+      const name = element.querySelector<HTMLInputElement>('#organization-settings-name');
+      if (!logo || !name) return false;
+      const logoBox = logo.getBoundingClientRect();
+      const nameBox = name.getBoundingClientRect();
+      return Math.abs(logoBox.top - nameBox.top) <= 8 && logoBox.right < nameBox.left;
+    })).toBe(true);
+
     const logoUploadResponse = page.waitForResponse((response) =>
       response.request().method() === "POST"
       && response.url().includes(`/api/orgs/${organization.id}/logo`)
