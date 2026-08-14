@@ -18,6 +18,29 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月15日" description="v0.7.7" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.7
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.7)
+
+这个版本让打包版 Desktop 更新更加安全、平滑：更新可以在后台下载，并在应用自然退出后完成替换。
+
+### 新功能
+
+- 增加静默的打包版 macOS 更新，支持后台下载，并在应用自然退出后安装。
+- 自动更新后首次启动时显示一次版本说明。
+
+### 改进
+
+- 自动更新事务现在会在替换前验证签名发布策略、精确的暂存候选版本和外部恢复助手。
+
+### 问题修复
+
+- 防止窗口关闭、驻留隐藏和操作系统关机触发暂存更新的应用替换。
+
+</Update>
+
 <Update label="2026年8月14日" description="v0.7.6" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.6

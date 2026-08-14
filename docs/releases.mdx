@@ -18,6 +18,29 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="August 15, 2026" description="v0.7.7" tags={["New","Improved","Fixed"]}>
+
+## v0.7.7
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.7)
+
+This release makes packaged Desktop updates safer and less disruptive by downloading them in the background and completing replacement only after a natural app quit.
+
+### New
+
+- Added silent packaged macOS updates that download in the background and install after a natural app quit.
+- Added one-shot release notes on the first launch after an automatic update.
+
+### Improved
+
+- Automatic update transactions now verify signed release policy, exact staged candidates, and an external recovery helper before replacement.
+
+### Fixed
+
+- Prevented window close, resident hide, and operating-system shutdown from applying a staged update.
+
+</Update>
+
 <Update label="August 14, 2026" description="v0.7.6" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.6
