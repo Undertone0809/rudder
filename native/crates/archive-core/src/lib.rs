@@ -832,10 +832,10 @@ pub fn create_archive(
     }];
     let mut names = HashSet::from([MANIFEST_PATH.to_owned()]);
     let mut folded = HashSet::from([MANIFEST_PATH.to_ascii_lowercase()]);
-    let mut total_file_bytes = manifest_size as u64;
-    if total_file_bytes > max_total_file_bytes {
-        return Err(ArchiveError::new("total_file_size_limit"));
-    }
+    // The public total-file budget applies to workspace content only. The
+    // generated manifest is bounded by max_file_bytes above, while directory
+    // entries have no content bytes and therefore do not consume this budget.
+    let mut total_file_bytes = 0u64;
     let mut total_name_bytes = MANIFEST_PATH.len();
     for item in plan.entries {
         let (archive_path, source_path, directory) = match item {
@@ -1330,6 +1330,85 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code(), "invalid_create_plan");
         assert!(!too_many_archive.exists());
+    }
+
+    #[test]
+    fn total_content_limit_excludes_manifest_and_rejects_one_byte_overflow() {
+        use tempfile::tempdir;
+
+        let root = tempdir().unwrap();
+        let manifest = root.path().join("manifest.json");
+        let plan = root.path().join("plan.json");
+        let archive = root.path().join("archive.zip");
+        let overflow_plan = root.path().join("overflow-plan.json");
+        let overflow_archive = root.path().join("overflow.zip");
+        fs::write(&manifest, b"{}").unwrap();
+
+        const TOTAL_CONTENT_BYTES: usize = 100 * 1024 * 1024;
+        const FILE_BYTES: usize = 5 * 1024 * 1024;
+        const FILE_COUNT: usize = TOTAL_CONTENT_BYTES / FILE_BYTES;
+        let payload = vec![0x61; FILE_BYTES];
+        for index in 0..FILE_COUNT {
+            fs::write(
+                root.path().join(format!("payload-{index:02}.bin")),
+                &payload,
+            )
+            .unwrap();
+        }
+
+        let write_plan = |path: &Path, first_file_size: usize| {
+            let entries: Vec<_> = (0..FILE_COUNT)
+                .map(|index| {
+                    serde_json::json!({
+                        "kind": "file",
+                        "archivePath": format!("workspace/payload-{index:02}.bin"),
+                        "sourcePath": root.path().join(format!("payload-{index:02}.bin")),
+                    })
+                })
+                .collect();
+            if first_file_size != FILE_BYTES {
+                fs::write(
+                    root.path().join("payload-00.bin"),
+                    vec![0x61; first_file_size],
+                )
+                .unwrap();
+            }
+            fs::write(
+                path,
+                serde_json::to_vec(&serde_json::json!({
+                    "protocolVersion": CREATE_PROTOCOL_VERSION,
+                    "manifestSource": manifest,
+                    "treeSha256": "a".repeat(64),
+                    "entries": entries,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        };
+
+        write_plan(&plan, FILE_BYTES);
+        let created = create_archive(
+            &plan,
+            &archive,
+            110 * 1024 * 1024,
+            6 * 1024 * 1024,
+            TOTAL_CONTENT_BYTES as u64,
+        )
+        .unwrap();
+        assert_eq!(created.entry_count, FILE_COUNT + 1);
+        assert!(archive.is_file());
+
+        write_plan(&overflow_plan, FILE_BYTES + 1);
+        let error = create_archive(
+            &overflow_plan,
+            &overflow_archive,
+            110 * 1024 * 1024,
+            6 * 1024 * 1024,
+            TOTAL_CONTENT_BYTES as u64,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "total_file_size_limit");
+        assert!(!overflow_archive.exists());
     }
 
     #[test]
