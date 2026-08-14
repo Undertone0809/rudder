@@ -227,10 +227,10 @@ fn validate_request(request: &UpdateRequest) -> Result<(), HelperError> {
         return Err(HelperError::Invalid("helper identity is incomplete".into()));
     }
     validate_helper_identity(&request.helper)?;
-    if let Some(parent_pid) = request.parent_pid {
-        if parent_pid == 0 {
-            return Err(HelperError::Invalid("parentPid must be positive".into()));
-        }
+    if let Some(parent_pid) = request.parent_pid
+        && parent_pid == 0
+    {
+        return Err(HelperError::Invalid("parentPid must be positive".into()));
     }
     if matches!(request.operation, Operation::Apply)
         && (request.candidate_sha256.len() != 64
@@ -360,12 +360,12 @@ fn apply(request: &UpdateRequest) -> Result<HelperResult, HelperError> {
     }
 
     let transaction_id = transaction_id(request);
-    if let Some(parent_pid) = request.parent_pid {
-        if !wait_for_parent_exit(parent_pid) {
-            return Err(HelperError::Invalid(
-                "parent Desktop process did not exit before helper timeout".into(),
-            ));
-        }
+    if let Some(parent_pid) = request.parent_pid
+        && !wait_for_parent_exit(parent_pid)
+    {
+        return Err(HelperError::Invalid(
+            "parent Desktop process did not exit before helper timeout".into(),
+        ));
     }
     let mut journal = Journal {
         version: JOURNAL_VERSION,
@@ -1109,10 +1109,10 @@ fn write_atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), HelperE
     file.sync_all()?;
     drop(file);
     fs::rename(&temporary, path)?;
-    if let Some(parent) = path.parent() {
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
+    if let Some(parent) = path.parent()
+        && let Ok(directory) = File::open(parent)
+    {
+        let _ = directory.sync_all();
     }
     Ok(())
 }

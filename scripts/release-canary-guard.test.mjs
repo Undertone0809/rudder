@@ -52,6 +52,10 @@ function createReleaseRepo() {
   ]) {
     cpSync(join(scriptsDir, fileName), join(repo, "scripts", fileName));
   }
+  writeFileSync(
+    join(repo, "scripts", "native-release-version.mjs"),
+    "// Native version identity is outside this release-shell fixture.\n",
+  );
   chmodSync(join(repo, "scripts", "release.sh"), 0o755);
   chmodSync(join(repo, "scripts", "release-lib.sh"), 0o755);
   chmodSync(join(repo, "scripts", "release-package-map.mjs"), 0o755);

@@ -19,34 +19,53 @@
       "不编辑 guarded doc/product/**",
       "不把缺失 native_ab/live evidence 伪装为完成"
     ],
-    "authorization": "implementation"
+    "authorization": "local_integration"
   },
   "candidate": {
-    "branch": "detached-clean-candidate",
-    "source_ref": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-    "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-    "dirty_fingerprint": "clean-tracked-tree-with-isolated-node-modules",
+    "branch": "codex/rust-native-foundations-integration",
+    "source_ref": "6c363bf822088f47508db4228e5e3665e75c88b1",
+    "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
-      "desktop/scripts/app-builder-smoke.mjs",
-      "scripts/perf/local-app-dogfood-cycle.mjs",
-      "scripts/perf/local-app-dogfood-cycle.test.ts",
-      "scripts/perf/local-app-native-ab.summary.ts",
-      "scripts/perf/workspace-backup-rust-node-ab.ts",
-      "scripts/perf/workspace-backup-rust-node-ab.test.ts",
+      "desktop/scripts/smoke.mjs",
+      "desktop/src/boot-preload.ts",
+      "desktop/src/desktop-update-flow.test.ts",
+      "desktop/src/desktop-update-flow.ts",
+      "desktop/src/main.ts",
+      "desktop/src/post-update-reload.ts",
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
-      "packages/identity-core/src/offline-grant.test.ts",
       "evidence/rust-native-foundations-delivery-packet.json",
-      "native/crates/archive-core/src/lib.rs"
+      "native/bins/rudder-process-tree-sampler/src/main.rs",
+      "native/crates/archive-core/src/lib.rs",
+      "native/crates/update-helper-core/src/lib.rs",
+      "releases/v0.7.7.md",
+      "scripts/perf/workspace-backup-rust-node-ab.test.ts",
+      "scripts/perf/workspace-backup-rust-node-ab.ts",
+      "scripts/release-canary-cleanup.test.mjs",
+      "scripts/release-canary-guard.test.mjs",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "server/src/__tests__/instance-settings-service.test.ts",
+      "server/src/services/instance-settings.ts",
+      "server/src/services/workspace-backup-v2.test.ts",
+      "server/src/services/workspace-backup-v2.ts"
     ],
+    "evidence": {
+      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-1a76ec93-100m-10k-clean.json",
+      "backup_comparator_receipt_sha256": "60b96797da5aedd2a9c77210bba11f2407dfb12034059f483b86e38328869f37",
+      "backup_comparator_status": "not_comparable"
+    },
     "build": {
-      "id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "portable_sha256": "d1035ee9dee10e84923875cc073cd799566fc66d861259d2282efaf4e80fa925",
+      "id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "artifact_bound_source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "portable_sha256": "a9b5196ca23fbb30b553774a95e68ed8f7a77469284d02bd8dd69d346a0a2678",
+      "shell_sha256": "80582aeda625f59241f9cf9c580e00708931e2e124c7e77196ad3bd76ff39363",
       "native_sha256": {
         "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
-        "rudder-native": "19ec4dcf9adc1b2221cda0fd8d036991145a20fb1555ae560d3b56ba4e965c5f",
-        "rudder-update-helper": "588f3973d2554f29c0e45feeb25a1b5acdf9611d01a6d53df16148a90351e1fa"
+        "rudder-native": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
+        "rudder-update-helper": "72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b",
+        "rudder-process-tree-sampler": "d8303913cc9194f2149a72da76b7e897bda45ebb80e09c739f3b2981db43081a"
       },
       "version": "0.7.7",
       "version_sources": {
@@ -58,26 +77,26 @@
       }
     },
     "runtime": {
-      "id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "artifact_bound_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+      "id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "artifact_bound_source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
-      "account_gate_smoke": "PASS_packaged_account_gate_8037198f1",
-      "server_package_verification": "PASS_packaged_server_8037198f1",
-      "app_builder_smoke": "PASS_packaged_app_builder_8037198f1",
-      "zip_integrity": "PASS_unzip_test_8037198f1",
+      "account_gate_smoke": "PASS_packaged_account_gate_6c363bf8",
+      "server_package_verification": "PASS_packaged_server_6c363bf8",
+      "app_builder_smoke": "PASS_packaged_app_builder_6c363bf8",
+      "zip_integrity": "PASS_unzip_test_6c363bf8",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); Rust/optimized-Node backup comparator small fixture (manifest/content/recovery parity, archiveByteParity=not_compared); native_ab summary producer (six rows, live campaign blocked)",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator fixture with tree SHA 1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22 and content SHA 0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13; native_ab summary producer (six rows, live campaign blocked)",
     "post_receipt_fix": {
-      "source_commits": ["7df802c81", "1e9002df5"],
-      "summary": "Raised the bounded native archive entry ceiling so the required 10,000-file workspace fixture can include manifest and directory overhead; added a boundary regression. The pre-fix packaged artifact and receipts are stale until rebuilt.",
-      "validation": "10,000-file comparator passed with manifest/entry/content parity and recovery preservation; archive-byte SHA parity remains intentionally not compared."
+      "source_commits": ["97a28e80b", "21271318c", "44e875564", "1a76ec93e"],
+      "summary": "Rebuilt the exact 0.7.7 packaged candidate after the native archive entry-budget and comparator evidence fixes; synchronized all first-party Rust package and Cargo.lock versions to the normal product version.",
+      "validation": "100 MiB/10,000-file comparator passed with manifest/entry/content/recovery parity, 200/200 positive external sampler boundaries, and no temporary artifacts; archive-byte SHA parity is intentionally not compared and elapsed/RSS metrics are marked not_comparable."
     },
     "budget_lease": {
       "id": "turn-2026-08-13",
@@ -112,32 +131,32 @@
   "receipts": {
     "reviewer": {
       "verdict": "needs_more_evidence",
-      "candidate_fingerprint": "stale-pre-fix-packaged-receipt",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2"
     },
     "verifier": {
       "verdict": "QUESTION",
-      "candidate_fingerprint": "stale-pre-fix-packaged-receipt",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Receipt is stale after the archive entry-overhead fix; packaged rebuild, authorized hosted fixture, seven-day dogfood, and live native_ab evidence remain unavailable."
+      "reason": "Exact packaged candidate and 100 MiB/10,000-file comparator are current, but authorized hosted fixture, seven-day/100-cycle dogfood, and live native_ab evidence remain unavailable; comparator metrics are descriptive not_comparable."
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "stale-pre-fix-packaged-receipt",
-      "source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-      "build_id": "packaged-rebuild-8037198f1-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-8037198f1-macos-arm64-0.7.7",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "6c363bf822088f47508db4228e5e3665e75c88b1",
+      "build_id": "packaged-rebuild-6c363bf8-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-6c363bf8-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Final review is pending a fresh reviewer accept and verifier PASS on the rebuilt candidate."
+      "reason": "Final review is pending reviewer disposition and verifier terminal evidence for the exact candidate; missing hosted dogfood and live native_ab keep the packet blocked."
     }
   },
   "drift": {
@@ -166,6 +185,12 @@
         "before_source_sha": "0e3c9b81798d9e50786f22e21316caf2274fff04",
         "after_source_sha": "c4dee5802ff76ba653987e83fe972c7d43a958e7",
         "reason": "Evidence producers and comparator tests were integrated after the prior receipt; packaged artifacts and all prior reviewer/verifier/final receipts are stale for this continuation."
+      },
+      {
+        "type": "candidate_refreshed_after_stale_receipt",
+        "before_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
+        "after_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
+        "reason": "Exact 0.7.7 packaged receipts, synchronized Rust package versions, and the fresh 100 MiB/10,000-file comparator are now bound to the current candidate; unresolved hosted dogfood and live native_ab evidence keep the delivery blocked."
       }
     ],
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
@@ -174,38 +199,38 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "8874dcbfb6bb1df8a36f9a166e25c5d54c0fb900",
+    "base_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "96cb4fe6a5f09cba266770b854627467bfc854a1",
+    "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
     "branch_refs": [
-      "a08bd880725f9adcfadac72f2097f31695b3e037"
+      "1a76ec93ee97dc0cdbee955a0718658cb511be50"
     ],
     "isolation_trigger": "independent_runtime",
-    "isolated_worktree": "/tmp/rudder-pilot-integrate.0e3c9b817",
-    "patch_tree_sha": "21f2d3937755b8bc1947f22c986a2acfda7cbb70",
-    "expected_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
+    "isolated_worktree": "/private/tmp/rudder-native-integration-a3",
+    "patch_tree_sha": "02dfe700a59680c3d0b074d420f0824d8315486c",
+    "expected_old_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
     "cas": {
-      "attempted": true,
-      "succeeded": true,
-      "observed_old_sha": "6af419a4c1bf0fcdfbb1a30e62bfae0e372aa090",
-      "delivered_sha": "db55044a299d57a92cf43df9c95f9ba03b744b6f"
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
     },
     "index_update_mode": "none"
   },
   "preservation": {
-    "checked": true,
+    "checked": false,
     "unrelated_dirty_paths": [
-      "shared main worktree changes preserved outside isolated candidate"
+      "shared main worktree changes preserved outside isolated candidate; final CAS preservation check pending"
     ],
-    "index_fingerprint_before": "not_applicable-isolated-worktree",
-    "index_fingerprint_after": "not_applicable-isolated-worktree",
-    "worktree_fingerprint_before": "isolated-clean",
-    "worktree_fingerprint_after": "isolated-clean",
-    "unrelated_paths_preserved": true,
-    "index_preserved": true,
+    "index_fingerprint_before": "pending-shared-main-baseline",
+    "index_fingerprint_after": "pending-shared-main-baseline",
+    "worktree_fingerprint_before": "pending-shared-main-baseline",
+    "worktree_fingerprint_after": "pending-shared-main-baseline",
+    "unrelated_paths_preserved": false,
+    "index_preserved": false,
     "evidence": [
-      "shared main checkout was not reset/stashed/cleaned",
-      "candidate worktree has zero tracked/untracked changes"
+      "shared main checkout was not reset/stashed/cleaned before isolated integration",
+      "candidate worktree has zero tracked/untracked changes; final merge preservation evidence pending"
     ]
   },
   "terminal": {
@@ -214,9 +239,9 @@
     "delivered_tree_sha": null,
     "timestamp": null,
     "proof": [
-      "prior main receipt db55044a299d57a92cf43df9c95f9ba03b744b6f is superseded by candidate drift",
-      "current 0.7.7 packaged artifact is rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
-      "shared worktree dirty/index state remains preserved"
+      "prior packaged receipt is superseded by candidate refresh to 1a76ec93ee97dc0cdbee955a0718658cb511be50",
+      "current 0.7.7 packaged artifact and exact 100 MiB/10,000-file comparator are rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
+      "local main integration is authorized and will use an isolated worktree plus CAS; shared dirty/index preservation is recorded only after the merge"
     ]
   }
 }

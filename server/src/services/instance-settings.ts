@@ -31,13 +31,19 @@ function stripLegacyGitIdentity(raw: unknown): unknown {
 }
 
 function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
+  const rawRecord = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
   const parsed = instanceGeneralSettingsSchema.safeParse(stripLegacyGitIdentity(raw) ?? {});
   if (parsed.success) {
+    const experimentalPluginsEnabled = typeof rawRecord.experimentalPluginsEnabled === "boolean"
+      ? rawRecord.experimentalPluginsEnabled
+      : parsed.data.experimentalSitesEnabled ?? false;
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
       showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
-      experimentalPluginsEnabled: true,
-      experimentalSitesEnabled: true,
+      experimentalPluginsEnabled,
+      experimentalSitesEnabled: experimentalPluginsEnabled,
       experimentalGoalsEnabled: parsed.data.experimentalGoalsEnabled ?? false,
       experimentalComputerUseEnabled: parsed.data.experimentalComputerUseEnabled ?? false,
       locale: parsed.data.locale ?? "en",
@@ -48,8 +54,8 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   return {
     censorUsernameInLogs: false,
     showDeveloperDiagnostics: false,
-    experimentalPluginsEnabled: true,
-    experimentalSitesEnabled: true,
+    experimentalPluginsEnabled: false,
+    experimentalSitesEnabled: false,
     experimentalGoalsEnabled: false,
     experimentalComputerUseEnabled: false,
     locale: "en",
@@ -127,11 +133,9 @@ export function instanceSettingsService(db: Db) {
   async function updateGeneralJson(patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> {
     const current = await getOrCreateRow();
     const now = new Date();
-    const {
-      experimentalPluginsEnabled: _experimentalPluginsEnabled,
-      experimentalSitesEnabled: _experimentalSitesEnabled,
-      ...supportedPatch
-    } = patch;
+    const supportedPatch = patch.experimentalPluginsEnabled === undefined
+      ? patch
+      : { ...patch, experimentalSitesEnabled: patch.experimentalPluginsEnabled };
     const [updated] = await db
       .update(instanceSettings)
       .set({
