@@ -1,0 +1,186 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "oss-release-mirror-2026-08-13",
+  "status": "delivered",
+  "owner": {
+    "root_id": "current-codex-thread",
+    "agent_id": "codex"
+  },
+  "intent": {
+    "raw_request": "帮我把这个流程搭建起来，后续 0.7.5 发版 maybe 就用这个方式",
+    "corrections": [
+      "The user clarified that object storage, not CDN, is the immediate distribution layer.",
+      "The user switched the selected provider from Alibaba Cloud to Tencent Cloud.",
+      "The user made the mirror mandatory for every future stable and canary Desktop release, not only 0.7.5.",
+      "The approved rehearsal source is existing public release v0.7.3; do not publish 0.7.5."
+    ],
+    "non_goals": [
+      "Do not publish Rudder 0.7.5 in this delivery.",
+      "Do not enable Tencent Cloud CDN.",
+      "Do not edit guarded doc/product contracts.",
+      "Do not make COS the authoritative version source."
+    ],
+    "authorization": "implementation and external Tencent COS/CAM/budget plus GitHub environment setup; branch commit and push after acceptance; no stable release publication"
+  },
+  "candidate": {
+    "branch": "codex/oss-release-mirror",
+    "source_ref": "refs/remotes/origin/main",
+    "source_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "dirty_fingerprint": "5208ee94fe9c90befd02ecdb671eb0177e8c0e69074e3c4401ae27c61b25df8d",
+    "fingerprint_command": "{ git diff --binary --full-index HEAD -- . ':(exclude)doc/plans/artifacts/2026-08-13-oss-release-mirror/delivery-packet.json'; git ls-files --others --exclude-standard -z -- . ':(exclude)doc/plans/artifacts/2026-08-13-oss-release-mirror/delivery-packet.json' | LC_ALL=C sort -z | while IFS= read -r -d '' file; do printf 'untracked %s\\0' \"$file\"; git hash-object \"$file\"; done; } | shasum -a 256",
+    "changed_paths": [
+      ".github/CODEOWNERS",
+      ".github/workflows/release.yml",
+      "cli/src/__tests__/start.test.ts",
+      "cli/src/commands/start.ts",
+      "cli/src/desktop-download.ts",
+      "cli/src/program.ts",
+      "doc/engineering/CLI.md",
+      "doc/engineering/PUBLISHING.md",
+      "doc/engineering/RELEASE-AUTOMATION-SETUP.md",
+      "doc/engineering/RELEASING.md",
+      "doc/plans/2026-08-13-oss-release-mirror.md",
+      "doc/plans/artifacts/2026-08-13-oss-release-mirror/delivery-packet.json",
+      "docs/get-started/installation.mdx",
+      "docs/zh/get-started/installation.mdx",
+      "scripts/mirror-desktop-release-to-cos.mjs",
+      "scripts/publish-github-release-assets-immutable.mjs",
+      "scripts/release-cos-mirror.test.mjs",
+      "scripts/release-github-assets.test.mjs",
+      "scripts/release-workflow-contract.test.mjs"
+    ],
+    "build": {"id": "pnpm-build-pass-cli-460a39e42e1a7cde", "source_sha": "7a58f929f00594726f14ab36b2b180388ba70302"},
+    "runtime": {"id": "v0.7.3-cn-cos-and-github-fallback-install-35593b35f8d164e3", "source_sha": "7a58f929f00594726f14ab36b2b180388ba70302"},
+    "organization_data": {"organization_id": "tencent-appid-1302936001", "data_id": "cos-rudder-releases-cn-1302936001-v0.7.3"},
+    "workload_fixture": "public GitHub v0.7.3 Desktop release mirrored to Tencent COS plus isolated CLI install",
+    "budget_lease": {"id": "user-authorized-cos-setup", "fingerprint": "cos-pay-as-you-go-rmb20-alert-no-cdn", "expires_at": "2026-08-31T23:59:59+08:00"},
+    "acceptance_packet": {
+      "version": "4",
+      "fingerprint": "oss-mirror-acceptance-v4-unified-frozen-artifact-gates",
+      "criteria": [
+        "Every future stable tag v* and canary tag canary/v* must pass the same Desktop GitHub-to-COS mirror gate before GitHub SHASUMS256.txt becomes visible as the completion marker",
+        "The unified Release workflow builds four frozen Desktop candidate artifacts before publication; stable and canary use separate mandatory mirror jobs, and stable partial recovery reuses the original candidate_run_id rather than rebuilding",
+        "GitHub Releases remain authoritative for tag, version metadata, filenames, and SHASUMS256.txt; the CLI always downloads the trust-root checksum from GitHub rather than COS",
+        "GitHub binaries are uploaded before OIDC and Tencent STS authentication, COS mirrors and verifies every asset, and GitHub SHASUMS256.txt is uploaded only after the COS gate succeeds",
+        "GitHub and COS object uploads forbid overwrite; same-name retries accept byte-identical complete sets, conflicts fail, and a visible GitHub checksum marker with any missing binary fails closed",
+        "GitHub Actions uses no long-lived Tencent SecretId or SecretKey and may request an OIDC token only through environment desktop-release-mirror",
+        "Tencent OIDC trust is locked to aud=sts.cloud.tencent.com and sub=repo:Undertone0809/rudder:environment:desktop-release-mirror with automatic key rotation",
+        "GitHub Environment desktop-release-mirror stores four non-sensitive variables, zero Tencent secrets, and permits deployment refs main, v*, and canary/v*",
+        "CAM role rudder-github-release-mirror grants only GetObject and PutObject for rudder-releases-cn-1302936001/releases/* and grants no list, delete, overwrite-management, or ACL operation",
+        "COS bucket rudder-releases-cn-1302936001 is ap-shanghai single-AZ standard storage with private ACL, SSE-COS enabled, versioning/logging/lifecycle deletion disabled, and anonymous exact GetObject only for releases/*",
+        "A monthly RMB 20 budget notifies the default finance contact and Message Center at 50, 80, and 100 percent without deletion or gate bypass",
+        "CLI source selection auto, cn, and global is deterministic; auto concurrently probes bounded COS and GitHub checksum URLs and explicit modes preserve their documented preference order",
+        "COS timeout, 404, interrupted stream, corrupt bytes, or SHA-256 mismatch falls back to GitHub; server-only start performs no Desktop mirror resolution",
+        "Public v0.7.3 rehearsal contains seven Rudder binaries plus SHASUMS256.txt at slash-preserving releases/v0.7.3 paths and all 8 objects are byte-identical to GitHub",
+        "Anonymous exact COS reads succeed while missing exact read returns 404 and anonymous bucket list/write return 403",
+        "Fresh isolated final-candidate CLI installs succeed once with source=cn from COS and once with a deliberately broken mirror URL through GitHub fallback"
+      ],
+      "state_inventory": [
+        "source=auto: bounded COS/GitHub probe then preferred download",
+        "source=cn: COS first then GitHub fallback",
+        "source=global: GitHub first, then COS fallback",
+        "COS unavailable, stalled, interrupted, 404, or corrupt: remove partial bytes and retry GitHub",
+        "GitHub checksum missing or corrupt: fail because COS never supplies trust-root checksum bytes",
+        "pre-marker release retry: fill only missing binaries after verifying existing bytes",
+        "post-marker completed release retry: require the entire GitHub binary and checksum set to be present and byte-identical",
+        "existing COS same bytes: accept; existing COS conflicting bytes: block publication",
+        "stable and canary: identical mandatory mirror gate",
+        "server-only: no Desktop mirror resolution"
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {"verdict": "accept", "candidate_fingerprint": "5208ee94fe9c90befd02ecdb671eb0177e8c0e69074e3c4401ae27c61b25df8d", "source_sha": "7a58f929f00594726f14ab36b2b180388ba70302", "build_id": "pnpm-build-pass-cli-460a39e42e1a7cde", "runtime_id": "v0.7.3-cn-cos-and-github-fallback-install-35593b35f8d164e3", "data_id": "cos-rudder-releases-cn-1302936001-v0.7.3", "packet_version": "4"},
+    "verifier": {"verdict": "PASS", "candidate_fingerprint": "5208ee94fe9c90befd02ecdb671eb0177e8c0e69074e3c4401ae27c61b25df8d", "source_sha": "7a58f929f00594726f14ab36b2b180388ba70302", "build_id": "pnpm-build-pass-cli-460a39e42e1a7cde", "runtime_id": "v0.7.3-cn-cos-and-github-fallback-install-35593b35f8d164e3", "data_id": "cos-rudder-releases-cn-1302936001-v0.7.3", "packet_version": "4"},
+    "final_review": {"verdict": "accept", "candidate_fingerprint": "5208ee94fe9c90befd02ecdb671eb0177e8c0e69074e3c4401ae27c61b25df8d", "source_sha": "7a58f929f00594726f14ab36b2b180388ba70302", "build_id": "pnpm-build-pass-cli-460a39e42e1a7cde", "runtime_id": "v0.7.3-cn-cos-and-github-fallback-install-35593b35f8d164e3", "data_id": "cos-rudder-releases-cn-1302936001-v0.7.3", "packet_version": "4"}
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "Reviewer stage reject on prior fingerprint 9f4361da6679fda9d0318b32b4e75f92b804170fafcc263e80ab9314af5b370e found completed GitHub Release repair semantics and packet coverage P1 blockers; implementation, tests, docs, and packet were changed.",
+      "Reviewer stage reject on prior fingerprint c52952809ed57f33a10356e503945862a2e25ada5189c522ff14d0b14eb599f7 found that an existing GitHub checksum marker could let a parent release bypass failure of its newly dispatched Desktop and COS run; workflow, tests, docs, and packet were changed.",
+      "origin/main advanced from 0906539b5b2bc7bcbb04af74e86a8da104647e87 to de0fd4324eb50a5c4e7b786f8adf589023f52afa after the current-run gate fix. The isolated branch fast-forwarded without scoped path conflicts; prior build, runtime, and test receipts were invalidated.",
+      "origin/main replaced the dispatched Desktop workflow with a unified Release candidate matrix at 480463b4eeb732d9bf30736a7794f9c1d146c7ba. The mirror implementation was migrated to separate stable and canary jobs that consume the same frozen run artifacts; old workflow and acceptance receipts were invalidated.",
+      "origin/main advanced to 00b7545b297836e0db36422c8004b3784b14ccda with v0.7.5 preparation and architecture-debt metadata. No mirror paths conflicted, but all candidate build and runtime evidence was invalidated and must be regenerated without publishing v0.7.5.",
+      "Architecture audit rejected growth in cli/src/commands/start.ts on acceptance v4. Download routing and fallback were extracted to cli/src/desktop-download.ts; the comparison ratchet now reports no regression and all receipts remain pending.",
+      "origin/main advanced from 00b7545b297836e0db36422c8004b3784b14ccda to 73f955fec10b4755dcbc740e8114eca2f0b4b595. The mirror patch was migrated into a fresh isolated worktree without scoped path conflicts; all prior candidate receipts remained pending and current build/runtime evidence was regenerated.",
+      "origin/main advanced from 73f955fec10b4755dcbc740e8114eca2f0b4b595 to dd2dc3e94abd7072e119ac48458d18abdcca1f11 with the Windows portable-install Expand-Archive repair. The mirror candidate was migrated and retained that repair plus its Windows-only real extraction test; the prior reviewer stage accept, build, runtime, and test receipts were invalidated.",
+      "origin/main advanced again from dd2dc3e94abd7072e119ac48458d18abdcca1f11 to 35096f97373e0b707ad6f111e719cebe9b742923 with the CLI start architecture ratchet. The extracted desktop-download module remains below the new comparison baseline with no architecture regression; all independent receipts remain pending until the new candidate is rebuilt and reverified.",
+      "origin/main advanced from 35096f97373e0b707ad6f111e719cebe9b742923 to 8037198f1f3e6a60e3f284844b6138cf62acb7d0 with native/Desktop release alignment and the v0.7.7 base. No mirror paths conflicted, but the stage accept, build, runtime, and test receipts for the old base were invalidated.",
+      "origin/main advanced from 8037198f1f3e6a60e3f284844b6138cf62acb7d0 to ead97b74317e12fd2345a4186877bdf7f6297b55 with release workflow and Desktop startup changes. The patch migrated without conflict; the first rebuilt package and install evidence were invalidated before review.",
+      "origin/main advanced from ead97b74317e12fd2345a4186877bdf7f6297b55 to 67c5b9e240f80ff02dc2e44079af089e2903e1f9 with a packaged runtime recovery fix and the same UI fixture repair found locally. The upstream fixture repair superseded the local one; the final package and install evidence were regenerated on 67c5b9e2.",
+      "origin/main advanced from 67c5b9e240f80ff02dc2e44079af089e2903e1f9 to 168dbcb1f9b9f6a343442e90db2582038b0c9dd7 with Electron CI cache repairs and overlapping release workflow contract assertions. The isolated branch fast-forwarded and the mirror patch reapplied without conflict while retaining the upstream assertions; the 67c5b9e2 build, runtime, test, and reviewer work were invalidated.",
+      "origin/main advanced from 168dbcb1f9b9f6a343442e90db2582038b0c9dd7 to 1e9002df59b77c2fbff9811121a0097c3bcee699 during Desktop verification with silent packaged auto-update and native archive-boundary changes. The failed old-base App Builder smoke occurred in upstream-rewritten Desktop code; the mirror patch migrated without conflict, retained fingerprint 5208ee94fe9c90befd02ecdb671eb0177e8c0e69074e3c4401ae27c61b25df8d, and all 168dbcb1 build/runtime/test work was invalidated.",
+      "origin/main advanced from 1e9002df59b77c2fbff9811121a0097c3bcee699 to 7a58f929f00594726f14ab36b2b180388ba70302. The isolated branch rebased without scoped conflicts; the implementation fingerprint remained 5208ee94fe9c90befd02ecdb671eb0177e8c0e69074e3c4401ae27c61b25df8d, full tests and build passed, and the v0.7.3 COS plus broken-mirror fallback installs were regenerated for the final candidate."
+    ],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/codex/oss-release-mirror",
+    "base_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "branch_refs": [
+      "refs/heads/codex/oss-release-mirror"
+    ],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/private/tmp/rudder-oss-release-mirror",
+    "patch_tree_sha": "407de06c62807c371e3cac9b4b4e0669d5891fbf",
+    "expected_old_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "cas": {"attempted": true, "succeeded": true, "observed_old_sha": "7a58f929f00594726f14ab36b2b180388ba70302", "delivered_sha": "21bf0eea86f57cd81e6dde63a681ff194a62e0e9"},
+    "index_update_mode": "alternate_index"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "shared checkout has unrelated tracked and untracked changes; see git status evidence captured before isolation"
+    ],
+    "index_fingerprint_before": "shared-checkout-index-not-mutated",
+    "index_fingerprint_after": "312b4025cb50c206d4966e6d8caf6df1adb316c7fc2228f8421096162f1901fe",
+    "worktree_fingerprint_before": "shared-checkout-head-40ac4d632eabf8cd9f71bf4408c395eb0b60d11c",
+    "worktree_fingerprint_after": "cf74eb6f6a5bdd9314e635bd6f1b62e9abc33f694642660d16c5860fe2c8d974",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "implementation isolated at /private/tmp/rudder-oss-release-mirror from origin/main",
+      "origin/main and candidate base both 7a58f929f00594726f14ab36b2b180388ba70302 after isolated rebase and final fetch",
+      "GitHub Environment API reports variables=4 and branch policies main, v*, canary/v*",
+      "COS Rudder-0.7.3-linux-x64.AppImage: 221100834 bytes, sha256 b26db375f9dc010841ef0e9ac5ad056278f887cf3cfe98f38085a4c28b07c451",
+      "COS Rudder-0.7.3-macos-arm64-portable.zip: 453373260 bytes, sha256 35593b35f8d164e3ba4a45ee19bd36f1daa3b2801faf10d6750aef767859e183",
+      "COS Rudder-0.7.3-macos-arm64-shell.zip: 141272944 bytes, sha256 75e71c738872338563cb1a8be8256f613521a60b31da6ad1302d6e06709432b1",
+      "COS Rudder-0.7.3-macos-x64-portable.zip: 460742760 bytes, sha256 d1bb4d5a307d08a5503b31b44778478033b948d419771d6d722cb58389b53d27",
+      "COS Rudder-0.7.3-macos-x64-shell.zip: 146047872 bytes, sha256 28740949917f122c6a8a11268d69eaae2725a33d309c8b1803261fac7d4405a4",
+      "COS Rudder-0.7.3-windows-x64-portable.zip: 285031329 bytes, sha256 02769f0d33189c258629f3b97f480d7a5d8e849437b1150235c1ca3c53a4d539",
+      "COS Rudder-0.7.3-windows-x64-shell.zip: 152777720 bytes, sha256 1c9a5ce4b6b63bff4f791fdd3b102564123f4eabfb3269859876d5c52f1cf376",
+      "COS SHASUMS256.txt: 709 bytes, sha256 34bb2e69b6e04c79f6f23faa98b9e491d5e6481f8b0cb8be569ee39ecefa0e24",
+      "COS streamed total: 8/8 objects and 1860347428 bytes",
+      "anonymous COS exact read 200, missing object 404, list 403, write 403",
+      "focused release tests 34/34 and CLI tests 106/106 pass on acceptance v4; actionlint, product logic, docs integrity, lint:changed, and architecture comparison pass",
+      "full lint reports 19 pre-existing origin/main import-order files; all changed files pass lint:changed",
+      "current-candidate pnpm -r typecheck and pnpm build pass; cli/dist/index.js sha256 is 460a39e42e1a7cde9b01bcfe92a489d5f46ddf1d51ada1719fd4d9af14c5c0aa",
+      "pnpm desktop:verify remains blocked by an upstream feature-flag smoke mismatch unrelated to the mirror paths; task-specific Desktop release and CLI installation behavior is covered by the focused workflow tests and two real isolated installs",
+      "full pnpm test:run passed UI 3054/3054, CLI 352/352, Desktop 909/909 with platform-only skips, and Scripts 131/131 with one platform skip",
+      "forced-COS final install downloaded the 432.4 MB v0.7.3 macOS arm64 asset from COS, used GitHub SHASUMS256.txt as the trust root, installed Desktop 0.7.3, and verified sha256 35593b35f8d164e3ba4a45ee19bd36f1daa3b2801faf10d6750aef767859e183",
+      "broken-mirror final fallback install used https://127.0.0.1:9 with an isolated RUDDER_HOME, downloaded the full 432.4 MB asset through GitHub fallback, installed Desktop 0.7.3, and verified sha256 35593b35f8d164e3ba4a45ee19bd36f1daa3b2801faf10d6750aef767859e183",
+      "both final installs downloaded GitHub SHASUMS256.txt sha256 34bb2e69b6e04c79f6f23faa98b9e491d5e6481f8b0cb8be569ee39ecefa0e24; anonymous COS ranged GetObject returned 206",
+      "focused release/COS/workflow tests pass 34/34; actionlint, docs integrity, product-logic:check with 96 contracts, lint:changed, architecture comparison, and git diff --check pass",
+      "independent verifier PASS through 2026-08-14T02:46:29Z: all 8 COS objects fully streamed and hash-matched, permissions returned exact-read 200/range 206/missing 404/list 403/write 403, both fresh installs passed, and no partial or lock artifacts remained; evidence logs are under /private/tmp/rudder-acceptance-v4.9iYa8O",
+      "the public v0.7.5 Release pre-existed independent verification and its identity remained unchanged; this delivery did not publish, retag, or modify v0.7.5",
+      "feature commit 21bf0eea86f57cd81e6dde63a681ff194a62e0e9 with tree 407de06c62807c371e3cac9b4b4e0669d5891fbf was pushed to refs/heads/codex/oss-release-mirror while remote main remained 7a58f929f00594726f14ab36b2b180388ba70302",
+      "shared checkout remained untouched; current shared HEAD is dc6d5d40b2b4a1a96bec20d8bd6cf960bc6af5af, current status fingerprint is 9da4cae6052f9861acc0a76bf70ebca1e92a61b85187cafccb4e65383ec4119d, and current staged-diff fingerprint is 621068ccb7fdc62328b5c1ae90f871fce5803d6b2e1619721f07fc64d93912d"
+    ]
+  },
+  "terminal": {
+    "delivered_ref": "refs/heads/codex/oss-release-mirror@2026-08-14T10:56:44+08:00",
+    "delivered_sha": "21bf0eea86f57cd81e6dde63a681ff194a62e0e9",
+    "delivered_tree_sha": "407de06c62807c371e3cac9b4b4e0669d5891fbf",
+    "timestamp": "2026-08-14T10:56:44+08:00",
+    "proof": [
+      "git ls-remote origin refs/heads/codex/oss-release-mirror returned 21bf0eea86f57cd81e6dde63a681ff194a62e0e9",
+      "git rev-parse 21bf0eea86f57cd81e6dde63a681ff194a62e0e9^{tree} returned 407de06c62807c371e3cac9b4b4e0669d5891fbf",
+      "remote refs/heads/main remained 7a58f929f00594726f14ab36b2b180388ba70302 at delivery"
+    ]
+  }
+}
