@@ -1097,6 +1097,21 @@ describe("desktop start command helpers", () => {
     );
   });
 
+  it("rejects malformed checksum manifest lines instead of ignoring them", () => {
+    expect(() => parseChecksumFile("not-a-checksum\n")).toThrow(
+      "Invalid SHA-256 checksum manifest line 1",
+    );
+  });
+
+  it("rejects duplicate checksum manifest entries", () => {
+    const checksum = "a".repeat(64);
+    expect(() =>
+      parseChecksumFile(
+        `${checksum}  Rudder-0.3.1-linux-x64.AppImage\n${checksum}  Rudder-0.3.1-linux-x64.AppImage\n`,
+      ),
+    ).toThrow("Duplicate SHA-256 checksum manifest entry");
+  });
+
   it("formats determinate and unknown-size byte progress", () => {
     expect(formatByteProgress({ receivedBytes: 1024, totalBytes: 2048, width: 10 })).toBe(
       "[#####-----] 50% 1.0 KB/2.0 KB",
