@@ -176,7 +176,24 @@ fn required_i32(value: Option<String>, label: &str) -> Result<i32, String> {
         .map_err(|_| format!("invalid {label}"))
 }
 
+fn handle_metadata_args() -> bool {
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => {
+            println!("rudder-process-tree-sampler {}", env!("CARGO_PKG_VERSION"));
+            true
+        }
+        Some("--protocol-version") => {
+            println!("1");
+            true
+        }
+        _ => false,
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if handle_metadata_args() {
+        return Ok(());
+    }
     let mut args = env::args().skip(1);
     let root_pid = required_i32(args.next(), "root pid")?;
     let interval_ms = required_i32(args.next(), "interval ms")?;
@@ -213,6 +230,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "rootPid": root_pid,
             "samplerPid": sampler_pid,
             "intervalMs": interval_ms,
+            "version": env!("CARGO_PKG_VERSION"),
+            "protocolVersion": 1,
             "qosClass": qos_class,
             "source": "proc_listchildpids+PROC_PIDTBSDINFO+PROC_PIDTASKINFO"
         })
