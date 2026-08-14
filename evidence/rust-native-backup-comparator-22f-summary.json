@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "status": "not_comparable",
+  "source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
+  "clean_worktree_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "receipt": "/tmp/rudder-native-backup-comparator-22f-100m-10k.json",
+  "receipt_sha256": "4afcb092dc40896042d679840a0f6ed0e4d92b02328116249a3bf7a7559b3ba5",
+  "native_binary": {
+    "name": "rudder-native",
+    "version": "0.7.7",
+    "target": "aarch64-apple-darwin",
+    "sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9"
+  },
+  "sampler": {
+    "name": "rudder-process-tree-sampler",
+    "version": "0.7.7",
+    "protocol_version": 1,
+    "target": "aarch64-apple-darwin",
+    "sha256": "b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c",
+    "positive_boundaries": "2/2",
+    "overhead_p95_ms": 0.183625
+  },
+  "fixture": {
+    "file_count": 10000,
+    "byte_size": 104857600,
+    "tree_sha256": "1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22",
+    "content_sha256": "0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13"
+  },
+  "sample_count": 1,
+  "parity": {
+    "manifest": true,
+    "entry": true,
+    "content": true,
+    "archive_bytes": "not_compared",
+    "recovery": true
+  },
+  "descriptive_metrics": {
+    "node_elapsed_ms": 6267.77,
+    "native_elapsed_ms": 3888.767,
+    "node_rss_delta_bytes": 62029824,
+    "native_rss_delta_bytes": 22200320,
+    "node_rss_peak_bytes": 142245888,
+    "native_rss_peak_bytes": 164446208,
+    "node_archive_bytes": 108285447,
+    "native_archive_bytes": 108285447
+  },
+  "non_comparable_reason": "One descriptive paired sample has no randomized arm order, warmups, or 100-operation confidence interval; it cannot support promotion or causal A/B claims."
+}
