@@ -1,10 +1,10 @@
-import crypto from "node:crypto";
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
@@ -775,7 +775,7 @@ function parseZipRecords(archive: Uint8Array): ZipRecord[] {
     if (foldedNames.has(folded)) throw new Error(`case-colliding v2 backup ZIP path: ${record.archivePath}`);
     names.add(record.archivePath);
     foldedNames.add(folded);
-    totalBytes += record.kind === "file" ? record.byteSize : 0;
+    totalBytes += record.kind === "file" && record.archivePath !== WORKSPACE_BACKUP_V2_MANIFEST_PATH ? record.byteSize : 0;
     if (totalBytes > WORKSPACE_BACKUP_V2_MAX_TOTAL_BYTES) throw new Error("v2 backup ZIP exceeds the total uncompressed byte limit");
     if (record.kind === "file") assertSafeWorkspaceBackupV2Path(record.archivePath);
     else if (!assertSafeWorkspaceBackupV2Path(record.archivePath.slice(0, -1))) throw new Error(`invalid v2 backup directory path: ${record.archivePath}`);
@@ -913,7 +913,7 @@ function parseCentralDirectory(central: Uint8Array, centralOffset: number, centr
     if (foldedNames.has(folded)) throw new Error(`case-colliding v2 backup ZIP path: ${record.archivePath}`);
     names.add(record.archivePath);
     foldedNames.add(folded);
-    totalBytes += record.kind === "file" ? record.byteSize : 0;
+    totalBytes += record.kind === "file" && record.archivePath !== WORKSPACE_BACKUP_V2_MANIFEST_PATH ? record.byteSize : 0;
     if (totalBytes > WORKSPACE_BACKUP_V2_MAX_TOTAL_BYTES) throw new Error("v2 backup ZIP exceeds the total uncompressed byte limit");
     if (record.kind === "file") assertSafeWorkspaceBackupV2Path(record.archivePath);
     else assertSafeWorkspaceBackupV2Path(record.archivePath.slice(0, -1));
