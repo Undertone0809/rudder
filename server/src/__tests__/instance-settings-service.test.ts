@@ -11,11 +11,11 @@ type TestInstanceSettingsRow = {
   updatedAt: Date;
 };
 
-function createInstanceSettingsDb(initialBrowser: unknown) {
+function createInstanceSettingsDb(initialBrowser: unknown, initialGeneral: Record<string, unknown> = {}) {
   let row: TestInstanceSettingsRow = {
     id: "instance-settings-1",
     singletonKey: "default",
-    general: {},
+    general: initialGeneral,
     notifications: {},
     browser: initialBrowser,
     createdAt: new Date("2026-07-12T00:00:00.000Z"),
@@ -129,6 +129,35 @@ describe("instanceSettingsService Browser settings", () => {
         enabled: false,
         openLinksIn: "default_browser",
       },
+    });
+  });
+});
+
+describe("instanceSettingsService general settings", () => {
+  it("defaults experimental plugins and sites to disabled", async () => {
+    const service = instanceSettingsService(createInstanceSettingsDb(undefined).db);
+
+    await expect(service.getGeneral()).resolves.toMatchObject({
+      experimentalPluginsEnabled: false,
+      experimentalSitesEnabled: false,
+    });
+  });
+
+  it("preserves the explicit plugin flag and mirrors the legacy sites flag", async () => {
+    const enabledService = instanceSettingsService(
+      createInstanceSettingsDb(undefined, { experimentalPluginsEnabled: true }).db,
+    );
+    const disabledService = instanceSettingsService(
+      createInstanceSettingsDb(undefined, { experimentalPluginsEnabled: false }).db,
+    );
+
+    await expect(enabledService.getGeneral()).resolves.toMatchObject({
+      experimentalPluginsEnabled: true,
+      experimentalSitesEnabled: true,
+    });
+    await expect(disabledService.getGeneral()).resolves.toMatchObject({
+      experimentalPluginsEnabled: false,
+      experimentalSitesEnabled: false,
     });
   });
 });
