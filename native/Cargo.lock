@@ -303,6 +303,7 @@ dependencies = [
 name = "rudder-update-helper"
 version = "0.7.7"
 dependencies = [
+ "libc",
  "rudder-update-helper-core",
  "serde_json",
 ]
