@@ -22,6 +22,9 @@ export function isInternalChatTranscriptLifecycleEntry(
   const text = compactTranscriptWhitespace(entry.text).toLowerCase();
   return text === "reasoning started"
     || text === "reasoning completed"
+    || text === "pi agent started"
+    || text === "pi agent finished"
+    || text === "turn ended"
     || /^item (?:started|completed): reasoning(?:\s+\([^)]*\))?$/.test(text)
     || /^item (?:started|completed): user[_-]?message(?:\s+\([^)]*\))?$/.test(text);
 }

@@ -53,6 +53,9 @@ export function RunTranscriptView({
   runAnnotationContext,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
+  const effectiveShowDeveloperDiagnostics = presentation === "chat"
+    ? false
+    : showDeveloperDiagnostics;
   const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
     if (!shouldHandlePlainClick(event)) return;
 
@@ -106,12 +109,17 @@ export function RunTranscriptView({
     });
   }, [onOpenFile, toastContext]);
   const renderableEntries = useMemo(
-    () => filterRenderableTranscriptEntries(entries, { showDeveloperDiagnostics }),
-    [entries, showDeveloperDiagnostics],
+    () => filterRenderableTranscriptEntries(entries, {
+      presentation,
+      showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+    }),
+    [effectiveShowDeveloperDiagnostics, entries, presentation],
   );
   const blocks = useMemo(
-    () => normalizeTranscript(renderableEntries, streaming, { showDeveloperDiagnostics }),
-    [renderableEntries, streaming, showDeveloperDiagnostics],
+    () => normalizeTranscript(renderableEntries, streaming, {
+      showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+    }),
+    [effectiveShowDeveloperDiagnostics, renderableEntries, streaming],
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
   const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);

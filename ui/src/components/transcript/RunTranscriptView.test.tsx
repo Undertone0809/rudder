@@ -976,11 +976,33 @@ describe("RunTranscriptView", () => {
           density="compact"
           presentation="chat"
           hiddenAssistantMessageText="Final answer shown in the assistant message."
+          showDeveloperDiagnostics
           entries={[
             {
               kind: "system",
               ts: "2026-07-19T00:00:00.000Z",
               text: "turn started",
+            },
+            {
+              kind: "system",
+              ts: "2026-07-19T00:00:00.100Z",
+              text: "Pi agent started",
+            },
+            {
+              kind: "stdout",
+              ts: "2026-07-19T00:00:00.150Z",
+              text: JSON.stringify({
+                type: "session",
+                version: 3,
+                id: "pi-session-1",
+                timestamp: "2026-07-19T00:00:00.150Z",
+                cwd: "/Users/operator/workspace",
+              }),
+            },
+            {
+              kind: "stdout",
+              ts: "2026-07-19T00:00:00.175Z",
+              text: JSON.stringify({ type: "auto_retry_start" }),
             },
             {
               kind: "system",
@@ -1017,6 +1039,21 @@ describe("RunTranscriptView", () => {
               text: "reasoning completed",
             },
             {
+              kind: "system",
+              ts: "2026-07-19T00:00:04.100Z",
+              text: "Turn ended",
+            },
+            {
+              kind: "system",
+              ts: "2026-07-19T00:00:04.200Z",
+              text: "Pi agent finished",
+            },
+            {
+              kind: "stderr",
+              ts: "2026-07-19T00:00:04.300Z",
+              text: "unexpected status 502 Bad Gateway: upstream request failed, url: https://provider.invalid/v1/responses",
+            },
+            {
               kind: "assistant",
               ts: "2026-07-19T00:00:05.000Z",
               text: "R",
@@ -1049,6 +1086,11 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("reasoning started");
     expect(html).not.toContain("reasoning completed");
     expect(html).not.toContain("UserMessage");
+    expect(html).not.toContain("Pi agent");
+    expect(html).not.toContain("pi-session-1");
+    expect(html).not.toContain("auto_retry_start");
+    expect(html).not.toContain("Bad Gateway");
+    expect(html).not.toContain("provider.invalid");
     expect(html).not.toContain("RUDDER_RESULT");
     expect(html).not.toContain("Final answer shown in the assistant message.");
   });

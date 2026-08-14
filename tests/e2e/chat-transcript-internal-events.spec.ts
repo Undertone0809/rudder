@@ -45,6 +45,9 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
     structuredPayload: {
       __chatTranscript: [
         { kind: "system", ts: "2026-07-19T00:00:00.000Z", text: "turn started" },
+        { kind: "system", ts: "2026-07-19T00:00:00.100Z", text: "Pi agent started" },
+        { kind: "stdout", ts: "2026-07-19T00:00:00.150Z", text: JSON.stringify({ type: "session", version: 3, id: "pi-session-1", timestamp: "2026-07-19T00:00:00.150Z", cwd: "/Users/operator/workspace" }) },
+        { kind: "stdout", ts: "2026-07-19T00:00:00.175Z", text: JSON.stringify({ type: "auto_retry_start" }) },
         {
           kind: "system",
           ts: "2026-07-19T00:00:00.250Z",
@@ -71,6 +74,9 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
         },
         { kind: "system", ts: "2026-07-19T00:00:03.000Z", text: "reasoning started" },
         { kind: "system", ts: "2026-07-19T00:00:04.000Z", text: "reasoning completed" },
+        { kind: "system", ts: "2026-07-19T00:00:04.100Z", text: "Turn ended" },
+        { kind: "system", ts: "2026-07-19T00:00:04.200Z", text: "Pi agent finished" },
+        { kind: "stderr", ts: "2026-07-19T00:00:04.300Z", text: "unexpected status 502 Bad Gateway: upstream request failed, url: https://provider.invalid/v1/responses" },
         { kind: "assistant", ts: "2026-07-19T00:00:05.000Z", text: "R" },
         { kind: "assistant", ts: "2026-07-19T00:00:06.000Z", text: "UD" },
         {
@@ -106,6 +112,10 @@ test("hides internal lifecycle and result protocol entries from Messenger proces
   await expect(transcript.getByText(/reasoning completed/i)).toHaveCount(0);
   await expect(transcript.getByText("UserMessage", { exact: true })).toHaveCount(0);
   await expect(transcript.getByText(/RUDDER_RESULT/i)).toHaveCount(0);
+  await expect(transcript.getByText(/Pi agent/i)).toHaveCount(0);
+  await expect(transcript.getByText(/auto_retry_start/i)).toHaveCount(0);
+  await expect(transcript.getByText(/pi-session-1/i)).toHaveCount(0);
+  await expect(transcript.getByText(/Bad Gateway/i)).toHaveCount(0);
   await expect(transcript.getByText(/^System$/)).toHaveCount(0);
   await page.screenshot({ path: "/tmp/rudder-user-message-lifecycle-hidden.png", fullPage: true });
 });
