@@ -39,7 +39,6 @@ commit_refs:
   - 2a470a382
   - b707c9254
   - 88e257044
-  - 22fbeedbc
 updated_at: 2026-08-14
 ---
 
@@ -49,19 +48,15 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current frozen runtime candidate is source `22fbeedbc0fe42431ac4c21f586d20bca21556bb`
-(`main`) in the clean worktree `/private/tmp/rudder-native-b5-rebuild`.
-The clean candidate fingerprint is
-`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (the
-SHA-256 of an empty status stream); shared-main dirty/index fingerprints are
-preservation evidence only. The exact macOS arm64 packaged candidate was
-rebuilt from this SHA. `desktop:dist`, server-package checks, native
-staging/version checks, standalone server-package verification, packaged
-Computer Use verification, account-gate smoke, App Builder smoke, and
-`unzip -t` passed. The portable ZIP SHA-256 is
-`9172ae7a20797186d5e5eafdda428154215f8222732d9e6f32214e5a7fd845dd`; the
+The exact runtime candidate is source `88e257044d33cbcc19feb4de65db57a82b367a16`
+(`main`), with the shared-main tracked dirty fingerprint recorded in the
+delivery packet. The exact macOS arm64 packaged candidate was rebuilt from
+this SHA. `desktop:dist`, all 14 server-package checks, native
+staging/version checks, standalone server-package verification, account
+gate/App Builder smoke, and `unzip -t` passed. The portable ZIP SHA-256 is
+`db7c028a97dc91112ec72071ba884a787bb3629581365e1f460f3cd2df2a4ac4`; the
 shell ZIP SHA-256 is
-`d5994ff8b55a1733c7572deac71a592f5c836a5a977299970b9ba30a88241423`; the
+`cf1cdf03a843b1931fca1f6d13c629c23b8c4e850514c0347f96f934d4d7ec4b`; the
 packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 Staged first-party Rust binaries report `0.7.7`: `rudder-native`
@@ -71,24 +66,15 @@ Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `rudder-update-helper`
 `72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b`.
 
-The benchmark-only `rudder-process-tree-sampler` is compiled at `0.7.7`
-(`b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c`) but
-is not a packaged product binary. `aarch64-apple-darwin` is the only
-packaged-acceptance target; other compiled targets remain
-`compiled_unverified`.
-
-The current-source backup scale receipt is
-`/tmp/rudder-native-backup-comparator-22f-100m-10k.json` with receipt SHA-256
-`4afcb092dc40896042d679840a0f6ed0e4d92b02328116249a3bf7a7559b3ba5`.
-It uses a 100 MiB/10,000-file fixture (`tree=1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22`,
-`content=0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13`),
-one paired sample, 2/2 positive external sampler boundaries, and passes
-manifest, entry, content, and recovery parity. It is explicitly
-`not_comparable`: one sample cannot satisfy
+The current exact-88e backup scale receipt is
+`/tmp/rudder-native-backup-comparator-88e-100m-10k.json` with receipt
+SHA-256 `f2e1cb806c2e339a9baeb84def027572ca85766f0bebc09186aec5c24af198a4`.
+It uses a 100 MiB/10,000-file fixture, one paired sample, 2/2 positive
+external sampler boundaries, and passes manifest, entry, content, and
+recovery parity. It is explicitly `not_comparable`: one sample cannot satisfy
 the declared 100-sample promotion gate, and the recorded 300-second bounded
 operation/native timeout is diagnostic configuration only. The predecessor
-`88e` 100 MiB/10,000-file receipt remains source-invalidated historical
-evidence and must not be reused by a current packet.
+100 MiB/10,000-file receipt remains source-invalidated historical evidence.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
@@ -334,8 +320,7 @@ plan; it requires a concrete Product Logic delta and explicit approval first.
 
 ### Repository layout
 
-Create one Cargo workspace with the product binaries plus one benchmark-only
-sampler and narrowly shared crates:
+Create one Cargo workspace with two binaries and narrowly shared crates:
 
 ```text
 native/
@@ -353,8 +338,6 @@ native/
   bins/
     rudder-process-host/
     rudder-native/
-    rudder-process-tree-sampler/ # benchmark-only; never a product runtime
-    rudder-update-helper/        # packaged Desktop update helper
 ```
 
 `rudder-process-host` is long-lived only relative to one accepted child

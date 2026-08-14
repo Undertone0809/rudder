@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   attestExternalDesktopUpdateHelper,
+  DESKTOP_UPDATE_HELPER_PROTOCOL,
   ensureExternalDesktopUpdateHelper,
   handoffDesktopUpdateToExternalHelper,
   isDesktopUpdateRequestFresh,
@@ -14,7 +15,6 @@ import {
   requestMatchesAutomaticCandidate,
   resolveDesktopUpdateTransactionPaths,
   resolveExternalDesktopUpdateHelperPath,
-  DESKTOP_UPDATE_HELPER_PROTOCOL,
 } from "./desktop-update-helper.js";
 
 describe("external Desktop update helper attestation", () => {
