@@ -40,6 +40,7 @@ commit_refs:
   - b707c9254
   - 88e257044
   - 22fbeedbc
+  - 72005f4b3
 updated_at: 2026-08-14
 ---
 
@@ -49,8 +50,8 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current frozen runtime candidate is source `22fbeedbc0fe42431ac4c21f586d20bca21556bb`
-(`main`) in the clean worktree `/private/tmp/rudder-native-b5-rebuild`.
+The current frozen runtime candidate is merge source `72005f4b37df05fbd987fb4c1051c8f21652ad23`
+(`main`) in the clean worktree `/private/tmp/rudder-native-main-merge`.
 The clean candidate fingerprint is
 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (the
 SHA-256 of an empty status stream); shared-main dirty/index fingerprints are
@@ -59,9 +60,9 @@ rebuilt from this SHA. `desktop:dist`, server-package checks, native
 staging/version checks, standalone server-package verification, packaged
 Computer Use verification, account-gate smoke, App Builder smoke, and
 `unzip -t` passed. The portable ZIP SHA-256 is
-`9172ae7a20797186d5e5eafdda428154215f8222732d9e6f32214e5a7fd845dd`; the
+`5544b24edd5fe15ec6e7ddda03da3faac023919a478002fe0bc802e40cef5866`; the
 shell ZIP SHA-256 is
-`d5994ff8b55a1733c7572deac71a592f5c836a5a977299970b9ba30a88241423`; the
+`f8b80973abd9f2dcf3c8b659990c0ef628f1c073dd091d54198d45f43b8b942f`; the
 packaged app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 Staged first-party Rust binaries report `0.7.7`: `rudder-native`
@@ -69,7 +70,7 @@ Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `rudder-process-host`
 `02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf`, and
 `rudder-update-helper`
-`72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b`.
+`20cecbf018d62ea578f59019ea1bdae5bc5bc8af25155c5cd310e1b2950dd0e1`.
 
 The benchmark-only `rudder-process-tree-sampler` is compiled at `0.7.7`
 (`b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c`) but
@@ -77,9 +78,9 @@ is not a packaged product binary. `aarch64-apple-darwin` is the only
 packaged-acceptance target; other compiled targets remain
 `compiled_unverified`.
 
-The current-source backup scale receipt is
-`/tmp/rudder-native-backup-comparator-22f-100m-10k.json` with receipt SHA-256
-`4afcb092dc40896042d679840a0f6ed0e4d92b02328116249a3bf7a7559b3ba5`.
+The final-merge-source backup scale receipt is
+`/tmp/rudder-native-backup-comparator-720-100m-10k.json` with receipt SHA-256
+`7103df8647c6aad596e4f731c5a98a93a04ff403a8877dad363c63e7cd6c55ca`.
 It uses a 100 MiB/10,000-file fixture (`tree=1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22`,
 `content=0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13`),
 one paired sample, 2/2 positive external sampler boundaries, and passes
@@ -87,7 +88,7 @@ manifest, entry, content, and recovery parity. It is explicitly
 `not_comparable`: one sample cannot satisfy
 the declared 100-sample promotion gate, and the recorded 300-second bounded
 operation/native timeout is diagnostic configuration only. The predecessor
-`88e` 100 MiB/10,000-file receipt remains source-invalidated historical
+`22f` receipt and its `88e` predecessor remain source-invalidated historical
 evidence and must not be reused by a current packet.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
