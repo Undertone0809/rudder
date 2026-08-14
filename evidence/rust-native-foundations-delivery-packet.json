@@ -66,6 +66,15 @@
         "staged_binaries": ["rudder-native --version", "rudder-process-host --version", "rudder-update-helper --version"],
         "release_tag": "not_present_for_unreleased_0.7.7_candidate",
         "target_scope": "aarch64-apple-darwin packaged acceptance; other targets compiled_unverified"
+      },
+      "clean_source_verification": {
+        "source_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
+        "worktree": "/private/tmp/rudder-native-verify-d301",
+        "worktree_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "cargo_fmt": "PASS",
+        "cargo_clippy_deny_warnings": "PASS",
+        "cargo_test_all_targets": "PASS",
+        "version_sync": "PASS_0.7.7_js_cargo_lock_and_native_packages"
       }
     },
     "runtime": {
