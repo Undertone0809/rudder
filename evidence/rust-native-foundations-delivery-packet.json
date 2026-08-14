@@ -31,7 +31,7 @@
       "runtime_paths_changed": false,
       "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are now directly rebuilt/bound to 88e."
     },
-    "dirty_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+    "dirty_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
     "changed_paths": [
       "desktop/scripts/smoke.mjs",
       "desktop/src/boot-preload.ts",
@@ -79,6 +79,8 @@
       "backup_comparator_native_binary_sha256": "97d0a91e0e2d77572df7283afe5f44f85a013ec3685d29d0f6e24cdeb80ac4b9",
       "backup_comparator_native_binary_version": "rudder-native 0.7.7",
       "backup_comparator_native_binary_target": "aarch64-apple-darwin",
+      "backup_comparator_receipt_dirty_fingerprint": "baee2373c9085fc8657107170bddd7ff4ffa4436e3d1cdfa8b63e38d4196025e",
+      "backup_comparator_receipt_dirty_fingerprint_scope": "isolated comparator worktree included the pre-commit packet metadata diff; source SHA and binary/build identities remain exact, while the current shared-main lease fingerprint is recorded on candidate.dirty_fingerprint",
       "backup_comparator_operation_timeout_ms": 300000,
       "backup_comparator_native_archive_timeout_ms": 300000,
       "backup_comparator_predecessor_receipt": "/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json",
@@ -176,34 +178,34 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "needs_more_evidence",
-      "candidate_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+      "verdict": "pending",
+      "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
       "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Direct 88e packaged proof and current 100 MiB/10,000-file one-sample parity/recovery are current, but the scale receipt is not_comparable and hosted Local App dogfood/live native_ab evidence remain unavailable."
+      "reason": "Prior needs_more_evidence receipt was invalidated when the candidate lease fingerprint was refreshed; request a new reviewer verdict against the current shared-main fingerprint."
     },
     "verifier": {
-      "verdict": "QUESTION",
-      "candidate_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+      "verdict": "pending",
+      "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
       "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Direct 88e packaged acceptance passes and the current scale fixture has parity/recovery PASS, but one sample cannot satisfy the 100-sample promotion gate; authorized hosted Local App dogfood and live native_ab remain unavailable."
+      "reason": "Prior QUESTION receipt was invalidated when the candidate lease fingerprint was refreshed; request a new verifier verdict against the current shared-main fingerprint."
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+      "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
       "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Final review is pending a fresh reviewer/verifier reconciliation; hosted dogfood and native_ab blockers still prevent acceptance."
+      "reason": "Final review is pending fresh reviewer/verifier receipts for the current lease; hosted dogfood and native_ab blockers remain unresolved."
     }
   },
   "drift": {
@@ -256,6 +258,12 @@
         "before_source_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
         "after_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
         "reason": "The exact 88e packaged artifact and current 100 MiB/10,000-file one-sample comparator are now bound to the direct candidate; prior b707 receipts are historical, while hosted dogfood/live native_ab remain unavailable."
+      },
+      {
+        "type": "candidate_dirty_fingerprint_refreshed_after_packet_metadata_patch",
+        "before_dirty_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
+        "after_dirty_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
+        "reason": "The shared-main lease fingerprint changed while binding the comparator receipt scope; prior reviewer, verifier, and final-review verdicts are invalidated and must be rerun on the current exact candidate identity."
       }
     ],
     "invalidated_receipts": [
