@@ -43,9 +43,49 @@ else {
   const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
   console.log(JSON.stringify({ok:true,operation:"create",protocolVersion:1,byteSize:bytes.length,sha256:behavior === "hash" ? "0".repeat(64) : hash(bytes),manifestSha256:hash(manifest),treeSha256:plan.treeSha256}));
 }
+
 `);
   await chmod(script, 0o755);
   return script;
+}
+
+function appendUnlistedByteEntry(archive: Buffer) {
+  const eocd = archive.length - 22;
+  const centralOffset = archive.readUInt32LE(eocd + 16);
+  const centralSize = archive.readUInt32LE(eocd + 12);
+  const entryCount = archive.readUInt16LE(eocd + 10);
+  const name = Buffer.from("overflow.bin", "utf8");
+  const local = Buffer.alloc(30 + name.length + 1);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0x0800, 6);
+  local.writeUInt32LE(1, 18);
+  local.writeUInt32LE(1, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+  local[30 + name.length] = 0x61;
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(0x0800, 8);
+  central.writeUInt32LE(1, 20);
+  central.writeUInt32LE(1, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE(centralOffset, 42);
+  name.copy(central, 46);
+  const updatedEocd = Buffer.from(archive.subarray(eocd));
+  updatedEocd.writeUInt16LE(entryCount + 1, 8);
+  updatedEocd.writeUInt16LE(entryCount + 1, 10);
+  updatedEocd.writeUInt32LE(centralSize + central.length, 12);
+  updatedEocd.writeUInt32LE(centralOffset + local.length, 16);
+  return Buffer.concat([
+    archive.subarray(0, centralOffset),
+    local,
+    archive.subarray(centralOffset, eocd),
+    central,
+    updatedEocd,
+  ]);
 }
 
 describe("workspace backup v2 comparator", () => {
@@ -224,6 +264,9 @@ describe("workspace backup v2 comparator", () => {
       expect(artifact.byteSize).toBe(100 * 1024 * 1024);
       const inspected = await inspectWorkspaceBackupV2File(artifactPath);
       expect(inspected.manifest.entries.filter((entry) => entry.kind === "file")).toHaveLength(20);
+      const overflowPath = path.join(f.root, "backup-100m-plus-one.zip");
+      await writeFile(overflowPath, appendUnlistedByteEntry(await readFile(artifactPath)));
+      await expect(inspectWorkspaceBackupV2File(overflowPath)).rejects.toThrow("total uncompressed byte limit");
     } finally { await f.dispose(); }
   }, 120_000);
 
