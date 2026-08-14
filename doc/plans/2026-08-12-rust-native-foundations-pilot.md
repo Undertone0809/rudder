@@ -65,7 +65,9 @@ Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `d8303913cc9194f2149a72da76b7e897bda45ebb80e09c739f3b2981db43081a`.
 
 The fresh 100 MiB/10,000-file Rust versus optimized-Node backup receipt is
-`/tmp/rudder-native-backup-comparator-1a76ec93-100m-10k-clean.json`. Fixture
+`/tmp/rudder-native-backup-comparator-1a76ec93-100m-10k-clean.json` with
+receipt SHA-256
+`60b96797da5aedd2a9c77210bba11f2407dfb12034059f483b86e38328869f37`. Fixture
 tree/content SHA-256 values are
 `1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22` and
 `0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13`.
