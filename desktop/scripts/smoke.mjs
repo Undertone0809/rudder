@@ -1287,19 +1287,13 @@ async function verifyBundledSkills(baseUrl, companyId) {
     throw new Error(`read feature capabilities failed (${healthResponse.status}): ${await healthResponse.text()}`);
   }
   const skills = await response.json();
-  const health = await healthResponse.json();
   assert.ok(Array.isArray(skills), "organization skills response should be an array");
 
   const bundledSlugs = skills
     .filter((skill) => skill?.sourceBadge === "rudder")
     .map((skill) => skill.slug)
     .sort();
-  const expectedSlugs = REQUIRED_BUNDLED_SKILLS
-    .filter((slug) => (
-      slug !== "app-builder"
-      || health.features?.experimentalPluginsEnabled === true
-    ))
-    .sort();
+  const expectedSlugs = [...REQUIRED_BUNDLED_SKILLS].sort();
 
   assert.deepEqual(
     bundledSlugs,
