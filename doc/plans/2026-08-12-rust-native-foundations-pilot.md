@@ -35,6 +35,9 @@ commit_refs:
   - 0691c3850
   - 0d30c8acb
   - 6c363bf82
+  - 474ae030e
+  - 2a470a382
+  - b707c9254
 updated_at: 2026-08-14
 ---
 
@@ -44,16 +47,20 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The exact runtime candidate is source `6c363bf822088f47508db4228e5e3665e75c88b1`
-(`codex/rust-native-foundations-integration`), with a clean tracked tree and
-dirty fingerprint `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
-The macOS arm64 packaged candidate was rebuilt from that SHA. `desktop:dist`,
-server-package verification, native staging/version checks, account-gate and
-App Builder smoke, and `unzip -t` passed. The portable ZIP SHA-256 is
-`a9b5196ca23fbb30b553774a95e68ed8f7a77469284d02bd8dd69d346a0a2678`; the
+The exact runtime candidate is source `b707c925434afb34f36ab2faae8a23f6a7bf26dc`
+(`main`), with a clean tracked tree and dirty fingerprint
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+This candidate adds three separately committed bounded improvements: explicit
+opt-in Rust Run evidence sidecar indexing with Node fallback, streaming
+PostgreSQL payload downloads with an optional SHA-256 pin and byte ceiling, and
+cleanup of invalid native sidecars. The macOS arm64 packaged candidate was
+rebuilt from this exact SHA. `desktop:dist`, all 14 server-package checks,
+native staging/version checks, standalone server-package verification, account
+gate/App Builder smoke, and `unzip -t` passed. The portable ZIP SHA-256 is
+`ef2c49a9b4c04a1adb8f7ff4ba522a6f75fcf78ab775cad31aea91b85e45b715`; the
 shell ZIP SHA-256 is
-`80582aeda625f59241f9cf9c580e00708931e2e124c7e77196ad3bd76ff39363`; the
-packaged app executable SHA-256 is
+`48e9df42dc18f53af490982b55b16bba7cc7448162448aeaee89599c6f5162af`; the
+packaged app executable SHA-256 remains
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`.
 Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9`,
@@ -64,20 +71,16 @@ Staged first-party Rust binaries report `0.7.7`: `rudder-native`
 `rudder-process-tree-sampler`
 `d8303913cc9194f2149a72da76b7e897bda45ebb80e09c739f3b2981db43081a`.
 
-The fresh 100 MiB/10,000-file Rust versus optimized-Node backup receipt is
-`/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json` with receipt
-SHA-256
-`27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123`. Fixture
-tree/content SHA-256 values are
-`1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22` and
-`0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13`.
-Manifest, entry, content, and recovery parity passed; both arms preserved the
-sentinel on final-exists rejection and left no temporary artifacts. The
-external process sampler recorded 200/200 positive operation boundaries. Node
-and native archive bytes are intentionally `not_compared`, and the harness
-marks elapsed/RSS measurements `not_comparable` because it lacks randomized
-paired arm order and warmup trials. Descriptive means were Node 6591.234 ms and
-native 3772.708 ms; they are not causal promotion evidence.
+The current exact-main backup diagnostic receipt is
+`/tmp/rudder-native-backup-comparator-b707-1sample.json` with receipt SHA-256
+`5c4b3026357e2a0e5e0153302ca126855e9a02bcfb69baaedcb991a19078752c`. It uses
+one paired sample, records 2/2 positive external sampler boundaries, and passes
+manifest, entry, content, and recovery parity with no temporary artifacts. It
+is explicitly `not_comparable` and cannot satisfy the 100 MiB/10,000-file
+promotion gate. The predecessor 100 MiB/10,000-file receipt remains at
+`/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json` (SHA-256
+`27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123`) but is
+source-invalidated and is retained only as historical evidence.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
