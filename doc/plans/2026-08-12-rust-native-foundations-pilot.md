@@ -42,6 +42,7 @@ commit_refs:
   - 22fbeedbc
   - 72005f4b3
   - d7f891d17
+  - 2161b2b6b
 updated_at: 2026-08-14
 ---
 
@@ -51,7 +52,7 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current final main candidate is `d7f891d17ef2f25fb9b625aa3d1229e46893f3a9`.
+The current final main candidate is `2161b2b6b12954c577bd10aceb9685909e7a4f6a`.
 Its packaged/runtime artifacts are bound to merge source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the only descendant change is a
 test-import organization commit, verified not to change runtime paths. The
