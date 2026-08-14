@@ -13,8 +13,8 @@ import {
   inspectWorkspaceBackupV2File,
   readWorkspaceBackupV2File,
   resolveNativeArchiveBinary,
-  workspaceBackupV2NativeDiagnostic,
   walkWorkspaceBackupV2,
+  workspaceBackupV2NativeDiagnostic,
 } from "./workspace-backup-v2.js";
 
 async function fixture() {
@@ -205,6 +205,27 @@ describe("workspace backup v2 comparator", () => {
       expect(tempArtifacts).toEqual([]);
     } finally { await f.dispose(); }
   });
+
+  it("publishes and inspects exactly 100 MiB of workspace content without charging the manifest", async () => {
+    const f = await fixture();
+    try {
+      const payload = Buffer.alloc(5 * 1024 * 1024, 0x61);
+      for (let index = 0; index < 20; index += 1) {
+        await writeFile(path.join(f.root, `payload-${String(index).padStart(2, "0")}.bin`), payload);
+      }
+      const artifactPath = path.join(f.root, "backup-100m.zip");
+      const artifact = await createWorkspaceBackupV2File({
+        rootPath: f.root,
+        orgId: "org",
+        instanceId: "instance",
+        artifactPath,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      });
+      expect(artifact.byteSize).toBe(100 * 1024 * 1024);
+      const inspected = await inspectWorkspaceBackupV2File(artifactPath);
+      expect(inspected.manifest.entries.filter((entry) => entry.kind === "file")).toHaveLength(20);
+    } finally { await f.dispose(); }
+  }, 120_000);
 
   it("walks canonical paths and preserves Unicode bytes in a round trip", async () => {
     const f = await fixture();
