@@ -8,7 +8,7 @@ import { runWorkspaceBackupRustNodeAb } from "./workspace-backup-rust-node-ab.js
 
 describe("workspace backup Rust/Node formal comparator", () => {
   const nativeBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH ?? path.resolve("native/target/debug/rudder-native");
-  it.skipIf(!existsSync(nativeBinary))("compares contract parity and publication recovery without byte-SHA parity", async () => {
+  it.skipIf(!existsSync(nativeBinary))("compares contract parity and publication recovery with 100 process-tree RSS samples", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-ab-fixture-"));
     const outputDir = await mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-ab-output-"));
     try {
@@ -20,6 +20,12 @@ describe("workspace backup Rust/Node formal comparator", () => {
         nativeBinary,
         createdAt: new Date("2026-08-14T00:00:00.000Z"),
       });
+      assert.equal(result.sampleCount, 100);
+      assert.equal(result.node.sampleCount, 100);
+      assert.equal(result.native.sampleCount, 100);
+      assert.equal(result.rssScope, "process-tree");
+      assert.equal(result.node.samples.length, 100);
+      assert.equal(result.native.samples.length, 100);
       assert.equal(result.manifestParity, true);
       assert.equal(result.entryParity, true);
       assert.equal(result.contentParity, true);
@@ -37,5 +43,5 @@ describe("workspace backup Rust/Node formal comparator", () => {
       await rm(root, { recursive: true, force: true });
       await rm(outputDir, { recursive: true, force: true });
     }
-  });
+  }, 300_000);
 });
