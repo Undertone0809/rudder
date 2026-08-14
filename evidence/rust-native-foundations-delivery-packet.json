@@ -26,13 +26,13 @@
     "source_ref": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
     "source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
     "metadata_only_wrapper": {
-      "wrapper_ref": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
+      "wrapper_ref": "775cd2ef437a2b3c997edfdf3324d664bf6d4768",
       "code_candidate_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
       "runtime_paths_changed": false,
       "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are directly rebuilt/bound to 88e."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
+      "wrapper_ref": "775cd2ef437a2b3c997edfdf3324d664bf6d4768",
       "artifact_source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
       "runtime_paths_changed": false,
       "reason": "38 is a packet-only descendant used to bind the current lease and receipts; it does not change the packaged/runtime source represented by 88e."
