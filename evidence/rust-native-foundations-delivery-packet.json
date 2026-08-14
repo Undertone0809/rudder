@@ -23,21 +23,21 @@
   },
   "candidate": {
     "branch": "main",
-    "source_ref": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
-    "source_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+    "source_ref": "d30138587a4265f2af498bb175ce24a96fd8b600",
+    "source_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
     "metadata_only_wrapper": {
-      "wrapper_ref": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+      "wrapper_ref": "d30138587a4265f2af498bb175ce24a96fd8b600",
       "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "The current main wrapper is a descendant of the clean packaged source; the diff contains only metadata and unrelated UI/test changes outside native/runtime paths."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+      "wrapper_ref": "d30138587a4265f2af498bb175ce24a96fd8b600",
       "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the current main wrapper records the delivery identity."
     },
-    "dirty_fingerprint": "shared-main-status-2f104ff473c2047a2e39b13f73f6a160b0255d7a849e14bc14ca8623e021cecc",
+    "dirty_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
     "changed_paths": [
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
       "evidence/rust-native-foundations-delivery-packet.json",
@@ -155,8 +155,8 @@
     "reviewer": {
       "verdict": "needs_more_evidence",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-2f104ff473c2047a2e39b13f73f6a160b0255d7a849e14bc14ca8623e021cecc",
-      "source_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+      "candidate_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+      "source_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -166,8 +166,8 @@
     "verifier": {
       "verdict": "QUESTION",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-2f104ff473c2047a2e39b13f73f6a160b0255d7a849e14bc14ca8623e021cecc",
-      "source_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+      "candidate_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+      "source_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -177,8 +177,8 @@
     "final_review": {
       "verdict": "pending",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-2f104ff473c2047a2e39b13f73f6a160b0255d7a849e14bc14ca8623e021cecc",
-      "source_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+      "candidate_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+      "source_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
@@ -230,7 +230,7 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
     "branch_refs": [
-      "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e"
+      "d30138587a4265f2af498bb175ce24a96fd8b600"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-main-merge",
@@ -240,7 +240,7 @@
       "attempted": true,
       "succeeded": true,
       "observed_old_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "delivered_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e"
+      "delivered_sha": "d30138587a4265f2af498bb175ce24a96fd8b600"
     },
     "index_update_mode": "none"
   },
@@ -262,11 +262,11 @@
   },
   "terminal": {
     "delivered_ref": "refs/heads/main",
-    "delivered_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
-    "delivered_tree_sha": "4da5364ad32ef6f7732c9a171605d9b2addf351e",
+    "delivered_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
+    "delivered_tree_sha": "78d92bba0e1ccda0e6e3a630916e3fdcb6616a78",
     "timestamp": "2026-08-14T18:26:49+08:00",
     "proof": [
-      "main currently points at bfab54182, a descendant of the native merge and the current delivery wrapper",
+      "main currently points at d30138587, a docs-only descendant of the native merge and the current delivery wrapper",
       "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, index preservation, and a release tag are absent",
       "the 100-sample backup receipt is parity-positive but explicitly not_comparable",
       "shared worktree dirty/index state remains preserved"

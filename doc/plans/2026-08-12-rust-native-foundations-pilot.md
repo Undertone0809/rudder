@@ -47,6 +47,7 @@ commit_refs:
   - 86f5d9953
   - dd88ffaca
   - bfab54182
+  - d30138587
 updated_at: 2026-08-14
 ---
 
@@ -56,7 +57,7 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current main wrapper is `bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e`.
+The current main wrapper is `d30138587a4265f2af498bb175ce24a96fd8b600`.
 Its native/runtime paths are unchanged from the clean packaged source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the wrapper contains only
 metadata and unrelated descendant changes. The exact macOS arm64 packaged
