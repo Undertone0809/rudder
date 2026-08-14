@@ -12,7 +12,9 @@ pub const COPY_CHUNK_BYTES: usize = 64 * 1024;
 const EOCD_FIXED_BYTES: usize = 22;
 const CENTRAL_FIXED_BYTES: usize = 46;
 const MAX_CENTRAL_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_ENTRIES: usize = 10_000;
+// Keep the public workspace fixture limit (10,000 files) usable when the
+// archive also contains the manifest and directory entries.
+const MAX_ENTRIES: usize = 16_384;
 const MAX_NAME_BYTES: usize = 1024;
 const MAX_AGGREGATE_NAME_BYTES: usize = 4 * 1024 * 1024;
 pub const CREATE_PROTOCOL_VERSION: u32 = 1;
