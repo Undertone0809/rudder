@@ -23,6 +23,7 @@ export type WorkspaceBackupRustNodeAbResult = {
   fileCount: number;
   byteSize: number;
   sampleCount: number;
+  operationTimeoutMs: number;
   rssScope: "process-tree";
   comparability: {
     status: "comparable" | "not_comparable";
@@ -43,6 +44,8 @@ export type WorkspaceBackupRustNodeAbResult = {
       rootPath: string;
       fileCount: number;
       byteSize: number;
+      treeSha256: string;
+      contentSha256: string;
       files: Array<{ path: string; byteSize: number }>;
     };
   };
@@ -90,6 +93,7 @@ type RssSample = {
 type MeasuredOperation<T> = {
   value: T;
   sample: RssSample;
+  boundary: Omit<OperationBoundaryReceipt, "arm" | "sampleIndex">;
 };
 
 type RecoveryProbe = {
@@ -105,8 +109,19 @@ type AbOptions = {
   createdAt?: Date;
   sampleCount?: number;
   sampleIntervalMs?: number;
+  operationTimeoutMs?: number;
   samplerMode?: "node-ps" | "external";
   samplerPath?: string;
+};
+
+type OperationBoundaryReceipt = {
+  arm: "node" | "native";
+  sampleIndex: number;
+  startRowIndex: number;
+  endRowIndex: number;
+  sampleCount: number;
+  operationElapsedMs: number;
+  positive: boolean;
 };
 
 type SamplerMetadata = {
@@ -118,6 +133,9 @@ type SamplerMetadata = {
   qosClass: string | null;
   intervalMs: number;
   source: string;
+  sessionScope: "shared-run" | "per-operation-fallback";
+  operationBoundaries: OperationBoundaryReceipt[];
+  positiveBoundaryCount: number;
   overheadMs: {
     p95: number | null;
     max: number | null;
@@ -133,6 +151,7 @@ type ExternalSamplerRow = {
   intervalMs?: number;
   source?: string;
   treeRssBytes?: number;
+  sampleDurationNs?: string;
   message?: string;
 };
 
@@ -142,7 +161,29 @@ type ExternalSamplerSession = {
   ready: ExternalSamplerRow;
   stderr: Buffer[];
   lines: ReturnType<typeof createInterface>;
+  stopped: boolean;
 };
+
+export function nativeTargetLabel(platform = process.platform, arch = process.arch) {
+  if (platform === "darwin") {
+    const targetArch = ({ arm64: "aarch64", x64: "x86_64" } as Record<string, string>)[arch] ?? arch;
+    return `${targetArch}-apple-darwin`;
+  }
+  return `${arch}-${platform}`;
+}
+
+export function stableFixtureContentHash(entries: Array<{ path: string; kind: "directory" | "file"; byteSize: number; sha256: string | null }>) {
+  const hash = crypto.createHash("sha256");
+  for (const entry of [...entries].filter((item) => item.kind === "file").sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)) {
+    hash.update(entry.path);
+    hash.update("\0");
+    hash.update(entry.sha256 ?? "");
+    hash.update("\0");
+    hash.update(String(entry.byteSize));
+    hash.update("\n");
+  }
+  return hash.digest("hex");
+}
 
 async function sha256File(filePath: string) {
   return crypto.createHash("sha256").update(await readFile(filePath)).digest("hex");
@@ -222,15 +263,27 @@ async function startExternalSampler(samplerPath: string, intervalMs: number): Pr
     });
   });
   const readyRow = await bounded(ready, "external sampler readiness");
-  return { child, rows, ready: readyRow, stderr, lines };
+  return { child, rows, ready: readyRow, stderr, lines, stopped: false };
 }
 
 async function stopExternalSampler(session: ExternalSamplerSession) {
-  session.child.stdin.write("stop\n");
-  session.child.stdin.end();
-  const exitCode = await bounded(waitForExit(session.child), "external sampler exit");
-  session.lines.close();
-  if (exitCode !== 0) throw new Error(`external sampler failed (${exitCode}): ${Buffer.concat(session.stderr).toString("utf8")}`);
+  if (session.stopped) return;
+  session.stopped = true;
+  try {
+    session.child.stdin.write("stop\n");
+    session.child.stdin.end();
+    const exitCode = await bounded(waitForExit(session.child), "external sampler exit");
+    if (exitCode !== 0) throw new Error(`external sampler failed (${exitCode}): ${Buffer.concat(session.stderr).toString("utf8")}`);
+  } finally {
+    session.lines.close();
+  }
+}
+
+async function waitForExternalSamples(session: ExternalSamplerSession, minimumRows: number, intervalMs: number) {
+  if (session.rows.length >= minimumRows) return;
+  await bounded((async () => {
+    while (session.rows.length < minimumRows) await sleep(intervalMs);
+  })(), "external sampler sample");
 }
 
 async function processTreeRss(rootPid: number) {
@@ -275,8 +328,13 @@ async function processTreeRss(rootPid: number) {
 
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-async function measureNodePsOperation<T>(operation: () => Promise<T>, sampleIntervalMs: number): Promise<MeasuredOperation<T>> {
+async function measureNodePsOperation<T>(
+  operation: () => Promise<T>,
+  sampleIntervalMs: number,
+  operationTimeoutMs: number,
+): Promise<MeasuredOperation<T>> {
   const rssBeforeBytes = await processTreeRss(process.pid);
+  let samplerRowCount = 1;
   let rssPeakBytes = rssBeforeBytes;
   let sampling = true;
   let samplerError: unknown;
@@ -284,6 +342,7 @@ async function measureNodePsOperation<T>(operation: () => Promise<T>, sampleInte
     while (sampling) {
       try {
         rssPeakBytes = Math.max(rssPeakBytes, await processTreeRss(process.pid));
+        samplerRowCount += 1;
       } catch (error) {
         samplerError = error;
         return;
@@ -295,7 +354,7 @@ async function measureNodePsOperation<T>(operation: () => Promise<T>, sampleInte
   let value!: T;
   let operationError: unknown;
   try {
-    value = await operation();
+    value = await bounded(operation(), "workspace backup operation", operationTimeoutMs);
   } catch (error) {
     operationError = error;
   }
@@ -305,6 +364,7 @@ async function measureNodePsOperation<T>(operation: () => Promise<T>, sampleInte
   if (operationError) throw operationError;
   if (samplerError) throw samplerError;
   const rssAfterBytes = await processTreeRss(process.pid);
+  samplerRowCount += 1;
   rssPeakBytes = Math.max(rssPeakBytes, rssAfterBytes);
   return {
     value,
@@ -315,38 +375,48 @@ async function measureNodePsOperation<T>(operation: () => Promise<T>, sampleInte
       rssAfterBytes,
       rssDeltaBytes: Math.max(0, rssPeakBytes - rssBeforeBytes),
     },
+    boundary: {
+      startRowIndex: 0,
+      endRowIndex: Math.max(0, samplerRowCount - 1),
+      sampleCount: Math.max(0, samplerRowCount - 1),
+      operationElapsedMs: elapsedMs,
+      positive: samplerRowCount > 1,
+    },
   };
 }
 
 async function measureExternalOperation<T>(
   operation: () => Promise<T>,
   sampleIntervalMs: number,
-  samplerPath: string,
-  samplerMetadata: SamplerMetadata,
+  operationTimeoutMs: number,
+  session: ExternalSamplerSession,
+  arm: "node" | "native",
 ): Promise<MeasuredOperation<T>> {
-  const samplerStart = performance.now();
-  const session = await startExternalSampler(samplerPath, sampleIntervalMs);
-  samplerMetadata.qosClass ??= session.ready.qosClass ?? null;
-  samplerMetadata.source = session.ready.source ?? samplerMetadata.source;
-  samplerMetadata.protocolVersion ??= session.ready.protocolVersion ?? null;
-  while (session.rows.length === 0) await sleep(sampleIntervalMs);
+  if (session.rows.length === 0) await waitForExternalSamples(session, 1, sampleIntervalMs);
+  const startRowIndex = session.rows.length;
+  const beforeRow = session.rows[startRowIndex - 1];
   const operationStart = performance.now();
   let value!: T;
   let operationError: unknown;
   try {
-    value = await operation();
+    value = await bounded(operation(), `${arm} workspace backup operation`, operationTimeoutMs);
   } catch (error) {
     operationError = error;
   }
   const elapsedMs = elapsed(operationStart);
-  await stopExternalSampler(session);
-  const samplerOverheadMs = Number((performance.now() - samplerStart - elapsedMs).toFixed(3));
-  const rssSamples = session.rows.filter((row): row is ExternalSamplerRow & { treeRssBytes: number } => Number.isFinite(row.treeRssBytes));
-  if (rssSamples.length === 0) throw new Error("external process-tree sampler emitted no RSS samples");
+  if (!operationError) await waitForExternalSamples(session, startRowIndex + 1, sampleIntervalMs);
+  const endRowIndex = session.rows.length;
+  const rssSamples = session.rows
+    .slice(startRowIndex, endRowIndex)
+    .filter((row): row is ExternalSamplerRow & { treeRssBytes: number } => Number.isFinite(row.treeRssBytes));
   if (operationError) throw operationError;
-  const rssBeforeBytes = rssSamples[0]!.treeRssBytes;
+  if (rssSamples.length === 0) throw new Error("external process-tree sampler emitted no RSS samples");
+  const rssBeforeBytes = Number.isFinite(beforeRow?.treeRssBytes) ? beforeRow.treeRssBytes! : rssSamples[0]!.treeRssBytes;
   const rssPeakBytes = Math.max(...rssSamples.map((row) => row.treeRssBytes));
   const rssAfterBytes = rssSamples[rssSamples.length - 1]!.treeRssBytes;
+  const observerDurationsMs = rssSamples.flatMap((row) => row.sampleDurationNs == null
+    ? []
+    : [Number(BigInt(row.sampleDurationNs)) / 1e6]);
   return {
     value,
     sample: {
@@ -356,7 +426,14 @@ async function measureExternalOperation<T>(
       rssAfterBytes,
       rssDeltaBytes: Math.max(0, rssPeakBytes - rssBeforeBytes),
       samplerSampleCount: rssSamples.length,
-      samplerOverheadMs,
+      samplerOverheadMs: observerDurationsMs.length > 0 ? nearestRank(observerDurationsMs, 0.95) : undefined,
+    },
+    boundary: {
+      startRowIndex,
+      endRowIndex,
+      sampleCount: endRowIndex - startRowIndex,
+      operationElapsedMs: elapsedMs,
+      positive: endRowIndex > startRowIndex,
     },
   };
 }
@@ -364,13 +441,19 @@ async function measureExternalOperation<T>(
 async function measureOperation<T>(
   operation: () => Promise<T>,
   sampleIntervalMs: number,
+  operationTimeoutMs: number,
   samplerMode: "node-ps" | "external",
-  samplerPath: string,
-  samplerMetadata: SamplerMetadata,
+  session: ExternalSamplerSession | undefined,
+  arm: "node" | "native",
 ): Promise<MeasuredOperation<T>> {
   return samplerMode === "external"
-    ? measureExternalOperation(operation, sampleIntervalMs, samplerPath, samplerMetadata)
-    : measureNodePsOperation(operation, sampleIntervalMs);
+    ? measureExternalOperation(operation, sampleIntervalMs, operationTimeoutMs, assertSession(session), arm)
+    : measureNodePsOperation(operation, sampleIntervalMs, operationTimeoutMs);
+}
+
+function assertSession(session: ExternalSamplerSession | undefined): ExternalSamplerSession {
+  if (!session) throw new Error("external sampler session was not started");
+  return session;
 }
 
 function summarizeArm(samples: RssSample[], byteSize: number, sha256: string, artifactPath: string) {
@@ -468,7 +551,7 @@ async function candidateIdentity(nativeBinary: string) {
       path: nativeBinary,
       sha256: crypto.createHash("sha256").update(binaryBytes).digest("hex"),
       version,
-      target: process.platform === "darwin" ? `${process.arch}-apple-darwin` : `${process.arch}-${process.platform}`,
+      target: nativeTargetLabel(),
       profile: profile as "debug" | "release" | "unknown",
     },
   };
@@ -489,6 +572,9 @@ async function samplerIdentity(
       qosClass: null,
       intervalMs,
       source: "Node child_process ps process-tree traversal (explicit fallback)",
+      sessionScope: "per-operation-fallback",
+      operationBoundaries: [],
+      positiveBoundaryCount: 0,
       overheadMs: { p95: null, max: null, samples: 0 },
     };
   }
@@ -503,6 +589,9 @@ async function samplerIdentity(
     qosClass: null,
     intervalMs,
     source: "proc_listchildpids+PROC_PIDTBSDINFO+PROC_PIDTASKINFO",
+    sessionScope: "shared-run",
+    operationBoundaries: [],
+    positiveBoundaryCount: 0,
     overheadMs: { p95: null, max: null, samples: 0 },
   };
 }
@@ -518,10 +607,12 @@ export async function runWorkspaceBackupRustNodeAb(
   }
   const sampleCount = options.sampleCount ?? 100;
   const sampleIntervalMs = options.sampleIntervalMs ?? 5;
+  const operationTimeoutMs = options.operationTimeoutMs ?? 120_000;
   const samplerMode = options.samplerMode ?? "node-ps";
   const samplerPath = options.samplerPath ?? path.resolve(process.cwd(), "native/target/debug/rudder-process-tree-sampler");
   if (!Number.isInteger(sampleCount) || sampleCount < 1) throw new Error("sampleCount must be a positive integer");
   if (!Number.isInteger(sampleIntervalMs) || sampleIntervalMs < 1) throw new Error("sampleIntervalMs must be a positive integer");
+  if (!Number.isInteger(operationTimeoutMs) || operationTimeoutMs < 1) throw new Error("operationTimeoutMs must be a positive integer");
   if (samplerMode === "external" && (!existsSync(samplerPath) || process.platform !== "darwin" || process.arch !== "arm64")) {
     throw new Error(`external process-tree sampler is unavailable for this environment: ${samplerPath}`);
   }
@@ -537,39 +628,54 @@ export async function runWorkspaceBackupRustNodeAb(
   let nativeArtifact: Awaited<ReturnType<typeof createWorkspaceBackupV2Native>> | undefined;
   let nodeIndex: WorkspaceBackupV2ArchiveIndex | undefined;
   let nativeIndex: WorkspaceBackupV2ArchiveIndex | undefined;
-  for (let index = 0; index < sampleCount; index += 1) {
-    const finalSample = index === sampleCount - 1;
-    nodePath = finalSample ? path.join(outputDir, "node.zip") : path.join(outputDir, `.node-${index}.zip`);
-    nativePath = finalSample ? path.join(outputDir, "native.zip") : path.join(outputDir, `.native-${index}.zip`);
-    const measuredNode = await measureOperation(
-      () => createWorkspaceBackupV2File({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nodePath, createdAt }),
-      sampleIntervalMs,
-      samplerMode,
-      samplerPath,
-      sampler,
-    );
-    nodeArtifact = measuredNode.value;
-    nodeSamples.push(measuredNode.sample);
-    if (measuredNode.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNode.sample.samplerOverheadMs);
-    const measuredNative = await measureOperation(async () => {
-      const previousBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-      process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativeBinary;
-      try {
-        return await createWorkspaceBackupV2Native({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nativePath, createdAt });
-      } finally {
-        if (previousBinary === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-        else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousBinary;
-      }
-    }, sampleIntervalMs, samplerMode, samplerPath, sampler);
-    nativeArtifact = measuredNative.value;
-    nativeSamples.push(measuredNative.sample);
-    if (measuredNative.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNative.sample.samplerOverheadMs);
-    if (index === 0) {
-      nodeIndex = await inspectWorkspaceBackupV2File(nodePath);
-      nativeIndex = await inspectWorkspaceBackupV2File(nativePath);
-      await inspectAndCompare(rootPath, nodePath, nativePath, nodeIndex, nativeIndex);
+  let externalSession: ExternalSamplerSession | undefined;
+  try {
+    if (samplerMode === "external") {
+      externalSession = await startExternalSampler(samplerPath, sampleIntervalMs);
+      sampler.qosClass ??= externalSession.ready.qosClass ?? null;
+      sampler.source = externalSession.ready.source ?? sampler.source;
+      sampler.protocolVersion ??= externalSession.ready.protocolVersion ?? null;
+      await waitForExternalSamples(externalSession, 1, sampleIntervalMs);
     }
-    if (!finalSample) await Promise.all([rm(nodePath, { force: true }), rm(nativePath, { force: true })]);
+    for (let index = 0; index < sampleCount; index += 1) {
+      const finalSample = index === sampleCount - 1;
+      nodePath = finalSample ? path.join(outputDir, "node.zip") : path.join(outputDir, `.node-${index}.zip`);
+      nativePath = finalSample ? path.join(outputDir, "native.zip") : path.join(outputDir, `.native-${index}.zip`);
+      const measuredNode = await measureOperation(
+        () => createWorkspaceBackupV2File({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nodePath, createdAt }),
+        sampleIntervalMs,
+        operationTimeoutMs,
+        samplerMode,
+        externalSession,
+        "node",
+      );
+      nodeArtifact = measuredNode.value;
+      nodeSamples.push(measuredNode.sample);
+      if (measuredNode.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNode.sample.samplerOverheadMs);
+      sampler.operationBoundaries.push({ arm: "node", sampleIndex: index, ...measuredNode.boundary });
+      const measuredNative = await measureOperation(async () => {
+        const previousBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+        process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativeBinary;
+        try {
+          return await createWorkspaceBackupV2Native({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nativePath, createdAt });
+        } finally {
+          if (previousBinary === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+          else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousBinary;
+        }
+      }, sampleIntervalMs, operationTimeoutMs, samplerMode, externalSession, "native");
+      nativeArtifact = measuredNative.value;
+      nativeSamples.push(measuredNative.sample);
+      if (measuredNative.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNative.sample.samplerOverheadMs);
+      sampler.operationBoundaries.push({ arm: "native", sampleIndex: index, ...measuredNative.boundary });
+      if (index === 0) {
+        nodeIndex = await inspectWorkspaceBackupV2File(nodePath);
+        nativeIndex = await inspectWorkspaceBackupV2File(nativePath);
+        await inspectAndCompare(rootPath, nodePath, nativePath, nodeIndex, nativeIndex);
+      }
+      if (!finalSample) await Promise.all([rm(nodePath, { force: true }), rm(nativePath, { force: true })]);
+    }
+  } finally {
+    if (externalSession) await stopExternalSampler(externalSession);
   }
   if (!nodeArtifact || !nativeArtifact || !nodeIndex || !nativeIndex) throw new Error("comparator produced no samples");
   const [nodeSha256, nativeSha256, nodeStat, nativeStat] = await Promise.all([
@@ -591,6 +697,7 @@ export async function runWorkspaceBackupRustNodeAb(
   assert.deepEqual(recovery.native.temporaryArtifacts, []);
   const nodeResult = summarizeArm(nodeSamples, nodeStat.size, nodeSha256, nodePath);
   const nativeResult = summarizeArm(nativeSamples, nativeStat.size, nativeSha256, nativePath);
+  sampler.positiveBoundaryCount = sampler.operationBoundaries.filter((boundary) => boundary.positive).length;
   if (samplerOverheads.length > 0) {
     sampler.overheadMs = {
       p95: nearestRank(samplerOverheads, 0.95),
@@ -601,11 +708,13 @@ export async function runWorkspaceBackupRustNodeAb(
   const fixtureFiles = nodeArtifact.manifest.entries
     .filter((entry) => entry.kind === "file")
     .map((entry) => ({ path: entry.path, byteSize: entry.byteSize }));
+  const fixtureContentSha256 = stableFixtureContentHash(nodeArtifact.manifest.entries);
   return {
     rootPath: path.resolve(rootPath),
     fileCount: nodeArtifact.fileCount,
     byteSize: nodeArtifact.byteSize,
     sampleCount,
+    operationTimeoutMs,
     rssScope: "process-tree",
     comparability: {
       status: "not_comparable",
@@ -618,6 +727,8 @@ export async function runWorkspaceBackupRustNodeAb(
         rootPath: path.resolve(rootPath),
         fileCount: nodeArtifact.fileCount,
         byteSize: nodeArtifact.byteSize,
+        treeSha256: nodeArtifact.manifest.treeSha256,
+        contentSha256: fixtureContentSha256,
         files: fixtureFiles,
       },
     },
