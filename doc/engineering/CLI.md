@@ -21,8 +21,9 @@ npx @rudderhq/cli@latest start
 
 This is the Desktop-first install path. It checks for newer Rudder CLI releases,
 prepares the matching persistent `rudder` CLI, installs the matching server
-runtime cache, and installs the per-user portable Rudder Desktop app from
-GitHub Release assets when needed. Desktop assets are checksum-verified before
+runtime cache, and installs the per-user portable Rudder Desktop app from the
+fastest healthy release transport when needed. GitHub Releases remain the
+version and SHA-256 authority; Desktop assets are checksum-verified before
 installation.
 
 Server-only install for hosts where the Desktop app should not be installed:
@@ -44,14 +45,18 @@ prompt are controlled by npm itself, so Rudder progress output starts after
 npm has handed execution to the CLI.
 
 First-run speed depends on three separate network paths: npm for the thin CLI,
-npm for the cached server runtime, and GitHub Releases for the portable Desktop
-asset. On Windows, the Desktop zip is usually the largest asset. If the initial
+npm for the cached server runtime, and Tencent COS or GitHub Releases for the
+portable Desktop asset. On Windows, the Desktop zip is usually the largest asset. If the initial
 `npx` phase is slow before Rudder prints its banner, check npm's active registry
 and proxy settings with `npm config get registry`, `npm config get proxy`, and
 `npm config get https-proxy`. If the slowdown starts at `Downloading
-Rudder-...-portable.zip`, the bottleneck is the GitHub Release asset path;
-Rudder uses the public release download URL first and falls back to the GitHub
-asset API URL if needed.
+Rudder-...-portable.zip`, select a deterministic route with
+`rudder start --download-source cn` (Tencent COS first) or
+`rudder start --download-source global` (GitHub first). The default `auto`
+mode probes both checksum URLs with a short timeout and uses the healthier
+path. `RUDDER_DOWNLOAD_SOURCE=auto|cn|global` provides the same override for
+automation. A failed or corrupt mirror response falls back to GitHub and is
+never accepted without the GitHub-authored SHA-256 checksum.
 
 Invocation forms are equivalent once they resolve to the same CLI version:
 
