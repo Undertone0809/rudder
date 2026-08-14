@@ -192,8 +192,14 @@
       {
         "type": "candidate_refreshed_after_stale_receipt",
         "before_source_sha": "8037198f1f3e6a60e3f284844b6138cf62acb7d0",
-        "after_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
+      "after_source_sha": "1a76ec93ee97dc0cdbee955a0718658cb511be50",
         "reason": "Exact 0.7.7 packaged receipts, synchronized Rust package versions, and the fresh 100 MiB/10,000-file comparator are now bound to the current candidate; unresolved hosted dogfood and live native_ab evidence keep the delivery blocked."
+      },
+      {
+        "type": "integration_target_drift_after_cas",
+        "before_target_sha": "8c24ba1819cab08e36ad2c8d92215c404f28bf1e",
+        "after_target_sha": "9b44a82ca0fbd07358d90cb21aafc8d42452619c",
+        "reason": "A concurrent desktop commit advanced refs/heads/main after the prior CAS; the previous integration receipt and verification lease are invalidated and must be refrozen against the new target."
       }
     ],
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
@@ -202,21 +208,21 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+    "base_sha": "9b44a82ca0fbd07358d90cb21aafc8d42452619c",
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
     "branch_refs": [
-      "da901007a4a0da8af01713e18559cafa90bbbafb"
+      "a59d1b4a65ecc4cfbf0f76b66ea94d5840d905cf"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-integration-a3",
     "patch_tree_sha": "03716596bbeb00159f10aad4af453b446c6ede3c",
-    "expected_old_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+    "expected_old_sha": "9b44a82ca0fbd07358d90cb21aafc8d42452619c",
     "cas": {
-      "attempted": true,
-      "succeeded": true,
-      "observed_old_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
-      "delivered_sha": "f54acd8940136a174135f4044bc2856a9947dee4"
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
     },
     "index_update_mode": "none"
   },
@@ -233,7 +239,7 @@
     "index_preserved": false,
     "evidence": [
       "shared main checkout was not reset/stashed/cleaned before isolated integration",
-      "CAS refs/heads/main c3cd8fec -> f54acd894 succeeded without writing shared worktree files",
+      "CAS refs/heads/main c3cd8fec -> f54acd894 succeeded before a concurrent target commit moved main to 9b44a82c; receipts are invalidated and a new CAS is pending",
       "pre/post status fingerprints differ because HEAD-relative status changed after ref advance; index hash changed during Git status refresh, so index_preserved remains false and delivery stays blocked"
     ]
   },
@@ -245,8 +251,8 @@
     "proof": [
     "prior packaged receipt is superseded by candidate refresh to 6c363bf822088f47508db4228e5e3665e75c88b1",
       "current 0.7.7 packaged artifact and exact 100 MiB/10,000-file comparator are rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
-    "local main integration completed via isolated merge worktree and CAS to f54acd8940136a174135f4044bc2856a9947dee4; final refs/heads/main metadata ref is 8c24ba1819cab08e36ad2c8d92215c404f28bf1e",
-    "terminal delivered_ref/delivered_sha/delivered_tree_sha/timestamp intentionally remain null because status=blocked: verifier is QUESTION, hosted dogfood/native_ab are absent, and index_preserved=false after the Git status refresh"
+    "local main integration was refrozen after concurrent target drift; new CAS expected-old is 9b44a82ca0fbd07358d90cb21aafc8d42452619c",
+    "terminal delivered_ref/delivered_sha/delivered_tree_sha/timestamp intentionally remain null because status=blocked: target drift invalidated prior receipts, verifier is QUESTION, hosted dogfood/native_ab are absent, and index_preserved=false after the Git status refresh"
     ]
   }
 }
