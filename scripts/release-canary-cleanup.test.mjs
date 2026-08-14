@@ -63,32 +63,35 @@ describe("obsolete canary cleanup", () => {
     );
   });
 
-  it("wires stable releases to canary cleanup after desktop assets are available", () => {
+  it("wires stable releases to canary cleanup after public surfaces are verified", () => {
     const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
-    const desktopJobIndex = workflow.indexOf("\n  stable-desktop:\n");
-    const cleanupJobIndex = workflow.indexOf("\n  stable-canary-cleanup:\n");
+    const publishJobIndex = workflow.indexOf("\n  publish-stable:\n");
+    const surfacesJobIndex = workflow.indexOf("\n  stable-surfaces:\n");
+    const cleanupJobIndex = workflow.indexOf("\n  stable-cleanup:\n");
     const cleanupJob = workflow.slice(
       cleanupJobIndex,
       workflow.indexOf("\n  next-release-base:\n", cleanupJobIndex),
     );
 
-    expect(cleanupJobIndex).toBeGreaterThan(desktopJobIndex);
-    expect(cleanupJob).toContain("- stable-desktop");
-    expect(cleanupJob).toContain("needs.stable-desktop.result == 'success'");
+    expect(publishJobIndex).toBeGreaterThan(-1);
+    expect(surfacesJobIndex).toBeGreaterThan(publishJobIndex);
+    expect(cleanupJobIndex).toBeGreaterThan(surfacesJobIndex);
+    expect(cleanupJob).toContain("- stable-surfaces");
+    expect(cleanupJob).toContain("needs.stable-surfaces.result == 'success'");
     expect(cleanupJob).toContain("node scripts/cleanup-obsolete-canaries.mjs");
-    expect(cleanupJob).toContain('--stable-version "$RELEASE_VERSION"');
+    expect(cleanupJob).toContain('--stable-version "${{ needs.preflight.outputs.version }}"');
   });
 
   it("runs the real stable job without a second authorization input", () => {
     const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
-    const stableJobStart = workflow.indexOf("\n  stable:\n");
-    const stableJobEnd = workflow.indexOf("\n  stable-desktop:\n", stableJobStart);
+    const stableJobStart = workflow.indexOf("\n  publish-stable:\n");
+    const stableJobEnd = workflow.indexOf("\n  canary-install:\n", stableJobStart);
     const stableJob = workflow.slice(stableJobStart, stableJobEnd);
     const canaryJob = workflow.slice(
-      workflow.indexOf("\n  canary:\n"),
+      workflow.indexOf("\n  publish-canary:\n"),
       stableJobStart,
     );
-    const publishIndex = stableJob.indexOf("- name: Publish stable");
+    const publishIndex = stableJob.indexOf("- name: Publish missing npm payloads");
 
     expect(workflow).not.toContain("confirm_stable:");
     expect(stableJob).not.toContain("CONFIRM_STABLE");
