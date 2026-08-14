@@ -494,6 +494,17 @@ async function inspectAndCompare(
   }
 }
 
+function assertArchiveStructureParity(
+  nodeIndex: WorkspaceBackupV2ArchiveIndex,
+  nativeIndex: WorkspaceBackupV2ArchiveIndex,
+) {
+  assert.deepEqual(nativeIndex.manifest, nodeIndex.manifest);
+  assert.deepEqual(
+    [...nativeIndex.entries.keys()].sort(),
+    [...nodeIndex.entries.keys()].sort(),
+  );
+}
+
 async function recoveryProbe(
   kind: "node" | "native",
   rootPath: string,
@@ -628,6 +639,9 @@ export async function runWorkspaceBackupRustNodeAb(
   let nativeArtifact: Awaited<ReturnType<typeof createWorkspaceBackupV2Native>> | undefined;
   let nodeIndex: WorkspaceBackupV2ArchiveIndex | undefined;
   let nativeIndex: WorkspaceBackupV2ArchiveIndex | undefined;
+  let manifestParity = true;
+  let entryParity = true;
+  let contentParity = true;
   let externalSession: ExternalSamplerSession | undefined;
   try {
     if (samplerMode === "external") {
@@ -667,11 +681,19 @@ export async function runWorkspaceBackupRustNodeAb(
       nativeSamples.push(measuredNative.sample);
       if (measuredNative.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNative.sample.samplerOverheadMs);
       sampler.operationBoundaries.push({ arm: "native", sampleIndex: index, ...measuredNative.boundary });
-      if (index === 0) {
-        nodeIndex = await inspectWorkspaceBackupV2File(nodePath);
-        nativeIndex = await inspectWorkspaceBackupV2File(nativePath);
-        await inspectAndCompare(rootPath, nodePath, nativePath, nodeIndex, nativeIndex);
+      const sampledNodeIndex = await inspectWorkspaceBackupV2File(nodePath);
+      const sampledNativeIndex = await inspectWorkspaceBackupV2File(nativePath);
+      try {
+        assertArchiveStructureParity(sampledNodeIndex, sampledNativeIndex);
+      } catch {
+        manifestParity = false;
+        entryParity = false;
+        throw new Error(`Rust/Node archive structure mismatch at sample ${index}`);
       }
+      nodeIndex = sampledNodeIndex;
+      nativeIndex = sampledNativeIndex;
+      const verifyContent = index === 0 || finalSample;
+      if (verifyContent) await inspectAndCompare(rootPath, nodePath, nativePath, sampledNodeIndex, sampledNativeIndex);
       if (!finalSample) await Promise.all([rm(nodePath, { force: true }), rm(nativePath, { force: true })]);
     }
   } finally {
@@ -733,9 +755,9 @@ export async function runWorkspaceBackupRustNodeAb(
       },
     },
     sampler,
-    manifestParity: JSON.stringify(nodeIndex.manifest) === JSON.stringify(nativeIndex.manifest),
-    entryParity: nodeIndex.entries.size === nativeIndex.entries.size,
-    contentParity: true,
+    manifestParity,
+    entryParity,
+    contentParity,
     archiveByteParity: "not_compared",
     node: nodeResult,
     native: nativeResult,
