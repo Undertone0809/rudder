@@ -11,6 +11,7 @@ import {
   quarantineDesktopUpdateRequest,
   readDesktopUpdateJournal,
   recoverDesktopUpdateWithExternalHelper,
+  requestMatchesAutomaticCandidate,
   resolveDesktopUpdateTransactionPaths,
   resolveExternalDesktopUpdateHelperPath,
   DESKTOP_UPDATE_HELPER_PROTOCOL,
@@ -87,6 +88,42 @@ describe("external Desktop update helper attestation", () => {
     expect(spawnProcess).toHaveBeenCalledWith("/tmp/rudder-update-helper", ["--request", expect.stringContaining(`${transactionId}.journal.json.request.json`)], expect.objectContaining({ detached: true, stdio: ["ignore", "ignore", "ignore"] }));
     const requestPath = spawnProcess.mock.calls[0][1][1] as string;
     expect(JSON.parse(fs.readFileSync(requestPath, "utf8"))).toMatchObject({ operation: "apply", transactionId, admission: { closed: true, activeRuns: 0 } });
+  });
+
+  it("rejects a claimed request bound to a different helper generation", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-update-helper-binding-"));
+    const transactionId = "desktop-update-binding";
+    const paths = resolveDesktopUpdateTransactionPaths({ userDataPath: root, transactionId });
+    const helper = { path: "/tmp/rudder-update-helper", ownerUid: 501, mode: 0o755, sha256: "b".repeat(64) };
+    const candidate = {
+      updateId: transactionId,
+      version: "0.3.4",
+      stagedArtifactPath: path.join(root, "staged.zip"),
+      stagedArtifactDigest: "a".repeat(64),
+    };
+    const request = {
+      operation: "apply" as const,
+      ownerToken: "owner-token-123456",
+      transactionId,
+      ...paths,
+      statePath: path.join(root, "desktop-auto-update.json"),
+      stagedPath: candidate.stagedArtifactPath,
+      targetVersion: candidate.version,
+      candidateSha256: candidate.stagedArtifactDigest,
+      admission: { closed: true, activeRuns: 0, drainToken: "drain-token-123456" },
+      checkpoint: { instanceId: "default", databaseRevision: "db-rev-1", migrationCompatible: true },
+      helper,
+      probation: { executable: path.join(paths.installPath, "Contents/MacOS/Rudder"), args: [], timeoutMs: 10_000 },
+    };
+
+    expect(requestMatchesAutomaticCandidate({ request, candidate, statePath: request.statePath, paths, helper })).toBe(true);
+    expect(requestMatchesAutomaticCandidate({
+      request,
+      candidate,
+      statePath: request.statePath,
+      paths,
+      helper: { ...helper, sha256: "c".repeat(64) },
+    })).toBe(false);
   });
 
   it("fails closed for unreadable journals and parses a recovery result", () => {

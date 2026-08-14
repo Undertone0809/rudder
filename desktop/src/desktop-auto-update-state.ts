@@ -29,12 +29,22 @@ export type DesktopAutoUpdateCandidate = DesktopAutoUpdateTargetIdentity & {
   generation: number;
 };
 
+export type DesktopAutoUpdatePreparation = {
+  updateId: string;
+  channel: "stable" | "canary";
+  version: string;
+  ownerPid: number;
+  childPid?: number;
+  startedAt: string;
+};
+
 export type DesktopAutoUpdateState = {
   version: typeof DESKTOP_AUTO_UPDATE_STATE_VERSION;
   generation: number;
   lastCheckAt: string | null;
   nextCheckAt: string | null;
   candidate: DesktopAutoUpdateCandidate | null;
+  preparation: DesktopAutoUpdatePreparation | null;
   recoveryRequired: boolean;
   recoveryCode?: string;
   acceptedPolicySequence: number;
@@ -51,6 +61,7 @@ export function createInitialDesktopAutoUpdateState(): DesktopAutoUpdateState {
     lastCheckAt: null,
     nextCheckAt: null,
     candidate: null,
+    preparation: null,
     recoveryRequired: false,
     acceptedPolicySequence: -1,
   };
@@ -90,6 +101,25 @@ function parseCandidate(value: unknown): DesktopAutoUpdateCandidate {
   return value as unknown as DesktopAutoUpdateCandidate;
 }
 
+function parsePreparation(value: unknown): DesktopAutoUpdatePreparation {
+  if (!isRecord(value)) throw new Error("Rudder automatic update preparation is invalid; recovery is required.");
+  if (
+    typeof value.updateId !== "string"
+    || value.updateId.length < 8
+    || (value.channel !== "stable" && value.channel !== "canary")
+    || typeof value.version !== "string"
+    || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(value.version)
+    || typeof value.ownerPid !== "number"
+    || !Number.isSafeInteger(value.ownerPid)
+    || value.ownerPid <= 0
+    || (value.childPid !== undefined && (typeof value.childPid !== "number" || !Number.isSafeInteger(value.childPid) || value.childPid <= 0))
+    || typeof value.startedAt !== "string"
+  ) {
+    throw new Error("Rudder automatic update preparation is invalid; recovery is required.");
+  }
+  return value as unknown as DesktopAutoUpdatePreparation;
+}
+
 export function readDesktopAutoUpdateState(statePath: string): DesktopAutoUpdateState {
   try {
     const parsed = JSON.parse(fs.readFileSync(statePath, "utf8")) as unknown;
@@ -102,6 +132,9 @@ export function readDesktopAutoUpdateState(statePath: string): DesktopAutoUpdate
       candidate: parsed.candidate === null || parsed.candidate === undefined
         ? null
         : parseCandidate(parsed.candidate),
+      preparation: parsed.preparation === null || parsed.preparation === undefined
+        ? null
+        : parsePreparation(parsed.preparation),
       recoveryRequired: parsed.recoveryRequired === true,
       acceptedPolicySequence:
         typeof parsed.acceptedPolicySequence === "number"
@@ -141,33 +174,16 @@ export function acceptAutomaticUpdatePolicySequenceAtPath(
   statePath: string,
   sequence: number,
 ): DesktopAutoUpdateState {
-  const lockPath = `${statePath}.policy-sequence.lock`;
-  const directory = path.dirname(statePath);
-  fs.mkdirSync(directory, { recursive: true });
-  let descriptor: number | null = null;
-  const startedAt = Date.now();
-  try {
-    while (descriptor === null) {
-      try {
-        descriptor = fs.openSync(lockPath, "wx", 0o600);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code !== "EEXIST") throw error;
-        if (Date.now() - startedAt > 5_000) {
-          throw new Error("Automatic update policy sequence lock timed out.");
-        }
-        // This is a synchronous, bounded critical section. The lock holder
-        // only performs one small state read and atomic rename.
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-      }
-    }
+  // Policy acceptance and helper reconciliation mutate the same durable JSON;
+  // use the shared install-scoped lock so neither writer can restore an older
+  // accepted sequence while clearing a terminal candidate.
+  const lockPath = `${statePath}.claim.lock`;
+  return withAutomaticFileLock(lockPath, "policy sequence", () => {
     const current = readDesktopAutoUpdateState(statePath);
     const accepted = acceptAutomaticUpdatePolicySequence(current, sequence);
     writeDesktopAutoUpdateState(statePath, accepted);
     return accepted;
-  } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
-    try { fs.unlinkSync(lockPath); } catch { /* another process may have cleaned a stale lock */ }
-  }
+  });
 }
 
 export function writeDesktopAutoUpdateState(statePath: string, state: DesktopAutoUpdateState): void {
@@ -190,6 +206,74 @@ export function writeDesktopAutoUpdateState(statePath: string, state: DesktopAut
     // Some macOS filesystem providers do not allow fsync on directories. The
     // atomic rename is still required; unsupported directory fsync is fail-open
     // only for durability, never for identity or authorization.
+  }
+}
+
+/**
+ * Serialize install-scoped claim mutations across multiple Desktop processes.
+ * The critical section must stay synchronous and small: it only reads/writes
+ * the durable state and the immutable helper request.
+ */
+export function withAutomaticUpdateStateLock<T>(statePath: string, callback: () => T): T {
+  const lockPath = `${statePath}.claim.lock`;
+  return withAutomaticFileLock(lockPath, "claim", callback);
+}
+
+const AUTOMATIC_LOCK_TIMEOUT_MS = 5_000;
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | null)?.code === "EPERM";
+  }
+}
+
+function reclaimStaleAutomaticLock(lockPath: string): boolean {
+  try {
+    const stat = fs.statSync(lockPath);
+    if (Date.now() - stat.mtimeMs < AUTOMATIC_LOCK_TIMEOUT_MS) return false;
+    let ownerPid: number | null = null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { pid?: unknown };
+      ownerPid = typeof parsed.pid === "number" ? parsed.pid : null;
+    } catch {
+      // A crashed writer can leave an empty/truncated lock. Age is the only
+      // available signal in that case, so reclaim it after the bounded grace.
+    }
+    if (ownerPid !== null && processIsAlive(ownerPid)) return false;
+    fs.unlinkSync(lockPath);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return code === "ENOENT";
+  }
+}
+
+function withAutomaticFileLock<T>(lockPath: string, label: string, callback: () => T): T {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  let descriptor: number | null = null;
+  const startedAt = Date.now();
+  try {
+    while (descriptor === null) {
+      try {
+        descriptor = fs.openSync(lockPath, "wx", 0o600);
+        const payload = Buffer.from(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }));
+        fs.writeSync(descriptor, payload, 0, payload.length, 0);
+        fs.fsyncSync(descriptor);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | null)?.code !== "EEXIST") throw error;
+        if (reclaimStaleAutomaticLock(lockPath)) continue;
+        if (Date.now() - startedAt > AUTOMATIC_LOCK_TIMEOUT_MS) throw new Error(`Automatic update ${label} lock timed out.`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+    }
+    return callback();
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    try { fs.unlinkSync(lockPath); } catch { /* a stale lock may have been cleaned by another process */ }
   }
 }
 
@@ -320,12 +404,54 @@ export function stageAutomaticCandidate(
   return { ...state, generation: Math.max(state.generation + 1, candidate.generation), candidate };
 }
 
+export function beginAutomaticPreparation(
+  state: DesktopAutoUpdateState,
+  preparation: DesktopAutoUpdatePreparation,
+): DesktopAutoUpdateState {
+  if (state.preparation && state.preparation.updateId !== preparation.updateId) {
+    throw new Error("Another automatic update preparation is already active.");
+  }
+  return {
+    ...state,
+    generation: state.generation + 1,
+    preparation,
+  };
+}
+
+export function clearAutomaticPreparation(
+  state: DesktopAutoUpdateState,
+  updateId: string,
+): DesktopAutoUpdateState {
+  if (state.preparation?.updateId !== updateId) return state;
+  return {
+    ...state,
+    generation: state.generation + 1,
+    preparation: null,
+  };
+}
+
+export function attachAutomaticPreparationChild(
+  state: DesktopAutoUpdateState,
+  updateId: string,
+  childPid: number,
+): DesktopAutoUpdateState {
+  if (state.preparation?.updateId !== updateId) return state;
+  if (!Number.isSafeInteger(childPid) || childPid <= 0) {
+    throw new Error("Automatic update preparation child pid is invalid.");
+  }
+  return {
+    ...state,
+    generation: state.generation + 1,
+    preparation: { ...state.preparation, childPid },
+  };
+}
+
 export function claimAutomaticCandidate(
   state: DesktopAutoUpdateState,
   updateId: string,
   expectedGeneration: number,
 ): DesktopAutoUpdateState {
-  if (!state.candidate || state.candidate.updateId !== updateId || state.generation !== expectedGeneration) {
+  if (!state.candidate || state.candidate.updateId !== updateId || state.candidate.status !== "staged" || state.generation !== expectedGeneration) {
     throw new Error("Automatic update candidate changed before apply.");
   }
   return {

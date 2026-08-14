@@ -8,7 +8,9 @@ import {
   DESKTOP_AUTO_UPDATE_INTERVAL_MS,
   acceptAutomaticUpdatePolicySequence,
   acceptAutomaticUpdatePolicySequenceAtPath,
+  beginAutomaticPreparation,
   claimAutomaticCandidate,
+  clearAutomaticPreparation,
   createInitialDesktopAutoUpdateState,
   hasExactStagedAutomaticArtifact,
   markAutomaticCandidateStatus,
@@ -18,6 +20,7 @@ import {
   scheduleNextAutomaticCheck,
   shouldRunAutomaticCheck,
   stageAutomaticCandidate,
+  withAutomaticUpdateStateLock,
   writeDesktopAutoUpdateState,
   type DesktopAutoUpdateCandidate,
 } from "./desktop-auto-update-state.js";
@@ -80,6 +83,21 @@ describe("desktop automatic update state", () => {
     const accepted = acceptAutomaticUpdatePolicySequence(state, 7);
     expect(accepted.acceptedPolicySequence).toBe(7);
     expect(() => acceptAutomaticUpdatePolicySequence(accepted, 7)).toThrow(/stale/);
+  });
+
+  it("persists one preparation lease and clears only its owner", () => {
+    const state = createInitialDesktopAutoUpdateState();
+    const preparation = {
+      updateId: "preparation-1",
+      channel: "stable" as const,
+      version: "0.7.5",
+      ownerPid: process.pid,
+      startedAt: "2026-08-13T00:00:00.000Z",
+    };
+    const leased = beginAutomaticPreparation(state, preparation);
+    expect(leased.preparation).toEqual(preparation);
+    expect(clearAutomaticPreparation(leased, "other-preparation")).toEqual(leased);
+    expect(clearAutomaticPreparation(leased, preparation.updateId).preparation).toBeNull();
   });
 
   it("accepts a policy sequence atomically at the durable state path", () => {
@@ -152,5 +170,17 @@ describe("desktop automatic update state", () => {
       candidate: { updateId: "update-1", status: "quarantined" },
     });
     expect(shouldRunAutomaticCheck(restored, new Date("2026-08-13T01:00:00.000Z"))).toBe(false);
+  });
+
+  it("reclaims a dead claim lock left by a crashed process", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-auto-update-lock-"));
+    temporaryRoots.push(root);
+    const statePath = path.join(root, "state.json");
+    const lockPath = `${statePath}.claim.lock`;
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: Number.MAX_SAFE_INTEGER, acquiredAt: "2020-01-01T00:00:00.000Z" }));
+    const staleAt = new Date(Date.now() - 30_000);
+    fs.utimesSync(lockPath, staleAt, staleAt);
+    expect(withAutomaticUpdateStateLock(statePath, () => "recovered")).toBe("recovered");
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 });

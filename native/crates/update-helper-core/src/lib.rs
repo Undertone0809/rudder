@@ -501,6 +501,7 @@ fn clear_desktop_candidate_state(request: &UpdateRequest) -> Result<(), HelperEr
     let Some(state_path) = request.state_path.as_deref() else {
         return Ok(());
     };
+    let _lock = StateFence::acquire(state_path)?;
     let bytes = match fs::read(state_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -522,6 +523,101 @@ fn clear_desktop_candidate_state(request: &UpdateRequest) -> Result<(), HelperEr
         object.insert("candidate".into(), serde_json::Value::Null);
     }
     write_atomic_json(state_path, &state)
+}
+
+/// Coordinate terminal helper state reconciliation with Desktop's synchronous
+/// state/policy mutations. The lock deliberately uses the same suffix and JSON
+/// pid payload as the TypeScript state lock.
+struct StateFence {
+    path: PathBuf,
+}
+
+impl StateFence {
+    fn acquire(state_path: &Path) -> Result<Self, HelperError> {
+        let path = PathBuf::from(format!("{}.claim.lock", state_path.display()));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let started = std::time::Instant::now();
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    file.write_all(
+                        format!(
+                            "{{\"pid\":{},\"acquiredAt\":\"{}\"}}",
+                            std::process::id(),
+                            now_string()
+                        )
+                        .as_bytes(),
+                    )?;
+                    file.sync_all()?;
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    if stale_state_lock(&path) {
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                    if started.elapsed() >= Duration::from_secs(5) {
+                        return Err(HelperError::Invalid(
+                            "automatic update state lock timed out".into(),
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+}
+
+impl Drop for StateFence {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn stale_state_lock(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return true;
+    };
+    let age = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.elapsed().ok());
+    if !matches!(age, Some(value) if value >= Duration::from_secs(5)) {
+        return false;
+    }
+    let Ok(contents) = fs::read_to_string(path) else {
+        return true;
+    };
+    let pid = contents
+        .split("\"pid\":")
+        .nth(1)
+        .and_then(|value| {
+            value
+                .split(|character: char| !character.is_ascii_digit())
+                .next()
+        })
+        .and_then(|value| value.parse::<i32>().ok())
+        .or_else(|| {
+            contents
+                .lines()
+                .find_map(|line| line.strip_prefix("pid=")?.parse::<i32>().ok())
+        });
+    let Some(pid) = pid else {
+        return true;
+    };
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc::kill(pid, 0) };
+        result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
 }
 
 fn wait_for_parent_exit(parent_pid: u32) -> bool {

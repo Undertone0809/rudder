@@ -6,7 +6,11 @@ import { appendFileSync, existsSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DESKTOP_CLI_FLAG } from "./cli-link.js";
 import {
+  attachAutomaticPreparationChild,
+  beginAutomaticPreparation,
+  claimAutomaticCandidate,
   clearAutomaticCandidate,
+  clearAutomaticPreparation,
   DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS,
   DESKTOP_AUTO_UPDATE_INTERVAL_MS,
   hasExactStagedAutomaticArtifact,
@@ -16,6 +20,7 @@ import {
   resolveDesktopAutoUpdateStatePath,
   scheduleNextAutomaticCheck,
   stageAutomaticCandidate,
+  withAutomaticUpdateStateLock,
   writeDesktopAutoUpdateState,
   type DesktopAutoUpdateCandidate,
 } from "./desktop-auto-update-state.js";
@@ -26,14 +31,16 @@ import {
 } from "./desktop-update-diagnostics.js";
 import {
   attestExternalDesktopUpdateHelper,
-  handoffDesktopUpdateToExternalHelper,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
+  readDesktopUpdateHelperRequest,
   readDesktopUpdateJournal,
+  requestMatchesAutomaticCandidate,
   resolveDesktopUpdateTransactionPaths,
   spawnDesktopUpdateHelper,
   writeDesktopUpdateHelperRequest,
-  type DesktopUpdateHelperRequest
+  type DesktopUpdateHelperRequest,
+  type HelperAttestation,
 } from "./desktop-update-helper.js";
 import {
   clearPostUpdateReloadMarker,
@@ -145,7 +152,7 @@ export function createDesktopUpdateFlow(context: {
   /** Prevents downloading a version absent from the authenticated policy. */
   isSignedUpdateVersionAuthorized?: (version: string) => boolean;
   /** Optional explicit helper attestation for tests or an embedding shell. */
-  getExternalUpdateHelper?: () => { path: string; protocol: string } | null;
+  getExternalUpdateHelper?: () => HelperAttestation | null;
 }) {
   const platform = context.platform ?? process.platform;
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
@@ -202,6 +209,24 @@ export function createDesktopUpdateFlow(context: {
       && context.hasSignedUpdatePolicyCapability?.() === true;
   }
 
+  function automaticPreparationIsActive(
+    preparation: { ownerPid: number; childPid?: number; startedAt: string },
+    now = new Date(),
+  ): boolean {
+    const startedAt = Date.parse(preparation.startedAt);
+    if (!Number.isFinite(startedAt) || now.getTime() - startedAt > DESKTOP_AUTO_UPDATE_INTERVAL_MS * 2) return false;
+    const pids = [preparation.ownerPid, preparation.childPid].filter((pid): pid is number => Number.isSafeInteger(pid) && pid > 0);
+    return pids.some((pid) => {
+      if (pid === process.pid) return true;
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   function autoUpdateStatePath(): string {
     return resolveDesktopAutoUpdateStatePath(context.getUserDataPath?.() ?? app.getPath("userData"));
   }
@@ -212,6 +237,17 @@ export function createDesktopUpdateFlow(context: {
 
   function writeAutomaticState(state: ReturnType<typeof readAutomaticState>): void {
     writeDesktopAutoUpdateState(autoUpdateStatePath(), state);
+  }
+
+  function mutateAutomaticState(
+    updater: (state: ReturnType<typeof readAutomaticState>) => ReturnType<typeof readAutomaticState>,
+  ): ReturnType<typeof readAutomaticState> {
+    const statePath = autoUpdateStatePath();
+    return withAutomaticUpdateStateLock(statePath, () => {
+      const next = updater(readAutomaticState());
+      writeAutomaticState(next);
+      return next;
+    });
   }
 
   function automaticInstallId(): string {
@@ -247,6 +283,10 @@ export function createDesktopUpdateFlow(context: {
     }
     if (context.getBootState().runtime?.mode === "attached") { trace({ blocked: "attached_runtime" }); return "continue"; }
     const state = readAutomaticState();
+    if (state.recoveryRequired) {
+      trace({ blocked: "recovery_required" });
+      return "continue";
+    }
     const candidate = state.candidate;
     if (!candidate || (candidate.status !== "staged" && candidate.status !== "claimed")) { trace({ blocked: "candidate", status: candidate?.status ?? null }); return "continue"; }
     const journal = readDesktopUpdateJournal(
@@ -265,33 +305,55 @@ export function createDesktopUpdateFlow(context: {
       // A claimed transaction may already be owned by a detached helper. Never
       // mint a new owner token or spawn a second destructive transaction.
       if (existsSync(existingRequestPath)) {
-        if (isDesktopUpdateRequestFresh(existingRequestPath)) return "continue";
+        if (isDesktopUpdateRequestFresh(existingRequestPath)) {
+          const pendingRequest = readDesktopUpdateHelperRequest(existingRequestPath);
+          const currentHelper = context.getExternalUpdateHelper?.()
+            ?? attestExternalDesktopUpdateHelper({
+              userDataPath: context.getUserDataPath?.() ?? app.getPath("userData"),
+              resourcesPath: process.resourcesPath,
+              env: process.env,
+            });
+          if (pendingRequest && requestMatchesAutomaticCandidate({
+            request: pendingRequest,
+            candidate,
+            statePath: autoUpdateStatePath(),
+            paths: transactionPaths,
+            helper: currentHelper ?? undefined,
+          })) return "continue";
+          quarantineDesktopUpdateRequest(existingRequestPath);
+          mutateAutomaticState((current) => ({
+            ...current,
+            recoveryRequired: true,
+            recoveryCode: "automatic_update_claim_request_mismatch",
+          }));
+          return "continue";
+        }
         const quarantinedPath = quarantineDesktopUpdateRequest(existingRequestPath);
         console.warn("[rudder-desktop] automatic update blocked: stale claimed request quarantined", quarantinedPath);
-        writeAutomaticState({
-          ...state,
+        mutateAutomaticState((current) => ({
+          ...current,
           recoveryRequired: true,
           recoveryCode: "automatic_update_claim_request_stale",
-        });
+        }));
         return "continue";
       }
       console.warn("[rudder-desktop] automatic update blocked: claimed transaction has no journal or request");
-      writeAutomaticState({ ...state, recoveryRequired: true, recoveryCode: "automatic_update_claim_request_missing" });
+      mutateAutomaticState((current) => ({ ...current, recoveryRequired: true, recoveryCode: "automatic_update_claim_request_missing" }));
       return "continue";
     }
     if (journal && !journal.recoveryRequired && !["committed", "rolled_back"].includes(journal.stage)) {
       return "continue";
     }
     if (journal?.recoveryRequired) {
-      writeAutomaticState({
-        ...state,
+      mutateAutomaticState((current) => ({
+        ...current,
         recoveryRequired: true,
         recoveryCode: journal.recoveryCode ?? "automatic_update_recovery_required",
-      });
+      }));
       return "continue";
     }
     if (journal && ["committed", "rolled_back"].includes(journal.stage)) {
-      writeAutomaticState(clearAutomaticCandidate(state, candidate.updateId));
+      mutateAutomaticState((current) => clearAutomaticCandidate(current, candidate.updateId));
       return "continue";
     }
     const runtimeIdentity = automaticRuntimeIdentity();
@@ -325,7 +387,7 @@ export function createDesktopUpdateFlow(context: {
       return "continue";
     }
     if (candidate.version === resolveRudderAppVersion()) {
-      writeAutomaticState(clearAutomaticCandidate(state, candidate.updateId));
+      mutateAutomaticState((current) => clearAutomaticCandidate(current, candidate.updateId));
       return "continue";
     }
 
@@ -394,30 +456,63 @@ export function createDesktopUpdateFlow(context: {
       },
     };
 
-    writePendingPostUpdateReloadMarker(candidate.updateId, candidate.version);
-
-    writeAutomaticState({
-      ...state,
-      generation: state.generation + 1,
-      candidate: { ...candidate, status: "claimed", generation: state.generation + 1 },
-    });
+    const statePath = resolveDesktopAutoUpdateStatePath(context.getUserDataPath?.() ?? app.getPath("userData"));
     let requestPath: string | null = null;
+    const restoreClaimedCandidate = (reason: unknown): void => {
+      if (!requestPath) return;
+      try {
+        rmSync(requestPath, { force: true });
+        clearPendingPostUpdateReloadMarker(candidate.updateId);
+        withAutomaticUpdateStateLock(statePath, () => {
+          const current = readAutomaticState();
+          if (current.candidate?.updateId !== candidate.updateId || current.candidate.status !== "claimed") return;
+          writeAutomaticState({
+            ...current,
+            generation: current.generation + 1,
+            candidate: { ...current.candidate, status: "staged", generation: current.generation + 1 },
+          });
+        });
+        console.warn("[rudder-desktop] automatic update helper handoff failed; candidate returned to staged", reason);
+      } catch (restoreError) {
+        console.error("[rudder-desktop] automatic update helper handoff recovery failed", restoreError);
+      }
+    };
     try {
+      withAutomaticUpdateStateLock(statePath, () => {
+        const current = readAutomaticState();
+        if (current.recoveryRequired || current.candidate?.updateId !== candidate.updateId) {
+          throw new Error("Automatic update candidate changed before claim.");
+        }
+        const claimed = claimAutomaticCandidate(current, candidate.updateId, current.generation);
+        writeAutomaticState(claimed);
+        try {
+          requestPath = writeDesktopUpdateHelperRequest(request);
+        } catch (error) {
+          writeAutomaticState({
+            ...current,
+            generation: current.generation + 1,
+            candidate: { ...candidate, status: "staged", generation: current.generation + 1 },
+          });
+          throw error;
+        }
+      });
+      writePendingPostUpdateReloadMarker(candidate.updateId, candidate.version);
       if (options.deferHandoff) {
-        requestPath = writeDesktopUpdateHelperRequest(request);
-        pendingAutomaticHelperHandoff = { requestPath, helperPath: effectiveHelper.path, transactionId };
+        pendingAutomaticHelperHandoff = { requestPath: requestPath!, helperPath: effectiveHelper.path, transactionId };
         return "continue";
       }
-      handoffDesktopUpdateToExternalHelper({ request, helperPath: effectiveHelper.path });
+      const helperChild = spawnDesktopUpdateHelper({ requestPath: requestPath!, helperPath: effectiveHelper.path });
+      helperChild.once("error", (error) => {
+        restoreClaimedCandidate(error);
+      });
+      helperChild.once("exit", (code) => {
+        if (code !== 0 && !readDesktopUpdateJournal(context.getUserDataPath?.() ?? app.getPath("userData"), candidate.updateId)) {
+          restoreClaimedCandidate(new Error(`helper exited with code ${code ?? "unknown"}`));
+        }
+      });
       return "continue";
     } catch (error) {
-      clearPendingPostUpdateReloadMarker(candidate.updateId);
-      if (requestPath) rmSync(requestPath, { force: true });
-      const current = readAutomaticState();
-      if (current.candidate?.updateId === candidate.updateId) {
-        writeAutomaticState({ ...current, candidate: { ...candidate, status: "staged", generation: current.generation + 1 } });
-      }
-      console.warn("[rudder-desktop] automatic update helper handoff failed", error);
+      restoreClaimedCandidate(error);
       return "continue";
     }
   }
@@ -433,13 +528,14 @@ export function createDesktopUpdateFlow(context: {
     const restoreStagedCandidate = (reason: unknown) => {
       try {
         rmSync(pending.requestPath, { force: true });
-        const state = readAutomaticState();
-        if (state.candidate?.updateId !== pending.transactionId || state.candidate.status !== "claimed") return;
         clearPendingPostUpdateReloadMarker(pending.transactionId);
-        writeAutomaticState({
-          ...state,
-          generation: state.generation + 1,
-          candidate: { ...state.candidate, status: "staged", generation: state.generation + 1 },
+        mutateAutomaticState((state) => {
+          if (state.candidate?.updateId !== pending.transactionId || state.candidate.status !== "claimed") return state;
+          return {
+            ...state,
+            generation: state.generation + 1,
+            candidate: { ...state.candidate, status: "staged", generation: state.generation + 1 },
+          };
         });
         console.warn("[rudder-desktop] automatic update helper handoff failed; candidate returned to staged", reason);
       } catch (restoreError) {
@@ -468,12 +564,10 @@ export function createDesktopUpdateFlow(context: {
       || context.isAutomaticUpdateAllowed?.() === false
       || context.hasExternalUpdateHelperCapability?.() !== true
     ) return;
-    let state = readAutomaticState();
     const now = new Date();
-    if (!state.nextCheckAt) {
-      state = scheduleNextAutomaticCheck(state, now);
-      writeAutomaticState(state);
-    }
+    const state = mutateAutomaticState((current) => current.nextCheckAt
+      ? current
+      : scheduleNextAutomaticCheck(current, now));
     const nextAt = Date.parse(state.nextCheckAt ?? "");
     const delay = Number.isFinite(nextAt) ? Math.max(0, nextAt - now.getTime()) : DESKTOP_AUTO_UPDATE_INITIAL_DELAY_MS;
     automaticUpdateTimer = setTimeout(() => {
@@ -484,15 +578,13 @@ export function createDesktopUpdateFlow(context: {
   }
 
   function deferAutomaticUpdateCheck(): void {
-    const state = readAutomaticState();
     const now = new Date();
-    const nextAt = state.nextCheckAt ? Date.parse(state.nextCheckAt) : Number.NaN;
-    if (!Number.isFinite(nextAt) || nextAt <= now.getTime()) {
-      writeAutomaticState({
-        ...state,
-        nextCheckAt: new Date(now.getTime() + DESKTOP_AUTO_UPDATE_INTERVAL_MS).toISOString(),
-      });
-    }
+    mutateAutomaticState((state) => {
+      const nextAt = state.nextCheckAt ? Date.parse(state.nextCheckAt) : Number.NaN;
+      return !Number.isFinite(nextAt) || nextAt <= now.getTime()
+        ? { ...state, nextCheckAt: new Date(now.getTime() + DESKTOP_AUTO_UPDATE_INTERVAL_MS).toISOString() }
+        : state;
+    });
     scheduleAutomaticUpdateCheck();
   }
 
@@ -505,9 +597,26 @@ export function createDesktopUpdateFlow(context: {
       console.warn("[rudder-desktop] automatic update deferred: version is absent from the signed release policy");
       return;
     }
-    const state = readAutomaticState();
-    if (state.candidate) return;
-    const updateId = randomUUID();
+    const statePath = autoUpdateStatePath();
+    const updateId = withAutomaticUpdateStateLock(statePath, () => {
+      const state = readAutomaticState();
+      if (state.candidate || state.preparation) return null;
+      const nextUpdateId = randomUUID();
+      writeAutomaticState(beginAutomaticPreparation(state, {
+        updateId: nextUpdateId,
+        channel,
+        version,
+        ownerPid: process.pid,
+        startedAt: new Date().toISOString(),
+      }));
+      return nextUpdateId;
+    });
+    if (!updateId) return;
+    const clearPreparation = () => {
+      mutateAutomaticState((current) => current.preparation?.updateId === updateId
+        ? clearAutomaticPreparation(current, updateId)
+        : current);
+    };
     const childLaunch = resolveDesktopUpdateChildLaunch({
       cliArgs: [
         "start", "--no-cli", "--no-runtime", "--no-open", "--target-version", version,
@@ -525,7 +634,13 @@ export function createDesktopUpdateFlow(context: {
       });
     } catch (error) {
       console.warn("[rudder-desktop] automatic update preparation failed to start", error);
+      clearPreparation();
       return;
+    }
+    if (typeof child.pid === "number") {
+      mutateAutomaticState((current) => current.preparation?.updateId === updateId
+        ? attachAutomaticPreparationChild(current, updateId, child.pid)
+        : current);
     }
     let prepared: {
       assetName?: string;
@@ -539,6 +654,7 @@ export function createDesktopUpdateFlow(context: {
     child.once("error", (error) => {
       childFailedToStart = true;
       console.warn("[rudder-desktop] automatic update preparation child failed", error);
+      clearPreparation();
     });
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
@@ -558,42 +674,60 @@ export function createDesktopUpdateFlow(context: {
         }
       }
     });
-    child.on("close", (code) => {
-      if (childFailedToStart || code !== 0 || !prepared) return;
-      const current = readAutomaticState();
-      if (!prepared.stagedArtifactPath || !prepared.stagedArtifactDigest) {
-        console.warn("[rudder-desktop] automatic update preparation did not return an exact staged artifact proof");
-        return;
-      }
-      if (context.authorizeSignedUpdateRelease && (!prepared.assetName || !prepared.assetChecksum || !prepared.releaseDigest
-        || context.authorizeSignedUpdateRelease({
-          version,
-          assetName: prepared.assetName,
-          assetSha256: prepared.assetChecksum,
-          releaseDigest: prepared.releaseDigest,
-        }) !== true)) {
-        console.warn("[rudder-desktop] automatic update preparation is not authorized by the signed release policy");
-        return;
-      }
-      const candidate: DesktopAutoUpdateCandidate = {
-        channel,
-        version,
-        platform: "darwin",
-        arch: process.arch,
-        installId: automaticInstallId(),
-        profile: context.getBootState().runtime?.localEnv ?? "prod_local",
-        instanceId: context.getBootState().runtime?.instanceId ?? "default",
-        sourceReleaseDigest: prepared.releaseDigest ?? `${channel}:${version}:${prepared.assetChecksum ?? "unknown"}`,
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      if (process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC !== "1") return;
+      const targetPath = process.env.RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH?.trim();
+      if (!targetPath) return;
+      appendFileSync(path.resolve(targetPath), `${JSON.stringify({
+        event: "auto-update-preparation-stderr",
+        at: new Date().toISOString(),
         updateId,
-        ...(prepared.assetName ? { assetName: prepared.assetName } : {}),
-        ...(prepared.assetChecksum ? { assetChecksum: prepared.assetChecksum } : {}),
-        stagedArtifactPath: prepared.stagedArtifactPath,
-        stagedArtifactDigest: prepared.stagedArtifactDigest,
-        stagedAt: new Date().toISOString(),
-        status: "staged",
-        generation: current.generation + 1,
-      };
-      writeAutomaticState(stageAutomaticCandidate(current, candidate));
+        version,
+        output: String(chunk),
+      })}\n`, "utf8");
+    });
+    child.on("close", (code) => {
+      if (childFailedToStart || code !== 0 || !prepared) {
+        clearPreparation();
+        return;
+      }
+      mutateAutomaticState((current) => {
+        if (current.preparation?.updateId !== updateId) return current;
+        if (!prepared.stagedArtifactPath || !prepared.stagedArtifactDigest) {
+          console.warn("[rudder-desktop] automatic update preparation did not return an exact staged artifact proof");
+          return clearAutomaticPreparation(current, updateId);
+        }
+        if (context.authorizeSignedUpdateRelease && (!prepared.assetName || !prepared.assetChecksum || !prepared.releaseDigest
+          || context.authorizeSignedUpdateRelease({
+            version,
+            assetName: prepared.assetName,
+            assetSha256: prepared.assetChecksum,
+            releaseDigest: prepared.releaseDigest,
+          }) !== true)) {
+          console.warn("[rudder-desktop] automatic update preparation is not authorized by the signed release policy");
+          return clearAutomaticPreparation(current, updateId);
+        }
+        const candidate: DesktopAutoUpdateCandidate = {
+          channel,
+          version,
+          platform: "darwin",
+          arch: process.arch,
+          installId: automaticInstallId(),
+          profile: context.getBootState().runtime?.localEnv ?? "prod_local",
+          instanceId: context.getBootState().runtime?.instanceId ?? "default",
+          sourceReleaseDigest: prepared.releaseDigest ?? `${channel}:${version}:${prepared.assetChecksum ?? "unknown"}`,
+          updateId,
+          ...(prepared.assetName ? { assetName: prepared.assetName } : {}),
+          ...(prepared.assetChecksum ? { assetChecksum: prepared.assetChecksum } : {}),
+          stagedArtifactPath: prepared.stagedArtifactPath,
+          stagedArtifactDigest: prepared.stagedArtifactDigest,
+          stagedAt: new Date().toISOString(),
+          status: "staged",
+          generation: current.generation + 1,
+        };
+        return stageAutomaticCandidate(clearAutomaticPreparation(current, updateId), candidate);
+      });
     });
     child.unref();
   }
@@ -607,31 +741,68 @@ export function createDesktopUpdateFlow(context: {
       }
       const now = new Date();
       let state = readAutomaticState();
+      if (state.recoveryRequired) {
+        scheduleAutomaticUpdateCheck();
+        return;
+      }
       // A staged or claimed candidate is already the durable transaction for
       // this install. Advance an overdue slot before returning so it cannot
       // create a zero-delay wake storm while waiting for an eligible Quit.
       if (state.candidate) {
         if (!state.nextCheckAt || Date.parse(state.nextCheckAt) <= now.getTime()) {
-          state = markAutomaticCheckStarted(state, now);
-          writeAutomaticState(state);
+          state = mutateAutomaticState((current) => markAutomaticCheckStarted(current, now));
         }
         scheduleAutomaticUpdateCheck();
         return;
       }
-      if (context.refreshSignedUpdatePolicy && !(await context.refreshSignedUpdatePolicy())) {
+      if (state.preparation) {
+        if (automaticPreparationIsActive(state.preparation, now)) {
+          if (!state.nextCheckAt || Date.parse(state.nextCheckAt) <= now.getTime()) {
+            state = mutateAutomaticState((current) => markAutomaticCheckStarted(current, now));
+          }
+          scheduleAutomaticUpdateCheck();
+          return;
+        }
+        state = mutateAutomaticState((current) => current.preparation
+          ? clearAutomaticPreparation(current, current.preparation.updateId)
+          : current);
+      }
+      let policyRefreshSucceeded = true;
+      if (context.refreshSignedUpdatePolicy) {
+        try {
+          policyRefreshSucceeded = await context.refreshSignedUpdatePolicy();
+        } catch (error) {
+          policyRefreshSucceeded = false;
+          console.warn("[rudder-desktop] signed update policy refresh failed", error);
+        }
+      }
+      if (!policyRefreshSucceeded) {
         const failedCheckAt = new Date();
-        const failedState = markAutomaticCheckStarted(readAutomaticState(), failedCheckAt);
-        writeAutomaticState(failedState);
+        mutateAutomaticState((current) => markAutomaticCheckStarted(current, failedCheckAt));
         scheduleAutomaticUpdateCheck();
         return;
       }
-      if (!state.nextCheckAt) state = scheduleNextAutomaticCheck(state, now);
+      // Policy refresh commits its accepted sequence through a separate
+      // compare-and-swap on the durable state file. Re-read after a
+      // successful refresh so the check timestamp cannot overwrite that
+      // newly accepted sequence with the pre-refresh snapshot.
+      state = readAutomaticState();
+      // A refresh callback is an admission path, not proof by itself. The
+      // callback may be absent, may have failed closed, or may have returned
+      // success without committing a usable policy. Never fall through to a
+      // public release lookup until the authenticated capability is live.
+      if (context.hasSignedUpdatePolicyCapability?.() !== true) {
+        const failedCheckAt = new Date();
+        mutateAutomaticState((current) => markAutomaticCheckStarted(current, failedCheckAt));
+        scheduleAutomaticUpdateCheck();
+        return;
+      }
+      if (!state.nextCheckAt) state = mutateAutomaticState((current) => scheduleNextAutomaticCheck(current, now));
       if (state.nextCheckAt && Date.parse(state.nextCheckAt) > now.getTime()) {
         scheduleAutomaticUpdateCheck();
         return;
       }
-      state = markAutomaticCheckStarted(state, now);
-      writeAutomaticState(state);
+      state = mutateAutomaticState((current) => markAutomaticCheckStarted(current, now));
       const result = await checkForUpdates();
       if (result.status === "update-available" && result.latestVersion) {
         await prepareAutomaticUpdate(result.latestVersion, result.channel);
@@ -710,12 +881,16 @@ export function createDesktopUpdateFlow(context: {
 
   async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
     const channel = readDesktopUpdateChannel(app.getPath("userData"));
+    const smokeReleaseApiBaseUrl = process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1"
+      ? process.env.RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL?.trim()
+      : undefined;
     return checkForRudderDesktopUpdates({
       currentVersion: resolveRudderAppVersion(),
       appName: app.getName(),
       repo: DESKTOP_GITHUB_REPO,
       releasesUrl: DESKTOP_RELEASES_URL,
       channel,
+      ...(smokeReleaseApiBaseUrl ? { apiBaseUrl: smokeReleaseApiBaseUrl } : {}),
     });
   }
 
@@ -844,6 +1019,10 @@ export function createDesktopUpdateFlow(context: {
   }
 
   function resolveRudderAppVersion(): string {
+    // The packaged Desktop bundle is the release identity. The managed server
+    // can be an older shared runtime during takeover, and must not make update
+    // checks or release notes report that runtime's version instead.
+    if (app.isPackaged) return app.getVersion();
     return context.getServerHandle()?.runtime.version
       ?? context.getBootState().runtime?.version
       ?? app.getVersion();
@@ -1028,7 +1207,23 @@ export function createDesktopUpdateFlow(context: {
 
   async function maybeShowStartupUpdateNotice(): Promise<void> {
     if (startupUpdateNoticeShown || !app.isPackaged || !isLocalRuntimeReadyForUpdate()) return;
-    if (context.refreshSignedUpdatePolicy && !(await context.refreshSignedUpdatePolicy())) {
+    if (context.hasExternalUpdateHelperCapability?.() !== true) {
+      // Automatic updates are a fully staged transaction: do not refresh
+      // release policy or touch the network when the destructive boundary is
+      // unavailable for this install.
+      scheduleAutomaticUpdateCheck();
+      return;
+    }
+    let policyRefreshSucceeded = true;
+    if (context.refreshSignedUpdatePolicy) {
+      try {
+        policyRefreshSucceeded = await context.refreshSignedUpdatePolicy();
+      } catch (error) {
+        policyRefreshSucceeded = false;
+        console.warn("[rudder-desktop] signed update policy refresh failed", error);
+      }
+    }
+    if (!policyRefreshSucceeded) {
       // Keep the startup hook retryable. The hourly timer remains active and
       // will refresh policy again when the network becomes available.
       scheduleAutomaticUpdateCheck();
@@ -1037,7 +1232,7 @@ export function createDesktopUpdateFlow(context: {
     startupUpdateNoticeShown = true;
     const state = readAutomaticState();
     if (!state.nextCheckAt) {
-      writeAutomaticState(scheduleNextAutomaticCheck(state, new Date()));
+      mutateAutomaticState((current) => scheduleNextAutomaticCheck(current, new Date()));
     }
     scheduleAutomaticUpdateCheck();
   }
@@ -1317,8 +1512,8 @@ export function createDesktopUpdateFlow(context: {
         try {
           const automaticState = readAutomaticState();
           if (automaticState.candidate?.updateId === updateId) {
-            writeAutomaticState(markAutomaticCandidateStatus(
-              automaticState,
+            mutateAutomaticState((current) => markAutomaticCandidateStatus(
+              current,
               updateId,
               code === 0 ? "committed" : "quarantined",
             ));

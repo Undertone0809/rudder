@@ -267,6 +267,70 @@ export function isDesktopUpdateRequestFresh(
   }
 }
 
+export function readDesktopUpdateHelperRequest(requestPath: string): DesktopUpdateHelperRequest | null {
+  try {
+    const parsed = JSON.parse(readFileSync(requestPath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const request = parsed as Partial<DesktopUpdateHelperRequest>;
+    if (request.operation !== "apply"
+      || typeof request.ownerToken !== "string"
+      || typeof request.transactionId !== "string"
+      || typeof request.installPath !== "string"
+      || typeof request.stagedPath !== "string"
+      || typeof request.lkgPath !== "string"
+      || typeof request.journalPath !== "string"
+      || typeof request.checkpointPath !== "string"
+      || typeof request.statePath !== "string"
+      || typeof request.targetVersion !== "string"
+      || typeof request.candidateSha256 !== "string"
+      || !request.helper
+      || !request.admission
+      || !request.checkpoint
+      || !request.probation) return null;
+    return request as DesktopUpdateHelperRequest;
+  } catch {
+    return null;
+  }
+}
+
+export function requestMatchesAutomaticCandidate(input: {
+  request: DesktopUpdateHelperRequest;
+  candidate: {
+    updateId: string;
+    version: string;
+    stagedArtifactPath?: string;
+    stagedArtifactDigest?: string;
+  };
+  statePath: string;
+  paths: DesktopUpdateTransactionPaths;
+  helper?: DesktopUpdateHelperIdentity;
+}): boolean {
+  const { request, candidate, statePath, paths, helper } = input;
+  return request.operation === "apply"
+    && request.transactionId === candidate.updateId
+    && request.targetVersion === candidate.version
+    && request.statePath === statePath
+    && request.installPath === paths.installPath
+    && request.lkgPath === paths.lkgPath
+    && request.journalPath === paths.journalPath
+    && request.checkpointPath === paths.checkpointPath
+    && request.stagedPath === candidate.stagedArtifactPath
+    && request.candidateSha256 === candidate.stagedArtifactDigest
+    && (!helper || (request.helper.path === helper.path
+      && request.helper.ownerUid === helper.ownerUid
+      && request.helper.mode === helper.mode
+      && request.helper.sha256 === helper.sha256))
+    && request.admission.closed === true
+    && request.admission.activeRuns === 0
+    && typeof request.admission.drainToken === "string"
+    && typeof request.checkpoint.instanceId === "string"
+    && typeof request.checkpoint.databaseRevision === "string"
+    && (request.checkpoint.migrationCompatible === true || request.checkpoint.migrationCompatible === false)
+    && typeof request.probation.executable === "string"
+    && Array.isArray(request.probation.args)
+    && request.probation.args.every((arg) => typeof arg === "string");
+}
+
 /** Move an orphaned request out of the active transaction namespace. */
 export function quarantineDesktopUpdateRequest(requestPath: string): string | null {
   try {
@@ -402,6 +466,20 @@ export function ensureExternalDesktopUpdateHelper(options: {
     }
   });
   if (!bundled) return attestExternalDesktopUpdateHelper(options);
+  // A claimed/applying transaction owns the helper generation recorded in its
+  // journal. Do not replace that binary with the newly unpacked bundle before
+  // recovery has validated and completed the transaction.
+  try {
+    const statePath = path.join(options.userDataPath, "desktop-auto-update.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+      candidate?: { status?: unknown } | null;
+    };
+    const activeTransaction = state.candidate?.status === "claimed" || state.candidate?.status === "applying";
+    if (activeTransaction) return attestExternalDesktopUpdateHelper(options);
+  } catch {
+    // Missing or unreadable state must not create a new capability. The normal
+    // attestation path below will fail closed if the existing helper is absent.
+  }
   try {
     const helperRoot = path.dirname(target);
     if (!hasNonSymlinkParentChain(helperRoot, path.resolve(options.userDataPath))) return null;

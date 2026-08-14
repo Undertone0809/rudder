@@ -72,6 +72,7 @@ import {
   clearAutomaticCandidate,
   readDesktopAutoUpdateState,
   resolveDesktopAutoUpdateStatePath,
+  withAutomaticUpdateStateLock,
   writeDesktopAutoUpdateState,
 } from "./desktop-auto-update-state.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
@@ -92,9 +93,12 @@ import {
   ensureExternalDesktopUpdateHelper,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
+  readDesktopUpdateHelperRequest,
   readDesktopUpdateJournal,
   recoverDesktopUpdateWithExternalHelper,
+  requestMatchesAutomaticCandidate,
   resolveDesktopUpdateTransactionPaths,
+  spawnDesktopUpdateHelper,
   type DesktopUpdateHelperRequest,
 } from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
@@ -477,14 +481,18 @@ function scheduleLifecycleSmokeAction(): void {
     const deadline = Date.now() + 90_000;
     const waitForPolicy = () => {
       let acceptedPolicySequence = -1;
+      let candidateStatus: string | null = null;
       try {
-        acceptedPolicySequence = readDesktopAutoUpdateState(statePath).acceptedPolicySequence;
+        const state = readDesktopAutoUpdateState(statePath);
+        acceptedPolicySequence = state.acceptedPolicySequence;
+        candidateStatus = state.candidate?.status ?? null;
       } catch {
         // Keep polling until the packaged bootstrap has created the state.
       }
-      if ((acceptedPolicySequence >= 42 && currentBootState.stage === "ready") || Date.now() >= deadline) {
+      if ((acceptedPolicySequence >= 42 && currentBootState.stage === "ready" && candidateStatus === "staged") || Date.now() >= deadline) {
         writeLifecycleSmokeEvent("auto-update-policy-ready", {
           acceptedPolicySequence,
+          candidateStatus,
           statePath,
           runtimeReady: currentBootState.stage === "ready",
         });
@@ -1433,7 +1441,13 @@ function initializeBrowserProfile(instanceRoot: string): void {
 
 function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage" | "message">): void {
   if (nextState.stage !== currentBootState.stage && process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1") {
-    writeLifecycleSmokeEvent("boot-state", { stage: nextState.stage, message: nextState.message });
+    writeLifecycleSmokeEvent("boot-state", {
+      stage: nextState.stage,
+      message: nextState.message,
+      detail: nextState.detail ?? null,
+      error: nextState.error ?? null,
+      failure: nextState.failure ?? null,
+    });
   }
   currentBootState = {
     ...currentBootState,
@@ -3053,21 +3067,94 @@ async function bootstrap(): Promise<void> {
       const candidate = autoUpdateState.candidate;
       const journal = readDesktopUpdateJournal(app.getPath("userData"), candidate.updateId);
       if (candidate.status === "claimed" && !journal) {
-        const requestPath = `${resolveDesktopUpdateTransactionPaths({
+      const requestPath = `${resolveDesktopUpdateTransactionPaths({
           userDataPath: app.getPath("userData"),
           transactionId: candidate.updateId,
           resourcesPath: process.resourcesPath,
           execPath: process.execPath,
-        }).journalPath}.request.json`;
+      }).journalPath}.request.json`;
         const requestPending = isDesktopUpdateRequestFresh(requestPath);
-        if (!requestPending) {
+        if (requestPending) {
+          const transactionPaths = resolveDesktopUpdateTransactionPaths({
+            userDataPath: app.getPath("userData"),
+            transactionId: candidate.updateId,
+            resourcesPath: process.resourcesPath,
+            execPath: process.execPath,
+          });
+          const request = readDesktopUpdateHelperRequest(requestPath);
+          const helper = getDesktopUpdateHelperAttestation();
+          if (!request || !requestMatchesAutomaticCandidate({
+            request,
+            candidate,
+            statePath: autoUpdateStatePath,
+            paths: transactionPaths,
+            helper: helper ?? undefined,
+          })) {
+            quarantineDesktopUpdateRequest(requestPath);
+            autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+              const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+              const next = {
+                ...current,
+                recoveryRequired: true,
+                recoveryCode: "automatic_update_claim_request_mismatch",
+              };
+              writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+              return next;
+            });
+          } else {
+          // A crash can occur after the immutable request is durably written
+          // but before the old process reaches spawn(). Re-issue the helper
+          // handoff on the next boot. The native helper's transaction lock
+          // makes this idempotent if another helper already owns the request.
+          if (helper) {
+            const restoreClaimedCandidate = (reason: unknown) => {
+              if (readDesktopUpdateJournal(app.getPath("userData"), candidate.updateId)) return;
+              try {
+                fs.rmSync(requestPath, { force: true });
+                clearPostUpdateReloadMarker(app.getPath("userData"), { updateId: candidate.updateId });
+                autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+                  const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+                  if (current.candidate?.updateId !== candidate.updateId || current.candidate.status !== "claimed") return current;
+                  const next = {
+                    ...current,
+                    generation: current.generation + 1,
+                    candidate: { ...current.candidate, status: "staged" as const, generation: current.generation + 1 },
+                  };
+                  writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+                  return next;
+                });
+                console.warn("[rudder-desktop] automatic update helper re-handoff failed; candidate returned to staged", reason);
+              } catch (restoreError) {
+                console.error("[rudder-desktop] automatic update helper re-handoff recovery failed", restoreError);
+              }
+            };
+            try {
+              const child = spawnDesktopUpdateHelper({ requestPath, helperPath: helper.path });
+              child.once("error", restoreClaimedCandidate);
+              child.once("exit", (code) => {
+                if (code !== 0) restoreClaimedCandidate(new Error(`helper exited with code ${code ?? "unknown"}`));
+              });
+              writeLifecycleSmokeEvent("auto-update-helper-rehandoff", {
+                transactionId: candidate.updateId,
+              });
+            } catch (error) {
+              restoreClaimedCandidate(error);
+              console.warn("[rudder-desktop] automatic update helper re-handoff failed", error);
+            }
+          }
+          }
+        } else {
           quarantineDesktopUpdateRequest(requestPath);
-          autoUpdateState = {
-            ...autoUpdateState,
-            recoveryRequired: true,
-            recoveryCode: "automatic_update_claim_request_stale",
-          };
-          writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+          autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+            const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+            const next = {
+              ...current,
+              recoveryRequired: true,
+              recoveryCode: "automatic_update_claim_request_stale",
+            };
+            writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+            return next;
+          });
         }
       } else if (journal && (journal.recoveryRequired || journal.stage === "previous_moved")) {
         const helper = getDesktopUpdateHelperAttestation();
@@ -3093,12 +3180,16 @@ async function bootstrap(): Promise<void> {
           || !journal.admission || !journal.checkpoint || !journal.installPath
           || !journal.stagedPath || !journal.lkgPath || !journal.checkpointPath
           || !journal.targetVersion || !journal.candidateSha256) {
-          autoUpdateState = {
-            ...autoUpdateState,
-            recoveryRequired: true,
-            recoveryCode: "automatic_update_recovery_identity_unavailable",
-          };
-          writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+          autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+            const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+            const next = {
+              ...current,
+              recoveryRequired: true,
+              recoveryCode: "automatic_update_recovery_identity_unavailable",
+            };
+            writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+            return next;
+          });
         } else {
           const recoveryRequest: DesktopUpdateHelperRequest = {
             operation: "recover",
@@ -3125,23 +3216,37 @@ async function bootstrap(): Promise<void> {
           };
           const recovery = recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });
           if (recovery.recoveryRequired || !recovery.stage || !["rolled_back", "committed"].includes(recovery.stage)) {
-            autoUpdateState = {
-              ...autoUpdateState,
-              recoveryRequired: true,
-              recoveryCode: recovery.recoveryCode ?? recovery.error ?? "automatic_update_recovery_failed",
-            };
-            writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+            autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+              const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+              const next = {
+                ...current,
+                recoveryRequired: true,
+                recoveryCode: recovery.recoveryCode ?? recovery.error ?? "automatic_update_recovery_failed",
+              };
+              writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+              return next;
+            });
           } else {
-            autoUpdateState = clearAutomaticCandidate({ ...autoUpdateState, recoveryRequired: false, recoveryCode: undefined }, candidate.updateId);
-            writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+            autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+              const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+              const next = clearAutomaticCandidate({ ...current, recoveryRequired: false, recoveryCode: undefined }, candidate.updateId);
+              writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+              return next;
+            });
           }
         }
       } else if (journal && ["committed", "rolled_back"].includes(journal.stage)) {
         // A terminal helper journal is authoritative. Clear the durable
         // candidate so a successful install or rollback cannot be claimed on
         // every subsequent launch.
-        autoUpdateState = clearAutomaticCandidate(autoUpdateState, autoUpdateState.candidate.updateId);
-        writeDesktopAutoUpdateState(autoUpdateStatePath, autoUpdateState);
+        autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
+          const current = readDesktopAutoUpdateState(autoUpdateStatePath);
+          const next = current.candidate
+            ? clearAutomaticCandidate(current, current.candidate.updateId)
+            : current;
+          writeDesktopAutoUpdateState(autoUpdateStatePath, next);
+          return next;
+        });
       }
     }
     if (autoUpdateState.recoveryRequired) {
@@ -3179,14 +3284,15 @@ async function bootstrap(): Promise<void> {
     });
     return;
   }
-  // Automatic update checks are anchored to the packaged app boot, not to
-  // account sign-in. A signed-out account gate has no local runtime to start,
-  // but it must still be able to download and stage a candidate silently.
-  scheduleAutomaticUpdateCheck();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start-runtime");
   }
   await startLocalRudder();
+  // Start the silent scheduler only after the account gate or managed local
+  // runtime has reached a stable boot state. This prevents policy/download work
+  // from racing migrations while still allowing signed-out installs to stage
+  // an update after the account-required state is rendered.
+  scheduleAutomaticUpdateCheck();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:ready");
   }

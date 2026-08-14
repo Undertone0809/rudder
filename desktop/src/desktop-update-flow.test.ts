@@ -53,6 +53,7 @@ class MockReadableStream extends EventEmitter {
 
 function createMockUpdateChild() {
   const child = new EventEmitter() as EventEmitter & {
+    pid: number;
     stdout: MockReadableStream;
     stderr: MockReadableStream;
     stdin: { destroyed: boolean; write: (chunk: string, callback?: (error?: Error | null) => void) => void };
@@ -64,6 +65,7 @@ function createMockUpdateChild() {
     destroyed: false,
     write: vi.fn((_chunk, callback) => callback?.(null)),
   };
+  child.pid = 123456;
   child.unref = vi.fn();
   return child;
 }
@@ -137,6 +139,25 @@ describe("desktop update flow", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       fetchMock.mockRestore();
+    }
+  });
+
+  it("keeps the startup update hook recoverable when policy refresh rejects", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    const refreshSignedUpdatePolicy = vi.fn(async () => {
+      throw new Error("policy endpoint unavailable");
+    });
+    try {
+      const { flow } = createFlow({
+        hasExternalUpdateHelperCapability: () => true,
+        refreshSignedUpdatePolicy,
+      });
+
+      await expect(flow.maybeShowStartupUpdateNotice()).resolves.toBeUndefined();
+      expect(refreshSignedUpdatePolicy).toHaveBeenCalledTimes(1);
+      expect(readDesktopAutoUpdateState(statePath).nextCheckAt).toBeTruthy();
+    } finally {
+      fs.rmSync(statePath, { force: true });
     }
   });
 
@@ -317,6 +338,150 @@ describe("desktop update flow", () => {
     } finally {
       fetchMock.mockRestore();
       fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("does not perform a public release lookup without a usable signed policy", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    const now = Date.now();
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(now - 1).toISOString(),
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      const { flow } = createFlow({
+        hasExternalUpdateHelperCapability: () => true,
+        hasSignedUpdatePolicyCapability: () => false,
+      });
+
+      await flow.runAutomaticUpdateCheck();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      const nextCheckAt = Date.parse(readDesktopAutoUpdateState(statePath).nextCheckAt ?? "");
+      expect(nextCheckAt).toBeGreaterThan(now + (DESKTOP_AUTO_UPDATE_INTERVAL_MS / 2));
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("backs off for an hour when signed policy refresh rejects", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    const now = Date.now();
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(now - 1).toISOString(),
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      const { flow } = createFlow({
+        hasExternalUpdateHelperCapability: () => true,
+        hasSignedUpdatePolicyCapability: () => false,
+        refreshSignedUpdatePolicy: vi.fn(async () => {
+          throw new Error("policy endpoint unavailable");
+        }),
+      });
+
+      await flow.runAutomaticUpdateCheck();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      const nextCheckAt = Date.parse(readDesktopAutoUpdateState(statePath).nextCheckAt ?? "");
+      expect(nextCheckAt).toBeGreaterThan(now + (DESKTOP_AUTO_UPDATE_INTERVAL_MS / 2));
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("preserves the accepted policy sequence when a refresh races the check timestamp", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(Date.now() - 1).toISOString(),
+    });
+    const refreshSignedUpdatePolicy = vi.fn(async () => {
+      const current = readDesktopAutoUpdateState(statePath);
+      writeDesktopAutoUpdateState(statePath, { ...current, acceptedPolicySequence: 42 });
+      return true;
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+      { tag_name: "v0.3.3", html_url: "https://example.test/releases/v0.3.3" },
+    ]), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const { flow } = createFlow({
+        hasExternalUpdateHelperCapability: () => true,
+        hasSignedUpdatePolicyCapability: () => false,
+        refreshSignedUpdatePolicy,
+      });
+
+      await flow.runAutomaticUpdateCheck();
+
+      expect(refreshSignedUpdatePolicy).toHaveBeenCalledTimes(1);
+      expect(readDesktopAutoUpdateState(statePath).acceptedPolicySequence).toBe(42);
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("downloads and durably stages the candidate returned by an automatic check", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "automatic-staged.zip");
+    const artifact = Buffer.from("automatic staged payload\n", "utf8");
+    const artifactDigest = createHash("sha256").update(artifact).digest("hex");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifact, { mode: 0o600 });
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(Date.now() - 1).toISOString(),
+    });
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+      { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
+    ]), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const { flow } = createFlow({
+        hasSignedUpdatePolicyCapability: () => true,
+        hasExternalUpdateHelperCapability: () => true,
+        getExternalUpdateHelper: () => ({
+          path: "/tmp/rudder-update-helper",
+          protocol: "rudder-update-helper 0.1.0 protocol=1",
+          ownerUid: 501,
+          mode: 0o755,
+          sha256: "a".repeat(64),
+        }),
+      });
+
+      await flow.runAutomaticUpdateCheck();
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      child.stdout.emit("data", `${JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "prepared",
+        message: "Prepared",
+        assetName: "Rudder-99.0.0-macos-arm64-portable.zip",
+        assetChecksum: artifactDigest,
+        releaseDigest: "release-digest",
+        stagedArtifactPath: artifactPath,
+        stagedArtifactDigest: artifactDigest,
+      })}\n`);
+      child.emit("close", 0);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(readDesktopAutoUpdateState(statePath)).toMatchObject({
+        candidate: {
+          version: "99.0.0",
+          status: "staged",
+          stagedArtifactPath: artifactPath,
+          stagedArtifactDigest: artifactDigest,
+        },
+        preparation: null,
+      });
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+      fs.rmSync(artifactPath, { force: true });
     }
   });
 

@@ -1,4 +1,7 @@
-export function macPortableZipArgs(sourceAppDir, outputPath) {
+export function macPortableZipArgs(sourceAppDir, outputPath, options = {}) {
+  const compressionLevel = Number.isInteger(options.compressionLevel)
+    ? Math.max(0, Math.min(9, options.compressionLevel))
+    : 9;
   return [
     "-c",
     "-k",
@@ -7,7 +10,7 @@ export function macPortableZipArgs(sourceAppDir, outputPath) {
     "--noqtn",
     "--noacl",
     "--zlibCompressionLevel",
-    "9",
+    String(compressionLevel),
     "--keepParent",
     sourceAppDir,
     outputPath,

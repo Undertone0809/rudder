@@ -3,6 +3,7 @@ import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { access, chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
@@ -11,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { macPortableZipArgs } from "./archive.mjs";
 import { createDesktopSmokeShutdownRegistry } from "./desktop-smoke-shutdown.mjs";
 import {
   assertExactLocalAppSavedViewTarget,
@@ -2980,76 +2982,114 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   assert.ok(nativeTarget);
   const helperPath = path.join(resourcesDir, "native", nativeTarget, "rudder-update-helper");
   const helperModule = await import(pathToFileURL(path.join(desktopDir, "dist", "desktop-update-helper.js")).href);
-  const stateModule = await import(pathToFileURL(path.join(desktopDir, "dist", "desktop-auto-update-state.js")).href);
   const policyKeys = generateKeyPairSync("ed25519");
   const publicKeyDer = policyKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64");
-  const updateId = `smoke-update-${randomUUID().replaceAll("-", "").slice(0, 24)}`;
-  const transactionRoot = path.join(paths.electronUserDataDir, "update-helper", "transactions");
   const installPath = path.join(scenarioRoot, "installed", "Rudder.app");
-  const stagedPath = path.join(scenarioRoot, "staged", "Rudder.app");
-  const candidateVersion = `${expectedReleaseVersion}-smoke.1`;
+  const statePath = path.join(paths.electronUserDataDir, "desktop-auto-update.json");
+  const candidateVersion = "99.0.0";
   const sourceAppPath = path.resolve(executablePath, "..", "..", "..");
+  const candidateAppPath = path.join(scenarioRoot, "release", "Rudder.app");
+  const assetName = `Rudder-${candidateVersion}-macos-arm64-portable.zip`;
+  const assetPath = path.join(scenarioRoot, "release", assetName);
   await cp(sourceAppPath, installPath, { recursive: true, dereference: true });
-  await cp(sourceAppPath, stagedPath, { recursive: true, dereference: true });
-  const stagedPackagePath = path.join(stagedPath, "Contents", "Resources", "app", "package.json");
-  const stagedPackage = JSON.parse(await readFile(stagedPackagePath, "utf8"));
-  stagedPackage.version = candidateVersion;
-  await writeFile(stagedPackagePath, `${JSON.stringify(stagedPackage, null, 2)}\n`, "utf8");
-  const stagedInfoPlistPath = path.join(stagedPath, "Contents", "Info.plist");
-  const stagedInfoPlist = (await readFile(stagedInfoPlistPath, "utf8"))
+  const installedBaseline = JSON.parse(await readFile(path.join(installPath, "Contents", "Resources", "app", "package.json"), "utf8"));
+  assert.equal(installedBaseline.version, expectedReleaseVersion, "public update must replace the current installed bundle");
+  await cp(sourceAppPath, candidateAppPath, { recursive: true, dereference: true });
+  const candidatePackagePath = path.join(candidateAppPath, "Contents", "Resources", "app", "package.json");
+  const candidatePackage = JSON.parse(await readFile(candidatePackagePath, "utf8"));
+  candidatePackage.version = candidateVersion;
+  await writeFile(candidatePackagePath, `${JSON.stringify(candidatePackage, null, 2)}\n`, "utf8");
+  const candidateServerPackagePath = path.join(candidateAppPath, "Contents", "Resources", "server-package", "package.json");
+  const candidateServerPackage = JSON.parse(await readFile(candidateServerPackagePath, "utf8"));
+  candidateServerPackage.version = candidateVersion;
+  await writeFile(candidateServerPackagePath, `${JSON.stringify(candidateServerPackage, null, 2)}\n`, "utf8");
+  const candidateInfoPlistPath = path.join(candidateAppPath, "Contents", "Info.plist");
+  const candidateInfoPlist = (await readFile(candidateInfoPlistPath, "utf8"))
     .replaceAll(`<string>${expectedReleaseVersion}</string>`, `<string>${candidateVersion}</string>`);
-  await writeFile(stagedInfoPlistPath, stagedInfoPlist, "utf8");
+  await writeFile(candidateInfoPlistPath, candidateInfoPlist, "utf8");
+  assert.equal(candidatePackage.version, candidateVersion, "candidate app package should match the update version");
+  assert.equal(candidateServerPackage.version, candidateVersion, "candidate server package should match the update version");
+  assert.equal(candidateInfoPlist.includes(`<string>${candidateVersion}</string>`), true, "candidate Info.plist should match the update version");
   await writeFile(
-    path.join(stagedPath, "Contents", "Resources", "app", "releases", `v${candidateVersion}.md`),
+    path.join(candidateAppPath, "Contents", "Resources", "app", "releases", `v${candidateVersion}.md`),
     "## New Features\n\n- Installed by the silent update smoke candidate.\n",
     "utf8",
   );
+  // This is still a real portable ZIP of the candidate bundle. Keep the
+  // acceptance run bounded on developer machines by using a fast compression
+  // level; release packaging continues to use the production default (9).
+  const archiveResult = await runCapturedProcess("ditto", macPortableZipArgs(candidateAppPath, assetPath, { compressionLevel: 1 }), { timeoutMs: 120_000 });
+  assert.equal(archiveResult.code, 0, `public update candidate archive failed: ${archiveResult.stderr}`);
   const helperDigest = createHash("sha256").update(await readFile(helperPath)).digest("hex");
-  const stagedDigest = await new Promise((resolve, reject) => {
-    const child = spawn(helperPath, ["--digest", stagedPath], { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = ""; let stderr = "";
-    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject); child.once("exit", (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr)));
-  });
-  const assetName = `Rudder-${candidateVersion}-macos-arm64-portable.zip`;
-  const assetChecksum = stagedDigest;
-  const releaseDigest = createHash("sha256").update(JSON.stringify({ releaseTag: `v${candidateVersion}`, assetName, assetChecksum, assetKind: "full", platform: "darwin", arch: "arm64" })).digest("hex");
+  const assetChecksum = createHash("sha256").update(await readFile(assetPath)).digest("hex");
+  // The signed policy is keyed to the runtime platform (`darwin`), while the
+  // CLI's immutable asset digest uses its download-target name (`macos`).
+  // Keep those two identities distinct or a verified download will be
+  // rejected during candidate authorization.
+  const releaseDigest = createHash("sha256").update(JSON.stringify({ releaseTag: `v${candidateVersion}`, assetName, assetChecksum, assetKind: "full", platform: "macos", arch: "arm64" })).digest("hex");
   const policy = {
     schema: 1, sequence: 42, keyId: "rudder-desktop-smoke", issuedAt: new Date(Date.now() - 60_000).toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), channel: "stable", platform: "darwin", arch: "arm64",
     releases: [{ version: candidateVersion, assetName, assetSha256: assetChecksum, releaseDigest }],
   };
   const policyEnvelope = { payload: policy, signature: sign(null, Buffer.from(canonicalizeSmokePolicy(policy)), policyKeys.privateKey).toString("base64url") };
-  const policyServer = http.createServer((_request, response) => {
-    response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(policyEnvelope));
+  const releaseRequests = [];
+  let releaseBaseUrl = null;
+  const release = {
+    tag_name: `v${candidateVersion}`,
+    html_url: "http://127.0.0.1/releases/tag/v99.0.0",
+    draft: false,
+    prerelease: false,
+    assets: [],
+  };
+  const policyServer = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", releaseBaseUrl ?? "http://127.0.0.1");
+    releaseRequests.push({ method: request.method ?? "GET", path: `${requestUrl.pathname}${requestUrl.search}` });
+    response.setHeader("Cache-Control", "no-store");
+    if (requestUrl.pathname === "/policy.json") {
+      response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(policyEnvelope)); return;
+    }
+    if (requestUrl.pathname === "/repos/Undertone0809/rudder/releases") {
+      response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify([release])); return;
+    }
+    if (requestUrl.pathname === "/repos/Undertone0809/rudder/releases/tags/v99.0.0") {
+      response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(release)); return;
+    }
+    const downloadPrefix = "/repos/Undertone0809/rudder/releases/download/v99.0.0/";
+    if (requestUrl.pathname.startsWith(downloadPrefix)) {
+      const name = decodeURIComponent(requestUrl.pathname.slice(downloadPrefix.length));
+      if (name === "SHASUMS256.txt") {
+        const body = `${assetChecksum}  ${assetName}\n`;
+        response.setHeader("Content-Type", "text/plain"); response.end(body); return;
+      }
+      if (name === assetName) {
+        response.setHeader("Content-Type", "application/zip");
+        createReadStream(assetPath).once("error", (error) => response.destroy(error)).pipe(response);
+        return;
+      }
+    }
+    response.statusCode = 404; response.end("not found");
   });
   await new Promise((resolve, reject) => { policyServer.once("error", reject); policyServer.listen(0, "127.0.0.1", resolve); });
   const policyAddress = policyServer.address();
-  const policyUrl = `http://127.0.0.1:${policyAddress.port}/policy.json`;
+  releaseBaseUrl = `http://127.0.0.1:${policyAddress.port}`;
+  release.html_url = `${releaseBaseUrl}/repos/Undertone0809/rudder/releases/tag/v99.0.0`;
+  release.assets = [
+    { name: assetName, browser_download_url: `${releaseBaseUrl}/repos/Undertone0809/rudder/releases/download/v99.0.0/${encodeURIComponent(assetName)}` },
+    { name: "SHASUMS256.txt", browser_download_url: `${releaseBaseUrl}/repos/Undertone0809/rudder/releases/download/v99.0.0/SHASUMS256.txt` },
+  ];
+  const policyUrl = `${releaseBaseUrl}/policy.json`;
   const lifecyclePath = path.join(scenarioRoot, "lifecycle.jsonl");
   const extraEnv = {
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
     RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: publicKeyDer,
     RUDDER_DESKTOP_UPDATE_POLICY_URL: policyUrl,
+    RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL: releaseBaseUrl,
+    RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL: releaseBaseUrl,
     RUDDER_DESKTOP_SMOKE_LIFECYCLE_ACTION: "auto-update-quit",
-    // The signed policy and accepted sequence are persisted before launch;
-    // leave enough time for the owned runtime to become ready without
-    // extending the lifecycle window beyond the normal smoke path.
     RUDDER_DESKTOP_SMOKE_LIFECYCLE_DELAY_MS: "8000",
     RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: lifecyclePath,
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH: installPath,
   };
-  const transactionPaths = helperModule.resolveDesktopUpdateTransactionPaths({ userDataPath: paths.electronUserDataDir, transactionId: updateId, resourcesPath: resourcesDir, execPath: executablePath, installPath });
-  await mkdir(path.dirname(transactionPaths.installPath), { recursive: true });
-  const candidate = { channel: "stable", version: candidateVersion, platform: "darwin", arch: "arm64", installId: path.resolve(paths.electronUserDataDir), profile: "prod_local", instanceId: "default", sourceReleaseDigest: releaseDigest, updateId, assetName, assetChecksum, stagedArtifactPath: stagedPath, stagedArtifactDigest: stagedDigest, stagedAt: new Date().toISOString(), status: "staged", generation: 1 };
-  const statePath = stateModule.resolveDesktopAutoUpdateStatePath(paths.electronUserDataDir);
-  await mkdir(path.dirname(statePath), { recursive: true });
-  // This scenario starts from the post-download/restart state. Persist the
-  // exact signed policy envelope alongside its accepted sequence so the
-  // account-gated launch can authorize the staged candidate without needing a
-  // second network refresh before natural Quit.
-  await writeFile(path.join(paths.electronUserDataDir, "desktop-update-policy.json"), `${JSON.stringify(policyEnvelope, null, 2)}\n`, { encoding: "utf8", mode: "0600" });
-  await writeFile(statePath, `${JSON.stringify({ ...stateModule.createInitialDesktopAutoUpdateState(), acceptedPolicySequence: policy.sequence, nextCheckAt: new Date(Date.now() - 1_000).toISOString(), candidate }, null, 2)}\n`, { encoding: "utf8", mode: "0600" });
   const run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), extraEnv);
   // Capture the child before the helper-triggered quit closes Playwright's
   // Electron connection. Calling electronApp.process() after that point can
@@ -3057,7 +3097,30 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const appProcess = typeof run.electronApp.process === "function"
     ? run.electronApp.process()
     : null;
+  let transactionPaths = null;
+  let updateId = null;
+  let state = null;
   try {
+    await waitForSmokeCondition("automatic update state", async () => (
+      (await pathExists(statePath)) ? true : null
+    ), { timeoutMs: 90_000 });
+    state = await waitForSmokeCondition("automatic update candidate staged", async () => {
+      const next = JSON.parse(await readFile(statePath, "utf8"));
+      return next.candidate?.status === "staged" ? next : null;
+    }, { timeoutMs: 90_000 });
+    const candidate = state.candidate;
+    updateId = candidate.updateId;
+    transactionPaths = helperModule.resolveDesktopUpdateTransactionPaths({ userDataPath: paths.electronUserDataDir, transactionId: updateId, resourcesPath: resourcesDir, execPath: executablePath, installPath });
+    assert.equal(candidate.version, candidateVersion);
+    assert.equal(candidate.assetName, assetName);
+    assert.equal(candidate.assetChecksum, assetChecksum);
+    assert.equal(candidate.stagedArtifactDigest, assetChecksum);
+    assert.equal(await pathExists(candidate.stagedArtifactPath), true, "automatic preparation should leave a downloaded cache artifact");
+    assert.notEqual(path.resolve(candidate.stagedArtifactPath), path.resolve(assetPath), "the app must stage the CLI download, not the smoke fixture");
+    assert.equal(releaseRequests.some((entry) => entry.path.startsWith("/repos/Undertone0809/rudder/releases?")), true, "Desktop must perform the update-available check");
+    assert.equal(releaseRequests.some((entry) => entry.path.endsWith("/releases/tags/v99.0.0")), true, "CLI must resolve release metadata");
+    assert.equal(releaseRequests.some((entry) => entry.path.endsWith("/SHASUMS256.txt")), true, "CLI must download release checksums");
+    assert.equal(releaseRequests.some((entry) => entry.path.endsWith(`/${assetName}`)), true, "CLI must download the portable asset");
     const events = await waitForSmokeCondition("public natural quit", async () => {
       if (!(await pathExists(lifecyclePath))) return null;
       const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
@@ -3074,10 +3137,10 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       if (!(await pathExists(transactionPaths.journalPath))) return null;
       const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
       return journal.stage === "committed" ? journal : null;
-    }, { timeoutMs: 30_000 });
+    }, { timeoutMs: 90_000 });
     const journal = JSON.parse(await readFile(transactionPaths.journalPath, "utf8"));
     assert.equal(journal.transactionId, updateId);
-    assert.equal(journal.candidateSha256, stagedDigest);
+    assert.equal(journal.candidateSha256, assetChecksum);
     assert.equal(journal.helper.sha256, helperDigest);
     await waitForSmokeCondition("public helper request consumption", async () => (
       (await pathExists(requestPath)) ? null : true
@@ -3085,9 +3148,12 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     assert.equal(await pathExists(requestPath), false, "helper request should be consumed");
     assert.equal(await pathExists(transactionPaths.installPath), true, "install remains present after helper commit");
     const installedPackage = JSON.parse(await readFile(path.join(transactionPaths.installPath, "Contents", "Resources", "app", "package.json"), "utf8"));
+    const installedServerPackage = JSON.parse(await readFile(path.join(transactionPaths.installPath, "Contents", "Resources", "server-package", "package.json"), "utf8"));
     assert.equal(installedPackage.version, candidateVersion, "helper must install the candidate bundle version");
-    const state = JSON.parse(await readFile(statePath, "utf8"));
+    assert.equal(installedServerPackage.version, candidateVersion, "helper must install a server runtime matching the candidate bundle");
+    state = JSON.parse(await readFile(statePath, "utf8"));
     assert.equal(state.candidate, null, "committed candidate is cleared from durable state");
+    assert.equal(state.preparation, null, "completed preparation lease is cleared from durable state");
     await waitForSmokeCondition("public app remains closed after helper commit", async () => {
       return appProcess && (appProcess.exitCode !== null || appProcess.signalCode !== null) ? true : null;
     }, { timeoutMs: 15_000 });
@@ -3104,6 +3170,9 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       await firstNotesRun.page.evaluate((version) => window.rudderBoot.markReleaseNotesShown(version), candidateVersion);
       const sameLaunchNotes = await firstNotesRun.page.evaluate(() => window.rudderBoot.getReleaseNotes());
       assert.equal(sameLaunchNotes.status, "already-shown", "release notes entitlement must be consumed before rendering");
+      const durableNotesState = JSON.parse(await readFile(path.join(paths.electronUserDataDir, "release-notes-state.json"), "utf8"));
+      assert.equal(durableNotesState.lastKnownVersion, candidateVersion, "release notes durable state must record the installed Desktop version");
+      assert.equal(durableNotesState.lastShownVersion, candidateVersion, "release notes durable state must record the acknowledged candidate version");
     } finally {
       await closeDesktop(firstNotesRun.electronApp).catch(() => {});
     }
@@ -3116,9 +3185,9 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       await closeDesktop(secondNotesRun.electronApp).catch(() => {});
     }
     console.log("[desktop-smoke] public automatic update installed " + candidateVersion + ", left the app closed, and showed release notes exactly once across relaunch");
-    console.log(`[desktop-smoke] public automatic update committed ${updateId}; state, request, journal, helper identity, and install read back`);
+    console.log(`[desktop-smoke] public automatic update committed ${updateId}; update check, CLI download, state, request, journal, helper identity, and install read back`);
   } finally {
-    policyServer.close();
+    await new Promise((resolve) => policyServer.close(() => resolve()));
     await closeDesktop(run.electronApp).catch(() => {});
   }
 }
@@ -7142,10 +7211,14 @@ try {
     console.error(`[desktop-smoke] preserving failed smoke root for cleanup diagnostics: ${tmpRoot}`);
   } else {
     console.log(`Desktop smoke test passed (${smokeMode}; ${executedScenarios.join(", ")}).`);
-    try {
-      await rm(tmpRoot, { recursive: true, force: true });
-    } catch (error) {
-      console.warn("[desktop-smoke] temp cleanup failed", error);
+    if (process.env.RUDDER_DESKTOP_SMOKE_KEEP_ROOT === "1") {
+      console.log(`[desktop-smoke] preserving successful smoke root: ${tmpRoot}`);
+    } else {
+      try {
+        await rm(tmpRoot, { recursive: true, force: true });
+      } catch (error) {
+        console.warn("[desktop-smoke] temp cleanup failed", error);
+      }
     }
   }
 }

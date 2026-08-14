@@ -30,6 +30,8 @@ type CheckForRudderDesktopUpdatesOptions = {
   repo: string;
   releasesUrl: string;
   channel?: DesktopUpdateChannel;
+  /** Test-only GitHub-compatible API origin used by packaged smoke. */
+  apiBaseUrl?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -171,15 +173,17 @@ async function fetchLatestReleaseWithFallback(options: {
   fetchImpl: typeof fetch;
   repo: string;
   releasesUrl: string;
+  apiBaseUrl?: string;
 }): Promise<{ version: string; releaseUrl?: string } | null> {
-  const { appName, channel, currentVersion, fetchImpl, repo, releasesUrl } = options;
+  const { appName, channel, currentVersion, fetchImpl, repo, releasesUrl, apiBaseUrl } = options;
+  const apiOrigin = (apiBaseUrl?.trim() || "https://api.github.com").replace(/\/+$/u, "");
   const headers = {
     Accept: "application/vnd.github+json",
     "User-Agent": `${appName}/${currentVersion}`,
   };
 
   try {
-    const response = await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=30`, { headers });
+    const response = await fetchImpl(`${apiOrigin}/repos/${repo}/releases?per_page=30`, { headers });
     if (!response.ok) {
       throw new Error(`GitHub release lookup failed (${response.status})`);
     }
@@ -207,7 +211,7 @@ async function fetchLatestReleaseWithFallback(options: {
 export async function checkForRudderDesktopUpdates(
   options: CheckForRudderDesktopUpdatesOptions,
 ): Promise<DesktopUpdateCheckResult> {
-  const { currentVersion, appName, repo, releasesUrl, channel = "stable", fetchImpl = fetch } = options;
+  const { currentVersion, appName, repo, releasesUrl, channel = "stable", apiBaseUrl, fetchImpl = fetch } = options;
 
   try {
     const latest = await fetchLatestReleaseWithFallback({
@@ -217,6 +221,7 @@ export async function checkForRudderDesktopUpdates(
       fetchImpl,
       repo,
       releasesUrl,
+      apiBaseUrl,
     });
     if (!latest) {
       throw new Error(`GitHub release lookup returned no ${channel} release`);
