@@ -135,6 +135,18 @@ describe("release package map", () => {
     expect(readFileSync(join(repo, "native", "Cargo.lock"), "utf8")).toContain('version = "0.2.11"');
   });
 
+  it("allows the Rust workspace and lockfile to already be on the release version", () => {
+    const { repo } = createPackageMapRepo();
+    const cargoPath = join(repo, "native", "Cargo.toml");
+    const lockPath = join(repo, "native", "Cargo.lock");
+    writeFileSync(cargoPath, readFileSync(cargoPath, "utf8").replaceAll("0.2.10", "0.2.11"));
+    writeFileSync(lockPath, readFileSync(lockPath, "utf8").replaceAll("0.2.10", "0.2.11"));
+
+    const result = runPackageMap(repo, ["set-version", "0.2.11"]);
+
+    expect(result.status).toBe(0);
+  });
+
   it("refuses publish manifest rewrites unless release automation opts in", () => {
     const { repo, packagePath } = createPackageMapRepo();
     const before = readFileSync(packagePath, "utf8");
