@@ -29,7 +29,13 @@
       "wrapper_ref": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "code_candidate_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
       "runtime_paths_changed": false,
-      "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are now directly rebuilt/bound to 88e."
+      "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are directly rebuilt/bound to 88e."
+    },
+    "delivery_wrapper": {
+      "wrapper_ref": "e81a9cd1f1fab2c4959fa551e75d518b440021fd",
+      "artifact_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "runtime_paths_changed": false,
+      "reason": "e81 is a packet-only descendant used to bind the current lease and receipts; it does not change the packaged/runtime source represented by 88e."
     },
     "dirty_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
     "changed_paths": [
@@ -178,24 +184,24 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
+      "verdict": "needs_more_evidence",
       "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
       "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Prior needs_more_evidence receipt was invalidated when the candidate lease fingerprint was refreshed; request a new reviewer verdict against the current shared-main fingerprint."
+      "reason": "Fresh stage review on e81 confirms packet alignment and 0.7.7 synchronization, but hosted Local App dogfood (0/100 cycles, 0/7 UTC dates), live native_ab, 100-sample promotion evidence, and semantic index preservation remain unavailable."
     },
     "verifier": {
-      "verdict": "pending",
+      "verdict": "QUESTION",
       "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
       "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
       "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Prior QUESTION receipt was invalidated when the candidate lease fingerprint was refreshed; request a new verifier verdict against the current shared-main fingerprint."
+      "reason": "Fresh black-box verification on e81 confirms packaged supporting evidence and 100 MiB/10,000-file parity/recovery, but no authorized hosted Local App fixture, seven UTC dates/100 accepted cycles, live native_ab campaign, release tag, or index-preservation proof exists."
     },
     "final_review": {
       "verdict": "pending",
@@ -205,11 +211,11 @@
       "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Final review is pending fresh reviewer/verifier receipts for the current lease; hosted dogfood and native_ab blockers remain unresolved."
+      "reason": "Final review remains pending because the current reviewer is needs_more_evidence and verifier is QUESTION; hosted dogfood, native_ab, promotion, and index-preservation blockers remain unresolved."
     }
   },
   "drift": {
-    "active": true,
+    "active": false,
     "events": [
       {
         "type": "post_receipt_archive_entry_limit_fix",
@@ -264,13 +270,15 @@
         "before_dirty_fingerprint": "shared-main-tracked-diff-ffe759ce12bd30f3e9b0fc1f69efbd904bb6733ca13d3a72403b2518d1802604",
         "after_dirty_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
         "reason": "The shared-main lease fingerprint changed while binding the comparator receipt scope; prior reviewer, verifier, and final-review verdicts are invalidated and must be rerun on the current exact candidate identity."
+      },
+      {
+        "type": "receipts_refreshed_on_current_delivery_wrapper",
+        "wrapper_ref": "e81a9cd1f1fab2c4959fa551e75d518b440021fd",
+        "artifact_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+        "reason": "Independent reviewer and verifier reran against the exact e81 packet wrapper and current 9d dirty lease; their needs_more_evidence and QUESTION verdicts are current, while the final review remains pending."
       }
     ],
-    "invalidated_receipts": [
-      "reviewer",
-      "verifier",
-      "final_review"
-    ]
+    "invalidated_receipts": []
   },
   "integration": {
     "authorized": true,
@@ -330,7 +338,7 @@
       "The exact 88e candidate is directly packaged and version-checked on macOS arm64; the portable/shell/server/native hashes are recorded above.",
       "The current 100 MiB/10,000-file one-sample comparator passes manifest/entry/content/recovery parity with positive external sampler boundaries; its status is explicitly not_comparable and no promotion metric is claimed.",
       "Authorized hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent; terminal delivery remains blocked.",
-      "Shared main dirty/index state remains preserved outside the isolated candidate worktree."
+      "Unrelated shared-main dirty paths remain preserved outside the isolated candidate worktree; semantic index preservation is unproven (index_preserved=false) and remains a delivery blocker."
     ]
   }
 }
