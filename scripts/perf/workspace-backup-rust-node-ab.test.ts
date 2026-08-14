@@ -44,4 +44,25 @@ describe("workspace backup Rust/Node formal comparator", () => {
       await rm(outputDir, { recursive: true, force: true });
     }
   }, 300_000);
+
+  it.skipIf(!existsSync(nativeBinary))("fails closed when the requested external sampler is unavailable", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-ab-missing-sampler-fixture-"));
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-ab-missing-sampler-output-"));
+    try {
+      await writeFile(path.join(root, "file.txt"), "content");
+      await assert.rejects(
+        runWorkspaceBackupRustNodeAb(root, {
+          outputDir,
+          nativeBinary,
+          samplerMode: "external",
+          samplerPath: path.join(root, "missing-process-tree-sampler"),
+          sampleCount: 1,
+        }),
+        /external process-tree sampler is unavailable/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
 });
