@@ -23,22 +23,32 @@
   },
   "candidate": {
     "branch": "main",
-    "source_ref": "88e257044d33cbcc19feb4de65db57a82b367a16",
-    "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+    "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "metadata_only_wrapper": {
-      "wrapper_ref": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "code_candidate_sha": "b707c925434afb34f36ab2faae8a23f6a7bf26dc",
+      "wrapper_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are directly rebuilt/bound to 88e."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "38ce591f5df44eb6a7db52cc41dac4c7831b8dfd",
-      "artifact_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "wrapper_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "38 is a packet-only descendant used to bind the current lease and receipts; it does not change the packaged/runtime source represented by 88e."
     },
-    "dirty_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
-    "changed_paths": [
+    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "changed_paths": [],
+    "artifact_scope": {
+      "source_clean_worktree": "/private/tmp/rudder-native-main-merge",
+      "source_clean_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "shared_main_dirty_scope": "preservation-only; not part of packaged/comparator identity",
+      "product_binaries": ["rudder-process-host", "rudder-native", "rudder-update-helper"],
+      "benchmark_only_binaries": ["rudder-process-tree-sampler"],
+      "packaged_acceptance_target": "aarch64-apple-darwin",
+      "other_targets": "compiled_unverified"
+    },
+    "historical_changed_paths": [
       "desktop/scripts/smoke.mjs",
       "desktop/src/boot-preload.ts",
       "desktop/src/desktop-update-flow.test.ts",
@@ -67,48 +77,52 @@
       "cli/src/__tests__/start.test.ts"
     ],
     "evidence": {
-      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-88e-100m-10k.json",
-      "backup_comparator_receipt_sha256": "f2e1cb806c2e339a9baeb84def027572ca85766f0bebc09186aec5c24af198a4",
+      "backup_comparator_receipt": "/tmp/rudder-native-backup-comparator-720-100m-10k.json",
+      "backup_comparator_receipt_sha256": "7103df8647c6aad596e4f731c5a98a93a04ff403a8877dad363c63e7cd6c55ca",
+      "backup_comparator_summary": "evidence/rust-native-backup-comparator-720-summary.json",
       "backup_comparator_status": "not_comparable",
       "backup_comparator_sample_count": 1,
-      "backup_comparator_node_elapsed_ms": 5527.419,
-      "backup_comparator_native_elapsed_ms": 14538.114,
+      "backup_comparator_node_elapsed_ms": 4813.708,
+      "backup_comparator_native_elapsed_ms": 3120.853,
       "backup_comparator_sampler_positive_boundaries": "2/2",
       "backup_comparator_sampler_mode": "external",
       "backup_comparator_sampler_interval_ms": 5,
-      "backup_comparator_sampler_overhead_p95_ms": 0.237916,
+      "backup_comparator_sampler_overhead_p95_ms": 0.168625,
       "backup_comparator_contract_parity": "manifest_entry_content_recovery_pass",
       "backup_comparator_fixture_file_count": 10000,
       "backup_comparator_fixture_byte_size": 104857600,
-      "backup_comparator_fixture_tree_sha256": "bf25e3fa6ca1fa28ac8b4fc35ef64100542a445ce0c3b2ac91306885e099777d",
-      "backup_comparator_fixture_content_sha256": "9514e8fb08d42f70d93aad9d6ceeccbd06109e65c298aa04b07cb5e8b19b6b7a",
-      "backup_comparator_native_binary_sha256": "97d0a91e0e2d77572df7283afe5f44f85a013ec3685d29d0f6e24cdeb80ac4b9",
+      "backup_comparator_fixture_tree_sha256": "1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22",
+      "backup_comparator_fixture_content_sha256": "0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13",
+      "backup_comparator_native_binary_sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
       "backup_comparator_native_binary_version": "rudder-native 0.7.7",
       "backup_comparator_native_binary_target": "aarch64-apple-darwin",
-      "backup_comparator_receipt_dirty_fingerprint": "baee2373c9085fc8657107170bddd7ff4ffa4436e3d1cdfa8b63e38d4196025e",
-      "backup_comparator_receipt_dirty_fingerprint_scope": "isolated comparator worktree included the pre-commit packet metadata diff; source SHA and binary/build identities remain exact, while the current shared-main lease fingerprint is recorded on candidate.dirty_fingerprint",
+      "backup_comparator_receipt_dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "backup_comparator_receipt_dirty_fingerprint_scope": "clean final-merge worktree status stream; shared-main dirty state is not included",
       "backup_comparator_operation_timeout_ms": 300000,
       "backup_comparator_native_archive_timeout_ms": 300000,
-      "backup_comparator_predecessor_receipt": "/tmp/rudder-native-backup-comparator-6c363bf8-100m-10k.json",
-      "backup_comparator_predecessor_receipt_sha256": "27fb9834b009430b0cf24fd6dd150c4f4f361733e820fc14cb335c4888b0f123",
+      "backup_comparator_predecessor_receipt": "/tmp/rudder-native-backup-comparator-22f-100m-10k.json",
+      "backup_comparator_predecessor_receipt_sha256": "4afcb092dc40896042d679840a0f6ed0e4d92b02328116249a3bf7a7559b3ba5",
       "backup_comparator_predecessor_status": "invalidated_source_drift",
       "backup_comparator_prior_small_receipt": "/tmp/rudder-native-backup-comparator-88e-1sample.json",
       "backup_comparator_prior_small_receipt_sha256": "6440d76e7bb21a4888640216351b99c5a35373ee5195800290dd1e89f567c437",
       "backup_comparator_prior_small_status": "superseded_by_current_scale_fixture"
     },
     "build": {
-      "id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
-      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "artifact_bound_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "portable_sha256": "db7c028a97dc91112ec72071ba884a787bb3629581365e1f460f3cd2df2a4ac4",
-      "shell_sha256": "cf1cdf03a843b1931fca1f6d13c629c23b8c4e850514c0347f96f934d4d7ec4b",
+      "id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
+      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "artifact_bound_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "portable_sha256": "5544b24edd5fe15ec6e7ddda03da3faac023919a478002fe0bc802e40cef5866",
+      "shell_sha256": "f8b80973abd9f2dcf3c8b659990c0ef628f1c073dd091d54198d45f43b8b942f",
       "server_package_sha256": "b529f9af73d28ef1fee9117009d6add967d2130225b7dca12805261281173046",
       "native_sha256": {
         "rudder-native": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
         "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
-        "rudder-update-helper": "72522630ab6d8913e5dc04d38679fe750c2eef133e73dcf548b0e740b1a32b5b"
+        "rudder-update-helper": "20cecbf018d62ea578f59019ea1bdae5bc5bc8af25155c5cd310e1b2950dd0e1"
       },
       "version": "0.7.7",
+      "benchmark_only_native_sha256": {
+        "rudder-process-tree-sampler": "b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c"
+      },
       "version_sources": {
         "cargo_workspace": "native/Cargo.toml [workspace.package].version",
         "cargo_lock": "native/Cargo.lock first-party workspace package entries",
@@ -123,26 +137,28 @@
           "rudder-process-host --version",
           "rudder-update-helper --version"
         ],
-        "release_tag": "not_present_for_unreleased_0.7.7_candidate"
+        "release_tag": "not_present_for_unreleased_0.7.7_candidate",
+        "target_scope": "aarch64-apple-darwin packaged acceptance; other targets compiled_unverified"
       }
     },
     "runtime": {
-      "id": "packaged-runtime-88e257-macos-arm64-0.7.7",
-      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "artifact_bound_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+      "id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
+      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "artifact_bound_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
-      "account_gate_smoke": "PASS_packaged_account_gate_88e257",
-      "server_package_verification": "PASS_packaged_server_88e257",
-      "app_builder_smoke": "PASS_packaged_app_builder_88e257",
-      "zip_integrity": "PASS_unzip_test_88e257",
+      "computer_use_package": "PASS_packaged_computer_use_darwin_arm64_22fbeed",
+      "account_gate_smoke": "PASS_packaged_account_gate_72005f4",
+      "server_package_verification": "PASS_packaged_server_72005f4",
+      "app_builder_smoke": "PASS_packaged_app_builder_72005f4",
+      "zip_integrity": "PASS_unzip_test_72005f4",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator fixture with tree SHA bf25e3fa6ca1fa28ac8b4fc35ef64100542a445ce0c3b2ac91306885e099777d and content SHA 9514e8fb08d42f70d93aad9d6ceeccbd06109e65c298aa04b07cb5e8b19b6b7a; native_ab summary producer (six rows, live campaign blocked)",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator fixture with tree SHA 1d620909a2b01c0c9c826e78aaea9561568504992a406947c187844703470b22 and content SHA 0a24c0d7dbe5947fdf014b28a5a404a49c59447efcd1e1b8d2a1ef4d58daef13; native_ab producer/rehearsal only (live campaign blocked)",
     "post_receipt_fix": {
       "source_commits": [
         "7df802c81",
@@ -161,12 +177,13 @@
       "version": "2",
       "fingerprint": "rust-native-foundations-pilot-packet-v2-continuation",
       "criteria": [
-        "Rust foundation format/clippy/tests and synchronized 0.7.7 metadata pass",
+        "Rust foundation format/tests and synchronized 0.7.7 metadata pass (clippy has seven pre-existing untouched collapsible-if lints)",
         "Local App focused native suite passes and Node fallback remains available",
         "macOS arm64 packaged Desktop builds, stages binaries, and account-gate smoke passes",
         "Rust/optimized-Node backup comparison records contract parity and recovery without claiming ZIP byte parity",
         "Packaged Local App dogfood records real cycle/date counts and fails closed below 100 cycles across 7 UTC dates",
-        "native_ab producer emits exactly 3 trials per arm, while live evaluation remains blocked without real binaries",
+        "native_ab producer/rehearsal records exactly 3 trials per arm with productPass=false, while live evaluation remains blocked without authorized campaign execution",
+        "Four native binary classes are explicit: process-host, rudder-native, packaged update-helper, and benchmark-only process-tree-sampler",
         "Agent Run process/I/O host remains not_admitted pending Local App dependency and real-run evidence",
         "Runtime payload installer/extractor remains not_admitted pending backup admission and recovery evidence",
         "Run evidence offset indexer/parser remains not_admitted pending bounded production path and provider parity",
@@ -185,33 +202,36 @@
   "receipts": {
     "reviewer": {
       "verdict": "needs_more_evidence",
-      "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
-      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
+      "invalidated": true,
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Fresh stage review on e81 confirms packet alignment and 0.7.7 synchronization, but hosted Local App dogfood (0/100 cycles, 0/7 UTC dates), live native_ab, 100-sample promotion evidence, and semantic index preservation remain unavailable."
+      "reason": "Previous stage verdict was invalidated by the final main merge; fresh stage review is required for this packet."
     },
     "verifier": {
       "verdict": "QUESTION",
-      "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
-      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
+      "invalidated": true,
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Fresh black-box verification on e81 confirms packaged supporting evidence and 100 MiB/10,000-file parity/recovery, but no authorized hosted Local App fixture, seven UTC dates/100 accepted cycles, live native_ab campaign, release tag, or index-preservation proof exists."
+      "reason": "Previous verifier verdict was invalidated by the final main merge; fresh black-box verification is required for this packet."
     },
     "final_review": {
       "verdict": "needs_more_evidence",
-      "candidate_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
-      "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
-      "build_id": "packaged-rebuild-88e257-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-88e257-macos-arm64-0.7.7",
+      "invalidated": true,
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
+      "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Final handoff review on exact main 38ce591f5 confirms artifact binding and current receipt coherence, but hosted dogfood, live native_ab, 100-sample promotion, and semantic index-preservation blockers remain unresolved."
+      "reason": "Previous final review was invalidated by the final main merge; final review must follow fresh stage review and verifier PASS."
     }
   },
   "drift": {
@@ -276,19 +296,44 @@
         "wrapper_ref": "38ce591f5df44eb6a7db52cc41dac4c7831b8dfd",
         "artifact_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
         "reason": "Independent reviewer, verifier, and final reviewer reconciled the exact 38 packet wrapper and current 9d dirty lease; needs_more_evidence, QUESTION, and needs_more_evidence are current."
+      },
+      {
+        "type": "candidate_rebuilt_after_main_advance",
+        "before_source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+        "after_source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
+        "reason": "Desktop identity/runtime changes and subsequent main commits invalidate the old packaged/comparator/reviewer/verifier identities; all current evidence was rebuilt in a clean isolated worktree."
+      },
+      {
+        "type": "candidate_rebuilt_after_native_branch_merge",
+        "before_source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
+        "after_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+        "reason": "The evidence branch was merged into current main; Desktop runtime artifacts changed, so the 22f packaged/comparator receipts were invalidated and rebuilt from the merge commit."
       }
     ],
-    "invalidated_receipts": []
+    "invalidated_receipts": [
+      {
+        "source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
+        "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "receipts": ["reviewer", "verifier", "final_review", "backup_comparator-22f-100m-10k"],
+        "reason": "final main merge changed packaged/runtime identity"
+      },
+      {
+        "source_sha": "88e257044d33cbcc19feb4de65db57a82b367a16",
+        "dirty_fingerprint": "shared-main-tracked-diff-9d630ce0549e2502a1a982129ca2282912bbe9dd1a738db19df4a0f34ac8c233",
+        "receipts": ["reviewer", "verifier", "final_review", "backup_comparator-88e-100m-10k"],
+        "reason": "source and runtime identity drift"
+      }
+    ]
   },
   "integration": {
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "53c5f9be85888c76e205bdd6e476017ca650ff4b",
+    "base_sha": "e03f5a5c41820b694c3236f373a11db566a93710",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "observed_remote_sha": "d9c0683777b38b15cc939bc6b13bba054183fb0d",
     "branch_refs": [
-      "88e257044d33cbcc19feb4de65db57a82b367a16"
+      "72005f4b37df05fbd987fb4c1051c8f21652ad23"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-integration-a3",
@@ -297,8 +342,9 @@
     "cas": {
       "attempted": true,
       "succeeded": true,
-      "observed_old_sha": "53c5f9be85888c76e205bdd6e476017ca650ff4b",
-      "delivered_sha": "88e257044d33cbcc19feb4de65db57a82b367a16"
+      "observed_old_sha": "e03f5a5c41820b694c3236f373a11db566a93710",
+      "delivered_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "reason": "isolated no-ff merge of the native evidence branch into current main, followed by compare-and-swap ref update"
     },
     "cas_history": [
       {
@@ -335,8 +381,8 @@
     "delivered_tree_sha": null,
     "timestamp": null,
     "proof": [
-      "The exact 88e candidate is directly packaged and version-checked on macOS arm64; the portable/shell/server/native hashes are recorded above.",
-      "The current 100 MiB/10,000-file one-sample comparator passes manifest/entry/content/recovery parity with positive external sampler boundaries; its status is explicitly not_comparable and no promotion metric is claimed.",
+      "The exact 720 merge candidate is directly packaged and version-checked on macOS arm64; the portable/shell/server/native hashes are recorded above.",
+      "The final-merge-source 100 MiB/10,000-file one-sample comparator passes manifest/entry/content/recovery parity with positive external sampler boundaries; its status is explicitly not_comparable and no promotion metric is claimed.",
       "Authorized hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent; terminal delivery remains blocked.",
       "Unrelated shared-main dirty paths remain preserved outside the isolated candidate worktree; semantic index preservation is unproven (index_preserved=false) and remains a delivery blocker."
     ]
