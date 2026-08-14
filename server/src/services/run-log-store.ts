@@ -1,8 +1,13 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, promises as fs } from "node:fs";
+import { createReadStream, existsSync, promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { notFound } from "../errors.js";
 import { resolveRudderInstanceRoot } from "../home-paths.js";
+
+const execFileAsync = promisify(execFile);
 
 export type RunLogStoreType = "local_file";
 
@@ -27,6 +32,17 @@ export interface RunLogFinalizeSummary {
   bytes: number;
   sha256?: string;
   compressed: boolean;
+  evidenceIndex?: RunLogEvidenceIndexSummary;
+}
+
+export interface RunLogEvidenceIndexSummary {
+  protocolVersion: 1;
+  status: "native" | "existing" | "fallback";
+  indexRef: string;
+  sourceBytes: number;
+  recordCount?: number;
+  sourceSha256: string;
+  fallbackReason?: string;
 }
 
 export interface RunLogStore {
@@ -50,6 +66,141 @@ function resolveWithin(basePath: string, relativePath: string) {
     throw new Error("Invalid log path");
   }
   return resolved;
+}
+
+const NATIVE_EVIDENCE_PROTOCOL_VERSION = 1;
+const NATIVE_EVIDENCE_OUTPUT_LIMIT_BYTES = 256 * 1024;
+const NATIVE_EVIDENCE_TIMEOUT_MS = 30_000;
+const NATIVE_EVIDENCE_MAX_RECORD_BYTES = 8 * 1024 * 1024;
+const NATIVE_EVIDENCE_MAX_RECORDS = 10_000_000;
+
+type NativeEvidenceIndexResponse = {
+  ok?: unknown;
+  operation?: unknown;
+  protocolVersion?: unknown;
+  sourceBytes?: unknown;
+  recordCount?: unknown;
+  sourceSha256?: unknown;
+  indexPath?: unknown;
+  errorCode?: unknown;
+};
+
+function nativeTarget() {
+  if (process.platform === "darwin") {
+    return process.arch === "arm64" ? "aarch64-apple-darwin" : process.arch === "x64" ? "x86_64-apple-darwin" : null;
+  }
+  if (process.platform === "linux") {
+    return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : process.arch === "x64" ? "x86_64-unknown-linux-gnu" : null;
+  }
+  if (process.platform === "win32") {
+    return process.arch === "arm64" ? "aarch64-pc-windows-msvc" : process.arch === "x64" ? "x86_64-pc-windows-msvc" : null;
+  }
+  return null;
+}
+
+export function resolveNativeEvidenceIndexBinary() {
+  const configured = process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH?.trim();
+  if (configured) return path.resolve(configured);
+  const binaryName = process.platform === "win32" ? "rudder-native.exe" : "rudder-native";
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const target = nativeTarget();
+  const resourcesPath = process.env.RUDDER_DESKTOP_RESOURCES_PATH?.trim()
+    || (typeof (process as NodeJS.Process & { resourcesPath?: unknown }).resourcesPath === "string"
+      ? (process as NodeJS.Process & { resourcesPath: string }).resourcesPath
+      : "");
+  const candidates = [
+    path.resolve(moduleDir, "../../../native/target/debug", binaryName),
+    path.resolve(moduleDir, "../../../../native/target/debug", binaryName),
+    path.resolve(moduleDir, "../../../native", target ?? "unsupported", binaryName),
+    resourcesPath && target ? path.resolve(resourcesPath, "native", target, binaryName) : "",
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+function boundedNativeReason(value: unknown) {
+  const text = String(value ?? "unknown").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  return text.slice(0, 180) || "unknown";
+}
+
+async function runNativeEvidenceIndex(binary: string, inputPath: string, outputPath: string): Promise<NativeEvidenceIndexResponse> {
+  let result: { stdout: string; stderr: string };
+  try {
+    result = await execFileAsync(binary, [
+      "evidence",
+      "index",
+      inputPath,
+      outputPath,
+      String(NATIVE_EVIDENCE_MAX_RECORD_BYTES),
+      String(NATIVE_EVIDENCE_MAX_RECORDS),
+    ], {
+      encoding: "utf8",
+      timeout: NATIVE_EVIDENCE_TIMEOUT_MS,
+      maxBuffer: NATIVE_EVIDENCE_OUTPUT_LIMIT_BYTES,
+      windowsHide: true,
+    });
+  } catch (error) {
+    const details = error as { stdout?: unknown; stderr?: unknown; code?: unknown; killed?: unknown; signal?: unknown };
+    throw new Error(boundedNativeReason(
+      details.stderr
+      || (details.killed || details.signal === "SIGTERM" || details.code === "ETIMEDOUT" ? "native index timeout" : details.code ?? "native index failed"),
+    ));
+  }
+  if (result.stderr.trim()) throw new Error(boundedNativeReason(result.stderr));
+  const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length !== 1) throw new Error(`native index response line count ${lines.length}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lines[0]!);
+  } catch {
+    throw new Error("native index response is not JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("native index response envelope is invalid");
+  return parsed as NativeEvidenceIndexResponse;
+}
+
+async function maybeBuildNativeEvidenceIndex(
+  basePath: string,
+  handle: RunLogHandle,
+  sourcePath: string,
+  sourceBytes: number,
+  sourceSha256: string,
+): Promise<RunLogEvidenceIndexSummary | undefined> {
+  if (process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX !== "1") return undefined;
+  const indexRelativePath = `${handle.logRef}.index.ndjson`;
+  const indexPath = resolveWithin(basePath, indexRelativePath);
+  const sourceStat = await fs.stat(sourcePath);
+  const existing = await fs.lstat(indexPath).catch(() => null);
+  if (existing) {
+    if (existing.isSymbolicLink() || !existing.isFile()) throw new Error("native evidence index path is not a regular file");
+    if (existing.mtimeMs >= sourceStat.mtimeMs) {
+      return {
+        protocolVersion: 1,
+        status: "existing",
+        indexRef: indexRelativePath,
+        sourceBytes,
+        sourceSha256,
+      };
+    }
+    await fs.rm(indexPath, { force: true });
+  }
+  const response = await runNativeEvidenceIndex(resolveNativeEvidenceIndexBinary(), sourcePath, indexPath);
+  if (response.ok !== true || response.operation !== "indexEvidence" || response.protocolVersion !== NATIVE_EVIDENCE_PROTOCOL_VERSION) {
+    throw new Error(boundedNativeReason(response.errorCode ?? "native index envelope mismatch"));
+  }
+  if (response.sourceBytes !== sourceBytes || response.sourceSha256 !== sourceSha256 || response.indexPath !== indexPath) {
+    throw new Error("native evidence index integrity mismatch");
+  }
+  if (!Number.isSafeInteger(response.recordCount) || Number(response.recordCount) < 0) {
+    throw new Error("native evidence index record count is invalid");
+  }
+  return {
+    protocolVersion: 1,
+    status: "native",
+    indexRef: indexRelativePath,
+    sourceBytes,
+    recordCount: Number(response.recordCount),
+    sourceSha256,
+  };
 }
 
 function createLocalFileRunLogStore(basePath: string): RunLogStore {
@@ -156,11 +307,27 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
       if (!stat) throw notFound("Run log not found");
 
       const hash = await sha256File(absPath);
-      return {
+      const summary = {
         bytes: stat.size,
         sha256: hash,
         compressed: false,
       };
+      try {
+        const evidenceIndex = await maybeBuildNativeEvidenceIndex(basePath, handle, absPath, stat.size, hash);
+        return evidenceIndex ? { ...summary, evidenceIndex } : summary;
+      } catch (error) {
+        return {
+          ...summary,
+          evidenceIndex: {
+            protocolVersion: 1,
+            status: "fallback",
+            indexRef: `${handle.logRef}.index.ndjson`,
+            sourceBytes: stat.size,
+            sourceSha256: hash,
+            fallbackReason: boundedNativeReason(error),
+          },
+        };
+      }
     },
 
     async read(handle, opts) {
