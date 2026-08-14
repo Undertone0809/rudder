@@ -41,6 +41,7 @@ commit_refs:
   - 88e257044
   - 22fbeedbc
   - 72005f4b3
+  - d7f891d17
 updated_at: 2026-08-14
 ---
 
@@ -50,8 +51,11 @@ updated_at: 2026-08-14
 
 ### Continuation status (2026-08-14)
 
-The current frozen runtime candidate is merge source `72005f4b37df05fbd987fb4c1051c8f21652ad23`
-(`main`) in the clean worktree `/private/tmp/rudder-native-main-merge`.
+The current final main candidate is `d7f891d17ef2f25fb9b625aa3d1229e46893f3a9`.
+Its packaged/runtime artifacts are bound to merge source
+`72005f4b37df05fbd987fb4c1051c8f21652ad23`; the only descendant change is a
+test-import organization commit, verified not to change runtime paths. The
+clean artifact worktree is `/private/tmp/rudder-native-main-merge`.
 The clean candidate fingerprint is
 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (the
 SHA-256 of an empty status stream); shared-main dirty/index fingerprints are

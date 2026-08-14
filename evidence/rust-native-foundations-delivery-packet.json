@@ -23,16 +23,16 @@
   },
   "candidate": {
     "branch": "main",
-    "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-    "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "source_ref": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
+    "source_sha": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
     "metadata_only_wrapper": {
-      "wrapper_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "wrapper_ref": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
       "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
-      "reason": "The exact 88e candidate is a docs-only descendant of b707; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt are directly rebuilt/bound to 88e."
+      "reason": "The final main descendant only organizes Desktop test imports; packaged/runtime code is unchanged, and the packaged artifact plus comparator receipt remain directly bound to 720."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "wrapper_ref": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
       "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "38 is a packet-only descendant used to bind the current lease and receipts; it does not change the packaged/runtime source represented by 88e."
@@ -41,6 +41,8 @@
     "changed_paths": [],
     "artifact_scope": {
       "source_clean_worktree": "/private/tmp/rudder-native-main-merge",
+      "final_main_ref": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
+      "artifact_bound_source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "source_clean_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "shared_main_dirty_scope": "preservation-only; not part of packaged/comparator identity",
       "product_binaries": ["rudder-process-host", "rudder-native", "rudder-update-helper"],
@@ -308,6 +310,12 @@
         "before_source_sha": "22fbeedbc0fe42431ac4c21f586d20bca21556bb",
         "after_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
         "reason": "The evidence branch was merged into current main; Desktop runtime artifacts changed, so the 22f packaged/comparator receipts were invalidated and rebuilt from the merge commit."
+      },
+      {
+        "type": "final_main_test_only_descendant",
+        "before_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+        "after_source_sha": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
+        "reason": "The final main merge preserves the 720 runtime tree; the intervening Desktop test-import organization is outside packaged/runtime paths, so 720 artifacts remain valid as artifact_bound_source."
       }
     ],
     "invalidated_receipts": [
@@ -329,11 +337,11 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "e03f5a5c41820b694c3236f373a11db566a93710",
+    "base_sha": "a33d1771bcd409d22e8c810b2a2aa0a2d3f4cd5a",
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "d9c0683777b38b15cc939bc6b13bba054183fb0d",
     "branch_refs": [
-      "72005f4b37df05fbd987fb4c1051c8f21652ad23"
+      "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-integration-a3",
@@ -342,9 +350,9 @@
     "cas": {
       "attempted": true,
       "succeeded": true,
-      "observed_old_sha": "e03f5a5c41820b694c3236f373a11db566a93710",
-      "delivered_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "reason": "isolated no-ff merge of the native evidence branch into current main, followed by compare-and-swap ref update"
+      "observed_old_sha": "a33d1771bcd409d22e8c810b2a2aa0a2d3f4cd5a",
+      "delivered_sha": "d7f891d17ef2f25fb9b625aa3d1229e46893f3a9",
+      "reason": "isolated conflict-resolved no-ff merge of the final evidence packet into current main, followed by compare-and-swap ref update"
     },
     "cas_history": [
       {
