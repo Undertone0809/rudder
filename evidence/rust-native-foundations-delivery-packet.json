@@ -203,34 +203,35 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
     "branch_refs": [
-      "1a76ec93ee97dc0cdbee955a0718658cb511be50"
+      "da901007a4a0da8af01713e18559cafa90bbbafb"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-integration-a3",
-    "patch_tree_sha": "02dfe700a59680c3d0b074d420f0824d8315486c",
+    "patch_tree_sha": "03716596bbeb00159f10aad4af453b446c6ede3c",
     "expected_old_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "c3cd8fec74a2d8c734a8fedba64641b35fde97d6",
+      "delivered_sha": "f54acd8940136a174135f4044bc2856a9947dee4"
     },
     "index_update_mode": "none"
   },
   "preservation": {
-    "checked": false,
+    "checked": true,
     "unrelated_dirty_paths": [
-      "shared main worktree changes preserved outside isolated candidate; final CAS preservation check pending"
+      "shared main worktree changes preserved outside isolated candidate; main ref advanced by CAS without checkout/reset/stash/clean"
     ],
     "index_fingerprint_before": "pending-shared-main-baseline",
-    "index_fingerprint_after": "pending-shared-main-baseline",
-    "worktree_fingerprint_before": "pending-shared-main-baseline",
-    "worktree_fingerprint_after": "pending-shared-main-baseline",
-    "unrelated_paths_preserved": false,
+    "index_fingerprint_after": "a1fc6258eb4060680d4376f8ce543af1b80331f6",
+    "worktree_fingerprint_before": "9408a9896338c2ba30c239f828ab48374a0a6010d0cdc0d2dc33d4f86442b1f8",
+    "worktree_fingerprint_after": "36577d2c9037824d3f9f493df1063a328d7812ddca5c129ac7556ddbeb076e0c",
+    "unrelated_paths_preserved": true,
     "index_preserved": false,
     "evidence": [
       "shared main checkout was not reset/stashed/cleaned before isolated integration",
-      "candidate worktree has zero tracked/untracked changes; final merge preservation evidence pending"
+      "CAS refs/heads/main c3cd8fec -> f54acd894 succeeded without writing shared worktree files",
+      "pre/post status fingerprints differ because HEAD-relative status changed after ref advance; index hash changed during Git status refresh, so index_preserved remains false and delivery stays blocked"
     ]
   },
   "terminal": {
@@ -241,7 +242,7 @@
     "proof": [
       "prior packaged receipt is superseded by candidate refresh to 1a76ec93ee97dc0cdbee955a0718658cb511be50",
       "current 0.7.7 packaged artifact and exact 100 MiB/10,000-file comparator are rebuilt and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, and a release tag are absent",
-      "local main integration is authorized and will use an isolated worktree plus CAS; shared dirty/index preservation is recorded only after the merge"
+      "local main integration completed via isolated merge worktree and CAS to f54acd8940136a174135f4044bc2856a9947dee4; shared dirty paths were not rewritten, but index preservation is inconclusive after Git status refresh"
     ]
   }
 }
