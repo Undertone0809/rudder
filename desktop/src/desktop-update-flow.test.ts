@@ -518,6 +518,57 @@ describe("desktop update flow", () => {
     }
   });
 
+  it("applies a staged candidate from the signed-out account gate without a runtime blocker query", async () => {
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "account-gated-staged.zip");
+    const artifact = Buffer.from("account-gated staged payload\n", "utf8");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifact, { mode: 0o600 });
+    const digest = createHash("sha256").update(artifact).digest("hex");
+    const candidate: DesktopAutoUpdateCandidate = {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: "e".repeat(64),
+      updateId: "automatic-account-gated",
+      assetName: "Rudder.zip",
+      assetChecksum: digest,
+      stagedArtifactPath: artifactPath,
+      stagedArtifactDigest: digest,
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    };
+    const statePath = path.join("/tmp/rudder-desktop-test", "desktop-auto-update.json");
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate));
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const listRunningRunsForUpdate = vi.fn(async () => {
+      throw new Error("account-gated launch must not query an unavailable runtime");
+    });
+    try {
+      const { flow } = createFlow({
+        getServerHandle: () => null,
+        getBootState: () => ({ stage: "account_required", runtime: { localEnv: "prod_local", instanceId: "default" } }),
+        hasExternalUpdateHelperCapability: () => true,
+        getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.1.0 protocol=1", ownerUid: 501, mode: 0o755, sha256: "a".repeat(64) }),
+        hasSignedUpdatePolicyCapability: () => true,
+        listRunningRunsForUpdate,
+      });
+
+      await expect(flow.applyPreparedAutomaticCandidate()).resolves.toBe("continue");
+      expect(spawnMock).toHaveBeenCalledWith(expect.stringContaining("rudder-update-helper"), ["--request", expect.stringContaining(`${candidate.updateId}.journal.json.request.json`)], expect.objectContaining({ detached: true }));
+      expect(listRunningRunsForUpdate).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(artifactPath, { force: true });
+      fs.rmSync(statePath, { force: true });
+      fs.rmSync(path.join("/tmp/rudder-desktop-test", "update-helper"), { recursive: true, force: true });
+    }
+  });
+
   it("uses the Node-mode CLI runner for macOS update children", () => {
     const launch = resolveDesktopUpdateChildLaunch({
       cliArgs: ["start", "--target-version", "0.6.2"],

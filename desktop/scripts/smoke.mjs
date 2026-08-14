@@ -2956,8 +2956,19 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const candidate = { channel: "stable", version: candidateVersion, platform: "darwin", arch: "arm64", installId: path.resolve(paths.electronUserDataDir), profile: "prod_local", instanceId: "default", sourceReleaseDigest: releaseDigest, updateId, assetName: "Rudder-99.0.0-macos-arm64-portable.zip", assetChecksum, stagedArtifactPath: stagedPath, stagedArtifactDigest: stagedDigest, stagedAt: new Date().toISOString(), status: "staged", generation: 1 };
   const statePath = stateModule.resolveDesktopAutoUpdateStatePath(paths.electronUserDataDir);
   await mkdir(path.dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${JSON.stringify({ ...stateModule.createInitialDesktopAutoUpdateState(), nextCheckAt: new Date(Date.now() - 1_000).toISOString(), candidate }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  // This scenario starts from the post-download/restart state. Persist the
+  // exact signed policy envelope alongside its accepted sequence so the
+  // account-gated launch can authorize the staged candidate without needing a
+  // second network refresh before natural Quit.
+  await writeFile(path.join(paths.electronUserDataDir, "desktop-update-policy.json"), `${JSON.stringify(policyEnvelope, null, 2)}\n`, { encoding: "utf8", mode: "0600" });
+  await writeFile(statePath, `${JSON.stringify({ ...stateModule.createInitialDesktopAutoUpdateState(), acceptedPolicySequence: policy.sequence, nextCheckAt: new Date(Date.now() - 1_000).toISOString(), candidate }, null, 2)}\n`, { encoding: "utf8", mode: "0600" });
   const run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), extraEnv);
+  // Capture the child before the helper-triggered quit closes Playwright's
+  // Electron connection. Calling electronApp.process() after that point can
+  // race the disposed CDP object and report a false timeout.
+  const appProcess = typeof run.electronApp.process === "function"
+    ? run.electronApp.process()
+    : null;
   try {
     const events = await waitForSmokeCondition("public natural quit", async () => {
       if (!(await pathExists(lifecyclePath))) return null;
@@ -2983,6 +2994,35 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     assert.equal(await pathExists(path.join(transactionPaths.installPath, "candidate-generation.txt")), true);
     const state = JSON.parse(await readFile(statePath, "utf8"));
     assert.equal(state.candidate, null, "committed candidate is cleared from durable state");
+    await waitForSmokeCondition("public app remains closed after helper commit", async () => {
+      return appProcess && (appProcess.exitCode !== null || appProcess.signalCode !== null) ? true : null;
+    }, { timeoutMs: 15_000 });
+    await closeDesktop(run.electronApp).catch(() => {});
+
+    const releaseNotesStatePath = path.join(paths.electronUserDataDir, "release-notes-state.json");
+    const postUpdateMarkerPath = path.join(paths.electronUserDataDir, "post-update-reload.json");
+    await writeFile(releaseNotesStatePath, JSON.stringify({ lastKnownVersion: "0.7.6" }, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+    await writeFile(postUpdateMarkerPath, JSON.stringify({ version: 1, requestedAt: new Date().toISOString(), targetVersion: expectedReleaseVersion, updateId: "release-notes-" + updateId }, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+    const firstNotesRun = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts());
+    try {
+      await firstNotesRun.page.waitForFunction(() => Boolean(window.rudderBoot?.getReleaseNotes));
+      const firstNotes = await firstNotesRun.page.evaluate(() => window.rudderBoot.getReleaseNotes());
+      assert.equal(firstNotes.status, "available", "the first ordinary launch should expose release notes once");
+      assert.equal(firstNotes.notes?.version, expectedReleaseVersion);
+      const sameLaunchNotes = await firstNotesRun.page.evaluate(() => window.rudderBoot.getReleaseNotes());
+      assert.equal(sameLaunchNotes.status, "already-shown", "release notes entitlement must be consumed before rendering");
+    } finally {
+      await closeDesktop(firstNotesRun.electronApp).catch(() => {});
+    }
+    const secondNotesRun = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts());
+    try {
+      await secondNotesRun.page.waitForFunction(() => Boolean(window.rudderBoot?.getReleaseNotes));
+      const nextLaunchNotes = await secondNotesRun.page.evaluate(() => window.rudderBoot.getReleaseNotes());
+      assert.equal(nextLaunchNotes.status, "already-shown", "a later launch must not repeat release notes");
+    } finally {
+      await closeDesktop(secondNotesRun.electronApp).catch(() => {});
+    }
+    console.log("[desktop-smoke] public automatic update left the app closed and showed " + expectedReleaseVersion + " release notes exactly once across relaunch");
     console.log(`[desktop-smoke] public automatic update committed ${updateId}; state, request, journal, helper identity, and install read back`);
   } finally {
     policyServer.close();

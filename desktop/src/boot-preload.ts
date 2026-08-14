@@ -6,6 +6,16 @@ import {
   type DesktopSignInHint,
 } from "./identity-ipc.js";
 
+type BootReleaseNotes = {
+  version: string;
+  title: string;
+  sections: Array<{ title: string; items: string[] }>;
+};
+
+type BootReleaseNotesResult =
+  | { status: "available"; notes: BootReleaseNotes }
+  | { status: "unavailable" | "already-shown" };
+
 contextBridge.exposeInMainWorld("rudderBoot", {
   getState: () => ipcRenderer.invoke("desktop:get-recovery-state") as Promise<BootScreenState>,
   onState: (listener: (state: BootScreenState) => void) => {
@@ -22,6 +32,10 @@ contextBridge.exposeInMainWorld("rudderBoot", {
   openInstanceFolder: () => ipcRenderer.invoke("desktop:open-recovery-instance-folder") as Promise<void>,
   signIn: (hint: DesktopSignInHint) =>
     ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.signIn, hint) as Promise<DesktopIdentityState>,
+  getReleaseNotes: () =>
+    ipcRenderer.invoke("desktop:get-release-notes") as Promise<BootReleaseNotesResult>,
+  markReleaseNotesShown: (version: string) =>
+    ipcRenderer.invoke("desktop:mark-release-notes-shown", version) as Promise<void>,
   sendEmailOtp: (email: string) =>
     ipcRenderer.invoke(DESKTOP_IDENTITY_IPC_CHANNELS.sendEmailOtp, { email }) as Promise<void>,
   verifyEmailOtp: (email: string, token: string) =>
@@ -55,6 +69,8 @@ declare global {
       copyBugReportUrl(): Promise<void>;
       copyDiagnostic(): Promise<void>;
       openInstanceFolder(): Promise<void>;
+      getReleaseNotes(): Promise<BootReleaseNotesResult>;
+      markReleaseNotesShown(version: string): Promise<void>;
       signIn(hint: DesktopSignInHint): Promise<DesktopIdentityState>;
       sendEmailOtp(email: string): Promise<void>;
       verifyEmailOtp(email: string, token: string): Promise<DesktopIdentityState>;

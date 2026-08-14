@@ -53,6 +53,34 @@ export function clearPostUpdateReloadMarker(
   fs.rmSync(markerPath, { force: true });
 }
 
+/** Read a valid marker without consuming the one-shot entitlement. */
+export function readPostUpdateReloadMarker(
+  userDataPath: string,
+  options: { now?: Date; maxAgeMs?: number } = {},
+): PostUpdateReloadMarker | null {
+  const markerPath = resolvePostUpdateReloadMarkerPath(userDataPath);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(markerPath, "utf8")) as unknown;
+    if (!isPostUpdateReloadMarker(parsed)) {
+      fs.rmSync(markerPath, { force: true });
+      return null;
+    }
+    const requestedAt = Date.parse(parsed.requestedAt);
+    const ageMs = (options.now ?? new Date()).getTime() - requestedAt;
+    if (!Number.isFinite(requestedAt) || ageMs < 0 || ageMs > (options.maxAgeMs ?? MAX_POST_UPDATE_RELOAD_AGE_MS)) {
+      fs.rmSync(markerPath, { force: true });
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    if (code !== "ENOENT") fs.rmSync(markerPath, { force: true });
+    return null;
+  }
+}
+
 function isPostUpdateReloadMarker(value: unknown): value is PostUpdateReloadMarker {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
@@ -64,25 +92,9 @@ export function consumePostUpdateReloadMarker(
   options: { now?: Date; maxAgeMs?: number } = {},
 ): PostUpdateReloadMarker | null {
   const markerPath = resolvePostUpdateReloadMarkerPath(userDataPath);
-  try {
-    const parsed = JSON.parse(fs.readFileSync(markerPath, "utf8")) as unknown;
-    fs.rmSync(markerPath, { force: true });
-    if (!isPostUpdateReloadMarker(parsed)) return null;
-
-    const requestedAt = Date.parse(parsed.requestedAt);
-    if (!Number.isFinite(requestedAt)) return null;
-    const ageMs = (options.now ?? new Date()).getTime() - requestedAt;
-    if (ageMs < 0 || ageMs > (options.maxAgeMs ?? MAX_POST_UPDATE_RELOAD_AGE_MS)) return null;
-    return parsed;
-  } catch (error) {
-    const code = typeof error === "object" && error && "code" in error
-      ? String((error as { code?: unknown }).code)
-      : "";
-    if (code !== "ENOENT") {
-      fs.rmSync(markerPath, { force: true });
-    }
-    return null;
-  }
+  const marker = readPostUpdateReloadMarker(userDataPath, options);
+  fs.rmSync(markerPath, { force: true });
+  return marker;
 }
 
 export function resolvePostUpdateReloadDelayMs(env: NodeJS.ProcessEnv = process.env): number {

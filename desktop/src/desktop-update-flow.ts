@@ -292,7 +292,12 @@ export function createDesktopUpdateFlow(context: {
     // Automatic quit must never open the manual blocker prompt. This final
     // read is only a silent race guard for work started after quit began.
     try {
-      const activeRuns = await context.listRunningRunsForUpdate();
+      // An account-gated packaged launch owns no local runtime yet, so there
+      // cannot be an active run to block a quit-time replacement. A runtime
+      // that exists still goes through the protected blocker inspection below.
+      const activeRuns = context.getServerHandle()
+        ? await context.listRunningRunsForUpdate()
+        : { totalRuns: 0, blockers: [] };
       if (activeRuns.totalRuns > 0) { trace({ blocked: "active_runs", totalRuns: activeRuns.totalRuns }); return "continue"; }
     } catch (error) {
       trace({ blocked: "run_inspection", error: error instanceof Error ? error.message : String(error) });

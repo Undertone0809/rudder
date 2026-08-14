@@ -128,7 +128,8 @@ import {
   sanitizeDesktopNavigationForLog,
 } from "./navigation-guard.js";
 import {
-  consumePostUpdateReloadMarker,
+  clearPostUpdateReloadMarker,
+  readPostUpdateReloadMarker,
   resolvePostUpdateReloadDelayMs,
   type PostUpdateReloadMarker,
 } from "./post-update-reload.js";
@@ -481,7 +482,7 @@ function scheduleLifecycleSmokeAction(): void {
       } catch {
         // Keep polling until the packaged bootstrap has created the state.
       }
-      if ((acceptedPolicySequence >= 42 && currentBootState.stage === "ready") || Date.now() >= deadline) {
+      if (acceptedPolicySequence >= 42 || Date.now() >= deadline) {
         writeLifecycleSmokeEvent("auto-update-policy-ready", {
           acceptedPolicySequence,
           statePath,
@@ -1826,6 +1827,7 @@ async function replaceMainWindow(nextWindow: BrowserWindow, kind: "app" | "boot"
 
 async function openBootWindow(): Promise<void> {
   await replaceMainWindow(await createDesktopWindow(resolveBootScreenUrl(), "boot"), "boot");
+  latestPostUpdateReloadMarker = readPostUpdateReloadMarker(app.getPath("userData"));
 }
 
 async function openAppWindow(loadUrl: string): Promise<void> {
@@ -1834,9 +1836,11 @@ async function openAppWindow(loadUrl: string): Promise<void> {
 }
 
 function schedulePostUpdateRendererReloadIfNeeded(): void {
-  const marker = consumePostUpdateReloadMarker(app.getPath("userData"));
+  if (!latestPostUpdateReloadMarker) {
+    latestPostUpdateReloadMarker = readPostUpdateReloadMarker(app.getPath("userData"));
+  }
+  const marker = latestPostUpdateReloadMarker;
   if (!marker) return;
-  latestPostUpdateReloadMarker = marker;
 
   const delayMs = resolvePostUpdateReloadDelayMs();
   setTimeout(() => {
@@ -2637,6 +2641,7 @@ function registerIpc(): void {
     const statePath = resolveReleaseNotesStatePath(app.getPath("userData"));
     const updatedAfterInstall = latestPostUpdateReloadMarker?.targetVersion === version;
     if (!shouldShowReleaseNotes({ statePath, version, updatedAfterInstall })) {
+      clearPostUpdateReloadMarker(app.getPath("userData"));
       return { status: "already-shown" };
     }
     const notes = readReleaseNotes({
@@ -2647,7 +2652,10 @@ function registerIpc(): void {
         version,
       }),
     });
-    if (!notes) return { status: "unavailable" };
+    if (!notes) {
+      clearPostUpdateReloadMarker(app.getPath("userData"));
+      return { status: "unavailable" };
+    }
     // Consume the one-shot release-note entitlement before handing the notes
     // to the renderer. A renderer crash or force quit after this IPC response
     // must not make the next launch show the same notes again.
@@ -2655,6 +2663,7 @@ function registerIpc(): void {
       version,
       statePath,
     });
+    clearPostUpdateReloadMarker(app.getPath("userData"));
     return { status: "available", notes };
   });
   ipcMain.handle("desktop:mark-release-notes-shown", async (_event, version: string) => {
@@ -3151,6 +3160,10 @@ async function bootstrap(): Promise<void> {
     });
     return;
   }
+  // Automatic update checks are anchored to the packaged app boot, not to
+  // account sign-in. A signed-out account gate has no local runtime to start,
+  // but it must still be able to download and stage a candidate silently.
+  scheduleAutomaticUpdateCheck();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start-runtime");
   }
