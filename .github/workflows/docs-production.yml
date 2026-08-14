@@ -141,11 +141,11 @@ jobs:
 
       - name: Validate docs
         working-directory: docs
-        run: PUPPETEER_SKIP_DOWNLOAD=1 npx -y mint@4.2.637 validate
+        run: PUPPETEER_SKIP_DOWNLOAD=1 npx -y @mintlify/cli@4.0.1240 validate
 
       - name: Export docs
         working-directory: docs
-        run: npx -y mint@4.2.637 export --output "$RUNNER_TEMP/rudder-docs.zip"
+        run: npx -y @mintlify/cli@4.0.1240 export --output "$RUNNER_TEMP/rudder-docs.zip"
 
       - name: Unpack static export
         run: |

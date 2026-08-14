@@ -18,29 +18,6 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
-<Update label="2026年8月14日" description="v0.7.7" tags={["新功能","改进","问题修复"]}>
-
-## v0.7.7
-
-[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.7)
-
-这个版本增加更安全的 Desktop 静默更新，并通过 COS 镜像和 GitHub 回退，为中国大陆用户提供更快的首次下载体验。
-
-### 新功能
-
-- 增加打包版 Desktop 静默更新：后台下载，在应用自然退出后安装，并在下次启动时显示一次更新说明。
-
-### 改进
-
-- Desktop 更新事务会在替换前校验签名更新策略、精确的暂存候选版本和恢复助手。
-- Desktop 下载在镜像可用时支持中国大陆 COS 镜像，同时保留 GitHub 回退和 SHA-256 校验。
-
-### 问题修复
-
-- 修复窗口关闭、常驻隐藏和操作系统关机可能意外应用暂存更新的问题。
-
-</Update>
-
 <Update label="2026年8月14日" description="v0.7.6" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.6
