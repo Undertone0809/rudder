@@ -470,6 +470,54 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     },
   );
 
+  it("blocks live_moved reconciliation when the published tree does not match the receipt", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "notes.md"), "live\n", "utf8");
+    const liveBackup = await service.create({ orgId });
+
+    const operationId = randomUUID();
+    const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
+    const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`);
+    const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+    const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
+    await fs.cp(workspaceRoot, stagingRoot, { recursive: true });
+    await fs.writeFile(path.join(stagingRoot, "notes.md"), "tampered\n", "utf8");
+    await fs.rename(workspaceRoot, rollbackRoot);
+    await fs.writeFile(path.join(rollbackRoot, "notes.md"), "corrupt-live\n", "utf8");
+    await fs.rename(stagingRoot, workspaceRoot);
+
+    await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+    await fs.writeFile(receiptPath, `${JSON.stringify({
+      version: 1,
+      operationId,
+      orgId,
+      backupId: liveBackup.id,
+      phase: "live_moved",
+      workspaceRoot,
+      stagingRoot,
+      rollbackRoot,
+      liveTreeSha256: liveBackup.treeSha256,
+      stagingTreeSha256: "0".repeat(64),
+      expectedTreeSha256: "1".repeat(64),
+      preRestoreBackupId: liveBackup.id,
+    })}\n`, { mode: 0o600 });
+
+    await expect(reconcileWorkspaceRestoreReceipts()).resolves.toEqual({
+      recovered: [],
+      blocked: [expect.objectContaining({
+        operationId,
+        error: "workspace and rollback roots match neither recorded tree",
+      })],
+    });
+    await expect(fs.readFile(path.join(workspaceRoot, "notes.md"), "utf8")).resolves.toBe("tampered\n");
+    await expect(fs.readFile(path.join(rollbackRoot, "notes.md"), "utf8")).resolves.toBe("corrupt-live\n");
+    await expect(fs.stat(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(rollbackRoot)).resolves.toBeDefined();
+    await expect(fs.stat(receiptPath)).resolves.toBeDefined();
+  });
+
   it("reconciles committed restore receipts without deleting the published workspace", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
