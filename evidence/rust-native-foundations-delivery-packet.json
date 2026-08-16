@@ -270,7 +270,7 @@
   "receipts": {
     "reviewer": {
       "verdict": "needs more evidence",
-      "invalidated": false,
+      "invalidated": true,
       "candidate_commit": "2a5b289f2a4063f5905f7f6e7e99b793af25174a",
       "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
@@ -278,11 +278,11 @@
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "3",
-      "reason": "Fresh stage review for exact candidate 2a5b289f2: packet identity, fair backup evidence, and 53/53 supporting workflow receipt are aligned; packaged create/browse/download/restore and full APFS/Windows interruption coverage remain open, and hosted Local App dogfood remains blocked."
+      "reason": "Invalidated: this stage review was bound to prior candidate 2a5b289f2. The packet advanced after that receipt; a fresh stage review must bind to the current review branch tip."
     },
     "verifier": {
       "verdict": "QUESTION",
-      "invalidated": false,
+      "invalidated": true,
       "candidate_commit": "2a5b289f2a4063f5905f7f6e7e99b793af25174a",
       "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
@@ -290,7 +290,7 @@
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "3",
-      "reason": "Fresh black-box verification for exact candidate 2a5b289f2: packaged account gate, fair backup, supporting 53/53 workflow receipt, native_ab receipts, and version/hash checks pass; hosted authenticated packaged Local App and 100 accepted cycles across 7 UTC dates are unavailable."
+      "reason": "Invalidated: this black-box verification was bound to prior candidate 2a5b289f2. A fresh verifier lease is required for the current review branch tip."
     },
     "final_review": {
       "verdict": "pending",
@@ -344,7 +344,7 @@
         "reason": "Replaced the fixed-order descriptive backup receipt with a counterbalanced comparable receipt, recorded the RSS regression that keeps backup opt-in, advanced the acceptance packet to v3, and rebound local/branch identity to the exact detached candidate. Prior reviewer/verifier receipts are stale."
       }
     ],
-    "invalidated_receipts": ["final_review"]
+    "invalidated_receipts": ["reviewer", "verifier", "final_review"]
   },
     "integration": {
     "current_local_head": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
@@ -352,7 +352,7 @@
     "packet_metadata_commit": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
     "packet_identity_note": "Packet v3 is anchored to immutable wrapper 621039522; any later checkout descendants are metadata-only. Verify the native/runtime candidate through wrapper_ref and the absence of native/runtime paths in the descendant diff.",
     "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
-    "review_branch_sha": "54baac0e2ff4646aa2b8d6568ce029e10419505b",
+    "review_branch_sha": "79883d5a0e38214c38f8c69a81b2a5f8cff40ee2",
     "review_branch_push": "PASS_origin_review_branch",
     "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
@@ -367,7 +367,7 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "branch_refs": [
-      "54baac0e2ff4646aa2b8d6568ce029e10419505b"
+      "79883d5a0e38214c38f8c69a81b2a5f8cff40ee2"
     ],
     "branch_ref_scope": "review branch tip; native/runtime candidate and packet wrapper remain scoped by wrapper_ref and artifact_source_sha",
     "isolation_trigger": "independent_runtime",
