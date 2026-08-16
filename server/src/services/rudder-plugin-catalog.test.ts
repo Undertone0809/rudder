@@ -208,11 +208,13 @@ describe("synthesizeSkillsPlugin", () => {
       { path: "SKILL.md", type: "blob", sha: "a".repeat(40), size: 40 },
       { path: "references/guide.md", type: "blob", sha: "b".repeat(40), size: 40 },
       { path: "README.md", type: "blob", sha: "c".repeat(40), size: 40 },
+      { path: "examples/nested/SKILL.md", type: "blob", sha: "d".repeat(40), size: 40 },
     ] as Parameters<typeof synthesizeSkillsPlugin>[2];
     const files = [
       { path: "SKILL.md", content: "---\nname: Root Skill\ndescription: Root instructions.\n---\n", encoding: "utf8" as const },
       { path: "references/guide.md", content: "Supporting guidance.", encoding: "utf8" as const },
       { path: "README.md", content: "Package context.", encoding: "utf8" as const },
+      { path: "examples/nested/SKILL.md", content: "Nested example.", encoding: "utf8" as const },
     ] as Parameters<typeof synthesizeSkillsPlugin>[3];
 
     const packageFiles = synthesizeSkillsPlugin(descriptor, resolution, tree, files);

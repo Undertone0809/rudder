@@ -555,8 +555,13 @@ export function synthesizeSkillsPlugin(
     .map((skillPath) => sourcePrefix ? skillPath.slice(sourcePrefix.length) : skillPath);
   if (discovered.length === 0) throw unprocessable("No compatible Skills were discovered in this source");
   const roots = discovered.map((skillPath) => path.posix.dirname(skillPath));
+  const discoveredSkillPaths = new Set(discovered);
   const matchesRoot = (filePath: string, root: string) => root === "."
-    ? filePath !== ".codex-plugin/plugin.json" && !filePath.startsWith(".codex-plugin/")
+    ? filePath !== ".codex-plugin/plugin.json"
+      && !filePath.startsWith(".codex-plugin/")
+      && (filePath === "SKILL.md"
+        || path.posix.basename(filePath).toLocaleLowerCase("en-US") !== "skill.md"
+        || discoveredSkillPaths.has(filePath))
     : filePath === `${root}/SKILL.md` || filePath.startsWith(`${root}/`);
   const selected = files.filter((file) => roots.some((root) => matchesRoot(file.path, root)));
   const rootsByTarget = new Map<string, string>();
