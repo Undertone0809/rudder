@@ -823,6 +823,57 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
       .resolves.toBe("approved\n");
   });
 
+  it.each(["recovery_required", "committed"] as const)(
+    "does not create or modify a sparse workspace while a %s restore receipt is present",
+    async (phase) => {
+      const orgId = await createOrganization();
+      const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+      await fs.mkdir(workspaceRoot, { recursive: true });
+      for (let index = 0; index < 10; index += 1) {
+        await fs.writeFile(path.join(workspaceRoot, `backup-${index}.txt`), `backup ${index}\n`, "utf8");
+      }
+      const backup = await service.create({ orgId, triggerSource: "manual" });
+      const operationId = randomUUID();
+      const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
+      const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`);
+      const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+      const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+      await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+      await fs.writeFile(receiptPath, `${JSON.stringify({
+        version: 1,
+        operationId,
+        orgId,
+        backupId: backup.id,
+        phase,
+        workspaceRoot,
+        stagingRoot,
+        rollbackRoot,
+        liveTreeSha256: null,
+        stagingTreeSha256: backup.treeSha256,
+        expectedTreeSha256: backup.treeSha256,
+        preRestoreBackupId: backup.id,
+      })}\n`, { mode: 0o600 });
+
+      await expect(service.recoverSparseWorkspaceFromLatestBackup(orgId)).rejects.toMatchObject({
+        status: 409,
+        details: { code: "restore_recovery_required" },
+      });
+      await expect(fs.stat(workspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(receiptPath)).resolves.toBeDefined();
+
+      await makeBackupDue(backup.id);
+      const scheduled = await service.runScheduledBackups({ now: new Date("2026-05-21T08:00:00.000Z") });
+      expect(scheduled.created).toEqual([]);
+      expect(scheduled.sparseRecoveries).toEqual([]);
+      expect(scheduled.errors).toEqual([
+        expect.objectContaining({ orgId, message: expect.stringContaining("Workspace restore requires recovery") }),
+      ]);
+      await expect(fs.stat(workspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(receiptPath)).resolves.toBeDefined();
+    },
+  );
+
   it("preserves conflicting live files while repairing missing sparse workspace files", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);

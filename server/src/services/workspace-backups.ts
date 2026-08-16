@@ -766,10 +766,7 @@ async function assertNoUnresolvedRestoreReceipt(orgId: string) {
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-    if (receipt && receipt.orgId === orgId && ["prepared", "live_moved", "recovery_required"].includes(receipt.phase)) {
-      throw new WorkspaceRestoreRecoveryRequiredError(receipt, "unresolved_receipt", "An earlier workspace restore has not reached a recoverable terminal state.");
-    }
-    if (!receipt) {
+    if (!receipt || receipt.orgId !== orgId) {
       throw conflict("Workspace restore requires recovery before another restore can run.", {
         code: "restore_recovery_required",
         orgId,
@@ -777,6 +774,13 @@ async function assertNoUnresolvedRestoreReceipt(orgId: string) {
         detail: "invalid_or_unowned_receipt",
       });
     }
+    throw new WorkspaceRestoreRecoveryRequiredError(
+      receipt,
+      ["prepared", "live_moved", "recovery_required"].includes(receipt.phase)
+        ? "unresolved_receipt"
+        : "blocked_receipt",
+      "An earlier workspace restore receipt still requires reconciliation before workspace recovery can run.",
+    );
   }
 }
 
@@ -1282,6 +1286,7 @@ export function workspaceBackupService(db: Db) {
   }
 
   async function recoverSparseWorkspaceFromLatestBackup(orgId: string): Promise<SparseWorkspaceRecoveryResult> {
+    await assertNoUnresolvedRestoreReceipt(orgId);
     const layout = await ensureOrganizationWorkspaceLayout(orgId);
     const currentFileCount = await countBackupEligibleWorkspaceFiles(
       layout.root,
