@@ -68,7 +68,10 @@ cleanup. These results do not count as hosted dogfood.
 `rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
 strictly invokes the existing three-trial OSS producer and writes a complete
 fail-closed `not_runnable` Packet V2 when producer, binary, identity, or
-import prerequisites are absent. No live native comparison was claimed.
+import prerequisites are absent. The normal and flood workloads both produced
+six comparable formal observations and imported as `native_ab_pass`; the
+protocol still sets `productPass: false`, so this is comparative evidence and
+not a product promotion by itself.
 
 ## Executive Decision
 
@@ -103,8 +106,7 @@ These are descriptive observations, not a promotion claim.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
-cannot run. A live three-trial `rudder-evals native_ab` campaign is also not
-available. The shared foundation remains `accepted_default`, Local App and
+cannot run. The shared foundation remains `accepted_default`, Local App and
 streaming backup remain `opt-in`, and the four dependent slices remain
 `not_admitted`. These are evidence-scoped decisions, not a claim that the
 pilot is complete.
