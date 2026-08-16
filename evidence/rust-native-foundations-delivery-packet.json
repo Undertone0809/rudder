@@ -21,6 +21,68 @@
     ],
     "authorization": "implementation"
   },
+  "admission_decisions": {
+    "version": "1",
+    "candidate_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "entries": [
+      {
+        "capability": "rust_native_foundation",
+        "decision": "accepted_default",
+        "scope": "macOS arm64 packaged tuple only (aarch64-apple-darwin, Rudder 0.7.7)",
+        "fallback": "TypeScript/Node implementation remains available outside this tuple",
+        "evidence": ["candidate.build.clean_source_verification", "candidate.runtime.account_gate_smoke", "candidate.runtime.packaged_account_gate_recheck"],
+        "limitations": ["Other targets are compiled_unverified; no portfolio-wide default claim"]
+      },
+      {
+        "capability": "local_app_process_host",
+        "decision": "opt-in",
+        "scope": "macOS arm64 packaged candidate with explicit native activation",
+        "fallback": "Node watchdog/process host",
+        "evidence": ["candidate.runtime.dev_local_app_recheck", "candidate.native_ab_normal_receipt", "candidate.native_ab_flood_receipt"],
+        "limitations": ["Hosted authenticated packaged fixture and 100 accepted cycles across 7 UTC dates are absent; normal lifecycle tail regresses"]
+      },
+      {
+        "capability": "streaming_workspace_backup",
+        "decision": "opt-in",
+        "scope": "macOS arm64 archive foundation with explicit native activation",
+        "fallback": "Optimized TypeScript/Node archive path",
+        "evidence": ["candidate.evidence.backup_comparator_contract_parity", "candidate.evidence.backup_comparator_recovery"],
+        "limitations": ["Current receipt is not_comparable because arm order is fixed, warmups are absent, and bootstrap confidence intervals are absent"]
+      },
+      {
+        "capability": "agent_run_process_io_host",
+        "decision": "not_admitted",
+        "scope": "none",
+        "fallback": "Existing TypeScript Agent Run process and log persistence path",
+        "evidence": ["candidate.acceptance_packet.criteria[6]"],
+        "limitations": ["Blocked by Local App packaged acceptance and stable 7-day/100-cycle dogfood dependency"]
+      },
+      {
+        "capability": "runtime_payload_installer_extractor",
+        "decision": "not_admitted",
+        "scope": "none",
+        "fallback": "Existing TypeScript streaming download, extraction, and atomic publish path",
+        "evidence": ["candidate.acceptance_packet.criteria[7]"],
+        "limitations": ["Blocked by Workspace backup admission and recovery evidence"]
+      },
+      {
+        "capability": "run_evidence_offset_indexer_parser",
+        "decision": "not_admitted",
+        "scope": "none",
+        "fallback": "Existing TypeScript byte paging and transcript/provider parsing path",
+        "evidence": ["candidate.acceptance_packet.criteria[8]"],
+        "limitations": ["Opt-in sidecar is diagnostic only; bounded production detail path and provider parity are absent"]
+      },
+      {
+        "capability": "workspace_manifest_index_watcher",
+        "decision": "not_admitted",
+        "scope": "none",
+        "fallback": "Existing TypeScript recursive workspace traversal and database mapping",
+        "evidence": ["candidate.acceptance_packet.criteria[9]"],
+        "limitations": ["No freshness contract, filesystem watcher capability, or scale evidence has been admitted"]
+      }
+    ]
+  },
   "candidate": {
     "branch": "main",
     "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
@@ -255,9 +317,9 @@
     ],
     "invalidated_receipts": ["final_review"]
   },
-  "integration": {
-    "current_local_head": "3c2a20dae6db032989d6cb7a56f2952d62098706",
-    "packet_metadata_commit": "3c2a20dae6db032989d6cb7a56f2952d62098706",
+    "integration": {
+    "current_local_head": "39bcc70cfcc6a0c81a5fe69354b9053604b9affb",
+    "packet_metadata_commit": "39bcc70cfcc6a0c81a5fe69354b9053604b9affb",
     "current_origin_main_head": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
     "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
@@ -267,21 +329,29 @@
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "base_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+    "observed_remote_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "branch_refs": [
-      "d30138587a4265f2af498bb175ce24a96fd8b600"
+      "39bcc70cfcc6a0c81a5fe69354b9053604b9affb"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-main-merge",
-    "patch_tree_sha": "clean-packaged-candidate-72005f4",
-    "expected_old_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "patch_tree_sha": "6496f6f616c7a7d2802ee23afbfaf0b101d91c2b",
+    "expected_old_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "cas": {
-      "attempted": true,
-      "succeeded": true,
-      "observed_old_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "delivered_sha": "d30138587a4265f2af498bb175ce24a96fd8b600"
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "historical_integration": {
+      "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
+      "previous_observed_remote_sha": "bfab54182d6739e7a3dff40d5efb2ddd6e1cd21e",
+      "previous_branch_ref": "d30138587a4265f2af498bb175ce24a96fd8b600",
+      "previous_expected_old_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "previous_delivered_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
+      "previous_cas_succeeded": true
     },
     "index_update_mode": "none"
   },
@@ -302,12 +372,13 @@
     ]
   },
   "terminal": {
+    "historical_only": true,
     "delivered_ref": "refs/heads/main",
-    "delivered_sha": "d30138587a4265f2af498bb175ce24a96fd8b600",
-    "delivered_tree_sha": "78d92bba0e1ccda0e6e3a630916e3fdcb6616a78",
-    "timestamp": "2026-08-14T18:26:49+08:00",
+    "delivered_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
+    "delivered_tree_sha": "3e6395a8ae04f4773b565f1e6593187e925e9f17",
+    "timestamp": "2026-08-16T00:00:00+08:00",
     "proof": [
-      "main currently points at d30138587, a docs-only descendant of the native merge and the current delivery wrapper",
+      "origin/main currently points at 0d19a8979; this is a historical remote-main identity and does not claim the current blocked detached packet is delivered",
       "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked; v0.7.7 exists at acfb8e4 on origin/main with native/runtime paths unchanged, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, index preservation, and an independently rehashed tag-built artifact are absent",
       "the 100-sample backup receipt is parity-positive but explicitly not_comparable",
       "shared worktree dirty/index state remains preserved"

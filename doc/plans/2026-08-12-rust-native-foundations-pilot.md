@@ -116,10 +116,10 @@ These are descriptive observations, not a promotion claim.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
-cannot run. The shared foundation remains `accepted_default`, Local App and
-streaming backup remain `opt-in`, and the four dependent slices remain
-`not_admitted`. These are evidence-scoped decisions, not a claim that the
-pilot is complete.
+cannot run. The foundation remains `accepted_default` only for the proven
+macOS arm64 packaged capability tuple; Local App and streaming backup remain
+`opt-in`, and the four dependent slices remain `not_admitted`. These are
+evidence-scoped decisions, not a claim that the pilot is complete.
 
 Release-version alignment is a hard gate. The normal Rudder product version
 is the single version for every first-party Rust package, Cargo.lock entry,
