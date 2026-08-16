@@ -23,12 +23,48 @@ export type WorkspaceBackupRustNodeAbResult = {
   fileCount: number;
   byteSize: number;
   sampleCount: number;
+  warmupCount: number;
   operationTimeoutMs: number;
   rssScope: "process-tree";
   comparability: {
     status: "comparable" | "not_comparable";
     reason: string | null;
+    failures: string[];
+    requirements: {
+      minimumWarmupsPerArm: number;
+      minimumMeasuredSamplesPerArm: number;
+      minimumBootstrapIterations: number;
+    };
+    evidence: {
+      warmupsPerArm: number;
+      measuredSamplesPerArm: { node: number; native: number };
+      pairedBlocks: number;
+      armOrders: BackupArm[][];
+      orderCoverage: { nodeFirst: number; nativeFirst: number };
+      bootstrap: {
+        seed: number;
+        iterations: number;
+        metrics: string[];
+      };
+      measuredBoundaryCount: number;
+      positiveMeasuredBoundaryCount: number;
+    };
   };
+  benchmark: {
+    seed: number;
+    warmupSeed: number;
+    warmupCount: number;
+    measuredSamples: number;
+    measuredBlocks: number;
+    armOrders: BackupArm[][];
+    warmupArmOrders: BackupArm[][];
+    bootstrapSeed: number;
+    bootstrapIterations: number;
+  };
+  pairedP95: {
+    elapsedMs: PairedP95Bootstrap;
+    rssDeltaBytes: PairedP95Bootstrap;
+  } | null;
   identity: {
     sourceSha: string;
     dirtyFingerprint: string;
@@ -90,6 +126,30 @@ type RssSample = {
   samplerOverheadMs?: number;
 };
 
+export type BackupArm = "node" | "native";
+export type PairedP95Metric = "elapsedMs" | "rssDeltaBytes";
+
+export type PairedP95Bootstrap = {
+  metric: PairedP95Metric;
+  completePairs: number;
+  seed: number;
+  iterations: number;
+  nodeP95: number;
+  nativeP95: number;
+  pointDeltaP95: number;
+  ci95DeltaP95: [number, number];
+  pointNodeRelativeImprovementPercent: number;
+  ci95NodeRelativeImprovementPercent: [number, number];
+};
+
+export type BackupObservation = {
+  block: number;
+  arm: BackupArm;
+  order: number;
+  warmup: boolean;
+  sample: RssSample;
+};
+
 type MeasuredOperation<T> = {
   value: T;
   sample: RssSample;
@@ -108,6 +168,9 @@ type AbOptions = {
   nativeBinary?: string;
   createdAt?: Date;
   sampleCount?: number;
+  warmupCount?: number;
+  seed?: number;
+  bootstrapIterations?: number;
   sampleIntervalMs?: number;
   operationTimeoutMs?: number;
   samplerMode?: "node-ps" | "external";
@@ -115,8 +178,11 @@ type AbOptions = {
 };
 
 type OperationBoundaryReceipt = {
-  arm: "node" | "native";
+  arm: BackupArm;
   sampleIndex: number;
+  block: number;
+  order: number;
+  warmup: boolean;
   startRowIndex: number;
   endRowIndex: number;
   sampleCount: number;
@@ -170,6 +236,124 @@ export function nativeTargetLabel(platform = process.platform, arch = process.ar
     return `${targetArch}-apple-darwin`;
   }
   return `${arch}-${platform}`;
+}
+
+const MIN_WARMUPS_PER_ARM = 3;
+const MIN_MEASURED_SAMPLES_PER_ARM = 100;
+const MIN_BOOTSTRAP_ITERATIONS = 1_000;
+const DEFAULT_BOOTSTRAP_ITERATIONS = 10_000;
+const WARMUP_SEED_XOR = 0x51a7;
+const BOOTSTRAP_SEED_XOR = 0xb0057a;
+
+export function seededArmOrders(seed: number, blocks: number): BackupArm[][] {
+  if (!Number.isInteger(seed)) throw new Error("seed must be an integer");
+  if (!Number.isInteger(blocks) || blocks < 0) throw new Error("blocks must be a non-negative integer");
+  let state = seed >>> 0;
+  const random = () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+  return Array.from({ length: blocks }, () => random() < 0.5
+    ? ["node", "native"]
+    : ["native", "node"]);
+}
+
+function nodeRelativeImprovement(nodeP95: number, nativeP95: number) {
+  return nodeP95 === 0 ? 0 : ((nodeP95 - nativeP95) / nodeP95) * 100;
+}
+
+export function pairedP95Bootstrap(
+  observations: BackupObservation[],
+  metric: PairedP95Metric,
+  seed: number,
+  iterations = DEFAULT_BOOTSTRAP_ITERATIONS,
+): PairedP95Bootstrap {
+  if (!Number.isInteger(seed)) throw new Error("bootstrap seed must be an integer");
+  if (!Number.isInteger(iterations) || iterations < 1) throw new Error("bootstrap iterations must be a positive integer");
+  const pairs = new Map<number, Partial<Record<BackupArm, BackupObservation>>>();
+  for (const observation of observations.filter((row) => !row.warmup)) {
+    const pair = pairs.get(observation.block) ?? {};
+    if (pair[observation.arm]) throw new Error(`duplicate ${observation.arm} observation for block ${observation.block}`);
+    pair[observation.arm] = observation;
+    pairs.set(observation.block, pair);
+  }
+  const complete = [...pairs.values()].filter((pair): pair is Record<BackupArm, BackupObservation> =>
+    Boolean(pair.node && pair.native));
+  if (complete.length === 0) throw new Error("no complete Rust/Node benchmark pairs");
+  const nodeValues = complete.map((pair) => pair.node.sample[metric]);
+  const nativeValues = complete.map((pair) => pair.native.sample[metric]);
+  const nodeP95 = nearestRank(nodeValues, 0.95);
+  const nativeP95 = nearestRank(nativeValues, 0.95);
+  let state = seed >>> 0;
+  const randomIndex = () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return Math.floor((state / 0x1_0000_0000) * complete.length);
+  };
+  const deltaBootstrap: number[] = [];
+  const improvementBootstrap: number[] = [];
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const sampledNode: number[] = [];
+    const sampledNative: number[] = [];
+    for (let index = 0; index < complete.length; index += 1) {
+      const pair = complete[randomIndex()]!;
+      sampledNode.push(pair.node.sample[metric]);
+      sampledNative.push(pair.native.sample[metric]);
+    }
+    const sampledNodeP95 = nearestRank(sampledNode, 0.95);
+    const sampledNativeP95 = nearestRank(sampledNative, 0.95);
+    deltaBootstrap.push(sampledNativeP95 - sampledNodeP95);
+    improvementBootstrap.push(nodeRelativeImprovement(sampledNodeP95, sampledNativeP95));
+  }
+  deltaBootstrap.sort((left, right) => left - right);
+  improvementBootstrap.sort((left, right) => left - right);
+  return {
+    metric,
+    completePairs: complete.length,
+    seed,
+    iterations,
+    nodeP95,
+    nativeP95,
+    pointDeltaP95: nativeP95 - nodeP95,
+    ci95DeltaP95: [nearestRank(deltaBootstrap, 0.025), nearestRank(deltaBootstrap, 0.975)],
+    pointNodeRelativeImprovementPercent: nodeRelativeImprovement(nodeP95, nativeP95),
+    ci95NodeRelativeImprovementPercent: [nearestRank(improvementBootstrap, 0.025), nearestRank(improvementBootstrap, 0.975)],
+  };
+}
+
+export function assessBackupComparability(input: {
+  warmupsPerArm: number;
+  measuredSamplesPerArm: { node: number; native: number };
+  pairedBlocks: number;
+  armOrders: BackupArm[][];
+  bootstrapIterations: number;
+  bootstrapMetrics: PairedP95Metric[];
+  measuredBoundaryCount: number;
+  positiveMeasuredBoundaryCount: number;
+  manifestParity: boolean;
+  entryParity: boolean;
+  contentParity: boolean;
+  recoveryPassed: boolean;
+}): { comparable: boolean; failures: string[] } {
+  const failures: string[] = [];
+  if (input.warmupsPerArm < MIN_WARMUPS_PER_ARM) failures.push("insufficient_warmups");
+  if (input.measuredSamplesPerArm.node < MIN_MEASURED_SAMPLES_PER_ARM
+    || input.measuredSamplesPerArm.native < MIN_MEASURED_SAMPLES_PER_ARM) failures.push("insufficient_measured_samples");
+  if (input.pairedBlocks < MIN_MEASURED_SAMPLES_PER_ARM) failures.push("insufficient_paired_blocks");
+  if (input.armOrders.length !== input.pairedBlocks) failures.push("missing_arm_orders");
+  const nodeFirst = input.armOrders.filter((order) => order[0] === "node").length;
+  const nativeFirst = input.armOrders.filter((order) => order[0] === "native").length;
+  if (nodeFirst === 0 || nativeFirst === 0) failures.push("arm_order_not_balanced");
+  if (input.armOrders.some((order) => order.length !== 2 || new Set(order).size !== 2)) failures.push("invalid_arm_order");
+  if (input.bootstrapIterations < MIN_BOOTSTRAP_ITERATIONS) failures.push("insufficient_bootstrap_iterations");
+  if (!input.bootstrapMetrics.includes("elapsedMs")) failures.push("missing_elapsed_bootstrap");
+  if (!input.bootstrapMetrics.includes("rssDeltaBytes")) failures.push("missing_rss_bootstrap");
+  if (input.measuredBoundaryCount < input.pairedBlocks * 2
+    || input.positiveMeasuredBoundaryCount !== input.measuredBoundaryCount) failures.push("non_positive_sampler_boundary");
+  if (!input.manifestParity) failures.push("manifest_parity_failed");
+  if (!input.entryParity) failures.push("entry_parity_failed");
+  if (!input.contentParity) failures.push("content_parity_failed");
+  if (!input.recoveryPassed) failures.push("recovery_failed");
+  return { comparable: failures.length === 0, failures: [...new Set(failures)] };
 }
 
 export function stableFixtureContentHash(entries: Array<{ path: string; kind: "directory" | "file"; byteSize: number; sha256: string | null }>) {
@@ -617,11 +801,17 @@ export async function runWorkspaceBackupRustNodeAb(
     throw new Error("native binary is required; set RUDDER_NATIVE_ARCHIVE_PATH or pass nativeBinary");
   }
   const sampleCount = options.sampleCount ?? 100;
+  const warmupCount = options.warmupCount ?? MIN_WARMUPS_PER_ARM;
+  const seed = options.seed ?? 20260816;
+  const bootstrapIterations = options.bootstrapIterations ?? DEFAULT_BOOTSTRAP_ITERATIONS;
   const sampleIntervalMs = options.sampleIntervalMs ?? 5;
   const operationTimeoutMs = options.operationTimeoutMs ?? 120_000;
   const samplerMode = options.samplerMode ?? "node-ps";
   const samplerPath = options.samplerPath ?? path.resolve(process.cwd(), "native/target/debug/rudder-process-tree-sampler");
   if (!Number.isInteger(sampleCount) || sampleCount < 1) throw new Error("sampleCount must be a positive integer");
+  if (!Number.isInteger(warmupCount) || warmupCount < 0) throw new Error("warmupCount must be a non-negative integer");
+  if (!Number.isInteger(seed)) throw new Error("seed must be an integer");
+  if (!Number.isInteger(bootstrapIterations) || bootstrapIterations < 1) throw new Error("bootstrapIterations must be a positive integer");
   if (!Number.isInteger(sampleIntervalMs) || sampleIntervalMs < 1) throw new Error("sampleIntervalMs must be a positive integer");
   if (!Number.isInteger(operationTimeoutMs) || operationTimeoutMs < 1) throw new Error("operationTimeoutMs must be a positive integer");
   if (samplerMode === "external" && (!existsSync(samplerPath) || process.platform !== "darwin" || process.arch !== "arm64")) {
@@ -633,6 +823,9 @@ export async function runWorkspaceBackupRustNodeAb(
   const samplerOverheads: number[] = [];
   const nodeSamples: RssSample[] = [];
   const nativeSamples: RssSample[] = [];
+  const observations: BackupObservation[] = [];
+  const warmupArmOrders = seededArmOrders(seed ^ WARMUP_SEED_XOR, warmupCount);
+  const armOrders = seededArmOrders(seed, sampleCount);
   let nodePath = "";
   let nativePath = "";
   let nodeArtifact: Awaited<ReturnType<typeof createWorkspaceBackupV2File>> | undefined;
@@ -651,36 +844,65 @@ export async function runWorkspaceBackupRustNodeAb(
       sampler.protocolVersion ??= externalSession.ready.protocolVersion ?? null;
       await waitForExternalSamples(externalSession, 1, sampleIntervalMs);
     }
-    for (let index = 0; index < sampleCount; index += 1) {
-      const finalSample = index === sampleCount - 1;
-      nodePath = finalSample ? path.join(outputDir, "node.zip") : path.join(outputDir, `.node-${index}.zip`);
-      nativePath = finalSample ? path.join(outputDir, "native.zip") : path.join(outputDir, `.native-${index}.zip`);
-      const measuredNode = await measureOperation(
-        () => createWorkspaceBackupV2File({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nodePath, createdAt }),
+    const runArm = async (arm: BackupArm, artifactPath: string) => {
+      if (arm === "node") {
+        return createWorkspaceBackupV2File({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath, createdAt });
+      }
+      const previousBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+      process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativeBinary;
+      try {
+        return await createWorkspaceBackupV2Native({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath, createdAt });
+      } finally {
+        if (previousBinary === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+        else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousBinary;
+      }
+    };
+    const runTrial = async (arm: BackupArm, block: number, order: number, warmup: boolean) => {
+      const artifactPath = warmup
+        ? path.join(outputDir, `.warmup-${arm}-${block}-${order}.zip`)
+        : block === sampleCount - 1
+          ? path.join(outputDir, `${arm}.zip`)
+          : path.join(outputDir, `.${arm}-${block}.zip`);
+      const measured = await measureOperation(
+        () => runArm(arm, artifactPath),
         sampleIntervalMs,
         operationTimeoutMs,
         samplerMode,
         externalSession,
-        "node",
+        arm,
       );
-      nodeArtifact = measuredNode.value;
-      nodeSamples.push(measuredNode.sample);
-      if (measuredNode.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNode.sample.samplerOverheadMs);
-      sampler.operationBoundaries.push({ arm: "node", sampleIndex: index, ...measuredNode.boundary });
-      const measuredNative = await measureOperation(async () => {
-        const previousBinary = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-        process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativeBinary;
-        try {
-          return await createWorkspaceBackupV2Native({ rootPath, orgId: "ab-org", instanceId: "ab-instance", artifactPath: nativePath, createdAt });
-        } finally {
-          if (previousBinary === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-          else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousBinary;
-        }
-      }, sampleIntervalMs, operationTimeoutMs, samplerMode, externalSession, "native");
-      nativeArtifact = measuredNative.value;
-      nativeSamples.push(measuredNative.sample);
-      if (measuredNative.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measuredNative.sample.samplerOverheadMs);
-      sampler.operationBoundaries.push({ arm: "native", sampleIndex: index, ...measuredNative.boundary });
+      if (arm === "node") nodeArtifact = measured.value;
+      else nativeArtifact = measured.value;
+      if (measured.sample.samplerOverheadMs !== undefined) samplerOverheads.push(measured.sample.samplerOverheadMs);
+      sampler.operationBoundaries.push({
+        arm,
+        sampleIndex: warmup ? block : block,
+        block: warmup ? -(block + 1) : block,
+        order,
+        warmup,
+        ...measured.boundary,
+      });
+      if (!warmup) {
+        const observation = { block, arm, order, warmup, sample: measured.sample } satisfies BackupObservation;
+        observations.push(observation);
+        if (arm === "node") nodeSamples.push(measured.sample);
+        else nativeSamples.push(measured.sample);
+      }
+      return { artifactPath, value: measured.value };
+    };
+    for (let index = 0; index < warmupCount; index += 1) {
+      for (const [order, arm] of warmupArmOrders[index]!.entries()) {
+        const warmup = await runTrial(arm, index, order, true);
+        await rm(warmup.artifactPath, { force: true });
+      }
+    }
+    for (let index = 0; index < sampleCount; index += 1) {
+      const finalSample = index === sampleCount - 1;
+      for (const [order, arm] of armOrders[index]!.entries()) {
+        const trial = await runTrial(arm, index, order, false);
+        if (arm === "node") nodePath = trial.artifactPath;
+        else nativePath = trial.artifactPath;
+      }
       const sampledNodeIndex = await inspectWorkspaceBackupV2File(nodePath);
       const sampledNativeIndex = await inspectWorkspaceBackupV2File(nativePath);
       try {
@@ -693,7 +915,14 @@ export async function runWorkspaceBackupRustNodeAb(
       nodeIndex = sampledNodeIndex;
       nativeIndex = sampledNativeIndex;
       const verifyContent = index === 0 || finalSample;
-      if (verifyContent) await inspectAndCompare(rootPath, nodePath, nativePath, sampledNodeIndex, sampledNativeIndex);
+      if (verifyContent) {
+        try {
+          await inspectAndCompare(rootPath, nodePath, nativePath, sampledNodeIndex, sampledNativeIndex);
+        } catch (error) {
+          contentParity = false;
+          throw error;
+        }
+      }
       if (!finalSample) await Promise.all([rm(nodePath, { force: true }), rm(nativePath, { force: true })]);
     }
   } finally {
@@ -711,15 +940,10 @@ export async function runWorkspaceBackupRustNodeAb(
     node: await recoveryProbe("node", rootPath, path.join(outputDir, "node-race.zip"), createdAt, nativeBinary),
     native: await recoveryProbe("native", rootPath, path.join(outputDir, "native-race.zip"), createdAt, nativeBinary),
   };
-  assert.equal(recovery.node.rejected, true);
-  assert.equal(recovery.native.rejected, true);
-  assert.equal(recovery.node.sentinelPreserved, true);
-  assert.equal(recovery.native.sentinelPreserved, true);
-  assert.deepEqual(recovery.node.temporaryArtifacts, []);
-  assert.deepEqual(recovery.native.temporaryArtifacts, []);
+  const recoveryPassed = [recovery.node, recovery.native].every((probe) =>
+    probe.rejected && probe.sentinelPreserved && probe.temporaryArtifacts.length === 0);
   const nodeResult = summarizeArm(nodeSamples, nodeStat.size, nodeSha256, nodePath);
   const nativeResult = summarizeArm(nativeSamples, nativeStat.size, nativeSha256, nativePath);
-  sampler.positiveBoundaryCount = sampler.operationBoundaries.filter((boundary) => boundary.positive).length;
   if (samplerOverheads.length > 0) {
     sampler.overheadMs = {
       p95: nearestRank(samplerOverheads, 0.95),
@@ -731,16 +955,78 @@ export async function runWorkspaceBackupRustNodeAb(
     .filter((entry) => entry.kind === "file")
     .map((entry) => ({ path: entry.path, byteSize: entry.byteSize }));
   const fixtureContentSha256 = stableFixtureContentHash(nodeArtifact.manifest.entries);
+  const measuredBoundaries = sampler.operationBoundaries.filter((boundary) => !boundary.warmup);
+  const positiveMeasuredBoundaries = measuredBoundaries.filter((boundary) => boundary.positive);
+  sampler.positiveBoundaryCount = positiveMeasuredBoundaries.length;
+  const pairedP95 = (() => {
+    try {
+      return {
+        elapsedMs: pairedP95Bootstrap(observations, "elapsedMs", seed ^ BOOTSTRAP_SEED_XOR, bootstrapIterations),
+        rssDeltaBytes: pairedP95Bootstrap(observations, "rssDeltaBytes", (seed ^ BOOTSTRAP_SEED_XOR) + 1, bootstrapIterations),
+      };
+    } catch {
+      return null;
+    }
+  })();
+  const comparison = assessBackupComparability({
+    warmupsPerArm: warmupCount,
+    measuredSamplesPerArm: { node: nodeSamples.length, native: nativeSamples.length },
+    pairedBlocks: sampleCount,
+    armOrders,
+    bootstrapIterations,
+    bootstrapMetrics: pairedP95 ? ["elapsedMs", "rssDeltaBytes"] : [],
+    measuredBoundaryCount: measuredBoundaries.length,
+    positiveMeasuredBoundaryCount: positiveMeasuredBoundaries.length,
+    manifestParity,
+    entryParity,
+    contentParity,
+    recoveryPassed,
+  });
+  const nodeFirst = armOrders.filter((order) => order[0] === "node").length;
+  const nativeFirst = armOrders.filter((order) => order[0] === "native").length;
+  const bootstrapSeed = seed ^ BOOTSTRAP_SEED_XOR;
   return {
     rootPath: path.resolve(rootPath),
     fileCount: nodeArtifact.fileCount,
     byteSize: nodeArtifact.byteSize,
     sampleCount,
+    warmupCount,
     operationTimeoutMs,
     rssScope: "process-tree",
     comparability: {
-      status: "not_comparable",
-      reason: "This harness does not implement randomized paired arm order and warmup trials; metrics are descriptive and must not be promoted as a causal A/B result.",
+      status: comparison.comparable ? "comparable" : "not_comparable",
+      reason: comparison.comparable ? null : comparison.failures.join(","),
+      failures: comparison.failures,
+      requirements: {
+        minimumWarmupsPerArm: MIN_WARMUPS_PER_ARM,
+        minimumMeasuredSamplesPerArm: MIN_MEASURED_SAMPLES_PER_ARM,
+        minimumBootstrapIterations: MIN_BOOTSTRAP_ITERATIONS,
+      },
+      evidence: {
+        warmupsPerArm: warmupCount,
+        measuredSamplesPerArm: { node: nodeSamples.length, native: nativeSamples.length },
+        pairedBlocks: sampleCount,
+        armOrders,
+        orderCoverage: { nodeFirst, nativeFirst },
+        bootstrap: {
+          seed: bootstrapSeed,
+          iterations: bootstrapIterations,
+          metrics: pairedP95 ? ["elapsedMs", "rssDeltaBytes"] : [],
+        },
+        measuredBoundaryCount: measuredBoundaries.length,
+        positiveMeasuredBoundaryCount: positiveMeasuredBoundaries.length,
+      },
+    },
+    benchmark: {
+      seed,
+      warmupSeed: seed ^ WARMUP_SEED_XOR,
+      warmupCount,
+      measuredSamples: sampleCount,
+      measuredBlocks: sampleCount,
+      armOrders,
+      warmupArmOrders,
+      bootstrapSeed,
+      bootstrapIterations,
     },
     identity: {
       ...candidate,
@@ -759,6 +1045,7 @@ export async function runWorkspaceBackupRustNodeAb(
     entryParity,
     contentParity,
     archiveByteParity: "not_compared",
+    pairedP95,
     node: nodeResult,
     native: nativeResult,
     recovery,
