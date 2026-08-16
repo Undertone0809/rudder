@@ -22,7 +22,7 @@ describe("Desktop Identity session store", () => {
     { isPackaged: false, platform: "win32" as const, storageBackend: "unavailable", expected: true },
     { isPackaged: false, platform: "linux" as const, storageBackend: "basic_text", expected: true },
     { isPackaged: true, platform: "linux" as const, storageBackend: "basic_text", expected: true },
-    { isPackaged: true, platform: "darwin" as const, storageBackend: "mac_memory_only", expected: true },
+    { isPackaged: true, platform: "darwin" as const, storageBackend: "mac_memory_only", expected: false },
     { isPackaged: true, platform: "darwin" as const, storageBackend: "keychain", expected: false },
     { isPackaged: true, platform: "win32" as const, storageBackend: "unavailable", expected: false },
   ])("selects the platform memory fallback policy (%o)", ({ expected, ...input }) => {
@@ -80,7 +80,7 @@ describe("Desktop Identity session store", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("uses process-only memory for a packaged macOS memory-only backend", () => {
+  it("fails closed for a packaged macOS memory-only backend", () => {
     const store = createDesktopIdentitySessionStore({
       status: () => ({
         available: false,
@@ -98,14 +98,15 @@ describe("Desktop Identity session store", () => {
       }),
     });
 
-    expect(store.persistence).toBe("memory");
+    expect(store.persistence).toBe("unavailable");
     expect(store.status()).toMatchObject({
-      available: true,
-      backend: "memory",
-      persistence: "process-only",
+      available: false,
+      backend: "mac_memory_only",
+      reason: "encryption_unavailable",
     });
-    store.write(credential);
-    expect(store.read()).toEqual(credential);
+    expect(() => store.write(credential)).toThrow(
+      "Secure credential storage is unavailable on this device",
+    );
   });
 
   it("fails closed when a packaged macOS keychain backend is unavailable", () => {

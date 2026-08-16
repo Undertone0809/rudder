@@ -2584,6 +2584,7 @@ async function runAccountGateScenario(mode) {
   }
   const scenarioRoot = path.join(tmpRoot, "account-gate");
   const residentStatusPath = path.join(scenarioRoot, "resident-shell-status.json");
+  const secureStorageProbePath = path.join(scenarioRoot, "secure-storage-probe.bin");
   const ports = await allocateSmokePorts();
   const screenshotPath = browserSmokeScreenshotPath
     ? path.resolve(browserSmokeScreenshotPath)
@@ -2777,6 +2778,24 @@ async function runAccountGateScenario(mode) {
     await page.getByRole("heading", { name: "Welcome to Rudder" }).waitFor();
     await page.getByRole("textbox", { name: "Email address" }).waitFor();
     await page.getByRole("button", { name: "Continue with email" }).waitFor();
+    if (process.platform === "darwin") {
+      const secureStorage = await electronApp.evaluate(({ safeStorage }) => {
+        const available = safeStorage.isEncryptionAvailable();
+        return {
+          available,
+          encrypted: available
+            ? safeStorage.encryptString("rudder-packaged-restart-probe").toString("base64")
+            : null,
+        };
+      });
+      assert.equal(
+        secureStorage.available,
+        true,
+        "packaged macOS Desktop must provide encrypted identity storage",
+      );
+      assert.ok(secureStorage.encrypted, "packaged macOS Desktop must encrypt the restart probe");
+      await writeFile(secureStorageProbePath, Buffer.from(secureStorage.encrypted, "base64"), { mode: "0600" });
+    }
     assert.equal(
       degradedIdentity.requests.includes("GET /api/health"),
       true,
@@ -2796,7 +2815,7 @@ async function runAccountGateScenario(mode) {
     assert.equal(
       await page.getByText("Secure credential storage is unavailable on this device.", { exact: true }).count(),
       0,
-      "unsigned macOS packaged Desktop must keep online sign-in available through process-only storage",
+      "packaged Desktop must keep secure identity storage available",
     );
     assert.equal(
       await page.getByText(/Sign in or create an account/i).count(),
@@ -2884,6 +2903,38 @@ async function runAccountGateScenario(mode) {
     console.log(`[desktop-smoke] email-code interaction screenshot: ${emailCodeScreenshotPath}`);
   } finally {
     await closeDesktop(electronApp);
+    if (process.platform === "darwin") {
+      const encryptedProbe = await readFile(secureStorageProbePath);
+      const { electronApp: restartedApp, page: restartedPage } = await launchDesktopWindow(
+        scenarioRoot,
+        mode,
+        ports,
+        {
+          ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+          RUDDER_IDENTITY_ORIGIN: degradedIdentity.origin,
+          RUDDER_DESKTOP_SMOKE_RESIDENT_STATUS_PATH: residentStatusPath,
+        },
+        degradedExecutable,
+      );
+      try {
+        await restartedPage.waitForFunction(
+          () => document.body.dataset.bootView === "account_required",
+          undefined,
+          { timeout: 30_000 },
+        );
+        const decryptedProbe = await restartedApp.evaluate(
+          ({ safeStorage }, encrypted) => safeStorage.decryptString(Buffer.from(encrypted, "base64")),
+          encryptedProbe.toString("base64"),
+        );
+        assert.equal(
+          decryptedProbe,
+          "rudder-packaged-restart-probe",
+          "packaged macOS secure storage must survive a full process restart",
+        );
+      } finally {
+        await closeDesktop(restartedApp);
+      }
+    }
     await degradedIdentity.stop();
   }
 }
