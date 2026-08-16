@@ -226,6 +226,57 @@ describe("synthesizeSkillsPlugin", () => {
       "skills/root-skill/README.md",
     ]);
   });
+
+  it("does not promote undiscovered nested Skill entries in a priority container", () => {
+    const descriptor = {
+      schemaVersion: 1,
+      slug: "container-skills",
+      kind: "skills_add",
+      displayName: "Container Skills",
+      developer: "Example",
+      category: "Developer Tools",
+      shortDescription: "Container Skills.",
+      longDescription: "Skills discovered from a priority container.",
+      capabilities: ["Read"],
+      websiteUrl: "https://github.com/example/container-skills",
+      privacyPolicyUrl: "https://example.com/privacy",
+      termsOfServiceUrl: "https://example.com/terms",
+      license: { spdx: "MIT", sourceUrl: "https://example.com/license", note: "Fixture" },
+      source: {
+        repositoryUrl: "https://github.com/example/container-skills",
+        skillsAddSource: "example/container-skills",
+        subdirectory: "",
+        versionStrategy: "latest_stable_release_or_head",
+      },
+      assets: { icon: "assets/icon.png", iconDark: "assets/icon-dark.png", origin: "rudder_generic" },
+    } as Parameters<typeof synthesizeSkillsPlugin>[0];
+    const resolution = {
+      repositoryUrl: "https://github.com/example/container-skills",
+      source: "example/container-skills",
+      subdirectory: "",
+      strategy: "default_branch_head",
+      version: "abcdef123456",
+      commitSha: "a".repeat(40),
+    } as Parameters<typeof synthesizeSkillsPlugin>[1];
+    const tree = [
+      { path: "skills/demo/SKILL.md", type: "blob", sha: "a".repeat(40), size: 40 },
+      { path: "skills/demo/internal/SKILL.md", type: "blob", sha: "b".repeat(40), size: 40 },
+      { path: "skills/demo/references/guide.md", type: "blob", sha: "c".repeat(40), size: 40 },
+    ] as Parameters<typeof synthesizeSkillsPlugin>[2];
+    const files = [
+      { path: "skills/demo/SKILL.md", content: "---\nname: Demo\ndescription: Demo instructions.\n---\n", encoding: "utf8" as const },
+      { path: "skills/demo/internal/SKILL.md", content: "Nested example.", encoding: "utf8" as const },
+      { path: "skills/demo/references/guide.md", content: "Supporting guidance.", encoding: "utf8" as const },
+    ] as Parameters<typeof synthesizeSkillsPlugin>[3];
+
+    const packageFiles = synthesizeSkillsPlugin(descriptor, resolution, tree, files);
+
+    expect(packageFiles.map((file) => file.path)).toEqual([
+      ".codex-plugin/plugin.json",
+      "skills/demo/SKILL.md",
+      "skills/demo/references/guide.md",
+    ]);
+  });
 });
 
 describe("resolveGitHubVersion", () => {

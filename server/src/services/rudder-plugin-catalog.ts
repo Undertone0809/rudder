@@ -562,7 +562,10 @@ export function synthesizeSkillsPlugin(
       && (filePath === "SKILL.md"
         || path.posix.basename(filePath).toLocaleLowerCase("en-US") !== "skill.md"
         || discoveredSkillPaths.has(filePath))
-    : filePath === `${root}/SKILL.md` || filePath.startsWith(`${root}/`);
+    : filePath === `${root}/SKILL.md`
+      || (filePath.startsWith(`${root}/`)
+        && (path.posix.basename(filePath).toLocaleLowerCase("en-US") !== "skill.md"
+          || discoveredSkillPaths.has(filePath)));
   const selected = files.filter((file) => roots.some((root) => matchesRoot(file.path, root)));
   const rootsByTarget = new Map<string, string>();
   const mapped = selected.map((file) => {
