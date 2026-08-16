@@ -332,6 +332,10 @@ export function PluginDetail() {
     : "";
 
   useEffect(() => {
+    setImageFailed(false);
+  }, [themedIconUrl]);
+
+  useEffect(() => {
     if (!selectedOrganizationId || !detail?.previewId || previewId === detail.previewId) return;
     queryClient.setQueryData(
       queryKeys.rudderPlugins.previewDetail(selectedOrganizationId, detail.previewId),

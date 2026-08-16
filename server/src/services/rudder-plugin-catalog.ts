@@ -380,7 +380,7 @@ export function discoverSkillsAddPaths(tree: GitTreeEntry[], subdirectory = ""):
         && parts.length >= 3
         && parts.length <= 4
         && parts.at(-1)!.toLocaleLowerCase("en-US") === "skill.md"
-        && skillDirs.every((part) => !SKIP_DIRS.has(part))
+        && skillDirs.every((part) => !SKIP_DIRS.has(part.toLocaleLowerCase("en-US")))
         && !hasAncestor;
       if ((direct || nested) && !seen.has(skillPath)) {
         found.push(skillPath);
@@ -389,7 +389,14 @@ export function discoverSkillsAddPaths(tree: GitTreeEntry[], subdirectory = ""):
     }
   }
   if (found.length > 0) return found.sort();
-  return all.filter((skillPath) => skillPath.slice(prefix.length).split("/").length <= 6).sort();
+  return all
+    .filter((skillPath) => {
+      const relativeParts = skillPath.slice(prefix.length).split("/");
+      const directories = relativeParts.slice(0, -1);
+      return relativeParts.length <= 6
+        && directories.every((part) => !SKIP_DIRS.has(part.toLocaleLowerCase("en-US")));
+    })
+    .sort();
 }
 
 async function fetchBounded(

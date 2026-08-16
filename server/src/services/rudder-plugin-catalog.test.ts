@@ -163,6 +163,15 @@ describe("discoverSkillsAddPaths", () => {
     ], "plugins/demo")).toEqual(["plugins/demo/examples/deep/SKILL.md"]);
   });
 
+  it("does not fall back into ignored directories", () => {
+    expect(discoverSkillsAddPaths([
+      blob("node_modules/unsafe/SKILL.md"),
+      blob("DIST/generated/SKILL.md"),
+      blob("build/generated/SKILL.md"),
+      blob("examples/valid/SKILL.md"),
+    ])).toEqual(["examples/valid/SKILL.md"]);
+  });
+
   it("handles a production-shaped 49-Skill bundle deterministically", () => {
     const tree = Array.from({ length: 49 }, (_, index) => blob(`skills/skill-${String(index).padStart(2, "0")}/SKILL.md`));
     const result = discoverSkillsAddPaths(tree);
