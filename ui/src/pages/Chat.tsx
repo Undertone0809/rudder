@@ -435,6 +435,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     draftStorageScopeKey,
     responseAnnotationState,
   ]);
+  const pendingGroupId = searchParams.get("groupId")?.trim() ?? "";
   useEffect(() => { if (!pendingPrefill) return; if (pendingPrefill === lastAppliedPrefillRef.current) return; if (draft.trim().length > 0) return; lastAppliedPrefillRef.current = pendingPrefill; setDraft(pendingPrefill);
     requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("prefill");
     navigate( {
@@ -1395,6 +1396,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         activeStreamKey = streamKey;
         await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
           preferredAgentId: selectedDraftAgentId,
+          groupId: pendingGroupId || undefined,
           modelOverride: draftRuntimeOverrides.modelOverride,
           effortOverride: draftRuntimeOverrides.effortOverride,
           issueCreationMode: "manual_approval",
@@ -1430,6 +1432,24 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 preview: event.userMessage.body,
               });
               upsertMessages(conversation.id, [event.userMessage]);
+              await Promise.all([
+                queryClient.invalidateQueries({
+                  queryKey: queryKeys.messenger.customGroups(selectedOrganizationId),
+                }),
+                ...(["active", "all"] as const).flatMap((status) => [
+                  queryClient.invalidateQueries({
+                    queryKey: queryKeys.chats.list(selectedOrganizationId, status),
+                  }),
+                  queryClient.invalidateQueries({
+                    queryKey: queryKeys.chats.listPreview(
+                      selectedOrganizationId,
+                      status,
+                      CHAT_LIST_PREVIEW_LIMIT,
+                    ),
+                  }),
+                ]),
+                invalidateMessengerThreadSummaryQueries(queryClient, selectedOrganizationId),
+              ]);
               rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId);
               rememberChatProjectIdForAgent(
                 selectedOrganizationId,

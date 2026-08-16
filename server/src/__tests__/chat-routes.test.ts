@@ -1719,7 +1719,11 @@ describe("chat routes", { retry: 2 }, () => {
 
     const res = await request(createApp())
       .post("/api/orgs/organization-1/chats/messages/stream")
-      .send({ body: "Start atomically", modelOverride: "gpt-5.6-terra" })
+      .send({
+        body: "Start atomically",
+        modelOverride: "gpt-5.6-terra",
+        groupId: "33333333-3333-4333-8333-333333333333",
+      })
       .buffer(true)
       .parse((response, callback) => {
         let text = "";
@@ -1738,7 +1742,12 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.createWithInitialMessage).toHaveBeenCalledTimes(1);
     expect(mockChatService.createWithInitialMessage).toHaveBeenCalledWith(
       "organization-1",
-      expect.objectContaining({ modelOverride: null, effortOverride: null }),
+      expect.objectContaining({
+        modelOverride: null,
+        effortOverride: null,
+        messengerGroupId: "33333333-3333-4333-8333-333333333333",
+        messengerGroupUserId: "user-1",
+      }),
     );
     expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(
       expect.objectContaining({ modelSnapshot: "gpt-5.6-terra" }),

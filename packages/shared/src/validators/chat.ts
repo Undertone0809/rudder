@@ -443,6 +443,7 @@ export const createChatConversationSchema = chatDraftSchema.extend({
 });
 
 export const createChatFirstTurnSchema = chatDraftSchema.extend({
+  groupId: z.string().uuid().optional(),
   body: z.string().trim().max(20000).default(""),
   clientMutationId: z.string().trim().min(1).max(120).optional(),
   inlineAnnotations: chatInlineAnnotationsInputSchema.optional().default([]),

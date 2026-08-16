@@ -57,6 +57,7 @@ export type ChatDraftRequest = {
 export type ChatFirstMessageStreamOptions = ChatDraftRequest & {
   signal?: AbortSignal;
   files?: File[];
+  groupId?: string;
   clientMutationId?: string;
   inlineAnnotations?: ChatInlineAnnotationInput[];
   onEvent: (event: ChatStreamEvent) => Promise<void> | void;
@@ -209,6 +210,7 @@ export const chatsApi = {
         form.append("issueCreationMode", options.issueCreationMode);
         form.append("planMode", String(options.planMode));
         form.append("contextLinks", JSON.stringify(options.contextLinks));
+        if (options.groupId) form.append("groupId", options.groupId);
         if (options.clientMutationId) form.append("clientMutationId", options.clientMutationId);
         if (inlineAnnotations.length > 0) {
           form.append("inlineAnnotations", JSON.stringify(inlineAnnotations));
@@ -226,6 +228,7 @@ export const chatsApi = {
         issueCreationMode: options.issueCreationMode,
         planMode: options.planMode,
         contextLinks: options.contextLinks,
+        ...(options.groupId ? { groupId: options.groupId } : {}),
         ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
         ...(inlineAnnotations.length > 0 ? { inlineAnnotations } : {}),
       });

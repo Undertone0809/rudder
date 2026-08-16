@@ -52,7 +52,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.ts";
 import {
@@ -69,6 +69,7 @@ import {
   messengerSavedViewsService,
 } from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
+import * as productAnalyticsService from "../services/product-analytics.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -308,6 +309,118 @@ describe("messengerService and issue follows", () => {
         plan_mode: true,
       },
     });
+  });
+
+  it("assigns an atomic first-turn Chat to an owned group and ignores stale group context", async () => {
+    const orgId = randomUUID();
+    const userId = "group-new-chat-user";
+    const foreignUserId = "group-new-chat-foreign-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Group-scoped new Chat",
+      urlKey: deriveOrganizationUrlKey("Group-scoped new Chat"),
+      issuePrefix: `G${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const createChat = (groupId: string, groupUserId = userId) => chatSvc.createWithInitialMessage(orgId, {
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+      messengerGroupId: groupId,
+      messengerGroupUserId: groupUserId,
+      initialMessage: {
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Start this Chat from the group",
+      },
+      activity: {
+        actorType: "user",
+        actorId: userId,
+      },
+    });
+
+    const ownedGroup = await messengerSvc.createCustomGroup(orgId, userId, "Owned group");
+    const groupedChat = await createChat(ownedGroup.id);
+    const groupedEntry = await db.select()
+      .from(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.userId, userId),
+        eq(messengerCustomGroupEntries.threadKey, `chat:${groupedChat.conversation.id}`),
+      ));
+    expect(groupedEntry).toHaveLength(1);
+    expect(groupedEntry[0]?.groupId).toBe(ownedGroup.id);
+
+    const foreignGroup = await messengerSvc.createCustomGroup(orgId, foreignUserId, "Foreign group");
+    const foreignChat = await createChat(foreignGroup.id);
+    const missingChat = await createChat(randomUUID());
+    const deletedGroup = await messengerSvc.createCustomGroup(orgId, userId, "Deleted group");
+    await messengerSvc.deleteCustomGroup(orgId, userId, deletedGroup.id);
+    const deletedChat = await createChat(deletedGroup.id);
+    const staleEntries = await db.select()
+      .from(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.userId, userId),
+      ));
+
+    expect(staleEntries.map((entry) => entry.threadKey)).toEqual([
+      `chat:${groupedChat.conversation.id}`,
+    ]);
+    expect(foreignChat.conversation.id).not.toBe(groupedChat.conversation.id);
+    expect(missingChat.conversation.id).not.toBe(groupedChat.conversation.id);
+    expect(deletedChat.conversation.id).not.toBe(groupedChat.conversation.id);
+  });
+
+  it("rolls back the Chat and group membership when first-turn persistence fails after placement", async () => {
+    const orgId = randomUUID();
+    const userId = "group-new-chat-rollback-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Group-scoped new Chat rollback",
+      urlKey: deriveOrganizationUrlKey("Group-scoped new Chat rollback"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Rollback group");
+    const analyticsSpy = vi
+      .spyOn(productAnalyticsService, "recordProductAnalyticsChatCreated")
+      .mockRejectedValueOnce(new Error("simulated first-turn persistence failure"));
+
+    try {
+      await expect(chatSvc.createWithInitialMessage(orgId, {
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        createdByUserId: userId,
+        messengerGroupId: group.id,
+        messengerGroupUserId: userId,
+        initialMessage: {
+          role: "user",
+          kind: "message",
+          status: "completed",
+          body: "This transaction must roll back",
+        },
+        activity: {
+          actorType: "user",
+          actorId: userId,
+        },
+      })).rejects.toThrow("simulated first-turn persistence failure");
+    } finally {
+      analyticsSpy.mockRestore();
+    }
+
+    expect(await db.select()
+      .from(chatConversations)
+      .where(and(eq(chatConversations.orgId, orgId), eq(chatConversations.createdByUserId, userId)))).toEqual([]);
+    expect(await db.select()
+      .from(messengerCustomGroupEntries)
+      .where(and(
+        eq(messengerCustomGroupEntries.orgId, orgId),
+        eq(messengerCustomGroupEntries.userId, userId),
+        eq(messengerCustomGroupEntries.groupId, group.id),
+      ))).toEqual([]);
   });
 
   it("records empty and fork chat creation at their service boundaries", async () => {

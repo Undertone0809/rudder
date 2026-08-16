@@ -1658,6 +1658,12 @@ export function MessengerContextSidebar() {
     closeMobileSidebar();
   };
 
+  const handleCustomGroupNewChat = (groupId: string) => {
+    const href = `/messenger/chat?groupId=${encodeURIComponent(groupId)}`;
+    handleMessengerEntrySelect(href);
+    navigate(href);
+  };
+
   const handleMessengerThreadSelect = (thread: MessengerThreadSummary) => {
     const orgId = model.selectedOrganizationId;
     handleMessengerEntrySelect(thread.href);
@@ -3366,6 +3372,10 @@ export function MessengerContextSidebar() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="messenger-thread-actions-menu morph-popover morph-popover--from-right surface-overlay text-foreground">
+                <DropdownMenuItem onClick={() => handleCustomGroupNewChat(customGroup.id)}>
+                  <Plus className="h-4 w-4" />
+                  New chat
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleRenameCustomGroup(customGroup)}>
                   <PencilLine className="h-4 w-4" />
                   Rename...

@@ -1702,6 +1702,88 @@ test.describe("Messenger unified threads contract", () => {
     expect(sidebarEntryBounds[0]).toEqual(sidebarEntryBounds[1]);
   });
 
+  test("starts a normal Chat from a group and assigns it after the first message", async ({ page }, testInfo) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-Group-New-Chat-${Date.now()}`);
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Group new Chat", icon: "D::teal" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    await expect(groupSection).toContainText("Group new Chat", { timeout: 15_000 });
+    await groupSection.getByRole("button", { name: "Group actions" }).click();
+    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat\\?groupId=${group.id}$`));
+    await expect(page.locator(".chat-composer")).toBeVisible({ timeout: 15_000 });
+
+    const chatsBefore = await page.request.get(`/api/orgs/${organization.id}/chats?status=all`);
+    expect(chatsBefore.ok()).toBe(true);
+    expect(await chatsBefore.json()).toHaveLength(0);
+    await page.screenshot({ path: testInfo.outputPath("group-new-chat-draft.png") });
+
+    const message = "Start a focused task inside this group";
+    await page.locator(".rudder-mdxeditor-content").first().fill(message);
+    await page.getByTestId("chat-composer-toolbar").getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat\/[0-9a-f-]+$/, {
+      timeout: 15_000,
+    });
+
+    const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const groupsAfterSend = await page.request.get(`/api/orgs/${organization.id}/messenger/groups`);
+    expect(groupsAfterSend.ok()).toBe(true);
+    const grouped = (await groupsAfterSend.json() as {
+      groups: Array<{ id: string; entries: Array<{ threadKey: string }> }>;
+    }).groups.find((candidate) => candidate.id === group.id);
+    expect(grouped?.entries.map((entry) => entry.threadKey)).toContain(`chat:${chatId}`);
+
+    await page.reload({ waitUntil: "commit" });
+    const reloadedGroupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    await expect(reloadedGroupSection).toContainText(message, { timeout: 15_000 });
+    await page.screenshot({ path: testInfo.outputPath("group-new-chat-reloaded.png") });
+  });
+
+  test("falls back to a loose Chat when its group is deleted before send", async ({ page }) => {
+    const organization = await createConfiguredOrganization(page, `Messenger-Deleted-Group-New-Chat-${Date.now()}`);
+    const groupRes = await page.request.post(`/api/orgs/${organization.id}/messenger/groups`, {
+      data: { name: "Deleted before send", icon: "D::rose" },
+    });
+    expect(groupRes.ok()).toBe(true);
+    const group = await groupRes.json() as { id: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ [orgId]: "latest" }));
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const groupSection = page.getByTestId(`messenger-thread-section-custom-group-${group.id}`);
+    await expect(groupSection).toContainText("Deleted before send", { timeout: 15_000 });
+    await groupSection.getByRole("button", { name: "Group actions" }).click();
+    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat\\?groupId=${group.id}$`));
+
+    const deleteRes = await page.request.delete(`/api/orgs/${organization.id}/messenger/groups/${group.id}`);
+    expect(deleteRes.ok()).toBe(true);
+    const message = "Continue after the group disappeared";
+    await page.locator(".rudder-mdxeditor-content").first().fill(message);
+    await page.getByTestId("chat-composer-toolbar").getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat\/[0-9a-f-]+$/, {
+      timeout: 15_000,
+    });
+
+    const chatId = new URL(page.url()).pathname.split("/").at(-1)!;
+    await expect(page.getByTestId(threadTestId(`chat:${chatId}`))).toContainText(message, { timeout: 15_000 });
+    await expect(page.getByTestId(`messenger-thread-section-custom-group-${group.id}`)).toHaveCount(0);
+  });
+
   test("reveals a collapsed Messenger group surface only on hover", async ({ page }) => {
     const organization = await createConfiguredOrganization(page, `Messenger-Collapsed-Group-${Date.now()}`);
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {

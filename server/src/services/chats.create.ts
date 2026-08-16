@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
+import { assignChatToExistingMessengerGroup } from "./chat-family-groups.js";
 import { asChatInlineAnnotationValidationQuery, validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
@@ -89,6 +90,8 @@ export async function createChatConversation(db: Db, orgId: string, data: Create
 
 export type CreateChatWithInitialMessageInput = {
   initialClientMutationId?: string | null;
+  messengerGroupId?: string | null;
+  messengerGroupUserId?: string | null;
   title?: string;
   summary?: string | null;
   preferredAgentId?: string | null;
@@ -237,6 +240,15 @@ export async function createChatWithInitialMessage(
         orgId,
         messageId: messageRow.id,
         entries: transcript,
+      });
+    }
+
+    if (data.messengerGroupId && data.messengerGroupUserId) {
+      await assignChatToExistingMessengerGroup(client, {
+        orgId,
+        userId: data.messengerGroupUserId,
+        groupId: data.messengerGroupId,
+        conversationId: conversationRow.id,
       });
     }
 

@@ -115,6 +115,7 @@ describe("atomic chat draft API", () => {
 
     await chatsApi.sendFirstMessageStream("org-1", "Begin atomically", {
       preferredAgentId: "agent-1",
+      groupId: "00000000-0000-4000-8000-000000000001",
       modelOverride: "gpt-5.6-luna",
       effortOverride: "high",
       issueCreationMode: "manual_approval",
@@ -139,7 +140,29 @@ describe("atomic chat draft API", () => {
       issueCreationMode: "manual_approval",
       planMode: false,
       contextLinks: [],
+      groupId: "00000000-0000-4000-8000-000000000001",
     });
+  });
+
+  it("omits group context from an ordinary JSON first turn", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendFirstMessageStream("org-1", "Start normally", {
+      preferredAgentId: "agent-1",
+      modelOverride: null,
+      effortOverride: null,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      contextLinks: [],
+      onEvent: vi.fn(),
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("groupId");
   });
 
   it("keeps first-turn metadata beside staged attachments", async () => {
@@ -157,6 +180,7 @@ describe("atomic chat draft API", () => {
       issueCreationMode: "manual_approval",
       planMode: true,
       contextLinks: [{ entityType: "issue", entityId: "issue-1" }],
+      groupId: "00000000-0000-4000-8000-000000000001",
       files: [attachment],
       onEvent: vi.fn(),
     });
@@ -174,7 +198,30 @@ describe("atomic chat draft API", () => {
     expect(form.get("contextLinks")).toBe(JSON.stringify([
       { entityType: "issue", entityId: "issue-1" },
     ]));
+    expect(form.get("groupId")).toBe("00000000-0000-4000-8000-000000000001");
     expect(form.getAll("files")).toEqual([attachment]);
+  });
+
+  it("omits group context from an ordinary multipart first turn", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendFirstMessageStream("org-1", "Attach normally", {
+      preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-terra",
+      effortOverride: "medium",
+      issueCreationMode: "manual_approval",
+      planMode: true,
+      contextLinks: [],
+      files: [new File(["evidence"], "evidence.txt", { type: "text/plain" })],
+      onEvent: vi.fn(),
+    });
+
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.has("groupId")).toBe(false);
   });
 
   it("encodes Agent-default runtime intent for attached first turns", async () => {
@@ -198,6 +245,7 @@ describe("atomic chat draft API", () => {
     const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("modelOverride")).toBe("__rudder_agent_default__");
     expect(form.get("effortOverride")).toBe("__rudder_agent_default__");
+    expect(form.has("groupId")).toBe(false);
   });
 
   it("sends an annotation-only turn as JSON", async () => {

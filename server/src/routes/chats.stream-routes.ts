@@ -1069,6 +1069,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     const accepted = await svc.createWithInitialMessage(draft.orgId, {
+      messengerGroupId: parsed.data.groupId ?? null,
+      messengerGroupUserId: boardUserId(req),
       title: parsed.data.title,
       summary: parsed.data.summary ?? null,
       preferredAgentId: draft.preferredAgentId,

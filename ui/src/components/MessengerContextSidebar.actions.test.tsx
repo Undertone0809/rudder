@@ -2824,6 +2824,42 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(mockUpdateCustomGroup).toHaveBeenCalledWith("org-1", "group-1", { pinned: false });
   });
 
+  it("opens a group-scoped new chat without creating a conversation", async () => {
+    customGroupList = [
+      {
+        id: "group-1",
+        orgId: "org-1",
+        userId: "local-board",
+        name: "Deep work",
+        icon: "😀::amber",
+        sortOrder: 0,
+        collapsed: false,
+        pinnedAt: null,
+        createdAt: "2026-04-11T09:40:00.000Z",
+        updatedAt: "2026-04-11T09:40:00.000Z",
+        entries: [],
+      },
+    ];
+    messengerModel = { ...baseModel(), threadSummaries: [] };
+
+    renderSidebar();
+
+    const groupSection = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-custom-group-group-1"]',
+    );
+    const newChatButton = Array.from(groupSection?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.trim() === "New chat");
+    expect(newChatButton).toBeTruthy();
+
+    await act(async () => {
+      newChatButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith("/messenger/chat?groupId=group-1");
+    expect(mockUpdateConversation).not.toHaveBeenCalled();
+  });
+
   it("renders pinned custom groups before unpinned custom groups", () => {
     customGroupList = [
       {

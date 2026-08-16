@@ -242,6 +242,11 @@ Product model:
 - No Chat may persist without at least one durable message or structured system
   event. The first accepted message is the atomic creation boundary across UI,
   API, CLI, MCP, automation, and IM entry points.
+- A Messenger custom-group `New chat` action carries only an ephemeral
+  group-selection context while the draft is unpersisted. When the first user
+  message is accepted, the new Chat and its `chat:<id>` group membership are
+  created atomically. If the selected group was deleted or is no longer owned
+  by the operator before acceptance, the Chat remains valid and is placed loose.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
 - A user message may carry response annotations under
@@ -3450,6 +3455,12 @@ Product model:
   section over hydrated directory items. Most members are thread summaries, but
   Saved Views may be mixed into the same group without becoming threads or
   owning-domain state.
+- Each custom group's actions menu exposes `New chat`. Selecting it opens the
+  normal unpersisted Chat draft with that group as pending context; it does not
+  create an empty Chat or mutate group membership. The first accepted message
+  appends the new Chat as `chat:<id>` to the selected operator-scoped group in
+  the same transaction as Chat creation. A missing, deleted, or foreign group
+  is treated as loose placement rather than a Chat-creation failure.
 - A visible Saved View may be loose in the Messenger directory or belong to
   exactly one custom group. Messenger has no fixed `Saved` section. Saving from
   a Chat or Issue keeps the existing automatic host-group default; a global or
@@ -3493,6 +3504,11 @@ Flow:
    starter work.
 3. Rudder writes the operator-scoped membership using the item's stable
    Messenger directory key.
+   Selecting `New chat` from a group instead keeps the group ID in the
+   unpersisted Chat draft. On first-message acknowledgement, Rudder writes the
+   conversation and its `chat:<id>` membership together. If group deletion
+   wins the placement lock before that acknowledgement, the conversation is
+   created as a loose row.
 4. When drag/drop merges loose members into a new group, Rudder sends the
    directory-item display titles, including Saved View labels, to Fast
    Intelligence with `feature: "messenger_group_title"`.

@@ -108,7 +108,40 @@ async function assignChatToFamilyGroup(
         END`,
         updatedAt: now,
       },
-    });
+  });
+}
+
+export async function assignChatToExistingMessengerGroup(
+  client: ChatFamilyGroupClient,
+  input: {
+    orgId: string;
+    userId: string;
+    groupId: string;
+    conversationId: string;
+  },
+) {
+  await lockMessengerOwnerPlacement(client, input.orgId, input.userId);
+  await lockMessengerCustomGroupPlacement(client, input.orgId, input.userId, input.groupId);
+
+  const [group] = await client
+    .select({ id: messengerCustomGroups.id })
+    .from(messengerCustomGroups)
+    .where(and(
+      eq(messengerCustomGroups.orgId, input.orgId),
+      eq(messengerCustomGroups.userId, input.userId),
+      eq(messengerCustomGroups.id, input.groupId),
+    ))
+    .limit(1);
+  if (!group) return false;
+
+  await assignChatToFamilyGroup(
+    client,
+    input.orgId,
+    input.userId,
+    group.id,
+    input.conversationId,
+  );
+  return true;
 }
 
 export async function ensureChatFamilyGroup(

@@ -1208,6 +1208,8 @@ contracts:
       - server/src/routes/chats.runtime-controls.ts
       - server/src/routes/chats.stream-routes.ts
       - server/src/services/chats.ts
+      - server/src/services/chats.create.ts
+      - server/src/services/chat-family-groups.ts
       - server/src/services/chats.helpers.ts
       - server/src/services/postgres-json.ts
       - server/src/services/run-events.ts
@@ -1779,6 +1781,9 @@ contracts:
       - server/src/services/legacy-operator-state.ts
       - server/src/services/local-account-auth.ts
       - server/src/services/messenger.ts
+      - server/src/services/chats.create.ts
+      - server/src/services/chat-family-groups.ts
+      - server/src/routes/chats.stream-routes.ts
       - ui/src/components/MessengerContextSidebar.tsx
       - ui/src/components/messenger/MessengerCustomGroupVisuals.tsx
       - ui/src/components/messenger/MessengerSavedViewRow.tsx
@@ -1787,11 +1792,15 @@ contracts:
       - ui/src/lib/messenger-preferences.ts
       - ui/src/lib/messenger-thread-organization.ts
       - ui/src/pages/Messenger.tsx
+      - ui/src/pages/Chat.tsx
+      - ui/src/api/chats.ts
     related_tests:
       - server/src/__tests__/messenger-service.test.ts
+      - server/src/__tests__/chat-routes.test.ts
       - server/src/__tests__/local-account-auth.test.ts
       - ui/src/components/MessengerContextSidebar.test.tsx
       - ui/src/components/MessengerContextSidebar.actions.test.tsx
+      - ui/src/api/chats.test.ts
       - ui/src/components/messenger/MessengerSavedViewRow.test.tsx
       - ui/src/components/messenger/MessengerThreadListViews.test.tsx
       - ui/src/context/MainWorkbenchContext.test.tsx
@@ -1806,6 +1815,7 @@ contracts:
       - doc/plans/2026-07-17-safe-change-throughput-architecture-optimization.md
       - doc/plans/2026-07-20-messenger-saved-views.md
       - doc/plans/2026-07-23-messenger-main-workbench-promotion.md
+      - doc/plans/2026-08-16-messenger-group-new-chat.md
   MESSENGER.SAVED.VIEWS.001:
     owner: product
     domain: collaboration
