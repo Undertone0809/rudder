@@ -3,7 +3,9 @@ import type {
   RudderMcpUiResource,
   RudderMcpUiResourceContent,
   RudderPluginArchiveInput,
+  RudderPluginCatalog,
   RudderPluginComponentLink,
+  RudderPluginDetail,
   RudderPluginDirectory,
   RudderPluginImportReport,
   RudderPluginMarketplaceInput,
@@ -17,6 +19,13 @@ function base(orgId: string) {
 
 export const rudderPluginsApi = {
   directory: (orgId: string) => api.get<RudderPluginDirectory>(base(orgId)),
+  catalog: (orgId: string) => api.get<RudderPluginCatalog>(`${base(orgId)}/catalog`),
+  previewCatalog: (orgId: string, slug: string) =>
+    api.post<RudderPluginDetail>(`${base(orgId)}/catalog/${encodeURIComponent(slug)}/preview`, {}),
+  previewSource: (orgId: string, source: string, subdirectory?: string) =>
+    api.post<RudderPluginDetail>(`${base(orgId)}/imports/preview-source`, { source, ...(subdirectory ? { subdirectory } : {}) }),
+  getPreview: (orgId: string, previewId: string) =>
+    api.get<RudderPluginDetail>(`${base(orgId)}/previews/${encodeURIComponent(previewId)}`),
   get: (orgId: string, pluginId: string) =>
     api.get<RudderInstalledPlugin>(`${base(orgId)}/${encodeURIComponent(pluginId)}`),
   inspect: (orgId: string, sourceLabel: string, files: RudderPluginPackageFileInput[]) =>

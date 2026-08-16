@@ -1,0 +1,252 @@
+import { describe, expect, it } from "vitest";
+import {
+  catalogSourceMatches,
+  createCatalogFreshnessLease,
+  discoverSkillsAddPaths,
+  fetchPluginCatalogResource,
+  parseSkillsAddSource,
+  resolveGitHubVersion,
+} from "./rudder-plugin-catalog.js";
+
+function json(value: unknown, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("parseSkillsAddSource", () => {
+  it("accepts owner/repository, HTTPS, tree, ref, and explicit subdirectory inputs", () => {
+    expect(parseSkillsAddSource("coreyhaines31/marketingskills")).toEqual({
+      repositoryUrl: "https://github.com/coreyhaines31/marketingskills",
+      source: "coreyhaines31/marketingskills",
+      owner: "coreyhaines31",
+      repo: "marketingskills",
+      ref: null,
+      subdirectory: "",
+    });
+    expect(parseSkillsAddSource("obra/superpowers@v6.3.0/skills", "skills/brainstorming")).toMatchObject({
+      owner: "obra",
+      repo: "superpowers",
+      ref: "v6.3.0",
+      subdirectory: "skills/brainstorming",
+    });
+    expect(parseSkillsAddSource("https://github.com/openai/plugins/tree/main/plugins/remotion")).toMatchObject({
+      owner: "openai",
+      repo: "plugins",
+      ref: "main",
+      subdirectory: "plugins/remotion",
+    });
+  });
+
+  it("rejects SSH, local, non-GitHub, and traversal sources", () => {
+    expect(() => parseSkillsAddSource("git@github.com:owner/repo.git")).toThrow(/public GitHub/);
+    expect(() => parseSkillsAddSource("../local-skills")).toThrow(/public GitHub/);
+    expect(() => parseSkillsAddSource("https://gitlab.com/owner/repo")).toThrow(/github.com/);
+    expect(() => parseSkillsAddSource("owner/repo", "skills/../private")).toThrow(/unsafe path/);
+  });
+});
+
+describe("catalogSourceMatches", () => {
+  it("matches normalized repository and subdirectory identities", () => {
+    expect(catalogSourceMatches(
+      { repositoryUrl: "https://github.com/obra/superpowers.git", subdirectory: "./" },
+      { repositoryUrl: "https://github.com/OBRA/superpowers/", subdirectory: "" },
+    )).toBe(true);
+    expect(catalogSourceMatches(
+      { repositoryUrl: "https://github.com/openai/plugins", subdirectory: "plugins/canva/" },
+      { repositoryUrl: "https://github.com/openai/plugins", subdirectory: "plugins/canva" },
+    )).toBe(true);
+  });
+
+  it("does not conflate repositories or Plugin subdirectories", () => {
+    expect(catalogSourceMatches(
+      { repositoryUrl: "https://github.com/openai/plugins", subdirectory: "plugins/canva" },
+      { repositoryUrl: "https://github.com/openai/plugins", subdirectory: "plugins/vercel" },
+    )).toBe(false);
+    expect(catalogSourceMatches(
+      { repositoryUrl: "https://github.com/obra/superpowers", subdirectory: "" },
+      { repositoryUrl: "https://github.com/coreyhaines31/marketingskills", subdirectory: "" },
+    )).toBe(false);
+  });
+});
+
+describe("fetchPluginCatalogResource", () => {
+  it("permits same-host HTTPS redirects and rejects cross-host redirects", async () => {
+    const allowed = new Set(["catalog.example"]);
+    const sameHost = async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/catalog.json") {
+        return new Response(null, { status: 302, headers: { location: "/v1/catalog.json" } });
+      }
+      return json({ schemaVersion: 1 });
+    };
+    await expect(fetchPluginCatalogResource(
+      sameHost as typeof fetch,
+      "https://catalog.example/catalog.json",
+      {},
+      allowed,
+    )).resolves.toMatchObject({ status: 200 });
+
+    const crossHost = async () => new Response(null, {
+      status: 302,
+      headers: { location: "https://attacker.example/catalog.json" },
+    });
+    await expect(fetchPluginCatalogResource(
+      crossHost as typeof fetch,
+      "https://catalog.example/catalog.json",
+      {},
+      allowed,
+    )).rejects.toThrow(/outside the allowed HTTPS hosts/);
+  });
+});
+
+describe("createCatalogFreshnessLease", () => {
+  it("keeps a degraded catalog visible through immediate recovery", () => {
+    let now = 1_000;
+    const lease = createCatalogFreshnessLease(30_000, () => now);
+
+    expect(lease.observe("fresh")).toBe("fresh");
+    expect(lease.observe("stale")).toBe("stale");
+
+    now += 29_999;
+    expect(lease.observe("fresh")).toBe("stale");
+
+    now += 1;
+    expect(lease.observe("fresh")).toBe("fresh");
+  });
+
+  it("extends the visibility window when degradation is observed again", () => {
+    let now = 1_000;
+    const lease = createCatalogFreshnessLease(30_000, () => now);
+
+    expect(lease.observe("stale")).toBe("stale");
+    now += 20_000;
+    expect(lease.observe("stale")).toBe("stale");
+    now += 20_000;
+    expect(lease.observe("fresh")).toBe("stale");
+    now += 10_000;
+    expect(lease.observe("fresh")).toBe("fresh");
+  });
+});
+
+describe("discoverSkillsAddPaths", () => {
+  const blob = (path: string) => ({ path, type: "blob" as const, sha: "a".repeat(40), size: 40 });
+
+  it("discovers a root Skill and stops at that direct entrypoint", () => {
+    expect(discoverSkillsAddPaths([
+      blob("SKILL.md"),
+      blob("examples/nested/SKILL.md"),
+    ])).toEqual(["SKILL.md"]);
+  });
+
+  it("matches skills CLI priority containers and does not descend past a Skill root", () => {
+    expect(discoverSkillsAddPaths([
+      blob("skills/cro/SKILL.md"),
+      blob("skills/cro/internal/SKILL.md"),
+      blob("skills/seo/technical/SKILL.md"),
+      blob(".agents/skills/research/SKILL.md"),
+      blob("examples/unrelated/SKILL.md"),
+      blob("node_modules/unsafe/SKILL.md"),
+    ])).toEqual([
+      ".agents/skills/research/SKILL.md",
+      "skills/cro/SKILL.md",
+      "skills/seo/technical/SKILL.md",
+    ]);
+  });
+
+  it("honors a safe source subdirectory and fallback depth", () => {
+    expect(discoverSkillsAddPaths([
+      blob("plugins/demo/examples/deep/SKILL.md"),
+      blob("plugins/other/skills/ignored/SKILL.md"),
+    ], "plugins/demo")).toEqual(["plugins/demo/examples/deep/SKILL.md"]);
+  });
+
+  it("handles a production-shaped 49-Skill bundle deterministically", () => {
+    const tree = Array.from({ length: 49 }, (_, index) => blob(`skills/skill-${String(index).padStart(2, "0")}/SKILL.md`));
+    const result = discoverSkillsAddPaths(tree);
+    expect(result).toHaveLength(49);
+    expect(result[0]).toBe("skills/skill-00/SKILL.md");
+    expect(result.at(-1)).toBe("skills/skill-48/SKILL.md");
+  });
+});
+
+describe("resolveGitHubVersion", () => {
+  it("chooses the highest stable semantic release and freezes its commit SHA", async () => {
+    const calls: string[] = [];
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/repos/owner/repo")) return json({ default_branch: "main", private: false });
+      if (url.includes("/releases?")) return json([
+        { tag_name: "v2.0.0-beta.1", draft: false, prerelease: true },
+        { tag_name: "v1.9.0", draft: false, prerelease: false },
+        { tag_name: "v2.0.0", draft: false, prerelease: false },
+      ]);
+      if (url.endsWith("/commits/v2.0.0")) return json({ sha: "b".repeat(40) });
+      return json({}, 404);
+    };
+    await expect(resolveGitHubVersion(fetcher as typeof fetch, {
+      repositoryUrl: "https://github.com/owner/repo",
+      source: "owner/repo",
+      subdirectory: "skills",
+    })).resolves.toEqual({
+      repositoryUrl: "https://github.com/owner/repo",
+      source: "owner/repo",
+      subdirectory: "skills",
+      strategy: "stable_release",
+      version: "2.0.0",
+      commitSha: "b".repeat(40),
+    });
+    expect(calls.some((url) => url.endsWith("/commits/main"))).toBe(false);
+  });
+
+  it("falls back to default branch HEAD and keeps explicit refs explicit", async () => {
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/repos/owner/repo")) return json({ default_branch: "trunk", private: false });
+      if (url.includes("/releases?")) return json([]);
+      if (url.endsWith("/commits/trunk")) return json({ sha: "c".repeat(40) });
+      if (url.endsWith("/commits/feature%2Fcatalog")) return json({ sha: "d".repeat(40) });
+      return json({}, 404);
+    };
+    await expect(resolveGitHubVersion(fetcher as typeof fetch, {
+      repositoryUrl: "https://github.com/owner/repo",
+      source: "owner/repo",
+      subdirectory: "",
+    })).resolves.toMatchObject({
+      strategy: "default_branch_head",
+      version: "cccccccccccc",
+      commitSha: "c".repeat(40),
+    });
+    await expect(resolveGitHubVersion(fetcher as typeof fetch, {
+      repositoryUrl: "https://github.com/owner/repo",
+      source: "owner/repo",
+      subdirectory: "",
+      ref: "feature/catalog",
+    })).resolves.toMatchObject({
+      strategy: "explicit_ref",
+      version: "feature/catalog",
+      commitSha: "d".repeat(40),
+    });
+  });
+
+  it("rejects private sources and non-full commit identities", async () => {
+    await expect(resolveGitHubVersion((async () => json({ private: true, default_branch: "main" })) as typeof fetch, {
+      repositoryUrl: "https://github.com/owner/repo",
+      source: "owner/repo",
+      subdirectory: "",
+    })).rejects.toThrow(/must be public/);
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/repos/owner/repo")) return json({ default_branch: "main", private: false });
+      if (url.includes("/releases?")) return json([]);
+      return json({ sha: "short" });
+    };
+    await expect(resolveGitHubVersion(fetcher as typeof fetch, {
+      repositoryUrl: "https://github.com/owner/repo",
+      source: "owner/repo",
+      subdirectory: "",
+    })).rejects.toThrow(/full immutable commit SHA/);
+  });
+});

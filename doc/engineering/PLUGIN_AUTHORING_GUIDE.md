@@ -48,14 +48,21 @@ skills/research/SKILL.md
 Follow the current Codex Plugin format for complete fields and component
 authoring. Do not add a Rudder-specific worker entry point.
 
-## Import And Review
+## Discover, Import, And Preview
 
-Open **Hub > Plugins** and use **Import** to select the package folder or ZIP.
-A team marketplace can use an ordered `marketplace.json` with local Plugin
-paths; Rudder also accepts an HTTPS GitHub marketplace pinned to a full commit
-SHA. Hub is a default Rudder capability and does not require an experimental
-flag. Rudder computes a digest and displays compatibility before installation.
-Marketplace `INSTALLED_BY_DEFAULT` policy never bypasses Rudder review.
+Open **Hub > Plugins** to browse Rudder's curated public catalog, or use
+**Import** to select a package folder, ZIP, marketplace, or public GitHub Skills
+source accepted by `skills add`. A team marketplace can use an ordered
+`marketplace.json` with local Plugin paths; Rudder also accepts an HTTPS GitHub
+marketplace pinned to a full commit SHA. Hub is a default Rudder capability and
+does not require an experimental flag.
+
+For curated and `skills add` sources, Rudder resolves the latest stable semantic
+Release or default branch HEAD, locks the full commit SHA, and displays one
+immutable Preview. Installing uses that Preview ID and never resolves upstream
+again. Rudder does not invoke `npx`; a Skills repository is mapped to a
+deterministic Skills-only Codex manifest. Marketplace `INSTALLED_BY_DEFAULT`
+policy never bypasses the explicit Rudder install action.
 
 Import inspection never executes package content. It rejects unsafe paths,
 case collisions, oversize packages, invalid manifests, missing component
@@ -74,7 +81,7 @@ After installation:
   Apps or endpoint discovery;
 - Rudder Local Apps continue to be built and run by App Builder/Desktop and
   appear as app-only entries under **Hub > Plugins**. New App revisions wait
-  for explicit update review while the current revision stays active.
+  for an explicit update Preview while the current revision stays active.
 
 ## Verification
 
@@ -84,11 +91,11 @@ Before sharing a package:
 - test each Skill independently and keep its scripts/references inside its root;
 - verify MCP definitions contain no literal credentials and disclose expected
   transport and access;
-- import the exact folder into a disposable Rudder Organization and review the
+- import the exact folder into a disposable Rudder Organization and inspect the
   compatibility report;
 - verify Agent assignment, managed MCP setup, disable/re-enable, and uninstall
   behavior for the components the package provides.
-- verify a reviewed version update, failure recovery, and rollback when sharing
+- verify a previewed version update, failure recovery, and rollback when sharing
   a new version of an existing package identity.
 
 Rudder package import does not prove the component works in Codex, and Codex

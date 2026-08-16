@@ -297,10 +297,10 @@ export {
 export {
   configureRudderPluginMarketplaceSchema, configureRudderPluginMcpSchema, configureRudderPluginSkillsSchema, customizeRudderPluginSkillSchema,
   inspectRudderPluginArchiveSchema, inspectRudderPluginSchema, installRudderPluginSchema,
-  rudderPluginPackageFileSchema, updateRudderPluginEnablementSchema,
+  previewRudderPluginSourceSchema, rudderPluginPackageFileSchema, updateRudderPluginEnablementSchema,
   type ConfigureRudderPluginMarketplace, type ConfigureRudderPluginMcp, type ConfigureRudderPluginSkills, type CustomizeRudderPluginSkill,
   type InspectRudderPlugin, type InspectRudderPluginArchive, type InstallRudderPlugin,
-  type UpdateRudderPluginEnablement
+  type PreviewRudderPluginSource, type UpdateRudderPluginEnablement
 } from "./plugin-v1.js";
 
 export {

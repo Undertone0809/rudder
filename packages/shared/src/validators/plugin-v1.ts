@@ -38,6 +38,11 @@ export const installRudderPluginSchema = z.object({
   skillConflictStrategy: z.enum(["keep", "replace", "rename"]).optional(),
 }).strict();
 
+export const previewRudderPluginSourceSchema = z.object({
+  source: z.string().trim().min(3).max(500),
+  subdirectory: z.string().trim().max(500).optional(),
+}).strict();
+
 export const updateRudderPluginEnablementSchema = z.object({
   enabled: z.boolean(),
 }).strict();
@@ -58,6 +63,7 @@ export type InspectRudderPlugin = z.infer<typeof inspectRudderPluginSchema>;
 export type InspectRudderPluginArchive = z.infer<typeof inspectRudderPluginArchiveSchema>;
 export type ConfigureRudderPluginMarketplace = z.infer<typeof configureRudderPluginMarketplaceSchema>;
 export type InstallRudderPlugin = z.infer<typeof installRudderPluginSchema>;
+export type PreviewRudderPluginSource = z.infer<typeof previewRudderPluginSourceSchema>;
 export type UpdateRudderPluginEnablement = z.infer<typeof updateRudderPluginEnablementSchema>;
 export type ConfigureRudderPluginSkills = z.infer<typeof configureRudderPluginSkillsSchema>;
 export type ConfigureRudderPluginMcp = z.infer<typeof configureRudderPluginMcpSchema>;

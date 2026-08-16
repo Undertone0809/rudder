@@ -7,6 +7,7 @@ import {
   inspectRudderPluginArchiveSchema,
   inspectRudderPluginSchema,
   installRudderPluginSchema,
+  previewRudderPluginSourceSchema,
   updateRudderPluginEnablementSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
@@ -14,12 +15,14 @@ import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { accessService, logActivity } from "../services/index.js";
 import type { ManagedMcpConnectionServiceOptions } from "../services/mcp/managed-connections.js";
+import { rudderPluginCatalogService } from "../services/rudder-plugin-catalog.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServiceOptions) {
   const router = Router();
   const plugins = rudderPluginService(db, mcpOptions);
+  const catalog = rudderPluginCatalogService(db, mcpOptions);
   const access = accessService(db);
 
   function assertCanRead(req: Request, orgId: string) {
@@ -57,6 +60,58 @@ export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServi
     const orgId = req.params.orgId as string;
     assertCanRead(req, orgId);
     res.json(await plugins.directory(orgId));
+  });
+
+  router.get("/orgs/:orgId/plugins/catalog", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCanRead(req, orgId);
+    res.json(await catalog.catalog(orgId));
+  });
+
+  router.post("/orgs/:orgId/plugins/catalog/:slug/preview", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    await assertCanManage(req, orgId);
+    const detail = await catalog.previewCatalog(orgId, req.params.slug as string);
+    await record(req, orgId, "plugin.catalog_previewed", detail.previewId ?? detail.installedPluginId ?? detail.packageId, {
+      slug: detail.slug,
+      sourceKind: detail.sourceKind,
+      commitSha: detail.resolution.commitSha,
+      version: detail.resolution.version,
+      componentCount: detail.components.length,
+    });
+    res.status(201).json(detail);
+  });
+
+  router.post(
+    "/orgs/:orgId/plugins/imports/preview-source",
+    validate(previewRudderPluginSourceSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      await assertCanManage(req, orgId);
+      const detail = await catalog.previewSource(orgId, req.body.source, req.body.subdirectory);
+      await record(req, orgId, "plugin.source_previewed", detail.previewId ?? detail.installedPluginId ?? detail.packageId, {
+        source: detail.resolution.source,
+        subdirectory: detail.resolution.subdirectory,
+        commitSha: detail.resolution.commitSha,
+        componentCount: detail.components.length,
+      });
+      res.status(201).json(detail);
+    },
+  );
+
+  router.get("/plugins/catalog/:slug/icon", async (req, res) => {
+    const result = await catalog.icon(req.params.slug as string, req.query.theme === "dark");
+    res.setHeader("content-type", "image/png");
+    res.setHeader("cache-control", "public, max-age=3600, stale-while-revalidate=86400");
+    if (result.etag) res.setHeader("etag", result.etag);
+    if (result.freshness === "stale") res.setHeader("warning", '110 - "Plugin catalog response is stale"');
+    res.send(result.content);
+  });
+
+  router.get("/orgs/:orgId/plugins/previews/:previewId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCanRead(req, orgId);
+    res.json(await catalog.previewDetail(orgId, req.params.previewId as string));
   });
 
   router.get("/orgs/:orgId/plugins/:pluginId", async (req, res) => {
