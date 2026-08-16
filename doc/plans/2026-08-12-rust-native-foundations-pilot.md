@@ -49,10 +49,26 @@ commit_refs:
   - bfab54182
   - d30138587
   - 2b4a25c13
-updated_at: 2026-08-15
+updated_at: 2026-08-16
 ---
 
 # Rust Native Foundations Pilot
+
+### Continuation status (2026-08-16)
+
+The exact `72005f4` macOS arm64 packaged candidate was rechecked from the
+portable ZIP with SHA-256
+`43336d17fba1692d75d644b3c479894ac08bf193d077fe4dbffc0f6177695ada`.
+The packaged account-gate scenario reached the real board URL and passed.
+The packaged Local App scenario then stopped at the expected
+`401 account_session_required` boundary because no hosted authenticated
+fixture is available; the dev Local App scenario completed its lifecycle and
+cleanup. These results do not count as hosted dogfood.
+
+`rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
+strictly invokes the existing three-trial OSS producer and writes a complete
+fail-closed `not_runnable` Packet V2 when producer, binary, identity, or
+import prerequisites are absent. No live native comparison was claimed.
 
 ## Executive Decision
 

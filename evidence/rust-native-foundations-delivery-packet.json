@@ -49,7 +49,7 @@
       "id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "artifact_bound_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "portable_sha256": "5544b24edd5fe15ec6e7ddda03da3faac023919a478002fe0bc802e40cef5866",
+      "portable_sha256": "43336d17fba1692d75d644b3c479894ac08bf193d077fe4dbffc0f6177695ada",
       "native_sha256": {
         "rudder-process-host": "02040e9caf459526f34be1e6b21b3263a040b7c923425e7ec5b019905e04b8cf",
         "rudder-native": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
@@ -91,6 +91,9 @@
       "server_package_verification": "PASS_packaged_server_72005f4",
       "app_builder_smoke": "PASS_packaged_app_builder_72005f4",
       "zip_integrity": "PASS_unzip_test_72005f4",
+      "packaged_account_gate_recheck": "PASS_0.7.7_72005f4_board_url_and_account_gate",
+      "packaged_local_app_recheck": "blocked_account_session_required_401_without_hosted_fixture",
+      "dev_local_app_recheck": "PASS_local_apps_full_lifecycle_and_cleanup",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
     "organization_data": {
