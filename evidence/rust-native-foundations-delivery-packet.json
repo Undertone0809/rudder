@@ -88,13 +88,13 @@
     "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "metadata_only_wrapper": {
-      "wrapper_ref": "db7cf955b06a6a86f64352cc93cf5366b298e27b",
+      "wrapper_ref": "eea5191cf88089d0b680cd43232e1b13567664b5",
       "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "The current main wrapper is a descendant of the clean packaged source; the diff contains only metadata and unrelated UI/test changes outside native/runtime paths."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "db7cf955b06a6a86f64352cc93cf5366b298e27b",
+      "wrapper_ref": "eea5191cf88089d0b680cd43232e1b13567664b5",
       "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the current main wrapper records the delivery identity."
@@ -340,7 +340,7 @@
   },
     "integration": {
     "current_local_head": "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b",
-    "packet_metadata_commit": "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b",
+    "packet_metadata_commit": "eea5191cf88089d0b680cd43232e1b13567664b5",
     "current_origin_main_head": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
     "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
