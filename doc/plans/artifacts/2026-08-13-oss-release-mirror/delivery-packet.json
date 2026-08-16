@@ -146,7 +146,7 @@
       "packet_version": "6"
     },
     "final_review": {
-      "verdict": "pending",
+      "verdict": "accept",
       "candidate_fingerprint": "sha256:6e0c7b9a9e5c0dce43e03566357acb3c1234fb2eec98037e90f229ba5e530806",
       "source_sha": "35b5ac4cb1aabf321bf2b50020870026ff81486f",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract-v3",
@@ -172,7 +172,7 @@
       "full_observed": "Blocked by import organization in 13 pre-existing unmodified files; no unrelated files changed."
     },
     "desktop_verify": {"verdict": "not_run_desktop_install; COS mirror/readback and multipart abort cleanup verified"},
-    "final_reviewer": {"verdict": "pending"}
+    "final_reviewer": {"verdict": "accept"}
   },
   "release_evidence": {
     "github_release": "v0.7.7 tag acfb8e4c7dbc963fdb32280b8055ee0604d021b6; seven binaries plus checksum marker",
@@ -199,7 +199,7 @@
     "public_install_github_fallback": "pending",
     "docs_and_next_version_handoff": "pending",
     "canary_cleanup": "pending",
-    "blocker": "COS recovery, abort cleanup, public object readback, and independent verifier PASS are current; final reviewer receipt is pending."
+    "blocker": "COS mirror repair is accepted; npm publication, public install smoke, docs handoff, and canary cleanup remain outside this targeted COS recovery receipt."
   },
   "drift": {
     "active": false,
@@ -207,7 +207,7 @@
     "invalidated_receipts": []
   },
   "integration": {
-    "authorized": false,
+    "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
     "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
