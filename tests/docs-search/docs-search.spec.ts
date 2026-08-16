@@ -121,7 +121,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/releases",
       title: "Changelog",
-      latestDate: "August 15, 2026",
+      latestDate: "August 17, 2026",
       filterTag: "New",
       statusTag: "Status",
       tags: ["Improved", "New", "Fixed", "Status"],
@@ -129,7 +129,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/zh/releases",
       title: "更新日志",
-      latestDate: "2026年8月15日",
+      latestDate: "2026年8月17日",
       filterTag: "新功能",
       statusTag: "版本状态",
       tags: ["改进", "新功能", "问题修复", "版本状态"],
@@ -145,9 +145,9 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       page.locator(`h2#${version}`).locator(
         "xpath=ancestor::div[contains(@class, 'update-container')]",
       );
-    await expect(page.locator("h2#v0-7-7")).toBeVisible();
-    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(38);
-    const latestUpdate = page.locator("h2#v0-7-7").locator(
+    await expect(page.locator("h2#v0-7-8")).toBeVisible();
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(39);
+    const latestUpdate = page.locator("h2#v0-7-8").locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
     await expect(latestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
@@ -158,6 +158,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       await expect(page.getByRole("button", { name: tag, exact: true })).toBeVisible();
     }
     await page.getByRole("button", { name: item.filterTag, exact: true }).click();
+    await expect(updateFor("v0-7-8")).toBeHidden();
     await expect(page.locator("h2#v0-7-7")).toBeVisible();
     await expect(updateFor("v0-7-5")).toBeHidden();
     await expect(updateFor("v0-7-4")).toBeHidden();
@@ -168,6 +169,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
 
     await page.getByRole("button", { name: item.statusTag, exact: true }).click();
+    await expect(updateFor("v0-7-8")).toBeHidden();
     await expect(updateFor("v0-7-7")).toBeHidden();
     await expect(updateFor("v0-7-5")).toBeVisible();
     await expect(updateFor("v0-7-4")).toBeVisible();
@@ -176,7 +178,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(item.route);
-    const mobileLatestUpdate = page.locator("h2#v0-7-7").locator(
+    const mobileLatestUpdate = page.locator("h2#v0-7-8").locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
     await expect(mobileLatestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
