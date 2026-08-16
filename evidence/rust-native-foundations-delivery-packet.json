@@ -23,15 +23,16 @@
   },
   "admission_decisions": {
     "version": "1",
-    "candidate_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "candidate_source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+    "historical_packaged_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "entries": [
       {
         "capability": "rust_native_foundation",
         "decision": "accepted_default",
-        "scope": "macOS arm64 packaged tuple only (aarch64-apple-darwin, Rudder 0.7.7), limited to versioned foundation packaging, binary resolution, and packaged account-gate checks",
+        "scope": "historical macOS arm64 packaged tuple only (aarch64-apple-darwin, Rudder 0.7.7, artifact source 72005f4); limited to versioned foundation packaging, binary resolution, and packaged account-gate checks",
         "fallback": "TypeScript/Node implementation remains available outside this tuple",
         "evidence": ["candidate.build.clean_source_verification", "candidate.runtime.account_gate_smoke", "candidate.runtime.packaged_account_gate_recheck"],
-        "limitations": ["Other targets are compiled_unverified; packaged inherited-pipe/EOF/failure-before-side-effect fixtures are not admitted by this packet, so no broader protocol-default claim is made"]
+        "limitations": ["The current restore-reconciliation source candidate is 47a00d611 and has no source-aligned packaged rebuild; other targets are compiled_unverified; packaged inherited-pipe/EOF/failure-before-side-effect fixtures are not admitted by this packet, so no broader protocol-default claim is made"]
       },
       {
         "capability": "local_app_process_host",
@@ -111,7 +112,8 @@
       "server/src/__tests__/workspace-backups.test.ts",
       "server/src/index.ts",
       "server/src/services/workspace-backups.ts",
-      "tests/e2e/workspace-backups.spec.ts"
+      "tests/e2e/workspace-backups.spec.ts",
+      "evidence/rust-native-backup-current-source-runtime-receipt.json"
     ],
     "build": {
       "id": "stale-packaged-72005f4-for-47a00d611-0.7.7-macos-arm64",
@@ -162,6 +164,7 @@
       "packaged_account_gate_recheck": "PASS_0.7.7_72005f4_board_url_and_account_gate",
       "packaged_local_app_recheck": "blocked_account_session_required_401_without_hosted_fixture",
       "packaged_source_alignment": "BLOCKED_artifact_bound_to_72005f4_current_runtime_candidate_47a00d611_requires_rebuild",
+      "current_source_backup_runtime_probe": "PASS_47a00d611_native_opt_in_startServer_create_browse_file_download_restore",
       "dev_local_app_recheck": "PASS_local_apps_full_lifecycle_and_cleanup",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
@@ -169,7 +172,7 @@
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator case with 100 descriptive paired samples and manifest/entry/content/recovery parity; real local workspace-backup Playwright workflow receipt (2/2); 65-test service/route workflow receipt including child-process crash windows, rollback tamper blocking, committed workspace missing/mismatch blocking, and DB status reconciliation; historical packaged server/runtime backup probe (create/browse/download/restore scoped pass, stale for 47a runtime); native_ab normal and flood producers (six rows per imported receipt, bounded comparative fixture campaign pass with productPass false)",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator case with 100 descriptive paired samples and manifest/entry/content/recovery parity; current-source local workspace-backup Playwright workflow receipt (2/2); current-source native opt-in startServer API/runtime probe (create/browse/file/download/restore pass); 65-test service/route workflow receipt including child-process crash windows, rollback tamper blocking, committed workspace missing/mismatch blocking, and DB status reconciliation; historical packaged server/runtime backup probe (create/browse/download/restore scoped pass, stale for 47a runtime); native_ab normal and flood producers (six rows per imported receipt, bounded comparative fixture campaign pass with productPass false)",
     "native_ab_runner_repository": "/Users/zeeland/projects/rudder-hub/rudder-evals",
     "native_ab_runner_commit": "6ccf86a4b915390cee524dfb5f5968eee5cdb370",
     "native_ab_runner_cli": "PASS_run_native-ab_and_native_ab_alias_help",
@@ -198,9 +201,12 @@
       "backup_workflow_test_receipt_sha256": "cc90bcd241d1af19fb672543a2ebb076f460df1bc281c90537e91fa398d31951",
       "backup_workflow_test_status": "PASS_65_tests_0_failures_supporting_service_route_evidence_including_restore_receipt_recovery; packaged evidence stale for current runtime",
       "backup_e2e_receipt": "evidence/rust-native-backup-e2e-receipt.json",
-      "backup_e2e_receipt_sha256": "c721bd6f5d6810ec7da15f405f21cebf850aa61afa7659115c11f27fd631a151",
-      "backup_e2e_candidate_commit": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
-      "backup_e2e_status": "PASS_2_tests_0_failures_real_local_dev_workflow_supporting_evidence",
+      "backup_e2e_receipt_sha256": "eb66b9817d62fbf83539ee2295d42ab8bde3df58261f154220a5ccde44098236",
+      "backup_e2e_candidate_commit": "47a00d611ada806551090d43f30c172f2422c81c",
+      "backup_e2e_status": "PASS_2_tests_0_failures_real_current_source_local_dev_workflow_supporting_evidence",
+      "backup_current_source_runtime_receipt": "evidence/rust-native-backup-current-source-runtime-receipt.json",
+      "backup_current_source_runtime_receipt_sha256": "d414958b354624582a573952133afdeba997386b78825088098bf8769c8dbd0c",
+      "backup_current_source_runtime_status": "PASS_current_source_native_opt_in_startServer_create_browse_file_download_restore_supporting_evidence",
       "backup_packaged_server_runtime_receipt": "evidence/rust-native-backup-packaged-server-runtime-receipt.json",
       "backup_packaged_server_runtime_status": "PASS_HISTORICAL_SCOPED_SUPPORTING_CREATE_BROWSE_DOWNLOAD_RESTORE_72005f4_NOT_CURRENT_47a00d611",
       "backup_comparator_status": "comparable",
