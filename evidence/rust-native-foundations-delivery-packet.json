@@ -89,13 +89,13 @@
     "source_ref": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
     "source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
     "metadata_only_wrapper": {
-      "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+      "wrapper_ref": "ae586d05d1cac2fc8b5013eeaebe81902c1da158",
       "code_candidate_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
       "runtime_paths_changed": true,
       "reason": "The packaged artifact was rebuilt from exact HEAD after the f330 sparse-recovery runtime/test fix; the packet now records this full source identity."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+      "wrapper_ref": "ae586d05d1cac2fc8b5013eeaebe81902c1da158",
       "artifact_source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
       "runtime_paths_changed": true,
       "reason": "The recorded packaged artifacts were rebuilt from exact HEAD; the older 720 and 47a identities remain historical only."
@@ -388,12 +388,12 @@
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
   },
     "integration": {
-    "current_local_head": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
-    "current_local_head_scope": "frozen exact-HEAD runtime/test candidate with restore reconciliation and sparse-recovery fixes; exact-HEAD packaged artifact and scoped server/runtime probe are current",
+    "current_local_head": "ae586d05d1cac2fc8b5013eeaebe81902c1da158",
+    "current_local_head_scope": "frozen metadata wrapper over exact runtime/test source 1d2f100cd; exact-HEAD packaged artifact and scoped server/runtime probe are current",
     "packet_metadata_commit": "9d4d17ba67e77fedc0ad73824fafac47e31d3db8",
-    "packet_identity_note": "Packet v3 history is anchored to immutable wrapper 621039522; current runtime candidate 1d2f100cd is source-aligned to the recorded 0.7.7 packaged artifact. Packaged Desktop hosted authentication remains a separate blocked gate.",
+    "packet_identity_note": "Packet v3 is bound to metadata wrapper ae586d05d; runtime source candidate 1d2f100cd is source-aligned to the recorded 0.7.7 packaged artifact. Packaged Desktop hosted authentication remains a separate blocked gate.",
     "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
-    "review_branch_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+    "review_branch_sha": "ae586d05d1cac2fc8b5013eeaebe81902c1da158",
     "review_branch_push": "PASS_origin_review_branch",
     "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
@@ -411,7 +411,8 @@
       "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
       "47a00d611ada806551090d43f30c172f2422c81c",
       "c7f8c69c4",
-      "1d2f100cd33748e23357d776efabb9c8833f4b9f"
+      "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+      "ae586d05d1cac2fc8b5013eeaebe81902c1da158"
     ],
     "branch_ref_scope": "current exact-HEAD TypeScript restore/sparse-recovery runtime/test candidate plus source-aligned 0.7.7 macOS arm64 packaged artifact; Desktop hosted-authenticated acceptance remains blocked",
     "isolation_trigger": "independent_runtime",
