@@ -99,18 +99,15 @@
       "runtime_paths_changed": false,
       "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the immutable 621 wrapper and its metadata/test-only descendants record delivery identity."
     },
-    "dirty_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
-    "dirty_path_count": 146,
-    "dirty_status_sha256": "be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
+    "dirty_fingerprint": "review-candidate-clean-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "dirty_path_count": 0,
+    "dirty_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
-      "evidence/rust-native-foundations-delivery-packet.json",
-      "evidence/rust-native-backup-comparator-fair-8581-summary.json",
+      "evidence/rust-native-backup-e2e-receipt.json",
+      "evidence/rust-native-backup-packaged-server-runtime-receipt.json",
       "evidence/rust-native-backup-workflow-test-receipt.json",
-      "evidence/rust-native-backup-comparator-22f-summary.json",
-      "desktop/src/desktop-update-helper.test.ts",
-      "tests/e2e/settings-sidebar.spec.ts",
-      "ui/src/pages/OrganizationSettings.tsx",
+      "evidence/rust-native-foundations-delivery-packet.json",
       "tests/e2e/workspace-backups.spec.ts"
     ],
     "build": {
@@ -277,7 +274,7 @@
       "verdict": "needs more evidence",
       "invalidated": true,
       "candidate_commit": "2a5b289f2a4063f5905f7f6e7e99b793af25174a",
-      "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
+      "candidate_fingerprint": "review-candidate-clean-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
@@ -289,7 +286,7 @@
       "verdict": "QUESTION",
       "invalidated": true,
       "candidate_commit": "2a5b289f2a4063f5905f7f6e7e99b793af25174a",
-      "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
+      "candidate_fingerprint": "review-candidate-clean-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
@@ -300,7 +297,7 @@
     "final_review": {
       "verdict": "pending",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
+      "candidate_fingerprint": "review-candidate-clean-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
@@ -358,12 +355,12 @@
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
   },
     "integration": {
-    "current_local_head": "c121285eb6bba9081167134cc8dfe1707835647d",
-    "current_local_head_scope": "test-inclusive review branch tip; native/runtime paths remain bound to immutable wrapper/artifact source",
+    "current_local_head": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
+    "current_local_head_scope": "frozen test-inclusive candidate; later packet-only commits do not change native/runtime or E2E test paths",
     "packet_metadata_commit": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
     "packet_identity_note": "Packet v3 is anchored to immutable wrapper 621039522; later checkout descendants may add packet/plan metadata, evidence scope, or test-only assertions but do not change native/runtime paths. Verify the native/runtime candidate through wrapper_ref and the absence of native/runtime paths in the descendant diff.",
     "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
-    "review_branch_sha": "c121285eb6bba9081167134cc8dfe1707835647d",
+    "review_branch_sha": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
     "review_branch_push": "PASS_origin_review_branch",
     "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
@@ -378,7 +375,8 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "branch_refs": [
-      "62103952266da6a1db0b3f7284a7d5f5ce66e4c5"
+      "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+      "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3"
     ],
     "branch_ref_scope": "immutable evidence wrapper code candidate plus test-only evidence assertion; native/runtime paths remain scoped by wrapper_ref and artifact_source_sha",
     "isolation_trigger": "independent_runtime",
@@ -413,6 +411,9 @@
     "worktree_fingerprint_after": "isolated-clean-after-e2e-assertion-commit",
     "unrelated_paths_preserved": true,
     "index_preserved": true,
+    "shared_main_dirty_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
+    "shared_main_dirty_path_count": 146,
+    "shared_main_dirty_status_sha256": "be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
     "evidence": [
       "shared main checkout was not reset/stashed/cleaned",
       "candidate worktree has zero tracked/untracked changes"
