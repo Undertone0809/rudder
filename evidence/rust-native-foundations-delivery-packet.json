@@ -224,6 +224,8 @@
       "backup_comparator_sampler_binary_sha256": "b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c",
       "backup_comparator_sampler_binary_version": "rudder-process-tree-sampler 0.7.7",
       "backup_comparator_source_sha": "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b",
+      "backup_comparator_source_scope": "counterbalanced TypeScript comparator harness and tests only",
+      "backup_comparator_native_binary_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "backup_comparator_arm_order": "seeded_counterbalanced_node_first_52_native_first_48",
       "backup_comparator_warmups": 3,
       "backup_comparator_bootstrap_confidence_interval": "paired_p95_10000_iterations_elapsed_and_rss_delta",
