@@ -23,6 +23,15 @@ on:
         description: "Original Release run ID containing the verified candidate artifacts (required for resume)"
         required: false
         type: string
+      mirror_recovery:
+        description: "Run only the COS mirror recovery against an existing stable Release"
+        required: false
+        type: boolean
+        default: false
+      recovery_tag:
+        description: "Existing stable tag to mirror during mirror recovery, for example v0.7.7"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -39,7 +48,7 @@ jobs:
   preflight:
     name: Lock source and preflight
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mirror_recovery != true) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -585,6 +594,97 @@ jobs:
             --tag "$RELEASE_TAG" \
             --asset-dir dist/desktop-assets \
             --phase binaries
+
+  mirror-recovery:
+    name: Recover stable Desktop release mirror in Tencent COS
+    if: github.event_name == 'workflow_dispatch' && inputs.mirror_recovery == true
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: desktop-release-mirror
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+      - name: Require immutable recovery inputs
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_ref must be a full 40-character commit SHA for mirror recovery." >&2
+            exit 1
+          }
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]] || {
+            echo "candidate_run_id is required for mirror recovery." >&2
+            exit 1
+          }
+          [[ "$RECOVERY_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "recovery_tag must be an existing stable tag such as v0.7.7." >&2
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+      - name: Validate frozen candidate run and existing Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
+          test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100")"
+          for artifact in \
+            desktop-macos-x64 \
+            desktop-macos-arm64 \
+            desktop-windows-x64 \
+            desktop-linux-x64; do
+            jq -e --arg name "$artifact" '.artifacts[] | select(.name == $name and .expired == false)' <<< "$artifacts" >/dev/null || {
+              echo "Candidate run $CANDIDATE_RUN_ID is missing unexpired artifact $artifact." >&2
+              exit 1
+            }
+          done
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RECOVERY_TAG")"
+          test "$(jq -r '.draft' <<< "$release_json")" = "false"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Mirror frozen GitHub binaries to Tencent COS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+        run: |
+          node scripts/mirror-desktop-release-to-cos.mjs \
+            --tag "${{ inputs.recovery_tag }}" \
+            --asset-dir dist/desktop-assets \
+            --prefix releases \
+            --allow-existing-checksum-marker
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ inputs.recovery_tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
 
   mirror-canary:
     name: Mirror canary Desktop release to Tencent COS

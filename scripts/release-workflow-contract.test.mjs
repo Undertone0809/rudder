@@ -131,6 +131,22 @@ describe("unified delivery workflows", () => {
     expect(stableMirror).toContain("github-token: ${{ github.token }}");
   });
 
+  it("supports explicit COS-only recovery from frozen stable artifacts", () => {
+    const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
+    expect(releaseWorkflow).toContain("mirror_recovery:");
+    expect(releaseWorkflow).toContain("recovery_tag:");
+    expect(releaseWorkflow).toContain("inputs.mirror_recovery != true");
+    expect(recovery).toContain("environment: desktop-release-mirror");
+    expect(recovery).toContain("id-token: write");
+    expect(recovery).toContain("actions/download-artifact@v8");
+    expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
+    expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
+    expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
+    expect(recovery).toContain("--phase checksum");
+    expect(recovery).not.toContain("npm publish");
+    expect(recovery).not.toContain("git push");
+  });
+
   it("documents the distinct COS HeadObject permission used by the signed existence check", () => {
     expect(releaseSetup).toContain("name/cos:HeadObject");
     expect(releaseSetup).toContain("name/cos:GetObject");

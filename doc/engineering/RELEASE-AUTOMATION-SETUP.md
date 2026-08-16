@@ -444,8 +444,13 @@ timeout again.
 
 Re-run the failed mirror job after fixing credentials or network state. The
 GitHub checksum marker remains absent until COS succeeds. For partial stable
-recovery, use the original Release `candidate_run_id`; do not rebuild or
-republish immutable npm versions.
+recovery after the mirror code or credentials changed, dispatch the same
+`release.yml` workflow with `mirror_recovery=true`, the current reviewed main
+commit as `source_ref`, the existing Release tag as `recovery_tag`, and the
+original Release `candidate_run_id`. This path downloads only the frozen
+Desktop artifacts from that run, does not republish npm, retag Git, or rebuild
+Desktop, and publishes the GitHub checksum marker only after COS succeeds.
+Do not use a branch or a newly generated artifact run for `source_ref`.
 
 ### Optional CODEOWNERS routing does not trigger
 
