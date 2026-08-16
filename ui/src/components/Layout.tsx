@@ -68,7 +68,8 @@ import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
-const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth.v2";
+// Reset widths remembered by the previous default, which could open the panel at 2:1.
+const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth.v3";
 const SIDE_PANEL_DEFAULT_WIDTH = 420;
 const SIDE_PANEL_MIN_WIDTH = 340;
 const SIDE_PANEL_COLLAPSE_WIDTH = 292;

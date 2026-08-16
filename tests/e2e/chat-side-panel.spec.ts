@@ -3259,7 +3259,7 @@ test.describe("Chat Side Panel", () => {
       await test.step(resizeCase.label, async () => {
         await page.setViewportSize({ width: resizeCase.viewportWidth, height: 900 });
         await page.evaluate(() => {
-          window.localStorage.removeItem("rudder.workspace.sidePanelWidth.v2");
+          window.localStorage.removeItem("rudder.workspace.sidePanelWidth.v3");
         });
         await page.goto(resizeCase.path);
         await resizeCase.open();
@@ -3903,9 +3903,12 @@ test.describe("Chat Side Panel", () => {
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.workspace.sidePanelWidth.v2", "900");
+      window.localStorage.removeItem("rudder.workspace.sidePanelWidth.v3");
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("side-panel-hover-edge").hover();
     await page.getByTestId("global-side-panel-trigger").click();
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
