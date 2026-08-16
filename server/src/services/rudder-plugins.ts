@@ -69,6 +69,10 @@ function packageIdentityKey(
   return `${sourceType}:${(publisher ?? "unknown").toLocaleLowerCase("en-US")}:${name}`;
 }
 
+function organizationSkillSelectionKey(key: string) {
+  return key.startsWith("org:") ? key : `org:${key}`;
+}
+
 function decodeInputFile(file: InspectRudderPlugin["files"][number]): Buffer {
   if (file.encoding !== "base64") return Buffer.from(file.content, "utf8");
   const compact = file.content.replace(/\s/g, "");
@@ -954,9 +958,13 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     const packageFiles = Object.fromEntries(snapshot
       .filter((file) => skillRoots.some((root) => file.path === `${root}/SKILL.md` || file.path.startsWith(`${root}/`)))
       .map((file) => [file.path, Buffer.from(file.content, "base64").toString("utf8")]));
+    const currentSkillIds = current.components
+      .filter((component) => component.type === "skill" && component.targetId)
+      .map((component) => component.targetId!);
     const importedSkills = report.components.some((component) => component.type === "skill")
       ? await skills.importPackageFiles(orgId, packageFiles, {
         onConflict: skillConflictStrategy === "keep" ? "skip" : skillConflictStrategy,
+        replaceSkillIds: currentSkillIds,
       })
       : [];
     let switched = false;
@@ -1096,13 +1104,21 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
         }).where(and(eq(installedPlugins.orgId, orgId), eq(installedPlugins.id, current.id)));
       });
       switched = true;
+      const retainedSkillTargets = new Set(linkValues
+        .filter((entry) => entry.componentType === "skill" && entry.targetId)
+        .map((entry) => entry.targetId));
       for (const component of current.components.filter((entry) => entry.type === "skill" && entry.targetId)) {
+        if (retainedSkillTargets.has(component.targetId)) continue;
         await skills.deletePluginManagedSkill(orgId, component.targetId!, current.id);
       }
       for (const link of linkValues.filter((entry) => entry.componentType === "skill" && entry.targetId)) {
         const skill = await db.select().from(organizationSkills).where(eq(organizationSkills.id, link.targetId!)).then((rows) => rows[0] ?? null);
         const agentIds = enabledAgentIdsFromMetadata(link.metadata);
-        if (skill) for (const agentId of agentIds) await enabledSkills.addMissingKeys(orgId, agentId, [skill.key]);
+        if (skill) {
+          for (const agentId of agentIds) {
+            await enabledSkills.addMissingKeys(orgId, agentId, [organizationSkillSelectionKey(skill.key)]);
+          }
+        }
       }
       return (await getInstalled(orgId, current.id))!;
     } catch (error) {
@@ -1647,13 +1663,15 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     const skillRows = skillIds.length === 0 ? [] : await db.select().from(organizationSkills)
       .where(and(eq(organizationSkills.orgId, orgId), inArray(organizationSkills.id, skillIds)));
     if (!enabled) {
-      const skillKeys = skillRows.map((skill) => skill.key);
+      const skillKeys = skillRows.map((skill) => organizationSkillSelectionKey(skill.key));
       const selected = skillKeys.length === 0 ? [] : await db.select().from(agentEnabledSkills)
         .where(and(eq(agentEnabledSkills.orgId, orgId), inArray(agentEnabledSkills.skillKey, skillKeys)));
       for (const link of skillLinks) {
         const skill = skillRows.find((row) => row.id === link.targetId);
         if (!skill) continue;
-        const enabledAgentIds = selected.filter((row) => row.skillKey === skill.key).map((row) => row.agentId);
+        const enabledAgentIds = selected
+          .filter((row) => row.skillKey === organizationSkillSelectionKey(skill.key))
+          .map((row) => row.agentId);
         await db.update(pluginComponentLinks).set({
           status: "disabled",
           metadata: { ...link.metadata, enabledAgentIds },
@@ -1666,7 +1684,9 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
         const skill = skillRows.find((row) => row.id === link.targetId);
         if (!skill) continue;
         const agentIds = enabledAgentIdsFromMetadata(link.metadata);
-        for (const agentId of agentIds) await enabledSkills.addMissingKeys(orgId, agentId, [skill.key]);
+        for (const agentId of agentIds) {
+          await enabledSkills.addMissingKeys(orgId, agentId, [organizationSkillSelectionKey(skill.key)]);
+        }
         await db.update(pluginComponentLinks).set({ status: "ready", updatedAt: new Date() })
           .where(eq(pluginComponentLinks.id, link.id));
       }
@@ -1705,8 +1725,9 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     const skillIds = plugin.components.filter((component) => component.type === "skill" && component.targetId).map((component) => component.targetId!);
     const skillRows = skillIds.length === 0 ? [] : await db.select().from(organizationSkills)
       .where(and(eq(organizationSkills.orgId, orgId), inArray(organizationSkills.id, skillIds)));
-    await enabledSkills.removeSkillKeys(orgId, skillRows.map((skill) => skill.key));
-    for (const agentId of agentIds) await enabledSkills.addMissingKeys(orgId, agentId, skillRows.map((skill) => skill.key));
+    const skillKeys = skillRows.map((skill) => organizationSkillSelectionKey(skill.key));
+    await enabledSkills.removeSkillKeys(orgId, skillKeys);
+    for (const agentId of agentIds) await enabledSkills.addMissingKeys(orgId, agentId, skillKeys);
     for (const component of plugin.components.filter((entry) => entry.type === "skill")) {
       await db.update(pluginComponentLinks).set({
         metadata: { ...component.metadata, enabledAgentIds: agentIds },

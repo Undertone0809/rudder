@@ -1857,6 +1857,7 @@ export function organizationSkillService(
     files: Record<string, string>,
     options?: {
       onConflict?: PackageSkillConflictStrategy;
+      replaceSkillIds?: string[];
     },
   ): Promise<ImportPackageSkillResult[]> {
     await ensureSkillInventoryCurrent(orgId);
@@ -1885,6 +1886,7 @@ export function organizationSkillService(
     }
 
     const conflictStrategy = options?.onConflict ?? "replace";
+    const replaceSkillIds = new Set(options?.replaceSkillIds ?? []);
     const existingSkills = await listFull(orgId);
     const existingByKey = new Map(existingSkills.map((skill) => [skill.key, skill]));
     const existingBySlug = new Map(
@@ -1912,7 +1914,7 @@ export function organizationSkillService(
       const existingByIncomingSlug = existingBySlug.get(normalizedSlug) ?? null;
       const conflict = existingByIncomingKey ?? existingByIncomingSlug;
 
-      if (!conflict || conflictStrategy === "replace") {
+      if (!conflict || conflictStrategy === "replace" || replaceSkillIds.has(conflict.id)) {
         toPersist.push(importedSkill);
         prepared.push({
           skill: importedSkill,
@@ -2143,7 +2145,7 @@ export function organizationSkillService(
           : "Bundled Rudder skills are read-only.");
       }
 
-      await enabledSkills.removeSkillKeys(orgId, [skill.key]);
+      await enabledSkills.removeSkillKeys(orgId, [skill.key, buildOrganizationSelectionKey(skill.key)]);
       await db
         .delete(organizationSkills)
         .where(eq(organizationSkills.id, skillId));
@@ -2169,7 +2171,7 @@ export function organizationSkillService(
       ) {
         throw unprocessable("Skill is not managed by this Plugin installation.");
       }
-      await enabledSkills.removeSkillKeys(orgId, [skill.key]);
+      await enabledSkills.removeSkillKeys(orgId, [skill.key, buildOrganizationSelectionKey(skill.key)]);
       await db.delete(organizationSkills).where(eq(organizationSkills.id, skillId));
       await removeInstalledSkillDirectory(orgId, skill);
       return skill;

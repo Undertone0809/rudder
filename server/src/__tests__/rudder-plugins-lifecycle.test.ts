@@ -222,6 +222,8 @@ describe("Rudder Plugin V1 lifecycle", () => {
 
     await plugins.configureSkills(org.id, installed.id, [agent.id]);
     expect(await db.select().from(agentEnabledSkills)).toHaveLength(1);
+    await runtimeSkills.list(org.id);
+    expect((await db.select().from(agentEnabledSkills))[0]?.skillKey).toBe(`org:${skill!.key}`);
     await plugins.setEnabled(org.id, installed.id, false);
     expect(await db.select().from(agentEnabledSkills)).toHaveLength(0);
     expect((await db.select().from(organizationSkills).where(eq(organizationSkills.id, skill!.id)))[0]?.metadata)
