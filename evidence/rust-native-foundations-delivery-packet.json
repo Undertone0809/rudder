@@ -382,12 +382,12 @@
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
   },
     "integration": {
-    "current_local_head": "47a00d611ada806551090d43f30c172f2422c81c",
+    "current_local_head": "c7f8c69c4",
     "current_local_head_scope": "frozen runtime/test candidate with restore reconciliation fixes; source-aligned packaged artifact and scoped server/runtime probe are current; later packet/plan-only commits do not change this source candidate",
     "packet_metadata_commit": "9d4d17ba67e77fedc0ad73824fafac47e31d3db8",
     "packet_identity_note": "Packet v3 history is anchored to immutable wrapper 621039522; current runtime candidate 47a00d611 is source-aligned to the recorded 0.7.7 packaged artifact. Packaged Desktop hosted authentication remains a separate blocked gate.",
     "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
-    "review_branch_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+    "review_branch_sha": "c7f8c69c4",
     "review_branch_push": "PASS_origin_review_branch",
     "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
@@ -403,7 +403,8 @@
     "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "branch_refs": [
       "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
-      "47a00d611ada806551090d43f30c172f2422c81c"
+      "47a00d611ada806551090d43f30c172f2422c81c",
+      "c7f8c69c4"
     ],
     "branch_ref_scope": "current TypeScript restore-reconciliation runtime/test candidate plus source-aligned 0.7.7 macOS arm64 packaged artifact; Desktop hosted-authenticated acceptance remains blocked",
     "isolation_trigger": "independent_runtime",
