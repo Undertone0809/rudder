@@ -24,8 +24,8 @@
   "candidate": {
     "branch": "codex/fix-cos-mirror-auth",
     "source_ref": "refs/heads/codex/fix-cos-mirror-auth",
-    "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
-    "dirty_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+    "source_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b",
+    "dirty_fingerprint": "sha256:da4e89e4ea5bbe3cce0d1025faf0dd3dcfde3a85b4f034038fcb1e66a958aea0",
     "changed_paths": [
       ".github/workflows/release.yml",
       "doc/engineering/RELEASE-AUTOMATION-SETUP.md",
@@ -36,12 +36,12 @@
       "scripts/release-workflow-contract.test.mjs"
     ],
     "build": {
-      "id": "focused-vitest-release-cos-mirror-and-workflow-contract",
-      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507"
+      "id": "focused-vitest-release-cos-mirror-and-workflow-contract-v2",
+      "source_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b"
     },
     "runtime": {
       "id": "not-run-real-cos-runtime",
-      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507"
+      "source_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b"
     },
     "organization_data": {
       "organization_id": "not_applicable",
@@ -78,8 +78,8 @@
         "server-only start: no Desktop mirror resolution"
       ]
     },
-    "implementation_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
-    "implementation_tree_sha": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+    "implementation_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b",
+    "implementation_tree_sha": "sha256:da4e89e4ea5bbe3cce0d1025faf0dd3dcfde3a85b4f034038fcb1e66a958aea0",
     "packet_scope": "The candidate fingerprint covers all implementation and documentation changes except this evidence packet; source_sha is the implementation commit bound to the current packet.",
     "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "release_version": "0.7.7",
@@ -129,27 +129,27 @@
   "receipts": {
     "reviewer": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
-      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
-      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "candidate_fingerprint": "sha256:da4e89e4ea5bbe3cce0d1025faf0dd3dcfde3a85b4f034038fcb1e66a958aea0",
+      "source_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b",
+      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract-v2",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
       "packet_version": "6"
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
-      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
-      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "candidate_fingerprint": "sha256:da4e89e4ea5bbe3cce0d1025faf0dd3dcfde3a85b4f034038fcb1e66a958aea0",
+      "source_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b",
+      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract-v2",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
       "packet_version": "6"
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
-      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
-      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "candidate_fingerprint": "sha256:da4e89e4ea5bbe3cce0d1025faf0dd3dcfde3a85b4f034038fcb1e66a958aea0",
+      "source_sha": "adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b",
+      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract-v2",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
       "packet_version": "6"
@@ -182,7 +182,7 @@
     "public_install_github_fallback": "pending",
     "docs_and_next_version_handoff": "pending",
     "canary_cleanup": "pending",
-    "blocker": "CAM policy readback is now confirmed for name/cos:HeadObject, name/cos:GetObject, and name/cos:PutObject; a fresh candidate-bound COS mirror run and public readback verifier are still pending."
+    "blocker": "CAM policy readback is confirmed and the multipart retry fix is locally verified; a fresh candidate-bound COS mirror run and public readback verifier are still pending for implementation adbccb72d5ca2e6650d9bc1e839fa0df7a44fd9b."
   },
   "drift": {
     "active": false,
@@ -202,7 +202,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-cos-fix.vDfniH",
-    "patch_tree_sha": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+    "patch_tree_sha": "sha256:da4e89e4ea5bbe3cce0d1025faf0dd3dcfde3a85b4f034038fcb1e66a958aea0",
     "expected_old_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "cas": {
       "attempted": false,
