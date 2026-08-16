@@ -130,12 +130,14 @@ streaming Workspace backup remains `opt-in` rather than becoming default.
 
 Supporting backup workflow evidence is recorded in
 `evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
-workspace backup service, and download-route suites pass 53/53 tests. The
+workspace backup service, and download-route suites pass 57/57 tests. The
 tests cover archive tampering and unsafe names, limits, symlink policy,
 publication races and recovery-required paths, sparse recovery, native
-fallback diagnostics, and browse/download behavior. They are service/route
-supporting evidence only; packaged create/browse/download/restore and the full
-APFS/Windows interruption matrix remain open.
+fallback diagnostics, browse/download behavior, and live-moved restore receipt
+recovery before/after publish with committed-receipt cleanup, and fail closed
+when both the published and rollback trees mismatch their receipt. They are
+service/route supporting evidence only; packaged create/browse/download/restore
+and the full APFS/Windows interruption matrix remain open.
 
 The real local workflow receipt in
 `evidence/rust-native-backup-e2e-receipt.json` adds two passing Playwright
