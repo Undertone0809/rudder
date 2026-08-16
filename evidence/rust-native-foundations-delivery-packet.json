@@ -299,7 +299,7 @@
     },
     "verifier": {
       "verdict": "QUESTION",
-      "invalidated": true,
+      "invalidated": false,
       "candidate_commit": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
       "candidate_fingerprint": "review-candidate-clean-1d2f100cd33748e23357d776efabb9c8833f4b9f",
       "source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
@@ -307,7 +307,7 @@
       "runtime_id": "packaged-runtime-1d2f100cd-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "3",
-      "reason": "The prior verifier lease is invalidated by the 47a runtime reconciliation fix; rerun targeted verification against the refreshed source-aligned packaged artifact. Authenticated packaged Desktop remains blocked without an authorized hosted signed-in fixture."
+      "reason": "Fresh exact-HEAD verifier evidence confirms the portable-ZIP packaged server/runtime create/browse/read/download/restore path as PASS_SCOPED_SUPPORTING with ZIP SHA 191250882595d607aa2866202f535cf9c4922ab56461365c6b34690cf68be558. Overall verdict remains QUESTION because packaged Desktop authenticated acceptance is blocked by the absent authorized hosted signed-in fixture; local_trusted cannot substitute for that gate."
     },
     "final_review": {
       "verdict": "pending",
