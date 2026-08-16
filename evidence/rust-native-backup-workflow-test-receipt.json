@@ -30,13 +30,15 @@
     },
     {
       "file": "server/src/__tests__/workspace-backups.test.ts",
-      "passed": 31,
+      "passed": 34,
       "failed": 0,
       "coverage": [
         "workspace backup service create/browse/restore behavior",
         "sparse recovery and conflicting live-file preservation",
         "corrupt-candidate fallback and richer-backup selection",
-        "native fallback diagnostic persistence"
+        "native fallback diagnostic persistence",
+        "live_moved restore receipt recovery before and after publish",
+        "committed restore receipt cleanup"
       ]
     },
     {
@@ -47,10 +49,10 @@
     }
   ],
   "totals": {
-    "passed": 53,
+    "passed": 56,
     "failed": 0,
     "skipped": 0,
-    "vitest_wall_seconds": 7.74
+    "vitest_wall_seconds": 11.19
   },
   "scope": "supporting service/route evidence only; full packaged create/browse/download/restore acceptance and the plan's complete APFS/Windows interruption matrix remain open",
   "decision_effect": "strengthens streaming_workspace_backup opt-in evidence without changing its admission decision"

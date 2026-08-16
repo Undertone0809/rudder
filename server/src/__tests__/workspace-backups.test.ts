@@ -18,7 +18,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveDefaultBackupDir, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
-import { reconcileWorkspaceBackupArtifactStorage, workspaceBackupService } from "../services/workspace-backups.js";
+import {
+  reconcileWorkspaceBackupArtifactStorage,
+  reconcileWorkspaceRestoreReceipts,
+  workspaceBackupService,
+} from "../services/workspace-backups.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -414,6 +418,97 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     expect(result.restoredBackup.status).toBe("restored");
     expect(result.preRestoreBackup.status).toBe("succeeded");
     await expect(fs.readFile(path.join(workspaceRoot, "notes.md"), "utf8")).resolves.toBe("before\n");
+  });
+
+  it.each(["before_publish", "after_publish"] as const)(
+    "reconciles a live_moved restore receipt after interruption %s",
+    async (interruptionPoint) => {
+      const orgId = await createOrganization();
+      const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+      await fs.mkdir(workspaceRoot, { recursive: true });
+      await fs.writeFile(path.join(workspaceRoot, "notes.md"), "live\n", "utf8");
+      const liveBackup = await service.create({ orgId });
+
+      await fs.writeFile(path.join(workspaceRoot, "notes.md"), "restored\n", "utf8");
+      const restoredBackup = await service.create({ orgId });
+
+      const operationId = randomUUID();
+      const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
+      const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`);
+      const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+      const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
+      await fs.cp(workspaceRoot, stagingRoot, { recursive: true });
+      await fs.writeFile(path.join(workspaceRoot, "notes.md"), "live\n", "utf8");
+      await fs.rename(workspaceRoot, rollbackRoot);
+      if (interruptionPoint === "after_publish") await fs.rename(stagingRoot, workspaceRoot);
+
+      await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+      await fs.writeFile(receiptPath, `${JSON.stringify({
+        version: 1,
+        operationId,
+        orgId,
+        backupId: restoredBackup.id,
+        phase: "live_moved",
+        workspaceRoot,
+        stagingRoot,
+        rollbackRoot,
+        liveTreeSha256: liveBackup.treeSha256,
+        stagingTreeSha256: restoredBackup.treeSha256,
+        expectedTreeSha256: restoredBackup.treeSha256,
+        preRestoreBackupId: liveBackup.id,
+      })}\n`, { mode: 0o600 });
+
+      await expect(reconcileWorkspaceRestoreReceipts()).resolves.toEqual({
+        recovered: [operationId],
+        blocked: [],
+      });
+      await expect(fs.readFile(path.join(workspaceRoot, "notes.md"), "utf8"))
+        .resolves.toBe(interruptionPoint === "before_publish" ? "live\n" : "restored\n");
+      await expect(fs.stat(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(rollbackRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("reconciles committed restore receipts without deleting the published workspace", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "notes.md"), "restored\n", "utf8");
+    const backup = await service.create({ orgId });
+    const operationId = randomUUID();
+    const stagingRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`);
+    const rollbackRoot = path.resolve(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`);
+    const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
+    const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
+    await fs.mkdir(stagingRoot, { recursive: true });
+    await fs.writeFile(path.join(stagingRoot, "stale.tmp"), "stale\n", "utf8");
+    await fs.mkdir(rollbackRoot, { recursive: true });
+    await fs.writeFile(path.join(rollbackRoot, "old.txt"), "old\n", "utf8");
+    await fs.mkdir(receiptRoot, { recursive: true, mode: 0o700 });
+    await fs.writeFile(receiptPath, `${JSON.stringify({
+      version: 1,
+      operationId,
+      orgId,
+      backupId: backup.id,
+      phase: "committed",
+      workspaceRoot,
+      stagingRoot,
+      rollbackRoot,
+      liveTreeSha256: null,
+      stagingTreeSha256: backup.treeSha256,
+      expectedTreeSha256: backup.treeSha256,
+      preRestoreBackupId: backup.id,
+    })}\n`, { mode: 0o600 });
+
+    await expect(reconcileWorkspaceRestoreReceipts()).resolves.toEqual({
+      recovered: [operationId],
+      blocked: [],
+    });
+    await expect(fs.readFile(path.join(workspaceRoot, "notes.md"), "utf8")).resolves.toBe("restored\n");
+    await expect(fs.stat(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(rollbackRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("repairs a sparse workspace from the latest richer backup without duplicating the recovered version", async () => {
