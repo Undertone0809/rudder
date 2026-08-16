@@ -157,7 +157,7 @@ streaming Workspace backup remains `opt-in` rather than becoming default.
 
 Supporting backup workflow evidence is recorded in
 `evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
-workspace backup service, and download-route suites pass 65/65 tests. The
+workspace backup service, and download-route suites pass 67/67 tests. The
 tests cover archive tampering and unsafe names, limits, symlink policy,
 publication races and recovery-required paths, sparse recovery, native
 fallback diagnostics, browse/download behavior, and live-moved restore receipt
@@ -198,7 +198,7 @@ staged binary, Desktop/server manifest, and release tag; Rust packages must
 not use an independent `0.x` line. The `v0.7.7` release tag now resolves to
 `acfb8e4c7dbc963fdb32280b8055ee0604d021b6` on `origin/main`, and its
 native/runtime paths are unchanged from the `72005f4` artifact source. The
-recorded packaged artifact is source-aligned to the `47a00d611` runtime
+recorded packaged artifact is source-aligned to the exact `1d2f100cd` runtime
 candidate but was not rebuilt from the release tag itself, so release preflight
 and packaged acceptance remain separately scoped; release preflight validates
 source metadata and Cargo.lock;
