@@ -96,8 +96,12 @@ pilot is complete.
 Release-version alignment is a hard gate. The normal Rudder product version
 is the single version for every first-party Rust package, Cargo.lock entry,
 staged binary, Desktop/server manifest, and release tag; Rust packages must
-not use an independent `0.x` line. The current `0.7.7` candidate has no
-release tag yet. Release preflight validates source metadata and Cargo.lock;
+not use an independent `0.x` line. The `v0.7.7` release tag now resolves to
+`acfb8e4c7dbc963fdb32280b8055ee0604d021b6` on `origin/main`, and its
+native/runtime paths are unchanged from the `72005f4` artifact source. The
+recorded packaged artifact was not rebuilt from that tag, so release preflight
+and packaged acceptance remain separately scoped; release preflight validates
+source metadata and Cargo.lock;
 packaged verification additionally validates staged binary `--version`
 outputs. A candidate is not release-ready until both scopes pass and the
 release tag resolves to the same version.

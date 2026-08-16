@@ -64,7 +64,10 @@
         "cargo_lock": "native/Cargo.lock first-party workspace package entries",
         "javascript": ["desktop/package.json", "server/package.json", "cli/package.json", "packages/shared/package.json"],
         "staged_binaries": ["rudder-native --version", "rudder-process-host --version", "rudder-update-helper --version"],
-        "release_tag": "not_present_for_unreleased_0.7.7_candidate",
+        "release_tag": "v0.7.7@acfb8e4c7dbc963fdb32280b8055ee0604d021b6",
+        "release_tag_version": "0.7.7",
+        "release_tag_native_runtime_paths_match_720": true,
+        "release_tag_packaged_artifact_scope": "tag exists on origin/main, but recorded packaged artifact remains bound to 720 ancestor and was not rebuilt from the tag",
         "target_scope": "aarch64-apple-darwin packaged acceptance; other targets compiled_unverified"
       },
       "clean_source_verification": {
@@ -181,7 +184,7 @@
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Fresh black-box verification for exact 2b4a25c13 candidate returned QUESTION: hosted dogfood, live native_ab, index-preservation, release-tag, and independently rehashed packaged artifacts remain unavailable."
+      "reason": "Fresh black-box verification for exact 2b4a25c13 candidate returned QUESTION: hosted dogfood, live native_ab, index-preservation, and independently rehashed tag-built packaged artifacts remain unavailable; v0.7.7 tag presence was separately confirmed on origin/main."
     },
     "final_review": {
       "verdict": "pending",
@@ -276,7 +279,7 @@
     "timestamp": "2026-08-14T18:26:49+08:00",
     "proof": [
       "main currently points at d30138587, a docs-only descendant of the native merge and the current delivery wrapper",
-      "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, index preservation, and a release tag are absent",
+      "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked; v0.7.7 exists at acfb8e4 on origin/main with native/runtime paths unchanged, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, index preservation, and an independently rehashed tag-built artifact are absent",
       "the 100-sample backup receipt is parity-positive but explicitly not_comparable",
       "shared worktree dirty/index state remains preserved"
     ]
