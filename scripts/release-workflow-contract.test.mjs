@@ -140,6 +140,10 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("actions/download-artifact@v8");
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
+    expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
+    expect(recovery).toContain("jq -r '.head_sha' <<< \"$run_json\"");
+    expect(recovery).toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$remote_tag_sha\"");
+    expect(recovery).toContain("success|cancelled");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
     expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
     expect(recovery).toContain("--phase checksum");

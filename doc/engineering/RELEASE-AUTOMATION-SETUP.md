@@ -450,7 +450,11 @@ commit as `source_ref`, the existing Release tag as `recovery_tag`, and the
 original Release `candidate_run_id`. This path downloads only the frozen
 Desktop artifacts from that run, does not republish npm, retag Git, or rebuild
 Desktop, and publishes the GitHub checksum marker only after COS succeeds.
-Do not use a branch or a newly generated artifact run for `source_ref`.
+The recovery job requires the current source to be an ancestor of `main`, and
+requires the candidate run's SHA to equal the existing tag's SHA; a run that
+was cancelled after publishing the candidate is acceptable when all artifacts
+remain available. Do not use a branch or a newly generated artifact run for
+`source_ref`.
 
 ### Optional CODEOWNERS routing does not trigger
 
