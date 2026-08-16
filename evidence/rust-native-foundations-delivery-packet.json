@@ -258,9 +258,10 @@
   "integration": {
     "current_local_head": "3c2a20dae6db032989d6cb7a56f2952d62098706",
     "packet_metadata_commit": "3c2a20dae6db032989d6cb7a56f2952d62098706",
-    "current_origin_main_head": "38edac07dcc08c394432fa9137b4828d95a2f930",
+    "current_origin_main_head": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
     "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
+    "packet_receipt_commit": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
     "current_head_origin_relationship": "remote_main_contains_native_foundations_evidence_merge; shared_local_main_remains_dirty_and_preserved",
     "historical_fields_below": true,
     "authorized": true,
