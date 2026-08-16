@@ -64,6 +64,7 @@ commit_refs:
   - fede632d7
   - 2a5b289f2
   - 1b8d36106
+  - 142c36592
 updated_at: 2026-08-16
 ---
 
@@ -135,6 +136,12 @@ publication races and recovery-required paths, sparse recovery, native
 fallback diagnostics, and browse/download behavior. They are service/route
 supporting evidence only; packaged create/browse/download/restore and the full
 APFS/Windows interruption matrix remain open.
+
+The real local workflow receipt in
+`evidence/rust-native-backup-e2e-receipt.json` adds two passing Playwright
+scenarios for create/browse/download/restore/delete and failed-artifact
+handling on an isolated embedded-PostgreSQL instance. This is supporting dev
+workflow evidence only; it does not upgrade the packaged acceptance gate.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
