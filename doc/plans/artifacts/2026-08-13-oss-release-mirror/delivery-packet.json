@@ -1,8 +1,11 @@
 {
   "schema_version": "1.0",
   "delivery_id": "oss-release-mirror-0.7.7",
-  "status": "acceptance_pending",
-  "owner": "current-codex-thread",
+  "status": "blocked",
+  "owner": {
+    "root_id": "oss-release-mirror-0.7.7",
+    "agent_id": "codex-fix-cos-mirror-auth"
+  },
   "intent": {
     "raw_request": "发版 0.7.7，并且 0.7.7 把 codex/oss-release-mirror merge 进来，验证拥有镜像下载的能力，完成所有需要配置的内容。",
     "corrections": [
@@ -19,11 +22,66 @@
     "authorization": "release stable 0.7.7, merge codex/oss-release-mirror into main, complete Tencent configuration, push the reviewed source, and verify public COS-backed installation"
   },
   "candidate": {
-    "branch": "codex/release-0.7.7-cos",
-    "implementation_sha": "19e5199d1",
-    "implementation_tree_sha": "283eba0244e3f491f384f2db57ad20864a79a21d",
-    "packet_scope": "The packet is evidence metadata; implementation_tree_sha excludes this packet file.",
-    "base_sha": "a33d1771bcd409d22e8c810b2a2aa0a2d3f4cd5a",
+    "branch": "codex/fix-cos-mirror-auth",
+    "source_ref": "refs/heads/codex/fix-cos-mirror-auth",
+    "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
+    "dirty_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+    "changed_paths": [
+      ".github/workflows/release.yml",
+      "doc/engineering/RELEASE-AUTOMATION-SETUP.md",
+      "doc/plans/2026-08-13-oss-release-mirror.md",
+      "doc/plans/artifacts/2026-08-13-oss-release-mirror/delivery-packet.json",
+      "scripts/mirror-desktop-release-to-cos.mjs",
+      "scripts/release-cos-mirror.test.mjs",
+      "scripts/release-workflow-contract.test.mjs"
+    ],
+    "build": {
+      "id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507"
+    },
+    "runtime": {
+      "id": "not-run-real-cos-runtime",
+      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507"
+    },
+    "organization_data": {
+      "organization_id": "not_applicable",
+      "data_id": "not_applicable"
+    },
+    "workload_fixture": "release-cos-mirror-regression-and-workflow-contract",
+    "budget_lease": {
+      "id": "current-task",
+      "fingerprint": "cos-headobject-auth-fix",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "6",
+      "fingerprint": "cos-headobject-auth-fix-v6",
+      "criteria": [
+        "Stable v0.7.7 and every future canary/stable Desktop release use the mandatory COS mirror gate before GitHub SHASUMS256.txt is published.",
+        "GitHub binaries are uploaded first; mirror jobs in desktop-release-mirror obtain temporary Tencent STS credentials through OIDC; COS verifies every allowlisted asset; checksum marker is last.",
+        "npm publish jobs may use GitHub OIDC only for npm provenance; only mirror jobs use Tencent OIDC variables and STS.",
+        "COS signed HEAD existence checks work with the actual STS role through the distinct COS HeadObject permission.",
+        "COS uploads forbid overwrite; identical retries succeed and byte conflicts fail closed.",
+        "CLI supports auto, cn, and global sources; COS timeout, 404, interruption, corruption, or SHA mismatch falls back to GitHub.",
+        "GitHub SHASUMS256.txt is always the checksum trust root.",
+        "All eight v0.7.7 objects are anonymously readable at releases/v0.7.7, match GitHub bytes and SHA-256, while anonymous list/write remain 403.",
+        "A fresh isolated rudder start --download-source cn install succeeds through COS and a broken mirror endpoint succeeds through GitHub fallback.",
+        "The final source passes required checks and the public release surfaces converge on v0.7.7."
+      ],
+      "state_inventory": [
+        "auto: bounded COS/GitHub probe and fastest healthy route",
+        "cn: COS first, GitHub fallback",
+        "global: GitHub first, COS fallback",
+        "COS unavailable, stalled, interrupted, 404, corrupt, or mismatched: remove partial bytes and retry GitHub",
+        "GitHub checksum missing or corrupt: fail closed",
+        "stable and canary: same mandatory mirror gate",
+        "server-only start: no Desktop mirror resolution"
+      ]
+    },
+    "implementation_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
+    "implementation_tree_sha": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+    "packet_scope": "The candidate fingerprint covers all implementation and documentation changes except this evidence packet; source_sha is the implementation commit bound to the current packet.",
+    "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "release_version": "0.7.7",
     "release_tag": "v0.7.7",
     "source_lock": "The release workflow must use the final reviewed full commit SHA, not a branch or tag."
@@ -54,6 +112,7 @@
       "storage": "single-AZ standard",
       "acl": "private",
       "encryption": "SSE-COS",
+      "role_policy_actions": ["HeadObject", "GetObject", "PutObject"],
       "versioning": false,
       "access_logging": false,
       "lifecycle_deletion": false,
@@ -67,36 +126,52 @@
       "deletion_or_gate_bypass": false
     }
   },
-  "acceptance_packet": {
-    "version": "5",
-    "criteria": [
-      "Stable v0.7.7 and every future canary/stable Desktop release use the mandatory COS mirror gate before GitHub SHASUMS256.txt is published.",
-      "GitHub binaries are uploaded first; mirror jobs in desktop-release-mirror obtain temporary Tencent STS credentials through OIDC; COS verifies every allowlisted asset; checksum marker is last.",
-      "npm publish jobs may use GitHub OIDC only for npm provenance; only mirror jobs use Tencent OIDC variables and STS.",
-      "COS signed HEAD existence checks work with the actual STS role through the COS GetObject permission.",
-      "COS uploads forbid overwrite; identical retries succeed and byte conflicts fail closed.",
-      "CLI supports auto, cn, and global sources; COS timeout, 404, interruption, corruption, or SHA mismatch falls back to GitHub.",
-      "GitHub SHASUMS256.txt is always the checksum trust root.",
-      "All eight v0.7.7 objects are anonymously readable at releases/v0.7.7, match GitHub bytes and SHA-256, while anonymous list/write remain 403.",
-      "A fresh isolated rudder start --download-source cn install succeeds through COS and a broken mirror endpoint succeeds through GitHub fallback.",
-      "The final source passes required checks and the public release surfaces converge on v0.7.7."
-    ],
-    "state_inventory": [
-      "auto: bounded COS/GitHub probe and fastest healthy route",
-      "cn: COS first, GitHub fallback",
-      "global: GitHub first, COS fallback",
-      "COS unavailable, stalled, interrupted, 404, corrupt, or mismatched: remove partial bytes and retry GitHub",
-      "GitHub checksum missing or corrupt: fail closed",
-      "stable and canary: same mandatory mirror gate",
-      "server-only start: no Desktop mirror resolution"
-    ]
-  },
   "receipts": {
-    "stage_reviewer": {"verdict": "pending", "candidate_sha": "19e5199d1"},
-    "full_tests": {"verdict": "pending"},
-    "build": {"verdict": "pending"},
-    "desktop_verify": {"verdict": "pending"},
-    "verifier": {"verdict": "pending"},
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
+      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "runtime_id": "not-run-real-cos-runtime",
+      "data_id": "not_applicable",
+      "packet_version": "6"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
+      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "runtime_id": "not-run-real-cos-runtime",
+      "data_id": "not_applicable",
+      "packet_version": "6"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+      "source_sha": "9c86ed21a186bb3b0efd941031e764dc508d5507",
+      "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
+      "runtime_id": "not-run-real-cos-runtime",
+      "data_id": "not_applicable",
+      "packet_version": "6"
+    },
+    "full_tests": {
+      "verdict": "BASELINE_BLOCKED",
+      "command": "pnpm test:run",
+      "observed": "Blocked in packages/db migration tests by timeout and a PostgreSQL null.write exception; the COS candidate does not modify database code."
+    },
+    "build": {
+      "verdict": "PASS",
+      "command": "pnpm build",
+      "observed": "Serial workspace build passed, including Desktop packaging preparation."
+    },
+    "lint": {
+      "verdict": "BASELINE_BLOCKED",
+      "changed_command": "pnpm lint:changed",
+      "changed_observed": "PASS",
+      "full_command": "pnpm lint",
+      "full_observed": "Blocked by import organization in 13 pre-existing unmodified files; no unrelated files changed."
+    },
+    "desktop_verify": {"verdict": "not_run_external_cos_pending"},
     "final_reviewer": {"verdict": "pending"}
   },
   "release_evidence": {
@@ -106,11 +181,56 @@
     "public_install_cn": "pending",
     "public_install_github_fallback": "pending",
     "docs_and_next_version_handoff": "pending",
-    "canary_cleanup": "pending"
+    "canary_cleanup": "pending",
+    "blocker": "CAM policy readback is now confirmed for name/cos:HeadObject, name/cos:GetObject, and name/cos:PutObject; a fresh candidate-bound COS mirror run and public readback verifier are still pending."
+  },
+  "drift": {
+    "active": false,
+    "events": [],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+    "branch_refs": [
+      "refs/heads/codex/fix-cos-mirror-auth",
+      "refs/remotes/origin/main"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/tmp/rudder-cos-fix.vDfniH",
+    "patch_tree_sha": "sha256:caafeefb4369dadf69b4a0bc27c366517e9d91337e70188c39c5c0be9f8b80f8",
+    "expected_old_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
   },
   "preservation": {
+    "checked": false,
     "shared_checkout": "untouched",
-    "isolated_worktree": "/tmp/rudder-release-077.b8TS8c",
-    "unrelated_dirty_work": "preserved"
+    "isolated_worktree": "/tmp/rudder-cos-fix.vDfniH",
+    "unrelated_dirty_paths": ["shared checkout existing dirty work"],
+    "index_fingerprint_before": "not-captured",
+    "index_fingerprint_after": "not-captured",
+    "worktree_fingerprint_before": "not-captured",
+    "worktree_fingerprint_after": "not-captured",
+    "unrelated_paths_preserved": true,
+    "index_preserved": false,
+    "unrelated_dirty_work": "preserved",
+    "evidence": ["shared checkout was not modified by this candidate"]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
   }
 }

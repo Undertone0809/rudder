@@ -63,6 +63,7 @@ immutable source SHA
   -> mirror job downloads the same frozen artifacts
   -> mirror job authenticates with GitHub OIDC and Tencent STS
   -> mirror script verifies local checksums
+  -> mirror script compares GitHub asset SHA-256 metadata when available
   -> upload versioned objects without overwrite
   -> fetch COS objects and verify size/hash/readability
   -> GitHub Release receives SHASUMS256.txt as the completion marker
@@ -104,11 +105,14 @@ variable exists for staging, recovery, and black-box verification.
 
 ## Security And Cost Controls
 
-- CAM role scope is limited to `PutObject` and `GetObject` under the release
-  prefix for one bucket.
+- CAM role scope is limited to `HeadObject`, `PutObject`, and `GetObject` under
+  the release prefix for one bucket. COS authorizes `HEAD Object` with the
+  distinct `name/cos:HeadObject` action.
 - Bucket listing, deletion, and overwrite are not granted to CI.
 - Object names and content types are allowlisted by the mirror script.
 - The workflow verifies every object after upload and never logs credentials.
+- GitHub Release asset digests avoid a second full download before COS upload;
+  responses without a digest retain the byte-level download fallback.
 - Tencent Cloud billing alerts fire at 50%, 80%, and 100% of a monthly RMB 20 budget.
 - GitHub remains the fallback so disabling the mirror is a configuration
   change, not a release rollback.

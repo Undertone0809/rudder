@@ -122,6 +122,11 @@ GitHub OIDC and Tencent STS credentials, copies the same frozen Actions artifact
 to COS without overwrite, and verifies authenticated and anonymous reads. Only
 then does it upload GitHub `SHASUMS256.txt` as the completion marker. A COS copy
 of the checksum supports network probing but never becomes the CLI trust root.
+Before that transfer, the mirror compares each local binary with the GitHub
+Release asset's API-provided SHA-256 digest when available. Older API responses
+fall back to downloading the asset for the same byte-level check, so a slow
+GitHub asset network cannot make the normal path spend the entire mirror timeout
+re-downloading binaries.
 
 Temporary fallback:
 
@@ -186,13 +191,14 @@ oidc:aud = sts.cloud.tencent.com
 oidc:sub = repo:Undertone0809/rudder:environment:desktop-release-mirror
 ```
 
-Attach a resource policy granting only `name/cos:GetObject` and
-`name/cos:PutObject` on
+Attach a resource policy granting only `name/cos:HeadObject`,
+`name/cos:GetObject`, and `name/cos:PutObject` on
 `qcs::cos:ap-shanghai:uid/<APPID>:rudder-releases-cn-<APPID>/releases/*`.
 Do not grant bucket listing, deletion, ACL mutation, or overwrite management.
-The mirror's signed `HEAD` existence check is covered by COS's `GetObject`
-permission; verify that operation with the real STS session before accepting a
-new environment or role configuration.
+COS maps the signed `HEAD Object` existence check to the distinct
+`name/cos:HeadObject` action; `name/cos:GetObject` alone returns `403` even
+when the object is absent. Verify both the `HEAD` check and a real object read
+with the STS session before accepting a new environment or role configuration.
 
 The `publish-canary` and `publish-stable` jobs also request GitHub's
 `id-token: write` permission solely for npm provenance used by
@@ -425,14 +431,30 @@ Check:
 1. `mirror-canary` or `mirror-stable` uses Environment `desktop-release-mirror`
 2. the job has `id-token: write` and all four Environment variables
 3. Tencent OIDC `aud` and `sub` conditions exactly match the documented values
-4. the CAM role can only get/put this bucket's `releases/*` objects
+4. the CAM role can head/get/put this bucket's `releases/*` objects, including
+   the distinct `name/cos:HeadObject` action required by the signed existence check
 5. an existing object is byte-identical; conflicting immutable objects require
    investigation and must never be overwritten
 
+The mirror jobs allow 120 minutes for the upload and authenticated/anonymous
+readback of all seven large binaries. A run that reaches the timeout before its
+first `verified` line is usually spending time on a legacy GitHub asset download;
+check that the Release API returns `sha256:` asset digests before extending the
+timeout again.
+
 Re-run the failed mirror job after fixing credentials or network state. The
 GitHub checksum marker remains absent until COS succeeds. For partial stable
-recovery, use the original Release `candidate_run_id`; do not rebuild or
-republish immutable npm versions.
+recovery after the mirror code or credentials changed, dispatch the same
+`release.yml` workflow with `mirror_recovery=true`, the current reviewed main
+commit as `source_ref`, the existing Release tag as `recovery_tag`, and the
+original Release `candidate_run_id`. This path downloads only the frozen
+Desktop artifacts from that run, does not republish npm, retag Git, or rebuild
+Desktop, and publishes the GitHub checksum marker only after COS succeeds.
+The recovery job requires the current source to be an ancestor of `main`, and
+requires the candidate run's SHA to equal the existing tag's SHA; a run that
+was cancelled after publishing the candidate is acceptable when all artifacts
+remain available. Do not use a branch or a newly generated artifact run for
+`source_ref`.
 
 ### Optional CODEOWNERS routing does not trigger
 

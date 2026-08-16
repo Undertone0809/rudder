@@ -204,6 +204,52 @@ describe("Tencent COS Desktop release mirror", () => {
     ).toHaveLength(1);
   });
 
+  it("uses GitHub asset digests without re-downloading large release binaries", async () => {
+    const assetDir = await releaseFixture("desktop-binary");
+    const binary = Buffer.from("desktop-binary");
+    const objects = new Map();
+    let githubAssetDownloads = 0;
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.hostname === "api.github.test") {
+        return jsonResponse({
+          assets: [githubAsset("Rudder-test.zip", binary, { digest: `sha256:${sha256(binary)}` })],
+          draft: false,
+        });
+      }
+      if (url.hostname === "github-assets.test") {
+        githubAssetDownloads += 1;
+        return new Response(binary);
+      }
+      if (url.searchParams.has("prefix")) return new Response("denied", { status: 403 });
+      const headers = new Headers(init.headers);
+      const key = decodeURIComponent(url.pathname.slice(1));
+      if (init.method === "PUT" && !headers.get("authorization")) return new Response("denied", { status: 403 });
+      if (init.method === "HEAD") return new Response(null, { status: objects.has(key) ? 200 : 404 });
+      if (init.method === "PUT") {
+        objects.set(key, await streamBytes(init.body));
+        return new Response(null, { status: 200 });
+      }
+      return objects.has(key) ? new Response(objects.get(key)) : new Response(null, { status: 404 });
+    };
+
+    await expect(mirrorDesktopReleaseToCos({
+      assetDir,
+      bucket,
+      credentials,
+      endpoint,
+      fetchImpl,
+      githubApiBase: "https://api.github.test",
+      githubToken: "github-token",
+      log: () => {},
+      now: () => 1_700_000_000_000,
+      region,
+      repo: "Undertone0809/rudder",
+      tag: "v0.7.5",
+    })).resolves.toEqual({ assets: 2, prefix: "releases/v0.7.5" });
+    expect(githubAssetDownloads).toBe(0);
+  });
+
   it("accepts a byte-identical existing GitHub checksum marker for an immutable retry", async () => {
     const assetDir = await releaseFixture("desktop-binary");
     const binary = Buffer.from("desktop-binary");
@@ -315,6 +361,18 @@ describe("Tencent COS Desktop release mirror", () => {
     expect(putCount).toBe(0);
   });
 
+  it("explains that COS HEAD checks require the distinct HeadObject action", async () => {
+    const file = await fileFixture("missing permission");
+    const mirror = createMirror(async (_input, init = {}) => {
+      if (init.method === "HEAD") return new Response(null, { status: 403 });
+      throw new Error("unexpected request after denied HEAD");
+    });
+
+    await expect(mirror.mirrorFile("releases/v0.7.5/Rudder-test.zip", file)).rejects.toThrow(
+      "name/cos:HeadObject CAM action",
+    );
+  });
+
   it("fails when an immutable COS key contains conflicting bytes", async () => {
     const file = await fileFixture("expected bytes");
     const mirror = createMirror(async (_input, init = {}) => {
@@ -394,8 +452,13 @@ async function makeTempDir() {
   return dir;
 }
 
-function githubAsset(name, bytes) {
-  return { name, size: bytes.length, url: `https://github-assets.test/${encodeURIComponent(name)}` };
+function githubAsset(name, bytes, { digest } = {}) {
+  return {
+    ...(digest ? { digest } : {}),
+    name,
+    size: bytes.length,
+    url: `https://github-assets.test/${encodeURIComponent(name)}`,
+  };
 }
 
 function jsonResponse(value, init = {}) {
