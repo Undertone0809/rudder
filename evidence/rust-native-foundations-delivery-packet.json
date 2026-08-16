@@ -109,10 +109,12 @@
     "native_ab_normal_receipt": "rudder-evals/.artifacts/native-ab/imported/2026-08-16T07-32-19-417Z",
     "native_ab_normal_receipt_manifest_sha256": "e5abbe97ff137d9eb47071509aea49b29dde64f9f5eef5aafee0ff39fa45390e",
     "native_ab_normal_summary_sha256": "d8a0935e710ebe317560910f5e574f4e3217139149bda5f78d76f71ae1810b18",
+    "native_ab_normal_raw_sha256": "721beb263a90971483c7ff44a294e641b28ec0ca7ab02b5f18f509f65ce9930a",
     "native_ab_normal_status": "PASS_native_ab_pass_correctness_pass_comparable_six_formal_observations_productPass_false",
     "native_ab_flood_receipt": "rudder-evals/.artifacts/native-ab/imported/2026-08-16T07-33-09-779Z",
     "native_ab_flood_receipt_manifest_sha256": "42288367a421de0db51963c0dd87f79ffe412b7f2f13c1c38164e75fd7de2bc5",
     "native_ab_flood_summary_sha256": "289cba4a98af18308a6d9a3d80e26dc49e7fb41b2b3e5c4810283df8b802063f",
+    "native_ab_flood_raw_sha256": "7c94a27d5d3a4d4b0baeccbc771e7ff1710858041cde745f7795edba7e61608d",
     "native_ab_flood_status": "PASS_native_ab_pass_correctness_pass_comparable_six_formal_observations_productPass_false",
     "post_receipt_fix": {
       "source_commits": ["7df802c81", "1e9002df5"],

@@ -74,7 +74,13 @@ fail-closed `not_runnable` Packet V2 when producer, binary, identity, or
 import prerequisites are absent. The normal and flood workloads both produced
 six comparable formal observations and imported as `native_ab_pass`; the
 protocol still sets `productPass: false`, so this is comparative evidence and
-not a product promotion by itself.
+not a product promotion by itself. The normal workload p95 was Node -> Rust:
+ready `235.7 -> 228.1 ms`, Stop admission `22.6 -> 50.9 ms`, terminal cleanup
+`126.2 -> 170.6 ms`, and peak tree RSS `208.4 -> 164.6 MiB`. The flood
+workload was ready `238.2 -> 225.6 ms`, Stop admission `12.7 -> 12.0 ms`,
+terminal cleanup `75.5 -> 78.6 ms`, and peak tree RSS `224.8 -> 175.2 MiB`.
+The normal lifecycle-tail regressions and the missing seven-day dogfood gate
+keep Local App at `opt-in` rather than `accepted_default`.
 
 ## Executive Decision
 
