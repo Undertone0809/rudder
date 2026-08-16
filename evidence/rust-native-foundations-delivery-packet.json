@@ -351,6 +351,9 @@
     "current_local_head_scope": "immutable evidence wrapper; subsequent descendants are packet/plan metadata-only and do not change native/runtime paths",
     "packet_metadata_commit": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
     "packet_identity_note": "Packet v3 is anchored to immutable wrapper 621039522; any later checkout descendants are metadata-only. Verify the native/runtime candidate through wrapper_ref and the absence of native/runtime paths in the descendant diff.",
+    "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
+    "review_branch_sha": "54baac0e2ff4646aa2b8d6568ce029e10419505b",
+    "review_branch_push": "PASS_origin_review_branch",
     "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
     "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
@@ -364,8 +367,9 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "branch_refs": [
-      "62103952266da6a1db0b3f7284a7d5f5ce66e4c5"
+      "54baac0e2ff4646aa2b8d6568ce029e10419505b"
     ],
+    "branch_ref_scope": "review branch tip; native/runtime candidate and packet wrapper remain scoped by wrapper_ref and artifact_source_sha",
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-main-merge",
     "patch_tree_sha": "6496f6f616c7a7d2802ee23afbfaf0b101d91c2b",
