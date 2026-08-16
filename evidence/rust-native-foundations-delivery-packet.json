@@ -187,25 +187,25 @@
   "receipts": {
     "reviewer": {
       "verdict": "needs_more_evidence",
-      "invalidated": true,
+      "invalidated": false,
       "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Superseded: the wrapper advanced to db7cf955b and the dirty candidate fingerprint was refreshed; fresh stage review is required."
+      "reason": "Fresh stage review for evidence wrapper db7cf955b and native source 72005f4 returned needs_more_evidence: hosted authenticated packaged Local App dogfood remains unavailable; normal/flood native_ab are bounded comparative evidence only."
     },
     "verifier": {
       "verdict": "QUESTION",
-      "invalidated": true,
+      "invalidated": false,
       "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Superseded: the wrapper advanced to db7cf955b and the dirty candidate fingerprint was refreshed; fresh black-box verification is required."
+      "reason": "Fresh black-box verification for evidence wrapper db7cf955b returned QUESTION: native binaries/lifecycle, packaged account gate, dev Local App, and normal/flood native_ab receipts pass; hosted authenticated packaged Local App and 100-cycle/7-date dogfood remain unavailable."
     },
     "final_review": {
       "verdict": "pending",
@@ -258,8 +258,9 @@
   "integration": {
     "current_local_head": "3c2a20dae6db032989d6cb7a56f2952d62098706",
     "packet_metadata_commit": "3c2a20dae6db032989d6cb7a56f2952d62098706",
-    "current_origin_main_head": "a845e1772b4db71f283f402867c76df5b1edbe6c",
+    "current_origin_main_head": "38edac07dcc08c394432fa9137b4828d95a2f930",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
+    "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
     "current_head_origin_relationship": "remote_main_contains_native_foundations_evidence_merge; shared_local_main_remains_dirty_and_preserved",
     "historical_fields_below": true,
     "authorized": true,
