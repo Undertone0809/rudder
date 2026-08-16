@@ -193,4 +193,3 @@ the same source, preview, installation, and update behavior.
   unchanged candidate.
 - Commit and push both repositories. Create the catalog as a public GitHub
   repository. Stop Rudder at Review Ready; do not publish a Rudder release.
-

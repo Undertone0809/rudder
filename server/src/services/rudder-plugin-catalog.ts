@@ -544,7 +544,7 @@ function normalizedSemver(value: string): string {
   return parseSemver(value) ? value.replace(/^v/, "") : `0.0.0-${value.replace(/[^0-9A-Za-z-]+/g, "-").slice(0, 32) || "snapshot"}`;
 }
 
-function synthesizeSkillsPlugin(
+export function synthesizeSkillsPlugin(
   descriptor: SourceDescriptor,
   resolution: RudderPluginSourceResolution,
   tree: GitTreeEntry[],
@@ -555,14 +555,13 @@ function synthesizeSkillsPlugin(
     .map((skillPath) => sourcePrefix ? skillPath.slice(sourcePrefix.length) : skillPath);
   if (discovered.length === 0) throw unprocessable("No compatible Skills were discovered in this source");
   const roots = discovered.map((skillPath) => path.posix.dirname(skillPath));
-  const selected = files.filter((file) => roots.some((root) => (
-    root === "." ? file.path === "SKILL.md" : file.path === `${root}/SKILL.md` || file.path.startsWith(`${root}/`)
-  )));
+  const matchesRoot = (filePath: string, root: string) => root === "."
+    ? filePath !== ".codex-plugin/plugin.json" && !filePath.startsWith(".codex-plugin/")
+    : filePath === `${root}/SKILL.md` || filePath.startsWith(`${root}/`);
+  const selected = files.filter((file) => roots.some((root) => matchesRoot(file.path, root)));
   const rootsByTarget = new Map<string, string>();
   const mapped = selected.map((file) => {
-    const root = roots.find((candidate) => candidate === "."
-      ? file.path === "SKILL.md"
-      : file.path === `${candidate}/SKILL.md` || file.path.startsWith(`${candidate}/`))!;
+    const root = roots.find((candidate) => matchesRoot(file.path, candidate))!;
     const skillDir = root === "." ? descriptor.slug : path.posix.basename(root);
     let targetRoot = `skills/${skillDir}`;
     const existing = rootsByTarget.get(targetRoot);

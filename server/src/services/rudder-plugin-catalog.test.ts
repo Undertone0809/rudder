@@ -6,6 +6,7 @@ import {
   fetchPluginCatalogResource,
   parseSkillsAddSource,
   resolveGitHubVersion,
+  synthesizeSkillsPlugin,
 } from "./rudder-plugin-catalog.js";
 
 function json(value: unknown, status = 200) {
@@ -168,6 +169,60 @@ describe("discoverSkillsAddPaths", () => {
     expect(result).toHaveLength(49);
     expect(result[0]).toBe("skills/skill-00/SKILL.md");
     expect(result.at(-1)).toBe("skills/skill-48/SKILL.md");
+  });
+});
+
+describe("synthesizeSkillsPlugin", () => {
+  it("preserves root Skill supporting files in the generated package", () => {
+    const descriptor = {
+      schemaVersion: 1,
+      slug: "root-skill",
+      kind: "skills_add",
+      displayName: "Root Skill",
+      developer: "Example",
+      category: "Developer Tools",
+      shortDescription: "A root Skill.",
+      longDescription: "A root Skill with supporting files.",
+      capabilities: ["Read"],
+      websiteUrl: "https://github.com/example/root-skill",
+      privacyPolicyUrl: "https://example.com/privacy",
+      termsOfServiceUrl: "https://example.com/terms",
+      license: { spdx: "MIT", sourceUrl: "https://example.com/license", note: "Fixture" },
+      source: {
+        repositoryUrl: "https://github.com/example/root-skill",
+        skillsAddSource: "example/root-skill",
+        subdirectory: "",
+        versionStrategy: "latest_stable_release_or_head",
+      },
+      assets: { icon: "assets/icon.png", iconDark: "assets/icon-dark.png", origin: "rudder_generic" },
+    } as Parameters<typeof synthesizeSkillsPlugin>[0];
+    const resolution = {
+      repositoryUrl: "https://github.com/example/root-skill",
+      source: "example/root-skill",
+      subdirectory: "",
+      strategy: "default_branch_head",
+      version: "abcdef123456",
+      commitSha: "a".repeat(40),
+    } as Parameters<typeof synthesizeSkillsPlugin>[1];
+    const tree = [
+      { path: "SKILL.md", type: "blob", sha: "a".repeat(40), size: 40 },
+      { path: "references/guide.md", type: "blob", sha: "b".repeat(40), size: 40 },
+      { path: "README.md", type: "blob", sha: "c".repeat(40), size: 40 },
+    ] as Parameters<typeof synthesizeSkillsPlugin>[2];
+    const files = [
+      { path: "SKILL.md", content: "---\nname: Root Skill\ndescription: Root instructions.\n---\n", encoding: "utf8" as const },
+      { path: "references/guide.md", content: "Supporting guidance.", encoding: "utf8" as const },
+      { path: "README.md", content: "Package context.", encoding: "utf8" as const },
+    ] as Parameters<typeof synthesizeSkillsPlugin>[3];
+
+    const packageFiles = synthesizeSkillsPlugin(descriptor, resolution, tree, files);
+
+    expect(packageFiles.map((file) => file.path)).toEqual([
+      ".codex-plugin/plugin.json",
+      "skills/root-skill/SKILL.md",
+      "skills/root-skill/references/guide.md",
+      "skills/root-skill/README.md",
+    ]);
   });
 });
 
