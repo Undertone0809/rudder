@@ -52,6 +52,7 @@ commit_refs:
   - 59b2ef7b5
   - cf46981e2
   - 72020b2da
+  - db7cf955b
 updated_at: 2026-08-16
 ---
 
@@ -86,7 +87,7 @@ keep Local App at `opt-in` rather than `accepted_default`.
 
 ### Continuation status (2026-08-15)
 
-The current main wrapper is `2b4a25c13a07798c6f4f4bb097aadc6dd2c6630b`.
+The current metadata wrapper is `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
 Its native/runtime paths are unchanged from the clean packaged source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the wrapper contains only
 metadata and unrelated descendant changes. The exact macOS arm64 packaged

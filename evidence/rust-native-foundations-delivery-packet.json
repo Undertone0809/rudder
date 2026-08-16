@@ -26,21 +26,24 @@
     "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "metadata_only_wrapper": {
-      "wrapper_ref": "72020b2da7494b026d0d5f123e567f6a8b1e046c",
+      "wrapper_ref": "db7cf955b06a6a86f64352cc93cf5366b298e27b",
       "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "The current main wrapper is a descendant of the clean packaged source; the diff contains only metadata and unrelated UI/test changes outside native/runtime paths."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "72020b2da7494b026d0d5f123e567f6a8b1e046c",
+      "wrapper_ref": "db7cf955b06a6a86f64352cc93cf5366b298e27b",
       "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
       "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the current main wrapper records the delivery identity."
     },
-    "dirty_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+    "dirty_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
+    "dirty_path_count": 146,
+    "dirty_status_sha256": "be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
     "changed_paths": [
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
       "evidence/rust-native-foundations-delivery-packet.json",
+      "evidence/rust-native-backup-comparator-22f-summary.json",
       "desktop/src/desktop-update-helper.test.ts",
       "tests/e2e/settings-sidebar.spec.ts",
       "ui/src/pages/OrganizationSettings.tsx"
@@ -185,29 +188,29 @@
     "reviewer": {
       "verdict": "needs_more_evidence",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+      "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Superseded: the wrapper advanced to 72020b2da and live normal/flood native_ab receipts were added; fresh stage review is required."
+      "reason": "Superseded: the wrapper advanced to db7cf955b and the dirty candidate fingerprint was refreshed; fresh stage review is required."
     },
     "verifier": {
       "verdict": "QUESTION",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+      "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "2",
-      "reason": "Superseded: the wrapper advanced to 72020b2da and live normal/flood native_ab receipts were added; fresh black-box verification is required."
+      "reason": "Superseded: the wrapper advanced to db7cf955b and the dirty candidate fingerprint was refreshed; fresh black-box verification is required."
     },
     "final_review": {
       "verdict": "pending",
       "invalidated": true,
-      "candidate_fingerprint": "shared-main-status-860a474228f1086c37b8c201ec76c773ea7492af8881b877831c403944400356",
+      "candidate_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
       "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
       "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
@@ -253,6 +256,10 @@
     "invalidated_receipts": ["final_review"]
   },
   "integration": {
+    "current_local_head": "db7cf955b06a6a86f64352cc93cf5366b298e27b",
+    "current_origin_main_head": "acfb8e4c7dbc963fdb32280b8055ee0604d021b6",
+    "current_head_origin_relationship": "local_main_ahead_10_behind_19; shared_worktree_dirty_146_paths",
+    "historical_fields_below": true,
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
