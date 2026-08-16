@@ -24,8 +24,8 @@
   "candidate": {
     "branch": "codex/fix-cos-mirror-auth",
     "source_ref": "refs/heads/codex/fix-cos-mirror-auth",
-    "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
-    "dirty_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
+    "source_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93",
+    "dirty_fingerprint": "sha256:0f96ae0d3b1aabe66068a204ad007c8b97e65b0cfec5be4f4906cccfdef9e3d2",
     "changed_paths": [
       ".github/workflows/release.yml",
       "doc/engineering/RELEASE-AUTOMATION-SETUP.md",
@@ -37,11 +37,11 @@
     ],
     "build": {
       "id": "focused-vitest-release-cos-mirror-and-workflow-contract",
-      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9"
+      "source_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93"
     },
     "runtime": {
       "id": "not-run-real-cos-runtime",
-      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9"
+      "source_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93"
     },
     "organization_data": {
       "organization_id": "not_applicable",
@@ -78,9 +78,9 @@
         "server-only start: no Desktop mirror resolution"
       ]
     },
-    "implementation_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
-    "implementation_tree_sha": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
-    "packet_scope": "The dirty fingerprint covers all implementation and documentation changes except this evidence packet; source_sha is the clean base commit.",
+    "implementation_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93",
+    "implementation_tree_sha": "sha256:0f96ae0d3b1aabe66068a204ad007c8b97e65b0cfec5be4f4906cccfdef9e3d2",
+    "packet_scope": "The candidate fingerprint covers all implementation and documentation changes except this evidence packet; source_sha is the implementation commit bound to the current packet.",
     "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "release_version": "0.7.7",
     "release_tag": "v0.7.7",
@@ -129,8 +129,8 @@
   "receipts": {
     "reviewer": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
-      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
+      "candidate_fingerprint": "sha256:0f96ae0d3b1aabe66068a204ad007c8b97e65b0cfec5be4f4906cccfdef9e3d2",
+      "source_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
@@ -138,8 +138,8 @@
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
-      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
+      "candidate_fingerprint": "sha256:0f96ae0d3b1aabe66068a204ad007c8b97e65b0cfec5be4f4906cccfdef9e3d2",
+      "source_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
@@ -147,8 +147,8 @@
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
-      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
+      "candidate_fingerprint": "sha256:0f96ae0d3b1aabe66068a204ad007c8b97e65b0cfec5be4f4906cccfdef9e3d2",
+      "source_sha": "f721b3d4233f7f529bf1701f42f6c1a3bcb64c93",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
@@ -202,7 +202,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-cos-fix.vDfniH",
-    "patch_tree_sha": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
+    "patch_tree_sha": "sha256:0f96ae0d3b1aabe66068a204ad007c8b97e65b0cfec5be4f4906cccfdef9e3d2",
     "expected_old_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "cas": {
       "attempted": false,
