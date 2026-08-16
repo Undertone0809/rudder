@@ -258,8 +258,9 @@
   "integration": {
     "current_local_head": "3c2a20dae6db032989d6cb7a56f2952d62098706",
     "packet_metadata_commit": "3c2a20dae6db032989d6cb7a56f2952d62098706",
-    "current_origin_main_head": "acfb8e4c7dbc963fdb32280b8055ee0604d021b6",
-    "current_head_origin_relationship": "local_main_ahead_11_behind_19; shared_worktree_dirty_146_paths",
+    "current_origin_main_head": "a845e1772b4db71f283f402867c76df5b1edbe6c",
+    "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
+    "current_head_origin_relationship": "remote_main_contains_native_foundations_evidence_merge; shared_local_main_remains_dirty_and_preserved",
     "historical_fields_below": true,
     "authorized": true,
     "mode": "main_first",
