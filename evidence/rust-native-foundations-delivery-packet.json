@@ -405,7 +405,7 @@
     "timestamp": "2026-08-16T00:00:00+08:00",
     "proof": [
       "origin/main currently points at fe2bfc00c8272dcedd39eb29729fa08ad88e941e; the prior 0d19a8979 integration identity is retained only under historical_integration and does not claim the current blocked detached packet is delivered",
-      "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked; v0.7.7 exists at acfb8e4 on origin/main with native/runtime paths unchanged, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, index preservation, and an independently rehashed tag-built artifact are absent",
+      "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked; v0.7.7 exists at acfb8e4 on origin/main with native/runtime paths unchanged. Bounded native_ab comparative receipts are present; the final blocking live_eval/portfolio campaign, hosted authenticated Local App fixture, seven-day/100-cycle dogfood, index preservation, and an independently rehashed tag-built artifact remain absent",
       "the fair 100-sample backup receipt is comparable for correctness and latency, records a higher native RSS p95, and therefore preserves the opt-in decision",
       "shared worktree dirty/index state remains preserved"
     ]
