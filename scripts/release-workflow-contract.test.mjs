@@ -8,6 +8,7 @@ const workflowDir = join(repoRoot, ".github/workflows");
 const testWorkflow = readFileSync(join(workflowDir, "ci.yml"), "utf8");
 const releaseWorkflow = readFileSync(join(workflowDir, "release.yml"), "utf8");
 const docsWorkflow = readFileSync(join(workflowDir, "docs-production.yml"), "utf8");
+const releaseSetup = readFileSync(join(repoRoot, "doc/engineering/RELEASE-AUTOMATION-SETUP.md"), "utf8");
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
 
 function workflowJob(source, jobName) {
@@ -112,7 +113,7 @@ describe("unified delivery workflows", () => {
       expect(publish).not.toContain("--phase checksum");
       expect(mirror).toContain("environment: desktop-release-mirror");
       expect(mirror).toContain("id-token: write");
-      expect(mirror).toContain("timeout-minutes: 60");
+      expect(mirror).toContain("timeout-minutes: 120");
       expect(mirror).toContain("pattern: desktop-*");
       expect(mirror).toContain("mirror-desktop-release-to-cos.mjs");
       expect(mirror).toContain("TENCENT_CLOUD_OIDC_PROVIDER_ID");
@@ -128,6 +129,14 @@ describe("unified delivery workflows", () => {
     expect(stableMirror).toContain("- publish-stable");
     expect(stableMirror).toContain("run-id: ${{ needs.preflight.outputs.candidate_run_id }}");
     expect(stableMirror).toContain("github-token: ${{ github.token }}");
+  });
+
+  it("documents the distinct COS HeadObject permission used by the signed existence check", () => {
+    expect(releaseSetup).toContain("name/cos:HeadObject");
+    expect(releaseSetup).toContain("name/cos:GetObject");
+    expect(releaseSetup).toContain("name/cos:PutObject");
+    expect(releaseSetup).toContain("name/cos:GetObject` alone returns `403`");
+    expect(releaseSetup).not.toContain("HEAD` existence check is covered by COS's `GetObject`");
   });
 
   it("prevents canary and stable install gates from bypassing the COS mirror", () => {

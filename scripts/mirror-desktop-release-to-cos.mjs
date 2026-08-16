@@ -197,7 +197,13 @@ export class CosReleaseMirror {
       }
       assertMatchingBytes(key, file, stored);
     } else {
-      throw await httpError(`inspect COS object ${key}`, existing);
+      const error = await httpError(`inspect COS object ${key}`, existing);
+      if (existing.status === 403) {
+        error.message +=
+          " Tencent COS requires the distinct name/cos:HeadObject CAM action for this signed HEAD check; " +
+          "name/cos:GetObject alone is insufficient.";
+      }
+      throw error;
     }
 
     const publicObject = await this.readObject(key, false);
@@ -381,6 +387,9 @@ async function readPublishedGitHubRelease({ fetchImpl, githubApiBase, githubToke
     if (!asset?.name || !asset?.url || !Number.isSafeInteger(asset.size) || asset.size < 0) {
       throw new Error(`GitHub Release ${repo}@${tag} returned invalid asset metadata.`);
     }
+    if (asset.digest !== undefined && asset.digest !== null && !/^sha256:[0-9a-f]{64}$/i.test(asset.digest)) {
+      throw new Error(`GitHub Release ${repo}@${tag} returned an invalid SHA-256 digest for ${asset.name}.`);
+    }
     validateAssetName(asset.name);
     if (names.has(asset.name)) throw new Error(`Duplicate GitHub Release asset name: ${asset.name}`);
     names.add(asset.name);
@@ -453,6 +462,15 @@ async function verifyGithubReleaseAssets({
       throw new Error(
         `GitHub Release asset conflict for ${asset.name}: expected ${local.size} bytes, received ${asset.size}.`,
       );
+    }
+    if (asset.digest) {
+      const remoteSha256 = asset.digest.slice("sha256:".length).toLowerCase();
+      if (remoteSha256 !== local.sha256) {
+        throw new Error(
+          `GitHub Release asset conflict for ${asset.name}: expected ${local.sha256}, received ${remoteSha256}.`,
+        );
+      }
+      continue;
     }
     const response = await fetchImpl(asset.url, {
       headers: githubHeaders(githubToken, "application/octet-stream"),
