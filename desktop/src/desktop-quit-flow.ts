@@ -19,6 +19,8 @@ type DesktopUpdateBlocker = {
 type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlocker[] };
 type DesktopApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
+const QUIT_RUN_CANCEL_TIMEOUT_MS = 5_000;
+
 export function createDesktopQuitFlow(context: {
   appName: string;
   getMainWindow: () => BrowserWindow | null;
@@ -211,11 +213,28 @@ export function createDesktopQuitFlow(context: {
     const runIds = summary.organizations.flatMap((organization) => organization.runs.map((run) => run.id));
     if (runIds.length === 0) return;
 
-    const results = await Promise.allSettled(runIds.map((runId) =>
-      desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
+    const results = await Promise.allSettled(runIds.map(async (runId) => {
+      const controller = new AbortController();
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const request = desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
         method: "POST",
         body: JSON.stringify({}),
-      })));
+        signal: controller.signal,
+      });
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`Timed out after ${QUIT_RUN_CANCEL_TIMEOUT_MS}ms while stopping active run ${runId}.`));
+        }, QUIT_RUN_CANCEL_TIMEOUT_MS);
+        timeout.unref?.();
+      });
+
+      try {
+        await Promise.race([request, deadline]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }));
 
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length > 0) {
@@ -324,7 +343,44 @@ export function createDesktopQuitFlow(context: {
             return;
           }
           if (decision === "stop-runs") {
-            await cancelActiveRunsBeforeQuit(activeRuns);
+            const runtimeModeAtDecision = context.getServerHandle()?.runtime.mode;
+            try {
+              await cancelActiveRunsBeforeQuit(activeRuns);
+            } catch (error) {
+              if (runtimeModeAtDecision === "attached") {
+                const window = context.getMainWindow() && !context.getMainWindow()!.isDestroyed()
+                  ? context.getMainWindow()!
+                  : undefined;
+                const message = error instanceof Error ? error.message : String(error);
+                const options: Electron.MessageBoxOptions = {
+                  type: "error",
+                  title: context.appName,
+                  buttons: ["OK"],
+                  defaultId: 0,
+                  noLink: true,
+                  message: "Rudder could not stop the active runs.",
+                  detail: `${message}\n\nThe attached runtime is still running, so Rudder stayed open.`,
+                };
+                await (window
+                  ? dialog.showMessageBox(window, options)
+                  : dialog.showMessageBox(options)).catch((dialogError) => {
+                    console.warn("[rudder-desktop] failed to show quit failure dialog", dialogError);
+                });
+                return;
+              }
+
+              if (runtimeModeAtDecision === "owned") {
+                // The owned runtime is stopped immediately below. Its shutdown
+                // is the final kill boundary even when the cancellation request
+                // is delayed by a stubborn Agent process.
+                console.warn("[rudder-desktop] active run cancellation did not complete before owned runtime quit", error);
+              } else {
+                // The runtime disappeared while the quit request was in
+                // flight. There is no attached runtime left for Desktop to
+                // protect, so finish the local quit flow.
+                console.warn("[rudder-desktop] runtime ownership disappeared during quit; continuing", error);
+              }
+            }
           }
         }
 

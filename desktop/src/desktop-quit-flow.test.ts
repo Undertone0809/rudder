@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const appExitMock = vi.hoisted(() => vi.fn());
 const appQuitMock = vi.hoisted(() => vi.fn());
+const dialogShowMessageBoxMock = vi.hoisted(() => vi.fn());
 
 vi.mock("electron", () => ({
   app: {
@@ -12,7 +13,7 @@ vi.mock("electron", () => ({
     quit: appQuitMock,
   },
   dialog: {
-    showMessageBox: vi.fn(),
+    showMessageBox: dialogShowMessageBoxMock,
   },
 }));
 
@@ -34,6 +35,173 @@ describe("desktop quit flow update handoff", () => {
   beforeEach(() => {
     appExitMock.mockReset();
     appQuitMock.mockReset();
+    dialogShowMessageBoxMock.mockReset();
+  });
+
+  it("stops active owned runs before quitting after confirmation", async () => {
+    dialogShowMessageBoxMock.mockResolvedValue({ response: 0 });
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      if (pathName === "/api/orgs/org-1/live-runs") {
+        return jsonResponse([{ id: "run-1", status: "running", agentName: "Codex" }]);
+      }
+      if (pathName === "/api/heartbeat-runs/run-1/cancel" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => null,
+      setMainWindow: vi.fn(),
+      getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+      fetchApi: fetchMock,
+      stopLocalRudder,
+      destroyResidentTray: vi.fn(),
+    });
+
+    await quitFlow.beginQuitFlow();
+
+    expect(dialogShowMessageBoxMock).toHaveBeenCalledWith(expect.objectContaining({
+      buttons: ["Stop Runs and Quit", "Cancel"],
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:3100/api/heartbeat-runs/run-1/cancel", expect.objectContaining({
+      method: "POST",
+    }));
+    expect(stopLocalRudder).toHaveBeenCalledOnce();
+    expect(appQuitMock).toHaveBeenCalledOnce();
+  });
+
+  it("continues quitting an owned runtime when active-run cancellation fails", async () => {
+    dialogShowMessageBoxMock.mockResolvedValue({ response: 0 });
+    const stopLocalRudder = vi.fn(async () => undefined);
+    let serverHandle: { apiUrl: string; runtime: { mode: "owned" | "attached" } } | null = {
+      apiUrl: "http://127.0.0.1:3100",
+      runtime: { mode: "owned" },
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      if (pathName === "/api/orgs/org-1/live-runs") {
+        return jsonResponse([{ id: "run-1", status: "running", agentName: "Codex" }]);
+      }
+      if (pathName === "/api/heartbeat-runs/run-1/cancel" && init?.method === "POST") {
+        serverHandle = null;
+        return new Response("cancel failed", { status: 500, statusText: "Internal Server Error" });
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => serverHandle,
+        fetchApi: fetchMock,
+        stopLocalRudder,
+        destroyResidentTray: vi.fn(),
+      });
+
+      await quitFlow.beginQuitFlow();
+
+      expect(stopLocalRudder).toHaveBeenCalledOnce();
+      expect(appQuitMock).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        "[rudder-desktop] active run cancellation did not complete before owned runtime quit",
+        expect.any(Error),
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("does not wait indefinitely for an active-run cancellation request", async () => {
+    vi.useFakeTimers();
+    dialogShowMessageBoxMock.mockResolvedValue({ response: 0 });
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") return Promise.resolve(jsonResponse([{ id: "org-1", name: "Z Studio" }]));
+      if (pathName === "/api/orgs/org-1/live-runs") {
+        return Promise.resolve(jsonResponse([{ id: "run-1", status: "running", agentName: "Codex" }]));
+      }
+      if (pathName === "/api/heartbeat-runs/run-1/cancel" && init?.method === "POST") {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        });
+      }
+      return Promise.resolve(new Response("not found", { status: 404, statusText: "Not Found" }));
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: fetchMock,
+        stopLocalRudder,
+        destroyResidentTray: vi.fn(),
+      });
+
+      const quitting = quitFlow.beginQuitFlow();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:3100/api/heartbeat-runs/run-1/cancel",
+        expect.objectContaining({ method: "POST" }),
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      await quitting;
+
+      expect(stopLocalRudder).toHaveBeenCalledOnce();
+      expect(appQuitMock).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(
+        "[rudder-desktop] active run cancellation did not complete before owned runtime quit",
+        expect.any(Error),
+      );
+    } finally {
+      warning.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps an attached runtime open and reports cancellation failure", async () => {
+    dialogShowMessageBoxMock
+      .mockResolvedValueOnce({ response: 1 })
+      .mockResolvedValueOnce({ response: 0 });
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      if (pathName === "/api/orgs/org-1/live-runs") {
+        return jsonResponse([{ id: "run-1", status: "running", agentName: "Codex" }]);
+      }
+      if (pathName === "/api/heartbeat-runs/run-1/cancel" && init?.method === "POST") {
+        return new Response("cancel failed", { status: 500, statusText: "Internal Server Error" });
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const quitFlow = createDesktopQuitFlow({
+      appName: "Rudder",
+      getMainWindow: () => null,
+      setMainWindow: vi.fn(),
+      getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "attached" } }),
+      fetchApi: fetchMock,
+      stopLocalRudder,
+      destroyResidentTray: vi.fn(),
+    });
+
+    await quitFlow.beginQuitFlow();
+
+    expect(stopLocalRudder).not.toHaveBeenCalled();
+    expect(appQuitMock).not.toHaveBeenCalled();
+    expect(dialogShowMessageBoxMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      type: "error",
+      message: "Rudder could not stop the active runs.",
+    }));
   });
 
   it("waits for Browser import cancellation cleanup before stopping the runtime", async () => {
