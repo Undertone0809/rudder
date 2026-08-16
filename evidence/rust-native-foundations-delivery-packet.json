@@ -28,10 +28,10 @@
       {
         "capability": "rust_native_foundation",
         "decision": "accepted_default",
-        "scope": "macOS arm64 packaged tuple only (aarch64-apple-darwin, Rudder 0.7.7)",
+        "scope": "macOS arm64 packaged tuple only (aarch64-apple-darwin, Rudder 0.7.7), limited to versioned foundation packaging, binary resolution, and packaged account-gate checks",
         "fallback": "TypeScript/Node implementation remains available outside this tuple",
         "evidence": ["candidate.build.clean_source_verification", "candidate.runtime.account_gate_smoke", "candidate.runtime.packaged_account_gate_recheck"],
-        "limitations": ["Other targets are compiled_unverified; no portfolio-wide default claim"]
+        "limitations": ["Other targets are compiled_unverified; packaged inherited-pipe/EOF/failure-before-side-effect fixtures are not admitted by this packet, so no broader protocol-default claim is made"]
       },
       {
         "capability": "local_app_process_host",
@@ -88,16 +88,16 @@
     "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
     "metadata_only_wrapper": {
-      "wrapper_ref": "eea5191cf88089d0b680cd43232e1b13567664b5",
+      "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
       "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
-      "reason": "The current main wrapper is a descendant of the clean packaged source; the diff contains only metadata and unrelated UI/test changes outside native/runtime paths."
+      "reason": "The immutable evidence wrapper is a descendant of the clean packaged source; every descendant after this wrapper changes only packet/plan metadata and evidence scope, with no native/runtime path changes."
     },
     "delivery_wrapper": {
-      "wrapper_ref": "eea5191cf88089d0b680cd43232e1b13567664b5",
+      "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
       "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "runtime_paths_changed": false,
-      "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the current main wrapper records the delivery identity."
+      "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the immutable 621 wrapper and its metadata-only descendants record delivery identity."
     },
     "dirty_fingerprint": "shared-main-status-be7a3997fd43f1a9bd7bc7afbc282abf994a8891274b0793e669fcc0b1356cef",
     "dirty_path_count": 146,
@@ -341,27 +341,30 @@
     "invalidated_receipts": ["reviewer", "verifier", "final_review"]
   },
     "integration": {
-    "current_local_head": "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b",
-    "packet_metadata_commit": "eea5191cf88089d0b680cd43232e1b13567664b5",
-    "current_origin_main_head": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
+    "current_local_head": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+    "current_local_head_scope": "immutable evidence wrapper; subsequent descendants are packet/plan metadata-only and do not change native/runtime paths",
+    "packet_metadata_commit": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+    "packet_identity_note": "Packet v3 is anchored to immutable wrapper 621039522; any later checkout descendants are metadata-only. Verify the native/runtime candidate through wrapper_ref and the absence of native/runtime paths in the descendant diff.",
+    "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
     "delivery_metadata_commit": "38edac07dcc08c394432fa9137b4828d95a2f930",
     "packet_receipt_commit": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
-    "current_head_origin_relationship": "remote_main_contains_native_foundations_evidence_merge; shared_local_main_remains_dirty_and_preserved",
+    "current_head_origin_relationship": "remote_main_advanced_to_fe2bfc00c8272dcedd39eb29729fa08ad88e941e_after_historical_native_foundations_merge; detached evidence wrapper remains isolated and shared_local_main_remains_dirty_and_preserved",
     "historical_fields_below": true,
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
-    "base_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
+    "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "remote_ref": "refs/remotes/origin/main",
-    "observed_remote_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
+    "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "branch_refs": [
-      "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b"
+      "62103952266da6a1db0b3f7284a7d5f5ce66e4c5"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-main-merge",
     "patch_tree_sha": "6496f6f616c7a7d2802ee23afbfaf0b101d91c2b",
-    "expected_old_sha": "0d19a89792da459a32bba9f30ba7ce4d8887026f",
+    "expected_old_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+    "patch_tree_scope": "historical isolated integration patch tree; no current CAS attempt",
     "cas": {
       "attempted": false,
       "succeeded": false,
@@ -401,7 +404,7 @@
     "delivered_tree_sha": "3e6395a8ae04f4773b565f1e6593187e925e9f17",
     "timestamp": "2026-08-16T00:00:00+08:00",
     "proof": [
-      "origin/main currently points at 0d19a8979; this is a historical remote-main identity and does not claim the current blocked detached packet is delivered",
+      "origin/main currently points at fe2bfc00c8272dcedd39eb29729fa08ad88e941e; the prior 0d19a8979 integration identity is retained only under historical_integration and does not claim the current blocked detached packet is delivered",
       "current 0.7.7 packaged artifact is bound to 72005f4 and version-checked; v0.7.7 exists at acfb8e4 on origin/main with native/runtime paths unchanged, but hosted authenticated Local App fixture, seven-day/100-cycle dogfood, live rudder-evals native_ab, index preservation, and an independently rehashed tag-built artifact are absent",
       "the fair 100-sample backup receipt is comparable for correctness and latency, records a higher native RSS p95, and therefore preserves the opt-in decision",
       "shared worktree dirty/index state remains preserved"

@@ -89,10 +89,10 @@ keep Local App at `opt-in` rather than `accepted_default`.
 
 ## Executive Decision
 
-### Continuation status (2026-08-15)
+### Historical packaged baseline (2026-08-15)
 
-The current metadata wrapper is `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
-Its native/runtime paths are unchanged from the clean packaged source
+The packaged baseline metadata wrapper was `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
+Its native/runtime paths were unchanged from the clean packaged source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the wrapper contains only
 metadata and unrelated descendant changes. The exact macOS arm64 packaged
 candidate was rebuilt from that clean source. `desktop:dist`, server-package
