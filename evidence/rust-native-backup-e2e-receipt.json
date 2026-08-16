@@ -2,17 +2,17 @@
   "schema_version": "1",
   "receipt_type": "workspace_backup_real_workflow_e2e",
   "status": "PASS",
-  "candidate_commit": "142c3659281b7fcf5ad7f6485c71fb9d9297d9e4",
+  "candidate_commit": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
   "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
   "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
   "runtime": {
     "id": "dev-e2e-embedded-postgres-local-trusted",
     "base_url": "http://127.0.0.1:3499",
     "database": "isolated embedded PostgreSQL",
-    "instance_id": "playwright-native-backup-real-20260816b",
-    "home": "/private/tmp/rudder-native-main-reconcile-20260816/tests/e2e/.tmp/rudder-e2e-home-native-backup-real-20260816b"
+    "instance_id": "playwright-native-backup-real-20260816c",
+    "home": "/private/tmp/rudder-native-main-reconcile-20260816/tests/e2e/.tmp/rudder-e2e-home-native-backup-real-20260816c"
   },
-  "command": "RUDDER_E2E_RUN_ID=native-backup-real-20260816b pnpm test:e2e --project=chromium tests/e2e/workspace-backups.spec.ts",
+  "command": "RUDDER_E2E_RUN_ID=native-backup-real-20260816c pnpm test:e2e --project=chromium tests/e2e/workspace-backups.spec.ts",
   "tests": {
     "total": 2,
     "passed": 2,

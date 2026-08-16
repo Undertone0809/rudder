@@ -194,6 +194,8 @@
       "backup_workflow_test_receipt_sha256": "8a09287d88598ae023bdd515f654da9c19faad49142153030c1c941ba68d7b8f",
       "backup_workflow_test_status": "PASS_53_tests_0_failures_supporting_service_route_evidence",
       "backup_e2e_receipt": "evidence/rust-native-backup-e2e-receipt.json",
+      "backup_e2e_receipt_sha256": "c721bd6f5d6810ec7da15f405f21cebf850aa61afa7659115c11f27fd631a151",
+      "backup_e2e_candidate_commit": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
       "backup_e2e_status": "PASS_2_tests_0_failures_real_local_dev_workflow_supporting_evidence",
       "backup_packaged_server_runtime_receipt": "evidence/rust-native-backup-packaged-server-runtime-receipt.json",
       "backup_packaged_server_runtime_status": "PASS_SCOPED_SUPPORTING_CREATE_BROWSE_DOWNLOAD_RESTORE",
@@ -357,7 +359,7 @@
     "integration": {
     "current_local_head": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
     "current_local_head_scope": "frozen test-inclusive candidate; later packet-only commits do not change native/runtime or E2E test paths",
-    "packet_metadata_commit": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+    "packet_metadata_commit": "566cadafcc1725d31de633ea45aa8a8ee9307a98",
     "packet_identity_note": "Packet v3 is anchored to immutable wrapper 621039522; later checkout descendants may add packet/plan metadata, evidence scope, or test-only assertions but do not change native/runtime paths. Verify the native/runtime candidate through wrapper_ref and the absence of native/runtime paths in the descendant diff.",
     "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
     "review_branch_sha": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
