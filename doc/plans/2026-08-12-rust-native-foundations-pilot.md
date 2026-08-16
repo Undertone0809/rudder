@@ -53,6 +53,9 @@ commit_refs:
   - cf46981e2
   - 72020b2da
   - db7cf955b
+  - 39bcc70cf
+  - cb9213e3c
+  - 8581b5cb9
 updated_at: 2026-08-16
 ---
 
@@ -103,16 +106,18 @@ packaged app executable SHA-256 is
 The staged product binaries report `0.7.7`; their hashes and the benchmark
 sampler hash are recorded in the delivery packet.
 
-The current backup comparator receipt is
-`/private/tmp/rudder-native-backup-dd8-100sample-ext25.json` with receipt
-SHA-256 `0dbecaa2f17b6c0e886f130fec0233b6df703f5938430944e57aa020aca50c29`.
-It uses a deterministic 100 MiB/10,000-file fixture, 100 paired samples per
-arm, 200/200 positive external sampler boundaries at 25 ms, and passes
-manifest, entry, content, and recovery parity. It remains explicitly
-`not_comparable`: arm order is fixed, warmups are absent, and no bootstrap
-confidence interval is recorded. Node p95 elapsed/RSS are 15330.897 ms /
-382025728 bytes; native p95 elapsed/RSS are 8323.525 ms / 389611520 bytes.
-These are descriptive observations, not a promotion claim.
+The fair backup comparator receipt is
+`/private/tmp/rudder-native-backup-fair-8581.json` with receipt SHA-256
+`e4a608aae2ade1724cdfd39cd84a2b0f05b20ade886b27d3e684a53c03225e25`.
+It uses a deterministic 100 MiB/10,000-file fixture, three warmups per arm,
+100 paired measured blocks, randomized counterbalanced order (Node first 52,
+Rust first 48), 10,000 paired-p95 bootstrap iterations, and 200/200 positive
+external sampler boundaries at 25 ms. Manifest, entry, content, and recovery
+parity pass; archive-byte parity remains intentionally not compared. Node p95
+elapsed/RSS are 6253.068 ms / 379682816 bytes; native p95 elapsed/RSS are
+3434.893 ms / 386940928 bytes. Latency improvement is 45.07% with a bootstrap
+95% CI of 35.06% to 54.95%, while native process-tree RSS peak is higher, so
+streaming Workspace backup remains `opt-in` rather than becoming default.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate

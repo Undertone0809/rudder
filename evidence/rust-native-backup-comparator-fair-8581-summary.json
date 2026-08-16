@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "status": "comparable",
+  "source_sha": "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b",
+  "receipt": "/private/tmp/rudder-native-backup-fair-8581.json",
+  "receipt_sha256": "e4a608aae2ade1724cdfd39cd84a2b0f05b20ade886b27d3e684a53c03225e25",
+  "fixture": {
+    "file_count": 10000,
+    "byte_size": 104857600,
+    "tree_sha256": "dbee8eeff1622a22c6ef4226100e88719db3123fb8840f46d0013ab52e2c564e",
+    "content_sha256": "169bac558fb4a812104ac443025046999aec9ef85f4817f7bbc451eb59263865"
+  },
+  "campaign": {
+    "warmups_per_arm": 3,
+    "measured_samples_per_arm": 100,
+    "paired_blocks": 100,
+    "order_coverage": {
+      "node_first": 52,
+      "native_first": 48
+    },
+    "bootstrap_iterations": 10000,
+    "external_sampler_interval_ms": 25,
+    "positive_measured_boundaries": "200/200"
+  },
+  "parity": {
+    "manifest": true,
+    "entry": true,
+    "content": true,
+    "archive_bytes": "not_compared",
+    "recovery": true
+  },
+  "metrics": {
+    "node_elapsed_p95_ms": 6253.068,
+    "native_elapsed_p95_ms": 3434.893,
+    "elapsed_p95_improvement_percent": 45.068676687987406,
+    "elapsed_p95_improvement_ci95_percent": [35.06277084439039, 54.94801345274214],
+    "node_rss_peak_p95_bytes": 379682816,
+    "native_rss_peak_p95_bytes": 386940928,
+    "node_rss_delta_p95_bytes": 1966080,
+    "native_rss_delta_p95_bytes": 13271040,
+    "rss_delta_p95_ci95_bytes": [10338304, 12648448]
+  },
+  "binaries": {
+    "native": {
+      "name": "rudder-native",
+      "version": "0.7.7",
+      "target": "aarch64-apple-darwin",
+      "sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9"
+    },
+    "sampler": {
+      "name": "rudder-process-tree-sampler",
+      "version": "0.7.7",
+      "target": "aarch64-apple-darwin",
+      "sha256": "b2462aee4b7414242c076c4083f1289ab61223b172a0cda581e722e48ad9956c"
+    }
+  },
+  "decision": "opt-in",
+  "decision_reason": "Comparable correctness and latency evidence is positive, but native process-tree RSS peak and RSS delta p95 are higher than the optimized Node comparator; retain the Node fallback and do not promote by latency alone."
+}
