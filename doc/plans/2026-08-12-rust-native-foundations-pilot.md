@@ -65,6 +65,7 @@ commit_refs:
   - 2a5b289f2
   - 1b8d36106
   - 142c36592
+  - 47a00d611
 updated_at: 2026-08-16
 ---
 
@@ -80,6 +81,14 @@ The packaged Local App scenario then stopped at the expected
 `401 account_session_required` boundary because no hosted authenticated
 fixture is available; the dev Local App scenario completed its lifecycle and
 cleanup. These results do not count as hosted dogfood.
+
+The restore recovery implementation was then hardened in `47a00d611`:
+startup reconciliation receives the live database handle, validates rollback
+and committed workspace tree hashes before cleanup, preserves ambiguous
+receipt/root state, and marks a recovered published backup `restored`. The
+existing packaged server/runtime receipt remains scoped to the earlier 720
+artifact until a rebuild from this runtime candidate is completed; it is not
+used as current packaged acceptance for `47a00d611`.
 
 `rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
 strictly invokes the existing three-trial OSS producer and writes a complete
@@ -130,12 +139,16 @@ streaming Workspace backup remains `opt-in` rather than becoming default.
 
 Supporting backup workflow evidence is recorded in
 `evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
-workspace backup service, and download-route suites pass 57/57 tests. The
+workspace backup service, and download-route suites pass 65/65 tests. The
 tests cover archive tampering and unsafe names, limits, symlink policy,
 publication races and recovery-required paths, sparse recovery, native
 fallback diagnostics, browse/download behavior, and live-moved restore receipt
 recovery before/after publish with committed-receipt cleanup, and fail closed
-when both the published and rollback trees mismatch their receipt. They are
+when the rollback tree is tampered, the committed workspace is missing or
+mismatched, or both the published and rollback trees mismatch their receipt.
+They are
+also exercised through a child-process crash harness across the prepared,
+live-moved, publish, and committed receipt windows on macOS. They are
 service/route supporting evidence only; packaged create/browse/download/restore
 and the full APFS/Windows interruption matrix remain open.
 

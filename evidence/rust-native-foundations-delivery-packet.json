@@ -84,22 +84,22 @@
     ]
   },
   "candidate": {
-    "branch": "main",
-    "source_ref": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-    "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "branch": "codex/rust-native-foundations-evidence-20260816",
+    "source_ref": "47a00d611ada806551090d43f30c172f2422c81c",
+    "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
     "metadata_only_wrapper": {
       "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
-      "code_candidate_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "runtime_paths_changed": false,
-      "reason": "The immutable evidence wrapper is a descendant of the clean packaged source; every descendant after this wrapper changes only packet/plan metadata, evidence scope, or test-only assertions, with no native/runtime path changes."
+      "code_candidate_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+      "runtime_paths_changed": true,
+      "reason": "The packaged wrapper remains the historical 720 artifact source; the current candidate adds TypeScript restore reconciliation runtime changes and therefore requires a fresh packaged rebuild before packaged evidence can be current."
     },
     "delivery_wrapper": {
       "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
       "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "runtime_paths_changed": false,
-      "reason": "Packaged artifacts remain directly bound to the clean 720 merge source while the immutable 621 wrapper and its metadata/test-only descendants record delivery identity."
+      "runtime_paths_changed": true,
+      "reason": "The recorded packaged artifacts remain bound to 720 and are stale for the 47a restore-reconciliation runtime candidate; they are retained only as historical supporting evidence until rebuilt."
     },
-    "dirty_fingerprint": "review-candidate-clean-8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
+    "dirty_fingerprint": "review-candidate-clean-47a00d611ada806551090d43f30c172f2422c81c",
     "dirty_path_count": 0,
     "dirty_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "changed_paths": [
@@ -109,11 +109,13 @@
       "evidence/rust-native-backup-workflow-test-receipt.json",
       "evidence/rust-native-foundations-delivery-packet.json",
       "server/src/__tests__/workspace-backups.test.ts",
+      "server/src/index.ts",
+      "server/src/services/workspace-backups.ts",
       "tests/e2e/workspace-backups.spec.ts"
     ],
     "build": {
-      "id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
-      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "id": "stale-packaged-72005f4-for-47a00d611-0.7.7-macos-arm64",
+      "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
       "artifact_bound_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "portable_sha256": "43336d17fba1692d75d644b3c479894ac08bf193d077fe4dbffc0f6177695ada",
       "native_sha256": {
@@ -147,8 +149,8 @@
       }
     },
     "runtime": {
-      "id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
-      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+      "id": "stale-packaged-runtime-72005f4-for-47a00d611-macos-arm64-0.7.7",
+      "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
       "artifact_bound_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
       "packaged_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
       "packaged_version": "0.7.7",
@@ -159,6 +161,7 @@
       "zip_integrity": "PASS_unzip_test_72005f4",
       "packaged_account_gate_recheck": "PASS_0.7.7_72005f4_board_url_and_account_gate",
       "packaged_local_app_recheck": "blocked_account_session_required_401_without_hosted_fixture",
+      "packaged_source_alignment": "BLOCKED_artifact_bound_to_72005f4_current_runtime_candidate_47a00d611_requires_rebuild",
       "dev_local_app_recheck": "PASS_local_apps_full_lifecycle_and_cleanup",
       "local_app_dogfood": "blocked_missing_real_100_cycles_7_dates"
     },
@@ -166,7 +169,7 @@
       "organization_id": "isolated-smoke-org",
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
-    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator case with 100 descriptive paired samples and manifest/entry/content/recovery parity; real local workspace-backup Playwright workflow receipt (2/2); 57-test service/route workflow receipt including live_moved before/after-publish, committed cleanup, and fail-closed mismatch recovery; packaged server/runtime backup probe (create/browse/download/restore scoped pass); native_ab normal and flood producers (six rows per imported receipt, bounded comparative fixture campaign pass with productPass false)",
+    "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator case with 100 descriptive paired samples and manifest/entry/content/recovery parity; real local workspace-backup Playwright workflow receipt (2/2); 65-test service/route workflow receipt including child-process crash windows, rollback tamper blocking, committed workspace missing/mismatch blocking, and DB status reconciliation; historical packaged server/runtime backup probe (create/browse/download/restore scoped pass, stale for 47a runtime); native_ab normal and flood producers (six rows per imported receipt, bounded comparative fixture campaign pass with productPass false)",
     "native_ab_runner_repository": "/Users/zeeland/projects/rudder-hub/rudder-evals",
     "native_ab_runner_commit": "6ccf86a4b915390cee524dfb5f5968eee5cdb370",
     "native_ab_runner_cli": "PASS_run_native-ab_and_native_ab_alias_help",
@@ -192,14 +195,14 @@
       "backup_comparator_receipt_sha256": "e4a608aae2ade1724cdfd39cd84a2b0f05b20ade886b27d3e684a53c03225e25",
       "backup_comparator_summary": "evidence/rust-native-backup-comparator-fair-8581-summary.json",
       "backup_workflow_test_receipt": "evidence/rust-native-backup-workflow-test-receipt.json",
-      "backup_workflow_test_receipt_sha256": "53ec3e8f21da4e66f3ccda471288dd9f2264b47afe17d7523e322c752449fa39",
-      "backup_workflow_test_status": "PASS_57_tests_0_failures_supporting_service_route_evidence_including_restore_receipt_recovery",
+      "backup_workflow_test_receipt_sha256": "cc90bcd241d1af19fb672543a2ebb076f460df1bc281c90537e91fa398d31951",
+      "backup_workflow_test_status": "PASS_65_tests_0_failures_supporting_service_route_evidence_including_restore_receipt_recovery; packaged evidence stale for current runtime",
       "backup_e2e_receipt": "evidence/rust-native-backup-e2e-receipt.json",
       "backup_e2e_receipt_sha256": "c721bd6f5d6810ec7da15f405f21cebf850aa61afa7659115c11f27fd631a151",
       "backup_e2e_candidate_commit": "fe254c4c05ae2a1b95c4335a2ec94b16be9491f3",
       "backup_e2e_status": "PASS_2_tests_0_failures_real_local_dev_workflow_supporting_evidence",
       "backup_packaged_server_runtime_receipt": "evidence/rust-native-backup-packaged-server-runtime-receipt.json",
-      "backup_packaged_server_runtime_status": "PASS_SCOPED_SUPPORTING_CREATE_BROWSE_DOWNLOAD_RESTORE",
+      "backup_packaged_server_runtime_status": "PASS_HISTORICAL_SCOPED_SUPPORTING_CREATE_BROWSE_DOWNLOAD_RESTORE_72005f4_NOT_CURRENT_47a00d611",
       "backup_comparator_status": "comparable",
       "backup_comparator_sample_count": 100,
       "backup_comparator_warmups_per_arm": 3,
@@ -274,43 +277,43 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "accept",
-      "invalidated": false,
-      "candidate_commit": "8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
-      "candidate_fingerprint": "review-candidate-clean-8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
-      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
+      "verdict": "QUESTION",
+      "invalidated": true,
+      "candidate_commit": "47a00d611ada806551090d43f30c172f2422c81c",
+      "candidate_fingerprint": "review-candidate-clean-47a00d611ada806551090d43f30c172f2422c81c",
+      "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+      "build_id": "stale-packaged-72005f4-for-47a00d611-0.7.7-macos-arm64",
+      "runtime_id": "stale-packaged-runtime-72005f4-for-47a00d611-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "3",
-      "reason": "Fresh stage review accepts clean 8a58c7d5c: 57/57 backup tests cover positive live_moved recovery, committed cleanup, and fail-closed ambiguous-tree recovery with no remaining slice findings. Packaged Desktop/authenticated, cross-platform interruption, seven-day dogfood, and final live_eval gates remain explicitly open."
+      "reason": "The prior stage receipt is invalidated by the 47a runtime reconciliation fix and the stale 720 packaged artifact; rerun stage review against the rebuilt current candidate."
     },
     "verifier": {
       "verdict": "QUESTION",
-      "invalidated": false,
-      "candidate_commit": "8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
-      "candidate_fingerprint": "review-candidate-clean-8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
-      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
+      "invalidated": true,
+      "candidate_commit": "47a00d611ada806551090d43f30c172f2422c81c",
+      "candidate_fingerprint": "review-candidate-clean-47a00d611ada806551090d43f30c172f2422c81c",
+      "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+      "build_id": "stale-packaged-72005f4-for-47a00d611-0.7.7-macos-arm64",
+      "runtime_id": "stale-packaged-runtime-72005f4-for-47a00d611-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "3",
-      "reason": "Fresh targeted verifier binds clean 8a58c7d5c and records the 57/57 backup suite, including before/after-publish, committed cleanup, and ambiguous-tree blocking. Overall packaged account-gate and scoped packaged server/runtime backup probe are supporting passes, but authenticated packaged Desktop remains blocked at account_session_required without an authorized hosted signed-in fixture; no bypass was used. APFS/Windows interruption, 100 cycles across 7 UTC dates, and final live_eval portfolio evidence remain absent."
+      "reason": "The prior verifier lease is invalidated by the 47a runtime reconciliation fix and the stale 720 packaged artifact; rerun targeted verification after a current-source rebuild. Authenticated packaged Desktop remains blocked without an authorized hosted signed-in fixture."
     },
     "final_review": {
       "verdict": "pending",
       "invalidated": true,
-      "candidate_fingerprint": "review-candidate-clean-8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
-      "source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
-      "build_id": "packaged-rebuild-72005f4-0.7.7-macos-arm64",
-      "runtime_id": "packaged-runtime-72005f4-macos-arm64-0.7.7",
+      "candidate_fingerprint": "review-candidate-clean-47a00d611ada806551090d43f30c172f2422c81c",
+      "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+      "build_id": "stale-packaged-72005f4-for-47a00d611-0.7.7-macos-arm64",
+      "runtime_id": "stale-packaged-runtime-72005f4-for-47a00d611-macos-arm64-0.7.7",
       "data_id": "isolated-packaged-smoke-and-fixture-data",
       "packet_version": "3",
       "reason": "Final review is not started because the current verifier returned QUESTION; it requires verifier PASS on this exact candidate first."
     }
   },
   "drift": {
-    "active": false,
+    "active": true,
     "events": [
       {
         "type": "post_receipt_archive_entry_limit_fix",
@@ -359,17 +362,23 @@
         "before_source_sha": "a150d1a7d8cf68b9693099bba4e10577b9e364e2",
         "after_source_sha": "8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
         "reason": "Added a negative reconciliation regression proving that a published tree and rollback tree that both mismatch the receipt remain blocked with operation-owned recovery state preserved; refreshed the supporting workflow receipt to 57/57 tests."
+      },
+      {
+        "type": "restore_reconciliation_runtime_fix",
+        "before_source_sha": "8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
+        "after_source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+        "reason": "Added database status reconciliation, rollback and committed workspace tree validation, child-crash exit assertions, and three fail-closed regressions. Prior reviewer/verifier receipts and the packaged 720 runtime evidence are invalid for this runtime candidate until refreshed."
       }
     ],
-    "invalidated_receipts": ["final_review"]
+    "invalidated_receipts": ["reviewer", "verifier", "final_review", "backup_packaged_server_runtime_receipt"]
   },
     "integration": {
-    "current_local_head": "8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
-    "current_local_head_scope": "frozen test-inclusive candidate with restore mismatch regression; later packet/plan-only commits do not change native/runtime or E2E test paths",
+    "current_local_head": "47a00d611ada806551090d43f30c172f2422c81c",
+    "current_local_head_scope": "frozen runtime/test candidate with restore reconciliation fixes; packaged 720 artifact is stale and requires rebuild; later packet/plan-only commits do not change this source candidate",
     "packet_metadata_commit": "566cadafcc1725d31de633ea45aa8a8ee9307a98",
-    "packet_identity_note": "Packet v3 is anchored to immutable wrapper 621039522; later checkout descendants may add packet/plan metadata, evidence scope, or test-only assertions but do not change native/runtime paths. Verify the native/runtime candidate through wrapper_ref and the absence of native/runtime paths in the descendant diff.",
+    "packet_identity_note": "Packet v3 history is anchored to immutable wrapper 621039522; current runtime candidate 47a00d611 adds TypeScript restore reconciliation paths while recorded packaged artifacts remain bound to 72005f4. Rebuild and reverify before any packaged claim.",
     "review_branch": "refs/heads/codex/rust-native-foundations-evidence-20260816",
-    "review_branch_sha": "8a58c7d5c80a7e4cc4375420381929aac2e76e9d",
+    "review_branch_sha": "47a00d611ada806551090d43f30c172f2422c81c",
     "review_branch_push": "PASS_origin_review_branch",
     "current_origin_main_head": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "delivered_merge_commit": "a845e1772b4db71f283f402867c76df5b1edbe6c",
@@ -385,9 +394,9 @@
     "observed_remote_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "branch_refs": [
       "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
-      "8a58c7d5c80a7e4cc4375420381929aac2e76e9d"
+      "47a00d611ada806551090d43f30c172f2422c81c"
     ],
-    "branch_ref_scope": "immutable evidence wrapper code candidate plus test-only evidence assertion; native/runtime paths remain scoped by wrapper_ref and artifact_source_sha",
+    "branch_ref_scope": "current TypeScript restore-reconciliation runtime/test candidate plus historical 720 packaged artifact identity; native packaged claims remain blocked until source-aligned rebuild",
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/private/tmp/rudder-native-main-merge",
     "patch_tree_sha": "6496f6f616c7a7d2802ee23afbfaf0b101d91c2b",
