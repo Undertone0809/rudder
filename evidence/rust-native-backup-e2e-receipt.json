@@ -2,17 +2,17 @@
   "schema_version": "1",
   "receipt_type": "workspace_backup_real_workflow_e2e",
   "status": "PASS",
-  "candidate_commit": "47a00d611ada806551090d43f30c172f2422c81c",
-  "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+  "candidate_commit": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+  "source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
   "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
   "runtime": {
     "id": "dev-e2e-embedded-postgres-local-trusted",
     "base_url": "http://127.0.0.1:3959",
     "database": "isolated embedded PostgreSQL",
-    "instance_id": "playwright-native-restore-47a-current",
-    "home": "/private/tmp/rudder-e2e-home-native-restore-47a-current"
+    "instance_id": "playwright-native-restore-1d2f-current",
+    "home": "/private/tmp/rudder-e2e-home-native-restore-1d2f-current"
   },
-  "command": "RUDDER_E2E_RUN_ID=native-restore-47a-current RUDDER_E2E_HOME=/private/tmp/rudder-e2e-home-native-restore-47a-current pnpm test:e2e --project=chromium tests/e2e/workspace-backups.spec.ts",
+  "command": "RUDDER_E2E_RUN_ID=native-restore-1d2f-current RUDDER_E2E_HOME=/private/tmp/rudder-e2e-home-native-restore-1d2f-current pnpm test:e2e --project=chromium tests/e2e/workspace-backups.spec.ts",
   "tests": {
     "total": 2,
     "passed": 2,

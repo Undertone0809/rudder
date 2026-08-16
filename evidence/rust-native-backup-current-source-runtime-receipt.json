@@ -3,7 +3,7 @@
   "receipt_type": "workspace_backup_current_source_runtime_probe",
   "status": "PASS",
   "candidate": {
-    "source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
+    "source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
     "release_version": "0.7.7",
     "native_binary_version": "rudder-native 0.7.7",
     "native_binary_path": "/private/tmp/rudder-native-main-reconcile-20260816/native/target/debug/rudder-native"
@@ -11,8 +11,8 @@
   "runtime": {
     "id": "current-source-startServer-local-trusted",
     "api_url": "http://127.0.0.1:64930",
-    "instance_id": "native-source-47a-3",
-    "home": "/private/tmp/rudder-native-source-47a-probe-3",
+    "instance_id": "native-source-1d2f-3",
+    "home": "/private/tmp/rudder-native-source-1d2f-probe-3",
     "database": "postgres://redacted@127.0.0.1:54330/rudder",
     "deployment_mode": "local_trusted",
     "native_enabled": true,
@@ -36,12 +36,12 @@
     "restore_status": 200,
     "restored_content": "before\n"
   },
-  "command": "RUDDER_HOME=/private/tmp/rudder-native-source-47a-probe-3 RUDDER_INSTANCE_ID=native-source-47a-3 RUDDER_WORKSPACE_BACKUP_V2_ENABLED=true RUDDER_WORKSPACE_BACKUP_V2_NATIVE=true RUDDER_NATIVE_ARCHIVE_PATH=/private/tmp/rudder-native-main-reconcile-20260816/native/target/debug/rudder-native RUDDER_MIGRATION_AUTO_APPLY=true RUDDER_MIGRATION_PROMPT=never RUDDER_UI_DEV_MIDDLEWARE=false server/node_modules/.bin/tsx -",
+  "command": "RUDDER_HOME=/private/tmp/rudder-native-source-1d2f-probe-3 RUDDER_INSTANCE_ID=native-source-1d2f-3 RUDDER_WORKSPACE_BACKUP_V2_ENABLED=true RUDDER_WORKSPACE_BACKUP_V2_NATIVE=true RUDDER_NATIVE_ARCHIVE_PATH=/private/tmp/rudder-native-main-reconcile-20260816/native/target/debug/rudder-native RUDDER_MIGRATION_AUTO_APPLY=true RUDDER_MIGRATION_PROMPT=never RUDDER_UI_DEV_MIDDLEWARE=false server/node_modules/.bin/tsx -",
   "scope": "current source API/runtime supporting evidence; not packaged Desktop acceptance",
   "packaged_acceptance": "not_run",
   "hosted_authenticated_acceptance": "blocked_no_authorized_fixture",
   "limitations": [
-    "Packaged artifact remains bound to stale 72005f4 and is historical only.",
+    "Packaged server/runtime evidence is recorded separately in rust-native-backup-packaged-server-runtime-receipt.json.",
     "No hosted authenticated Desktop fixture; packaged account-session acceptance remains blocked.",
     "APFS/Windows interruption matrix and seven-day/100-cycle dogfood remain open."
   ]

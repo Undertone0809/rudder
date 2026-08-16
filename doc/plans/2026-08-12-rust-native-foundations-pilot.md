@@ -67,6 +67,9 @@ commit_refs:
   - 142c36592
   - 47a00d611
   - 9d4d17ba6
+  - f33081055
+  - c7f8c69c4
+  - 1d2f100cd
 updated_at: 2026-08-17
 ---
 
@@ -88,18 +91,22 @@ startup reconciliation receives the live database handle, validates rollback
 and committed workspace tree hashes before cleanup, preserves ambiguous
 receipt/root state, and marks a recovered published backup `restored`.
 
-The source-aligned `0.7.7` packaged artifact was then verified from the current
-desktop release output. Its portable ZIP SHA-256 is
-`947b568a5540110afd83ba4f0bf40c0138449032ea971ed0624ae5e0902ecded`, shell ZIP
-SHA-256 is `32192bb119ee4124fac3df5d10fd9221e469a24705e9e5c1d725c84d2b3aca58`,
+The exact-HEAD `0.7.7` packaged artifact was rebuilt from the current desktop
+release output after the sparse-recovery guard in `f33081055`. Its portable ZIP
+SHA-256 is
+`191250882595d607aa2866202f535cf9c4922ab56461365c6b34690cf68be558`, shell ZIP
+SHA-256 is `2b114e7a02b21357f42461fd0a67a3f432f38f1bbef23055b8cc1d2b0c253cd9`,
 the app executable SHA-256 is
 `b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`, and the
 packaged `rudder-native` SHA-256 is
 `6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9`.
-The exact packaged server/runtime probe now records the source-aligned
-`47a00d611` tuple and passed organization create, backup create, browse, file
-read, ZIP download, and restore against packaged PostgreSQL 18.4. This is a
-scoped supporting receipt, not authenticated packaged Desktop acceptance.
+The exact packaged server/runtime probe now records the `1d2f100cd` candidate
+tuple and passed organization create, backup create, browse, file read, ZIP
+download, and restore against packaged PostgreSQL 18.4. This is a scoped
+supporting receipt, not authenticated packaged Desktop acceptance. The focused
+service/route regression suite is `67/67` after the sparse-recovery guard; the
+Desktop account-session gate remains blocked without an authorized hosted
+signed-in fixture.
 
 `rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
 strictly invokes the existing three-trial OSS producer and writes a complete
