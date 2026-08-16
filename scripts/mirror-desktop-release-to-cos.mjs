@@ -2,7 +2,7 @@
 
 import { createHash, createHmac } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
@@ -11,6 +11,9 @@ const DEFAULT_PREFIX = "releases";
 const DEFAULT_STS_ENDPOINT = "https://sts.tencentcloudapi.com";
 const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
+const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
+const DEFAULT_MULTIPART_PART_SIZE = 32 * 1024 * 1024;
+const DEFAULT_MULTIPART_RETRIES = 3;
 const SIGNABLE_HEADERS = new Set([
   "cache-control",
   "content-disposition",
@@ -166,13 +169,37 @@ export async function getTencentStsCredentials(options) {
 }
 
 export class CosReleaseMirror {
-  constructor({ bucket, region, endpoint, credentials, fetchImpl = fetch, now = Date.now }) {
+  constructor({
+    bucket,
+    region,
+    endpoint,
+    credentials,
+    fetchImpl = fetch,
+    now = Date.now,
+    multipartThreshold = DEFAULT_MULTIPART_THRESHOLD,
+    multipartPartSize = DEFAULT_MULTIPART_PART_SIZE,
+    multipartRetries = DEFAULT_MULTIPART_RETRIES,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  }) {
     this.bucket = validateBucket(bucket);
     this.region = validateRegion(region);
     this.endpoint = normalizeCosEndpoint(endpoint, this.bucket, this.region);
     this.credentials = validateCredentials(credentials);
     this.fetchImpl = fetchImpl;
     this.now = now;
+    if (!Number.isSafeInteger(multipartThreshold) || multipartThreshold < 0) {
+      throw new Error("COS multipart threshold must be a non-negative safe integer.");
+    }
+    if (!Number.isSafeInteger(multipartPartSize) || multipartPartSize < 1_048_576) {
+      throw new Error("COS multipart part size must be a safe integer of at least 1 MiB.");
+    }
+    if (!Number.isSafeInteger(multipartRetries) || multipartRetries < 1 || multipartRetries > 10) {
+      throw new Error("COS multipart retries must be an integer from 1 through 10.");
+    }
+    this.multipartThreshold = multipartThreshold;
+    this.multipartPartSize = multipartPartSize;
+    this.multipartRetries = multipartRetries;
+    this.sleep = sleep;
   }
 
   async mirrorFile(key, file) {
@@ -186,7 +213,9 @@ export class CosReleaseMirror {
       assertMatchingBytes(key, file, current);
     } else if (existing.status === 404) {
       await existing.body?.cancel();
-      const upload = await this.putObject(key, file);
+      const upload = file.size >= this.multipartThreshold
+        ? await this.putObjectMultipart(key, file)
+        : await this.putObject(key, file);
       if (![200, 201, 409, 412].includes(upload.status)) {
         throw await httpError(`upload COS object ${key}`, upload);
       }
@@ -259,8 +288,108 @@ export class CosReleaseMirror {
     });
   }
 
-  requestObject(method, key, { authenticated = true, body, headers = {} } = {}) {
-    const url = this.objectUrl(key);
+  async putObjectMultipart(key, file) {
+    const initiate = await this.requestObject("POST", key, {
+      query: new URLSearchParams([["uploads", ""]]),
+      headers: {
+        "content-type": file.contentType,
+        "x-cos-forbid-overwrite": "true",
+        "x-cos-meta-sha256": file.sha256,
+      },
+    });
+    if (initiate.status !== 200) throw await httpError(`initiate multipart COS upload ${key}`, initiate);
+    const uploadId = extractXmlTag(await initiate.text(), "UploadId");
+    if (!uploadId) throw new Error(`Tencent COS did not return an UploadId for ${key}.`);
+
+    let handle;
+    try {
+      handle = await open(file.path, "r");
+      const parts = [];
+      for (let offset = 0, partNumber = 1; offset < file.size; offset += this.multipartPartSize, partNumber += 1) {
+        const length = Math.min(this.multipartPartSize, file.size - offset);
+        const bytes = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(bytes, 0, length, offset);
+        if (bytesRead !== length) {
+          throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+        }
+        parts.push({
+          etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
+          partNumber,
+        });
+      }
+      const completeBody = `<CompleteMultipartUpload>${parts
+        .map(({ etag, partNumber }) => `<Part><PartNumber>${partNumber}</PartNumber><ETag>${escapeXml(etag)}</ETag></Part>`)
+        .join("")}</CompleteMultipartUpload>`;
+      const complete = await this.requestObject("POST", key, {
+        body: completeBody,
+        query: new URLSearchParams([["uploadId", uploadId]]),
+        headers: {
+          "content-length": String(Buffer.byteLength(completeBody)),
+          "content-type": "application/xml; charset=utf-8",
+          "x-cos-forbid-overwrite": "true",
+        },
+      });
+      if (complete.status !== 200) throw await httpError(`complete multipart COS upload ${key}`, complete);
+      return complete;
+    } catch (error) {
+      await this.abortMultipartUpload(key, uploadId);
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  }
+
+  async uploadMultipartPart(key, uploadId, partNumber, bytes, file) {
+    const query = new URLSearchParams([
+      ["partNumber", String(partNumber)],
+      ["uploadId", uploadId],
+    ]);
+    let lastDetail = "";
+    for (let attempt = 1; attempt <= this.multipartRetries; attempt += 1) {
+      const response = await this.requestObject("PUT", key, {
+        body: bytes,
+        query,
+        headers: {
+          "content-length": String(bytes.length),
+          "content-md5": createHash("md5").update(bytes).digest("base64"),
+          "content-type": file.contentType,
+          "x-cos-forbid-overwrite": "true",
+          "x-cos-meta-sha256": file.sha256,
+        },
+      });
+      if (response.status === 200) {
+        const etag = response.headers.get("etag");
+        await response.body?.cancel();
+        if (!etag) throw new Error(`Tencent COS did not return an ETag for multipart part ${partNumber} of ${key}.`);
+        return etag;
+      }
+
+      lastDetail = await response.text();
+      const retryable = response.status === 408 || response.status === 429 || response.status >= 500 ||
+        (response.status === 400 && lastDetail.includes("UserNetworkTooSlow"));
+      if (!retryable || attempt === this.multipartRetries) {
+        throw new Error(
+          `upload COS multipart part ${partNumber} of ${key} failed with HTTP ${response.status}${lastDetail ? `: ${lastDetail.trim().slice(0, 500)}` : ""}`,
+        );
+      }
+      await this.sleep(1000 * attempt);
+    }
+    throw new Error(`upload COS multipart part ${partNumber} of ${key} failed${lastDetail ? `: ${lastDetail}` : ""}.`);
+  }
+
+  async abortMultipartUpload(key, uploadId) {
+    try {
+      const response = await this.requestObject("DELETE", key, {
+        query: new URLSearchParams([["uploadId", uploadId]]),
+      });
+      await response.body?.cancel();
+    } catch {
+      // Preserve the original upload failure; COS lifecycle cleanup can handle a lost abort request.
+    }
+  }
+
+  requestObject(method, key, { authenticated = true, body, headers = {}, query } = {}) {
+    const url = this.objectUrl(key, query);
     const requestHeaders = new Headers(headers);
     if (authenticated) this.authorize(requestHeaders, method, url);
     return this.fetchImpl(url, {
@@ -291,10 +420,11 @@ export class CosReleaseMirror {
     );
   }
 
-  objectUrl(key) {
+  objectUrl(key, query = new URLSearchParams()) {
     validateObjectPath(key);
     const url = new URL(this.endpoint);
     url.pathname = `/${key.split("/").map(camSafeEncode).join("/")}`;
+    url.search = query.toString();
     return url;
   }
 }
@@ -663,6 +793,29 @@ function validateRepo(repo) {
   if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
     throw new Error(`Invalid GitHub repository: ${repo || "<empty>"}`);
   }
+}
+
+function extractXmlTag(xml, tag) {
+  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([^<]*)</${tag}>`));
+  return match ? decodeXmlEntities(match[1].trim()) : "";
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function decodeXmlEntities(value) {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 async function httpError(action, response) {

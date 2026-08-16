@@ -361,6 +361,66 @@ describe("Tencent COS Desktop release mirror", () => {
     expect(putCount).toBe(0);
   });
 
+  it("uses resumable multipart uploads for large files and completes them immutably", async () => {
+    const file = await fileFixture(Buffer.alloc(2 * 1024 * 1024, 7));
+    const objectKey = "releases/v0.7.5/Rudder-test.zip";
+    const objects = new Map();
+    const parts = new Map();
+    const partAttempts = new Map();
+    const calls = [];
+    const mirror = createMirror(async (input, init = {}) => {
+      const url = new URL(input);
+      const headers = new Headers(init.headers);
+      const method = init.method || "GET";
+      calls.push({ method, query: url.search, key: url.pathname.slice(1) });
+      if (url.searchParams.has("prefix")) return new Response("denied", { status: 403 });
+      if (method === "PUT" && !headers.get("authorization")) return new Response("denied", { status: 403 });
+      if (method === "HEAD") return new Response(null, { status: objects.has(objectKey) ? 200 : 404 });
+      if (url.searchParams.has("uploads")) {
+        expect(method).toBe("POST");
+        return new Response("<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>", { status: 200 });
+      }
+      if (url.searchParams.has("partNumber")) {
+        expect(method).toBe("PUT");
+        const partNumber = Number(url.searchParams.get("partNumber"));
+        const attempt = (partAttempts.get(partNumber) ?? 0) + 1;
+        partAttempts.set(partNumber, attempt);
+        if (partNumber === 1 && attempt === 1) {
+          return new Response("<Code>UserNetworkTooSlow</Code>", { status: 400 });
+        }
+        parts.set(partNumber, await streamBytes(init.body));
+        return new Response(null, { status: 200, headers: { etag: `"etag-${partNumber}"` } });
+      }
+      if (url.searchParams.has("uploadId")) {
+        if (method === "POST") {
+          const body = await streamBytes(init.body);
+          expect(body.toString()).toContain("<ETag>&quot;etag-1&quot;</ETag>");
+          expect(body.toString()).toContain("<ETag>&quot;etag-2&quot;</ETag>");
+          objects.set(objectKey, Buffer.concat([parts.get(1), parts.get(2)]));
+          return new Response(null, { status: 200 });
+        }
+        expect(method).toBe("DELETE");
+        return new Response(null, { status: 204 });
+      }
+      if (method === "GET") return objects.has(objectKey) ? new Response(objects.get(objectKey)) : new Response(null, { status: 404 });
+      throw new Error(`Unexpected COS request: ${method} ${url}`);
+    }, {
+      multipartPartSize: 1024 * 1024,
+      multipartThreshold: 1,
+      sleep: async () => {},
+    });
+
+    await mirror.mirrorFile(objectKey, file);
+
+    expect(objects.get(objectKey)).toEqual(Buffer.alloc(2 * 1024 * 1024, 7));
+    expect(calls.filter(({ query }) => query.includes("partNumber=")).map(({ query }) => query)).toEqual([
+      "?partNumber=1&uploadId=upload-1",
+      "?partNumber=1&uploadId=upload-1",
+      "?partNumber=2&uploadId=upload-1",
+    ]);
+    expect(partAttempts).toEqual(new Map([[1, 2], [2, 1]]));
+  }, 15_000);
+
   it("explains that COS HEAD checks require the distinct HeadObject action", async () => {
     const file = await fileFixture("missing permission");
     const mirror = createMirror(async (_input, init = {}) => {
@@ -408,12 +468,13 @@ describe("Tencent COS Desktop release mirror", () => {
   });
 });
 
-function createMirror(fetchImpl) {
+function createMirror(fetchImpl, options = {}) {
   return new CosReleaseMirror({
     bucket,
     credentials,
     endpoint,
     fetchImpl,
+    ...options,
     now: () => 1_700_000_000_000,
     region,
   });
@@ -469,6 +530,8 @@ function jsonResponse(value, init = {}) {
 }
 
 async function streamBytes(stream) {
+  if (Buffer.isBuffer(stream)) return stream;
+  if (typeof stream === "string") return Buffer.from(stream);
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
   return Buffer.concat(chunks);
