@@ -157,6 +157,10 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("--phase checksum");
     expect(recovery).not.toContain("npm publish");
     expect(recovery).not.toContain("git push");
+    expect(recovery).toContain("class AbortProbeMirror extends CosReleaseMirror");
+    expect(recovery).toContain("multipartThreshold: 1");
+    expect(recovery).toContain("expected 204");
+    expect(recovery).toContain("publicObject.status !== 404");
   });
 
   it("documents the distinct COS HeadObject permission used by the signed existence check", () => {

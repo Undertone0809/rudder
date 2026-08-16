@@ -697,6 +697,68 @@ jobs:
             --asset-dir dist/desktop-assets \
             --prefix releases \
             --allow-existing-checksum-marker
+      - name: Verify Tencent COS multipart abort cleanup
+        env:
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { CosReleaseMirror, getTencentStsCredentials } from './scripts/mirror-desktop-release-to-cos.mjs';
+
+          const credentials = await getTencentStsCredentials({
+            providerId: process.env.TENCENT_CLOUD_OIDC_PROVIDER_ID,
+            region: process.env.TENCENT_COS_REGION,
+            requestToken: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
+            requestUrl: process.env.ACTIONS_ID_TOKEN_REQUEST_URL,
+            roleArn: process.env.TENCENT_CLOUD_ROLE_ARN,
+            roleSessionName: `rudder-cos-abort-probe-${process.env.GITHUB_RUN_ID}`,
+          });
+          class AbortProbeMirror extends CosReleaseMirror {
+            async abortMultipartUpload(key, uploadId) {
+              const response = await this.requestObject('DELETE', key, {
+                query: new URLSearchParams([['uploadId', uploadId]]),
+              });
+              this.abortStatus = response.status;
+              await response.body?.cancel();
+            }
+          }
+
+          const mirror = new AbortProbeMirror({
+            bucket: process.env.TENCENT_COS_BUCKET,
+            credentials,
+            multipartThreshold: 1,
+            region: process.env.TENCENT_COS_REGION,
+          });
+          const key = `releases/${process.env.RECOVERY_TAG}/Rudder-cos-abort-probe-${process.env.GITHUB_RUN_ID}.zip`;
+          const file = {
+            contentType: 'application/octet-stream',
+            md5: '',
+            name: 'Rudder-cos-abort-probe.zip',
+            path: '/tmp/rudder-cos-abort-probe-file-does-not-exist',
+            sha256: '0'.repeat(64),
+            size: 1,
+          };
+          let failure;
+          try {
+            await mirror.mirrorFile(key, file);
+          } catch (error) {
+            failure = error;
+          }
+          if (!failure || !String(failure).includes('ENOENT')) {
+            throw new Error(`Abort probe did not fail at the intended local file boundary: ${failure || 'no failure'}.`);
+          }
+          if (mirror.abortStatus !== 204) {
+            throw new Error(`COS AbortMultipartUpload returned ${mirror.abortStatus ?? 'no status'}, expected 204.`);
+          }
+          const publicObject = await mirror.readObject(key, false);
+          if (publicObject.status !== 404) {
+            throw new Error(`Aborted COS probe object is still readable with HTTP ${publicObject.status}.`);
+          }
+          console.log(`verified\tabort\tcos://${process.env.TENCENT_COS_BUCKET}/${key}`);
+          NODE
       - name: Publish GitHub checksum completion marker
         env:
           GH_TOKEN: ${{ github.token }}
