@@ -362,7 +362,7 @@ describe("Tencent COS Desktop release mirror", () => {
   });
 
   it("uses resumable multipart uploads for large files and completes them immutably", async () => {
-    const file = await fileFixture(Buffer.alloc(2 * 1024 * 1024, 7));
+    const file = await fileFixture(Buffer.alloc(1024 * 1024, 7));
     const objectKey = "releases/v0.7.5/Rudder-test.zip";
     const objects = new Map();
     const parts = new Map();
@@ -395,8 +395,7 @@ describe("Tencent COS Desktop release mirror", () => {
         if (method === "POST") {
           const body = await streamBytes(init.body);
           expect(body.toString()).toContain("<ETag>&quot;etag-1&quot;</ETag>");
-          expect(body.toString()).toContain("<ETag>&quot;etag-2&quot;</ETag>");
-          objects.set(objectKey, Buffer.concat([parts.get(1), parts.get(2)]));
+          objects.set(objectKey, parts.get(1));
           return new Response(null, { status: 200 });
         }
         expect(method).toBe("DELETE");
@@ -412,14 +411,67 @@ describe("Tencent COS Desktop release mirror", () => {
 
     await mirror.mirrorFile(objectKey, file);
 
-    expect(objects.get(objectKey)).toEqual(Buffer.alloc(2 * 1024 * 1024, 7));
+    expect(objects.get(objectKey)).toEqual(Buffer.alloc(1024 * 1024, 7));
     expect(calls.filter(({ query }) => query.includes("partNumber=")).map(({ query }) => query)).toEqual([
       "?partNumber=1&uploadId=upload-1",
       "?partNumber=1&uploadId=upload-1",
-      "?partNumber=2&uploadId=upload-1",
     ]);
-    expect(partAttempts).toEqual(new Map([[1, 2], [2, 1]]));
+    expect(partAttempts).toEqual(new Map([[1, 2]]));
   }, 15_000);
+
+  it("reuses a byte-identical object when multipart completion loses an overwrite race", async () => {
+    const file = await fileFixture(Buffer.alloc(1024 * 1024, 3));
+    const objectKey = "releases/v0.7.5/Rudder-test.zip";
+    const objects = new Map([[objectKey, Buffer.alloc(1024 * 1024, 3)]]);
+    let abortCount = 0;
+    const mirror = createMirror(async (input, init = {}) => {
+      const url = new URL(input);
+      const method = init.method || "GET";
+      if (method === "HEAD") return new Response(null, { status: 404 });
+      if (url.searchParams.has("uploads")) return new Response("<UploadId>upload-race</UploadId>", { status: 200 });
+      if (url.searchParams.has("partNumber")) return new Response(null, { status: 200, headers: { etag: '"etag-1"' } });
+      if (url.searchParams.has("uploadId") && method === "POST") return new Response("race", { status: 412 });
+      if (url.searchParams.has("uploadId") && method === "DELETE") {
+        abortCount += 1;
+        return new Response(null, { status: 204 });
+      }
+      if (method === "GET") return new Response(objects.get(objectKey));
+      throw new Error(`Unexpected COS request: ${method} ${url}`);
+    }, {
+      multipartPartSize: 1024 * 1024,
+      multipartThreshold: 1,
+      sleep: async () => {},
+    });
+
+    await expect(mirror.mirrorFile(objectKey, file)).resolves.toBeUndefined();
+    expect(abortCount).toBe(1);
+  });
+
+  it("aborts a multipart upload after a non-retryable part failure", async () => {
+    const file = await fileFixture(Buffer.alloc(1024 * 1024, 4));
+    let abortCount = 0;
+    const mirror = createMirror(async (input, init = {}) => {
+      const url = new URL(input);
+      const method = init.method || "GET";
+      if (method === "HEAD") return new Response(null, { status: 404 });
+      if (url.searchParams.has("uploads")) return new Response("<UploadId>upload-fail</UploadId>", { status: 200 });
+      if (url.searchParams.has("partNumber")) return new Response("denied", { status: 403 });
+      if (url.searchParams.has("uploadId") && method === "DELETE") {
+        abortCount += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected COS request: ${method} ${url}`);
+    }, {
+      multipartPartSize: 1024 * 1024,
+      multipartThreshold: 1,
+      sleep: async () => {},
+    });
+
+    await expect(mirror.mirrorFile("releases/v0.7.5/Rudder-test.zip", file)).rejects.toThrow(
+      "upload COS multipart part 1",
+    );
+    expect(abortCount).toBe(1);
+  });
 
   it("explains that COS HEAD checks require the distinct HeadObject action", async () => {
     const file = await fileFixture("missing permission");

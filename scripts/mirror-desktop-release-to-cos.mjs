@@ -329,7 +329,13 @@ export class CosReleaseMirror {
           "x-cos-forbid-overwrite": "true",
         },
       });
-      if (complete.status !== 200) throw await httpError(`complete multipart COS upload ${key}`, complete);
+      if (![200, 409, 412].includes(complete.status)) {
+        throw await httpError(`complete multipart COS upload ${key}`, complete);
+      }
+      if (complete.status !== 200) {
+        await complete.body?.cancel();
+        await this.abortMultipartUpload(key, uploadId);
+      }
       return complete;
     } catch (error) {
       await this.abortMultipartUpload(key, uploadId);
