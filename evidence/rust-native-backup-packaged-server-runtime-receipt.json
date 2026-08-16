@@ -3,45 +3,61 @@
   "receipt_type": "packaged_server_runtime_workspace_backup_probe",
   "status": "PASS_SCOPED_SUPPORTING",
   "candidate_code_tuple": {
+    "candidate_source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
     "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
-    "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "artifact_source_sha": "47a00d611ada806551090d43f30c172f2422c81c",
     "release_version": "0.7.7",
     "target": "aarch64-apple-darwin"
   },
-  "packaged_resources": {
-    "server_entrypoint": "/private/tmp/rudder-native-packaged-720/desktop/release/mac-arm64/Rudder.app/Contents/Resources/server-package/dist/index.js",
-    "server_package_version": "0.7.7",
-    "postgres_runtime": "18.4 packaged darwin-arm64 resources",
-    "native_archive_binary": "/private/tmp/rudder-native-packaged-720/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-native",
-    "native_archive_version": "rudder-native 0.7.7",
-    "portable_zip_sha256": "43336d17fba1692d75d644b3c479894ac08bf193d077fe4dbffc0f6177695ada",
+  "packaged_artifact": {
+    "portable_zip": "/private/tmp/rudder-native-main-reconcile-20260816/desktop/release/Rudder-0.7.7-macos-arm64-portable.zip",
+    "portable_zip_sha256": "947b568a5540110afd83ba4f0bf40c0138449032ea971ed0624ae5e0902ecded",
+    "shell_zip_sha256": "32192bb119ee4124fac3df5d10fd9221e469a24705e9e5c1d725c84d2b3aca58",
     "desktop_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
-    "native_archive_sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9"
+    "native_archive_sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
+    "zip_integrity": "PASS_unzip_test",
+    "server_package_version": "0.7.7",
+    "native_archive_version": "rudder-native 0.7.7"
+  },
+  "packaged_resources": {
+    "server_entrypoint": "/private/tmp/rudder-native-packaged-current-oS0pBS/Rudder.app/Contents/Resources/server-package/dist/index.js",
+    "postgres_runtime": "18.4 packaged darwin-arm64 resources",
+    "native_archive_binary": "/private/tmp/rudder-native-packaged-current-oS0pBS/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-native"
   },
   "runtime": {
     "entry": "startServer from packaged server-package/dist/index.js",
     "runtime_overrides": {
       "deploymentMode": "local_trusted",
-      "host": "127.0.0.1"
+      "host": "127.0.0.1",
+      "port": 64933
     },
     "workspace_backup_v2_enabled": true,
     "workspace_backup_v2_native": true,
     "native_archive_path": "packaged Resources/native/aarch64-apple-darwin/rudder-native",
-    "database": "isolated temporary embedded PostgreSQL using packaged PostgreSQL 18.4"
+    "database": "isolated temporary embedded PostgreSQL 18.4 from packaged Resources",
+    "instance_id": "native-packaged-current-9d4-final",
+    "home": "/private/tmp/rudder-native-packaged-current-probe-final-O0T6q5"
   },
-  "observed_contract": [
-    "POST /api/orgs returned 201.",
-    "POST /api/orgs/:id/workspace/backups returned 201 with the native archive path enabled.",
-    "GET workspace backup files returned 200.",
-    "GET workspace backup file returned 200.",
-    "GET workspace backup download returned 200 with application/zip.",
-    "After changing the live workspace, POST restore with confirm=true returned 200 and restored before\\n."
-  ],
+  "observed_contract": {
+    "organization_create": { "status": 201 },
+    "backup_create": {
+      "status": 201,
+      "backup_id": "8c94bef5-5db2-4525-9f2e-b4a677901133",
+      "file_count": 1,
+      "byte_size": 7,
+      "tree_sha256": "0fd747a711beb806d76c2e519109fe5e5d5c699b518498499a24b5a7b718f3ee"
+    },
+    "files_list": { "status": 200, "path": "projects", "entry": "projects/before.txt" },
+    "file_read": { "status": 200, "path": "projects/before.txt", "content": "before\\n", "content_type": "text/plain" },
+    "download": { "status": 200, "content_type": "application/zip", "magic": [80, 75, 3, 4], "bytes": 1709 },
+    "restore": { "status": 200, "restored_status": "restored", "restored_content": "before\\n" }
+  },
   "packaged_desktop_acceptance": "blocked_account_session_required_401_without_authorized_hosted_fixture",
   "limitations": [
-    "This receipt proves the packaged server/runtime backup path only; it is not packaged Desktop authenticated acceptance.",
+    "This receipt proves the current-source packaged server/runtime backup path only; it is not packaged Desktop authenticated acceptance.",
     "APFS/Windows interruption, malformed/corrupt/failure recovery, and the full size/count mutation matrix remain open.",
-    "The Desktop account gate cannot be bypassed in a packaged build; no credentials or authenticated session were used."
+    "The Desktop account gate cannot be bypassed in a packaged build; no credentials or authenticated session were used.",
+    "The local_trusted server override intentionally bypasses only the Desktop account-session layer for this scoped runtime probe."
   ],
-  "provenance": "delegated independent packaged-resource audit plus local artifact identity/hash recheck"
+  "provenance": "current-source packaged artifact rebuild and independent packaged-resource startServer API probe"
 }

@@ -66,12 +66,13 @@ commit_refs:
   - 1b8d36106
   - 142c36592
   - 47a00d611
-updated_at: 2026-08-16
+  - 9d4d17ba6
+updated_at: 2026-08-17
 ---
 
 # Rust Native Foundations Pilot
 
-### Continuation status (2026-08-16)
+### Continuation status (2026-08-17)
 
 The exact `72005f4` macOS arm64 packaged candidate was rechecked from the
 portable ZIP with SHA-256
@@ -85,10 +86,20 @@ cleanup. These results do not count as hosted dogfood.
 The restore recovery implementation was then hardened in `47a00d611`:
 startup reconciliation receives the live database handle, validates rollback
 and committed workspace tree hashes before cleanup, preserves ambiguous
-receipt/root state, and marks a recovered published backup `restored`. The
-existing packaged server/runtime receipt remains scoped to the earlier 720
-artifact until a rebuild from this runtime candidate is completed; it is not
-used as current packaged acceptance for `47a00d611`.
+receipt/root state, and marks a recovered published backup `restored`.
+
+The source-aligned `0.7.7` packaged artifact was then verified from the current
+desktop release output. Its portable ZIP SHA-256 is
+`947b568a5540110afd83ba4f0bf40c0138449032ea971ed0624ae5e0902ecded`, shell ZIP
+SHA-256 is `32192bb119ee4124fac3df5d10fd9221e469a24705e9e5c1d725c84d2b3aca58`,
+the app executable SHA-256 is
+`b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`, and the
+packaged `rudder-native` SHA-256 is
+`6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9`.
+The exact packaged server/runtime probe now records the source-aligned
+`47a00d611` tuple and passed organization create, backup create, browse, file
+read, ZIP download, and restore against packaged PostgreSQL 18.4. This is a
+scoped supporting receipt, not authenticated packaged Desktop acceptance.
 
 `rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
 strictly invokes the existing three-trial OSS producer and writes a complete
@@ -149,8 +160,9 @@ mismatched, or both the published and rollback trees mismatch their receipt.
 They are
 also exercised through a child-process crash harness across the prepared,
 live-moved, publish, and committed receipt windows on macOS. They are
-service/route supporting evidence only; packaged create/browse/download/restore
-and the full APFS/Windows interruption matrix remain open.
+service/route supporting evidence only; malformed/corrupt/failure recovery,
+the full size/count mutation matrix, and the full APFS/Windows interruption
+matrix remain open.
 
 The real local workflow receipt in
 `evidence/rust-native-backup-e2e-receipt.json` adds two passing Playwright
@@ -159,12 +171,12 @@ handling on an isolated embedded-PostgreSQL instance. This is supporting dev
 workflow evidence only; it does not upgrade the packaged acceptance gate.
 
 The scoped packaged server/runtime probe in
-`evidence/rust-native-backup-packaged-server-runtime-receipt.json` also passes
-the real `startServer` API path with the packaged PostgreSQL 18.4 runtime and
-the staged `rudder-native 0.7.7` binary: create, browse, file read, ZIP
-download, and restore all completed. It remains supporting evidence only;
-the packaged Desktop account gate, interruption matrix, and hosted
-authenticated Local App fixture are still separate open gates.
+`evidence/rust-native-backup-packaged-server-runtime-receipt.json` passes the
+real `startServer` API path with the source-aligned packaged PostgreSQL 18.4
+runtime and staged `rudder-native 0.7.7` binary: create, browse, file read, ZIP
+download, and restore all completed. It remains supporting evidence only; the
+packaged Desktop account gate, interruption matrix, and hosted authenticated
+Local App fixture are still separate open gates.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
@@ -179,7 +191,8 @@ staged binary, Desktop/server manifest, and release tag; Rust packages must
 not use an independent `0.x` line. The `v0.7.7` release tag now resolves to
 `acfb8e4c7dbc963fdb32280b8055ee0604d021b6` on `origin/main`, and its
 native/runtime paths are unchanged from the `72005f4` artifact source. The
-recorded packaged artifact was not rebuilt from that tag, so release preflight
+recorded packaged artifact is source-aligned to the `47a00d611` runtime
+candidate but was not rebuilt from the release tag itself, so release preflight
 and packaged acceptance remain separately scoped; release preflight validates
 source metadata and Cargo.lock;
 packaged verification additionally validates staged binary `--version`
