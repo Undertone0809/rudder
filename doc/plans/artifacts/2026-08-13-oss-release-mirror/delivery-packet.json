@@ -24,8 +24,8 @@
   "candidate": {
     "branch": "codex/fix-cos-mirror-auth",
     "source_ref": "refs/heads/codex/fix-cos-mirror-auth",
-    "source_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
-    "dirty_fingerprint": "sha256:7ca18bf49b954bac13c0710065149b073cf0a5711914c8c2df6e77e32648b2a7",
+    "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
+    "dirty_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
     "changed_paths": [
       ".github/workflows/release.yml",
       "doc/engineering/RELEASE-AUTOMATION-SETUP.md",
@@ -37,11 +37,11 @@
     ],
     "build": {
       "id": "focused-vitest-release-cos-mirror-and-workflow-contract",
-      "source_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e"
+      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9"
     },
     "runtime": {
       "id": "not-run-real-cos-runtime",
-      "source_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e"
+      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9"
     },
     "organization_data": {
       "organization_id": "not_applicable",
@@ -78,8 +78,8 @@
         "server-only start: no Desktop mirror resolution"
       ]
     },
-    "implementation_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
-    "implementation_tree_sha": "replace-with-dirty-tree-sha",
+    "implementation_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
+    "implementation_tree_sha": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
     "packet_scope": "The dirty fingerprint covers all implementation and documentation changes except this evidence packet; source_sha is the clean base commit.",
     "base_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "release_version": "0.7.7",
@@ -129,8 +129,8 @@
   "receipts": {
     "reviewer": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:7ca18bf49b954bac13c0710065149b073cf0a5711914c8c2df6e77e32648b2a7",
-      "source_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+      "candidate_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
+      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
@@ -138,8 +138,8 @@
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:7ca18bf49b954bac13c0710065149b073cf0a5711914c8c2df6e77e32648b2a7",
-      "source_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+      "candidate_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
+      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
@@ -147,8 +147,8 @@
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "sha256:7ca18bf49b954bac13c0710065149b073cf0a5711914c8c2df6e77e32648b2a7",
-      "source_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
+      "candidate_fingerprint": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
+      "source_sha": "3ba3c8bdf955b5431e6a508892826f50af6c81c9",
       "build_id": "focused-vitest-release-cos-mirror-and-workflow-contract",
       "runtime_id": "not-run-real-cos-runtime",
       "data_id": "not_applicable",
@@ -202,7 +202,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/tmp/rudder-cos-fix.vDfniH",
-    "patch_tree_sha": "replace-with-patch-tree-sha",
+    "patch_tree_sha": "sha256:b5705ceda21eaaba856a66fdbaf2a76c03a0cd4d27da6b383c9e308018aad206",
     "expected_old_sha": "fe2bfc00c8272dcedd39eb29729fa08ad88e941e",
     "cas": {
       "attempted": false,
