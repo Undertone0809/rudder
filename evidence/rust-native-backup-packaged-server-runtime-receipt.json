@@ -1,0 +1,47 @@
+{
+  "schema_version": "1",
+  "receipt_type": "packaged_server_runtime_workspace_backup_probe",
+  "status": "PASS_SCOPED_SUPPORTING",
+  "candidate_code_tuple": {
+    "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+    "artifact_source_sha": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "release_version": "0.7.7",
+    "target": "aarch64-apple-darwin"
+  },
+  "packaged_resources": {
+    "server_entrypoint": "/private/tmp/rudder-native-packaged-720/desktop/release/mac-arm64/Rudder.app/Contents/Resources/server-package/dist/index.js",
+    "server_package_version": "0.7.7",
+    "postgres_runtime": "18.4 packaged darwin-arm64 resources",
+    "native_archive_binary": "/private/tmp/rudder-native-packaged-720/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-native",
+    "native_archive_version": "rudder-native 0.7.7",
+    "portable_zip_sha256": "43336d17fba1692d75d644b3c479894ac08bf193d077fe4dbffc0f6177695ada",
+    "desktop_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
+    "native_archive_sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9"
+  },
+  "runtime": {
+    "entry": "startServer from packaged server-package/dist/index.js",
+    "runtime_overrides": {
+      "deploymentMode": "local_trusted",
+      "host": "127.0.0.1"
+    },
+    "workspace_backup_v2_enabled": true,
+    "workspace_backup_v2_native": true,
+    "native_archive_path": "packaged Resources/native/aarch64-apple-darwin/rudder-native",
+    "database": "isolated temporary embedded PostgreSQL using packaged PostgreSQL 18.4"
+  },
+  "observed_contract": [
+    "POST /api/orgs returned 201.",
+    "POST /api/orgs/:id/workspace/backups returned 201 with the native archive path enabled.",
+    "GET workspace backup files returned 200.",
+    "GET workspace backup file returned 200.",
+    "GET workspace backup download returned 200 with application/zip.",
+    "After changing the live workspace, POST restore with confirm=true returned 200 and restored before\\n."
+  ],
+  "packaged_desktop_acceptance": "blocked_account_session_required_401_without_authorized_hosted_fixture",
+  "limitations": [
+    "This receipt proves the packaged server/runtime backup path only; it is not packaged Desktop authenticated acceptance.",
+    "APFS/Windows interruption, malformed/corrupt/failure recovery, and the full size/count mutation matrix remain open.",
+    "The Desktop account gate cannot be bypassed in a packaged build; no credentials or authenticated session were used."
+  ],
+  "provenance": "delegated independent packaged-resource audit plus local artifact identity/hash recheck"
+}

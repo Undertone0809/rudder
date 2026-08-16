@@ -143,6 +143,14 @@ scenarios for create/browse/download/restore/delete and failed-artifact
 handling on an isolated embedded-PostgreSQL instance. This is supporting dev
 workflow evidence only; it does not upgrade the packaged acceptance gate.
 
+The scoped packaged server/runtime probe in
+`evidence/rust-native-backup-packaged-server-runtime-receipt.json` also passes
+the real `startServer` API path with the packaged PostgreSQL 18.4 runtime and
+the staged `rudder-native 0.7.7` binary: create, browse, file read, ZIP
+download, and restore all completed. It remains supporting evidence only;
+the packaged Desktop account gate, interruption matrix, and hosted
+authenticated Local App fixture are still separate open gates.
+
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
 cannot run. The foundation remains `accepted_default` only for the proven
