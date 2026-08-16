@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "status": "pass",
+  "candidate": {
+    "metadata_wrapper": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+    "artifact_source": "72005f4b37df05fbd987fb4c1051c8f21652ad23",
+    "comparator_source": "8581b5cb9be9852d9ca616c256d3c2fb0b736d2b"
+  },
+  "command": "/Users/zeeland/projects/rudder-oss/node_modules/.bin/vitest run server/src/services/workspace-backup-v2.test.ts server/src/__tests__/workspace-backups.test.ts server/src/__tests__/workspace-backups-routes.test.ts",
+  "environment": {
+    "platform": "macOS arm64",
+    "rudder_version": "0.7.7",
+    "dependency_resolution": "temporary read-only symlinks to the existing workspace node_modules and server/node_modules; no source or generated files were changed",
+    "packaged_acceptance": "not_run"
+  },
+  "suites": [
+    {
+      "file": "server/src/services/workspace-backup-v2.test.ts",
+      "passed": 17,
+      "failed": 0,
+      "coverage": [
+        "native capability/protocol/malformed/process/hash/timeout diagnostics",
+        "final publication race and fallback fencing",
+        "publication recovery-required paths",
+        "bounded file-backed create and 100 MiB limit",
+        "Unicode and binary byte round trip",
+        "skip policy and symlink rejection",
+        "malformed and tampered archive rejection"
+      ]
+    },
+    {
+      "file": "server/src/__tests__/workspace-backups.test.ts",
+      "passed": 31,
+      "failed": 0,
+      "coverage": [
+        "workspace backup service create/browse/restore behavior",
+        "sparse recovery and conflicting live-file preservation",
+        "corrupt-candidate fallback and richer-backup selection",
+        "native fallback diagnostic persistence"
+      ]
+    },
+    {
+      "file": "server/src/__tests__/workspace-backups-routes.test.ts",
+      "passed": 5,
+      "failed": 0,
+      "coverage": ["download route response and artifact integrity errors"]
+    }
+  ],
+  "totals": {
+    "passed": 53,
+    "failed": 0,
+    "skipped": 0,
+    "vitest_wall_seconds": 7.74
+  },
+  "scope": "supporting service/route evidence only; full packaged create/browse/download/restore acceptance and the plan's complete APFS/Windows interruption matrix remain open",
+  "decision_effect": "strengthens streaming_workspace_backup opt-in evidence without changing its admission decision"
+}

@@ -120,6 +120,15 @@ elapsed/RSS are 6253.068 ms / 379682816 bytes; native p95 elapsed/RSS are
 95% CI of 35.06% to 54.95%, while native process-tree RSS peak is higher, so
 streaming Workspace backup remains `opt-in` rather than becoming default.
 
+Supporting backup workflow evidence is recorded in
+`evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
+workspace backup service, and download-route suites pass 53/53 tests. The
+tests cover archive tampering and unsafe names, limits, symlink policy,
+publication races and recovery-required paths, sparse recovery, native
+fallback diagnostics, and browse/download behavior. They are service/route
+supporting evidence only; packaged create/browse/download/restore and the full
+APFS/Windows interruption matrix remain open.
+
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
 cannot run. The foundation remains `accepted_default` only for the proven

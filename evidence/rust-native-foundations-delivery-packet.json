@@ -46,8 +46,8 @@
         "decision": "opt-in",
         "scope": "macOS arm64 archive foundation with explicit native activation",
         "fallback": "Optimized TypeScript/Node archive path",
-        "evidence": ["candidate.evidence.backup_comparator_contract_parity", "candidate.evidence.backup_comparator_recovery"],
-        "limitations": ["Fair receipt is comparable for latency and correctness, but native process-tree RSS peak is higher; keep opt-in until memory behavior is improved or bounded in a production-shaped campaign"]
+        "evidence": ["candidate.evidence.backup_comparator_contract_parity", "candidate.evidence.backup_comparator_recovery", "candidate.evidence.backup_workflow_test_receipt"],
+        "limitations": ["Fair receipt is comparable for latency and correctness, but native process-tree RSS peak is higher; service/route tests pass but packaged create/browse/download/restore and the full APFS/Windows interruption matrix remain open, so keep opt-in"]
       },
       {
         "capability": "agent_run_process_io_host",
@@ -106,6 +106,7 @@
       "doc/plans/2026-08-12-rust-native-foundations-pilot.md",
       "evidence/rust-native-foundations-delivery-packet.json",
       "evidence/rust-native-backup-comparator-fair-8581-summary.json",
+      "evidence/rust-native-backup-workflow-test-receipt.json",
       "evidence/rust-native-backup-comparator-22f-summary.json",
       "desktop/src/desktop-update-helper.test.ts",
       "tests/e2e/settings-sidebar.spec.ts",
@@ -191,6 +192,8 @@
       "backup_comparator_receipt": "/private/tmp/rudder-native-backup-fair-8581.json",
       "backup_comparator_receipt_sha256": "e4a608aae2ade1724cdfd39cd84a2b0f05b20ade886b27d3e684a53c03225e25",
       "backup_comparator_summary": "evidence/rust-native-backup-comparator-fair-8581-summary.json",
+      "backup_workflow_test_receipt": "evidence/rust-native-backup-workflow-test-receipt.json",
+      "backup_workflow_test_status": "PASS_53_tests_0_failures_supporting_service_route_evidence",
       "backup_comparator_status": "comparable",
       "backup_comparator_sample_count": 100,
       "backup_comparator_warmups_per_arm": 3,
