@@ -58,6 +58,8 @@ describe("unified delivery workflows", () => {
   });
 
   it("builds npm and four Desktop candidates before either publish job", () => {
+    const preflight = workflowJob(releaseWorkflow, "preflight");
+    const desktop = workflowJob(releaseWorkflow, "desktop-candidate");
     const candidate = workflowJob(releaseWorkflow, "candidate-complete");
     const canary = workflowJob(releaseWorkflow, "publish-canary");
     const stable = workflowJob(releaseWorkflow, "publish-stable");
@@ -72,6 +74,12 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain("Smoke packaged App Builder");
     expect(releaseWorkflow).toContain("Smoke staged PostgreSQL runtime");
     expect(releaseWorkflow).toContain("Smoke packaged account gate");
+    expect(preflight).toContain("Verify migration compatibility manifest");
+    expect(preflight).toContain("scripts/release-compatibility-matrix.mjs");
+    expect(desktop).toContain("timeout-minutes: 25");
+    expect(desktop).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
+    expect(desktop.indexOf("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts"))
+      .toBeLessThan(desktop.indexOf("pnpm desktop:dist"));
   });
 
   it("publishes only frozen run artifacts without dispatching or rebuilding Desktop", () => {

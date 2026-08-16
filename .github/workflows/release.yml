@@ -151,6 +151,13 @@ jobs:
             echo "candidate_run_id=${CANDIDATE_RUN_ID:-$GITHUB_RUN_ID}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify migration compatibility manifest
+        if: steps.release.outputs.resume != 'true'
+        run: >-
+          node scripts/release-compatibility-matrix.mjs
+          --candidate-version "${{ steps.release.outputs.version }}"
+          --channel "${{ steps.release.outputs.channel }}"
+
       - name: Require matching verified candidate run for recovery
         if: steps.release.outputs.resume == 'true'
         env:
@@ -255,7 +262,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.resume != 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -303,6 +310,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify historical migration compatibility
+        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
 
       - name: Cache Playwright Chromium
         if: matrix.platform != 'windows'
