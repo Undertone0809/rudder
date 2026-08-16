@@ -101,6 +101,11 @@
       "data_id": "isolated-packaged-smoke-and-fixture-data"
     },
     "workload_fixture": "packaged Local App dogfood producer (0 accepted cycles/0 UTC dates); exact 104857600-byte/10000-file Rust/optimized-Node backup comparator case with 100 descriptive paired samples and manifest/entry/content/recovery parity; native_ab summary producer (six rows, live campaign blocked)",
+    "native_ab_runner_repository": "/Users/zeeland/projects/rudder-hub/rudder-evals",
+    "native_ab_runner_commit": "6ccf86a4b915390cee524dfb5f5968eee5cdb370",
+    "native_ab_runner_cli": "PASS_run_native-ab_and_native_ab_alias_help",
+    "native_ab_fail_closed_rehearsal": "PASS_missing_producer_not_runnable_packet_v2_six_observations",
+    "native_ab_fail_closed_manifest_sha256": "c54a97eb505d25a5e05de842f87e7c2e7a0b0eb751147c64bc81322bc5986270",
     "post_receipt_fix": {
       "source_commits": ["7df802c81", "1e9002df5"],
       "summary": "Raised the bounded native archive entry ceiling so the required 10,000-file workspace fixture can include manifest and directory overhead, added a boundary regression, and rebuilt the packaged 720 candidate.",
