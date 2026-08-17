@@ -618,13 +618,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Require immutable recovery inputs
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || {
             echo "source_ref must be a full 40-character commit SHA for mirror recovery." >&2
@@ -638,8 +639,10 @@ jobs:
             echo "recovery_tag must be an existing stable tag such as v0.7.7." >&2
             exit 1
           }
-          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git cat-file -e "$SOURCE_REF^{commit}"
           git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
       - name: Validate frozen candidate run and existing Release
         env:
@@ -708,15 +711,19 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "COS mirror attempt ${attempt}/3"
-            if node scripts/mirror-desktop-release-to-cos.mjs \
+            set +e
+            node scripts/mirror-desktop-release-to-cos.mjs \
               --tag "${{ inputs.recovery_tag }}" \
               --asset-dir dist/desktop-assets \
               --prefix releases \
-              --allow-existing-checksum-marker; then
+              --allow-existing-checksum-marker
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
+            if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]; then
+              exit "$status"
             fi
             sleep $((attempt * 15))
           done
@@ -828,15 +835,19 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "COS mirror attempt ${attempt}/3"
-            if node scripts/mirror-desktop-release-to-cos.mjs \
+            set +e
+            node scripts/mirror-desktop-release-to-cos.mjs \
               --tag "${{ needs.preflight.outputs.tag }}" \
               --asset-dir dist/desktop-assets \
               --prefix releases \
-              --allow-existing-checksum-marker; then
+              --allow-existing-checksum-marker
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
+            if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]; then
+              exit "$status"
             fi
             sleep $((attempt * 15))
           done
@@ -888,15 +899,19 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "COS mirror attempt ${attempt}/3"
-            if node scripts/mirror-desktop-release-to-cos.mjs \
+            set +e
+            node scripts/mirror-desktop-release-to-cos.mjs \
               --tag "${{ needs.preflight.outputs.tag }}" \
               --asset-dir dist/desktop-assets \
               --prefix releases \
-              --allow-existing-checksum-marker; then
+              --allow-existing-checksum-marker
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
+            if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]; then
+              exit "$status"
             fi
             sleep $((attempt * 15))
           done

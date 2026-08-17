@@ -16,6 +16,19 @@ const DEFAULT_MULTIPART_PART_SIZE = 32 * 1024 * 1024;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
 const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
+const RETRYABLE_NETWORK_EXIT_CODE = 75;
+const RETRYABLE_NETWORK_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 const SIGNABLE_HEADERS = new Set([
   "cache-control",
   "content-disposition",
@@ -897,6 +910,27 @@ async function httpError(action, response) {
   return new Error(`${action} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
 }
 
+export class RetryableNetworkError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RetryableNetworkError";
+  }
+}
+
+function errorChainHasRetryableCode(error, seen = new Set()) {
+  if (!error || (typeof error !== "object" && typeof error !== "function") || seen.has(error)) return false;
+  seen.add(error);
+  if (typeof error.code === "string" && RETRYABLE_NETWORK_CODES.has(error.code)) return true;
+  if (Array.isArray(error.errors) && error.errors.some((nested) => errorChainHasRetryableCode(nested, seen))) {
+    return true;
+  }
+  return errorChainHasRetryableCode(error.cause, seen);
+}
+
+export function isRetryableNetworkError(error) {
+  return error instanceof TypeError && error.message === "fetch failed" && errorChainHasRetryableCode(error);
+}
+
 async function fetchWithRetry(
   fetchImpl,
   input,
@@ -909,9 +943,12 @@ async function fetchWithRetry(
     try {
       return await fetchImpl(input, init);
     } catch (error) {
+      if (!isRetryableNetworkError(error)) throw error;
       lastError = error;
       if (attempt === networkRetries) {
-        throw new Error(`${operation} failed after ${networkRetries} network attempts.`, { cause: error });
+        throw new RetryableNetworkError(`${operation} failed after ${networkRetries} network attempts.`, {
+          cause: error,
+        });
       }
       await retrySleep(retryDelayMs * attempt);
     }
@@ -982,7 +1019,7 @@ async function main() {
     console.error(formatError(error));
     if (error instanceof Error && error.stack) console.error(error.stack);
     usage();
-    process.exitCode = 1;
+    process.exitCode = error instanceof RetryableNetworkError ? RETRYABLE_NETWORK_EXIT_CODE : 1;
   }
 }
 

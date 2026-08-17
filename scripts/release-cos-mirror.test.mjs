@@ -10,6 +10,8 @@ import {
   getTencentStsCredentials,
   mirrorDesktopReleaseToCos,
   objectKeyForReleaseAsset,
+  requestGitHubOidcToken,
+  RetryableNetworkError,
 } from "./mirror-desktop-release-to-cos.mjs";
 
 const tempDirs = [];
@@ -126,7 +128,11 @@ describe("Tencent COS Desktop release mirror", () => {
       const key = url.hostname;
       const attempt = (attempts.get(key) ?? 0) + 1;
       attempts.set(key, attempt);
-      if (attempt === 1) throw new TypeError("fetch failed", { cause: new Error("ECONNRESET") });
+      if (attempt === 1) {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+        });
+      }
       if (key === "oidc.actions.test") return jsonResponse({ value: "github-oidc-jwt" });
       expect(init.method).toBe("POST");
       return jsonResponse({
@@ -156,6 +162,71 @@ describe("Tencent COS Desktop release mirror", () => {
       ["oidc.actions.test", 2],
       ["sts.tencentcloudapi.com", 2],
     ]));
+  });
+
+  it.each([
+    ["AbortError", Object.assign(new Error("cancelled"), { name: "AbortError" })],
+    ["arbitrary error", new Error("programming failure")],
+    [
+      "non-retryable fetch cause",
+      new TypeError("fetch failed", {
+        cause: Object.assign(new Error("EINVAL"), { code: "EINVAL" }),
+      }),
+    ],
+  ])("does not retry %s", async (_label, failure) => {
+    let attempts = 0;
+    await expect(
+      requestGitHubOidcToken({
+        fetchImpl: async () => {
+          attempts += 1;
+          throw failure;
+        },
+        networkRetries: 3,
+        requestToken: "oidc-request-token",
+        requestUrl: "https://oidc.actions.test/token",
+        retryDelayMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toBe(failure);
+    expect(attempts).toBe(1);
+  });
+
+  it("marks exhausted transient fetch failures for workflow-level retry", async () => {
+    let attempts = 0;
+    await expect(
+      requestGitHubOidcToken({
+        fetchImpl: async () => {
+          attempts += 1;
+          throw new TypeError("fetch failed", {
+            cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+          });
+        },
+        networkRetries: 3,
+        requestToken: "oidc-request-token",
+        requestUrl: "https://oidc.actions.test/token",
+        retryDelayMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toBeInstanceOf(RetryableNetworkError);
+    expect(attempts).toBe(3);
+  });
+
+  it("does not retry HTTP authorization failures", async () => {
+    let attempts = 0;
+    await expect(
+      requestGitHubOidcToken({
+        fetchImpl: async () => {
+          attempts += 1;
+          return new Response("forbidden", { status: 403 });
+        },
+        networkRetries: 3,
+        requestToken: "oidc-request-token",
+        requestUrl: "https://oidc.actions.test/token",
+        retryDelayMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("HTTP 403");
+    expect(attempts).toBe(1);
   });
 
   it("rejects Tencent STS responses missing the temporary credential triplet", async () => {
