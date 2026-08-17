@@ -104,15 +104,86 @@ describe("server-utils prompt contracts", () => {
     ]) {
       expect(template).toContain("This is a Rudder product Goal, not a Codex internal goal.");
       expect(template).toContain("Do not call Codex `create_goal`, `update_goal`, or `get_goal`");
+      expect(template).toContain("call `rudder_goal_context` once");
+      expect(template).toContain("contract, current Plan, continuation");
       expect(template).toContain("call that typed tool directly");
       expect(template).toContain("Do not load `rudder-docs`, inspect skill files, or run discovery commands");
-      expect(template).toContain("instead of using shell, Bash, curl, or the `rudder` CLI");
+      expect(template).toContain("Do not use shell, Bash, curl, or the `rudder` CLI");
       expect(template).toContain("`rudder_goal_progress`");
       expect(template).toContain("`rudder_goal_change_propose`");
       expect(template).toContain("`rudder_goal_result_propose`");
       expect(template).toContain("automatically attributes progress to this Run");
       expect(template).toContain("A human must accept every terminal Goal result.");
+      expect(template).toContain("Never claim that a Plan, wait, review, Checkpoint, proposal, or transition was persisted");
     }
+  });
+
+  it("drives every Goal wake through the complete advancement phase router", () => {
+    for (const template of [
+      GOAL_STARTED_PROMPT_TEMPLATE,
+      GOAL_FEEDBACK_PROMPT_TEMPLATE,
+      GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE,
+    ]) {
+      expect(template).toContain("## Goal Advancement Protocol");
+      expect(template).toContain("### Phase 1 - Reconstruct the current state");
+      expect(template).toContain("### Phase 2 - Check that the Goal is executable");
+      expect(template).toContain("### Phase 3 - Plan or Replan");
+      expect(template).toContain("### Phase 4 - Run an optional Plan or Replan review");
+      expect(template).toContain("### Phase 5 - Execute one bounded commitment");
+      expect(template).toContain("### Phase 6 - Observe and checkpoint");
+      expect(template).toContain("### Phase 7 - Choose exactly one primary continuation route");
+      expect(template).toContain("### Phase 8 - Audit a possible block");
+      expect(template).toContain("### Phase 9 - Review and propose the result");
+      expect(template).toContain("### Required turn closeout");
+    }
+  });
+
+  it("keeps Plan ownership, review authority, Contract changes, and result acceptance distinct", () => {
+    for (const template of [
+      GOAL_STARTED_PROMPT_TEMPLATE,
+      GOAL_FEEDBACK_PROMPT_TEMPLATE,
+      GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE,
+    ]) {
+      expect(template).toContain("Plan and Replan changes remain Agent-owned");
+      expect(template).toContain("They do not silently revise the Goal Contract.");
+      expect(template).toContain("label the proposed strategy as Run-local and unpersisted");
+      expect(template).toContain("do not imply that Rudder will resume it automatically");
+      expect(template).toContain("Invoke a Plan/Replan review only when the Contract, continuation, risk policy, or explicit human instruction requires it");
+      expect(template).toContain("A Reviewer returns findings; it does not become the Goal Owner");
+      expect(template).toContain("If review is required but no review mechanism is available, report that exact unpersisted gate.");
+      expect(template).toContain("Continue under the existing Contract until a human-applied decision says otherwise.");
+      expect(template).toContain("Stop execution while a Result Proposal is ready for human Acceptance.");
+    }
+  });
+
+  it("requires a materially different Replan before a three-turn blocked conclusion", () => {
+    for (const template of [
+      GOAL_STARTED_PROMPT_TEMPLATE,
+      GOAL_FEEDBACK_PROMPT_TEMPLATE,
+      GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE,
+    ]) {
+      expect(template).toContain("Do not mark or claim the Goal blocked the first time a blocker appears.");
+      expect(template).toContain("If the same blocker persists for three consecutive Goal turns, first perform a Replan audit");
+      expect(template).toContain("If Replan finds a viable path, continue through that path.");
+      expect(template).toContain("Resuming after a blocked conclusion starts a fresh three-turn audit.");
+      expect(template).toContain("no blocker fingerprint schema is required");
+      expect(template).toContain("Missing context is not by itself a validated blocked conclusion.");
+    }
+  });
+
+  it("gives each real Goal wake a concrete entry and same-turn advancement rule", () => {
+    expect(GOAL_STARTED_PROMPT_TEMPLATE).toContain("## Wake Entry - Goal Started");
+    expect(GOAL_STARTED_PROMPT_TEMPLATE).toContain("Start at Plan/Replan because activation already confirmed the Contract.");
+    expect(GOAL_STARTED_PROMPT_TEMPLATE).toContain("Do not finish by merely restating the Goal or producing a Plan");
+
+    expect(GOAL_FEEDBACK_PROMPT_TEMPLATE).toContain("## Wake Entry - Goal Feedback");
+    expect(GOAL_FEEDBACK_PROMPT_TEMPLATE).toContain("new fact or Evidence -> observe and checkpoint");
+    expect(GOAL_FEEDBACK_PROMPT_TEMPLATE).toContain("Do not merely acknowledge feedback");
+
+    expect(GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE).toContain("## Wake Entry - Goal Change Decision");
+    expect(GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE).toContain("If the decision is approved and applied");
+    expect(GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE).toContain("If the proposal was rejected, preserve the current Contract");
+    expect(GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE).toContain("Acknowledging the decision alone is not advancement");
   });
 
   it("renders a Goal start wake with the outcome, current contract, and continuation", () => {
@@ -131,6 +202,10 @@ describe("server-utils prompt contracts", () => {
         summary: "Run the public installation verification.",
         wakeCondition: null,
       },
+      goalPlan: {
+        revision: 1,
+        summary: "Verify the public installer before proposing a result.",
+      },
     };
 
     const template = selectPromptTemplate(undefined, context);
@@ -145,7 +220,10 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("**Goal ID:** goal-started-1");
     expect(rendered).toContain("Customers can install the verified release.");
     expect(rendered).toContain('"contractRevision":3');
+    expect(rendered).toContain('"revision":1');
+    expect(rendered).toContain("Verify the public installer before proposing a result.");
     expect(rendered).toContain("action: Run the public installation verification.");
+    expect(rendered).toContain("Validate and use the persisted initial Plan before replacing it.");
     expect(rendered).not.toContain("Continue your Rudder work.");
   });
 
@@ -165,6 +243,10 @@ describe("server-utils prompt contracts", () => {
         summary: "Repeat the restart acceptance run.",
         wakeCondition: null,
       },
+      goalPlan: {
+        revision: 4,
+        summary: "Exercise restart recovery and compare the runtime identity.",
+      },
       goalFeedback: {
         id: "feedback-77",
         body: "Verify the restart path before proposing completion.",
@@ -183,6 +265,8 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("New feedback requires your review on a Goal you own.");
     expect(rendered).toContain("Goal activation remains reliable after restart.");
     expect(rendered).toContain('"contractRevision":5');
+    expect(rendered).toContain('"revision":4');
+    expect(rendered).toContain("Exercise restart recovery and compare the runtime identity.");
     expect(rendered).toContain("verification: Repeat the restart acceptance run.");
     expect(rendered).toContain("**Feedback ID:** feedback-77");
     expect(rendered).toContain("Verify the restart path before proposing completion.");
@@ -236,6 +320,10 @@ describe("server-utils prompt contracts", () => {
         kind: "action",
         summary: "Continue with the approved release boundary.",
       },
+      goalPlan: {
+        revision: 2,
+        summary: "Verify installation and rollback against the accepted candidate.",
+      },
       goalDecision: {
         proposalId: "proposal-1",
         decision: "approve",
@@ -254,6 +342,8 @@ describe("server-utils prompt contracts", () => {
     expect(GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE).toContain("## Goal Change Decision");
     expect(rendered).toContain("A human decided a proposed change");
     expect(rendered).toContain('"contractRevision":4');
+    expect(rendered).toContain('"revision":2');
+    expect(rendered).toContain("Verify installation and rollback against the accepted candidate.");
     expect(rendered).toContain("**Decision:** approve");
     expect(rendered).toContain("**Decision status:** applied");
     expect(rendered).toContain("Keep rollback evidence visible in the final result.");
@@ -267,7 +357,7 @@ describe("server-utils prompt contracts", () => {
     })).toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
   });
 
-  it("turns missing Goal context into a named blocker instead of a retrieval instruction", () => {
+  it("uses managed Goal context for missing wake facts without inventing a blocked conclusion", () => {
     const rendered = renderTemplate(selectPromptTemplate(undefined, {
       wakeReason: "goal_feedback",
       goal: { id: "goal-missing-context" },
@@ -276,11 +366,14 @@ describe("server-utils prompt contracts", () => {
       context: {},
     });
 
-    expect(rendered).toContain("report the missing outcome as a named blocker");
-    expect(rendered).toContain("report the missing continuation as a named blocker");
-    expect(rendered).toContain("report the missing feedback body as a named blocker");
+    expect(rendered).toContain("load managed Goal context once; otherwise report the missing outcome");
+    expect(rendered).toContain("load managed Goal context once; otherwise report the missing current Plan");
+    expect(rendered).toContain("load managed Goal context once; otherwise report the missing continuation");
+    expect(rendered).toContain("load managed Goal context once; otherwise report the missing feedback body");
+    expect(rendered).toContain("Missing context is not by itself a validated blocked conclusion.");
     expect(rendered).not.toContain("load the Goal's current");
     expect(rendered).not.toContain("load the triggering feedback entry");
+    expect(rendered).toContain("Do not use shell, Bash, curl, or the `rudder` CLI to read or mutate Goal state");
   });
 
   it("renders explicit issue ownership and timestamp metadata for issue-aware wakes", () => {

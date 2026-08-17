@@ -1214,6 +1214,12 @@ export function goalService(db: Db) {
     },
   ): Promise<GoalWakeupDispatch> {
     if (!goal.ownerAgentId) throw conflict("Goal has no Owner Agent to wake");
+    const currentPlan = goal.planRevision > 0
+      ? await database.select().from(goalPlans).where(and(
+          eq(goalPlans.goalId, goal.id),
+          eq(goalPlans.revision, goal.planRevision),
+        )).then((rows) => rows[0] ?? null)
+      : null;
     const taskKey = `goal:${goal.id}:${input.event}:${input.eventId}`;
     const idempotencyKey = input.event === "goal_started"
       ? `goal-start:${input.eventId}`
@@ -1245,6 +1251,12 @@ export function goalService(db: Db) {
         actionDeadline: goal.actionDeadline,
         evaluationDeadline: goal.evaluationDeadline,
       },
+      goalPlan: currentPlan
+        ? {
+            revision: currentPlan.revision,
+            summary: currentPlan.summary,
+          }
+        : null,
       goalContinuation: {
         kind: goal.continuationKind,
         summary: goal.continuationSummary,
