@@ -572,7 +572,7 @@ async function writeRestoreReceipt(filePath: string, value: Record<string, unkno
   await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   const handle = await fs.open(temporary, "r+");
   try {
-    await handle.sync();
+    if (process.platform !== "win32") await handle.sync();
   } finally {
     await handle.close();
   }
