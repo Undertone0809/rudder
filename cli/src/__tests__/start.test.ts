@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { powershellQuote } from "../commands/start-windows.js";
 import {
   assertChecksumMatch,
   buildGithubReleaseAssetDownloadUrl,
@@ -735,11 +736,14 @@ describe("desktop start command helpers", () => {
       await mkdir(outputDir, { recursive: true });
       await writeFile(path.join(sourceDir, "probe.txt"), "windows archive probe", "utf8");
 
-      const createResult = spawnSync(
-        "tar.exe",
-        ["--force-local", "-a", "-cf", archivePath, "-C", sourceDir, "."],
-        { encoding: "utf8" },
-      );
+      const createResult = spawnSync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath ${powershellQuote(path.join(sourceDir, "probe.txt"))} -DestinationPath ${powershellQuote(archivePath)} -Force`,
+      ], { encoding: "utf8" });
       expect(createResult.status, createResult.stderr || createResult.stdout).toBe(0);
 
       const extractCommand = buildWindowsZipExtractCommand(archivePath, outputDir);

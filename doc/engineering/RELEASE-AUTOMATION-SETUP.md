@@ -191,8 +191,17 @@ oidc:aud = sts.cloud.tencent.com
 oidc:sub = repo:Undertone0809/rudder:environment:desktop-release-mirror
 ```
 
-Attach a resource policy granting only `name/cos:HeadObject`,
-`name/cos:GetObject`, and `name/cos:PutObject` on
+Attach a resource policy granting only these object and multipart-upload actions:
+
+- `name/cos:HeadObject`
+- `name/cos:GetObject`
+- `name/cos:PutObject`
+- `name/cos:InitiateMultipartUpload`
+- `name/cos:UploadPart`
+- `name/cos:CompleteMultipartUpload`
+- `name/cos:AbortMultipartUpload`
+
+Scope all seven actions to
 `qcs::cos:ap-shanghai:uid/<APPID>:rudder-releases-cn-<APPID>/releases/*`.
 Do not grant bucket listing, deletion, ACL mutation, or overwrite management.
 COS maps the signed `HEAD Object` existence check to the distinct
@@ -431,8 +440,10 @@ Check:
 1. `mirror-canary` or `mirror-stable` uses Environment `desktop-release-mirror`
 2. the job has `id-token: write` and all four Environment variables
 3. Tencent OIDC `aud` and `sub` conditions exactly match the documented values
-4. the CAM role can head/get/put this bucket's `releases/*` objects, including
-   the distinct `name/cos:HeadObject` action required by the signed existence check
+4. the CAM role has the seven documented object and multipart actions on this
+   bucket's `releases/*` objects, including the distinct `name/cos:HeadObject`
+   action required by the signed existence check and
+   `name/cos:AbortMultipartUpload` for failed large-object cleanup
 5. an existing object is byte-identical; conflicting immutable objects require
    investigation and must never be overwritten
 

@@ -163,10 +163,17 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("publicObject.status !== 404");
   });
 
-  it("documents the distinct COS HeadObject permission used by the signed existence check", () => {
-    expect(releaseSetup).toContain("name/cos:HeadObject");
-    expect(releaseSetup).toContain("name/cos:GetObject");
-    expect(releaseSetup).toContain("name/cos:PutObject");
+  it("documents the complete COS object and multipart permission set", () => {
+    const requiredActions = [
+      "name/cos:HeadObject",
+      "name/cos:GetObject",
+      "name/cos:PutObject",
+      "name/cos:InitiateMultipartUpload",
+      "name/cos:UploadPart",
+      "name/cos:CompleteMultipartUpload",
+      "name/cos:AbortMultipartUpload",
+    ];
+    for (const action of requiredActions) expect(releaseSetup).toContain(action);
     expect(releaseSetup).toContain("name/cos:GetObject` alone returns `403`");
     expect(releaseSetup).not.toContain("HEAD` existence check is covered by COS's `GetObject`");
   });
@@ -231,6 +238,8 @@ describe("unified delivery workflows", () => {
     expect(install).toContain("node scripts/smoke-public-install.mjs");
     expect(docs).toContain("uses: ./.github/workflows/docs-production.yml");
     expect(docs).toContain("source_ref: ${{ needs.preflight.outputs.tag }}");
+    expect(docs).toContain("- mirror-stable");
+    expect(docs).toContain("needs.mirror-stable.result == 'success'");
     expect(surfaces).toContain("- stable-docs");
     expect(surfaces).toContain("- stable-install");
     expect(handoff).toContain("- stable-surfaces");

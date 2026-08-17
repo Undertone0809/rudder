@@ -926,7 +926,8 @@ jobs:
     needs:
       - preflight
       - publish-stable
-    if: needs.publish-stable.result == 'success'
+      - mirror-stable
+    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
     permissions:
       actions: read
       contents: write
