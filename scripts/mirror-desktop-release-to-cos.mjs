@@ -931,6 +931,12 @@ export function isRetryableNetworkError(error) {
   return error instanceof TypeError && error.message === "fetch failed" && errorChainHasRetryableCode(error);
 }
 
+export function exitCodeForMirrorError(error) {
+  return error instanceof RetryableNetworkError || isRetryableNetworkError(error)
+    ? RETRYABLE_NETWORK_EXIT_CODE
+    : 1;
+}
+
 async function fetchWithRetry(
   fetchImpl,
   input,
@@ -1019,7 +1025,7 @@ async function main() {
     console.error(formatError(error));
     if (error instanceof Error && error.stack) console.error(error.stack);
     usage();
-    process.exitCode = error instanceof RetryableNetworkError ? RETRYABLE_NETWORK_EXIT_CODE : 1;
+    process.exitCode = exitCodeForMirrorError(error);
   }
 }
 

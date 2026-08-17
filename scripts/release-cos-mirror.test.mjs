@@ -7,6 +7,7 @@ import {
   assumeTencentRoleWithWebIdentity,
   CosReleaseMirror,
   createCosAuthorization,
+  exitCodeForMirrorError,
   getTencentStsCredentials,
   mirrorDesktopReleaseToCos,
   objectKeyForReleaseAsset,
@@ -209,6 +210,31 @@ describe("Tencent COS Desktop release mirror", () => {
       }),
     ).rejects.toBeInstanceOf(RetryableNetworkError);
     expect(attempts).toBe(3);
+  });
+
+  it("maps a raw retryable COS fetch failure to the workflow retry exit code", async () => {
+    const failure = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+    });
+    const mirror = new CosReleaseMirror({
+      bucket,
+      credentials,
+      fetchImpl: async () => {
+        throw failure;
+      },
+      region,
+    });
+
+    let observed;
+    try {
+      await mirror.readObject("releases/v0.7.9/Rudder-test.zip", false);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toBe(failure);
+    expect(exitCodeForMirrorError(observed)).toBe(75);
+    expect(exitCodeForMirrorError(new Error("checksum conflict"))).toBe(1);
   });
 
   it("does not retry HTTP authorization failures", async () => {
