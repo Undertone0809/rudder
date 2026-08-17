@@ -989,14 +989,18 @@ test.describe("Chat streaming", () => {
         preferredAgentId: organization.chatAgent.id,
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: {
+          body: "Seed the chat before testing interrupted recovery.",
+        },
       },
     });
-    expect(chatRes.ok()).toBe(true);
-    const chat = await chatRes.json();
+    const chatPayload = await chatRes.json() as { id?: string; error?: string };
+    expect(chatRes.ok(), JSON.stringify(chatPayload)).toBe(true);
+    const chat = chatPayload as { id: string };
 
     const chatTurnId = randomUUID();
-    const userCreatedAt = new Date(Date.now() - 2_000);
-    const assistantCreatedAt = new Date(Date.now() - 1_000);
+    const userCreatedAt = new Date();
+    const assistantCreatedAt = new Date(userCreatedAt.getTime() + 1);
     await e2eDb.insert(chatMessages).values([
       {
         id: randomUUID(),
@@ -1046,20 +1050,27 @@ test.describe("Chat streaming", () => {
     await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Partial preserved reply" })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText("Interrupted", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Continue" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Interrupted", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled({ timeout: 15_000 });
     const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
     expect(messagesRes.ok()).toBe(true);
     const messages = await messagesRes.json();
     expect(messages.find((message: { role: string }) => message.role === "assistant")?.status).toBe("interrupted");
 
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await composer.fill("Continue with this correction instead");
+    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Continue" })).toHaveCount(0);
+    await composer.fill("");
+    await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
+
     await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Continue from the interrupted chat run." })).toBeVisible({
+    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Continue from the interrupted chat run." }).last()).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
-      timeout: 15_000,
+      timeout: 30_000,
     });
   });
 

@@ -1518,7 +1518,6 @@ function CommonComponentsSection() {
                 actionPending={false}
                 onCopyMessageText={() => {}}
                 onEditUserMessage={() => {}}
-                onContinueInterruptedMessage={() => {}}
                 onRetryFailedMessage={() => {}}
                 onOpenFile={() => {}}
                 skillReferences={[]}
@@ -1538,7 +1537,6 @@ function CommonComponentsSection() {
                 actionPending={false}
                 onCopyMessageText={() => {}}
                 onEditUserMessage={() => {}}
-                onContinueInterruptedMessage={() => {}}
                 onRetryFailedMessage={() => {}}
                 onOpenFile={() => {}}
                 skillReferences={[]}
@@ -1558,7 +1556,6 @@ function CommonComponentsSection() {
                 actionPending={false}
                 onCopyMessageText={() => {}}
                 onEditUserMessage={() => {}}
-                onContinueInterruptedMessage={() => {}}
                 onRetryFailedMessage={() => {}}
                 onOpenFile={() => {}}
                 skillReferences={[]}

@@ -223,13 +223,13 @@ import {
   useChatRuntimeMutation,
   useChatRuntimeSelection,
 } from "./Chat.model-selector";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, latestContinuableInterruptedChatMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
 import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annotation-selection";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
-import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry, type SendButtonMode } from "./Chat.workspace-helpers";
+import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatComposerSendButtonMode, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -2672,7 +2672,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         },
       },
     );
-  }; const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || serverActiveGenerationId)); const retryFailedMessage = useCallback(
+  }; const selectedConversationHasActiveReply = Boolean(selectedConversation && (activeStream || activeSendInFlight || serverActiveGenerationId)); const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation); const interruptedContinuationMessage = selectedConversationHasActiveReply ? null : latestContinuableInterruptedChatMessage(visibleMessages); const canContinueInterruptedConversation = Boolean(selectedConversation && interruptedContinuationMessage && !selectedConversationExternalBound); const retryFailedMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (!sourceUserMessage) {
         pushToast({
@@ -2770,10 +2770,20 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     pendingRegularFileCount: pendingFiles.length,
     newConversationSendInFlight,
   });
+  const hasSubmittableComposerDraft = canSubmitChatResponseAnnotations(draft, responseAnnotationState);
   const activeStreamStopState = activeStream?.state === "stopping" || activeStream?.state === "stopped";
   const selectedStopRequestPending = Boolean(selectedConversation && stoppingChatIds.has(selectedConversation.id));
-  const sendButtonMode: SendButtonMode = newConversationSendInFlight || (activeSendInFlight && !activeStream) ? "sending" : selectedStopRequestPending || activeStreamStopState ? "stopping" : canQueueDraft ? "queue" : activeSendInFlight ? "stop" : "send";
-  const selectedConversationExternalBound = isExternalBoundConversation(selectedConversation);
+  const sendButtonMode = chatComposerSendButtonMode({
+    newConversationSendInFlight,
+    activeSendInFlight,
+    hasActiveStream: Boolean(activeStream),
+    stopRequestPending: selectedStopRequestPending,
+    streamStopping: activeStreamStopState,
+    canQueueDraft,
+    canContinueInterruptedConversation,
+    hasSubmittableDraft: hasSubmittableComposerDraft,
+    pendingFileCount: pendingFiles.length,
+  });
   const sideChatSlashAnchor = selectedConversation ? latestSideChatAnchor(visibleMessages) : null;
   const showSideChatSlashCommand = Boolean(
     selectedConversation
@@ -2854,7 +2864,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     modelSelectionPending: runtimeSelectionPending,
     composerUnavailable,
     sendButtonMode,
-    hasDraft: canSubmitChatResponseAnnotations(draft, responseAnnotationState),
+    hasDraft: hasSubmittableComposerDraft,
   });
   const canSteerQueuedMessages = Boolean(
     (
@@ -3393,6 +3403,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 }
                 if (sendButtonMode === "queue" && selectedConversation) {
                   void queueComposerMessage(selectedConversation);
+                  return;
+                }
+                if (sendButtonMode === "continue" && selectedConversation) {
+                  void sendMessage({
+                    bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,
+                    filesOverride: [],
+                    conversationOverride: selectedConversation,
+                  });
                   return;
                 }
                 if (sendButtonMode === "send") {
@@ -3991,11 +4009,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       resolveCurrentSidePanelChatContextKey(),
                                       sideChatTargetFromMessage(selectedConversation, messageForSideChat),
                                     );
-                                  }} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onContinueInterruptedMessage={selectedConversationExternalBound ? undefined : () => {
-                                    void sendMessage({
-                                      bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,
-                                      filesOverride: [], conversationOverride: selectedConversation, });
-                                  }} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
+                                  }} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
                                     message,
                                     branchControls: refreshTurnBranchControls,
                                     hasActiveReply: selectedConversationHasActiveReply,

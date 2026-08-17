@@ -261,7 +261,6 @@ function renderChatMessageItem(
         onOpenSideChat={vi.fn()}
         onForkMessage={onForkMessage}
         onEditUserMessage={vi.fn()}
-        onContinueInterruptedMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
         onOpenFile={vi.fn()}
         skillReferences={[]}
@@ -812,6 +811,35 @@ describe("assistant chat message rendering", () => {
     expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
   });
 
+  it("hides interrupted recovery chrome while preserving partial assistant content", () => {
+    const placeholder = "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.";
+    const placeholderOnly = renderChatMessageItem(message({
+      id: "assistant-interrupted-placeholder",
+      role: "assistant",
+      kind: "message",
+      status: "interrupted",
+      body: placeholder,
+    }));
+
+    expect(placeholderOnly.querySelector('[data-testid="chat-assistant-message"]')).toBeNull();
+
+    cleanupFn?.();
+    cleanupFn = null;
+
+    const partial = renderChatMessageItem(message({
+      id: "assistant-interrupted-partial",
+      role: "assistant",
+      kind: "message",
+      status: "interrupted",
+      body: `${placeholder}\n\nPartial preserved reply`,
+    }));
+
+    expect(partial.textContent).toContain("Partial preserved reply");
+    expect(partial.textContent).not.toContain("Chat run interrupted");
+    expect(partial.textContent).not.toContain("Interrupted");
+    expect(partial.textContent).not.toContain("Continue");
+  });
+
   it("renders a persisted message-owned inline visual and hides its directive", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       '<div id="widget"><input class="form-range" type="range"><button class="btn">Run</button></div>',
@@ -1082,7 +1110,6 @@ describe("failed chat transcript rendering", () => {
           actionPending={false}
           onCopyMessageText={vi.fn()}
           onEditUserMessage={vi.fn()}
-          onContinueInterruptedMessage={vi.fn()}
           onRetryFailedMessage={vi.fn()}
           onOpenFile={vi.fn()}
           skillReferences={[]}

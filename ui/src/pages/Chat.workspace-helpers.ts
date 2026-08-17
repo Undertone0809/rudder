@@ -6,7 +6,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatStreamEvent } from "@rudderhq/shared";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 
-export type SendButtonMode = "send" | "stop" | "sending" | "stopping" | "queue";
+export type SendButtonMode = "send" | "continue" | "stop" | "sending" | "stopping" | "queue";
 export type PendingChatSteerRetry = {
   key: string;
   orgId: string;
@@ -325,6 +325,29 @@ export function chatComposerSubmitAction(input: {
   return input.controlsDisabled ? "none" as const : "send" as const;
 }
 
+export function chatComposerSendButtonMode(input: {
+  newConversationSendInFlight: boolean;
+  activeSendInFlight: boolean;
+  hasActiveStream: boolean;
+  stopRequestPending: boolean;
+  streamStopping: boolean;
+  canQueueDraft: boolean;
+  canContinueInterruptedConversation: boolean;
+  hasSubmittableDraft: boolean;
+  pendingFileCount: number;
+}): SendButtonMode {
+  if (input.newConversationSendInFlight || (input.activeSendInFlight && !input.hasActiveStream)) return "sending";
+  if (input.stopRequestPending || input.streamStopping) return "stopping";
+  if (input.canQueueDraft) return "queue";
+  if (input.activeSendInFlight) return "stop";
+  if (
+    input.canContinueInterruptedConversation
+    && !input.hasSubmittableDraft
+    && input.pendingFileCount === 0
+  ) return "continue";
+  return "send";
+}
+
 export function chatSendButtonDisabled(input: {
   selectedConversationExternalBound: boolean;
   modelSelectionPending: boolean;
@@ -334,6 +357,7 @@ export function chatSendButtonDisabled(input: {
 }) {
   if (input.selectedConversationExternalBound || input.composerUnavailable) return true;
   if (input.sendButtonMode === "sending" || input.sendButtonMode === "stopping") return true;
+  if (input.sendButtonMode === "continue") return input.modelSelectionPending;
   if (input.sendButtonMode === "send" || input.sendButtonMode === "queue") {
     return input.modelSelectionPending || !input.hasDraft;
   }

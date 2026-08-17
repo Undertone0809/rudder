@@ -34,6 +34,7 @@ import {
   ChatMessageItem,
   ChatSystemMessageBody,
   INTERRUPTED_CHAT_CONTINUATION_PROMPT,
+  INTERRUPTED_CHAT_PLACEHOLDER,
   NO_PROJECT_ID,
   ProposalCard,
   applyChatStreamProgressEvent,
@@ -63,6 +64,7 @@ import {
   issueProposalWithPrincipalSelection,
   issueProposalWithPriority,
   issueProposalWithStatus,
+  latestContinuableInterruptedChatMessage,
   parseAskUserAnswerMessage,
   rememberChatProjectId,
   rememberChatProjectIdForAgent,
@@ -74,6 +76,7 @@ import {
   shouldAttachApprovalFeedbackSystemMessage,
   shouldAttachIssueCreatedSystemMessage,
   statusChipClassName,
+  visibleInterruptedChatMessageBody,
   withOptimisticOutgoingMessage,
   withOptimisticPlanMode,
 } from "./Chat";
@@ -613,7 +616,6 @@ function renderChatMessageItem(messageToRender: ChatMessage, options?: { canRefr
         actionPending={false}
         onCopyMessageText={vi.fn()}
         onEditUserMessage={vi.fn()}
-        onContinueInterruptedMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
         canRefreshAssistantMessage={options?.canRefreshAssistantMessage ?? false}
         onRefreshAssistantMessage={vi.fn()}
@@ -1632,23 +1634,33 @@ describe("proposal revision prompts", () => {
 });
 
 describe("interrupted chat messages", () => {
-  it("labels interrupted assistant messages and exposes continuation intent", () => {
+  it("preserves recovery intent without rendering the placeholder as assistant content", () => {
     const interrupted = message({
       role: "assistant",
       kind: "message",
       status: "interrupted",
-      body: "Partial preserved reply",
+      body: INTERRUPTED_CHAT_PLACEHOLDER,
     });
 
     expect(assistantStateLabel("interrupted")).toBe("Interrupted");
     expect(statusChipClassName("interrupted")).toContain("amber");
     expect(canContinueInterruptedChatMessage(interrupted)).toBe(true);
     expect(INTERRUPTED_CHAT_CONTINUATION_PROMPT).toBe("Continue from the interrupted chat run.");
+    expect(visibleInterruptedChatMessageBody(interrupted)).toBe("");
+    expect(visibleInterruptedChatMessageBody({
+      ...interrupted,
+      body: `${INTERRUPTED_CHAT_PLACEHOLDER}\n\nPartial preserved reply`,
+    })).toBe("Partial preserved reply");
+    expect(latestContinuableInterruptedChatMessage([interrupted])).toBe(interrupted);
   });
 
-  it("does not offer continuation for completed or user messages", () => {
+  it("does not offer continuation for completed, user, or superseded latest turns", () => {
     expect(canContinueInterruptedChatMessage(message({ role: "assistant", status: "completed" }))).toBe(false);
     expect(canContinueInterruptedChatMessage(message({ role: "user", status: "interrupted" }))).toBe(false);
+    expect(latestContinuableInterruptedChatMessage([
+      message({ id: "interrupted", role: "assistant", status: "interrupted" }),
+      message({ id: "completed", role: "assistant", status: "completed" }),
+    ])).toBeNull();
   });
 });
 

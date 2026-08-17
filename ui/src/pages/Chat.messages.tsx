@@ -106,7 +106,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
-import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName, visibleInterruptedChatMessageBody } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
@@ -1231,16 +1231,27 @@ export function ChatLongMessageBody({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   className?: string;
 }) {
+  const renderedMessage = message && message.body !== body
+    ? { ...message, body }
+    : message;
   return (
     <div className={cn("min-w-0", className)}>
       <div data-testid="chat-long-message-body" className="min-w-0">
-        {message ? (
+        {renderedMessage ? (
           <ChatInlineVisualContent
-            message={message}
-            markdownProps={{ skillReferences, onLinkClick: onMarkdownLinkClick, enableCodeBlockCopy: true }}
+            message={renderedMessage}
+            markdownProps={{
+              skillReferences,
+              onLinkClick: onMarkdownLinkClick,
+              enableCodeBlockCopy: true,
+            }}
           />
         ) : (
-          <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
+          <MarkdownBody
+            skillReferences={skillReferences}
+            onLinkClick={onMarkdownLinkClick}
+            enableCodeBlockCopy
+          >
             {body}
           </MarkdownBody>
         )}
@@ -2396,7 +2407,6 @@ export function ChatMessageItem({
   onOpenSideChat,
   onForkMessage,
   onEditUserMessage,
-  onContinueInterruptedMessage,
   onRetryFailedMessage,
   canRefreshAssistantMessage = false,
   onRefreshAssistantMessage,
@@ -2436,7 +2446,6 @@ export function ChatMessageItem({
   onOpenSideChat?: (message: ChatMessage) => void;
   onForkMessage?: (message: ChatMessage) => void;
   onEditUserMessage?: (message: ChatMessage) => void;
-  onContinueInterruptedMessage?: (message: ChatMessage) => void;
   onRetryFailedMessage?: (message: ChatMessage) => void;
   canRefreshAssistantMessage?: boolean;
   onRefreshAssistantMessage?: (message: ChatMessage) => void;
@@ -2542,7 +2551,9 @@ export function ChatMessageItem({
   const inlineAnnotationAttachmentIds = new Set(
     inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
   );
-  const statusLabel = !isUser ? localizeText(assistantStateLabel(displayedState) ?? "") || null : null;
+  const statusLabel = !isUser && displayedState !== "interrupted"
+    ? localizeText(assistantStateLabel(displayedState) ?? "") || null
+    : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
     (attachment) => (
@@ -2550,7 +2561,6 @@ export function ChatMessageItem({
       && !inlineAnnotationAttachmentIds.has(attachment.id)
     ),
   );
-  const canContinueInterrupted = Boolean(onContinueInterruptedMessage) && canContinueInterruptedChatMessage(message);
   const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
   const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
@@ -2570,6 +2580,13 @@ export function ChatMessageItem({
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
+  const visibleAssistantBody = isUser ? message.body : visibleInterruptedChatMessageBody(message);
+  const hideInterruptedPlaceholder = !isUser
+    && canContinueInterruptedChatMessage(message)
+    && visibleAssistantBody.trim().length === 0
+    && visibleMessageAttachments.length === 0;
+
+  if (hideInterruptedPlaceholder) return null;
 
   if (!isUser) {
     return (
@@ -2585,15 +2602,6 @@ export function ChatMessageItem({
               <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(displayedState))}>
                 {statusLabel}
               </span>
-              {canContinueInterrupted ? (
-                <button
-                  type="button"
-                  className="inline-flex h-7 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-xs font-medium text-amber-700 transition-[background-color,border-color,color,box-shadow] hover:border-amber-500/70 hover:bg-amber-500/25 hover:text-amber-950 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/35 dark:text-amber-300 dark:hover:text-amber-100"
-                  onClick={() => onContinueInterruptedMessage?.(message)}
-                >
-                  Continue
-                </button>
-              ) : null}
             </div>
           ) : null}
           {displayedState === "failed" ? (
@@ -2638,7 +2646,7 @@ export function ChatMessageItem({
               className="relative"
             >
               <ChatLongMessageBody
-                body={message.body}
+                body={visibleAssistantBody}
                 message={message}
                 skillReferences={skillReferences}
                 onMarkdownLinkClick={onMarkdownLinkClick}
@@ -2646,7 +2654,7 @@ export function ChatMessageItem({
               />
               <AnchoredResponseAnnotationMarkers
                 sourceRootRef={assistantAnnotationSourceRef}
-                source={message.body}
+                source={visibleAssistantBody}
                 annotations={assistantResponseAnnotations}
                 onActivate={onEditResponseAnnotation}
               />
@@ -2674,7 +2682,7 @@ export function ChatMessageItem({
                 className="text-[11px] tracking-normal"
               />
               {canShowAssistantMessageActions ? (
-                <CopyMessageButton onClick={() => void onCopyMessageText(message.body)} />
+                <CopyMessageButton onClick={() => void onCopyMessageText(visibleAssistantBody)} />
               ) : null}
               {canShowAssistantMessageActions && onRefreshAssistantMessage && canRefreshAssistantMessage ? (
                 <TooltipProvider>

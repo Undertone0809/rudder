@@ -3439,7 +3439,7 @@ test.describe("Chat Side Panel", () => {
     const scrollRegion = page.getByTestId("chat-messages-scroll-region");
     await expect(page.getByTestId("chat-desktop-toolbar-clearance")).toHaveCount(0);
     await expect(chatActionsButton).toBeVisible();
-    await expect(assistantMessage).toContainText("Chat run interrupted before a final reply.");
+    await expect(assistantMessage).not.toContainText("Chat run interrupted before a final reply.");
     await expect(transcriptLine).toBeVisible();
     await scrollRegion.evaluate((element) => {
       element.scrollTop = 0;

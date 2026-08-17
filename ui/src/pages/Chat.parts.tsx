@@ -1339,9 +1339,31 @@ export function formatChatPrimaryIssueBreadcrumb(issue: ChatPrimaryIssueSummary)
 }
 
 export const INTERRUPTED_CHAT_CONTINUATION_PROMPT = "Continue from the interrupted chat run.";
+export const INTERRUPTED_CHAT_PLACEHOLDER = "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.";
 
 export function canContinueInterruptedChatMessage(message: Pick<ChatMessage, "role" | "status">) {
   return message.role === "assistant" && message.status === "interrupted";
+}
+
+export function visibleInterruptedChatMessageBody(
+  message: Pick<ChatMessage, "role" | "status" | "body">,
+) {
+  if (!canContinueInterruptedChatMessage(message)) return message.body;
+  const normalizedBody = message.body.trim();
+  if (!normalizedBody.startsWith(INTERRUPTED_CHAT_PLACEHOLDER)) return message.body;
+  const remainder = normalizedBody.slice(INTERRUPTED_CHAT_PLACEHOLDER.length);
+  if (remainder.length > 0 && !/^\s/.test(remainder)) return message.body;
+  return remainder.trimStart();
+}
+
+export function latestContinuableInterruptedChatMessage(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.supersededAt || message.kind !== "message") continue;
+    if (message.role === "system") continue;
+    return canContinueInterruptedChatMessage(message) ? message : null;
+  }
+  return null;
 }
 
 export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId" | "structuredPayload" | "runId">) {

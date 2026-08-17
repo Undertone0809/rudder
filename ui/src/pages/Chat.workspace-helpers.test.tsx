@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canQueueComposerDraft,
+  chatComposerSendButtonMode,
   chatMessageJumpTargetFromHref,
   chatSendButtonDisabled,
   createQueuedComposerMessage,
@@ -324,6 +325,53 @@ describe("chatSendButtonDisabled", () => {
       sendButtonMode: "stop",
       hasDraft: false,
     })).toBe(false);
+  });
+
+  it("enables Continue without a draft after runtime selection settles", () => {
+    expect(chatSendButtonDisabled({
+      selectedConversationExternalBound: false,
+      modelSelectionPending: false,
+      composerUnavailable: false,
+      sendButtonMode: "continue",
+      hasDraft: false,
+    })).toBe(false);
+
+    expect(chatSendButtonDisabled({
+      selectedConversationExternalBound: false,
+      modelSelectionPending: true,
+      composerUnavailable: false,
+      sendButtonMode: "continue",
+      hasDraft: false,
+    })).toBe(true);
+  });
+});
+
+describe("chatComposerSendButtonMode", () => {
+  const interruptedIdle = {
+    newConversationSendInFlight: false,
+    activeSendInFlight: false,
+    hasActiveStream: false,
+    stopRequestPending: false,
+    streamStopping: false,
+    canQueueDraft: false,
+    canContinueInterruptedConversation: true,
+    hasSubmittableDraft: false,
+    pendingFileCount: 0,
+  };
+
+  it("uses Continue only for an empty interrupted composer", () => {
+    expect(chatComposerSendButtonMode(interruptedIdle)).toBe("continue");
+    expect(chatComposerSendButtonMode({
+      ...interruptedIdle,
+      hasSubmittableDraft: true,
+    })).toBe("send");
+  });
+
+  it("does not let Continue discard a pending regular attachment", () => {
+    expect(chatComposerSendButtonMode({
+      ...interruptedIdle,
+      pendingFileCount: 1,
+    })).toBe("send");
   });
 });
 

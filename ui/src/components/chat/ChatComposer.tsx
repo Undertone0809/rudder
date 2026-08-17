@@ -22,7 +22,7 @@ import {
   type Ref,
 } from "react";
 
-export type ChatComposerSendMode = "send" | "sending" | "stop" | "stopping" | "queue";
+export type ChatComposerSendMode = "send" | "continue" | "sending" | "stop" | "stopping" | "queue";
 
 export const ChatComposerSurface = forwardRef<
   HTMLDivElement,
@@ -322,6 +322,21 @@ export function ChatComposerSendButton({
   ariaLabel?: string;
 }) {
   const busy = mode === "sending" || (mode === "stopping" && !stoppingComplete);
+  const resolvedAriaLabel = ariaLabel ?? (
+    mode === "sending"
+      ? "Sending"
+      : mode === "stopping"
+        ? stoppingComplete
+          ? "Response stopped"
+          : "Stopping response"
+        : mode === "stop"
+          ? "Stop streaming"
+          : mode === "queue"
+            ? "Queue"
+            : mode === "continue"
+              ? "Continue"
+              : "Send"
+  );
   return (
     <Button
       type="button"
@@ -330,19 +345,8 @@ export function ChatComposerSendButton({
       onClick={onClick}
       disabled={disabled}
       aria-busy={busy ? true : undefined}
-      aria-label={ariaLabel ?? (
-        mode === "sending"
-          ? "Sending"
-          : mode === "stopping"
-          ? stoppingComplete
-            ? "Response stopped"
-            : "Stopping response"
-            : mode === "stop"
-              ? "Stop streaming"
-              : mode === "queue"
-                ? "Queue"
-                : "Send"
-      )}
+      aria-label={resolvedAriaLabel}
+      title={mode === "continue" ? resolvedAriaLabel : undefined}
       className={cn(
         "shrink-0 rounded-full border-0 bg-white text-black shadow-sm",
         "hover:bg-zinc-100 dark:bg-white dark:text-black dark:hover:bg-zinc-100",
