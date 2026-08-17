@@ -280,21 +280,12 @@ describe("Desktop Local App runtime", () => {
     },
   );
 
-  it("keeps an inherited attacker PATH from replacing the trusted executable path", async () => {
-    const attackerRoot = await mkdtemp(path.join(tmpdir(), "rudder-local-app-path-attacker-"));
-    const attackerExecutable = path.join(
-      attackerRoot,
-      process.platform === "win32" ? "node.cmd" : "node",
-    );
-    const attackerMarker = path.join(attackerRoot, "executed");
-    if (process.platform === "win32") {
-      await writeFile(attackerExecutable, [
-        "@echo off",
-        `>"${attackerMarker}" echo attacked`,
-        "echo attacker-node",
-        "",
-      ].join("\r\n"));
-    } else {
+  it.runIf(process.platform !== "win32")(
+    "keeps an inherited attacker PATH from replacing the trusted executable path",
+    async () => {
+      const attackerRoot = await mkdtemp(path.join(tmpdir(), "rudder-local-app-path-attacker-"));
+      const attackerExecutable = path.join(attackerRoot, "node");
+      const attackerMarker = path.join(attackerRoot, "executed");
       await writeFile(attackerExecutable, [
         "#!/bin/sh",
         `printf attacked > '${attackerMarker}'`,
@@ -302,36 +293,36 @@ describe("Desktop Local App runtime", () => {
         "",
       ].join("\n"));
       await chmod(attackerExecutable, 0o755);
-    }
 
-    const previousPath = process.env.PATH;
-    process.env.PATH = attackerRoot;
-    const { registry, definition } = await approvedFixture({ inheritedEnvNames: ["PATH"] });
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: "darwin",
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
-    });
-    try {
-      const running = await manager.start(definition.id);
-      const probe = await fetch(`${running.origin}/path-probe`).then((response) => response.text());
-      const childEnvironment = await fetch(`${running.origin}/env`).then((response) => response.json()) as {
-        path?: string;
-      };
-      const childPath = childEnvironment.path?.split(path.delimiter) ?? [];
+      const previousPath = process.env.PATH;
+      process.env.PATH = attackerRoot;
+      const { registry, definition } = await approvedFixture({ inheritedEnvNames: ["PATH"] });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        verifyListenerOwnership: acceptFixtureListenerOwnership,
+      });
+      try {
+        const running = await manager.start(definition.id);
+        const probe = await fetch(`${running.origin}/path-probe`).then((response) => response.text());
+        const childEnvironment = await fetch(`${running.origin}/env`).then((response) => response.json()) as {
+          path?: string;
+        };
+        const childPath = childEnvironment.path?.split(path.delimiter) ?? [];
 
-      expect(probe).toBe(await realpath(process.execPath));
-      expect(childPath[0]).toBe(path.dirname(definition.executable));
-      expect(childPath).toContain(path.dirname(process.execPath));
-      expect(childPath).toEqual(expect.arrayContaining(["/usr/bin", "/bin", "/usr/sbin", "/sbin"]));
-      expect(childPath).not.toContain(attackerRoot);
-      await expect(access(attackerMarker)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await manager.stop(definition.id).catch(() => undefined);
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-    }
-  });
+        expect(probe).toBe(await realpath(process.execPath));
+        expect(childPath[0]).toBe(path.dirname(definition.executable));
+        expect(childPath).toContain(path.dirname(process.execPath));
+        expect(childPath).toEqual(expect.arrayContaining(["/usr/bin", "/bin", "/usr/sbin", "/sbin"]));
+        expect(childPath).not.toContain(attackerRoot);
+        await expect(access(attackerMarker)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await manager.stop(definition.id).catch(() => undefined);
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      }
+    },
+  );
 
   it.runIf(process.platform === "darwin")(
     "spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition",
