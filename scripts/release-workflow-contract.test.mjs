@@ -151,6 +151,8 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("ref: ${{ github.sha }}");
     expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
     expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
+    expect(recovery.match(/^\s+WORKFLOW_SHA:/gm)).toHaveLength(1);
+    expect(recovery).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(recovery).toContain('test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"');
     expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
     expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
@@ -202,10 +204,21 @@ describe("unified delivery workflows", () => {
   });
 
   it("retries transient COS mirror failures before failing the release gate", () => {
-    for (const jobName of ["mirror-canary", "mirror-stable"]) {
-      expect(workflowJob(releaseWorkflow, jobName)).toContain("for attempt in 1 2 3");
-      expect(workflowJob(releaseWorkflow, jobName)).toContain("COS mirror attempt ${attempt}/3");
+    for (const jobName of ["mirror-recovery", "mirror-canary", "mirror-stable"]) {
+      const job = workflowJob(releaseWorkflow, jobName);
+      expect(job).toContain("for attempt in 1 2 3");
+      expect(job).toContain("COS mirror attempt ${attempt}/3");
+      expect(job).toContain('if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]');
+      expect(job).toContain('exit "$status"');
     }
+  });
+
+  it("runs mirror recovery from trusted main workflow code while preserving the released source", () => {
+    const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
+    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
+    expect(recovery).toContain('test "$SOURCE_REF" = "$remote_tag_sha"');
   });
 
   it("waits for the exact manifest versions before creating public release surfaces", () => {

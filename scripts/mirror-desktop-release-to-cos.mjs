@@ -12,11 +12,24 @@ const DEFAULT_STS_ENDPOINT = "https://sts.tencentcloudapi.com";
 const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
-const DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
 const DEFAULT_MULTIPART_CONCURRENCY = 4;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
 const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
+const RETRYABLE_NETWORK_EXIT_CODE = 75;
+const RETRYABLE_NETWORK_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 const SIGNABLE_HEADERS = new Set([
   "cache-control",
   "content-disposition",
@@ -331,31 +344,40 @@ export class CosReleaseMirror {
       const partCount = Math.ceil(file.size / this.multipartPartSize);
       const parts = new Array(partCount);
       let nextPartIndex = 0;
+      let stopped = false;
       const uploadPart = async () => {
         while (true) {
+          if (stopped) return;
           const partIndex = nextPartIndex;
           nextPartIndex += 1;
           if (partIndex >= partCount) return;
           const partNumber = partIndex + 1;
-          const offset = partIndex * this.multipartPartSize;
-          const length = Math.min(this.multipartPartSize, file.size - offset);
-          const bytes = Buffer.alloc(length);
-          // Positional reads keep concurrent workers independent of the file handle cursor.
-          const { bytesRead } = await handle.read(bytes, 0, length, offset);
-          if (bytesRead !== length) {
-            throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+          try {
+            const offset = partIndex * this.multipartPartSize;
+            const length = Math.min(this.multipartPartSize, file.size - offset);
+            const bytes = Buffer.alloc(length);
+            // Positional reads keep concurrent workers independent of the file handle cursor.
+            const { bytesRead } = await handle.read(bytes, 0, length, offset);
+            if (bytesRead !== length) {
+              throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+            }
+            parts[partIndex] = {
+              etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
+              partNumber,
+            };
+          } catch (error) {
+            stopped = true;
+            throw error;
           }
-          parts[partIndex] = {
-            etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
-            partNumber,
-          };
         }
       };
       const workerCount = Math.min(this.multipartConcurrency, partCount);
       const workerResults = await Promise.allSettled(
         Array.from({ length: workerCount }, () => uploadPart()),
       );
-      const rejectedWorker = workerResults.find((result) => result.status === "rejected");
+      const rejectedWorkers = workerResults.filter((result) => result.status === "rejected");
+      const rejectedWorker = rejectedWorkers.find((result) => exitCodeForMirrorError(result.reason) !== 75) ??
+        rejectedWorkers[0];
       if (rejectedWorker) throw rejectedWorker.reason;
       const completeBody = `<CompleteMultipartUpload>${parts
         .map(({ etag, partNumber }) => `<Part><PartNumber>${partNumber}</PartNumber><ETag>${escapeXml(etag)}</ETag></Part>`)
@@ -406,8 +428,14 @@ export class CosReleaseMirror {
           },
         });
       } catch (error) {
+        if (!isRetryableNetworkError(error)) throw error;
         lastDetail = formatError(error);
-        if (attempt === this.multipartRetries) throw error;
+        if (attempt === this.multipartRetries) {
+          throw new RetryableNetworkError(
+            `upload COS multipart part ${partNumber} of ${key} failed after ${this.multipartRetries} network attempts.`,
+            { cause: error },
+          );
+        }
         await this.sleep(1000 * attempt);
         continue;
       }
@@ -927,6 +955,33 @@ async function httpError(action, response) {
   return new Error(`${action} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
 }
 
+export class RetryableNetworkError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RetryableNetworkError";
+  }
+}
+
+function errorChainHasRetryableCode(error, seen = new Set()) {
+  if (!error || (typeof error !== "object" && typeof error !== "function") || seen.has(error)) return false;
+  seen.add(error);
+  if (typeof error.code === "string" && RETRYABLE_NETWORK_CODES.has(error.code)) return true;
+  if (Array.isArray(error.errors) && error.errors.some((nested) => errorChainHasRetryableCode(nested, seen))) {
+    return true;
+  }
+  return errorChainHasRetryableCode(error.cause, seen);
+}
+
+export function isRetryableNetworkError(error) {
+  return error instanceof TypeError && error.message === "fetch failed" && errorChainHasRetryableCode(error);
+}
+
+export function exitCodeForMirrorError(error) {
+  return error instanceof RetryableNetworkError || isRetryableNetworkError(error)
+    ? RETRYABLE_NETWORK_EXIT_CODE
+    : 1;
+}
+
 async function fetchWithRetry(
   fetchImpl,
   input,
@@ -939,9 +994,12 @@ async function fetchWithRetry(
     try {
       return await fetchImpl(input, init);
     } catch (error) {
+      if (!isRetryableNetworkError(error)) throw error;
       lastError = error;
       if (attempt === networkRetries) {
-        throw new Error(`${operation} failed after ${networkRetries} network attempts.`, { cause: error });
+        throw new RetryableNetworkError(`${operation} failed after ${networkRetries} network attempts.`, {
+          cause: error,
+        });
       }
       await retrySleep(retryDelayMs * attempt);
     }
@@ -1012,7 +1070,7 @@ async function main() {
     console.error(formatError(error));
     if (error instanceof Error && error.stack) console.error(error.stack);
     usage();
-    process.exitCode = 1;
+    process.exitCode = exitCodeForMirrorError(error);
   }
 }
 
