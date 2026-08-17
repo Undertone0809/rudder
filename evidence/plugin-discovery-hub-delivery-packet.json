@@ -26,8 +26,8 @@
   },
   "candidate": {
     "branch": "codex/plugin-discovery-hub",
-    "source_ref": "refs/heads/codex/plugin-discovery-hub",
-    "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+    "source_ref": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
+    "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
     "dirty_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "doc/engineering/PLUGIN_AUTHORING_GUIDE.md",
@@ -62,11 +62,11 @@
     ],
     "build": {
       "id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56"
+      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f"
     },
     "runtime": {
-      "id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
-      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56"
+      "id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
+      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f"
     },
     "organization_data": {
       "organization_id": "d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd",
@@ -163,9 +163,9 @@
     "reviewer": {
       "verdict": "pending",
       "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
-      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
       "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
       "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
       "packet_version": "21",
       "summary": "Awaiting a fresh stage review after the disposable URL Import Preview was removed and the v21 acceptance data projection was refrozen."
@@ -173,9 +173,9 @@
     "verifier": {
       "verdict": "pending",
       "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
-      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
       "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
       "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
       "packet_version": "21",
       "summary": "Awaiting a fresh black-box verification of the unchanged candidate against the refrozen v21 acceptance data projection."
@@ -183,9 +183,9 @@
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
-      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
       "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
       "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
       "packet_version": "21",
       "summary": "Awaiting final handoff review after fresh v21 stage and black-box receipts."
