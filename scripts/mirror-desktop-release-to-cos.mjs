@@ -12,7 +12,7 @@ const DEFAULT_STS_ENDPOINT = "https://sts.tencentcloudapi.com";
 const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
-const DEFAULT_MULTIPART_PART_SIZE = 32 * 1024 * 1024;
+const DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
 const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
@@ -370,17 +370,25 @@ export class CosReleaseMirror {
     ]);
     let lastDetail = "";
     for (let attempt = 1; attempt <= this.multipartRetries; attempt += 1) {
-      const response = await this.requestObject("PUT", key, {
-        body: bytes,
-        query,
-        headers: {
-          "content-length": String(bytes.length),
-          "content-md5": createHash("md5").update(bytes).digest("base64"),
-          "content-type": file.contentType,
-          "x-cos-forbid-overwrite": "true",
-          "x-cos-meta-sha256": file.sha256,
-        },
-      });
+      let response;
+      try {
+        response = await this.requestObject("PUT", key, {
+          body: bytes,
+          query,
+          headers: {
+            "content-length": String(bytes.length),
+            "content-md5": createHash("md5").update(bytes).digest("base64"),
+            "content-type": file.contentType,
+            "x-cos-forbid-overwrite": "true",
+            "x-cos-meta-sha256": file.sha256,
+          },
+        });
+      } catch (error) {
+        lastDetail = formatError(error);
+        if (attempt === this.multipartRetries) throw error;
+        await this.sleep(1000 * attempt);
+        continue;
+      }
       if (response.status === 200) {
         const etag = response.headers.get("etag");
         await response.body?.cancel();
