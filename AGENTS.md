@@ -38,14 +38,16 @@ Then choose the route that matches the work:
 - Desktop app, packaging, installer, local prod startup:
   - `doc/README.md`
   - `doc/engineering/DESKTOP.md`
-  - `doc/engineering/DEVELOPING.md`
+  - `doc/engineering/LOCAL-DEVELOPMENT.md`
   - `desktop/scripts/smoke.mjs`
   - `scripts/prod-desktop.mjs`
 - Server/runtime/database work:
   - `doc/README.md`
-  - `doc/engineering/DEVELOPING.md`
+  - `doc/engineering/LOCAL-DEVELOPMENT.md`
   - `doc/engineering/DATABASE.md`
   - `doc/engineering/DEPLOYMENT-MODES.md`
+  - `doc/engineering/ARCHITECTURE-GUARDRAILS.md` when module boundaries or
+    architecture checks are affected
   - relevant `doc/product/domains/**` contracts when behavior changes
 - CLI/task-surface work:
   - `doc/README.md`
@@ -55,6 +57,7 @@ Then choose the route that matches the work:
   - `doc/README.md`
   - `doc/product/PRODUCT.md`
   - `doc/engineering/DESIGN.md`
+  - `doc/engineering/PERFORMANCE.md` for data-heavy or scale-sensitive surfaces
   - relevant `doc/product/domains/**` contracts for user-visible behavior
 - Release/publishing work:
   - `doc/README.md`
@@ -152,6 +155,13 @@ If you change schema/API behavior, update all impacted layers:
 - Budget hard-stop auto-pause behavior
 - Activity logging for mutating actions
 
+1. Explain non-obvious critical decisions.
+
+Add concise reasoning comments when behavior is policy-driven,
+ordering-sensitive, or intentionally backward-compatible. Explain why, not
+what. Follow `doc/engineering/ARCHITECTURE-GUARDRAILS.md` for comment shape,
+runtime prompt assembly guidance, and architecture ratchet commands.
+
 1. Do not replace current product contracts wholesale unless asked.
 
 Prefer additive updates. Keep `doc/product/**` as the current source of product truth. `doc/archive/**` is historical context only.
@@ -168,7 +178,9 @@ Repository-based agent skills for local development, maintenance, release, debug
 
 New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.
 When using plan mode, write the plan in `doc/plans/` before starting implementation work.
-New plan docs should start with the standard YAML frontmatter described in `doc/engineering/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
+New plan docs should follow `doc/plans/_template.md`, use the most specific
+supported `kind`, and choose `area` / `entities` using
+`doc/plans/_taxonomy.md` plus relevant prior plans.
 
 1. Treat `doc/product/` as the guarded Product Logic Registry.
 
@@ -288,6 +300,22 @@ pnpm test:run
 pnpm build
 ```
 
+Typical `NO_BUILD` evidence is a scoped diff check:
+
+```sh
+git diff --check -- AGENTS.md
+```
+
+For `SCOPED`, adapt this concrete UI-package example to the owning package and
+focused test files:
+
+```sh
+git diff --check -- ui/src
+pnpm lint:changed
+pnpm --filter @rudderhq/ui typecheck
+pnpm -s exec vitest run ui/src/pages/Chat.test.tsx
+```
+
 Reclassify when the diff, runtime, fixture, or acceptance criteria change. A
 relevant candidate change invalidates reviewer or verifier evidence tied to the
 old candidate. CI remains the broad integration safety net, but it does not
@@ -319,7 +347,7 @@ Task-specific additions:
 - Visible UI changes:
   - use `SPECIALIZED` unless a `FULL_GATE` trigger also applies
   - verify the rendered result in a browser or desktop shell, not just by tests
-  - when browser verification is needed, prefer `@browser-use` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
+  - when browser verification is needed, prefer `$ego-browser` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
   - store temporary screenshots and other ad-hoc verification artifacts outside the repository tree (for example under `/tmp` or the system temp dir), not in the project root
 - Release work:
   - use `FULL_GATE` and follow `doc/engineering/RELEASING.md`; its exact-source
