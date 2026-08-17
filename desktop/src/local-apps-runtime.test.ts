@@ -35,6 +35,8 @@ const nativeCapabilities = [
   "stdout_relay",
   "stderr_relay",
 ];
+const localAppRuntimeTestTimeoutMs = process.platform === "win32" ? 45_000 : 5_000;
+const localAppWatchdogStartTimeoutMs = process.platform === "win32" ? 30_000 : 10_000;
 
 async function unusedLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -165,7 +167,7 @@ function nativeHostEmitting(onStart?: (message: Record<string, unknown>, helper:
   return { helper, emitExit };
 }
 
-describe("Desktop Local App runtime", () => {
+describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs }, () => {
   it("injects Electron Node mode for the managed host executable even when the parent env omits it", async () => {
     const { registry, definition } = await approvedFixture({
       inheritedEnvNames: ["ELECTRON_RUN_AS_NODE"],
@@ -332,6 +334,7 @@ describe("Desktop Local App runtime", () => {
       const manager = new LocalAppRuntimeManager({
         registry,
         platform: process.platform,
+        watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
         maxLogBytes: 256,
         observeLifecycleEvent: (event) => events.push(event),
       });
@@ -360,10 +363,14 @@ describe("Desktop Local App runtime", () => {
 
   it(
     "rejects and fully cleans an approved fixture that exposes its allocated port on every interface",
-    { timeout: 30_000 },
+    { timeout: process.platform === "win32" ? 45_000 : 30_000 },
     async () => {
       const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
-      const manager = new LocalAppRuntimeManager({ registry, platform: process.platform });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: process.platform,
+        watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      });
       const markerPath = path.join(root, "wildcard-listener.json");
       try {
         await expect(manager.start(definition.id)).rejects.toThrow(
@@ -389,6 +396,7 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     try {
@@ -410,6 +418,7 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     const starting = manager.start(definition.id);
@@ -426,6 +435,7 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     try {
@@ -642,6 +652,7 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       probePersistedRuntimeLiveness,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
@@ -704,7 +715,11 @@ describe("Desktop Local App runtime", () => {
 
   it("fails closed on readiness failure or unproven listener ownership", async () => {
     const wrongHealth = await approvedFixture({ readinessPath: "/never", readinessTimeoutMs: 1_000 });
-    const timeoutManager = new LocalAppRuntimeManager({ registry: wrongHealth.registry, platform: process.platform });
+    const timeoutManager = new LocalAppRuntimeManager({
+      registry: wrongHealth.registry,
+      platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+    });
     await expect(timeoutManager.start(wrongHealth.definition.id)).rejects.toThrow("readiness");
     expect((await timeoutManager.status(wrongHealth.definition.id)).status).toBe("failed");
 
@@ -712,6 +727,7 @@ describe("Desktop Local App runtime", () => {
     const ownershipManager = new LocalAppRuntimeManager({
       registry: unowned.registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       verifyListenerOwnership: async () => false,
       listenerOwnershipRetryTimeoutMs: 750,
     });
@@ -727,6 +743,7 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       verifyListenerOwnership,
     });
     try {
@@ -817,6 +834,7 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
       platform: process.platform,
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       verifyListenerOwnership: () => new Promise(() => undefined),
       listenerOwnershipRetryTimeoutMs: 250,
       cleanupTimeoutMs: 250,
