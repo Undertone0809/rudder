@@ -27,6 +27,7 @@ import {
 } from "react";
 import { buildTranscript, getUIAdapter } from "../agent-runtimes";
 import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
+import { chatsApi } from "../api/chats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { CopyText } from "../components/CopyText";
 import { PageTabBar } from "../components/PageTabBar";
@@ -35,7 +36,7 @@ import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTransc
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { queryKeys } from "../lib/queryKeys";
-import { heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries } from "../lib/run-detail-events";
+import { chatTranscriptEntriesToRunTranscriptEntries, heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries, resolveRunChatTranscriptTarget } from "../lib/run-detail-events";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
@@ -229,9 +230,14 @@ export function LogViewer({
   }
 
   // Fetch events
-  const { data: initialEvents } = useQuery({
+  const {
+    data: initialEvents,
+    error: initialEventsError,
+    isFetching: initialEventsFetching,
+  } = useQuery({
     queryKey: queryKeys.runEvents(run.id),
     queryFn: () => agentRunsApi.allEvents(run.id),
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
@@ -241,7 +247,7 @@ export function LogViewer({
   }, [run.id]);
 
   useEffect(() => {
-    if (initialEvents) {
+    if (initialEvents !== undefined) {
       persistedEventCursorRef.current = advancePersistedRunEventCursor(
         persistedEventCursorRef.current,
         initialEvents,
@@ -251,8 +257,10 @@ export function LogViewer({
         return mergeRunEvents(currentEvents, initialEvents);
       });
       setLoading(false);
+    } else if (initialEventsError) {
+      setLoading(false);
     }
-  }, [initialEvents]);
+  }, [initialEvents, initialEventsError]);
 
   // The opened Run keeps a cursor-based event backfill so reconnect gaps and
   // terminal races cannot lose structured invocation evidence. Background Runs
@@ -488,18 +496,62 @@ export function LogViewer({
   }, [censorUsernameInLogs, events]);
 
   const adapter = useMemo(() => getUIAdapter(agentRuntimeType), [agentRuntimeType]);
-  const transcript = useMemo(() => {
-    const logTranscript = buildTranscript(logLines, adapter.parseStdoutLine, { censorUsernameInLogs });
-    const liveLogTranscript = liveTranscriptByRun.get(run.id) ?? [];
+  const logTranscript = useMemo(
+    () => buildTranscript(logLines, adapter.parseStdoutLine, { censorUsernameInLogs }),
+    [adapter, censorUsernameInLogs, logLines],
+  );
+  const liveLogTranscript = liveTranscriptByRun.get(run.id) ?? [];
+  const eventTranscript = useMemo(() => heartbeatRunEventsToTranscriptEntries(events, {
+    redactText: (value) => redactPathText(value, censorUsernameInLogs),
+    redactValue: (value) => redactPathValue(value, censorUsernameInLogs),
+  }), [censorUsernameInLogs, events]);
+  const nativeTranscript = useMemo(() => {
     const effectiveLogTranscript = liveLogTranscript.length > logTranscript.length
       ? liveLogTranscript
       : logTranscript;
-    const eventTranscript = heartbeatRunEventsToTranscriptEntries(events, {
-      redactText: (value) => redactPathText(value, censorUsernameInLogs),
-      redactValue: (value) => redactPathValue(value, censorUsernameInLogs),
-    });
     return mergeTranscriptEntries(effectiveLogTranscript, eventTranscript);
-  }, [adapter, censorUsernameInLogs, events, liveTranscriptByRun, logLines, run.id]);
+  }, [eventTranscript, liveLogTranscript, logTranscript]);
+  const chatTranscriptTarget = resolveRunChatTranscriptTarget(run);
+  const shouldLoadChatTranscriptFallback = !isLive
+    && Boolean(chatTranscriptTarget)
+    && !loading
+    && !initialEventsFetching
+    && !logLoading
+    && logTranscript.length === 0
+    && liveLogTranscript.length === 0
+    && !events.some((event) => event.eventType === "transcript.entry");
+  const chatTranscriptQuery = useQuery({
+    queryKey: chatTranscriptTarget
+      ? queryKeys.chats.messageTranscript(
+        run.orgId,
+        chatTranscriptTarget.conversationId,
+        chatTranscriptTarget.messageId,
+      )
+      : queryKeys.chats.messageTranscript("__none__", "__none__", "__none__"),
+    queryFn: () => chatsApi.getMessageTranscript(
+      chatTranscriptTarget!.conversationId,
+      chatTranscriptTarget!.messageId,
+    ),
+    enabled: shouldLoadChatTranscriptFallback,
+  });
+  const persistedChatTranscript = useMemo(() => chatTranscriptEntriesToRunTranscriptEntries(
+    chatTranscriptQuery.data?.transcript ?? [],
+    censorUsernameInLogs,
+  ), [chatTranscriptQuery.data?.transcript, censorUsernameInLogs]);
+  const hasNativeTranscript = logTranscript.length > 0
+    || liveLogTranscript.length > 0
+    || events.some((event) => event.eventType === "transcript.entry");
+  const transcript = useMemo(
+    () => hasNativeTranscript
+      ? nativeTranscript
+      : mergeTranscriptEntries(nativeTranscript, persistedChatTranscript),
+    [hasNativeTranscript, nativeTranscript, persistedChatTranscript],
+  );
+  const transcriptEmptyMessage = chatTranscriptQuery.isError
+    ? "Transcript unavailable."
+    : run.logRef
+      ? "Waiting for transcript..."
+      : "No persisted transcript for this run.";
   const hasInvocationTab = Boolean(adapterInvokePayload);
   const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload);
   const invocationPromptText =
@@ -568,7 +620,12 @@ export function LogViewer({
     }
   }, [activeDetailTab, hasInvocationTab]);
 
-  if (loading || logLoading) {
+  if (
+    loading
+    || logLoading
+    || (initialEventsFetching && (initialEvents === undefined || initialEvents.length === 0))
+    || (shouldLoadChatTranscriptFallback && chatTranscriptQuery.isFetching)
+  ) {
     return <p className="text-xs text-muted-foreground">Loading run logs...</p>;
   }
 
@@ -654,7 +711,7 @@ export function LogViewer({
               mode={transcriptMode}
               streaming={isLive}
               collapseStdout
-              emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
+              emptyMessage={transcriptEmptyMessage}
               presentation="detail"
               runAnnotationContext={onAnnotate ? {
                 sourceRunId: run.id,
@@ -798,7 +855,7 @@ export function LogViewer({
               mode={transcriptMode}
               streaming={isLive}
               collapseStdout
-              emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
+              emptyMessage={transcriptEmptyMessage}
               presentation="detail"
               runAnnotationContext={onAnnotate ? {
                 sourceRunId: run.id,
