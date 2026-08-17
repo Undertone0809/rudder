@@ -1,9 +1,45 @@
-import { isInternalChatTranscriptLifecycleEntry, type HeartbeatRunEvent } from "@rudderhq/shared";
+import { redactTranscriptEntryPaths } from "@rudderhq/agent-runtime-utils";
+import {
+  isInternalChatTranscriptLifecycleEntry,
+  type ChatStreamTranscriptEntry,
+  type HeartbeatRun,
+  type HeartbeatRunEvent,
+} from "@rudderhq/shared";
 import type { TranscriptEntry } from "../agent-runtimes";
 
 interface RunDetailEventOptions {
   redactText?: (value: string) => string;
   redactValue?: <T>(value: T) => T;
+}
+
+export interface RunChatTranscriptTarget {
+  conversationId: string;
+  messageId: string;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+export function resolveRunChatTranscriptTarget(run: HeartbeatRun): RunChatTranscriptTarget | null {
+  const context = run.contextSnapshot;
+  const conversationId = nonEmptyString(run.chatConversationId) ?? nonEmptyString(context?.conversationId);
+  // Only an assistant message owns the persisted runtime transcript. The
+  // initial messageId/userMessageId values identify the prompt, and querying
+  // either one would silently return an empty transcript.
+  const messageId = nonEmptyString(context?.assistantMessageId);
+  if (!conversationId || !messageId) return null;
+  return { conversationId, messageId };
+}
+
+export function chatTranscriptEntriesToRunTranscriptEntries(
+  entries: ChatStreamTranscriptEntry[],
+  censorUsernameInLogs: boolean,
+): TranscriptEntry[] {
+  return entries.map((entry) => redactTranscriptEntryPaths(
+    entry as TranscriptEntry,
+    { enabled: censorUsernameInLogs },
+  ));
 }
 
 const OPERATOR_HIDDEN_RUN_EVENT_TYPES = new Set([
