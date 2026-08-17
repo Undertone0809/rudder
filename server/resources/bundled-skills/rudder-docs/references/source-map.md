@@ -84,8 +84,11 @@ Common domain routes include:
 
 ## Contributor And Engineering Documentation
 
+- Contributor workflow and verification policy: `AGENTS.md`
 - Route selector: `doc/README.md`
-- Development: `doc/engineering/DEVELOPING.md`
+- Local development: `doc/engineering/LOCAL-DEVELOPMENT.md`
+- Architecture guardrails: `doc/engineering/ARCHITECTURE-GUARDRAILS.md`
+- Performance and production-shaped data: `doc/engineering/PERFORMANCE.md`
 - CLI: `doc/engineering/CLI.md`
 - Database: `doc/engineering/DATABASE.md`
 - Deployment modes: `doc/engineering/DEPLOYMENT-MODES.md`

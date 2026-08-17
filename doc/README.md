@@ -23,7 +23,10 @@ Use this page to choose the current source of truth. Do not scan all of
 - Product direction: `doc/product/GOAL.md`, `doc/product/PRODUCT.md`
 - Current product logic: `doc/product/README.md`, then the owning domain under
   `doc/product/domains/`
-- Development setup: `doc/engineering/DEVELOPING.md`
+- Contributor workflow and verification policy: root `AGENTS.md`
+- Local setup and worktree isolation: `doc/engineering/LOCAL-DEVELOPMENT.md`
+- Architecture guardrails: `doc/engineering/ARCHITECTURE-GUARDRAILS.md`
+- Performance and production-shaped data: `doc/engineering/PERFORMANCE.md`
 - Database and migrations: `doc/engineering/DATABASE.md`
 - CLI behavior: `doc/engineering/CLI.md`
 - Desktop and packaging: `doc/engineering/DESKTOP.md`

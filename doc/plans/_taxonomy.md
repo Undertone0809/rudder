@@ -13,7 +13,7 @@ related_plans:
   - 2026-04-17-plan-template-kinds-and-taxonomy.md
 supersedes: []
 related_code:
-  - doc/engineering/DEVELOPING.md
+  - doc/plans/_template.md
   - .agents/skills/build-advisor/SKILL.md
 commit_refs: []
 updated_at: 2026-04-17
