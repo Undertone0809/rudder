@@ -13,6 +13,8 @@ related_code:
   - packages/shared/src/validators/plugin-v1.ts
   - server/src/routes/rudder-plugins.ts
   - server/src/services/rudder-plugins.ts
+  - server/src/services/rudder-plugin-catalog.ts
+  - ui/src/pages/PluginDetail.tsx
   - ui/src/pages/Plugins.tsx
 related_tests:
   - server/src/services/rudder-plugins.test.ts
@@ -60,6 +62,11 @@ Product model:
   runtime or work-management object.
 - Rudder accepts the Codex `.codex-plugin/plugin.json` package shape. A package
   may contain one or more Skills, MCP definitions, or App references.
+- Rudder's curated catalog may describe either a native Codex Plugin or one
+  public GitHub source compatible with `skills add`. For the latter, Rudder
+  discovers one or more Skill roots and deterministically generates a
+  Skills-only Codex manifest in memory; one repository remains one Plugin even
+  when it contains one Skill or many.
 - Unknown and unsupported package fields remain preserved in the snapshot.
   Codex `.app.json` aliases are reported but never inferred to be Rudder Local
   Apps or MCP endpoints.
@@ -93,28 +100,40 @@ Why:
 
 Flow:
 
-1. An Organization owner selects a local Codex Plugin folder or ZIP, or adds a
-   local Codex marketplace folder or GitHub marketplace pinned to a full commit
-   SHA.
-2. Rudder validates bounded input, safe relative paths, ZIP expansion, manifest
+1. An Organization owner opens a manually curated public Plugin, enters a
+   public GitHub source accepted by `skills add`, selects a local Codex Plugin
+   folder or ZIP, or adds a local Codex marketplace folder or GitHub marketplace
+   pinned to a full commit SHA.
+2. For a curated or URL source, Rudder resolves the newest stable semantic
+   Release when one exists and otherwise the default branch HEAD, then locks a
+   full commit SHA and bounded repository subdirectory. Discover itself remains
+   a lightweight catalog and does not download every package.
+3. Rudder validates bounded input, safe relative paths, ZIP expansion, manifest
    identity, referenced component paths, and literal credential exposure.
-3. Rudder computes the digest and returns a component compatibility report.
-4. The operator reviews ready, setup-required, unsupported, warning, and error
-   states before installation.
-5. When the same installed identity has a different semantic version, the
-   report is an update review. The current package remains active until the
-   reviewed revision is fully prepared.
-6. Update review shows added, removed, and changed components with the old and
+4. Rudder computes the digest and persists an immutable Preview containing the
+   exact package snapshot, source resolution, compatibility inventory, warnings,
+   errors, and organization-scoped Preview ID.
+5. Plugin Detail shows ready, setup-required, unsupported, warning, and error
+   states before installation. Refreshing Detail by Preview ID before or after
+   install and uninstall reads that persisted snapshot and does not resolve or
+   download the upstream again.
+6. When the same installed identity has a different semantic version, Plugin
+   Detail is an update Preview. The current package remains active until the
+   Preview revision is fully prepared.
+7. Update Preview shows added, removed, and changed components with the old and
    new execution surface. A new Skill or MCP, changed Skill instructions or
    executable files, or changed MCP command/endpoint is an access expansion and
    requires an explicit operator confirmation before apply.
-7. A marketplace entry becomes a Discover review. `INSTALLED_BY_DEFAULT` is
-   retained as provenance and never causes installation without Rudder review.
+8. A marketplace entry becomes a Discover Preview. `INSTALLED_BY_DEFAULT` is
+   retained as provenance and never causes installation without an explicit
+   Rudder install action.
 
 Invariants:
 
-- Inspection executes no hooks, scripts, MCP servers, Apps, package-manager
-  lifecycle steps, or network calls.
+- Preview executes no `npx`, hooks, Skill scripts, MCP servers, Apps,
+  package-manager lifecycle steps, or third-party installers. Network access is
+  limited to bounded catalog and public source retrieval before the immutable
+  Preview is created.
 - Traversal, absolute paths, duplicate/case-colliding paths, oversize files,
   oversize packages, invalid JSON, invalid identity, and literal MCP secrets
   are rejected.
@@ -125,10 +144,15 @@ Invariants:
   with a full 40-character commit SHA. Rudder fetches that immutable archive;
   moving branches and tags are not accepted as provenance.
 - A package with no supported or setup-capable component cannot be installed.
+- Curated and URL sources accept only public HTTPS GitHub repositories and
+  bounded redirects. SSH, private repositories, and local paths stay behind
+  the existing explicit import boundaries.
 - The same version with a conflicting digest is a source-integrity error, not
   an in-place update.
-- Discover shows no public directory when no documented directory source is
-  configured; Rudder does not imply an OpenAI catalog it cannot access.
+- Discover uses the manually curated Rudder Plugin catalog by default. Catalog
+  fetches use ETag and the instance's latest successful cache; a temporary
+  outage may show stale discovery data but never disables or mutates installed
+  Plugins.
 - Codex browser extensions, scheduled-task templates, hooks, and other known
   unsupported surfaces are named in the compatibility inventory and never
   silently ignored or executed.
@@ -142,7 +166,8 @@ Why:
 
 Flow:
 
-1. A reviewed package is installed into exactly one Organization.
+1. The exact immutable package named by a Preview ID is installed into exactly
+   one Organization. Install and Update never re-resolve the upstream source.
 2. Skills materialize as read-only `plugin_managed` Organization Skills.
    When a package Skill conflicts with an existing Organization Skill, the
    operator must explicitly choose keep existing, replace, or install both by
@@ -157,7 +182,7 @@ Flow:
 6. Customize creates an independent editable Organization Skill fork with
    package provenance. It is not a Plugin component target and is never removed
    or overwritten by Plugin lifecycle operations.
-7. A reviewed update prepares new Skill projections before atomically switching
+7. An explicitly accepted update Preview prepares new Skill projections before atomically switching
    package and component links. The prior immutable package remains available
    for explicit rollback; a preparation failure leaves the current package
    active and retryable.
@@ -166,7 +191,7 @@ Flow:
    MCP resource discovery and a network-disabled sandbox; `.app.json` aliases
    never activate that path.
 9. A changed App Builder revision creates an immutable pending Local App package
-   and update review. The last known-good revision remains active until the
+   and update Preview. The last known-good revision remains active until the
    operator applies the pending revision. If the projection is uninstalled
    while the underlying App still exists, directory reconciliation recreates it
    without changing App source, data, identity, or `/apps/...` launch
@@ -196,6 +221,9 @@ Invariants:
   selection record remains.
 - Updating or rolling back never mutates an immutable package snapshot. A
   failed update keeps the last known-good package and component targets active.
+- Installed Plugins remain on their current immutable revision. A lightweight
+  Release/HEAD check may show `Update available`, but only a newly opened Detail
+  Preview and explicit Update can advance the installation.
 - Hub is a default Primary Rail capability with Plugins, Skills, and Showcase
   views. It is not controlled by an Experimental setting. Existing `/apps/...`
   routes remain directly launchable and select the Hub rail.
@@ -210,6 +238,6 @@ Evidence:
   MCP status and UI resources, Organization isolation, Customize preservation,
   Local App revision projection and rebuild, access-expansion confirmation,
   update, rollback, uninstall, and reinstall.
-- Browser E2E covers the visible import, review, install, assignment,
+- Browser E2E covers Discover, immutable Detail Preview, URL import, install, assignment,
   enablement, update diff and confirmation, rollback, Organization mutation
   isolation, Local App projection recovery, and uninstall journey.

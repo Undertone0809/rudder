@@ -26,14 +26,15 @@ and package-component links. They do not own execution.
 
 - Package identity, immutable snapshots, provenance, digest, and compatibility
   reports.
-- Organization-scoped install, enable, disable, reviewed update, rollback, and
+- Organization-scoped install, enable, disable, previewed update, rollback, and
   uninstall lifecycle.
 - Links from a package to package-managed Skills, managed MCP drafts, preserved
   App references, and host-native Local Apps.
 - Editable Skill fork provenance and managed MCP UI resource entry points,
   while their execution remains owned by Skills and Managed MCP.
 - The default Hub Primary Rail surface: Plugins, Skills, and Showcase views,
-  plus import, creation, review, assignment, and setup entry points.
+  plus curated discovery, URL import, creation, Preview, assignment, and setup
+  entry points.
 
 ## Does Not Own
 
@@ -46,8 +47,8 @@ and package-component links. They do not own execution.
 ## Contract Index
 
 - `PLUGIN.PACKAGE.001`: Codex-compatible package identity and component model.
-- `PLUGIN.IMPORT.001`: bounded, non-executing inspection and compatibility
-  review.
+- `PLUGIN.IMPORT.001`: bounded, non-executing discovery and immutable
+  compatibility Preview.
 - `PLUGIN.INSTALLATION.001`: organization-scoped component projection and
   non-destructive lifecycle.
 

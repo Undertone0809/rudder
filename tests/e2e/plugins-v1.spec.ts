@@ -116,6 +116,15 @@ async function readAgentRuntimeCapabilities(orgId: string, agentId: string) {
 test.describe("Plugins V1", () => {
   test.describe.configure({ mode: "serial" });
 
+  test.beforeEach(async ({ page }) => {
+    await page.route(/\/api\/orgs\/[^/]+\/plugins\/catalog$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        json: { entries: [], freshness: "fresh", updatedAt: "2026-08-14T00:00:00.000Z" },
+      });
+    });
+  });
+
   test("imports, configures, disables, restores, isolates, and uninstalls a Codex Plugin", async ({ page }, testInfo) => {
     test.setTimeout(600_000);
     const organization = await createOrganization(page.request, "Plugins-A");
@@ -176,8 +185,7 @@ test.describe("Plugins V1", () => {
     await page.getByRole("button", { name: "plugins", exact: true }).click();
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(page.getByTestId("hub-empty-installed")).toContainText("No plugins yet");
-    await expect(page.getByTestId("hub-empty-marketplace")).toContainText("No marketplace source configured");
-    await expect(page.getByText("No marketplace source configured", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("hub-empty-marketplace")).toContainText("No plugins match this search");
     await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
 
     const existingSkill = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/skills`, {
@@ -204,15 +212,15 @@ test.describe("Plugins V1", () => {
     await uploadPluginFolder(page);
     const inspected = await inspectResponse;
     expect(inspected.ok(), await inspected.text()).toBe(true);
-    const review = page.getByRole("dialog");
-    await expect(review.getByRole("heading", { name: "Review e2e-research-kit" })).toBeVisible();
-    await expect(review.getByText("Package inspection complete. Nothing has been executed.")).toBeVisible();
-    await expect(review.getByText("Evidence Research", { exact: true })).toBeVisible();
-    await expect(review.getByRole("radiogroup", { name: "Skill conflict strategy" })).toBeVisible();
-    await expect(review.getByText("Evidence Research conflicts with Existing Evidence", { exact: true })).toBeVisible();
+    const preview = page.getByRole("dialog");
+    await expect(preview.getByRole("heading", { name: "Preview e2e-research-kit" })).toBeVisible();
+    await expect(preview.getByText("Package inspection complete. Nothing has been executed.")).toBeVisible();
+    await expect(preview.getByText("Evidence Research", { exact: true })).toBeVisible();
+    await expect(preview.getByRole("radiogroup", { name: "Skill conflict strategy" })).toBeVisible();
+    await expect(preview.getByText("Evidence Research conflicts with Existing Evidence", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-plugins-v1-import-conflict.png", fullPage: true });
-    await review.getByText("Replace", { exact: true }).click();
-    await review.getByRole("button", { name: "Install" }).click();
+    await preview.getByText("Replace", { exact: true }).click();
+    await preview.getByRole("button", { name: "Install" }).click();
 
     const detail = page.getByRole("dialog");
     await expect(detail.getByRole("heading", { name: "E2E Research Kit" })).toBeVisible({ timeout: 30_000 });
@@ -445,14 +453,14 @@ test.describe("Plugins V1", () => {
       && response.request().method() === "POST");
     await uploadPluginFolder(page, "v2");
     expect((await updateInspectResponse).ok()).toBe(true);
-    const updateReview = page.getByRole("dialog");
-    await expect(updateReview.getByRole("heading", { name: "Review update e2e-research-kit" })).toBeVisible();
-    await expect(updateReview.getByRole("heading", { name: "Capability changes" })).toBeVisible();
-    await expect(updateReview.getByText("Access expansion", { exact: true })).toBeVisible();
-    const applyUpdate = updateReview.getByRole("button", { name: "Apply update" });
+    const updatePreview = page.getByRole("dialog");
+    await expect(updatePreview.getByRole("heading", { name: "Preview update e2e-research-kit" })).toBeVisible();
+    await expect(updatePreview.getByRole("heading", { name: "Capability changes" })).toBeVisible();
+    await expect(updatePreview.getByText("Access expansion", { exact: true })).toBeVisible();
+    const applyUpdate = updatePreview.getByRole("button", { name: "Apply update" });
     await expect(applyUpdate).toBeDisabled();
-    await updateReview.getByText("I reviewed and approve the new execution and external-access surface.").click();
-    await updateReview.getByText("Replace", { exact: true }).click();
+    await updatePreview.getByText("I understand and approve the expanded execution and external-access surface.").click();
+    await updatePreview.getByText("Replace", { exact: true }).click();
     await expect(applyUpdate).toBeEnabled();
     await page.screenshot({ path: "/tmp/rudder-plugins-v1-update-review.png", fullPage: true });
     await applyUpdate.click();
@@ -611,7 +619,7 @@ test.describe("Plugins V1", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await page.getByText("E2E Research Canvas", { exact: true }).click();
     const localAppReview = page.getByRole("dialog", { name: "E2E Research Canvas" });
-    await expect(localAppReview.getByText("Local App update ready for review")).toBeVisible();
+    await expect(localAppReview.getByText("Local App update ready")).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-plugins-v1-local-app-review.png", fullPage: true });
     await localAppReview.getByRole("button", { name: "Apply update" }).click();
     await expect(localAppReview.getByRole("heading", { name: "E2E Research Canvas Revised" })).toBeVisible();
@@ -696,15 +704,14 @@ test.describe("Plugins V1", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
     await expect(page.getByText("Marketplace E2E Kit", { exact: true })).toBeVisible();
-    await expect(page.getByText("INSTALLED BY DEFAULT · ON INSTALL", { exact: false })).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-plugins-v1-discover.png", fullPage: true });
-    await page.getByRole("button", { name: "Review" }).click();
-    const review = page.getByRole("dialog");
-    await expect(review.getByText("Marketplace Review", { exact: true })).toBeVisible();
-    await expect(review.getByText("canvas", { exact: true })).toBeVisible();
-    await expect(review.getByText("Hooks", { exact: true })).toBeVisible();
+    await page.getByText("Marketplace E2E Kit", { exact: true }).click();
+    const preview = page.getByRole("dialog");
+    await expect(preview.getByText("Marketplace Review", { exact: true })).toBeVisible();
+    await expect(preview.getByText("canvas", { exact: true })).toBeVisible();
+    await expect(preview.getByText("Hooks", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/rudder-plugins-v1-marketplace-review.png", fullPage: true });
-    await review.getByRole("button", { name: "Install" }).click();
+    await preview.getByRole("button", { name: "Install" }).click();
     await expect(page.getByRole("dialog").getByRole("heading", { name: "Marketplace E2E Kit" })).toBeVisible();
     const installed = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/plugins`);
     expect((await installed.json() as { installed: Array<{ name: string }> }).installed)
@@ -746,7 +753,7 @@ test.describe("Plugins V1", () => {
       components: Array<{ type: string; name: string }>;
     };
     expect(report).toMatchObject({
-      status: "review_required",
+      status: "preview",
       components: [expect.objectContaining({ type: "skill", name: "ZIP Research" })],
     });
     const install = await page.request.post(

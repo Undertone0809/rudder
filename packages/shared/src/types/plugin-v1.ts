@@ -1,4 +1,5 @@
 export type RudderPluginSourceType = "local_upload" | "marketplace" | "git" | "package";
+export type RudderPluginCatalogSourceKind = "codex_plugin" | "skills_add";
 export type RudderPluginSkillConflictStrategy = "keep" | "replace" | "rename";
 export type RudderPluginComponentType = "skill" | "mcp" | "app" | "unsupported";
 export type RudderPluginComponentStatus = "ready" | "setup_required" | "unsupported" | "disabled";
@@ -47,7 +48,7 @@ export interface RudderPluginImportReport {
   packageId: string | null;
   sourceType: RudderPluginSourceType;
   sourceLabel: string;
-  status: "review_required" | "accepted" | "rejected" | "failed";
+  status: "preview" | "accepted" | "rejected" | "failed";
   digest: string | null;
   manifest: Record<string, unknown> | null;
   components: RudderPluginCompatibilityComponent[];
@@ -68,6 +69,68 @@ export interface RudderPluginImportReport {
     existingSkillId: string;
     existingSkillName: string;
   }>;
+}
+
+export interface RudderPluginCatalogEntry {
+  slug: string;
+  displayName: string;
+  developer: string;
+  category: string;
+  shortDescription: string;
+  sourceKind: RudderPluginCatalogSourceKind;
+  iconUrl: string;
+  installedPluginId: string | null;
+  installedVersion: string | null;
+  installedSourceSha: string | null;
+  latestVersion: string | null;
+  latestSourceSha: string | null;
+  updateAvailable: boolean;
+}
+
+export interface RudderPluginCatalog {
+  entries: RudderPluginCatalogEntry[];
+  freshness: "fresh" | "stale";
+  updatedAt: string;
+}
+
+export interface RudderPluginSourceResolution {
+  repositoryUrl: string;
+  source: string;
+  subdirectory: string;
+  strategy: "stable_release" | "default_branch_head" | "explicit_ref";
+  version: string;
+  commitSha: string;
+}
+
+export interface RudderPluginDetail {
+  slug: string;
+  displayName: string;
+  developer: string;
+  category: string;
+  shortDescription: string;
+  longDescription: string;
+  capabilities: string[];
+  websiteUrl: string;
+  privacyPolicyUrl: string;
+  termsOfServiceUrl: string;
+  license: { spdx: string; sourceUrl: string; note: string };
+  sourceKind: RudderPluginCatalogSourceKind;
+  iconUrl: string;
+  previewId: string | null;
+  packageId: string;
+  action: "install" | "update" | "installed";
+  installedPluginId: string | null;
+  resolution: RudderPluginSourceResolution;
+  components: RudderPluginCompatibilityComponent[];
+  groups: {
+    skills: RudderPluginCompatibilityComponent[];
+    mcps: RudderPluginCompatibilityComponent[];
+    apps: RudderPluginCompatibilityComponent[];
+    unsupported: RudderPluginCompatibilityComponent[];
+  };
+  warnings: string[];
+  capabilityDiff: RudderPluginCapabilityDiff | null;
+  skillConflicts: RudderPluginImportReport["skillConflicts"];
 }
 
 export interface RudderPluginComponentLink {

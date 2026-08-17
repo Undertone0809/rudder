@@ -1,4 +1,11 @@
 export const queryKeys = {
+  rudderPlugins: {
+    directory: (orgId: string) => ["rudder-plugins", orgId] as const,
+    catalog: (orgId: string) => ["rudder-plugins", orgId, "catalog"] as const,
+    catalogDetail: (orgId: string, slug: string) => ["rudder-plugins", orgId, "catalog", slug] as const,
+    previewDetail: (orgId: string, previewId: string) => ["rudder-plugins", orgId, "preview", previewId] as const,
+    installed: (orgId: string, pluginId: string) => ["rudder-plugins", orgId, "installed", pluginId] as const,
+  },
   organizations: {
     all: ["organizations"] as const,
     detail: (id: string) => ["organizations", id] as const,

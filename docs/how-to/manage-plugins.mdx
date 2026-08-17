@@ -13,16 +13,16 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 ---
 
 Rudder Plugins are capability packages composed from Skills, MCP servers, Apps,
-or a combination. Rudder accepts the Codex Plugin folder format and shows a
-compatibility report before installation.
+or a combination. Browse Rudder's curated catalog, enter a public GitHub source
+accepted by `skills add`, or import the Codex Plugin folder format. Every path
+shows an immutable compatibility Preview before installation.
 
 <a id="completed-state" />
 
 ## What you will do
 
-Open Hub, import a local Codex Plugin folder or ZIP, or add a local or
-pinned-GitHub Codex marketplace. Review what Rudder can use, install it into an
-Organization, and finish any Agent or MCP setup.
+Open Hub, discover or import a Plugin, preview what Rudder can use, install it
+into an Organization, and finish any Agent or MCP setup.
 
 <a id="prerequisites" />
 
@@ -38,10 +38,11 @@ Rudder's Managed MCP settings.
 ## Install and set up
 
 1. Select **Hub** in the Primary Rail and open **Plugins**.
-2. Choose **Import**, then **Plugin folder** or **Plugin ZIP**, to inspect one
-   Plugin. You can also add a **Local marketplace** or **Pinned GitHub
-   marketplace**. GitHub sources require the full commit SHA.
-3. Review package identity, digest, Skills, MCP definitions, App references,
+2. Open one curated Plugin, use **URL Import** with a public source such as
+   `coreyhaines31/marketingskills`, or choose **Import** and then **Plugin
+   folder** or **Plugin ZIP**. You can also add a **Local marketplace** or
+   **Pinned GitHub marketplace**.
+3. Preview package identity, digest, Skills, MCP definitions, App references,
    executable Skill files, and unsupported surfaces such as browser extensions,
    scheduled-task templates, and hooks. Inspection executes nothing.
 4. Resolve any Skill collision explicitly: keep the existing Skill, replace it,
@@ -56,8 +57,11 @@ Rudder's Managed MCP settings.
 8. If an active Managed MCP connection exposes an HTML UI resource, open it
    from the MCP component. Rudder renders it in a network-disabled sandbox.
 
-Marketplace policy is provenance, not Rudder installation authority. An entry
-declared `INSTALLED_BY_DEFAULT` still appears in Hub and requires review.
+For curated and URL sources, Rudder resolves the latest stable semantic Release
+or default branch HEAD to a full commit SHA. The Preview and install use that
+same immutable snapshot. Rudder never invokes `npx`, package hooks, or Skill
+scripts. Marketplace policy is provenance, not installation authority; an
+`INSTALLED_BY_DEFAULT` entry still requires an explicit install action.
 
 <a id="success-signal" />
 
@@ -78,17 +82,17 @@ provenance; Plugin lifecycle actions no longer change or remove that copy.
 
 ## Update or roll back
 
-Import and review the newer package before choosing **Apply update**. Rudder
+Open the newer Detail Preview before choosing **Update**. Rudder
 shows old and new execution surfaces. When the update adds or changes executable
 Skills or MCP access, confirm the access expansion explicitly. Rudder then
 prepares its component projections before switching the active installation. If
-preparation fails, the current version remains active and the review can be
+preparation fails, the current version remains active and the Preview can be
 retried.
 
 After a successful update, choose **Roll back** to reactivate the retained
 previous immutable package. Rollback does not rewrite either package snapshot.
 
-When App Builder produces a new Local App revision, Hub shows **Update review**.
+When App Builder produces a new Local App revision, Hub shows **Update available**.
 The current revision stays active until you open the Plugin detail and choose
 **Apply update**.
 
@@ -100,5 +104,5 @@ the previous package Skill assignments.
 
 Uninstall removes package-owned Skill projections and the active installation.
 It does not delete user Goals, Automations, Documents, external MCP
-connections, Local App source, or App business data. You can review and install
+connections, Local App source, or App business data. You can preview and install
 the package again later.

@@ -12,16 +12,16 @@ hreflang_en: "https://docs.rudderhq.dev/how-to/manage-plugins"
 hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 ---
 
-Rudder 插件是由技能、MCP 服务端、应用或它们的组合构成的能力包。Rudder
-可以读取 Codex 插件目录格式，并在安装前显示兼容性报告。
+Rudder 插件是由技能、MCP 服务端、应用或它们的组合构成的能力包。你可以浏览
+Rudder 精选目录，输入 `skills add` 兼容的公开 GitHub 来源，或导入 Codex 插件目录。
+所有路径都会在安装前展示不可变的兼容性 Preview。
 
 <a id="completed-state" />
 
 ## 你将完成什么
 
-打开 **Hub**，导入本地 Codex 插件目录或 `.zip`，或者添加本地/固定 GitHub `commit`
-的 Codex 市场。检查 Rudder 可以使用的内容，把它安装到组织，并完成必要的 Agent 或
-MCP 设置。
+打开 **Hub**，发现或导入插件，预览 Rudder 可以使用的内容，把它安装到组织，并完成
+必要的 Agent 或 MCP 设置。
 
 <a id="prerequisites" />
 
@@ -36,10 +36,11 @@ MCP 设置。
 ## 安装和设置
 
 1. 在主导航栏中选择 **Hub**，打开 **Plugins**。
-2. 选择 **Import**，然后选择 **Plugin folder** 或 **Plugin ZIP**。也可以添加
-   **Local marketplace** 或 **Pinned GitHub marketplace**；GitHub 来源必须使用完整
-   `commit SHA`。
-3. 检查软件包身份、摘要、技能、MCP 定义、应用引用、技能中的可执行文件，
+2. 打开一个精选插件，使用 **URL Import** 输入
+   `coreyhaines31/marketingskills` 这类公开来源，或选择 **Import** 后再选
+   **Plugin folder** / **Plugin ZIP**。也可以添加 **Local marketplace** 或
+   **Pinned GitHub marketplace**。
+3. 在 Preview 中检查软件包身份、摘要、技能、MCP 定义、应用引用、技能中的可执行文件，
    以及浏览器扩展、定时任务模板和钩子等不支持的能力。检查
    过程不会执行任何内容。
 4. 如果技能与现有组织技能冲突，显式选择保留现有版本、替换，或重命名后同时安装。
@@ -50,8 +51,10 @@ MCP 设置。
 8. 如果已启用的托管 MCP 连接提供 `HTML` 界面资源，可以从 MCP 组件中打开。
    Rudder 会在禁止网络访问的沙箱中渲染。
 
-市场策略只作为来源信息保留。即使条目声明 `INSTALLED_BY_DEFAULT`，也仍会在插件中心
-中出现并要求用户检查，不会静默安装。
+对于精选和 URL 来源，Rudder 会把最新稳定语义化 Release 或默认分支 HEAD 解析为
+完整 `commit SHA`。Preview 和安装使用同一份不可变快照。Rudder 不会执行 `npx`、
+包 hooks 或 Skill scripts。市场策略只作为来源信息保留；即使条目声明
+`INSTALLED_BY_DEFAULT`，也仍要求显式安装，不会静默安装。
 
 <a id="success-signal" />
 
@@ -69,14 +72,14 @@ MCP 设置。
 
 ## 更新或回滚
 
-导入并检查新版本后再选择 **Apply update**。Rudder 会展示新旧执行面；如果更新新增或
+打开新版本的 Detail Preview 后再选择 **Update**。Rudder 会展示新旧执行面；如果更新新增或
 改变可执行技能或 MCP 访问，必须显式确认权限扩张。之后 Rudder 会先准备新版本的
-组件投影，再切换当前安装。如果准备失败，现有版本继续生效，这次检查也可以重试。
+组件投影，再切换当前安装。如果准备失败，现有版本继续生效，这次 Preview 也可以重试。
 
 更新成功后，可以选择 **Roll back** 重新启用保留的上一份不可变软件包。回滚不会
 改写任何一个软件包快照。
 
-应用构建器产生新的本地应用版本时，**Hub** 会显示 **Update review**。当前版本会继续运行，
+应用构建器产生新的本地应用版本时，**Hub** 会显示 **Update available**。当前版本会继续运行，
 直到用户在插件详情中选择 **Apply update**。
 
 ## 禁用或卸载
@@ -85,4 +88,4 @@ MCP 设置。
 应用数据。重新启用会恢复之前的技能分配。
 
 卸载会移除软件包拥有的技能投影和当前安装记录，不会删除用户目标、自动化、文档、
-外部 MCP 连接、本地应用源码或业务数据。之后仍可重新检查并安装该软件包。
+外部 MCP 连接、本地应用源码或业务数据。之后仍可重新预览并安装该软件包。
