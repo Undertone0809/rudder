@@ -39,7 +39,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     ];
 
     const html = renderToStaticMarkup(
-      <ThemeProvider>
+      <ThemeProvider initialShowToolCallFailureIndicators>
         <RunTranscriptView
           density="compact"
           presentation="chat"
@@ -140,7 +140,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     expect((html.match(/data-transcript-action-trailing="true"/g) ?? [])).toHaveLength(3);
     expect((html.match(/data-transcript-action-duration="true"/g) ?? [])).toHaveLength(3);
     expect((html.match(/data-transcript-action-disclosure-slot="true"/g) ?? [])).toHaveLength(3);
-    expect(html).toContain("Failed");
+    expect(html).not.toContain("Failed");
     expect(html).toContain("23s");
     expect(html).toContain("47ms");
     expect(html).toContain("2.4s");
@@ -186,7 +186,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
 
   it("keeps detail-view tool disclosures hidden outside hover or focus even when details are open", () => {
     const html = renderToStaticMarkup(
-      <ThemeProvider>
+      <ThemeProvider initialShowToolCallFailureIndicators>
         <TranscriptChatToolActionRow
           block={{
             ts: "2026-07-23T00:00:01.000Z",
@@ -215,7 +215,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
 
   it("keeps an expanded activity-group disclosure hidden outside hover or focus", () => {
     const html = renderToStaticMarkup(
-      <ThemeProvider>
+      <ThemeProvider initialShowToolCallFailureIndicators>
         <RunTranscriptView
           density="compact"
           presentation="chat"

@@ -6,6 +6,7 @@ import {
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToolCallFailureIndicators } from "@/context/ThemeContext";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatInlineAnnotationInput,
@@ -57,7 +58,7 @@ import {
 } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
-import { describeToolSemanticInfo, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
 import { getTranscriptAgentAvatarInfo, TranscriptAgentAvatarIcon } from "./TranscriptAgentAvatarIcon";
 
@@ -1156,23 +1157,32 @@ export function TranscriptToolCard({
   density: TranscriptDensity;
   presentation?: TranscriptPresentation;
 }) {
-  const [open, setOpen] = useState(presentation !== "detail" && block.status === "error");
+  const showFailureIndicators = useToolCallFailureIndicators();
+  const renderFailure = showFailureIndicators && block.status === "error";
+  const visualStatus = block.status === "error" && !showFailureIndicators
+    ? "completed"
+    : block.status;
+  const [open, setOpen] = useState(presentation !== "detail" && renderFailure);
+  const failureAutoOpenRef = useRef(presentation !== "detail" && renderFailure);
   const compact = density === "compact";
   const detail = presentation === "detail";
-  const semantic = describeToolSemanticInfo(block.name, block.input);
+  const rawSemantic = describeToolSemanticInfo(block.name, block.input);
+  const semantic = showFailureIndicators
+    ? rawSemantic
+    : neutralizeToolFailureSemanticInfo(rawSemantic);
   const isCommand = isCommandTool(block.name, block.input);
   const statusLabel =
     block.status === "running"
       ? "Running"
       : block.status === "error"
-        ? "Errored"
+        ? renderFailure ? "Errored" : null
         : isCommand
           ? null
           : "Completed";
   const statusTone =
     block.status === "running"
       ? "text-cyan-700 dark:text-cyan-300"
-      : block.status === "error"
+      : renderFailure
         ? "text-red-700 dark:text-red-300"
         : "text-emerald-700 dark:text-emerald-300";
   const duration = formatTranscriptDuration(block.ts, block.endTs);
@@ -1186,25 +1196,47 @@ export function TranscriptToolCard({
   const canExpand = semantic.category !== "skill";
   const detailsClass = cn(
     "space-y-3",
-    block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
+    renderFailure && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
     detail && "rounded-xl border border-border/40 bg-background/60 p-3",
   );
   const summary = semantic.summary;
   const agentAvatarInfo = getTranscriptAgentAvatarInfo(block.name, block.input);
   const outerClass = cn(
     detail && "rounded-xl border border-border/60 bg-background/80 p-3 shadow-sm",
-    block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.04] p-3",
+    renderFailure && "rounded-xl border border-red-500/20 bg-red-500/[0.04] p-3",
   );
+
+  useEffect(() => {
+    if (presentation !== "detail" && renderFailure) {
+      setOpen((current) => {
+        if (!current) {
+          failureAutoOpenRef.current = true;
+          return true;
+        }
+        return current;
+      });
+      return;
+    }
+    if (failureAutoOpenRef.current) {
+      failureAutoOpenRef.current = false;
+      setOpen(false);
+    }
+  }, [presentation, renderFailure]);
+
+  const toggleOpen = () => {
+    failureAutoOpenRef.current = false;
+    setOpen((value) => !value);
+  };
 
   return (
     <div className={outerClass} title={getTranscriptTimestampTitle(block.ts)}>
       <div className="flex items-start gap-2">
         {agentAvatarInfo ? (
           <span className="relative mt-0.5 h-5 w-8 shrink-0" data-transcript-action-icon-slot="true">
-            <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={block.status} />
+            <TranscriptAgentAvatarIcon info={agentAvatarInfo} status={visualStatus} />
           </span>
         ) : (
-          <TranscriptActionIconSlot category={semantic.category} status={block.status} />
+          <TranscriptActionIconSlot category={semantic.category} status={visualStatus} />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1230,7 +1262,7 @@ export function TranscriptToolCard({
           <button
             type="button"
             className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-            onClick={() => setOpen((value) => !value)}
+            onClick={toggleOpen}
             aria-expanded={open}
             aria-label={open ? `Collapse ${isCommand ? "command" : "tool"} details` : `Expand ${isCommand ? "command" : "tool"} details`}
           >
@@ -1244,7 +1276,7 @@ export function TranscriptToolCard({
             <CommandTerminalDetail
               command={requestText}
               output={responseText}
-              status={block.status}
+              status={visualStatus}
               taskLabel={semantic.label}
               taskSummary={summary}
               duration={duration}
@@ -1267,7 +1299,7 @@ export function TranscriptToolCard({
                   <ExpandableTranscriptResponsePre
                     text={responseText ?? "No response"}
                     className={cn(
-                      block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
+                      renderFailure ? "text-red-700 dark:text-red-300" : "text-foreground/80",
                     )}
                   />
                 </div>
@@ -1314,21 +1346,53 @@ export function TranscriptCommandGroup({
   block: Extract<TranscriptBlock, { type: "command_group" }>;
   density: TranscriptDensity;
 }) {
+  const showFailureIndicators = useToolCallFailureIndicators();
   const compact = density === "compact";
   const runningItem = [...block.items].reverse().find((item) => item.status === "running");
   const allToolsErrored = areAllToolEntriesErrored(block.items);
-  const [open, setOpen] = useState(allToolsErrored);
+  const renderGroupFailure = showFailureIndicators && allToolsErrored;
+  const [open, setOpen] = useState(renderGroupFailure);
+  const failureAutoOpenRef = useRef(renderGroupFailure);
   const isRunning = Boolean(runningItem);
-  const showExpandedErrorState = open && allToolsErrored;
-  const semanticItems = block.items.map((item) => describeToolSemanticInfo(item.name, item.input));
+  const showExpandedErrorState = open && renderGroupFailure;
+  const semanticItems = block.items.map((item) => {
+    const semantic = describeToolSemanticInfo(item.name, item.input);
+    return showFailureIndicators ? semantic : neutralizeToolFailureSemanticInfo(semantic);
+  });
   const summary = formatSemanticDigest(semanticItems, 0, { preferDirectSummary: true });
   const visibleIcons = block.items.slice(0, 3).map((item, index) => {
     const semantic = semanticItems[index] ?? describeToolSemanticInfo(item.name, item.input);
     return {
       category: semantic.category,
-      status: item.status === "error" ? "error" : item.status === "running" ? "running" : "completed",
+      status: item.status === "error" && showFailureIndicators
+        ? "error"
+        : item.status === "running"
+          ? "running"
+          : "completed",
     } satisfies { category: TranscriptActionIconCategory; status: TranscriptActionIconStatus };
   });
+
+  useEffect(() => {
+    if (renderGroupFailure) {
+      setOpen((current) => {
+        if (!current) {
+          failureAutoOpenRef.current = true;
+          return true;
+        }
+        return current;
+      });
+      return;
+    }
+    if (failureAutoOpenRef.current) {
+      failureAutoOpenRef.current = false;
+      setOpen(false);
+    }
+  }, [renderGroupFailure]);
+
+  const toggleOpen = () => {
+    failureAutoOpenRef.current = false;
+    setOpen((value) => !value);
+  };
 
   return (
     <div className={cn(showExpandedErrorState && "rounded-xl border border-red-500/20 bg-red-500/[0.04] p-3")} title={getTranscriptTimestampTitle(block.ts)}>
@@ -1338,12 +1402,12 @@ export function TranscriptCommandGroup({
         className="flex cursor-pointer items-start gap-2"
         onClick={() => {
           if (hasSelectedText()) return;
-          setOpen((value) => !value);
+          toggleOpen();
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            setOpen((value) => !value);
+            toggleOpen();
           }
         }}
       >
@@ -1364,7 +1428,7 @@ export function TranscriptCommandGroup({
           className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
           onClick={(event) => {
             event.stopPropagation();
-            setOpen((value) => !value);
+            toggleOpen();
           }}
           aria-label={open ? "Collapse command details" : "Expand command details"}
         >
@@ -1372,7 +1436,7 @@ export function TranscriptCommandGroup({
         </button>
       </div>
       {open && (
-        <div className={cn("motion-disclosure-enter mt-3 space-y-3", allToolsErrored && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3")}>
+        <div className={cn("motion-disclosure-enter mt-3 space-y-3", renderGroupFailure && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3")}>
           {block.items.map((item, index) => (
             <TranscriptToolCard
               key={`${item.ts}-${index}`}
