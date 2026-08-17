@@ -252,7 +252,61 @@ Notes:
 
 ## 7. Verification Before Hand-off
 
-Run this full check before claiming done:
+Choose the smallest verification tier that can credibly disprove the change.
+Do not run the full repository test or build pipeline by default, and do not
+escalate to a broader tier merely "to be safe." Escalate only when the changed
+surface or an observed failure crosses the stated boundary.
+
+### Tier 1: presentation-only or mechanical
+
+Use Tier 1 when the change is limited to presentation or mechanical source
+edits, such as CSS, design tokens, static `className` / `style` values, visual
+assets, or contributor documentation. It must not change control flow, state,
+async behavior, routing, API/data contracts, accessibility semantics,
+persistence, dependencies, build configuration, Desktop behavior, or release
+artifacts.
+
+Required checks are scoped to the touched surface:
+
+```sh
+git diff --check
+pnpm lint:changed
+pnpm --filter @rudderhq/ui typecheck  # when UI TS/TSX changed
+```
+
+- Run an existing focused unit or E2E test when it directly covers the changed
+  surface; do not run unrelated suites.
+- For a visible UI change, inspect the real rendered surface and capture the
+  representative screenshot(s). Exercise the viewport/theme state that could
+  disprove the visual claim.
+- Do not run `pnpm lint`, `pnpm -r typecheck`, `pnpm test:run`, `pnpm build`, or
+  `pnpm desktop:verify` for a qualifying Tier 1 change.
+
+### Tier 2: scoped behavior
+
+Use Tier 2 for behavior changes contained within one package or workflow that
+do not alter shared contracts, packaging, migrations, or runtime boundaries.
+
+- Run changed-file lint, the owning package typecheck, and focused unit tests.
+- Add or run the relevant E2E journey when user-visible behavior changed.
+- Render and inspect visible UI changes in a browser or Desktop shell.
+- Do not run the root build or every repository test unless the change reveals
+  a cross-package or build-boundary risk.
+
+### Tier 3: cross-cutting or build-sensitive
+
+Run the full checks only when the change affects one or more of these surfaces:
+
+- dependency manifests, the lockfile, TypeScript/build configuration, Vite or
+  bundling behavior, generated artifacts, public exports, or code splitting
+- shared/db/server/UI contracts, migrations, organization or permission
+  boundaries, runtime adapters, or multiple packages
+- Desktop startup, profile routing, packaging, installer assets, release
+  automation, or production deployment
+- a broad refactor or a change whose blast radius cannot be bounded reliably
+- an explicit user request for full local CI parity
+
+Tier 3 commands:
 
 ```sh
 pnpm lint
@@ -261,7 +315,9 @@ pnpm test:run
 pnpm build
 ```
 
-If anything cannot be run, explicitly report what was not run and why.
+If a required check cannot be run, explicitly report what was not run and why.
+Checks omitted because they belong to a higher tier should be reported as
+intentionally out of scope, not as failed or incomplete validation.
 
 Use `pnpm lint:fix` to automatically organize TypeScript and JavaScript imports.
 
@@ -304,11 +360,19 @@ When adding endpoints:
 
 ## 9. Review and verify
 
-For every non-trivial task, spawn distinct reviewer and verifier agents. Use
+For non-trivial feature, workflow, runtime, release, or high-risk UI work, spawn
+distinct reviewer and verifier agents. Use
 `.agents/skills/maintainer/agent-work-reviewer-maintainer` for first-principles,
 functional, adversarial, product-taste, and evidence-integrity review. Use
 `.agents/skills/maintainer/product-acceptance-verifier-maintainer` for read-only
 black-box acceptance in the real local or otherwise named terminal environment.
+
+Do not spawn reviewer/verifier agents for a qualifying Tier 1 presentation-only
+change or contributor-documentation edit unless the user explicitly asks for
+independent review. The implementer still owns the scoped checks and, for UI,
+current rendered evidence. Use the acceptance verifier only when there is a
+concrete terminal behavior and independent observation is materially stronger
+than author-run checks; it is not a generic documentation or test runner.
 
 The gate order is:
 
@@ -338,15 +402,17 @@ sequencing. The verifier must black-box the primary journey plus the highest-ris
 decision-flow, content, async, interaction, continuity, viewport, and theme
 states. Include current final screenshots in the handoff.
 
-Simple mechanical changes such as correcting one README typo may omit spawned
-agents when no product behavior, runtime, release, or layout claim is involved.
+Simple mechanical and Tier 1 presentation-only changes may omit spawned agents
+when no product behavior, interaction, accessibility, runtime, release, or
+build-boundary claim is involved.
 
 ## 10. Definition of Done
 
 A change is done when all are true:
 
 1. Behavior matches affected `doc/product/**` contracts, or the product logic delta has been explicitly proposed when the registry cannot be edited yet
-2. Typecheck, tests, and build pass
+2. The selected risk-based verification tier passes; full repository tests and
+   build are required only for Tier 3 changes
 3. Contracts are synced across db/shared/server/ui
 4. Docs updated when behavior or commands change
 5. Please provide screenshots if there are any UI-related changes.
