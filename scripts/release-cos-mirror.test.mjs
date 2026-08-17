@@ -237,6 +237,23 @@ describe("Tencent COS Desktop release mirror", () => {
     expect(exitCodeForMirrorError(new Error("checksum conflict"))).toBe(1);
   });
 
+  it("maps transient COS HTTP failures to the workflow retry exit code", async () => {
+    const mirror = createMirror(async (_input, init = {}) => {
+      if (init.method === "HEAD") return new Response("temporarily unavailable", { status: 503 });
+      throw new Error("unexpected request after transient HEAD failure");
+    });
+    const file = await fileFixture("retryable");
+
+    let observed;
+    try {
+      await mirror.mirrorFile("releases/v0.7.9/Rudder-test.zip", file);
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toMatchObject({ name: "RetryableNetworkError" });
+    expect(exitCodeForMirrorError(observed)).toBe(75);
+  });
+
   it("does not retry HTTP authorization failures", async () => {
     let attempts = 0;
     await expect(
@@ -325,10 +342,10 @@ describe("Tencent COS Desktop release mirror", () => {
     });
 
     expect(result).toEqual({ assets: 2, prefix: "releases/canary/v0.7.5-canary.1" });
-    expect([...objects]).toEqual([
+    expect([...objects].sort(([left], [right]) => left.localeCompare(right))).toEqual([
       ["releases/canary/v0.7.5-canary.1/Rudder-test.zip", binary],
       ["releases/canary/v0.7.5-canary.1/SHASUMS256.txt", checksum],
-    ]);
+    ].sort(([left], [right]) => left.localeCompare(right)));
     expect(methods.filter(({ method }) => method === "HEAD")).toHaveLength(2);
     expect(methods.filter(({ method, authorization }) => method === "PUT" && authorization)).toHaveLength(2);
     expect(methods.filter(({ method, authorization }) => method === "GET" && authorization)).toHaveLength(2);
@@ -565,6 +582,51 @@ describe("Tencent COS Desktop release mirror", () => {
     const mirror = createMirror(async () => new Response(null));
     expect(mirror.multipartPartSize).toBe(1024 * 1024);
     expect(mirror.multipartConcurrency).toBe(4);
+    expect(mirror.fileConcurrency).toBe(4);
+  });
+
+  it("mirrors multiple COS files with bounded file-level concurrency", async () => {
+    const mirror = createMirror(async () => new Response(null), { fileConcurrency: 2 });
+    const entries = [1, 2, 3, 4].map((index) => ({
+      file: { name: `Rudder-test-${index}.zip` },
+      key: `releases/v0.7.5/Rudder-test-${index}.zip`,
+    }));
+    const verified = [];
+    let active = 0;
+    let maximumActive = 0;
+    mirror.mirrorFile = async (key) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      verified.push(key);
+    };
+
+    await mirror.mirrorFiles(entries, ({ key }) => verified.push(`verified:${key}`));
+
+    expect(maximumActive).toBe(2);
+    expect(verified.filter((key) => key.startsWith("verified:")).map((key) => key.slice(9))).toEqual(
+      entries.map(({ key }) => key),
+    );
+  });
+
+  it("stops scheduling new files after a failure while active files settle", async () => {
+    const mirror = createMirror(async () => new Response(null), { fileConcurrency: 2 });
+    const entries = [1, 2, 3, 4].map((index) => ({
+      file: { name: `Rudder-test-${index}.zip` },
+      key: `releases/v0.7.5/Rudder-test-${index}.zip`,
+    }));
+    const failure = new Error("file mirror failure");
+    const started = [];
+    mirror.mirrorFile = async (key) => {
+      started.push(key);
+      if (key === entries[0].key) throw failure;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
+
+    await expect(mirror.mirrorFiles(entries)).rejects.toBe(failure);
+
+    expect(started.sort()).toEqual([entries[0].key, entries[1].key].sort());
   });
 
   it("reuses a byte-identical object when multipart completion loses an overwrite race", async () => {
@@ -696,7 +758,7 @@ describe("Tencent COS Desktop release mirror", () => {
 
     expect(observed).toBe(deterministicFailure);
     expect(exitCodeForMirrorError(observed)).toBe(1);
-    expect(scheduledParts).toEqual([1, 2]);
+    expect(scheduledParts.sort((left, right) => left - right)).toEqual([1, 2]);
     expect(abortCount).toBe(1);
   });
 
