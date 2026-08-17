@@ -147,17 +147,26 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("environment: desktop-release-mirror");
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("timeout-minutes: 240");
-    expect(recovery).toContain("actions/download-artifact@v8");
-    expect(recovery).toContain("id: download_candidate_assets_attempt_1");
-    expect(recovery).toContain("id: download_candidate_assets_attempt_2");
-    expect(recovery).toContain("id: download_candidate_assets_attempt_3");
+    expect(recovery.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(3);
+    expect(recovery.match(/continue-on-error: true/g)).toHaveLength(3);
+    expect(recovery.match(/run-id: \$\{\{ inputs\.candidate_run_id \}\}/g)).toHaveLength(3);
+    for (const attempt of [1, 2, 3]) {
+      expect(recovery.match(new RegExp(`id: download_candidate_assets_attempt_${attempt}`, "g"))).toHaveLength(1);
+    }
+    expect(
+      recovery.match(/^\s+if: steps\.download_candidate_assets_attempt_1\.outcome == 'failure'$/gm),
+    ).toHaveLength(1);
+    expect(
+      recovery.match(
+        /^\s+if: steps\.download_candidate_assets_attempt_1\.outcome == 'failure' && steps\.download_candidate_assets_attempt_2\.outcome == 'failure'$/gm,
+      ),
+    ).toHaveLength(1);
     expect(recovery).toContain("if: always()");
     expect(recovery).toContain("Require frozen candidate desktop assets");
     expect(recovery).toContain("steps.download_candidate_assets_attempt_1.outcome");
     expect(recovery).toContain("steps.download_candidate_assets_attempt_2.outcome");
     expect(recovery).toContain("steps.download_candidate_assets_attempt_3.outcome");
     expect(recovery).toContain('= "success"');
-    expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
     expect(recovery).toContain("ref: ${{ github.sha }}");
     expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
     expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
@@ -175,6 +184,12 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("SOURCE_REF: ${{ inputs.source_ref }}");
     expect(recovery).toContain(".prerelease");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
+    const sevenBinaryAssertion = recovery.indexOf(
+      'test "$(find dist/desktop-assets -maxdepth 1 -type f -name \'Rudder-*\' | wc -l | xargs)" = "7"',
+    );
+    const cosMirror = recovery.indexOf("mirror-desktop-release-to-cos.mjs");
+    expect(sevenBinaryAssertion).toBeGreaterThan(-1);
+    expect(cosMirror).toBeGreaterThan(sevenBinaryAssertion);
     expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
     expect(recovery).toContain("--phase checksum");
     expect(recovery).not.toContain("npm publish");
