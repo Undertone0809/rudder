@@ -164,10 +164,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
-          test "$(jq -r '.head_sha' <<< "$run_json")" = "$SOURCE_SHA"
           test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
+          test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
+          candidate_workflow_sha="$(jq -r '.head_sha' <<< "$run_json")"
+          git cat-file -e "$candidate_workflow_sha^{commit}"
+          git merge-base --is-ancestor "$candidate_workflow_sha" refs/remotes/origin/main
+          run_conclusion="$(jq -r '.conclusion' <<< "$run_json")"
+          case "$run_conclusion" in
+            success|cancelled|failure) ;;
+            *) echo "Candidate run $CANDIDATE_RUN_ID did not produce a usable stable candidate." >&2; exit 1 ;;
+          esac
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100")"
+          jq -e '.jobs[] | select(.name == "Publish stable" and .conclusion == "success")' <<< "$jobs" >/dev/null || {
+            echo "Candidate run $CANDIDATE_RUN_ID did not complete Publish stable successfully." >&2
+            exit 1
+          }
+          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
+          test -n "$remote_tag_sha"
+          test "$SOURCE_SHA" = "$remote_tag_sha"
           artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" --jq '.artifacts | map(select(.expired == false)) | map(.name) | .[]')"
           for artifact in \
             npm-release-candidate \

@@ -303,6 +303,7 @@ describe("unified delivery workflows", () => {
   });
 
   it("fails closed when partial recovery finds different published artifacts", () => {
+    const preflight = workflowJob(releaseWorkflow, "preflight");
     const npmCandidate = workflowJob(releaseWorkflow, "npm-candidate");
     const desktopCandidate = workflowJob(releaseWorkflow, "desktop-candidate");
     const candidateComplete = workflowJob(releaseWorkflow, "candidate-complete");
@@ -311,10 +312,41 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain('description: "Original Release run ID containing the verified candidate artifacts (required for resume)"');
     expect(releaseWorkflow).toContain('candidate_run_id is required when resume_missing is true.');
     expect(releaseWorkflow).toContain("Require matching verified candidate run for recovery");
-    expect(releaseWorkflow).toContain("actions/runs/$CANDIDATE_RUN_ID");
-    expect(releaseWorkflow).toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$SOURCE_SHA\"");
-    expect(releaseWorkflow).toContain('test "$(jq -r \'.path\' <<< "$run_json")" = ".github/workflows/release.yml"');
-    expect(releaseWorkflow).toContain("desktop-macos-arm64");
+    expect(preflight).toContain("actions/runs/$CANDIDATE_RUN_ID");
+    expect(preflight).not.toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$SOURCE_SHA\"");
+    expect(preflight).toContain('test "$(jq -r \'.path\' <<< "$run_json")" = ".github/workflows/release.yml"');
+    expect(preflight).toContain('test "$(jq -r \'.head_branch\' <<< "$run_json")" = "main"');
+    expect(preflight).toContain('test "$(jq -r \'.head_repository.full_name\' <<< "$run_json")" = "$GITHUB_REPOSITORY"');
+    expect(preflight).toContain('candidate_workflow_sha="$(jq -r \'.head_sha\' <<< "$run_json")"');
+    expect(preflight).toContain('git cat-file -e "$candidate_workflow_sha^{commit}"');
+    expect(preflight).toContain("git merge-base --is-ancestor \"$candidate_workflow_sha\" refs/remotes/origin/main");
+    expect(preflight).toContain("success|cancelled|failure");
+    expect(preflight).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");
+    expect(preflight).toContain('.name == "Publish stable" and .conclusion == "success"');
+    expect(preflight).toContain('git ls-remote --tags origin "refs/tags/$TAG"');
+    expect(preflight).toContain('test "$SOURCE_SHA" = "$remote_tag_sha"');
+    for (const artifact of [
+      "npm-release-candidate",
+      "desktop-macos-x64",
+      "desktop-macos-arm64",
+      "desktop-windows-x64",
+      "desktop-linux-x64",
+    ]) {
+      expect(preflight).toContain(artifact);
+    }
+    expect(preflight).toContain(".artifacts | map(select(.expired == false))");
+    const identityIndex = preflight.indexOf(".head_repository.full_name");
+    const trustedWorkflowIndex = preflight.indexOf('git cat-file -e "$candidate_workflow_sha^{commit}"');
+    const terminalIndex = preflight.indexOf("success|cancelled|failure");
+    const publishIndex = preflight.indexOf('.name == "Publish stable" and .conclusion == "success"');
+    const tagIndex = preflight.indexOf('git ls-remote --tags origin "refs/tags/$TAG"');
+    const artifactsIndex = preflight.indexOf(".artifacts | map(select(.expired == false))");
+    expect(identityIndex).toBeGreaterThan(-1);
+    expect(trustedWorkflowIndex).toBeGreaterThan(identityIndex);
+    expect(terminalIndex).toBeGreaterThan(trustedWorkflowIndex);
+    expect(publishIndex).toBeGreaterThan(terminalIndex);
+    expect(tagIndex).toBeGreaterThan(publishIndex);
+    expect(artifactsIndex).toBeGreaterThan(tagIndex);
     expect(npmCandidate).toContain("if: needs.preflight.outputs.resume != 'true'");
     expect(desktopCandidate).toContain("if: needs.preflight.outputs.resume != 'true'");
     expect(candidateComplete).toContain("needs.npm-candidate.result == 'skipped'");
