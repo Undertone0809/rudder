@@ -960,7 +960,7 @@ async function startServerRuntime(
     db,
     workspaceAvailableOrganizationIds,
   );
-  const workspaceRestoreReconciliation = await reconcileWorkspaceRestoreReceipts();
+  const workspaceRestoreReconciliation = await reconcileWorkspaceRestoreReceipts(db);
   if (workspaceRestoreReconciliation.recovered.length > 0) {
     logger.warn({ operationIds: workspaceRestoreReconciliation.recovered }, "reconciled workspace restore receipts on startup");
   }

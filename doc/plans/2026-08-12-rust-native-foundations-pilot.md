@@ -53,12 +53,29 @@ commit_refs:
   - cf46981e2
   - 72020b2da
   - db7cf955b
-updated_at: 2026-08-16
+  - 39bcc70cf
+  - cb9213e3c
+  - 8581b5cb9
+  - eea5191cf
+  - 34d85592e
+  - 621039522
+  - 5ea5d9285
+  - db19c7e8b
+  - fede632d7
+  - 2a5b289f2
+  - 1b8d36106
+  - 142c36592
+  - 47a00d611
+  - 9d4d17ba6
+  - f33081055
+  - c7f8c69c4
+  - 1d2f100cd
+updated_at: 2026-08-17
 ---
 
 # Rust Native Foundations Pilot
 
-### Continuation status (2026-08-16)
+### Continuation status (2026-08-17)
 
 The exact `72005f4` macOS arm64 packaged candidate was rechecked from the
 portable ZIP with SHA-256
@@ -68,6 +85,28 @@ The packaged Local App scenario then stopped at the expected
 `401 account_session_required` boundary because no hosted authenticated
 fixture is available; the dev Local App scenario completed its lifecycle and
 cleanup. These results do not count as hosted dogfood.
+
+The restore recovery implementation was then hardened in `47a00d611`:
+startup reconciliation receives the live database handle, validates rollback
+and committed workspace tree hashes before cleanup, preserves ambiguous
+receipt/root state, and marks a recovered published backup `restored`.
+
+The exact-HEAD `0.7.7` packaged artifact was rebuilt from the current desktop
+release output after the sparse-recovery guard in `f33081055`. Its portable ZIP
+SHA-256 is
+`191250882595d607aa2866202f535cf9c4922ab56461365c6b34690cf68be558`, shell ZIP
+SHA-256 is `2b114e7a02b21357f42461fd0a67a3f432f38f1bbef23055b8cc1d2b0c253cd9`,
+the app executable SHA-256 is
+`b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`, and the
+packaged `rudder-native` SHA-256 is
+`6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9`.
+The exact packaged server/runtime probe now records the `1d2f100cd` candidate
+tuple and passed organization create, backup create, browse, file read, ZIP
+download, and restore against packaged PostgreSQL 18.4. This is a scoped
+supporting receipt, not authenticated packaged Desktop acceptance. The focused
+service/route regression suite is `67/67` after the sparse-recovery guard; the
+Desktop account-session gate remains blocked without an authorized hosted
+signed-in fixture.
 
 `rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
 strictly invokes the existing three-trial OSS producer and writes a complete
@@ -85,10 +124,10 @@ keep Local App at `opt-in` rather than `accepted_default`.
 
 ## Executive Decision
 
-### Continuation status (2026-08-15)
+### Historical packaged baseline (2026-08-15)
 
-The current metadata wrapper is `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
-Its native/runtime paths are unchanged from the clean packaged source
+The packaged baseline metadata wrapper was `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
+Its native/runtime paths were unchanged from the clean packaged source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the wrapper contains only
 metadata and unrelated descendant changes. The exact macOS arm64 packaged
 candidate was rebuilt from that clean source. `desktop:dist`, server-package
@@ -103,23 +142,55 @@ packaged app executable SHA-256 is
 The staged product binaries report `0.7.7`; their hashes and the benchmark
 sampler hash are recorded in the delivery packet.
 
-The current backup comparator receipt is
-`/private/tmp/rudder-native-backup-dd8-100sample-ext25.json` with receipt
-SHA-256 `0dbecaa2f17b6c0e886f130fec0233b6df703f5938430944e57aa020aca50c29`.
-It uses a deterministic 100 MiB/10,000-file fixture, 100 paired samples per
-arm, 200/200 positive external sampler boundaries at 25 ms, and passes
-manifest, entry, content, and recovery parity. It remains explicitly
-`not_comparable`: arm order is fixed, warmups are absent, and no bootstrap
-confidence interval is recorded. Node p95 elapsed/RSS are 15330.897 ms /
-382025728 bytes; native p95 elapsed/RSS are 8323.525 ms / 389611520 bytes.
-These are descriptive observations, not a promotion claim.
+The fair backup comparator receipt is
+`/private/tmp/rudder-native-backup-fair-8581.json` with receipt SHA-256
+`e4a608aae2ade1724cdfd39cd84a2b0f05b20ade886b27d3e684a53c03225e25`.
+It uses a deterministic 100 MiB/10,000-file fixture, three warmups per arm,
+100 paired measured blocks, randomized counterbalanced order (Node first 52,
+Rust first 48), 10,000 paired-p95 bootstrap iterations, and 200/200 positive
+external sampler boundaries at 25 ms. Manifest, entry, content, and recovery
+parity pass; archive-byte parity remains intentionally not compared. Node p95
+elapsed/RSS are 6253.068 ms / 379682816 bytes; native p95 elapsed/RSS are
+3434.893 ms / 386940928 bytes. Latency improvement is 45.07% with a bootstrap
+95% CI of 35.06% to 54.95%, while native process-tree RSS peak is higher, so
+streaming Workspace backup remains `opt-in` rather than becoming default.
+
+Supporting backup workflow evidence is recorded in
+`evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
+workspace backup service, and download-route suites pass 67/67 tests. The
+tests cover archive tampering and unsafe names, limits, symlink policy,
+publication races and recovery-required paths, sparse recovery, native
+fallback diagnostics, browse/download behavior, and live-moved restore receipt
+recovery before/after publish with committed-receipt cleanup, and fail closed
+when the rollback tree is tampered, the committed workspace is missing or
+mismatched, or both the published and rollback trees mismatch their receipt.
+They are
+also exercised through a child-process crash harness across the prepared,
+live-moved, publish, and committed receipt windows on macOS. They are
+service/route supporting evidence only; malformed/corrupt/failure recovery,
+the full size/count mutation matrix, and the full APFS/Windows interruption
+matrix remain open.
+
+The real local workflow receipt in
+`evidence/rust-native-backup-e2e-receipt.json` adds two passing Playwright
+scenarios for create/browse/download/restore/delete and failed-artifact
+handling on an isolated embedded-PostgreSQL instance. This is supporting dev
+workflow evidence only; it does not upgrade the packaged acceptance gate.
+
+The scoped packaged server/runtime probe in
+`evidence/rust-native-backup-packaged-server-runtime-receipt.json` passes the
+real `startServer` API path with the source-aligned packaged PostgreSQL 18.4
+runtime and staged `rudder-native 0.7.7` binary: create, browse, file read, ZIP
+download, and restore all completed. It remains supporting evidence only; the
+packaged Desktop account gate, interruption matrix, and hosted authenticated
+Local App fixture are still separate open gates.
 
 The candidate remains blocked for Local App promotion: no authorized hosted
 authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
-cannot run. The shared foundation remains `accepted_default`, Local App and
-streaming backup remain `opt-in`, and the four dependent slices remain
-`not_admitted`. These are evidence-scoped decisions, not a claim that the
-pilot is complete.
+cannot run. The foundation remains `accepted_default` only for the proven
+macOS arm64 packaged capability tuple; Local App and streaming backup remain
+`opt-in`, and the four dependent slices remain `not_admitted`. These are
+evidence-scoped decisions, not a claim that the pilot is complete.
 
 Release-version alignment is a hard gate. The normal Rudder product version
 is the single version for every first-party Rust package, Cargo.lock entry,
@@ -127,7 +198,8 @@ staged binary, Desktop/server manifest, and release tag; Rust packages must
 not use an independent `0.x` line. The `v0.7.7` release tag now resolves to
 `acfb8e4c7dbc963fdb32280b8055ee0604d021b6` on `origin/main`, and its
 native/runtime paths are unchanged from the `72005f4` artifact source. The
-recorded packaged artifact was not rebuilt from that tag, so release preflight
+recorded packaged artifact is source-aligned to the exact `1d2f100cd` runtime
+candidate but was not rebuilt from the release tag itself, so release preflight
 and packaged acceptance remain separately scoped; release preflight validates
 source metadata and Cargo.lock;
 packaged verification additionally validates staged binary `--version`

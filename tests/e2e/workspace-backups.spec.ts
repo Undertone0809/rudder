@@ -115,11 +115,19 @@ test("shows failed workspace backups without requesting missing artifacts", asyn
   });
 
   await selectOrganization(page, organization.id);
+  const failedBackupArtifactRequests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.includes(`/workspace/backups/${failedBackupId}/`)) {
+      failedBackupArtifactRequests.push(pathname);
+    }
+  });
   await page.goto(`/${organization.urlKey}/workspaces/backups`);
 
   await expect(page.getByRole("heading", { name: "Workspace backups" })).toBeVisible();
   await expect(page.getByTestId("workspace-sidebar").getByText("Backup failed: Maximum call stack size exceeded")).toBeVisible();
   await expect(page.getByTestId("workspace-main-card").getByText("This backup failed: Maximum call stack size exceeded")).toBeVisible();
+  expect(failedBackupArtifactRequests).toEqual([]);
   await expect(page.getByText("Workspace backup artifact not found")).toBeHidden();
   await expect(page.getByRole("button", { name: "Restore" })).toBeDisabled();
 });

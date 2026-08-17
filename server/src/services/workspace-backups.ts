@@ -33,14 +33,13 @@ import {
 } from "../home-paths.js";
 import { organizationService } from "./orgs.js";
 import {
-  createWorkspaceBackupV2,
   createWorkspaceBackupV2File,
   createWorkspaceBackupV2Native,
   formatWorkspaceBackupV2NativeFallback,
   inspectWorkspaceBackupV2File,
   readWorkspaceBackupV2File,
   workspaceBackupV2NativeDiagnostic,
-  type WorkspaceBackupV2ArchiveIndex,
+  type WorkspaceBackupV2ArchiveIndex
 } from "./workspace-backup-v2.js";
 
 const ARTIFACT_VERSION = 1;
@@ -628,7 +627,7 @@ function isOwnedRestoreRoot(root: string, workspaceRoot: string, operationId: st
 }
 
 /** Reconcile only validated receipts and their exact operation-owned roots. */
-export async function reconcileWorkspaceRestoreReceipts(): Promise<{
+export async function reconcileWorkspaceRestoreReceipts(db?: Db): Promise<{
   recovered: string[];
   blocked: Array<{ receiptPath: string; operationId: string; error: string }>;
 }> {
@@ -671,30 +670,45 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
     try {
       const workspace = await pathExists(receipt.workspaceRoot);
       const rollback = await pathExists(receipt.rollbackRoot);
+      const expectedPublishedTree = receipt.expectedTreeSha256 ?? receipt.stagingTreeSha256;
+      let publishedRestore = false;
+
       if (receipt.phase === "prepared") {
         if (workspace && rollback) throw new Error("prepared receipt has conflicting live and rollback roots");
         if (!workspace && rollback) {
+          if (!receipt.liveTreeSha256) throw new Error("prepared receipt has rollback root without a recorded live tree");
+          const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
+          if (rollbackTree !== receipt.liveTreeSha256) throw new Error("prepared rollback tree does not match recorded live tree");
           // Crash window: workspace was renamed before the phase receipt advanced.
           await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
           await syncDirectory(path.dirname(receipt.workspaceRoot));
         }
-        await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
-        await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
-      } else if (receipt.phase === "committed" || receipt.phase === "rolled_back") {
-        await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
-        await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
+      } else if (receipt.phase === "committed") {
+        if (!workspace) throw new Error("committed receipt workspace is missing");
+        const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
+        if (publishedTree !== expectedPublishedTree) throw new Error("committed workspace tree does not match receipt");
+        publishedRestore = true;
+      } else if (receipt.phase === "rolled_back") {
+        if (!workspace) throw new Error("rolled_back receipt workspace is missing");
+        if (receipt.liveTreeSha256) {
+          const liveTree = await workspaceTreeSha256(receipt.workspaceRoot);
+          if (liveTree !== receipt.liveTreeSha256) throw new Error("rolled_back workspace tree does not match recorded live tree");
+        }
       } else if (receipt.phase === "live_moved" || receipt.phase === "recovery_required") {
         if (!workspace && rollback) {
+          if (!receipt.liveTreeSha256) throw new Error("restore receipt has rollback root without a recorded live tree");
+          const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
+          if (rollbackTree !== receipt.liveTreeSha256) throw new Error("rollback tree does not match recorded live tree");
           await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
           await syncDirectory(path.dirname(receipt.workspaceRoot));
         } else if (workspace && !rollback) {
           const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
-          if (receipt.expectedTreeSha256 && publishedTree !== receipt.expectedTreeSha256) throw new Error("published workspace tree does not match receipt");
+          if (publishedTree !== expectedPublishedTree) throw new Error("published workspace tree does not match receipt");
+          publishedRestore = true;
         } else if (workspace && rollback) {
           const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
-          if (receipt.expectedTreeSha256 && publishedTree === receipt.expectedTreeSha256) {
-            await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
-            await syncDirectory(path.dirname(receipt.workspaceRoot));
+          if (publishedTree === expectedPublishedTree) {
+            publishedRestore = true;
           } else if (receipt.liveTreeSha256) {
             const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
             if (rollbackTree !== receipt.liveTreeSha256) throw new Error("workspace and rollback roots match neither recorded tree");
@@ -707,9 +721,18 @@ export async function reconcileWorkspaceRestoreReceipts(): Promise<{
         } else {
           throw new Error("workspace and rollback roots are both missing");
         }
-        await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
-        await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
       }
+
+      if (publishedRestore && db) {
+        const [updated] = await db
+          .update(workspaceBackups)
+          .set({ status: "restored", updatedAt: new Date() })
+          .where(and(eq(workspaceBackups.id, receipt.backupId), eq(workspaceBackups.orgId, receipt.orgId)))
+          .returning({ id: workspaceBackups.id });
+        if (!updated) throw new Error("restore receipt backup row is missing");
+      }
+      await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
+      await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
       await fs.rm(receiptPath, { force: true });
       await syncDirectory(receiptRoot);
       recovered.push(receipt.operationId);
@@ -743,10 +766,7 @@ async function assertNoUnresolvedRestoreReceipt(orgId: string) {
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-    if (receipt && receipt.orgId === orgId && ["prepared", "live_moved", "recovery_required"].includes(receipt.phase)) {
-      throw new WorkspaceRestoreRecoveryRequiredError(receipt, "unresolved_receipt", "An earlier workspace restore has not reached a recoverable terminal state.");
-    }
-    if (!receipt) {
+    if (!receipt || receipt.orgId !== orgId) {
       throw conflict("Workspace restore requires recovery before another restore can run.", {
         code: "restore_recovery_required",
         orgId,
@@ -754,6 +774,13 @@ async function assertNoUnresolvedRestoreReceipt(orgId: string) {
         detail: "invalid_or_unowned_receipt",
       });
     }
+    throw new WorkspaceRestoreRecoveryRequiredError(
+      receipt,
+      ["prepared", "live_moved", "recovery_required"].includes(receipt.phase)
+        ? "unresolved_receipt"
+        : "blocked_receipt",
+      "An earlier workspace restore receipt still requires reconciliation before workspace recovery can run.",
+    );
   }
 }
 
@@ -1259,6 +1286,7 @@ export function workspaceBackupService(db: Db) {
   }
 
   async function recoverSparseWorkspaceFromLatestBackup(orgId: string): Promise<SparseWorkspaceRecoveryResult> {
+    await assertNoUnresolvedRestoreReceipt(orgId);
     const layout = await ensureOrganizationWorkspaceLayout(orgId);
     const currentFileCount = await countBackupEligibleWorkspaceFiles(
       layout.root,

@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "receipt_type": "workspace_backup_real_workflow_e2e",
+  "status": "PASS",
+  "candidate_commit": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+  "source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+  "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+  "runtime": {
+    "id": "dev-e2e-embedded-postgres-local-trusted",
+    "base_url": "http://127.0.0.1:3959",
+    "database": "isolated embedded PostgreSQL",
+    "instance_id": "playwright-native-restore-1d2f-current",
+    "home": "/private/tmp/rudder-e2e-home-native-restore-1d2f-current"
+  },
+  "command": "RUDDER_E2E_RUN_ID=native-restore-1d2f-current RUDDER_E2E_HOME=/private/tmp/rudder-e2e-home-native-restore-1d2f-current pnpm test:e2e --project=chromium tests/e2e/workspace-backups.spec.ts",
+  "tests": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "cases": [
+      "browses, restores, and deletes workspace backup versions",
+      "shows failed workspace backups without requesting missing artifacts"
+    ]
+  },
+  "observed_contract": [
+    "Creates a manual workspace backup through the public API.",
+    "Browses the backup in the real UI and reads the selected file.",
+    "Downloads a ZIP with the expected file and content.",
+    "Restores the backup after a live file change and observes the restored content.",
+    "Deletes the backup and observes the pre-restore backup count.",
+    "Renders a failed backup without requesting a missing artifact and disables restore."
+  ],
+  "packaged_acceptance": "not_run",
+  "hosted_authenticated_acceptance": "not_applicable",
+  "limitations": [
+    "This is real local dev workflow evidence, not packaged Desktop acceptance.",
+    "The full packaged create/browse/download/restore matrix and APFS/Windows interruption matrix remain open."
+  ],
+  "temporary_dependency_plumbing": "The isolated worktree used a temporary pnpm node_modules installation and hydrated embedded-postgres dynamic-library symlinks; no source or runtime files were modified."
+}

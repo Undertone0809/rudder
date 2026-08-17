@@ -1,0 +1,63 @@
+{
+  "schema_version": "1",
+  "receipt_type": "packaged_server_runtime_workspace_backup_probe",
+  "status": "PASS_SCOPED_SUPPORTING",
+  "candidate_code_tuple": {
+    "candidate_source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+    "wrapper_ref": "62103952266da6a1db0b3f7284a7d5f5ce66e4c5",
+    "artifact_source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+    "release_version": "0.7.7",
+    "target": "aarch64-apple-darwin"
+  },
+  "packaged_artifact": {
+    "portable_zip": "/private/tmp/rudder-native-main-reconcile-20260816/desktop/release/Rudder-0.7.7-macos-arm64-portable.zip",
+    "portable_zip_sha256": "191250882595d607aa2866202f535cf9c4922ab56461365c6b34690cf68be558",
+    "shell_zip_sha256": "2b114e7a02b21357f42461fd0a67a3f432f38f1bbef23055b8cc1d2b0c253cd9",
+    "desktop_executable_sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
+    "native_archive_sha256": "6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9",
+    "zip_integrity": "PASS_unzip_test",
+    "server_package_version": "0.7.7",
+    "native_archive_version": "rudder-native 0.7.7"
+  },
+  "packaged_resources": {
+    "server_entrypoint": "/private/tmp/rudder-native-packaged-final-L1m7AE/Rudder.app/Contents/Resources/server-package/dist/index.js",
+    "postgres_runtime": "18.4 packaged darwin-arm64 resources",
+    "native_archive_binary": "/private/tmp/rudder-native-packaged-final-L1m7AE/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-native"
+  },
+  "runtime": {
+    "entry": "startServer from portable-ZIP-extracted packaged server-package/dist/index.js",
+    "runtime_overrides": {
+      "deploymentMode": "local_trusted",
+      "host": "127.0.0.1",
+      "port": 64933
+    },
+    "workspace_backup_v2_enabled": true,
+    "workspace_backup_v2_native": true,
+    "native_archive_path": "packaged Resources/native/aarch64-apple-darwin/rudder-native",
+    "database": "isolated temporary embedded PostgreSQL 18.4 from packaged Resources",
+    "instance_id": "native-packaged-final-1d2f",
+    "home": "/private/tmp/rudder-native-packaged-final-home-1d2f"
+  },
+  "observed_contract": {
+    "organization_create": { "status": 201 },
+    "backup_create": {
+      "status": 201,
+      "backup_id": "46f45760-65fd-46c3-a419-8e2d73c32d64",
+      "file_count": 1,
+      "byte_size": 7,
+      "tree_sha256": "0fd747a711beb806d76c2e519109fe5e5d5c699b518498499a24b5a7b718f3ee"
+    },
+    "files_list": { "status": 200, "path": "projects", "entry": "projects/before.txt" },
+    "file_read": { "status": 200, "path": "projects/before.txt", "content": "before\\n", "content_type": "application/json; charset=utf-8" },
+    "download": { "status": 200, "content_type": "application/zip", "magic": [80, 75, 3, 4], "bytes": 1684 },
+    "restore": { "status": 200, "restored_status": "restored", "restored_content": "before\\n" }
+  },
+  "packaged_desktop_acceptance": "blocked_account_session_required_401_without_authorized_hosted_fixture",
+  "limitations": [
+    "This receipt proves the exact-HEAD packaged server/runtime backup path only; it is not packaged Desktop authenticated acceptance.",
+    "APFS/Windows interruption, malformed/corrupt/failure recovery, and the full size/count mutation matrix remain open.",
+    "The Desktop account gate cannot be bypassed in a packaged build; no credentials or authenticated session were used.",
+    "The local_trusted server override intentionally bypasses only the Desktop account-session layer for this scoped runtime probe."
+  ],
+  "provenance": "exact-HEAD packaged portable ZIP rebuild, unzip integrity check, and independent packaged-resource startServer API probe"
+}

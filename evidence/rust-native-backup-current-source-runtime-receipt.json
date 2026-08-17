@@ -1,0 +1,48 @@
+{
+  "schema_version": "1",
+  "receipt_type": "workspace_backup_current_source_runtime_probe",
+  "status": "PASS",
+  "candidate": {
+    "source_sha": "1d2f100cd33748e23357d776efabb9c8833f4b9f",
+    "release_version": "0.7.7",
+    "native_binary_version": "rudder-native 0.7.7",
+    "native_binary_path": "/private/tmp/rudder-native-main-reconcile-20260816/native/target/debug/rudder-native"
+  },
+  "runtime": {
+    "id": "current-source-startServer-local-trusted",
+    "api_url": "http://127.0.0.1:64930",
+    "instance_id": "native-source-1d2f-3",
+    "home": "/private/tmp/rudder-native-source-1d2f-probe-3",
+    "database": "postgres://redacted@127.0.0.1:54330/rudder",
+    "deployment_mode": "local_trusted",
+    "native_enabled": true,
+    "workspace_backup_v2_enabled": true,
+    "workspace_backup_v2_native": true
+  },
+  "organization": {
+    "id": "1dad33a3-d64d-4091-b38a-91643d53e83e",
+    "workspace_root": "/private/tmp/rudder-native-source-47a-probe-3/instances/native-source-47a-3/organizations/1dad33a3d64d/workspaces"
+  },
+  "operations": {
+    "create_status": 201,
+    "create_backup_id": "efcd615a-7d20-42a0-8c11-0d23cc7fb646",
+    "list_status": 200,
+    "files_status": 200,
+    "file_status": 200,
+    "file_content": "before\n",
+    "download_status": 200,
+    "download_content_type": "application/zip",
+    "download_magic": [80, 75, 3, 4],
+    "restore_status": 200,
+    "restored_content": "before\n"
+  },
+  "command": "RUDDER_HOME=/private/tmp/rudder-native-source-1d2f-probe-3 RUDDER_INSTANCE_ID=native-source-1d2f-3 RUDDER_WORKSPACE_BACKUP_V2_ENABLED=true RUDDER_WORKSPACE_BACKUP_V2_NATIVE=true RUDDER_NATIVE_ARCHIVE_PATH=/private/tmp/rudder-native-main-reconcile-20260816/native/target/debug/rudder-native RUDDER_MIGRATION_AUTO_APPLY=true RUDDER_MIGRATION_PROMPT=never RUDDER_UI_DEV_MIDDLEWARE=false server/node_modules/.bin/tsx -",
+  "scope": "current source API/runtime supporting evidence; not packaged Desktop acceptance",
+  "packaged_acceptance": "not_run",
+  "hosted_authenticated_acceptance": "blocked_no_authorized_fixture",
+  "limitations": [
+    "Packaged server/runtime evidence is recorded separately in rust-native-backup-packaged-server-runtime-receipt.json.",
+    "No hosted authenticated Desktop fixture; packaged account-session acceptance remains blocked.",
+    "APFS/Windows interruption matrix and seven-day/100-cycle dogfood remain open."
+  ]
+}
