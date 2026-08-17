@@ -1340,7 +1340,7 @@ fn spawn_terminal(
 fn windows_runtime_environment() -> Vec<(String, std::ffi::OsString)> {
     #[cfg(windows)]
     {
-        return [
+        [
             "SystemRoot",
             "WINDIR",
             "ComSpec",
@@ -1355,7 +1355,7 @@ fn windows_runtime_environment() -> Vec<(String, std::ffi::OsString)> {
         ]
         .into_iter()
         .filter_map(|name| std::env::var_os(name).map(|value| (name.to_string(), value)))
-        .collect();
+        .collect()
     }
     #[cfg(not(windows))]
     {
