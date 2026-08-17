@@ -19,13 +19,17 @@ use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GetLastError, HANDLE,
+};
 #[cfg(windows)]
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject,
 };
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 const TERM_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -1731,7 +1735,33 @@ fn unsafe_fd(fd: i32) -> io::Result<std::fs::File> {
 #[cfg(windows)]
 fn unsafe_fd(fd: i32) -> io::Result<std::fs::File> {
     use std::os::windows::io::FromRawHandle;
-    Ok(unsafe { std::fs::File::from_raw_handle(fd as *mut std::ffi::c_void) })
+    // Node passes extra stdio entries through the MSVC CRT fd table. The fd
+    // number is not itself a Windows HANDLE, so duplicate the CRT handle
+    // before giving ownership to File. This also prevents the CRT cleanup
+    // from closing the handle owned by File at process shutdown.
+    let handle = unsafe { libc::get_osfhandle(fd) };
+    if handle == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut duplicate: HANDLE = std::ptr::null_mut();
+    let current = unsafe { GetCurrentProcess() };
+    let duplicated = unsafe {
+        DuplicateHandle(
+            current,
+            handle as HANDLE,
+            current,
+            &mut duplicate,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if duplicated == 0 {
+        return Err(io::Error::from_raw_os_error(unsafe {
+            GetLastError() as i32
+        }));
+    }
+    Ok(unsafe { std::fs::File::from_raw_handle(duplicate) })
 }
 
 fn send(writer: &Lifecycle, value: Value) {

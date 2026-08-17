@@ -1,3 +1,4 @@
+import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import { resolveRudderNativeCapability, resolveRudderNativeTarget, type RudderNativeDiagnostic } from "@rudderhq/shared";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -89,10 +90,11 @@ function watchState(value: unknown): WatchState | null {
 async function startSession(rootPath: string): Promise<WatchSession> {
   const manifestPath = manifestPathForRoot(rootPath);
   await fs.mkdir(path.dirname(manifestPath), { recursive: true });
-  const child = spawn(resolveNativeWorkspaceManifestBinary(), [
+  const command = resolveNativeCommand(resolveNativeWorkspaceManifestBinary(), [
     "workspace", "watch", path.resolve(rootPath), manifestPath,
     String(MAX_ENTRIES), String(MAX_PATH_BYTES), String(DEBOUNCE_MS),
-  ], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  ]);
+  const child = spawn(command.command, command.args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   const session: WatchSession = {
     child, manifestPath, state: "building", exited: false,
     target: nativeTarget() ?? "unsupported", binaryVersion: "unavailable",

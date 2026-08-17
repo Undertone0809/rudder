@@ -1,3 +1,4 @@
+import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import { createRudderNativeDiagnostic, resolveRudderNativeTarget, type RudderNativeDiagnostic } from "@rudderhq/shared";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
@@ -555,7 +556,8 @@ async function sha256FileBounded(filePath: string) {
 async function runNativeArchive(binary: string, args: string[], timeoutMs = Number(process.env.RUDDER_NATIVE_ARCHIVE_TIMEOUT_MS) || 30_000): Promise<NativeArchiveJson> {
   let result: { stdout: string; stderr: string };
   try {
-    result = await execFileAsync(binary, args, {
+    const command = resolveNativeCommand(binary, args);
+    result = await execFileAsync(command.command, command.args, {
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: NATIVE_OUTPUT_LIMIT_BYTES,
