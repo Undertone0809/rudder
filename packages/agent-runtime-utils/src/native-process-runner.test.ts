@@ -1,6 +1,9 @@
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { runNativeChildProcess } from "./native-process-runner.js";
 
@@ -123,6 +126,57 @@ describe("Rust Agent Run process host", () => {
     expect(deliveredBytes).toBe(64 * 16_384);
     expect(maxActiveConsumers).toBe(1);
     await expect(access(path.join(root, "receipts"))).resolves.toBeUndefined();
+  });
+
+  it("fails closed when the log consumer cannot drain the bounded output spool", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-spool-overflow-"));
+    const commandInput = new PassThrough();
+    const lifecycle = new PassThrough();
+    const rawStdout = new PassThrough();
+    const rawStderr = new PassThrough();
+    const fakeHost = Object.assign(new EventEmitter(), {
+      stdin: commandInput,
+      stdio: [null, null, null, lifecycle, rawStdout, rawStderr],
+      stderr: rawStderr,
+      exitCode: null,
+      signalCode: null,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+    const capabilities = ["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "owner_receipt", "stdout_relay", "stderr_relay"];
+    let started = false;
+    commandInput.on("data", (chunk) => {
+      if (started) return;
+      started = true;
+      const start = JSON.parse(String(chunk)) as { requestId?: string };
+      const requestId = start.requestId!;
+      lifecycle.write(`${JSON.stringify({ type: "accepted", protocolVersion: { major: 1, minor: 0 }, requestId })}\n`);
+      lifecycle.write(`${JSON.stringify({ type: "spawned", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, pid: 12345 })}\n`);
+      const data = "x".repeat(16_384);
+      lifecycle.write(Array.from({ length: 1_280 }, () => `${JSON.stringify({ type: "output", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, stream: "stdout", data })}\n`).join(""));
+      lifecycle.write(`${JSON.stringify({ type: "app-exit", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, code: 0 })}\n`);
+      lifecycle.write(`${JSON.stringify({ type: "terminal", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, cleanupProven: true, receiptWritten: true })}\n`);
+      lifecycle.end();
+      fakeHost.emit("close", 0, null);
+    });
+    setImmediate(() => {
+      lifecycle.write(`${JSON.stringify({ type: "handshake", protocolVersion: { major: 1, minor: 0 }, capabilities, target: "test", binaryVersion: "test" })}\n`);
+    });
+    await expect(runNativeChildProcess("spool-overflow", process.execPath, [], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 10,
+      graceSec: 1,
+      onLog: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      },
+      onLogError: () => {},
+      binaryPath: "fake-process-host",
+      runtimeRoot: path.join(root, "receipts"),
+      spawnHost: () => fakeHost,
+    })).rejects.toMatchObject({
+      fallbackCode: "output_spool_overflow",
+      accepted: true,
+    });
   });
 
   nativeOnly("times out through host Stop and leaves no owned process", async () => {

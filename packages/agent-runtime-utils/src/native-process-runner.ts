@@ -21,6 +21,8 @@ import {
 
 const PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
 const MAX_LIFECYCLE_FRAME_BYTES = 64 * 1024;
+const MAX_OUTPUT_QUEUE_BYTES = 4 * 1024 * 1024;
+const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 
 type NativeHostSpawn = (
@@ -308,6 +310,7 @@ export async function runNativeChildProcess(
     let frameBytes = 0;
     const pendingOutput: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
     const outputQueue: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
+    let queuedOutputBytes = 0;
     let fatalError: Error | null = null;
 
     const rejectImmediately = (error: Error) => {
@@ -366,6 +369,7 @@ export async function runNativeChildProcess(
       lifecycle.pause();
       while (outputQueue.length > 0) {
         const output = outputQueue.shift()!;
+        queuedOutputBytes -= Buffer.byteLength(output.data);
         if (!operatorInterrupted) {
           try {
             await opts.onLog(output.stream, output.data);
@@ -378,12 +382,30 @@ export async function runNativeChildProcess(
       lifecycle.resume();
       for (const resolveDelivery of logDeliveryWaiters.splice(0)) resolveDelivery();
     };
+    const queueOutput = (output: { stream: "stdout" | "stderr"; data: string }) => {
+      const outputBytes = Buffer.byteLength(output.data);
+      const queuedItems = pendingOutput.length + outputQueue.length;
+      if (queuedItems >= MAX_OUTPUT_QUEUE_ITEMS || queuedOutputBytes + outputBytes > MAX_OUTPUT_QUEUE_BYTES) {
+        settleReject(new NativeProcessUnavailableError(
+          "Rust process host output spool exceeded its bounded capacity",
+          "output_spool_overflow",
+          accepted,
+        ));
+        return;
+      }
+      queuedOutputBytes += outputBytes;
+      if (accepted) {
+        outputQueue.push(output);
+        void drainOutput();
+      } else {
+        pendingOutput.push(output);
+      }
+    };
     const appendOutput = (stream: "stdout" | "stderr", data: string) => {
       if (stream === "stdout") stdout = appendWithCap(stdout, data);
       else stderr = appendWithCap(stderr, data);
       if (operatorInterrupted) return;
-      outputQueue.push({ stream, data });
-      void drainOutput();
+      queueOutput({ stream, data });
     };
     const send = (message: Record<string, unknown>) => {
       if (commandInput.destroyed || commandInput.writableEnded) return false;
@@ -478,8 +500,7 @@ export async function runNativeChildProcess(
           stream: frame.stream,
           data: frame.data,
         };
-        if (accepted) appendOutput(output.stream, output.data);
-        else pendingOutput.push(output);
+        appendOutput(output.stream, output.data);
         return;
       }
       if (type === "accepted") {
@@ -488,7 +509,8 @@ export async function runNativeChildProcess(
           return;
         }
         accepted = true;
-        for (const output of pendingOutput.splice(0)) appendOutput(output.stream, output.data);
+        outputQueue.push(...pendingOutput.splice(0));
+        void drainOutput();
         return;
       }
       if (type === "spawned") {
