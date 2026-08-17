@@ -1611,10 +1611,10 @@ fn terminate_owned_process(
         let _ = (pgid, grace);
         let terminated = _boundary.terminate();
         let _ = child.wait();
-        return CleanupResult {
+        CleanupResult {
             proven: terminated,
             had_surviving_group: false,
-        };
+        }
     }
 }
 
