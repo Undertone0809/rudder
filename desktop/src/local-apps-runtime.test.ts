@@ -105,9 +105,93 @@ async function acceptFixtureListenerOwnership(): Promise<boolean> {
   return true;
 }
 
-const fixtureListenerOwnershipOverride = process.platform === "win32"
-  ? undefined
-  : acceptFixtureListenerOwnership;
+const fixtureListenerOwnershipOverride = acceptFixtureListenerOwnership;
+
+function fixtureWatchdogSpawner(): typeof spawn | undefined {
+  if (process.platform !== "win32") return undefined;
+  return (() => {
+    const helper = new EventEmitter() as ChildProcess & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      stdin: { end: ReturnType<typeof vi.fn> };
+      send: ReturnType<typeof vi.fn>;
+      connected: boolean;
+    };
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let app: ChildProcess | null = null;
+    let exited = false;
+    let cleanupRequested = false;
+    let exitCode: number | null = null;
+    let signalCode: NodeJS.Signals | null = null;
+    Object.defineProperties(helper, {
+      stdout: { value: stdout },
+      stderr: { value: stderr },
+      stdin: { value: { end: vi.fn() } },
+      connected: { get: () => !exited },
+      exitCode: { get: () => exitCode },
+      signalCode: { get: () => signalCode },
+    });
+    const emitExit = (code: number | null, signal: NodeJS.Signals | null = null) => {
+      if (exited) return;
+      exited = true;
+      exitCode = code;
+      signalCode = signal;
+      helper.emit("exit", code, signal);
+    };
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as {
+        type?: string;
+        executable?: string;
+        argv?: string[];
+        cwd?: string;
+        env?: NodeJS.ProcessEnv;
+      };
+      if (typed.type === "start") {
+        if (!typed.executable || !typed.cwd || !Array.isArray(typed.argv)) {
+          callback?.(new Error("Invalid fixture watchdog start message"));
+          return true;
+        }
+        app = spawn(typed.executable, typed.argv, {
+          cwd: typed.cwd,
+          env: typed.env,
+          shell: false,
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        app.stdout?.pipe(stdout);
+        app.stderr?.pipe(stderr);
+        app.once("error", (error) => {
+          helper.emit("message", { type: "error", message: error.message });
+          emitExit(1, null);
+        });
+        app.once("spawn", () => {
+          helper.emit("message", { type: "spawned", pid: app?.pid, pgid: app?.pid });
+        });
+        app.once("exit", (code, signal) => {
+          helper.emit("message", { type: "app-exit", code, signal });
+          if (cleanupRequested) {
+            helper.emit("message", { type: "stopped" });
+          }
+          emitExit(code, signal);
+        });
+      } else if (typed.type === "cleanup") {
+        cleanupRequested = true;
+        if (!app || app.exitCode !== null || app.signalCode !== null) {
+          helper.emit("message", { type: "stopped" });
+          emitExit(0, null);
+        } else {
+          app.kill("SIGKILL");
+        }
+      }
+      callback?.(null);
+      return true;
+    });
+    return helper;
+  }) as unknown as typeof spawn;
+}
+
+const windowsFixtureWatchdogSpawner = fixtureWatchdogSpawner();
 
 function watchdogEmitting(message: unknown) {
   const helper = new EventEmitter() as EventEmitter & {
@@ -339,6 +423,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
         registry,
         platform: process.platform,
         watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+        ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
         maxLogBytes: 256,
         observeLifecycleEvent: (event) => events.push(event),
       });
@@ -401,6 +486,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
@@ -423,6 +509,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     const starting = manager.start(definition.id);
@@ -440,6 +527,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
@@ -723,6 +811,8 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry: wrongHealth.registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     await expect(timeoutManager.start(wrongHealth.definition.id)).rejects.toThrow("readiness");
     expect((await timeoutManager.status(wrongHealth.definition.id)).status).toBe("failed");
@@ -732,6 +822,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry: unowned.registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership: async () => false,
       listenerOwnershipRetryTimeoutMs: 750,
     });
@@ -748,6 +839,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry: owned.registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership,
     });
     try {
@@ -768,6 +860,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
       platform: "win32",
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership,
     });
     try {
@@ -850,6 +943,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
               })),
               verifyListenerOwnership: () => new Promise(() => undefined),
             },
+            ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
             watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
             listenerOwnershipRetryTimeoutMs: 250,
             cleanupTimeoutMs: 250,
@@ -857,6 +951,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
         : {
             registry: owned.registry,
             platform: process.platform,
+            ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
             watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
             verifyListenerOwnership: () => new Promise(() => undefined),
             listenerOwnershipRetryTimeoutMs: 250,
