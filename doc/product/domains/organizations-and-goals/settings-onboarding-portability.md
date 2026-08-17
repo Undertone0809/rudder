@@ -52,6 +52,8 @@ related_code:
   - ui/src/components/settings/SettingsPageSkeleton.tsx
   - ui/src/components/settings/SettingsScaffold.tsx
   - ui/src/context/ThemeContext.tsx
+  - ui/src/components/transcript/RunTranscriptView.blocks.tsx
+  - ui/src/components/transcript/RunTranscriptView.chat.tsx
   - ui/src/pages/InstanceAboutSettings.tsx
   - ui/src/pages/InstanceAppearanceSettings.tsx
   - ui/src/pages/InstanceBrowserSettings.tsx
@@ -95,6 +97,8 @@ related_tests:
   - ui/src/components/SettingsSidebar.browser.test.tsx
   - ui/src/components/settings/SettingsScaffold.test.tsx
   - ui/src/context/ThemeContext.test.tsx
+  - ui/src/components/transcript/RunTranscriptView.test.tsx
+  - ui/src/components/transcript/RunTranscriptView.failure-indicators.test.tsx
   - ui/src/hooks/useOrganizationPageMemory.test.ts
   - ui/src/lib/organization-routes.test.ts
   - ui/src/pages/InstanceAboutSettings.test.tsx
@@ -236,15 +240,16 @@ Product model:
   supported by the deployment. Instance administration destinations require
   instance-admin access, Browser is available only in `local_trusted`, and
   organization destinations remain organization-scoped.
-- Appearance exposes four independent controls:
+- Appearance exposes five independent controls:
   - color mode: `light`, `system`, `dark`
   - design style: `default`, `mira`, `luma`
   - base color: `neutral`, `stone`, `zinc`, `mauve`, `olive`, `mist`, `taupe`
   - theme color: `neutral`, `amber`, `blue`, `cyan`, `emerald`, `fuchsia`,
     `green`, `indigo`, `lime`, `orange`, `pink`
+  - tool call failure indicators: boolean, presented as Show failure indicators
 - The default presentation for a browser or local shell without valid saved
   preferences is color mode `system`, design style `luma`, base color
-  `neutral`, and theme color `emerald`.
+  `neutral`, theme color `emerald`, and tool call failure indicators off.
 - Appearance presentation names do not replace their stable values. Design
   style `luma` is presented as Rudder, `default` as Classic, and `mira` as
   Compact. Theme color `emerald` is presented as Rudder.
@@ -273,9 +278,10 @@ Flow:
 8. Browser settings control the instance capability and default web-link
    destination. Import and clear actions execute through the trusted Desktop
    boundary and disclose that their effect is shared across organizations.
-9. Appearance choices apply immediately by setting root DOM attributes and the
-   resolved browser theme color, then persist to local storage so the next app
-   boot can apply the same presentation before React finishes loading.
+9. Appearance choices apply immediately and persist to local storage. Color,
+   style, and theme choices set root DOM attributes and the resolved browser
+   theme color before React finishes loading. Tool call failure indicators
+   update mounted transcripts immediately and are restored for later views.
 10. Affected workflows read settings through their own domain service; workflow
    behavior must not depend on presentation-only appearance values.
 
@@ -316,9 +322,14 @@ Invariants:
 - Route-backed settings overlays must preserve the previous work surface when
   the shell uses contextual settings.
 - Appearance state must remain reversible and local: selecting a color mode,
-  design style, base color, or theme color must not change any durable work
-  object, organization setting, runtime config, agent instruction, or review
-  outcome.
+  design style, base color, theme color, or tool call failure indicator setting
+  must not change any durable work object, organization setting, runtime config,
+  agent instruction, transcript result, or review outcome.
+- When tool call failure indicators are off, failed tool calls use the same
+  neutral presentation as ordinary tool calls and omit failure-specific labels,
+  red styling, and automatic error expansion. Their input, response, and stored
+  failure status remain inspectable. Turning indicators on restores the
+  failure-specific presentation without changing the underlying transcript.
 - Stored appearance values outside the supported option sets must fall back to
   the default presentation instead of leaving the app in an undefined style.
 - Valid stored appearance values must remain selected across upgrades and must
@@ -335,6 +346,8 @@ Evidence:
 - `ui/src/context/ThemeContext.test.tsx` covers supported appearance values,
   DOM attributes, local storage persistence, and Desktop shell appearance
   bridging.
+- `ui/src/components/transcript/RunTranscriptView.test.tsx` covers neutral
+  default rendering and the opt-in failure presentation for tool calls.
 - `ui/src/pages/InstanceAppearanceSettings.test.tsx` covers the visible
   Appearance settings choices.
 - `server/src/__tests__/instance-settings-service.test.ts`,
@@ -344,7 +357,8 @@ Evidence:
 - `desktop/src/browser-ipc.test.ts` and `desktop/src/browser-profile.test.ts`
   cover trusted clear/disable handling and preservation of Browser settings.
 - `tests/e2e/settings-appearance.spec.ts` covers the user-visible Appearance
-  workflow, including persistence for expanded base and theme color options.
+  workflow, including persistence for expanded base and theme color options
+  plus default-off and opt-in failed tool call presentation.
 - `tests/e2e/organization-issue-key.spec.ts` covers the absence of Issue Key and
   description controls from organization settings while preserving
   compatibility API migration and historical-link behavior.

@@ -10,6 +10,65 @@ function uniqueIssuePrefix() {
 }
 
 test.describe("Settings appearance", () => {
+  test("keeps failed tool calls neutral by default and restores opt-in failure indicators", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Tool Call Appearance ${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    const openAppearanceSettings = async () => {
+      await page.goto(`/${organization.issuePrefix}/dashboard`);
+      await page.getByRole("button", { name: "System settings" }).click();
+      const modal = page.getByTestId("settings-modal-shell");
+      await modal.getByTestId("workspace-sidebar")
+        .locator('a[href$="/instance/settings/appearance"]')
+        .click();
+      await expect(modal.getByRole("heading", { name: "Appearance" })).toBeVisible();
+      return modal;
+    };
+
+    const openSettledTranscript = async () => {
+      await page.goto(`/${organization.issuePrefix}/tests/ux/runs`);
+      await expect(page.getByRole("heading", { name: "Run Detail" })).toBeVisible();
+      await page.getByRole("button", { name: "Show settled state" }).click();
+      return page.getByRole("button", { name: /Expand command details: Ran pnpm test:run/ });
+    };
+
+    const modal = await openAppearanceSettings();
+    const toggle = modal.getByRole("switch", { name: "Toggle tool call failure indicators" });
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect.poll(() => page.evaluate(() => (
+      window.localStorage.getItem("rudder.showToolCallFailureIndicators")
+    ))).toBe("false");
+
+    const neutralFailedTool = await openSettledTranscript();
+    await expect(neutralFailedTool).toBeVisible();
+    await expect(neutralFailedTool).not.toHaveAccessibleName(/Failed/);
+    await expect(neutralFailedTool.locator('[data-transcript-action-icon="command"]')).not.toHaveClass(/text-red/);
+    await page.screenshot({ path: "/tmp/rudder-tool-call-failure-indicators-off.png", fullPage: true });
+
+    const reopenedModal = await openAppearanceSettings();
+    const reopenedToggle = reopenedModal.getByRole("switch", { name: "Toggle tool call failure indicators" });
+    await reopenedToggle.click();
+    await expect(reopenedToggle).toHaveAttribute("aria-checked", "true");
+    await expect.poll(() => page.evaluate(() => (
+      window.localStorage.getItem("rudder.showToolCallFailureIndicators")
+    ))).toBe("true");
+
+    const highlightedFailedTool = await openSettledTranscript();
+    await expect(highlightedFailedTool).toHaveAccessibleName(/Failed/);
+    await expect(highlightedFailedTool.locator('[data-transcript-action-icon="command"]')).toHaveClass(/text-red/);
+    await page.screenshot({ path: "/tmp/rudder-tool-call-failure-indicators-on.png", fullPage: true });
+
+    await page.reload();
+    await page.getByRole("button", { name: "Show settled state" }).click();
+    await expect(page.getByRole("button", { name: /Expand command details: Ran pnpm test:run Failed/ })).toBeVisible();
+  });
+
   test("applies appearance preferences before React hydration", async ({ page }) => {
     await page.route("**/src/main.tsx*", (route) => route.abort());
 

@@ -1,11 +1,12 @@
-import { Fragment, createContext, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useToolCallFailureIndicators } from "@/context/ThemeContext";
+import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
-import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
 import { transcriptAgentInspectionForTool } from "./TranscriptAgentInspection";
@@ -139,14 +140,22 @@ export function shouldHideChatToolResult(semantic: TranscriptToolSemanticInfo): 
   return semantic.category === "read" || semantic.category === "skill";
 }
 
-function formatChatToolActionSummary(block: TranscriptToolCardEntry, semantic: TranscriptToolSemanticInfo, density: TranscriptDensity) {
+function formatChatToolActionSummary(
+  block: TranscriptToolCardEntry,
+  semantic: TranscriptToolSemanticInfo,
+  density: TranscriptDensity,
+  renderFailure: boolean,
+) {
+  if (block.status === "error" && !renderFailure) {
+    return semantic.summary || semantic.label;
+  }
   if (
     semantic.summary &&
     !(semantic.summary === "Tool" && block.input == null && typeof block.result === "string" && block.result.trim())
   ) {
     return semantic.summary;
   }
-  return summarizeToolResult(block.result, block.status === "error", density);
+  return summarizeToolResult(block.result, renderFailure, density);
 }
 
 function TranscriptChatActionIconCell({
@@ -343,9 +352,14 @@ export function TranscriptChatToolActionRow({
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   quiet?: boolean;
 }) {
+  const showFailureIndicators = useToolCallFailureIndicators();
   const localizeText = useTranscriptText();
-  const semantic = describeToolSemanticInfo(block.name, block.input, block.result);
-  const displaySummary = localizeText(formatChatToolActionSummary(block, semantic, density));
+  const renderFailure = showFailureIndicators && block.status === "error";
+  const rawSemantic = describeToolSemanticInfo(block.name, block.input, block.result);
+  const semantic = showFailureIndicators
+    ? rawSemantic
+    : neutralizeToolFailureSemanticInfo(rawSemantic);
+  const displaySummary = localizeText(formatChatToolActionSummary(block, semantic, density, renderFailure));
   const compact = density === "compact";
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
@@ -361,22 +375,26 @@ export function TranscriptChatToolActionRow({
           : null;
   const canExpand = semantic.category !== "skill"
     && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
-  const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
+  const visualStatus = block.status === "error" && !showFailureIndicators
+    ? "completed"
+    : block.status;
+  const [open, setOpen] = useState(inline || (defaultOpenOnError && renderFailure));
+  const failureAutoOpenRef = useRef(!inline && defaultOpenOnError && renderFailure);
   const [imageOpen, setImageOpen] = useState(false);
   const [openDiffIndexes, setOpenDiffIndexes] = useState<Set<number>>(() => new Set());
   const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
-    block.status === "error"
+    renderFailure
       ? localizeText("Failed")
       : block.status === "running"
         ? localizeText("Running")
         : null;
-  const rowTone = block.status === "error"
+  const rowTone = renderFailure
     ? "text-red-700 dark:text-red-300"
     : block.status === "running"
       ? "text-cyan-700 dark:text-cyan-300"
       : "text-muted-foreground";
-  const iconStatus = block.status === "error" ? "error" : block.status === "running" ? "running" : quiet ? "neutral" : "completed";
+  const iconStatus = renderFailure ? "error" : block.status === "running" ? "running" : quiet ? "neutral" : "completed";
   const rowPaddingClass = compact ? "py-0.5" : "py-1.5";
   const rowAlignmentClass = compact ? "items-center" : "items-start";
   const rowGapClass = compact ? "gap-1.5" : "gap-2";
@@ -406,8 +424,26 @@ export function TranscriptChatToolActionRow({
   const detailStateLabelId = useId();
   const summaryLabelId = useId();
   const statusLabelId = useId();
+  useEffect(() => {
+    if (!inline && defaultOpenOnError && renderFailure) {
+      setOpen((current) => {
+        if (!current) {
+          failureAutoOpenRef.current = true;
+          return true;
+        }
+        return current;
+      });
+      return;
+    }
+    if (failureAutoOpenRef.current) {
+      failureAutoOpenRef.current = false;
+      setOpen(false);
+    }
+  }, [defaultOpenOnError, inline, renderFailure]);
+
   const toggleDetails = () => {
     if (inline || !canExpand) return;
+    failureAutoOpenRef.current = false;
     setOpen((value) => !value);
   };
   const inspectableAgent = agentInspection && onOpenAgent ? agentInspection : null;
@@ -425,7 +461,7 @@ export function TranscriptChatToolActionRow({
 
   return (
     <div
-      className={cn(rowPaddingClass, highlightError && block.status === "error" && "-mx-2 rounded-lg bg-red-500/[0.04] px-2")}
+      className={cn(rowPaddingClass, highlightError && renderFailure && "-mx-2 rounded-lg bg-red-500/[0.04] px-2")}
       title={getTranscriptTimestampTitle(block.ts)}
     >
       {canExpand && !inline && !inspectAgent ? (
@@ -729,7 +765,7 @@ export function TranscriptChatToolActionRow({
           <CommandTerminalDetail
             command={requestText}
             output={responseText}
-            status={block.status}
+            status={visualStatus}
             className="motion-disclosure-enter ml-5 mt-2"
           />
         ) : (
@@ -750,7 +786,7 @@ export function TranscriptChatToolActionRow({
                 <ExpandableTranscriptResponsePre
                   text={responseText}
                   className={cn(
-                    block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
+                    renderFailure ? "text-red-700 dark:text-red-300" : "text-foreground/80",
                   )}
                 />
               </div>
@@ -859,10 +895,16 @@ export function segmentChatTranscriptBlocks(blocks: TranscriptBlock[]): ChatTran
   return segments;
 }
 
-export function formatChatActionSummary(actions: ChatTranscriptAction[]): string {
+export function formatChatActionSummary(
+  actions: ChatTranscriptAction[],
+  showFailureIndicators = true,
+): string {
   const infos = actions
     .filter((action): action is Extract<ChatTranscriptAction, { type: "tool" }> => action.type === "tool")
-    .map((action) => describeToolSemanticInfo(action.entry.name, action.entry.input));
+    .map((action) => {
+      const semantic = describeToolSemanticInfo(action.entry.name, action.entry.input);
+      return showFailureIndicators ? semantic : neutralizeToolFailureSemanticInfo(semantic);
+    });
   const stdoutCount = actions.filter((action) => action.type === "stdout").length;
   return formatSemanticDigest(infos, stdoutCount, { preferDirectSummary: true });
 }
@@ -908,6 +950,7 @@ export function TranscriptChatActionGroup({
   annotationSource?: TranscriptAnnotationSourceContext;
   runAnnotationContext?: TranscriptRunAnnotationContext;
 }) {
+  const showFailureIndicators = useToolCallFailureIndicators();
   const localizeText = useTranscriptText();
   const compact = density === "compact";
   const singleAction = actions[0];
@@ -918,9 +961,10 @@ export function TranscriptChatActionGroup({
   const allToolsErrored = areAllToolEntriesErrored(toolEntries);
   const shouldInlineSingleStdoutAction = hasSingleAction && singleAction?.type === "stdout";
   const shouldRenderSingleToolAction = hasSingleAction && singleAction?.type === "tool";
-  const summary = localizeText(formatChatActionSummary(actions));
-  const highlightGroupError = allToolsErrored && !detailVariant;
-  const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : allToolsErrored));
+  const summary = localizeText(formatChatActionSummary(actions, showFailureIndicators));
+  const highlightGroupError = showFailureIndicators && allToolsErrored && !detailVariant;
+  const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : highlightGroupError));
+  const failureAutoOpenRef = useRef(!detailVariant && highlightGroupError);
   const summaryIcon = getChatActionIconInfo(actions[0]!);
   const summaryAgentAvatar = actions[0]?.type === "tool"
     ? getTranscriptAgentAvatarInfo(actions[0].entry.name, actions[0].entry.input)
@@ -961,10 +1005,26 @@ export function TranscriptChatActionGroup({
   ) : content;
 
   useEffect(() => {
-    if (!detailVariant && allToolsErrored) {
-      setDetailsOpen(true);
+    if (!detailVariant && showFailureIndicators && allToolsErrored) {
+      setDetailsOpen((current) => {
+        if (!current) {
+          failureAutoOpenRef.current = true;
+          return true;
+        }
+        return current;
+      });
+      return;
     }
-  }, [detailVariant, allToolsErrored]);
+    if (failureAutoOpenRef.current) {
+      failureAutoOpenRef.current = false;
+      setDetailsOpen(false);
+    }
+  }, [detailVariant, showFailureIndicators, allToolsErrored]);
+
+  const toggleDetails = () => {
+    failureAutoOpenRef.current = false;
+    setDetailsOpen((value) => !value);
+  };
 
   if (shouldInlineSingleStdoutAction) {
     return wrapAnnotation(
@@ -1015,7 +1075,7 @@ export function TranscriptChatActionGroup({
           compact ? "gap-1.5" : "gap-2",
           highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
         )}
-        onClick={() => setDetailsOpen((value) => !value)}
+        onClick={toggleDetails}
         aria-expanded={detailsOpen}
         aria-label={expandedLabel}
       >
@@ -1026,7 +1086,11 @@ export function TranscriptChatActionGroup({
           {summaryAgentAvatar ? (
             <TranscriptAgentAvatarIcon
               info={summaryAgentAvatar}
-              status={highlightGroupError ? "error" : summaryIcon.status}
+              status={highlightGroupError
+                ? "error"
+                : summaryIcon.status === "running"
+                  ? "running"
+                  : "neutral"}
             />
           ) : (
             <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
