@@ -202,6 +202,17 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "tab-count")).toBe("1");
   });
 
+  it("routes Issue links away from the mobile Side Panel", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.history.replaceState({}, "", "/rudder-studio/issues/source-1");
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Open issue");
+
+    expect(window.location.pathname).toBe("/rudder-studio/issues/issue-1");
+    expect(text(container, "tab-count")).toBe("0");
+  });
+
   it("restores an open chat side panel after switching away and back", () => {
     ({ container, root } = renderSidePanelProvider());
 

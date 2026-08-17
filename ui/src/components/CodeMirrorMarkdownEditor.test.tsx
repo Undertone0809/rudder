@@ -835,7 +835,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(ref.current?.getMarkdown?.()).toBe(markdown);
   });
 
-  it("emits one navigation callback for an atomic reference click", async () => {
+  it("emits one navigation callback when an atomic reference receives a pointer sequence", async () => {
     const onInlineTokenClick = vi.fn();
     act(() => {
       root?.render(
@@ -862,13 +862,14 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
       bubbles: true,
       cancelable: true,
     });
+    const atomicPointerUp = new MouseEvent("mouseup", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
     act(() => {
       atomicLink?.dispatchEvent(atomicPointerDown);
-      atomicLink?.dispatchEvent(new MouseEvent("click", {
-        button: 0,
-        bubbles: true,
-        cancelable: true,
-      }));
+      atomicLink?.dispatchEvent(atomicPointerUp);
     });
     expect(atomicPointerDown.defaultPrevented).toBe(true);
     expect(onInlineTokenClick).toHaveBeenCalledTimes(1);
