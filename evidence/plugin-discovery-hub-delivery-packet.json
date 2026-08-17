@@ -1,0 +1,444 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "2026-08-14-plugin-discovery-hub",
+  "status": "review_ready",
+  "owner": {
+    "root_id": "current-codex-task",
+    "agent_id": "codex"
+  },
+  "intent": {
+    "raw_request": "PLEASE IMPLEMENT THIS PLAN: create and publish Undertone0809/rudder-plugins as Rudder's curated Plugin catalog; extend Rudder Hub to discover native Codex Plugins and npx skills add compatible public Skill repositories; use Discover -> Plugin Detail -> Preview Skills/MCPs/Apps -> immutable Preview Install/Update -> Agent assignment or MCP setup; never execute third-party npx, install scripts, hooks, MCPs, Apps, or Skill scripts; synchronize the explicitly authorized PLUGIN.PACKAGE.001, PLUGIN.IMPORT.001, and PLUGIN.INSTALLATION.001 Product Logic contracts; include Superpowers, Marketing Skills, Vercel, Base44, Canva, Remotion, and Zotero; verify desktop/mobile light/dark UI with ego-browser; complete reviewer/verifier/final-review gates; commit and push both repositories; stop Rudder at Review Ready without releasing it.",
+    "corrections": [
+      "Plugin Detail page 可以参考刚才给你的 codex ui 设计，继续推进。",
+      "Plugin Detail is a dedicated routable page with a brand header, grouped Skills/MCPs/Apps, information metadata, and direct Install/Update action; Review is not a product step.",
+      "After an Update reaches Installed, stale Preview capabilityDiff or skillConflicts must not leave approval, conflict, or Capability changes controls visible.",
+      "Packet v7 clarifies the original Detail-diff requirement: Update Detail must render every component change present in the frozen immutable diff and label each present item added, removed, or changed; changed items require bounded Before/After execution surfaces. Acceptance does not require manufacturing all three change types when the real frozen upstream fixture only contains changed items."
+    ],
+    "non_goals": [
+      "Do not execute npx skills add or any third-party install, lifecycle, hook, MCP, App, or Skill script.",
+      "Do not silently update installed Plugins.",
+      "Do not copy third-party Plugin or Skill source into the catalog repository.",
+      "Do not claim Codex .app.json aliases are executable Rudder Apps.",
+      "Do not release Rudder.",
+      "Do not modify, reset, stash, or clean the shared dirty Rudder checkout."
+    ],
+    "authorization": "implementation, public catalog repository creation and push, Rudder branch commit and push, and explicit Product Logic Registry synchronization for PLUGIN.PACKAGE.001, PLUGIN.IMPORT.001, and PLUGIN.INSTALLATION.001; no Rudder release"
+  },
+  "candidate": {
+    "branch": "codex/plugin-discovery-hub",
+    "source_ref": "refs/heads/codex/plugin-discovery-hub",
+    "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+    "dirty_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
+    "changed_paths": [
+      "doc/engineering/PLUGIN_AUTHORING_GUIDE.md",
+      "doc/engineering/PLUGIN_RUNTIME_CONTRACT.md",
+      "doc/plans/2026-08-14-rudder-plugin-discovery-hub.md",
+      "doc/product/domains/plugins/README.md",
+      "doc/product/domains/plugins/lifecycle-capabilities.md",
+      "docs/concepts/plugins.mdx",
+      "docs/how-to/manage-plugins.mdx",
+      "docs/zh/concepts/plugins.mdx",
+      "docs/zh/how-to/manage-plugins.mdx",
+      "packages/shared/src/index.ts",
+      "packages/shared/src/types/index.ts",
+      "packages/shared/src/types/plugin-v1.ts",
+      "packages/shared/src/validators/index.ts",
+      "packages/shared/src/validators/plugin-v1.ts",
+      "server/src/__tests__/rudder-plugins-lifecycle.test.ts",
+      "server/src/routes/rudder-plugins.ts",
+      "server/src/services/knowledge-portability/organization-skills.ts",
+      "server/src/services/rudder-plugin-agent-bindings.ts",
+      "server/src/services/rudder-plugin-catalog.test.ts",
+      "server/src/services/rudder-plugin-catalog.ts",
+      "server/src/services/rudder-plugins.ts",
+      "tests/e2e/plugin-discovery-hub.spec.ts",
+      "tests/e2e/plugins-v1.spec.ts",
+      "ui/src/App.tsx",
+      "ui/src/api/rudderPlugins.ts",
+      "ui/src/components/Layout.tsx",
+      "ui/src/lib/queryKeys.ts",
+      "ui/src/pages/PluginDetail.tsx",
+      "ui/src/pages/Plugins.tsx"
+    ],
+    "build": {
+      "id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
+      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56"
+    },
+    "runtime": {
+      "id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56"
+    },
+    "organization_data": {
+      "organization_id": "d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd",
+      "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
+      "projection": "Disposable v18 acceptance organization with Marketing Skills 2.10.0 installed and bound to one Agent, then explicitly updated to 2.10.1 through the immutable Preview; 49 plugin-managed Skills remain bound after refresh.",
+      "mutation_policy": "Local disposable acceptance data only; no shared, staging, production, or external mutation."
+    },
+    "catalog": {
+      "repository": "/Users/zeeland/projects/rudder-hub/rudder-plugins",
+      "content_fingerprint": "sha256:af864ae5fb2ccc98705c958340f0a71754985acd827737d945fc5771554251d6",
+      "repository_commit": "546caa667670054b7238972eb7e29ae8cb1e8ea5",
+      "repository_tree": "6ea771ad13b3f6acf9742d16237fbc7b7c33c907",
+      "catalog_json_sha256": "59c592a856be0f9af6266c1c3893c8918d1fd19b353b899c3130c93e7bba856b",
+      "file_count": 34,
+      "acceptance_url": "https://raw.githubusercontent.com/Undertone0809/rudder-plugins/main/catalog.json",
+      "public_target": "https://github.com/Undertone0809/rudder-plugins",
+      "publication_state": "published_and_ci_validated",
+      "ci_run": "https://github.com/Undertone0809/rudder-plugins/actions/runs/31783437653",
+      "ci_conclusion": "success"
+    },
+    "workload_fixture": "v18 local immutable fixture derived from the 249-file Marketing Skills repository snapshot: baseline 2.10.0 with one baseline-only ab-testing marker, update 2.10.1 at upstream commit ff8cccced801966ce7129c3a18baeb7a027d4e54; 49 Skills.",
+    "budget_lease": {
+      "id": "not_applicable",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "20",
+      "fingerprint": "b05618defd421ecf14c391a60ad85e37117248f5b3de6bf6e6ab3b50f506dc74",
+      "fingerprint_method": "SHA-256 of canonical compact sorted acceptance_packet JSON with fingerprint removed",
+      "criteria": [
+        "Discover lists all seven curated Plugins from a lightweight remote catalog and survives catalog outage using the last successful cache without affecting installed Plugins.",
+        "Plugin Detail follows the supplied Codex UI hierarchy on desktop and 390px mobile in light and dark themes, with brand identity, description, and the sole Install/Update action at the top.",
+        "Plugin Detail loading retains Back navigation, failures expose Back and Retry, and light/dark themes request the matching validated icon variant.",
+        "Opening Detail resolves a stable Release or default-branch HEAD, locks a full commit SHA, and previews grouped Skills, MCPs, and Apps without executing third-party code.",
+        "skills_add-compatible repositories become one Skills-only Plugin and install the complete discovered Skill set; Marketing Skills exposes 49 Skills and Superpowers exposes 14 Skills.",
+        "Install and Update consume the exact immutable Preview ID with no upstream re-resolution; installed packages remain unchanged until explicit Update.",
+        "Update Detail renders every component change present in the frozen immutable diff, labels each present item added, removed, or changed, and shows bounded Before and After execution surfaces for changed items before access expansion can be confirmed.",
+        "After Update succeeds, Installed is the sole terminal action state and stale access approval, Skill conflict, and Capability changes controls are absent.",
+        "Codex App aliases are visible as unsupported inventory and never treated as Rudder Apps or MCP endpoints.",
+        "URL Import accepts compatible public sources while curated Discover remains manually controlled; private, SSH, and local boundaries are unchanged.",
+        "Organization isolation, package bounds, path safety, credential detection, attribution, and non-execution invariants remain enforced.",
+        "Superpowers and Marketing Skills complete Detail, install, Agent assignment, refresh continuity, and uninstall journeys; Agent bindings survive explicit updates.",
+        "Product Logic, engineering docs, public docs, API types, server behavior, UI copy, automated tests, and live evidence agree on Preview terminology and the absence of a Review product step.",
+        "The catalog content passes its repository validator locally and is published byte-for-byte to Undertone0809/rudder-plugins only after stage reviewer, verifier, and final reviewer gates."
+      ],
+      "state_inventory": [
+        "Discover loading: a bounded page-level Loading... or mounted catalog skeleton is visible; no package archives are fetched.",
+        "Discover ready: search plus seven rows; installed and update states visible; selecting a row is the primary decision.",
+        "Discover degraded: cached rows remain usable with a stale indicator; installed Plugins remain unaffected.",
+        "Detail resolving: the Plugin route remains stable, component inventory waits, Back remains available, and no action can install an unresolved package.",
+        "Detail error: no install controls are visible; Back returns to Discover and Retry repeats the same bounded resolution.",
+        "Detail preview ready: direct Install or Update is primary; grouped Skills/MCPs/Apps and trust metadata are visible; no extra Review confirmation.",
+        "Detail unsupported inventory: App aliases are labeled unsupported while supported Skills or MCP drafts remain installable.",
+        "Detail installed: Installed is terminal and disabled; stale Preview approval/change controls are absent; Agent assignment and MCP setup are follow-up actions; uninstall is secondary and explicit.",
+        "Detail update available: component changes and Before/After execution surfaces are visible before explicit Update; access expansion requires confirmation; Back leaves the current install unchanged.",
+        "URL Import: one source decision, validation error continuity, and successful navigation to the same immutable Detail shape.",
+        "Long bundle: 49 Skills remain fully rendered, searchable, and readable without overflowing desktop or 390px layout.",
+        "Reopen/refresh: route and installed state restore from server truth; no transient Preview silently mutates installation.",
+        "Theme switch: Plugin icons request theme=light or theme=dark from the same-origin bounded icon endpoint and the header retains stable icon dimensions while loading."
+      ],
+      "comparison": {
+        "reference": "Rudder v18 same-runtime Hub Discover sibling plus doc/engineering/DESIGN.md; the original temporary Codex reference files are unavailable and are not treated as evidence.",
+        "current_desktop": "/tmp/rudder-plugin-v18-installed-desktop-light-real.png",
+        "current_desktop_dark": "/tmp/rudder-plugin-v18-update-desktop-dark.png",
+        "current_mobile_light": "/tmp/rudder-plugin-v18-installed-mobile-light.png",
+        "current_mobile_dark": "/tmp/rudder-plugin-v18-installed-mobile-dark.png",
+        "dimensions": "1440x900 desktop and 390x844 mobile; v18 runtime 127.0.0.1:4050; Marketing Skills 2.10.1 installed projection",
+        "data": "Marketing Skills 2.10.0 -> 2.10.1 explicit immutable Update; 49 Skills; ab-testing changed; 49/49 Agent bindings preserved",
+        "historical_invalidated": [
+          "/tmp/rudder-plugin-v9-verifier-desktop-light.png",
+          "/tmp/rudder-plugin-v9-verifier-mobile-dark.png",
+          "/tmp/rudder-plugin-v16-installed-desktop-light.png",
+          "/tmp/rudder-plugin-v16-installed-desktop-dark.png",
+          "/tmp/rudder-plugin-v16-installed-mobile-light.png",
+          "/tmp/rudder-plugin-v16-installed-mobile-dark.png"
+        ],
+        "nearest_shipped_sibling": "/tmp/rudder-plugin-v18-discover-desktop-light.png",
+        "comparison_method": "Same runtime/org, 1440x900 light Hub Discover sibling compared with 1440x900 Plugin Detail and 390x844 light/dark Detail captures; the Detail hierarchy, direct action, density, borders, icon treatment, and mobile overflow are inspectable without external reference files.",
+        "nearest_shipped_sibling_sha256": "a90a13e7c0fff80bf7e05e8fff93ab240c8f939bbf2716376066f3449e876bdc"
+      },
+      "interaction_semantics": {
+        "back": "Returns to Hub > Plugins without installing or updating.",
+        "cancel": "Footer Close and Escape dismiss Agent assignment or uninstall dialogs without mutation.",
+        "close": "No persistent draft is created by footer Close or Escape dismissal; reopening reads server truth.",
+        "reopen": "Server truth restores installed and Agent-assignment state; no client draft restoration contract exists.",
+        "search": "Filters the in-memory immutable component Preview and preserves Preview identity.",
+        "deep_link": "The preview query parameter reopens the same persisted immutable Preview without a new upstream resolution.",
+        "load_more": "Not applicable; the 49-Skill inventory is fully rendered and searchable rather than virtualized or incrementally revealed."
+      }
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
+      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+      "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
+      "packet_version": "20",
+      "summary": "Independent stage reviewer accepted the exact v20 candidate after sequential health, catalog, installed-directory, Preview, and icon reads returned successfully; all five screenshots were checked and no blocking gap remained."
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
+      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+      "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
+      "packet_version": "20",
+      "summary": "Independent black-box verifier PASS on the exact v20 candidate: observed Update available -> Installing... -> Installed for Marketing Skills 2.10.0 to 2.10.1 using Preview 789ae093-0673-4832-b4b2-fe2217367a73; confirmed 49 Skills, 49/49 Agent bindings, seven curated Discover entries, reload/reopen continuity, 390x844 no-overflow, no stale controls, and installed-plugin cross-organization 404."
+    },
+    "final_review": {
+      "verdict": "accept",
+      "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
+      "source_sha": "58c5a0a5b0837e9c398b4218229ef2fcff732f56",
+      "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-21940",
+      "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
+      "packet_version": "20",
+      "summary": "Final handoff reviewer accepted the exact v20 candidate after confirming packet validator validity, exact source/build/runtime/org/data identity, stage reviewer accept, and independent verifier PASS; no blocking conditions remain."
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "Packet v1 stage-review evidence was invalidated by redirect-host enforcement, corrected production Skill counts, Update execution-surface UI, stable Back/Retry states, dark icon requests, and runtime restart.",
+      "Packet v2 verifier returned QUESTION because URL Import changed a byte-level organization snapshot and required Update/mobile/degraded evidence was incomplete.",
+      "Packet v2 receipts were invalidated by the URL Import source-identity fix, uninstall stale-read fix, installed terminal-control fix, focused E2E rerun, new candidate fingerprint, v4 runtime, organization, fixture, screenshots, and packet v3.",
+      "Packet v3 stage reviewer accepted the candidate, then the independent verifier returned FAIL because the real cached-catalog outage retained seven rows and Installed continuity without the required visible stale indicator.",
+      "Packet v4 adds the accessible cached-catalog stale indicator and E2E/live outage coverage; fast-forwards the isolated base through unrelated Desktop updates to d17a41ef2792ffa4ce28ab26a1d5f7aaaa95abaa; and restarts the exact dirty candidate on 127.0.0.1:3998. All packet v3 receipts are invalidated.",
+      "Packet v5 fast-forwards the isolated base through unrelated native archive and release-CI commits to 7a58f929f00594726f14ab36b2b180388ba70302, preserves the Plugin source-content fingerprint and empty live index, restarts the exact candidate as acceptance-v5, and captures current desktop/mobile evidence. Any pending packet v4 review lease is invalidated.",
+      "Packet v5 stage review accepted, then its verifier returned FAIL because Marketing Preview bb844897-3e19-4f3d-8317-2bea16625eb4 became unreadable after uninstall. Packet v6 includes the persisted-Preview read fix, plugin tests, lifecycle tests, focused E2E, a rebuilt acceptance-v6 runtime, two complete Marketing install/uninstall cycles using the same Preview and SHA, refreshed screenshots, and a new candidate/data lease. All v5 receipts are invalidated.",
+      "Packet v6 stage reviewer accepted and its independent verifier proved the mandatory persisted-Preview fix, two-cycle Marketing lifecycle, Agent continuity, Codex UI, stale-cache recovery, unsupported inventory, and organization isolation, but returned QUESTION because criterion 7 literally required a live fixture containing added, removed, and changed items while the immutable upstream diff contained only six changed items; icon-failure fallback was also not conclusive. Packet v7 aligns the observable bar with the original Detail-diff request: render and label every change type present in the frozen diff, require Before/After for changed items, accept bounded Loading... or skeleton states, and do not require manufacturing an icon endpoint failure. No source, build, runtime, catalog, or organization-data identity changed.",
+      "Packet v7 stage reviewer accepted, then its verifier returned FAIL solely because the cached-catalog banner could disappear on an immediate recovery reload. Packet v8 adds a tested 30-second instance-level degraded-visibility lease, proves stale -> immediate fresh still renders stale -> post-lease fresh, runs the full production build, and restarts the exact candidate as acceptance-v8. All v7 receipts are invalidated.",
+      "Packet v8 stage reviewer accepted and its verifier met all 14 feature criteria, then returned FAIL solely because the visible uninstall footer Close and the first Escape attempt did not dismiss the dialog. Packet v9 hides the duplicate top-right close affordance, wires the footer Close and Escape explicitly, adds E2E coverage for both non-mutating dismissal paths before confirmation, passes both Plugin E2E suites 4/4, rebuilds the production workspace, and restarts the exact candidate as acceptance-v9. All v8 receipts are invalidated.",
+      "Packet v9 stage reviewer accepted, independent verifier returned PASS for all 14 criteria, and final reviewer accepted the exact restored lease. The public catalog was then created at Undertone0809/rudder-plugins; its initial CI exposed and the gated follow-up fixed a duplicate pnpm version declaration without changing catalog.json; commit 546caa667670054b7238972eb7e29ae8cb1e8ea5 passed GitHub Actions, including live validation. Packet v10 binds the unchanged Rudder source/build/data candidate to the public raw catalog and acceptance-public-v10 runtime. All v9 receipts are invalidated for the public-runtime gate.",
+      "Packet v11 records the incremental commits 84200bc1f and dc6e3dc74, rebuilds the UI as index-Das_viwK.js, and invalidates v10 because the acceptance runtime exited. A fresh runtime start on 127.0.0.1:4016 was blocked by sandbox listener EPERM in detect-port, and the Computer Use Terminal path was unavailable; no v11 organization or browser evidence is claimed.",
+      "Packet v12 adds root Skill supporting-file preservation and its regression test in eeec6fd3f. This invalidates v11; the runtime remains unavailable and no v12 organization or browser evidence is claimed.",
+      "Packet v13 filters undiscovered nested SKILL.md files from root Skill support payloads and adds the corresponding regression case in 62995a894. This invalidates v12; the runtime remains unavailable and no v13 organization or browser evidence is claimed.",
+      "Packet v14 applies the same discovered-entry filter to non-root priority containers and adds the regression case in 3f0536a46. This invalidates v13; the runtime remains unavailable and no v14 organization or browser evidence is claimed.",
+      "Packet v14 was invalidated by the newly available acceptance-public-v15 runtime, organization projection, current candidate 35f7c366c, and current browser evidence; all v14 reviewer/verifier/final-review receipts are stale.",
+      "Packet v15 records the real Marketing Skills 2.10.1 local immutable update fixture, the explicit Update terminal state, normalized Agent binding continuity, current desktop/mobile screenshots, and Superpowers uninstall projection. Its receipts are invalidated by the v16 source, build, runtime, organization, and evidence refresh.",
+      "Packet v16 records the current 58c5a0a5b source, index-CqjIKfuw.js build, acceptance-public-v16 runtime, public catalog resolution for Marketing Skills/Superpowers/Canva, URL Import preview, current light/dark desktop/mobile screenshots, and refreshed independent-gate leases.",
+      "Packet v18 records a fresh acceptance-public-v18 runtime at 127.0.0.1:4050, a new organization with baseline 2.10.0 install and Agent binding, an immutable 2.10.1 update Preview, explicit Update, 49/49 binding continuity, refresh continuity, and current desktop/mobile screenshots. All v16 receipts are invalidated.",
+      "Packet v19 replaces unavailable temporary reference-file paths with a self-contained same-runtime Hub Discover sibling comparison and rechecks the v18 runtime health before independent gates.",
+      "Packet v20 records stage reviewer accept after sequential health, catalog, installed-directory, Preview, and icon reads all returned successfully; the earlier runtime-window needs-more-evidence receipt is superseded without source/build/org/data drift."
+    ],
+    "invalidated_receipts": [
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v1",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v2",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v2-QUESTION",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v3-accept",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v3-FAIL",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v4-pending-base-drift",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v5-accept",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v5-FAIL-preview-unreadable-after-uninstall",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v6-accept",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v6-QUESTION-fixture-coverage",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v7-accept",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v7-FAIL-cached-banner-recovery-race",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v8-accept",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v8-FAIL-uninstall-dialog-dismissal",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v9-accept",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v9-PASS",
+      "final-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v9-accept",
+      "stage-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v10-public-runtime-drift",
+      "verifier-019ffcff-81a4-7040-aca1-2e81827172bb-v10-public-runtime-drift",
+      "final-review-019ffcb7-6837-7ea0-9fb4-7bd50ee052ff-v10-public-runtime-drift",
+      "stage-review-v14-runtime-blocked",
+      "verifier-v14-runtime-blocked",
+      "final-review-v14-pending",
+      "stage-review-v15-pending-runtime-drift",
+      "verifier-v15-pending-runtime-drift",
+      "final-review-v15-pending-runtime-drift",
+      "stage-review-v16-pending",
+      "verifier-v16-pending",
+      "final-review-v16-pending",
+      "stage-review-v18-needs-more-evidence",
+      "stage-review-v19-needs-more-evidence-runtime-window"
+    ]
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "isolated_risk",
+    "target_ref": "refs/heads/main",
+    "base_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "dacc1fa045af8e7752f3cab6ee67ee92298b8026",
+    "branch_refs": [
+      "refs/heads/codex/plugin-discovery-hub",
+      "refs/remotes/origin/codex/plugin-discovery-hub"
+    ],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/Users/zeeland/projects/rudder-oss/.worktrees/plugin-discovery-continued",
+    "patch_tree_sha": "c61ae542ebe5c71af6f9a18ac15bfce4bd836ba5",
+    "expected_old_sha": "7a58f929f00594726f14ab36b2b180388ba70302",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "alternate_index"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "shared checkout changes outside isolated worktree",
+      "remote worktree /Users/zeeland/projects/rudder-hub/rudder-oss-plugin-discovery has unrelated uncommitted changes and was not touched"
+    ],
+    "index_fingerprint_before": "not_applicable:isolated-worktree",
+    "index_fingerprint_after": "not_applicable:isolated-worktree",
+    "worktree_fingerprint_before": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
+    "worktree_fingerprint_after": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Implementation and acceptance runtime are isolated at /Users/zeeland/projects/rudder-oss/.worktrees/plugin-discovery-continued.",
+      "Shared checkout /Users/zeeland/projects/rudder-oss and remote worktree /Users/zeeland/projects/rudder-hub/rudder-oss-plugin-discovery were not modified.",
+      "Runtime server.json identifies instance plugin-discovery-acceptance-v18, pid 21940, port 4050, and source-aligned startup after 58c5a0a5b0837e9c398b4218229ef2fcff732f56.",
+      "The candidate product tree has no tracked dirty diff; the scoped fingerprint is the empty product diff SHA and excludes the dependency symlink and delivery packet artifact."
+    ]
+  },
+  "evidence": {
+    "current_status": "Review ready: v20 binds the unchanged source/build to the healthy v18 runtime; stage review accepted, the independent verifier returned PASS after the real immutable Update and terminal UI checks, and final review accepted the exact candidate. Rudder is not released.",
+    "author_claimed_checks": [
+      "Server typecheck passed after the Skill binding lifecycle fix.",
+      "Plugin catalog/lifecycle focused tests passed 34/34.",
+      "Full workspace typecheck passed across 19 of 20 workspace projects, including server, UI, shared, DB, Desktop, identity, CLI, and all agent runtimes.",
+      "Product Logic validation passed with 96 valid contracts.",
+      "git diff --check passed for the current candidate.",
+      "Changed-path import lint passed; full repository lint remains blocked by 16 pre-existing import-order findings outside the Plugin Hub change set.",
+      "The four-test Plugin discovery and Plugins V1 E2E run passed 4/4 on the isolated runtime, covering curated Discover, Plugin Detail/update lifecycle, and Skills-only ZIP import regression.",
+      "Full pnpm test:run reached a deterministic baseline failure in packages/db: 74/75 tests passed and only src/client.test.ts migration 0100 alias-table case timed out at 20 seconds; no Plugin test failed.",
+      "Full pnpm build exited 0 and completed UI/server/CLI builds with index-CqjIKfuw.js; Desktop packaging's staging restore prompted for interactive module removal and was stopped after the web build completed, so packaged Desktop acceptance is not claimed.",
+      "UI production build emitted index-CqjIKfuw.js; the current runtime serves that asset.",
+      "The public rudder-plugins catalog remains published and CI-validated at commit 546caa667670054b7238972eb7e29ae8cb1e8ea5.",
+      "The v18 acceptance fixture used 249 local package files; no third-party CLI, hook, MCP, App, Skill script, or package lifecycle ran."
+    ],
+    "live_ui": [
+      "Runtime health returned status=ok, version=0.7.7, instanceId=plugin-discovery-acceptance-v18, localEnv=acceptance-public-v18, and bootstrapStatus=ready at http://127.0.0.1:4050/api/health.",
+      "Discover after refresh showed all seven curated entries: Superpowers, Marketing Skills, Vercel, Base44, Canva, Remotion, and Zotero.",
+      "Marketing Skills baseline package dfe39023-12cf-4baa-9447-0fe79685da83 installed version 2.10.0 with 49 Skills; the update Preview 789ae093-0673-4832-b4b2-fe2217367a73 resolved version 2.10.1 at commit ff8cccced801966ce7129c3a18baeb7a027d4e54 with 49 Skills.",
+      "Update Detail rendered the changed ab-testing component as changed/expanded and displayed bounded Before and After execution surfaces with distinct instruction digests.",
+      "Explicit Update consumed Preview 789ae093-0673-4832-b4b2-fe2217367a73; the installed package moved from dfe39023-12cf-4baa-9447-0fe79685da83 to 18ac956f-3051-4012-81a5-dd0d81fa3f03 and reached version 2.10.1.",
+      "The installed plugin 42ffc483-1a89-462c-9a4b-6727e010342d retained all 49 Skills bound to Agent 3a1d54e9-9c45-4bca-98a1-c36fbf13f157 after the explicit update; API readback and browser refresh confirmed continuity.",
+      "After Update, the rendered terminal state was Installed; Capability changes and Approve expanded access controls were absent after reload.",
+      "Current rendered evidence was captured with ego-browser CDP at 1440x900 and 390x844 in light/dark states; the long 49-Skill list had no horizontal overflow.",
+      "After catalog resolution on the same runtime, Hub Discover displayed all seven curated entries and the installed Marketing Skills row at v2.10.1.",
+      "The stage-review retry confirmed the runtime health endpoint and same runtime identity after the earlier transient connection-refused observation; no source or build changed."
+    ],
+    "historical_live_ui": [
+      "ego-browser task space 81 observed packet v6 Marketing Detail from immutable Preview bb844897-3e19-4f3d-8317-2bea16625eb4 with 49 Skills, version 2.10.0, and full SHA ff8cccced801966ce7129c3a18baeb7a027d4e54.",
+      "ego-browser installed all 49 Marketing Skills, assigned them to Plugin Acceptance Agent, refreshed and reopened the assignment dialog, and observed the Agent remained selected.",
+      "ego-browser uninstalled Marketing Skills, reopened the exact Preview URL, observed Install with the same 49 Skills and SHA, then repeated the same Preview install/uninstall cycle and restored the install-ready projection.",
+      "Independent v6 verifier reproduced both immutable Preview cycles, 49/49 Agent assignment continuity, Discover stale-cache banner and recovery, desktop/mobile Codex hierarchy, unsupported Hook/App inventory, URL Import fixture continuity, two organization-scoped 404s, and final projection restoration; its QUESTION was limited to the superseded packet wording for unavailable update change types and an optional icon-failure simulation.",
+      "Desktop light and 390px mobile dark screenshots show the supplied Codex Detail hierarchy with brand, title, developer, summary, sole Install action, safety note, search, and grouped Skills without horizontal overflow.",
+      "ego Page.captureScreenshot timed out for the long Detail document; Playwright captured viewport PNGs from the same acceptance-v6 runtime, organization, and immutable Preview after ego semantic, persistence, and geometry verification.",
+      "ego-browser task space 5 proved packet-v8 catalog degradation continuity: catalog 404 showed one cached banner with all seven rows and Installed state, immediate restored 200 retained it, and a hard reload after the 30-second lease removed it without changing inventory.",
+      "Independent packet-v8 verifier met all 14 feature criteria, including Codex-style desktop/mobile Detail, immutable 49-Skill install/assignment/reuse, real six-item Update diff, unsupported inventory, URL Import, organization isolation, and catalog lease behavior; it returned FAIL only for uninstall-dialog dismissal and restored the exact data/catalog projection.",
+      "Packet-v9 automated E2E opens uninstall, dismisses with the sole footer Close, verifies Installed is unchanged, reopens, dismisses with Escape, verifies Installed is unchanged, then reopens and confirms uninstall.",
+      "Independent packet-v9 verifier returned PASS on the exact candidate, build, runtime, data, packet, and catalog lease. It reproduced the semantic Close and Escape dismissals without mutation, explicit Uninstall, all 14 criteria, and exact final projection restoration."
+    ],
+    "screenshots": [
+      {
+        "path": "/tmp/rudder-plugin-v18-discover-desktop-light.png",
+        "sha256": "a90a13e7c0fff80bf7e05e8fff93ab240c8f939bbf2716376066f3449e876bdc",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Hub Discover sibling with seven curated Plugins, installed Marketing Skills, search, and URL Import."
+      },
+      {
+        "path": "/tmp/rudder-plugin-v18-update-desktop-dark.png",
+        "sha256": "9e9ff57c9859ba6796a1c5b91d969606c58589693a2f3f4889702761e980df07",
+        "viewport": "1440x900",
+        "theme": "dark",
+        "state": "Marketing Skills 2.10.1 immutable Update Detail; changed ab-testing component with Before/After execution surfaces and explicit Update."
+      },
+      {
+        "path": "/tmp/rudder-plugin-v18-installed-desktop-light-real.png",
+        "sha256": "8784759c312910ee6465747e21193d80b8ded3dd7bb5704a2b9a042bcf30868d",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Marketing Skills 2.10.1 Installed Detail; sole Installed terminal action and 49-Skill inventory."
+      },
+      {
+        "path": "/tmp/rudder-plugin-v18-installed-mobile-light.png",
+        "sha256": "78aa42681fa8e91f3f75031eed7f93491d459f4a872a062ffb1840a9d639c562",
+        "viewport": "390x844",
+        "theme": "light",
+        "state": "Marketing Skills 2.10.1 Installed Detail; long 49-Skill list."
+      },
+      {
+        "path": "/tmp/rudder-plugin-v18-installed-mobile-dark.png",
+        "sha256": "f87d261583dee0f3defba23d23d56cf125ce46451830008fd7258fc29a598c7d",
+        "viewport": "390x844",
+        "theme": "dark",
+        "state": "Marketing Skills 2.10.1 Installed Detail; long 49-Skill list with Agent setup and Information sections."
+      }
+    ],
+    "historical_screenshots": [
+      {
+        "path": "/tmp/rudder-plugin-v9-verifier-desktop-light.png",
+        "sha256": "a1f169686b2fe58dd3043c4926c596917e9135352e8c0ad153f77416014b6380",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Marketing Skills 49-Skill immutable Preview, install-ready"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v9-verifier-mobile-dark.png",
+        "sha256": "51342ad3a2ca057178ba1841dbf7d6be7e1bb062aaeb2536e0778925a806584b",
+        "viewport": "390x844",
+        "theme": "dark",
+        "state": "Marketing Skills 49-Skill Preview"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v9-verifier-uninstall-dialog.png",
+        "sha256": "dbff3a5a4a21a69240ba22f28d1a7b4efed59ab87e5a523f8faeedb2447e81b7",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Uninstall dialog with semantic Close and separate destructive Uninstall"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v9-verifier-update-diff.png",
+        "sha256": "caa5f0a0614f6065b68176a7f6e7bff2f987c223724269070c779bdec132cc9e",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Superpowers v6.2.0 to v6.3.0 six-item immutable Update diff"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v8-verifier-desktop-light.png",
+        "sha256": "f4ebb59c938dcab84a1d20f01ca2ce146cf4078f80da012fea074d6cf6f8a696",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Marketing Skills 49-Skill immutable Preview, install-ready"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v8-verifier-mobile-dark.png",
+        "sha256": "51342ad3a2ca057178ba1841dbf7d6be7e1bb062aaeb2536e0778925a806584b",
+        "viewport": "390x844",
+        "theme": "dark",
+        "state": "Marketing Skills 49-Skill Preview"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v8-verifier-update-diff.png",
+        "sha256": "caa5f0a0614f6065b68176a7f6e7bff2f987c223724269070c779bdec132cc9e",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Superpowers v6.2.0 to v6.3.0 six-item immutable Update diff"
+      },
+      {
+        "path": "/tmp/rudder-plugin-v8-verifier-detail-loading.png",
+        "sha256": "6ac6ec345d8f63d80969b8fff261ba6f954d7824833292208641befb727ad732",
+        "viewport": "1440x900",
+        "theme": "light",
+        "state": "Plugin Detail resolving with Back and bounded skeleton"
+      }
+    ],
+    "known_external_state": [
+      "The public catalog is available at https://github.com/Undertone0809/rudder-plugins, commit 546caa667670054b7238972eb7e29ae8cb1e8ea5; raw catalog.json SHA-256 is 59c592a856be0f9af6266c1c3893c8918d1fd19b353b899c3130c93e7bba856b and CI run 31783437653 passed.",
+      "The public catalog source remains Marketing Skills v2.10.0 at ff8cccced801966ce7129c3a18baeb7a027d4e54; catalog commit 546caa667670054b7238972eb7e29ae8cb1e8ea5 is an unchanged published and CI-validated artifact from the earlier catalog gate, not a publication performed after Rudder source 58c5a0a5b.",
+      "No third-party npx, script, hook, MCP, App, or Skill content was executed; the update package was inspected as bytes and installed through Rudder APIs/UI only.",
+      "The branch is not integrated or released. origin/main currently resolves to dacc1fa045af8e7752f3cab6ee67ee92298b8026; no CAS or push is claimed yet."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}
