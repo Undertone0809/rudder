@@ -82,6 +82,14 @@ async function openNewIssueDialog(page: Page) {
     .getByTestId("workspace-main-header")
     .getByRole("button", { name: "Create Issue" });
   if ((page.viewportSize()?.width ?? 0) >= 768) {
+    try {
+      await expect(desktopCreateButton).toBeVisible({ timeout: 15_000 });
+    } catch {
+      // A cold Vite dependency optimization can serve a transient 504 before
+      // React mounts. Reload once so the user-facing locator gets a clean page.
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(desktopCreateButton).toBeVisible({ timeout: 45_000 });
+    }
     await desktopCreateButton.click();
     return;
   }
@@ -257,6 +265,17 @@ test.describe("New issue Agent creation", () => {
         targetId: accepted.id,
       }),
     });
+
+    await page.goto(`/${organizationPath(organization)}/agents/${agent.id}/runs/${completed.runId}`, {
+      waitUntil: "domcontentloaded",
+    });
+    const runDetailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(runDetailPane.getByText("Create issue", { exact: true })).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-runs-detail-pane").getByText("Create issue", { exact: true })).toBeVisible();
+    if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
+      await page.screenshot({ path: screenshotPath("agent-issue-run-label.png"), fullPage: false });
+    }
 
     const runIssuesResponse = await page.request.get(`${E2E_BASE_URL}/api/agent-runs/${completed.runId}/issues`);
     expect(runIssuesResponse.ok()).toBe(true);
@@ -566,5 +585,65 @@ test.describe("New issue Agent creation", () => {
     expect(manualIssue.title).toBe(manualTitle);
     await expect(page).toHaveURL(new RegExp(`/${organizationPath(organization)}/issues/${manualIssue.identifier ?? "[^/]+"}$`));
     await expect(page.getByRole("heading", { name: manualTitle })).toBeVisible();
+  });
+
+  test("preserves the shared description, Agent, and Project selections across modes", async ({ page }) => {
+    const suffix = Date.now();
+    const organization = await createOrganization(page, `mode-switch-${suffix}`);
+    const agent = await createAgent(page, organization, "Mode Switch Builder", E2E_CODEX_STUB);
+    const projectResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: `Mode switch project ${suffix}`,
+        status: "planned",
+      },
+    });
+    expect(projectResponse.ok()).toBe(true);
+    const project = await projectResponse.json() as { id: string; name: string };
+    const description = `Preserve this issue description across modes E2E-${suffix}.`;
+
+    await selectOrganization(page, organization);
+    await page.goto(`${E2E_BASE_URL}/${organizationPath(organization)}/issues`);
+    await openNewIssueDialog(page);
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(dialog).toBeVisible();
+
+    const manualEditor = dialog.locator(".cm-content").first();
+    await manualEditor.click();
+    await page.keyboard.insertText(description);
+
+    await dialog.getByRole("button", { name: "No assignee" }).click();
+    await dialog.getByPlaceholder("Search assignees...").fill(agent.name);
+    await dialog.getByPlaceholder("Search assignees...").press("Enter");
+    await expect(dialog.locator('[data-slot="popover-trigger"]').filter({ hasText: agent.name })).toBeVisible();
+
+    await dialog.getByRole("button", { name: "No project" }).first().click();
+    await dialog.getByPlaceholder("Search projects...").fill(project.name);
+    await dialog.getByPlaceholder("Search projects...").press("Enter");
+    await expect(dialog.locator('[data-slot="popover-trigger"]').filter({ hasText: project.name })).toBeVisible();
+
+    await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    await expect(dialog.locator('[data-slot="popover-trigger"]').filter({ hasText: agent.name })).toBeVisible();
+    await expect(dialog.locator('[data-slot="popover-trigger"]').filter({ hasText: project.name })).toBeVisible();
+    await expect(dialog.locator('[data-slot="agent-issue-instruction"] .cm-content')).toContainText(description);
+
+    await dialog.getByRole("tab", { name: "Manual", exact: true }).click();
+    await expect(dialog.locator('[data-slot="popover-trigger"]').filter({ hasText: agent.name })).toBeVisible();
+    await expect(dialog.locator('[data-slot="popover-trigger"]').filter({ hasText: project.name })).toBeVisible();
+    await expect(dialog.locator(".cm-content").first()).toContainText(description);
+
+    await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    const agentRequestPromise = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/orgs/${organization.id}/agent-issue-creation-requests`),
+    );
+    await dialog.getByRole("button", { name: "Send to Agent" }).click();
+    const agentResponse = await agentRequestPromise;
+    expect(agentResponse.status()).toBe(202);
+    expect(agentResponse.request().postDataJSON()).toMatchObject({
+      agentId: agent.id,
+      projectId: project.id,
+      instruction: description,
+    });
   });
 });

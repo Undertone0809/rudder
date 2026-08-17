@@ -220,8 +220,6 @@ export function NewIssueDialog() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [creationMode, setCreationMode] = useState<IssueCreationMode>("manual");
-  const [agentCreationAgentId, setAgentCreationAgentId] = useState("");
-  const [agentInstruction, setAgentInstruction] = useState("");
   const [status, setStatus] = useState("todo");
   const [priority, setPriority] = useState("");
   const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
@@ -258,7 +256,6 @@ export function NewIssueDialog() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
-  const agentInstructionEditorRef = useRef<MarkdownEditorRef>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -393,8 +390,6 @@ export function NewIssueDialog() {
   useEffect(() => {
     if (!newIssueOpen) return;
     setCreationMode("manual");
-    setAgentInstruction("");
-    setAgentCreationAgentId(newIssueDefaults.assigneeAgentId ?? "");
     agentIssueIdempotencyKeyRef.current = createAgentIssueIdempotencyKey();
   }, [newIssueOpen]);
 
@@ -818,8 +813,6 @@ export function NewIssueDialog() {
     setTitle("");
     setDescription("");
     setCreationMode("manual");
-    setAgentCreationAgentId("");
-    setAgentInstruction("");
     setStatus("todo");
     setPriority("");
     setSelectedLabelIds([]);
@@ -845,9 +838,8 @@ export function NewIssueDialog() {
 
   function handleCloseNewIssue() {
     flushPendingDraftSave();
+    if (creationMode === "agent") setDescription("");
     setCreationMode("manual");
-    setAgentCreationAgentId("");
-    setAgentInstruction("");
     setDocumentSessionId((current) => current + 1);
     agentIssueIdempotencyKeyRef.current = null;
     agentIssueSubmissionInFlightRef.current = false;
@@ -860,7 +852,6 @@ export function NewIssueDialog() {
     setDialogCompanyId(orgId);
     setAssigneeValue("");
     setReviewerValue("");
-    setAgentCreationAgentId("");
     setProjectId("");
     setGoalId("");
     setProjectWorkspaceId("");
@@ -905,21 +896,18 @@ export function NewIssueDialog() {
     if (isCreatingOrRedirecting || nextMode === creationMode) return;
     if (nextMode === "agent") clearPendingDraftSave();
     setCreationMode(nextMode);
-    if (nextMode === "agent" && !agentCreationAgentId && selectedAssigneeAgentId) {
-      setAgentCreationAgentId(selectedAssigneeAgentId);
-    }
   }
 
   function handleSubmit() {
     if (!effectiveCompanyId || isCreatingOrRedirecting) return;
     if (creationMode === "agent") {
       if (agentIssueSubmissionInFlightRef.current) return;
-      const instruction = agentInstruction.trim();
-      if (!agentCreationAgentId || !instruction) return;
+      const instruction = description.trim();
+      if (!selectedAssigneeAgentId || !instruction) return;
       agentIssueSubmissionInFlightRef.current = true;
       createAgentIssueRequest.mutate({
         orgId: effectiveCompanyId,
-        agentId: agentCreationAgentId,
+        agentId: selectedAssigneeAgentId,
         instruction,
         projectId: projectId || null,
         goalId: goalId || null,
@@ -1116,13 +1104,13 @@ export function NewIssueDialog() {
       (agents ?? []).filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval"),
       recentAssigneeIds,
     ).map((agent) => ({
-      id: agent.id,
+      id: assigneeValueFromSelection({ assigneeAgentId: agent.id }),
       label: agent.name,
       searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
     })),
     [agents, recentAssigneeIds],
   );
-  const agentCreationAgent = (agents ?? []).find((agent) => agent.id === agentCreationAgentId) ?? null;
+  const agentCreationAgent = currentAssignee;
   const reviewerOptions = useMemo<InlineEntityOption[]>(
     () => [
       ...currentUserAssigneeOption(currentUserId),
@@ -1179,8 +1167,15 @@ export function NewIssueDialog() {
   const isCreatingOrRedirecting =
     createIssue.isPending || createAgentIssueRequest.isPending || Boolean(redirectingIssueRef);
   const hasIssueTitle = title.trim().length > 0;
-  const hasAgentInstruction = agentCreationAgentId.length > 0 && agentInstruction.trim().length > 0;
+  const hasAgentInstruction = Boolean(selectedAssigneeAgentId) && description.trim().length > 0;
   const canSubmit = creationMode === "agent" ? hasAgentInstruction : hasIssueTitle;
+  const handleAssigneeChange = useCallback((value: string) => {
+    const nextAssignee = parseAssigneeValue(value);
+    if (nextAssignee.assigneeAgentId) {
+      trackRecentAssignee(nextAssignee.assigneeAgentId);
+    }
+    setAssigneeValue(value);
+  }, []);
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1281,6 +1276,33 @@ export function NewIssueDialog() {
       }));
     },
     [assigneeAdapterType, assigneeAgentRuntimeModels],
+  );
+  const descriptionEditor = (
+    <MarkdownEditor
+      ref={descriptionEditorRef}
+      engine="codemirror"
+      documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
+      value={description}
+      onChange={(value) => {
+        if (!isCreatingOrRedirecting) setDescription(value);
+      }}
+      readOnly={isCreatingOrRedirecting}
+      ariaLabel={creationMode === "agent" ? "Instruction" : undefined}
+      placeholder={creationMode === "agent" ? "Describe the Issue you want the Agent to create..." : "Add description..."}
+      bordered={false}
+      mentions={mentionOptions}
+      onMentionQueryChange={setLibraryFileMentionQuery}
+      contentClassName={cn(
+        "text-sm text-muted-foreground pb-12",
+        creationMode === "agent" ? "min-h-[180px]" : "min-h-[88px]",
+      )}
+      imageUploadHandler={isCreatingOrRedirecting
+        ? undefined
+        : async (file) => {
+            const asset = await uploadDescriptionImage.mutateAsync(file);
+            return asset.contentPath;
+          }}
+    />
   );
 
   return (
@@ -1453,7 +1475,7 @@ export function NewIssueDialog() {
         {creationMode === "agent" ? (
           <fieldset
             data-slot="agent-issue-composer"
-            className="m-0 flex min-h-[360px] min-w-0 flex-1 flex-col border-0 p-0 disabled:cursor-wait"
+            className="m-0 min-w-0 shrink-0 border-0 p-0 disabled:cursor-wait"
             disabled={isCreatingOrRedirecting}
           >
             <div className="shrink-0 px-4 pb-3 pt-4">
@@ -1461,7 +1483,7 @@ export function NewIssueDialog() {
                 <div className="min-w-0 space-y-1">
                   <div className="text-[11px] font-medium text-muted-foreground">Agent</div>
                   <InlineEntitySelector
-                    value={agentCreationAgentId}
+                    value={assigneeValue}
                     options={agentCreationOptions}
                     placeholder="Select an Agent"
                     noneLabel="Select an Agent"
@@ -1470,11 +1492,9 @@ export function NewIssueDialog() {
                     variant="field"
                     className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                     disablePortal
-                    onConfirm={() => agentInstructionEditorRef.current?.focus()}
+                    onConfirm={() => descriptionEditorRef.current?.focus()}
                     onChange={(value) => {
-                      if (isCreatingOrRedirecting) return;
-                      setAgentCreationAgentId(value);
-                      if (value) trackRecentAssignee(value);
+                      if (!isCreatingOrRedirecting) handleAssigneeChange(value);
                     }}
                     renderTriggerValue={(option) =>
                       option && agentCreationAgent ? (
@@ -1485,7 +1505,8 @@ export function NewIssueDialog() {
                     }
                     renderOption={(option) => {
                       if (!option.id) return <span className="truncate">{option.label}</span>;
-                      const agent = (agents ?? []).find((candidate) => candidate.id === option.id);
+                      const agentId = parseAssigneeValue(option.id).assigneeAgentId;
+                      const agent = (agents ?? []).find((candidate) => candidate.id === agentId);
                       return agent
                         ? <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />
                         : <span className="truncate">{option.label}</span>;
@@ -1551,33 +1572,6 @@ export function NewIssueDialog() {
                 ) : null}
               </div>
             </div>
-            <div
-              data-slot="agent-issue-instruction"
-              className="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pb-2 pt-3"
-            >
-              <MarkdownEditor
-                ref={agentInstructionEditorRef}
-                engine="codemirror"
-                documentIdentity={`new-issue-agent:${effectiveCompanyId ?? "none"}:${documentSessionId}`}
-                value={agentInstruction}
-                onChange={(value) => {
-                  if (!isCreatingOrRedirecting) setAgentInstruction(value);
-                }}
-                readOnly={isCreatingOrRedirecting}
-                ariaLabel="Instruction"
-                placeholder="Describe the Issue you want the Agent to create..."
-                bordered={false}
-                mentions={mentionOptions}
-                onMentionQueryChange={setLibraryFileMentionQuery}
-                contentClassName="min-h-[180px] pb-12 text-sm text-muted-foreground"
-                imageUploadHandler={isCreatingOrRedirecting
-                  ? undefined
-                  : async (file) => {
-                      const asset = await uploadDescriptionImage.mutateAsync(file);
-                      return asset.contentPath;
-                    }}
-              />
-            </div>
           </fieldset>
         ) : (
           <>
@@ -1637,13 +1631,7 @@ export function NewIssueDialog() {
                 emptyMessage="No assignees found."
                 variant="field"
                 className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                onChange={(value) => {
-                  const nextAssignee = parseAssigneeValue(value);
-                  if (nextAssignee.assigneeAgentId) {
-                    trackRecentAssignee(nextAssignee.assigneeAgentId);
-                  }
-                  setAssigneeValue(value);
-                }}
+                onChange={handleAssigneeChange}
                 onConfirm={() => {
                   if (projectId) {
                     descriptionEditorRef.current?.focus();
@@ -1819,37 +1807,30 @@ export function NewIssueDialog() {
           </div>
         )}
 
+          </>
+        )}
+
         {/* Description */}
         <div
-          className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
-          onDragEnter={handleFileDragEnter}
-          onDragOver={handleFileDragOver}
-          onDragLeave={handleFileDragLeave}
-          onDrop={handleFileDrop}
+          data-slot={creationMode === "agent" ? "agent-issue-instruction" : undefined}
+          className={cn(
+            "min-h-0 overflow-y-auto border-t border-border/60 px-4 pb-2 pt-3",
+            creationMode === "agent" && "flex-1",
+          )}
+          onDragEnter={creationMode === "manual" ? handleFileDragEnter : undefined}
+          onDragOver={creationMode === "manual" ? handleFileDragOver : undefined}
+          onDragLeave={creationMode === "manual" ? handleFileDragLeave : undefined}
+          onDrop={creationMode === "manual" ? handleFileDrop : undefined}
         >
           <div
             className={cn(
               "rounded-md transition-colors",
-              isFileDragOver && "bg-accent/20",
+              creationMode === "manual" && isFileDragOver && "bg-accent/20",
             )}
           >
-            <MarkdownEditor
-              ref={descriptionEditorRef}
-              engine="codemirror" documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
-              value={description}
-              onChange={setDescription}
-              placeholder="Add description..."
-              bordered={false}
-              mentions={mentionOptions}
-              onMentionQueryChange={setLibraryFileMentionQuery}
-              contentClassName="text-sm text-muted-foreground pb-12 min-h-[88px]"
-              imageUploadHandler={async (file) => {
-                const asset = await uploadDescriptionImage.mutateAsync(file);
-                return asset.contentPath;
-              }}
-            />
+            {descriptionEditor}
           </div>
-          {stagedFiles.length > 0 ? (
+          {creationMode === "manual" && stagedFiles.length > 0 ? (
             <div className="mt-4 space-y-3 rounded-lg border border-border/70 p-3">
               {stagedDocuments.length > 0 ? (
                 <div className="space-y-2">
@@ -1922,6 +1903,7 @@ export function NewIssueDialog() {
         </div>
 
         {/* Property chips bar */}
+        {creationMode === "manual" ? (
         <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap shrink-0">
           {/* Status chip */}
           <Popover open={statusOpen} onOpenChange={setStatusOpen}>
@@ -2076,9 +2058,7 @@ export function NewIssueDialog() {
             </PopoverContent>
           </Popover>
         </div>
-
-          </>
-        )}
+        ) : null}
 
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border shrink-0">

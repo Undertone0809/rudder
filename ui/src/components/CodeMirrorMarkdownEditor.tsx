@@ -1052,6 +1052,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     contentClassName,
     bordered = true,
   } = props;
+  const editorAriaLabel = ariaLabel ?? (placeholder ? `${placeholder} Markdown editor` : "Markdown editor");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -2100,7 +2101,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       ])),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.contentAttributes.of({
-        "aria-label": ariaLabel ?? (placeholder ? `${placeholder} Markdown editor` : "Markdown editor"),
+        "aria-label": editorAriaLabel,
         "aria-autocomplete": "list",
         "aria-expanded": "false",
         "data-markdown-source-editor": "true",
@@ -2236,6 +2237,12 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     unregisterPortal,
     updateMentionState,
   ]);
+
+  useEffect(() => {
+    const content = viewRef.current?.contentDOM;
+    if (!content) return;
+    content.setAttribute("aria-label", editorAriaLabel);
+  }, [editorAriaLabel]);
 
   useEffect(() => {
     const view = viewRef.current;

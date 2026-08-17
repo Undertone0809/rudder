@@ -297,6 +297,37 @@ afterEach(() => {
 });
 
 describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
+  it("updates the content accessibility label when editor props change", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value=""
+          onChange={() => undefined}
+          placeholder="Add description..."
+        />,
+      );
+    });
+    await flushReact();
+
+    expect(editorView().contentDOM.getAttribute("aria-label")).toBe(
+      "Add description... Markdown editor",
+    );
+
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value=""
+          onChange={() => undefined}
+          ariaLabel="Instruction"
+          placeholder="Describe the Issue you want the Agent to create..."
+        />,
+      );
+    });
+    await flushReact();
+
+    expect(editorView().contentDOM.getAttribute("aria-label")).toBe("Instruction");
+  });
+
   it("blocks text and image paste mutations while read-only", async () => {
     const onChange = vi.fn();
     const imageUploadHandler = vi.fn(async () => "/api/assets/read-only/content");
