@@ -119,6 +119,45 @@ describe("Tencent COS Desktop release mirror", () => {
     expect(requests).toHaveLength(2);
   });
 
+  it("retries transient OIDC and Tencent STS network failures", async () => {
+    const attempts = new Map();
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(input);
+      const key = url.hostname;
+      const attempt = (attempts.get(key) ?? 0) + 1;
+      attempts.set(key, attempt);
+      if (attempt === 1) throw new TypeError("fetch failed", { cause: new Error("ECONNRESET") });
+      if (key === "oidc.actions.test") return jsonResponse({ value: "github-oidc-jwt" });
+      expect(init.method).toBe("POST");
+      return jsonResponse({
+        Response: {
+          Credentials: {
+            TmpSecretId: "tmp-id",
+            TmpSecretKey: "tmp-key",
+            Token: "tmp-token",
+          },
+        },
+      });
+    };
+
+    await expect(getTencentStsCredentials({
+      networkRetries: 3,
+      providerId: "github-provider",
+      region,
+      requestToken: "oidc-request-token",
+      requestUrl: "https://oidc.actions.test/token?job=publish",
+      retryDelayMs: 0,
+      roleArn: "qcs::cam::uin/1250000000:roleName/rudder-release",
+      roleSessionName: "rudder-release-42",
+      sleep: async () => {},
+      fetchImpl,
+    })).resolves.toEqual({ secretId: "tmp-id", secretKey: "tmp-key", token: "tmp-token" });
+    expect(attempts).toEqual(new Map([
+      ["oidc.actions.test", 2],
+      ["sts.tencentcloudapi.com", 2],
+    ]));
+  });
+
   it("rejects Tencent STS responses missing the temporary credential triplet", async () => {
     await expect(
       assumeTencentRoleWithWebIdentity({

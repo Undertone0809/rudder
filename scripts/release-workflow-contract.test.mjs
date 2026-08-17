@@ -148,6 +148,11 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("actions/download-artifact@v8");
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
+    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
+    expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
+    expect(recovery).toContain('test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"');
+    expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
     expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
     expect(recovery).toContain("success|cancelled|failure");
     expect(recovery).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");
@@ -155,6 +160,8 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain(".name == \"Mirror stable Desktop release to Tencent COS\" and .conclusion == \"failure\"");
     expect(recovery).toContain("test \"$SOURCE_REF\" = \"$remote_tag_sha\"");
     expect(recovery).not.toContain("jq -r '.head_sha' <<< \"$run_json\"");
+    expect(recovery).toContain("SOURCE_REF: ${{ inputs.source_ref }}");
+    expect(recovery).toContain(".prerelease");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
     expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
     expect(recovery).toContain("--phase checksum");
@@ -164,6 +171,7 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("multipartThreshold: 1");
     expect(recovery).toContain("expected 204");
     expect(recovery).toContain("publicObject.status !== 404");
+    expect(recovery).toContain("COS mirror attempt ${attempt}/3");
   });
 
   it("documents the complete COS object and multipart permission set", () => {
@@ -191,6 +199,13 @@ describe("unified delivery workflows", () => {
     expect(stableInstall).toContain("needs.mirror-stable.result == 'success'");
     expect(stableSurfaces).toContain("- mirror-stable");
     expect(stableSurfaces).toContain("needs.mirror-stable.result == 'success'");
+  });
+
+  it("retries transient COS mirror failures before failing the release gate", () => {
+    for (const jobName of ["mirror-canary", "mirror-stable"]) {
+      expect(workflowJob(releaseWorkflow, jobName)).toContain("for attempt in 1 2 3");
+      expect(workflowJob(releaseWorkflow, jobName)).toContain("COS mirror attempt ${attempt}/3");
+    }
   });
 
   it("waits for the exact manifest versions before creating public release surfaces", () => {
