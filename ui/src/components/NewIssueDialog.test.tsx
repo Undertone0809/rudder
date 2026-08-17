@@ -418,6 +418,21 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("rounded-[6px]");
   });
 
+  it("keeps the close control in the top-right mode bar", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+    const modeBarStart = html.indexOf('data-slot="new-issue-mode-bar"');
+    const headerStart = html.indexOf('data-slot="new-issue-header"');
+
+    expect(modeBarStart).toBeGreaterThanOrEqual(0);
+    expect(headerStart).toBeGreaterThan(modeBarStart);
+
+    const modeBar = html.slice(modeBarStart, headerStart);
+    expect(modeBar).toContain("relative");
+    expect(modeBar).toContain("absolute right-4 top-1/2 -translate-y-1/2");
+    expect(modeBar).toContain('data-slot="new-issue-close-button"');
+    expect(html.slice(headerStart)).not.toContain('aria-label="Close new issue dialog"');
+  });
+
   it("gives the dialog an accessible title", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
