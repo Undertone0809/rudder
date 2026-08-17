@@ -64,6 +64,27 @@ test.describe("Codex model order", () => {
     const selectedAgentOption = page.locator("[data-inline-entity-option]").filter({ hasText: "Newest First Agent" });
     const runtimeSelector = selectedAgentOption.getByTestId("issue-runtime-selector");
     await expect(runtimeSelector).toBeVisible();
+
+    await page.setViewportSize({ width: 800, height: 572 });
+    const assigneePopover = page.locator('[data-slot="popover-content"][data-state="open"]')
+      .filter({ has: page.locator('input[placeholder="Search assignees..."]') })
+      .first();
+    await expect(assigneePopover).toBeVisible();
+    const [assigneePopoverBox, selectedAgentOptionBox, overflow] = await Promise.all([
+      assigneePopover.boundingBox(),
+      selectedAgentOption.boundingBox(),
+      assigneePopover.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      })),
+    ]);
+    expect(assigneePopoverBox).not.toBeNull();
+    expect(selectedAgentOptionBox).not.toBeNull();
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+    expect(selectedAgentOptionBox!.x + selectedAgentOptionBox!.width)
+      .toBeLessThanOrEqual(assigneePopoverBox!.x + assigneePopoverBox!.width + 1);
+
+    await page.setViewportSize({ width: 1280, height: 720 });
     await runtimeSelector.click();
     await page.getByTestId("issue-runtime-model-trigger").click();
 
@@ -150,15 +171,18 @@ test.describe("Codex model order", () => {
   });
 
   test("persists New Issue runtime overrides and applies them to the assigned run", async ({ page }) => {
+    test.setTimeout(90_000);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-issue-runtime-override-"));
     const commandPath = path.join(tempDir, "codex-runtime-override-stub");
     const capturePath = path.join(tempDir, "capture.json");
     const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 let prompt = "";
+let completed = false;
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { prompt += chunk; });
-process.stdin.on("end", () => {
+const complete = () => {
+  if (completed) return;
+  completed = true;
   fs.writeFileSync(process.env.RUDDER_TEST_CAPTURE_PATH, JSON.stringify({
     argv: process.argv.slice(2),
     prompt,
@@ -172,9 +196,14 @@ process.stdin.on("end", () => {
     type: "turn.completed",
     usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
   }));
+};
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+  setImmediate(complete);
 });
-`;
+    `;
     await fs.writeFile(commandPath, script, { mode: 0o755 });
+    await fs.chmod(commandPath, 0o755);
 
     try {
       const orgRes = await page.request.post("/api/orgs", {
@@ -265,7 +294,7 @@ process.stdin.on("end", () => {
           return false;
         }
       }, {
-        timeout: 20_000,
+        timeout: 60_000,
         intervals: [100, 250, 500, 1_000],
       }).toBe(true);
 

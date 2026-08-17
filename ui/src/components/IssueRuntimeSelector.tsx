@@ -243,8 +243,12 @@ export function IssueRuntimeSelector({
         viewportPadding,
         Math.min(rect.top, window.innerHeight - viewportPadding - maxHeight),
       );
+    const boundedLeft = Math.min(
+      Math.max(viewportPadding, left),
+      Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
+    );
     return {
-      left,
+      left: boundedLeft,
       top,
       maxHeight: `${maxHeight}px`,
     };
@@ -543,7 +547,7 @@ export function IssueRuntimeSelector({
         data-testid={`issue-runtime-${activeSubmenu}-options`}
         role="listbox"
         aria-label={activeSubmenu === "model" ? "Model options" : "Thinking options"}
-        className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
+        className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
         style={submenuPosition}
         onKeyDown={(event) => {
           if (event.key === "Escape" || event.key === "ArrowLeft") {
