@@ -13,20 +13,20 @@ const macMemoryOnlyStorage: IdentitySafeStorage = {
 
 /**
  * Electron safeStorage can synchronously open a blocking Keychain NSAlert in
- * an unsigned macOS build before Rudder creates its first window.
+ * an unsigned macOS development shell before Rudder creates its first window.
  *
- * The current macOS artifacts are not Developer ID signed, so they cannot
- * safely promise durable Keychain-backed identity credentials. Keep all
- * current macOS shells memory-only until signed-build capability is wired into
- * the release pipeline. The credential vault still fails closed when Electron
- * reports that encryption is unavailable on other platforms.
+ * Keep the development shell memory-only so local and CI startup do not depend
+ * on the operator's login Keychain. Packaged builds must use the platform vault:
+ * otherwise a successful Rudder Account sign-in is discarded on every restart.
+ * The credential vault still fails closed when Electron reports that encryption
+ * is unavailable.
  */
 export function resolveDesktopIdentitySafeStorage(options: {
   safeStorage: IdentitySafeStorage;
   isPackaged: boolean;
   platform: NodeJS.Platform;
 }): IdentitySafeStorage {
-  if (options.platform === "darwin") {
+  if (options.platform === "darwin" && !options.isPackaged) {
     return macMemoryOnlyStorage;
   }
   return options.safeStorage;

@@ -1,16 +1,26 @@
 import * as p from "@clack/prompts";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
+import { constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
 import { access, chmod, copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import pc from "picocolors";
+import { parseChecksumFile } from "../checksum-manifest.js";
 import { resolveRudderHomeDir } from "../config/home.js";
+import {
+  DEFAULT_DESKTOP_RELEASE_REPO,
+  downloadAsset,
+  formatFetchError,
+  resolveDesktopDownloadOrigins,
+  resolveDesktopDownloadSource,
+  resolveDesktopReleaseMirrorBaseUrl,
+  withDesktopDownloadOrigins,
+  type DesktopDownloadOrigin,
+  type GithubReleaseAsset,
+} from "../desktop-download.js";
 import {
   CLI_NPM_PACKAGE_NAME,
   getGlobalInstalledPackageVersion,
@@ -21,7 +31,18 @@ import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError,
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
-export const DEFAULT_DESKTOP_RELEASE_REPO = "Undertone0809/rudder";
+export { parseChecksumFile } from "../checksum-manifest.js";
+export {
+  buildReleaseMirrorAssetDownloadUrl, DEFAULT_DESKTOP_RELEASE_MIRROR_BASE_URL,
+  DEFAULT_DESKTOP_RELEASE_REPO, downloadAsset,
+  resolveDesktopDownloadOrigins,
+  resolveDesktopDownloadSource,
+  resolveDesktopReleaseMirrorBaseUrl,
+  withDesktopDownloadOrigins,
+  type DesktopDownloadOrigin,
+  type DesktopDownloadSource
+} from "../desktop-download.js";
+export type { GithubReleaseAsset } from "../desktop-download.js";
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 
@@ -38,12 +59,6 @@ export interface DesktopInstallPaths {
   appPath: string;
   executablePath: string;
   metadataPath: string;
-}
-
-export interface GithubReleaseAsset {
-  name: string;
-  browser_download_url: string;
-  url?: string;
 }
 
 interface GithubRelease {
@@ -69,6 +84,7 @@ interface StartCommandOptions {
   version?: string;
   targetVersion?: string;
   repo?: string;
+  downloadSource?: string;
   outputDir?: string;
   desktopInstallDir?: string;
   open?: boolean;
@@ -701,106 +717,10 @@ function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): 
   };
 }
 
-function uniqueAssetDownloadUrls(asset: GithubReleaseAsset): string[] {
-  const urls = [asset.browser_download_url, asset.url].filter((url): url is string => Boolean(url));
-  return Array.from(new Set(urls));
-}
-
-function downloadHeadersForAssetUrl(asset: GithubReleaseAsset, url: string): HeadersInit {
-  return {
-    Accept: url === asset.url ? GITHUB_ASSET_DOWNLOAD_ACCEPT : "*/*",
-    "User-Agent": "rudder-cli-installer",
-  };
-}
-
-function formatFetchError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-
-  const cause = (error as { cause?: unknown }).cause;
-  if (cause instanceof Error) {
-    const code = (cause as { code?: unknown }).code;
-    const suffix = typeof code === "string" ? ` [${code}]` : "";
-    return `${error.message}: ${cause.message}${suffix}`;
-  }
-
-  return error.message;
-}
-
-function contentLengthFromHeaders(headers: Headers): number | null {
-  const raw = headers.get("content-length");
-  if (!raw) return null;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-export async function downloadAsset(
-  asset: GithubReleaseAsset,
-  outputDir: string,
-  progressFactory: ProgressReporterFactory = createByteProgress,
-): Promise<string> {
-  mkdirSync(outputDir, { recursive: true });
-  const outputPath = path.join(outputDir, path.basename(asset.name));
-
-  const ASSET_DOWNLOAD_TIMEOUT_MS = 600_000;
-  let response: Response | null = null;
-  const failures: string[] = [];
-  for (const url of uniqueAssetDownloadUrls(asset)) {
-    try {
-      const candidate = await fetchWithTimeout(
-        url,
-        { headers: downloadHeadersForAssetUrl(asset, url) },
-        ASSET_DOWNLOAD_TIMEOUT_MS,
-      );
-      if (candidate.ok && candidate.body) {
-        response = candidate;
-        break;
-      }
-      failures.push(`Failed to download ${asset.name} from ${url} (${candidate.status}).`);
-    } catch (error) {
-      failures.push(`Failed to download ${asset.name} from ${url}: ${formatFetchError(error)}.`);
-    }
-  }
-
-  if (!response) {
-    throw new Error(failures.join("\n"));
-  }
-
-  const totalBytes = contentLengthFromHeaders(response.headers);
-  const progress = progressFactory(`Downloading ${asset.name}`);
-  let receivedBytes = 0;
-  const monitor = new Transform({
-    transform(chunk: Buffer | string, _encoding, callback) {
-      receivedBytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
-      progress.update(receivedBytes, totalBytes);
-      callback(null, chunk);
-    },
-  });
-
-  progress.start(totalBytes);
-  try {
-    await pipeline(Readable.fromWeb(response.body as never), monitor, createWriteStream(outputPath));
-    progress.finish(receivedBytes, totalBytes);
-  } catch (error) {
-    progress.fail();
-    throw error;
-  }
-  return outputPath;
-}
-
 function checksumForFile(filePath: string): string {
   const hash = createHash("sha256");
   hash.update(readFileSync(filePath));
   return hash.digest("hex");
-}
-
-export function parseChecksumFile(contents: string): Map<string, string> {
-  const checksums = new Map<string, string>();
-  for (const line of contents.split(/\r?\n/)) {
-    const match = line.match(/^([a-fA-F0-9]{64})\s+\*?(.+)$/);
-    if (!match) continue;
-    checksums.set(match[2].trim(), match[1].toLowerCase());
-  }
-  return checksums;
 }
 
 export function resolveAssetChecksum(checksums: Map<string, string>, assetName: string): string {
@@ -1073,7 +993,7 @@ export async function downloadDesktopAssetWithCache(
   const outputDir = options.outputDir ?? await mkdtemp(path.join(tmpdir(), "rudder-desktop-installer."));
   const removeOutputDir = options.outputDir ? false : true;
   try {
-    const downloadedPath = await downloadAsset(asset, outputDir, options.progressFactory);
+    const downloadedPath = await downloadAsset(asset, outputDir, options.progressFactory, normalizedChecksum);
     const checksum = assertChecksumMatch(downloadedPath, normalizedChecksum);
     await mkdir(path.dirname(cachePath), { recursive: true });
     if (path.resolve(downloadedPath) !== path.resolve(cachePath)) {
@@ -1215,7 +1135,7 @@ function powershellQuote(value: string): string {
 }
 
 export function buildWindowsZipExtractCommand(zipPath: string, outputDir: string): { command: string; args: string[] } {
-  return { command: "tar.exe", args: ["-xf", zipPath, "-C", outputDir] };
+  return { command: "tar.exe", args: ["--force-local", "-xf", zipPath, "-C", outputDir] };
 }
 
 export function buildWindowsRobocopyMirrorCommand(sourcePath: string, destinationPath: string): { command: string; args: string[] } {
@@ -1856,6 +1776,8 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   }
 
   if (installDesktop) {
+    const downloadSource = resolveDesktopDownloadSource(opts.downloadSource);
+    const mirrorBaseUrl = resolveDesktopReleaseMirrorBaseUrl(repo);
     const target = resolveDesktopAssetTarget();
     const tag = resolveDesktopReleaseTag(version);
     const installRoot = opts.desktopInstallDir
@@ -1870,6 +1792,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     p.log.message(`Release: ${pc.cyan(`${repo}@${tag}`)}`);
     p.log.message(`Target: ${pc.cyan(`${target.platform}/${target.arch}`)}`);
     p.log.message(`Install: ${pc.cyan(installPaths.appPath)}`);
+    p.log.message(`Download source: ${pc.cyan(downloadSource)}`);
 
     if (dryRun) {
       p.log.message(`[dry-run] Would resolve, download, verify, install, and ${opts.open === false ? "not launch" : "launch"} Rudder Desktop.`);
@@ -1888,6 +1811,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       let cachedAsset: Awaited<ReturnType<typeof downloadDesktopAssetWithCache>> | null = null;
       let assetCandidates: DesktopAssetCandidate[] = [];
       let checksums = new Map<string, string>();
+      let downloadOrigins: DesktopDownloadOrigin[] = ["github"];
 
       if (exactDesktopAssetPath) {
         releaseTag = tag;
@@ -1953,6 +1877,22 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         }
         const checksumAsset = selectChecksumAsset(release?.assets ?? [])
           ?? (directReleaseVersion ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME) : null);
+        if (!checksumAsset) {
+          throw new Error("Desktop release is missing SHASUMS256.txt.");
+        }
+        downloadOrigins = await resolveDesktopDownloadOrigins({
+          source: downloadSource,
+          checksumAsset,
+          tag: releaseTag,
+          mirrorBaseUrl,
+        });
+        if (downloadOrigins[0] === "mirror") {
+          p.log.message("Using the China release mirror with GitHub fallback.");
+        } else if (downloadSource !== "global" && mirrorBaseUrl) {
+          p.log.message("Using GitHub for this network path.");
+        }
+        // GitHub's checksum manifest remains the trust root. The mirror copy is
+        // probed for availability only and never defines accepted asset bytes.
         checksums = await downloadChecksums(checksumAsset, outputDir, progressFactory);
         let selectedCandidate: ChecksummedDesktopAssetCandidate;
         try {
@@ -1961,7 +1901,10 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           throw new Error(`No checksummed Rudder Desktop asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
         }
         for (const warning of selectedCandidate.warnings) p.log.warn(warning);
-        selectedAsset = selectedCandidate.asset;
+        selectedAsset = withDesktopDownloadOrigins(selectedCandidate.asset, downloadOrigins, {
+          mirrorBaseUrl,
+          tag: releaseTag,
+        });
         selectedAssetKind = selectedCandidate.kind;
         expectedChecksum = selectedCandidate.expectedChecksum;
       }
@@ -1993,7 +1936,10 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           p.log.warn(
             `Layered Desktop shell asset download failed; falling back to the full portable asset. ${formatFetchError(error)}`,
           );
-          selectedAsset = fullCandidate.asset;
+          selectedAsset = withDesktopDownloadOrigins(fullCandidate.asset, downloadOrigins, {
+            mirrorBaseUrl,
+            tag: releaseTag,
+          });
           selectedAssetKind = fullCandidate.kind;
           expectedChecksum = resolveAssetChecksum(checksums, selectedAsset.name);
           cachedAsset = await downloadDesktopAssetWithCache(selectedAsset, expectedChecksum, {

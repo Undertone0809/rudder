@@ -33,7 +33,7 @@ function run(command, args, { attempts = 1, ...options } = {}) {
   process.exit(result?.status ?? 1);
 }
 
-run("npx", ["-y", "mint@4.2.637", "export", "--output", archivePath], {
+run("npx", ["-y", "@mintlify/cli@4.0.1240", "export", "--output", archivePath], {
   attempts: 3,
   cwd: docsDir,
 });

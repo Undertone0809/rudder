@@ -23,6 +23,15 @@ on:
         description: "Original Release run ID containing the verified candidate artifacts (required for resume)"
         required: false
         type: string
+      mirror_recovery:
+        description: "Run only the COS mirror recovery against an existing stable Release"
+        required: false
+        type: boolean
+        default: false
+      recovery_tag:
+        description: "Existing stable tag to mirror during mirror recovery, for example v0.7.7"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -39,7 +48,7 @@ jobs:
   preflight:
     name: Lock source and preflight
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mirror_recovery != true) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -142,6 +151,13 @@ jobs:
             echo "candidate_run_id=${CANDIDATE_RUN_ID:-$GITHUB_RUN_ID}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify migration compatibility manifest
+        if: steps.release.outputs.resume != 'true'
+        run: >-
+          node scripts/release-compatibility-matrix.mjs
+          --candidate-version "${{ steps.release.outputs.version }}"
+          --channel "${{ steps.release.outputs.channel }}"
+
       - name: Require matching verified candidate run for recovery
         if: steps.release.outputs.resume == 'true'
         env:
@@ -227,8 +243,8 @@ jobs:
           test "$(wc -l < "$package_map" | xargs)" = "15"
           while IFS=$'\t' read -r pkg_dir pkg_name pkg_version; do
             [ -n "$pkg_dir" ] || continue
-            pack_json="$(cd "$pkg_dir" && npm pack --json --pack-destination "$GITHUB_WORKSPACE/dist/npm-payloads")"
-            filename="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(p[0].filename)' <<< "$pack_json")"
+            pack_output="$(cd "$pkg_dir" && npm pack --json --pack-destination "$GITHUB_WORKSPACE/dist/npm-payloads" 2>&1)"
+            filename="$(printf '%s\n' "$pack_output" | node scripts/parse-npm-pack-output.mjs)"
             digest="$(shasum -a 256 "dist/npm-payloads/$filename" | awk '{print $1}')"
             printf '%s\t%s\t%s\t%s\n' "$pkg_name" "$pkg_version" "$filename" "$digest" >> dist/npm-payloads/manifest.tsv
           done < "$package_map"
@@ -246,7 +262,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.resume != 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -294,6 +310,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify historical migration compatibility
+        run: pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts
 
       - name: Cache Playwright Chromium
         if: matrix.platform != 'windows'
@@ -483,11 +502,19 @@ jobs:
           wait_for_npm_package_versions "$(cat "$package_map")" 60 5
           git tag "$RELEASE_TAG" "$SOURCE_SHA"
           git push origin "refs/tags/$RELEASE_TAG"
-          gh release create "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease --notes "Desktop artifacts for $RELEASE_TAG."
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
           shasum -a 256 Rudder-* > SHASUMS256.txt
-          gh release upload "$RELEASE_TAG" Rudder-* SHASUMS256.txt
+          cd "$GITHUB_WORKSPACE"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease --notes "Desktop artifacts for $RELEASE_TAG."
+          else
+            gh release edit "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease
+          fi
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "$RELEASE_TAG" \
+            --asset-dir dist/desktop-assets \
+            --phase binaries
 
   publish-stable:
     name: Publish stable
@@ -572,28 +599,282 @@ jobs:
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
           shasum -a 256 Rudder-* > SHASUMS256.txt
-          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
-          verify_dir="$(mktemp -d)"
-          for asset in Rudder-*; do
-            if grep -Fxq "$asset" <<< "$existing_assets"; then
-              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$verify_dir"
-              test "$(shasum -a 256 "$verify_dir/$asset" | awk '{print $1}')" = "$(shasum -a 256 "$asset" | awk '{print $1}')" || {
-                echo "Existing release asset $asset does not match the verified candidate." >&2
-                exit 1
-              }
-              echo "Verified existing release asset $asset"
-            else
-              gh release upload "$RELEASE_TAG" "$asset"
-            fi
+          cd "$GITHUB_WORKSPACE"
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "$RELEASE_TAG" \
+            --asset-dir dist/desktop-assets \
+            --phase binaries
+
+  mirror-recovery:
+    name: Recover stable Desktop release mirror in Tencent COS
+    if: github.event_name == 'workflow_dispatch' && inputs.mirror_recovery == true
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: desktop-release-mirror
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+      - name: Require immutable recovery inputs
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_ref must be a full 40-character commit SHA for mirror recovery." >&2
+            exit 1
+          }
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]] || {
+            echo "candidate_run_id is required for mirror recovery." >&2
+            exit 1
+          }
+          [[ "$RECOVERY_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "recovery_tag must be an existing stable tag such as v0.7.7." >&2
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
+      - name: Validate frozen candidate run and existing Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
+          test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
+          case "$(jq -r '.conclusion' <<< "$run_json")" in
+            success|cancelled) ;;
+            *) echo "Candidate run $CANDIDATE_RUN_ID did not produce a usable stable candidate." >&2; exit 1 ;;
+          esac
+          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$RECOVERY_TAG" | awk '{print $1}')"
+          test -n "$remote_tag_sha"
+          test "$(jq -r '.head_sha' <<< "$run_json")" = "$remote_tag_sha"
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100")"
+          for artifact in \
+            desktop-macos-x64 \
+            desktop-macos-arm64 \
+            desktop-windows-x64 \
+            desktop-linux-x64; do
+            jq -e --arg name "$artifact" '.artifacts[] | select(.name == $name and .expired == false)' <<< "$artifacts" >/dev/null || {
+              echo "Candidate run $CANDIDATE_RUN_ID is missing unexpired artifact $artifact." >&2
+              exit 1
+            }
           done
-          gh release upload "$RELEASE_TAG" SHASUMS256.txt --clobber
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RECOVERY_TAG")"
+          test "$(jq -r '.draft' <<< "$release_json")" = "false"
+          test "$(jq '[.assets[] | select(.name | startswith("Rudder-"))] | length' <<< "$release_json")" = "7"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Mirror frozen GitHub binaries to Tencent COS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+        run: |
+          node scripts/mirror-desktop-release-to-cos.mjs \
+            --tag "${{ inputs.recovery_tag }}" \
+            --asset-dir dist/desktop-assets \
+            --prefix releases \
+            --allow-existing-checksum-marker
+      - name: Verify Tencent COS multipart abort cleanup
+        env:
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { CosReleaseMirror, getTencentStsCredentials } from './scripts/mirror-desktop-release-to-cos.mjs';
+
+          const credentials = await getTencentStsCredentials({
+            providerId: process.env.TENCENT_CLOUD_OIDC_PROVIDER_ID,
+            region: process.env.TENCENT_COS_REGION,
+            requestToken: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
+            requestUrl: process.env.ACTIONS_ID_TOKEN_REQUEST_URL,
+            roleArn: process.env.TENCENT_CLOUD_ROLE_ARN,
+            roleSessionName: `rudder-cos-abort-probe-${process.env.GITHUB_RUN_ID}`,
+          });
+          class AbortProbeMirror extends CosReleaseMirror {
+            async abortMultipartUpload(key, uploadId) {
+              const response = await this.requestObject('DELETE', key, {
+                query: new URLSearchParams([['uploadId', uploadId]]),
+              });
+              this.abortStatus = response.status;
+              await response.body?.cancel();
+            }
+          }
+
+          const mirror = new AbortProbeMirror({
+            bucket: process.env.TENCENT_COS_BUCKET,
+            credentials,
+            multipartThreshold: 1,
+            region: process.env.TENCENT_COS_REGION,
+          });
+          const key = `releases/${process.env.RECOVERY_TAG}/Rudder-cos-abort-probe-${process.env.GITHUB_RUN_ID}.zip`;
+          const file = {
+            contentType: 'application/octet-stream',
+            md5: '',
+            name: 'Rudder-cos-abort-probe.zip',
+            path: '/tmp/rudder-cos-abort-probe-file-does-not-exist',
+            sha256: '0'.repeat(64),
+            size: 1,
+          };
+          let failure;
+          try {
+            await mirror.mirrorFile(key, file);
+          } catch (error) {
+            failure = error;
+          }
+          if (!failure || !String(failure).includes('ENOENT')) {
+            throw new Error(`Abort probe did not fail at the intended local file boundary: ${failure || 'no failure'}.`);
+          }
+          if (mirror.abortStatus !== 204) {
+            throw new Error(`COS AbortMultipartUpload returned ${mirror.abortStatus ?? 'no status'}, expected 204.`);
+          }
+          const publicObject = await mirror.readObject(key, false);
+          if (publicObject.status !== 404) {
+            throw new Error(`Aborted COS probe object is still readable with HTTP ${publicObject.status}.`);
+          }
+          console.log(`verified\tabort\tcos://${process.env.TENCENT_COS_BUCKET}/${key}`);
+          NODE
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ inputs.recovery_tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
+
+  mirror-canary:
+    name: Mirror canary Desktop release to Tencent COS
+    needs:
+      - preflight
+      - publish-canary
+    if: needs.publish-canary.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: desktop-release-mirror
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Mirror GitHub binaries to Tencent COS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+        run: |
+          node scripts/mirror-desktop-release-to-cos.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --prefix releases \
+            --allow-existing-checksum-marker
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
+
+  mirror-stable:
+    name: Mirror stable Desktop release to Tencent COS
+    needs:
+      - preflight
+      - publish-stable
+    if: needs.publish-stable.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: desktop-release-mirror
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Mirror GitHub binaries to Tencent COS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
+          TENCENT_CLOUD_ROLE_ARN: ${{ vars.TENCENT_CLOUD_ROLE_ARN }}
+          TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
+        run: |
+          node scripts/mirror-desktop-release-to-cos.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --prefix releases \
+            --allow-existing-checksum-marker
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
 
   canary-install:
     name: Canary public install ${{ matrix.label }}
     needs:
       - preflight
       - publish-canary
-    if: needs.publish-canary.result == 'success'
+      - mirror-canary
+    if: needs.publish-canary.result == 'success' && needs.mirror-canary.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -625,7 +906,6 @@ jobs:
     if: needs.publish-canary.result == 'success' && needs.canary-install.result == 'success'
     permissions:
       contents: read
-      id-token: write
     runs-on: ubuntu-latest
     environment: npm-canary
     steps:
@@ -662,7 +942,8 @@ jobs:
     needs:
       - preflight
       - publish-stable
-    if: needs.publish-stable.result == 'success'
+      - mirror-stable
+    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -690,9 +971,10 @@ jobs:
     needs:
       - preflight
       - publish-stable
+      - mirror-stable
       - stable-docs
       - stable-install
-    if: needs.publish-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
+    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
     permissions:
       contents: read
     runs-on: ubuntu-latest

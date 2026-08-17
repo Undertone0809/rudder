@@ -13,6 +13,8 @@ Use these scripts:
 - [`scripts/rollback-latest.sh`](../scripts/rollback-latest.sh) to repoint `latest`
 - [`scripts/build-npm.sh`](../scripts/build-npm.sh) for the CLI packaging build
 - [`scripts/collect-desktop-release-assets.mjs`](../scripts/collect-desktop-release-assets.mjs) to normalize desktop portable asset names for GitHub Releases
+- [`scripts/publish-github-release-assets-immutable.mjs`](../../scripts/publish-github-release-assets-immutable.mjs) to publish byte-identical GitHub binaries and the checksum completion marker in separate phases
+- [`scripts/mirror-desktop-release-to-cos.mjs`](../../scripts/mirror-desktop-release-to-cos.mjs) to copy and verify frozen Desktop assets in Tencent COS with OIDC/STS credentials
 
 Rudder no longer uses release branches or Changesets for publishing.
 
@@ -138,6 +140,8 @@ Stable publishes do not create a release commit. Instead:
 - git tag `vX.Y.Z` points at that original commit
 - portable desktop assets are built, verified, and attached to the matching
   GitHub Release by `.github/workflows/release.yml`
+- the same bytes are mirrored under `releases/<slash-preserving-tag>/<asset>` in
+  Tencent COS before GitHub `SHASUMS256.txt` becomes visible
 
 The primary user install path is:
 
@@ -146,9 +150,20 @@ npx @rudderhq/cli@latest start
 ```
 
 The `start` command checks npm for newer CLI releases, uses npm for the
-persistent CLI, and uses checksum-verified GitHub Release assets for the
-per-user portable desktop app. Desktop binaries are intentionally not published
-to npm.
+persistent CLI, and chooses between Tencent COS and GitHub for the per-user
+portable desktop app. GitHub Release `SHASUMS256.txt` is always downloaded as
+the trust root. COS timeout, missing objects, interrupted streams, corrupt
+content, or SHA-256 mismatch falls back to GitHub. Desktop binaries are
+intentionally not published to npm.
+
+The COS mirror is a required release surface, not an independent release
+authority. Gitee, GitCode, or AtomGit Releases may be added as community
+mirrors, but they are not suitable for this mandatory gate: the workflow needs
+object-scoped OIDC/IAM, immutable create semantics, exact anonymous reads while
+listing stays denied, bounded billing alerts, and deterministic post-upload byte
+verification. General source-hosting Release endpoints may impose platform
+rate limits or anti-abuse behavior that makes unattended installation
+unpredictable.
 
 For server or headless installs, the same npm CLI exposes a server-only path:
 

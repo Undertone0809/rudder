@@ -180,12 +180,15 @@ function setNativeWorkspaceVersion(version) {
   const cargoPath = join(repoRoot, "native", "Cargo.toml");
   if (!existsSync(cargoPath)) return;
   const source = readFileSync(cargoPath, "utf8");
+  const workspaceVersion = source.match(
+    /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/mu,
+  )?.[1];
+  if (!workspaceVersion) throw new Error(`native workspace version is missing from ${cargoPath}`);
   const next = source.replace(
     /(^\[workspace\.package\][\s\S]*?^version\s*=\s*")[^"]+(")/mu,
     `$1${version}$2`,
   );
-  if (next === source) throw new Error(`native workspace version is missing from ${cargoPath}`);
-  writeFileSync(cargoPath, next);
+  if (next !== source) writeFileSync(cargoPath, next);
 
   const lockPath = join(repoRoot, "native", "Cargo.lock");
   if (!existsSync(lockPath)) throw new Error(`native Cargo.lock is missing: ${lockPath}`);
@@ -200,9 +203,15 @@ function setNativeWorkspaceVersion(version) {
     return block.replace(/(^version\s*=\s*")[^"]+(")/mu, `$1${version}$2`);
   });
   if (nextLock === lockSource && memberNames.length > 0) {
-    throw new Error(`native Cargo.lock has no workspace package entries to update: ${lockPath}`);
+    const lockVersions = new Map(
+      [...lockSource.matchAll(/^\[\[package\]\][\s\S]*?^name\s*=\s*"([^"]+)"[\s\S]*?^version\s*=\s*"([^"]+)"/gmu)]
+        .map((match) => [match[1], match[2]]),
+    );
+    if (memberNames.some((name) => lockVersions.get(name) !== version)) {
+      throw new Error(`native Cargo.lock has no workspace package entries to update: ${lockPath}`);
+    }
   }
-  writeFileSync(lockPath, nextLock);
+  if (nextLock !== lockSource) writeFileSync(lockPath, nextLock);
 }
 
 function setVersion(version, { publish = false } = {}) {
