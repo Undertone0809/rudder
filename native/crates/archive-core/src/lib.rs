@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::time::Duration;
 
 pub const MANIFEST_PATH: &str = ".rudder-backup/manifest-v2.json";
 pub const COPY_CHUNK_BYTES: usize = 64 * 1024;
@@ -746,6 +747,26 @@ trait PublicationFs {
 
 struct RealPublicationFs;
 
+fn sync_file(file: &File) -> io::Result<()> {
+    let attempts = if cfg!(windows) { 8 } else { 1 };
+    let mut last_error = None;
+    for attempt in 0..attempts {
+        match file.sync_all() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && attempt + 1 < attempts =>
+            {
+                last_error = Some(error);
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.expect("sync retry must retain its last error"))
+}
+
 impl PublicationFs for RealPublicationFs {
     fn link(&self, source: &Path, output: &Path) -> io::Result<()> {
         fs::hard_link(source, output)
@@ -756,7 +777,8 @@ impl PublicationFs for RealPublicationFs {
     }
 
     fn sync_parent(&self, output: &Path) -> io::Result<()> {
-        File::open(output.parent().unwrap())?.sync_all()
+        let directory = File::open(output.parent().unwrap())?;
+        sync_file(&directory)
     }
 }
 
@@ -968,10 +990,7 @@ pub fn create_archive(
         writer
             .flush()
             .map_err(|error| ArchiveError::io("output_flush_failed", error))?;
-        writer
-            .inner
-            .sync_all()
-            .map_err(|error| ArchiveError::io("output_flush_failed", error))?;
+        sync_file(&writer.inner).map_err(|error| ArchiveError::io("output_flush_failed", error))?;
         let byte_size = writer.bytes;
         let archive_sha256 = format!("{:x}", writer.sha.finalize());
         drop(writer.inner);
