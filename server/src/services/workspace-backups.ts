@@ -587,6 +587,7 @@ async function workspaceTreeSha256(rootPath: string) {
 }
 
 async function syncDirectory(directoryPath: string) {
+  if (process.platform === "win32") return;
   const handle = await fs.open(directoryPath, "r");
   try {
     await handle.sync();

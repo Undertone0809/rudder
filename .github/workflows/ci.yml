@@ -449,6 +449,7 @@ jobs:
         env:
           RUDDER_NATIVE_MODE: required
           RUDDER_NATIVE_ARCHIVE_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
+          RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
         run: pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/workspace-backups.spec.ts
 
       - name: Exercise Rust-first Agent Run process workflow
