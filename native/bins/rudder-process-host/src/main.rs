@@ -720,7 +720,6 @@ fn main() {
                         {
                             gate.store(true, Ordering::Release);
                         }
-                        #[cfg(debug_assertions)]
                         if std::env::var("RUDDER_PROCESS_HOST_TEST_AFTER_ACCEPT_FRAME")
                             .ok()
                             .as_deref()
@@ -1083,7 +1082,6 @@ fn spawn_child(
             ));
         }
     };
-    #[cfg(debug_assertions)]
     if injected_process_setup_failure() {
         let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
         return Err(SpawnChildError::after_spawn(
@@ -1177,7 +1175,6 @@ fn spawn_path_preflight(executable: &str, cwd: &str) -> Result<(), &'static str>
     Ok(())
 }
 
-#[cfg(debug_assertions)]
 fn injected_process_setup_failure() -> bool {
     std::env::var("RUDDER_PROCESS_HOST_TEST_PROCESS_SETUP_FAILURE")
         .ok()

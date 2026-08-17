@@ -348,16 +348,16 @@ jobs:
           RUDDER_NATIVE_EVIDENCE_INDEX_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
           RUDDER_NATIVE_PAYLOAD_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
           RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
-        run: >-
-          pnpm exec vitest run
-          packages/shared/src/native-mode.test.ts
-          packages/agent-runtime-utils/src/native-process-runner.test.ts
-          cli/src/runtime/native-payload.test.ts
-          desktop/src/local-app-native-host.test.ts
-          desktop/src/local-apps-runtime.test.ts
-          server/src/__tests__/log-store-offsets.test.ts
-          server/src/__tests__/workspace-manifest-native.test.ts
-          server/src/__tests__/workspace-backups.test.ts
+        run: |
+          RUDDER_NATIVE_MODE=required pnpm exec vitest run \
+            packages/shared/src/native-mode.test.ts \
+            packages/agent-runtime-utils/src/native-process-runner.test.ts \
+            cli/src/runtime/native-payload.test.ts \
+            desktop/src/local-app-native-host.test.ts \
+            server/src/__tests__/log-store-offsets.test.ts \
+            server/src/__tests__/workspace-manifest-native.test.ts \
+            server/src/__tests__/workspace-backups.test.ts
+          RUDDER_NATIVE_MODE=node pnpm exec vitest run desktop/src/local-apps-runtime.test.ts
 
   desktop-packaged-smoke:
     name: Desktop packaged smoke macOS arm64

@@ -228,9 +228,10 @@ export async function runNativeChildProcess(
   args: string[],
   opts: NativeProcessRunOptions,
 ): Promise<RunProcessResult> {
-  const binaryPath = opts.binaryPath === undefined
+  const configuredBinaryPath = opts.binaryPath === undefined
     ? resolveNativeProcessHostPath()
     : opts.binaryPath;
+  const binaryPath = configuredBinaryPath && path.resolve(configuredBinaryPath);
   if (!binaryPath) {
     throw new NativeProcessUnavailableError(
       "Rust process host binary is unavailable for this platform",
