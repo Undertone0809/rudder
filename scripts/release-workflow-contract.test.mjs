@@ -148,6 +148,15 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("timeout-minutes: 240");
     expect(recovery).toContain("actions/download-artifact@v8");
+    expect(recovery).toContain("id: download_candidate_assets_attempt_1");
+    expect(recovery).toContain("id: download_candidate_assets_attempt_2");
+    expect(recovery).toContain("id: download_candidate_assets_attempt_3");
+    expect(recovery).toContain("if: always()");
+    expect(recovery).toContain("Require frozen candidate desktop assets");
+    expect(recovery).toContain("steps.download_candidate_assets_attempt_1.outcome");
+    expect(recovery).toContain("steps.download_candidate_assets_attempt_2.outcome");
+    expect(recovery).toContain("steps.download_candidate_assets_attempt_3.outcome");
+    expect(recovery).toContain('= "success"');
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
     expect(recovery).toContain("ref: ${{ github.sha }}");
     expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");

@@ -689,13 +689,45 @@ jobs:
           test "$(jq -r '.draft' <<< "$release_json")" = "false"
           test "$(jq -r '.prerelease' <<< "$release_json")" = "false"
           test "$(jq '[.assets[] | select(.name | startswith("Rudder-"))] | length' <<< "$release_json")" = "7"
-      - uses: actions/download-artifact@v8
+      - name: Download frozen candidate desktop assets (attempt 1)
+        id: download_candidate_assets_attempt_1
+        continue-on-error: true
+        uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
           path: dist/desktop-assets
           merge-multiple: true
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
+      - name: Download frozen candidate desktop assets (attempt 2)
+        id: download_candidate_assets_attempt_2
+        if: steps.download_candidate_assets_attempt_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download frozen candidate desktop assets (attempt 3)
+        id: download_candidate_assets_attempt_3
+        if: steps.download_candidate_assets_attempt_1.outcome == 'failure' && steps.download_candidate_assets_attempt_2.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Require frozen candidate desktop assets
+        if: always()
+        run: |
+          test "${{ steps.download_candidate_assets_attempt_1.outcome }}" = "success" || \
+            test "${{ steps.download_candidate_assets_attempt_2.outcome }}" = "success" || \
+            test "${{ steps.download_candidate_assets_attempt_3.outcome }}" = "success"
+          test "$(find dist/desktop-assets -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
       - name: Generate checksum trust root
         run: |
           cd dist/desktop-assets
