@@ -425,6 +425,9 @@ describe("Tencent COS Desktop release mirror", () => {
         const attempt = (partAttempts.get(partNumber) ?? 0) + 1;
         partAttempts.set(partNumber, attempt);
         if (partNumber === 1 && attempt === 1) {
+          throw new TypeError("fetch failed", { cause: new Error("HeadersTimeoutError") });
+        }
+        if (partNumber === 1 && attempt === 2) {
           return new Response("<Code>UserNetworkTooSlow</Code>", { status: 400 });
         }
         parts.set(partNumber, await streamBytes(init.body));
@@ -454,9 +457,15 @@ describe("Tencent COS Desktop release mirror", () => {
     expect(calls.filter(({ query }) => query.includes("partNumber=")).map(({ query }) => query)).toEqual([
       "?partNumber=1&uploadId=upload-1",
       "?partNumber=1&uploadId=upload-1",
+      "?partNumber=1&uploadId=upload-1",
     ]);
-    expect(partAttempts).toEqual(new Map([[1, 2]]));
+    expect(partAttempts).toEqual(new Map([[1, 3]]));
   }, 15_000);
+
+  it("uses a smaller default multipart part size for slow cross-region uploads", () => {
+    const mirror = createMirror(async () => new Response(null));
+    expect(mirror.multipartPartSize).toBe(8 * 1024 * 1024);
+  });
 
   it("reuses a byte-identical object when multipart completion loses an overwrite race", async () => {
     const file = await fileFixture(Buffer.alloc(1024 * 1024, 3));
