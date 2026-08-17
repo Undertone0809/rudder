@@ -149,9 +149,12 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("actions/download-artifact@v8");
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
     expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
-    expect(recovery).toContain("jq -r '.head_sha' <<< \"$run_json\"");
-    expect(recovery).toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$remote_tag_sha\"");
-    expect(recovery).toContain("success|cancelled");
+    expect(recovery).toContain("success|cancelled|failure");
+    expect(recovery).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");
+    expect(recovery).toContain(".name == \"Publish stable\" and .conclusion == \"success\"");
+    expect(recovery).toContain(".name == \"Mirror stable Desktop release to Tencent COS\" and .conclusion == \"failure\"");
+    expect(recovery).toContain("test \"$SOURCE_REF\" = \"$remote_tag_sha\"");
+    expect(recovery).not.toContain("jq -r '.head_sha' <<< \"$run_json\"");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
     expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
     expect(recovery).toContain("--phase checksum");

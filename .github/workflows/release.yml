@@ -646,18 +646,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
           test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
           test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
           test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
-          case "$(jq -r '.conclusion' <<< "$run_json")" in
-            success|cancelled) ;;
+          run_conclusion="$(jq -r '.conclusion' <<< "$run_json")"
+          case "$run_conclusion" in
+            success|cancelled|failure) ;;
             *) echo "Candidate run $CANDIDATE_RUN_ID did not produce a usable stable candidate." >&2; exit 1 ;;
           esac
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100")"
+          jq -e '.jobs[] | select(.name == "Publish stable" and .conclusion == "success")' <<< "$jobs" >/dev/null || {
+            echo "Candidate run $CANDIDATE_RUN_ID did not complete Publish stable successfully." >&2
+            exit 1
+          }
+          if [ "$run_conclusion" = "failure" ]; then
+            jq -e '.jobs[] | select(.name == "Mirror stable Desktop release to Tencent COS" and .conclusion == "failure")' <<< "$jobs" >/dev/null || {
+              echo "Failed candidate run $CANDIDATE_RUN_ID did not fail at the stable COS mirror boundary." >&2
+              exit 1
+            }
+          fi
           remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$RECOVERY_TAG" | awk '{print $1}')"
           test -n "$remote_tag_sha"
-          test "$(jq -r '.head_sha' <<< "$run_json")" = "$remote_tag_sha"
+          test "$SOURCE_REF" = "$remote_tag_sha"
           artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100")"
           for artifact in \
             desktop-macos-x64 \
