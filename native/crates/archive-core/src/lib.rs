@@ -777,8 +777,23 @@ impl PublicationFs for RealPublicationFs {
     }
 
     fn sync_parent(&self, output: &Path) -> io::Result<()> {
-        let directory = File::open(output.parent().unwrap())?;
-        sync_file(&directory)
+        let directory = match File::open(output.parent().unwrap()) {
+            Ok(directory) => directory,
+            // Windows does not expose a directory handle with the access mode
+            // used by std::fs::File::open on hosted runners. The file itself
+            // is already flushed and synced; keep publication atomic while
+            // treating this metadata-only durability step as best effort.
+            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        match sync_file(&directory) {
+            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                Ok(())
+            }
+            result => result,
+        }
     }
 }
 
