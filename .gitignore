@@ -19,6 +19,9 @@ tmp-*
 cli/tmp/
 .artifacts/
 
+# Local delivery evidence belongs in the Codex workspace, not the repository.
+evidence/
+
 # Scratch/seed scripts (but not scripts/ dir)
 check-*.mjs
 !scripts/check-*.mjs
