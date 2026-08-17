@@ -198,6 +198,18 @@ describe("Rudder Plugin V1 lifecycle", () => {
     });
   }
 
+  function catalogService(fetcher: typeof fetch) {
+    const options: ManagedMcpConnectionServiceOptions = {
+      deploymentMode: "authenticated",
+      allowlists: { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [] },
+      hostEnv: {},
+      createClient: async () => { throw new Error("MCP client must not start while previewing a Plugin"); },
+      createOAuthCredential: () => ({ token: async () => "unused", refresh: async () => undefined }),
+      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
+    };
+    return rudderPluginCatalogService(db, options, { fetch: fetcher });
+  }
+
   it("installs a managed Skill, restores Agent assignment, and supports uninstall/reinstall", async () => {
     const { org, agent } = await seedOrg("Acme", "ACM");
     const plugins = service();
@@ -825,15 +837,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
       }
       return new Response("not found", { status: 404 });
     };
-    const options: ManagedMcpConnectionServiceOptions = {
-      deploymentMode: "authenticated",
-      allowlists: { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [] },
-      hostEnv: {},
-      createClient: async () => { throw new Error("MCP client must not start while previewing a Plugin"); },
-      createOAuthCredential: () => ({ token: async () => "unused", refresh: async () => undefined }),
-      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
-    };
-    const catalog = rudderPluginCatalogService(db, options, { fetch: fetcher as typeof fetch });
+    const catalog = catalogService(fetcher as typeof fetch);
     const preview = await catalog.previewSource(org.id, "example/skills-repo");
 
     expect(preview).toMatchObject({
@@ -873,5 +877,75 @@ describe("Rudder Plugin V1 lifecycle", () => {
     const reinstalled = await plugins.install(org.id, preview.previewId!);
     expect(reinstalled).toMatchObject({ packageId: preview.packageId, version: "0.0.0-aaaaaaaaaaaa" });
     expect(reinstalled.id).not.toBe(installed.id);
+  });
+
+  it("creates a cold Preview through the public archive fallback when GitHub API returns 403", async () => {
+    const { org } = await seedOrg("API Fallback", "APF");
+    const commitSha = "b36e0829c6d0140e93cfef2ca599b1b07d4a7797";
+    const archive = zipSync({
+      [`skills-repo-${commitSha}/skills/research/SKILL.md`]: strToU8(
+        "---\nname: Research\ndescription: Gather evidence without API quota.\n---\n\n# Research\n",
+      ),
+    });
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://api.github.com/")) {
+        return new Response("rate limited", { status: 403 });
+      }
+      if (url === "https://github.com/example/skills-repo/releases.atom") {
+        return new Response("<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"></feed>");
+      }
+      if (url === "https://github.com/example/skills-repo/commits/HEAD.atom") {
+        return new Response(`<feed><entry><id>tag:github.com,2008:Grit::Commit/${commitSha}</id></entry></feed>`);
+      }
+      if (url === `https://codeload.github.com/example/skills-repo/zip/${commitSha}`) {
+        return new Response(Buffer.from(archive), {
+          headers: { "content-type": "application/zip", "content-length": String(archive.byteLength) },
+        });
+      }
+      return new Response("catalog unavailable", { status: 503 });
+    };
+    const catalog = catalogService(fetcher as typeof fetch);
+
+    await expect(catalog.previewSource(org.id, "example/skills-repo")).resolves.toMatchObject({
+      action: "install",
+      previewId: expect.any(String),
+      resolution: { commitSha, strategy: "default_branch_head" },
+      groups: {
+        skills: [expect.objectContaining({
+          name: "Research",
+          detail: "Gather evidence without API quota.",
+          status: "ready",
+        })],
+      },
+    });
+  });
+
+  it("rejects case-colliding paths from the public archive fallback", async () => {
+    const { org } = await seedOrg("Archive Collision", "ARC");
+    const commitSha = "b36e0829c6d0140e93cfef2ca599b1b07d4a7797";
+    const archive = zipSync({
+      [`skills-repo-${commitSha}/skills/workflow/SKILL.md`]: strToU8("---\nname: Workflow\n---\n"),
+      [`skills-repo-${commitSha}/skills/Workflow/skill.md`]: strToU8("---\nname: Collision\n---\n"),
+    });
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://api.github.com/")) return new Response("rate limited", { status: 403 });
+      if (url === "https://github.com/example/skills-repo/releases.atom") {
+        return new Response("<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"></feed>");
+      }
+      if (url === "https://github.com/example/skills-repo/commits/HEAD.atom") {
+        return new Response(`<feed><entry><id>tag:github.com,2008:Grit::Commit/${commitSha}</id></entry></feed>`);
+      }
+      if (url === `https://codeload.github.com/example/skills-repo/zip/${commitSha}`) {
+        return new Response(Buffer.from(archive), {
+          headers: { "content-type": "application/zip", "content-length": String(archive.byteLength) },
+        });
+      }
+      return new Response("catalog unavailable", { status: 503 });
+    };
+
+    await expect(catalogService(fetcher as typeof fetch).previewSource(org.id, "example/skills-repo"))
+      .rejects.toThrow(/duplicate or case-colliding path/i);
   });
 });

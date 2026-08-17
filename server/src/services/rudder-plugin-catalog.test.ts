@@ -102,6 +102,65 @@ describe("fetchPluginCatalogResource", () => {
   });
 });
 
+describe("resolveGitHubVersion", () => {
+  it("falls back to public GitHub pages when the REST API is rate limited", async () => {
+    const commitSha = "b36e0829c6d0140e93cfef2ca599b1b07d4a7797";
+    const requested: string[] = [];
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.startsWith("https://api.github.com/")) {
+        return new Response("rate limited", { status: 403 });
+      }
+      if (url === "https://github.com/obra/superpowers/releases.atom") {
+        return new Response(`<?xml version="1.0"?>
+          <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry><link rel="alternate" href="https://github.com/obra/superpowers/releases/tag/v6.2.0" /></entry>
+            <entry><link rel="alternate" href="https://github.com/obra/superpowers/releases/tag/v6.3.0" /></entry>
+          </feed>`);
+      }
+      if (url === "https://github.com/obra/superpowers/commits/v6.3.0.atom") {
+        return new Response(`<feed><entry><id>tag:github.com,2008:Grit::Commit/${commitSha}</id></entry></feed>`);
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    await expect(resolveGitHubVersion(fetcher as typeof fetch, {
+      repositoryUrl: "https://github.com/obra/superpowers",
+      source: "obra/superpowers",
+      subdirectory: "",
+    })).resolves.toEqual({
+      repositoryUrl: "https://github.com/obra/superpowers",
+      source: "obra/superpowers",
+      subdirectory: "",
+      strategy: "stable_release",
+      version: "6.3.0",
+      commitSha,
+    });
+    expect(requested).toContain("https://github.com/obra/superpowers/releases.atom");
+    expect(requested).toContain("https://github.com/obra/superpowers/commits/v6.3.0.atom");
+  });
+
+  it("fails closed instead of selecting HEAD when the public release feed is unavailable", async () => {
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://api.github.com/")) {
+        return new Response("rate limited", { status: 403 });
+      }
+      if (url === "https://github.com/obra/superpowers/releases.atom") {
+        return new Response("authentication required", { status: 401 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+
+    await expect(resolveGitHubVersion(fetcher as typeof fetch, {
+      repositoryUrl: "https://github.com/obra/superpowers",
+      source: "obra/superpowers",
+      subdirectory: "",
+    })).rejects.toThrow("GitHub release feed returned HTTP 401");
+  });
+});
+
 describe("createCatalogFreshnessLease", () => {
   it("keeps a degraded catalog visible through immediate recovery", () => {
     let now = 1_000;

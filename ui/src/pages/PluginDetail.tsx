@@ -29,10 +29,10 @@ import {
   AppWindow,
   ArrowLeft,
   Bot,
+  Boxes,
   Check,
   CircleAlert,
   ExternalLink,
-  FileCode2,
   Loader2,
   Package,
   PlugZap,
@@ -45,7 +45,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 function componentIcon(type: RudderPluginCompatibilityComponent["type"]) {
-  if (type === "skill") return FileCode2;
+  if (type === "skill") return Boxes;
   if (type === "mcp") return Unplug;
   if (type === "app") return AppWindow;
   return CircleAlert;

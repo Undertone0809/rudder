@@ -278,6 +278,9 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
   await expect(page.getByTestId("workspace-main-card")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(requestedIconThemes).toContain("light");
   await expect(page.getByRole("heading", { name: /Skills 14/ })).toBeVisible();
+  const skillsSection = page.locator('section[aria-labelledby="plugin-skills-heading"]');
+  await expect(skillsSection.locator(".lucide-boxes").first()).toBeVisible();
+  await expect(skillsSection.locator(".lucide-file-code-2")).toHaveCount(0);
   await page.getByRole("textbox", { name: "Search Plugin components" }).fill("Workflow 14");
   await expect(page.getByRole("heading", { name: /Skills 1 \/ 14/ })).toBeVisible();
   await expect(page.getByText("Workflow 14", { exact: true })).toBeVisible();
