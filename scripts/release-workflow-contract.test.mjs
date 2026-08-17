@@ -294,6 +294,9 @@ describe("unified delivery workflows", () => {
   it("routes real stable resumes through publish and fails closed on an incomplete chain", () => {
     const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
     const releaseResult = workflowJob(releaseWorkflow, "stable-release-result");
+    expect(stablePublish).toContain("always()");
+    expect(stablePublish).toContain("needs.preflight.result == 'success'");
+    expect(stablePublish).toContain("needs.candidate-complete.result == 'success'");
     expect(stablePublish).toContain("github.event_name == 'workflow_dispatch'");
     expect(stablePublish).toContain("github.event.inputs.mirror_recovery != 'true'");
     expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
@@ -315,6 +318,27 @@ describe("unified delivery workflows", () => {
       expect(releaseResult).toContain(`- ${jobName}`);
     }
     expect(releaseResult.match(/test \"\$result\" = \"success\"/g)).toHaveLength(1);
+  });
+
+  it("carries stable resumes through intentional candidate skips without bypassing failures", () => {
+    const requiredResults = new Map([
+      ["mirror-stable", ["preflight", "publish-stable"]],
+      ["stable-docs", ["preflight", "publish-stable", "mirror-stable"]],
+      ["stable-install", ["preflight", "publish-stable", "mirror-stable"]],
+      [
+        "stable-surfaces",
+        ["preflight", "publish-stable", "mirror-stable", "stable-docs", "stable-install"],
+      ],
+      ["stable-cleanup", ["preflight", "stable-surfaces"]],
+      ["next-release-base", ["preflight", "publish-stable", "stable-surfaces", "stable-cleanup"]],
+    ]);
+    for (const [jobName, dependencies] of requiredResults) {
+      const job = workflowJob(releaseWorkflow, jobName);
+      expect(job).toContain("always()");
+      for (const dependency of dependencies) {
+        expect(job).toContain(`needs.${dependency}.result == 'success'`);
+      }
+    }
   });
 
   it("runs public install inside Release and requires stable docs before closeout", () => {
