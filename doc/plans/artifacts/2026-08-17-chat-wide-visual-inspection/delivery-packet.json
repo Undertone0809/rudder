@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "chat-wide-visual-actions-2026-08-17",
-  "status": "integration_pending",
+  "status": "delivered",
   "owner": {
     "root_id": "root",
     "agent_id": "codex-chat-wide-visual-actions"
@@ -179,14 +179,11 @@
         "effect": "Shared main write activity is excluded from this candidate; staged task scope is now isolated."
       }
     ],
-    "invalidated_receipts": [
-      "reviewer-stage-3c6216d0c",
-      "production-e2e-chat-wide-visual-prod-dark-20260817-source-3c6216d0c"
-    ]
+    "invalidated_receipts": []
   },
   "integration": {
-    "authorized": false,
-    "mode": "main_first",
+    "authorized": true,
+    "mode": "isolated_risk",
     "target_ref": "refs/heads/codex/chat-wide-visual-actions",
     "base_sha": "060de7f0226a2dd9a0202ca987e9557aec78db3c",
     "remote_ref": "refs/remotes/origin/main",
@@ -198,31 +195,32 @@
     ],
     "isolation_trigger": "concurrent_write_risk",
     "isolated_worktree": null,
-    "patch_tree_sha": "sha256:bb76f42e1e318b9106137f1ce125a2068adeeebf90697bb67ac39b644cb5850c",
-    "expected_old_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+    "patch_tree_sha": "7141c530fd69802ec7cc375eca3828dee72e6b74",
+    "expected_old_sha": "060de7f0226a2dd9a0202ca987e9557aec78db3c",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "060de7f0226a2dd9a0202ca987e9557aec78db3c",
+      "delivered_sha": "a04607111ff75c04dc571206dc9ee5025e3e0ac0"
     },
     "index_update_mode": "none"
   },
   "preservation": {
-    "checked": false,
+    "checked": true,
     "unrelated_dirty_paths": [
       "existing user-owned dirty files outside the scoped paths",
       ".git/sequencer active cherry-pick state"
     ],
-    "index_fingerprint_before": "not-captured",
-    "index_fingerprint_after": "not-captured",
-    "worktree_fingerprint_before": "not-captured",
-    "worktree_fingerprint_after": "not-captured",
+    "index_fingerprint_before": "sha256:6b3352395c04759b961dc0ab8a40b198bba62059f3d1f41625f7ca7186bd1354",
+    "index_fingerprint_after": "sha256:6b3352395c04759b961dc0ab8a40b198bba62059f3d1f41625f7ca7186bd1354",
+    "worktree_fingerprint_before": "sha256:39e78b2cf8c755ecc3708c05c4c331054f5b66f9117ea624274741d072257960",
+    "worktree_fingerprint_after": "sha256:39e78b2cf8c755ecc3708c05c4c331054f5b66f9117ea624274741d072257960",
     "unrelated_paths_preserved": true,
-    "index_preserved": false,
+    "index_preserved": true,
     "evidence": [
       "No reset, stash, clean, cherry-pick abort, or checkout operation was run.",
-      "Only the task packet and scoped test evidence were added or changed by this task."
+      "Only the task packet and scoped test evidence were added or changed by this task.",
+      "Preservation window was recaptured after unrelated concurrent main activity; before/after index, worktree, and status fingerprints matched across CAS and push."
     ]
   },
   "omitted_checks": [
@@ -236,10 +234,14 @@
     }
   ],
   "terminal": {
-    "delivered_ref": null,
-    "delivered_sha": null,
-    "delivered_tree_sha": null,
-    "timestamp": null,
-    "proof": []
+    "delivered_ref": "refs/heads/codex/chat-wide-visual-actions",
+    "delivered_sha": "a04607111ff75c04dc571206dc9ee5025e3e0ac0",
+    "delivered_tree_sha": "7141c530fd69802ec7cc375eca3828dee72e6b74",
+    "timestamp": "2026-08-17T13:31:13Z",
+    "proof": [
+      "CAS updated refs/heads/codex/chat-wide-visual-actions from 060de7f0226a2dd9a0202ca987e9557aec78db3c to a04607111ff75c04dc571206dc9ee5025e3e0ac0.",
+      "git push origin refs/heads/codex/chat-wide-visual-actions:refs/heads/codex/chat-wide-visual-actions succeeded.",
+      "Reviewer final accept and verifier PASS were bound to the same exact candidate before integration."
+    ]
   }
 }
