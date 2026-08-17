@@ -82,6 +82,7 @@ import { OrganizationImport } from "./pages/OrganizationImport";
 import { OrganizationResources } from "./pages/OrganizationResources";
 import { OrganizationSettings } from "./pages/OrganizationSettings";
 import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
+import { PluginDetail } from "./pages/PluginDetail";
 import { Plugins } from "./pages/Plugins";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { Projects } from "./pages/Projects";
@@ -220,7 +221,9 @@ function boardRoutes() {
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="hub" element={<Plugins />} />
+      <Route path="hub/plugins/:slug" element={<PluginDetail />} />
       <Route path="plugins" element={<Plugins />} />
+      <Route path="plugins/catalog/:slug" element={<PluginDetail />} />
       <Route path="org" element={<Navigate to="../organization/settings" replace />} />
       <Route path="agents" element={<AgentsEntryRedirect />} />
       <Route path="agents/all" element={<Navigate to="/agents" replace />} />

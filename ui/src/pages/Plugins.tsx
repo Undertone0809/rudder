@@ -250,7 +250,7 @@ function PluginDetailDialog({
           <section className="rounded-md border border-amber-600/30 bg-amber-500/5 px-3 py-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold">Local App update ready for review</h3>
+                <h3 className="text-sm font-semibold">Local App update ready</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {plugin.version} → {plugin.pendingUpdate.version} · {plugin.pendingUpdate.digest.slice(0, 12)}
                 </p>
@@ -279,7 +279,7 @@ function PluginDetailDialog({
   );
 }
 
-function ImportReviewDialog({
+function ImportPreviewDialog({
   report,
   open,
   busy,
@@ -309,7 +309,7 @@ function ImportReviewDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{report.operation === "update" ? "Review update" : "Review"} {displayName}</DialogTitle>
+          <DialogTitle>{report.operation === "update" ? "Preview update" : "Preview"} {displayName}</DialogTitle>
           <DialogDescription>{report.sourceLabel} · {report.limits.fileCount} files · {Math.ceil(report.limits.totalBytes / 1024)} KB</DialogDescription>
         </DialogHeader>
         {report.errors.length > 0 ? (
@@ -341,7 +341,7 @@ function ImportReviewDialog({
                           ? record.url
                           : [record.command, ...(Array.isArray(record.args) ? record.args : [])].filter((value) => typeof value === "string").join(" ") || "Not declared";
                       })()}</dd>
-                      <dt>Access</dt><dd>Provider default; reviewed again in Managed MCP setup</dd>
+                      <dt>Access</dt><dd>Provider default; configured in Managed MCP setup</dd>
                       <dt>Side effects</dt><dd>Connected tools may read or change data in the declared external service</dd>
                       <dt>Results</dt><dd>Returned to the invoking Rudder Agent Run or Chat</dd>
                     </dl>
@@ -407,7 +407,7 @@ function ImportReviewDialog({
               checked={accessExpansionConfirmed}
               onChange={(event) => onAccessExpansionConfirmedChange(event.target.checked)}
             />
-            <span>I reviewed and approve the new execution and external-access surface.</span>
+            <span>I understand and approve the expanded execution and external-access surface.</span>
           </label>
         ) : null}
         {report.skillConflicts.length > 0 ? (
@@ -439,7 +439,7 @@ function ImportReviewDialog({
         ) : null}
         {error ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{error}</div> : null}
         <DialogFooter showCloseButton>
-          <Button disabled={busy || report.status !== "review_required" || report.errors.length > 0 || (Boolean(report.capabilityDiff?.accessExpansion) && !accessExpansionConfirmed) || (report.skillConflicts.length > 0 && !skillConflictStrategy)} onClick={onInstall}>
+          <Button disabled={busy || report.status !== "preview" || report.errors.length > 0 || (Boolean(report.capabilityDiff?.accessExpansion) && !accessExpansionConfirmed) || (report.skillConflicts.length > 0 && !skillConflictStrategy)} onClick={onInstall}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             {report.operation === "update" ? "Apply update" : "Install"}
           </Button>
@@ -469,6 +469,8 @@ export function Plugins() {
   const [accessExpansionConfirmed, setAccessExpansionConfirmed] = useState(false);
   const [skillConflictStrategy, setSkillConflictStrategy] = useState<"keep" | "replace" | "rename" | null>(null);
   const [marketplaceDialogOpen, setMarketplaceDialogOpen] = useState(false);
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
+  const [sourceInput, setSourceInput] = useState("");
   const [marketplaceRepository, setMarketplaceRepository] = useState("");
   const [marketplaceCommit, setMarketplaceCommit] = useState("");
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -480,9 +482,16 @@ export function Plugins() {
   const [uploadedSkills, setUploadedSkills] = useState<string[]>([]);
 
   const directoryQuery = useQuery({
-    queryKey: ["rudder-plugins", selectedOrganizationId],
+    queryKey: queryKeys.rudderPlugins.directory(selectedOrganizationId ?? "__none__"),
     queryFn: () => rudderPluginsApi.directory(selectedOrganizationId!),
     enabled: Boolean(selectedOrganizationId),
+  });
+  const catalogQuery = useQuery({
+    queryKey: queryKeys.rudderPlugins.catalog(selectedOrganizationId ?? "__none__"),
+    queryFn: () => rudderPluginsApi.catalog(selectedOrganizationId!),
+    enabled: Boolean(selectedOrganizationId),
+    staleTime: 0,
+    refetchOnMount: "always",
   });
   const skillsQuery = useQuery({
     queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__"),
@@ -496,7 +505,8 @@ export function Plugins() {
   });
 
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["rudder-plugins", selectedOrganizationId] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.rudderPlugins.directory(selectedOrganizationId ?? "__none__") });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.rudderPlugins.catalog(selectedOrganizationId ?? "__none__") });
     await queryClient.invalidateQueries({ queryKey: queryKeys.organizationSkills.list(selectedOrganizationId ?? "__none__") });
   };
   const mutationError = (error: unknown) => setActionError(error instanceof Error ? error.message : "Plugin action failed.");
@@ -580,6 +590,20 @@ export function Plugins() {
     },
     onError: mutationError,
   });
+  const sourcePreviewMutation = useMutation({
+    mutationFn: () => rudderPluginsApi.previewSource(selectedOrganizationId!, sourceInput),
+    onMutate: () => setActionError(null),
+    onSuccess: (detail) => {
+      queryClient.setQueryData(
+        queryKeys.rudderPlugins.previewDetail(selectedOrganizationId!, detail.previewId!),
+        detail,
+      );
+      setSourceDialogOpen(false);
+      setSourceInput("");
+      navigate(`/hub/plugins/${encodeURIComponent(detail.slug)}?preview=${encodeURIComponent(detail.previewId!)}`);
+    },
+    onError: mutationError,
+  });
   const localAppUpdateMutation = useMutation({
     mutationFn: (plugin: RudderInstalledPlugin) => rudderPluginsApi.applyLocalAppUpdate(selectedOrganizationId!, plugin.id),
     onMutate: () => setActionError(null),
@@ -654,7 +678,9 @@ export function Plugins() {
     !normalizedSearch || `${plugin.displayName} ${plugin.description ?? ""} ${plugin.publisher ?? ""}`.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.installed, normalizedSearch]);
   const localApps = useMemo(() => (directoryQuery.data?.localApps ?? []).filter((app) =>
     !normalizedSearch || app.name.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.localApps, normalizedSearch]);
-  const discover = useMemo(() => (directoryQuery.data?.discover ?? []).filter((plugin) =>
+  const discover = useMemo(() => (catalogQuery.data?.entries ?? []).filter((plugin) =>
+    !normalizedSearch || `${plugin.displayName} ${plugin.shortDescription} ${plugin.developer} ${plugin.category}`.toLowerCase().includes(normalizedSearch)), [catalogQuery.data?.entries, normalizedSearch]);
+  const configuredDiscover = useMemo(() => (directoryQuery.data?.discover ?? []).filter((plugin) =>
     !normalizedSearch || `${plugin.displayName} ${plugin.description ?? ""} ${plugin.publisher ?? ""}`.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.discover, normalizedSearch]);
   const skills = useMemo(() => (skillsQuery.data ?? []).filter((skill) =>
     !normalizedSearch || `${skill.name} ${skill.description ?? ""} ${skill.sourceLabel ?? ""}`.toLowerCase().includes(normalizedSearch)), [skillsQuery.data, normalizedSearch]);
@@ -728,6 +754,9 @@ export function Plugins() {
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setMarketplaceDialogOpen(true)}>
                 <Box className="h-4 w-4" />Pinned GitHub marketplace
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setActionError(null); setSourceDialogOpen(true); }}>
+                <Download className="h-4 w-4" />GitHub Skills source
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -803,6 +832,7 @@ export function Plugins() {
 
       <main className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
         {tab === "plugins" && directoryQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{directoryQuery.error.message}</div> : null}
+        {tab === "plugins" && catalogQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{catalogQuery.error.message}</div> : null}
         {tab === "skills" && skillsQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{skillsQuery.error.message}</div> : null}
         {actionError && !detailPlugin && !importReport && !assigningPlugin ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{actionError}</div> : null}
         {(tab === "plugins" ? directoryQuery.isLoading : tab === "skills" ? skillsQuery.isLoading : false) ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : null}
@@ -837,7 +867,7 @@ export function Plugins() {
                     }}>
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">{plugin.components.length === 1 && plugin.components[0]?.type === "app" ? <AppWindow className="h-4.5 w-4.5" /> : <Blocks className="h-4.5 w-4.5" />}</div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className={cn("text-[11px]", plugin.enabled && plugin.setupState === "ready" && !plugin.pendingUpdate ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{plugin.pendingUpdate ? "Update review" : stateLabel(plugin)}</span></div>
+                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className={cn("text-[11px]", plugin.enabled && plugin.setupState === "ready" && !plugin.pendingUpdate ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{plugin.pendingUpdate ? "Update available" : stateLabel(plugin)}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
                         <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                           {plugin.components.slice(0, 3).map((component) => <span key={component.id} className="capitalize">{component.type}</span>)}
@@ -864,35 +894,61 @@ export function Plugins() {
 
             <section className="mt-8 border-t pt-6">
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-                <div><h2 className="text-sm font-semibold">Discover plugins</h2><p className="mt-0.5 text-xs text-muted-foreground">Packages from configured marketplaces. Every install opens a capability review first.</p></div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => marketplaceInputRef.current?.click()}><PackageOpen className="h-4 w-4" />Local source</Button>
-                  <Button variant="outline" size="sm" onClick={() => setMarketplaceDialogOpen(true)}><Box className="h-4 w-4" />Pinned GitHub</Button>
+                <div><h2 className="text-sm font-semibold">Discover plugins</h2><p className="mt-0.5 text-xs text-muted-foreground">Curated capability bundles. Open a Plugin to preview everything included.</p></div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {catalogQuery.data?.freshness === "stale" ? (
+                    <span
+                      role="status"
+                      data-testid="plugin-catalog-stale"
+                      className="inline-flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400"
+                    >
+                      <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      Catalog unavailable. Showing cached catalog.
+                    </span>
+                  ) : null}
+                  <Button variant="outline" size="sm" onClick={() => setSourceDialogOpen(true)}><Download className="h-4 w-4" />URL Import</Button>
                 </div>
               </div>
-              {discover.length === 0 ? (
+              {catalogQuery.isLoading ? (
+                <div className="flex h-32 items-center justify-center border-y border-[color:var(--border-soft)]"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+              ) : discover.length === 0 ? (
                 <div data-testid="hub-empty-marketplace" className="flex items-start gap-3 rounded-md border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,var(--surface-page))] px-4 py-3.5">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--surface-inset)]"><Box className="h-3.5 w-3.5 text-muted-foreground" /></div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">No marketplace source configured</p>
-                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Add a local marketplace folder or a GitHub repository pinned to a full commit SHA.</p>
+                    <p className="text-sm font-medium">No plugins match this search</p>
+                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Clear the search or preview a compatible public GitHub source.</p>
                   </div>
                 </div>
               ) : (
                 <div className="grid gap-2 md:grid-cols-2">
                   {discover.map((plugin) => (
-                    <div key={plugin.reportId} className="flex min-h-[120px] items-start gap-3 rounded-md border bg-card p-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Blocks className="h-4.5 w-4.5" /></div>
+                    <button key={plugin.slug} type="button" className="group flex min-h-[112px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35" onClick={() => navigate(`/hub/plugins/${encodeURIComponent(plugin.slug)}`)}>
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40"><img src={plugin.iconUrl} alt="" className="h-full w-full object-cover" /></div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className="text-[11px] text-muted-foreground">{plugin.category ?? "Plugin"}</span></div>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
-                        <div className="mt-2 text-[11px] text-muted-foreground">{plugin.sourceType === "git" ? "Pinned GitHub" : "Local marketplace"} · v{plugin.version}</div>
-                        <div className="mt-0.5 text-[11px] text-muted-foreground">
-                          {typeof plugin.policy.installation === "string" ? plugin.policy.installation.replaceAll("_", " ") : "available"}
-                          {typeof plugin.policy.authentication === "string" ? ` · ${plugin.policy.authentication.replaceAll("_", " ")}` : ""}
-                        </div>
+                        <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span>{plugin.updateAvailable ? <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400">Update available</span> : plugin.installedPluginId ? <span className="text-[11px] text-emerald-700 dark:text-emerald-400">Installed</span> : null}</div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.shortDescription}</p>
+                        <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"><span>{plugin.developer}</span><span>{plugin.category}</span><span className="ml-auto">{plugin.sourceKind === "skills_add" ? "Skills source" : "Codex Plugin"}</span></div>
                       </div>
-                      <Button size="sm" variant="outline" onClick={async () => {
+                      <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {configuredDiscover.length > 0 ? (
+              <section className="mt-8 border-t pt-6">
+                <div className="mb-3 flex items-end justify-between gap-3">
+                  <div><h2 className="text-sm font-semibold">Configured sources</h2><p className="mt-0.5 text-xs text-muted-foreground">Plugins from local and pinned GitHub marketplaces.</p></div>
+                  <span className="text-xs text-muted-foreground">{configuredDiscover.length}</span>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {configuredDiscover.map((plugin) => (
+                    <button
+                      key={plugin.reportId}
+                      type="button"
+                      className="group flex min-h-[104px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35"
+                      onClick={async () => {
                         setActionError(null);
                         try {
                           const report = await rudderPluginsApi.getImportReport(selectedOrganizationId, plugin.reportId);
@@ -902,12 +958,20 @@ export function Plugins() {
                         } catch (error) {
                           mutationError(error);
                         }
-                      }}>Review</Button>
-                    </div>
+                      }}
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Blocks className="h-4.5 w-4.5" /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className="text-[11px] text-muted-foreground">{plugin.category ?? "Plugin"}</span></div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
+                        <div className="mt-2 text-[11px] text-muted-foreground">{plugin.sourceType === "git" ? "Pinned GitHub" : "Local marketplace"} · v{plugin.version}</div>
+                      </div>
+                      <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                    </button>
                   ))}
                 </div>
-              )}
-            </section>
+              </section>
+            ) : null}
           </div>
         ) : null}
 
@@ -957,7 +1021,7 @@ export function Plugins() {
             <div className="mb-4"><h2 className="text-sm font-semibold">Showcase</h2><p className="mt-0.5 text-xs text-muted-foreground">Starting points from effective multi-Agent workflows.</p></div>
             <div className="divide-y border-y">
               {[
-                { icon: Sparkles, title: "Research brief", copy: "Combine a research Plugin with a reviewing Agent before the result returns to the team.", action: "Explore plugins", run: () => setSearchParams({ tab: "plugins" }) },
+                { icon: Sparkles, title: "Research brief", copy: "Combine a research Plugin with a verification Agent before the result returns to the team.", action: "Explore plugins", run: () => setSearchParams({ tab: "plugins" }) },
                 { icon: BookOpen, title: "Team writing standard", copy: "Turn an existing playbook into a Skill that every writing Agent can share.", action: "Create Skill", run: createSkillInChat },
                 { icon: AppWindow, title: "Internal operations console", copy: "Build a private App when the work needs an interactive surface, records, and repeated actions.", action: "Build App", run: () => navigate("/apps") },
               ].filter((item) => !normalizedSearch || `${item.title} ${item.copy}`.toLowerCase().includes(normalizedSearch)).map((item) => {
@@ -1062,7 +1126,7 @@ export function Plugins() {
         </DialogContent>
       </Dialog>
 
-      <ImportReviewDialog
+      <ImportPreviewDialog
         report={importReport}
         open={Boolean(importReport)}
         busy={installMutation.isPending}
@@ -1116,7 +1180,7 @@ export function Plugins() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add pinned GitHub marketplace</DialogTitle>
-            <DialogDescription>Rudder fetches one immutable GitHub archive and makes its Plugins available for review. Nothing installs automatically.</DialogDescription>
+            <DialogDescription>Rudder fetches one immutable GitHub archive and makes its Plugins available to preview. Nothing installs automatically.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <label className="block text-sm">
@@ -1136,6 +1200,25 @@ export function Plugins() {
             >
               {marketplaceMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               Add marketplace
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={sourceDialogOpen} onOpenChange={(open) => { setSourceDialogOpen(open); if (!open) setActionError(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Preview GitHub Skills source</DialogTitle>
+            <DialogDescription>Enter a public source accepted by the skills CLI. Rudder discovers it without running npx or package scripts.</DialogDescription>
+          </DialogHeader>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Source</span>
+            <Input value={sourceInput} onChange={(event) => setSourceInput(event.target.value)} placeholder="coreyhaines31/marketingskills" autoFocus />
+          </label>
+          {actionError ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{actionError}</div> : null}
+          <DialogFooter showCloseButton>
+            <Button disabled={sourcePreviewMutation.isPending || sourceInput.trim().length < 3} onClick={() => sourcePreviewMutation.mutate()}>
+              {sourcePreviewMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              {sourcePreviewMutation.isPending ? "Creating Preview..." : "Preview"}
             </Button>
           </DialogFooter>
         </DialogContent>

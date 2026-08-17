@@ -192,10 +192,10 @@ export type {
   WorkspaceWebPreviewNetworkMode
 } from "./organization.js";
 export type {
-  RudderInstalledPlugin, RudderLocalAppPlugin, RudderMcpUiResource, RudderMcpUiResourceContent, RudderPluginArchiveInput, RudderPluginCapabilityChange, RudderPluginCapabilityDiff, RudderPluginCapabilitySnapshot, RudderPluginCompatibilityComponent,
+  RudderInstalledPlugin, RudderLocalAppPlugin, RudderMcpUiResource, RudderMcpUiResourceContent, RudderPluginArchiveInput, RudderPluginCapabilityChange, RudderPluginCapabilityDiff, RudderPluginCapabilitySnapshot, RudderPluginCatalog, RudderPluginCatalogEntry, RudderPluginCatalogSourceKind, RudderPluginCompatibilityComponent,
   RudderPluginComponentLink, RudderPluginComponentStatus, RudderPluginComponentType,
-  RudderPluginDirectory, RudderPluginDiscoverEntry, RudderPluginImportReport, RudderPluginMarketplaceInput, RudderPluginPackageFileInput,
-  RudderPluginSkillConflictStrategy, RudderPluginSourceType
+  RudderPluginDetail, RudderPluginDirectory, RudderPluginDiscoverEntry, RudderPluginImportReport, RudderPluginMarketplaceInput, RudderPluginPackageFileInput,
+  RudderPluginSkillConflictStrategy, RudderPluginSourceResolution, RudderPluginSourceType
 } from "./plugin-v1.js";
 export type {
   Project,

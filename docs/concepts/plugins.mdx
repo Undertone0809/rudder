@@ -17,8 +17,9 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/concepts/plugins"
 ## One package for reusable capabilities
 
 A Rudder Plugin is a distribution package containing one or more Skills, MCP
-server definitions, or Apps. It uses the Codex Plugin folder format, including
-the required `.codex-plugin/plugin.json` manifest.
+server definitions, or Apps. It may use the Codex Plugin folder format with a
+`.codex-plugin/plugin.json` manifest, or be deterministically generated as a
+Skills-only package from a public source compatible with `skills add`.
 
 Plugins organize capabilities that belong together. They do not introduce a
 separate Rudder runtime: Skills still run through an Agent, MCP servers still
@@ -34,10 +35,12 @@ digest, supported components, warnings, and errors. Installation creates an
 Organization-scoped snapshot. You can then assign package Skills to Agents and
 finish any MCP authentication or access setup.
 
-Input may be a folder, bounded ZIP, local Codex marketplace, or an HTTPS GitHub
-marketplace pinned to a full commit SHA. Marketplace installation and
+Input may be Rudder's curated catalog, a compatible public GitHub Skills source,
+a folder, bounded ZIP, local Codex marketplace, or an HTTPS GitHub marketplace
+pinned to a full commit SHA. Curated and URL sources resolve to an immutable
+Release or default-branch commit before Detail appears. Marketplace installation and
 authentication policy is preserved as provenance. It never bypasses Rudder's
-review or installs a Plugin silently.
+Preview or installs a Plugin silently.
 
 When a package Skill conflicts with an Organization Skill, installation pauses
 until the operator explicitly keeps the existing Skill, replaces it, or installs
@@ -46,7 +49,7 @@ both under distinct identities.
 Local Apps also appear in **Hub > Plugins** as app-only entries. Their direct
 launch behavior and existing `/apps/...` routes remain unchanged. A new App
 Builder revision becomes a pending immutable update; the current revision stays
-active until the operator reviews and applies it.
+active until the operator previews and applies it.
 
 Choosing **Customize** on a package Skill creates an independent, editable
 Organization Skill with package provenance. The copy is no longer controlled
@@ -74,18 +77,18 @@ projections while preserving user work and independently managed resources.
 An update is inspected before it replaces the active package. Rudder prepares
 the new component projections first, keeps the current version active if that
 preparation fails, and retains the previous immutable package for explicit
-rollback. The review compares old and new execution surfaces and requires an
+rollback. The Preview compares old and new execution surfaces and requires an
 explicit confirmation when Skill execution or MCP access expands.
 
 An active Managed MCP connection may expose HTML UI resources. Rudder lists and
 opens those resources in a network-disabled sandbox; `.app.json` aliases never
 activate this path.
 
-Treat every imported package as untrusted input. Review its publisher, version,
+Treat every imported package as untrusted input. Inspect its publisher, version,
 files, credential references, unsupported fields, and compatibility report
 before installation. Rudder V1 does not run Plugin workers, jobs, webhooks, UI
 slots, hooks, browser extensions, scheduled-task templates, or arbitrary package
-code.
+code. It also never invokes `npx` or a repository's install lifecycle.
 
 Follow [Install and Manage a Plugin](/how-to/manage-plugins) for the complete
 workflow.

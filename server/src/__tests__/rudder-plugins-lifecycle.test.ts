@@ -28,6 +28,7 @@ import { instanceSettingsService } from "../services/instance-settings.js";
 import { managedMcpBindingService } from "../services/mcp/managed-bindings.js";
 import type { ManagedMcpConnectionServiceOptions } from "../services/mcp/managed-connections.js";
 import { organizationSkillService } from "../services/organization-skills.js";
+import { rudderPluginCatalogService } from "../services/rudder-plugin-catalog.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
 
 vi.setConfig({ hookTimeout: 180_000, testTimeout: 30_000 });
@@ -88,7 +89,7 @@ async function startTempDatabase() {
   return { connectionString, dataDir, instance };
 }
 
-function pluginInput(sourceLabel: string, options: { mcpCommand?: string; mcpCwd?: string; mcpEnv?: Record<string, string>; appOnly?: boolean; version?: string; skillBody?: string } = {}): InspectRudderPlugin {
+function pluginInput(sourceLabel: string, options: { mcpCommand?: string; mcpCwd?: string; mcpEnv?: Record<string, string>; appOnly?: boolean; version?: string; skillBody?: string; additionalSkillBody?: string } = {}): InspectRudderPlugin {
   const manifest: Record<string, unknown> = {
     name: "research-kit",
     version: options.version ?? "1.0.0",
@@ -105,6 +106,13 @@ function pluginInput(sourceLabel: string, options: { mcpCommand?: string; mcpCwd
       content: options.skillBody ?? "---\nname: Research\ndescription: Gather evidence.\n---\n\n# Research\n",
       encoding: "utf8",
     });
+    if (options.additionalSkillBody) {
+      files.push({
+        path: "skills/synthesis/SKILL.md",
+        content: options.additionalSkillBody,
+        encoding: "utf8",
+      });
+    }
     if (options.mcpCommand) {
       manifest.mcpServers = { evidence: { command: options.mcpCommand, args: ["server.js"], cwd: options.mcpCwd, env: options.mcpEnv } };
     }
@@ -214,6 +222,8 @@ describe("Rudder Plugin V1 lifecycle", () => {
 
     await plugins.configureSkills(org.id, installed.id, [agent.id]);
     expect(await db.select().from(agentEnabledSkills)).toHaveLength(1);
+    await runtimeSkills.list(org.id);
+    expect((await db.select().from(agentEnabledSkills))[0]?.skillKey).toBe(`org:${skill!.key}`);
     await plugins.setEnabled(org.id, installed.id, false);
     expect(await db.select().from(agentEnabledSkills)).toHaveLength(0);
     expect((await db.select().from(organizationSkills).where(eq(organizationSkills.id, skill!.id)))[0]?.metadata)
@@ -536,27 +546,38 @@ describe("Rudder Plugin V1 lifecycle", () => {
   });
 
   it("updates through a reviewed package and rolls back to the immutable previous snapshot", async () => {
-    const { org } = await seedOrg("Update", "UPD");
+    const { org, agent } = await seedOrg("Update", "UPD");
     const plugins = service();
     const firstReport = await plugins.inspect(org.id, pluginInput("Version one"));
     const first = await plugins.install(org.id, firstReport.id);
+    await plugins.configureSkills(org.id, first.id, [agent.id]);
 
     const updateReport = await plugins.inspect(org.id, pluginInput("Version two", {
       version: "2.0.0",
       skillBody: "---\nname: Research\ndescription: Updated evidence.\n---\n\n# Research V2\n",
+      additionalSkillBody: "---\nname: Synthesis\ndescription: Synthesize evidence.\n---\n\n# Synthesis\n",
     }));
     expect(updateReport).toMatchObject({ operation: "update", installedPluginId: first.id });
     expect(updateReport.capabilityDiff).toMatchObject({
       accessExpansion: true,
-      changes: [expect.objectContaining({ key: "skill:research", kind: "changed", accessImpact: "expanded" })],
+      changes: expect.arrayContaining([
+        expect.objectContaining({ key: "skill:research", kind: "changed", accessImpact: "expanded" }),
+        expect.objectContaining({ key: "skill:synthesis", kind: "added", accessImpact: "expanded" }),
+      ]),
     });
     await expect(plugins.install(org.id, updateReport.id)).rejects.toThrow(/confirm the reviewed access expansion/i);
     const updated = await plugins.install(org.id, updateReport.id, true, true);
     expect(updated).toMatchObject({ id: first.id, version: "2.0.0", previousPackageId: first.packageId });
+    expect(updated.components.filter((component) => component.type === "skill")).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ enabledAgentIds: [agent.id] }) }),
+      expect.objectContaining({ metadata: expect.objectContaining({ enabledAgentIds: [agent.id] }) }),
+    ]);
+    expect(await db.select().from(agentEnabledSkills)).toHaveLength(2);
     expect((await db.select().from(organizationSkills).where(eq(organizationSkills.id, updated.components[0]!.targetId!)))[0]?.markdown).toContain("Research V2");
 
     const rolledBack = await plugins.rollback(org.id, first.id);
     expect(rolledBack).toMatchObject({ id: first.id, version: "1.0.0", previousPackageId: updated.packageId });
+    expect(await db.select().from(agentEnabledSkills)).toHaveLength(1);
     expect((await db.select().from(organizationSkills).where(eq(organizationSkills.id, rolledBack.components[0]!.targetId!)))[0]?.markdown).toContain("# Research\n");
   });
 
@@ -778,5 +799,79 @@ describe("Rudder Plugin V1 lifecycle", () => {
     ]);
     await expect(plugins.install(org.id, report.id)).rejects.toThrow(/not ready/i);
     expect(await db.select().from(installedPlugins)).toHaveLength(0);
+  });
+
+  it("reopens an immutable Skills Preview without network access and enforces Organization isolation", async () => {
+    const { org } = await seedOrg("Preview", "PRV");
+    const { org: otherOrg } = await seedOrg("Other Preview", "OPV");
+    const commitSha = "a".repeat(40);
+    let online = true;
+    const fetcher = async (input: string | URL | Request) => {
+      if (!online) throw new Error("network must not be used while reopening a Preview");
+      const url = String(input);
+      if (url.endsWith("/repos/example/skills-repo")) {
+        return new Response(JSON.stringify({ default_branch: "main", private: false }));
+      }
+      if (url.includes("/releases?")) return new Response("[]");
+      if (url.endsWith("/commits/main")) return new Response(JSON.stringify({ sha: commitSha }));
+      if (url.includes(`/git/trees/${commitSha}?recursive=1`)) {
+        return new Response(JSON.stringify({
+          truncated: false,
+          tree: [{ path: "skills/research/SKILL.md", type: "blob", sha: "b".repeat(40), size: 76 }],
+        }));
+      }
+      if (url.includes(`/example/skills-repo/${commitSha}/skills/research/SKILL.md`)) {
+        return new Response("---\nname: Research\ndescription: Gather evidence.\n---\n\n# Research\n");
+      }
+      return new Response("not found", { status: 404 });
+    };
+    const options: ManagedMcpConnectionServiceOptions = {
+      deploymentMode: "authenticated",
+      allowlists: { httpOrigins: [], stdioCommands: [], stdioWorkingDirectories: [], stdioEnvironmentNames: [] },
+      hostEnv: {},
+      createClient: async () => { throw new Error("MCP client must not start while previewing a Plugin"); },
+      createOAuthCredential: () => ({ token: async () => "unused", refresh: async () => undefined }),
+      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
+    };
+    const catalog = rudderPluginCatalogService(db, options, { fetch: fetcher as typeof fetch });
+    const preview = await catalog.previewSource(org.id, "example/skills-repo");
+
+    expect(preview).toMatchObject({
+      action: "install",
+      previewId: expect.any(String),
+      resolution: { commitSha, strategy: "default_branch_head" },
+      groups: { skills: [expect.objectContaining({ name: "Research", status: "ready" })] },
+    });
+
+    online = false;
+    await expect(catalog.previewDetail(org.id, preview.previewId!)).resolves.toMatchObject({
+      previewId: preview.previewId,
+      packageId: preview.packageId,
+      resolution: preview.resolution,
+      components: preview.components,
+    });
+    await expect(catalog.previewDetail(otherOrg.id, preview.previewId!)).rejects.toThrow("Plugin Preview not found");
+
+    const plugins = service();
+    const installed = await plugins.install(org.id, preview.previewId!);
+    await expect(catalog.previewDetail(org.id, preview.previewId!)).resolves.toMatchObject({
+      action: "installed",
+      installedPluginId: installed.id,
+      resolution: { commitSha },
+    });
+
+    await expect(plugins.install(org.id, preview.previewId!)).rejects.toThrow(/already installed/i);
+    await plugins.uninstall(org.id, installed.id);
+    await expect(catalog.previewDetail(org.id, preview.previewId!)).resolves.toMatchObject({
+      action: "install",
+      installedPluginId: null,
+      previewId: preview.previewId,
+      packageId: preview.packageId,
+      resolution: { commitSha },
+    });
+
+    const reinstalled = await plugins.install(org.id, preview.previewId!);
+    expect(reinstalled).toMatchObject({ packageId: preview.packageId, version: "0.0.0-aaaaaaaaaaaa" });
+    expect(reinstalled.id).not.toBe(installed.id);
   });
 });

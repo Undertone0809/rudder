@@ -472,16 +472,16 @@ export {
 } from "./config-schema.js";
 
 export type {
-  RudderInstalledPlugin, RudderLocalAppPlugin, RudderMcpUiResource, RudderMcpUiResourceContent, RudderPluginArchiveInput, RudderPluginCapabilityChange, RudderPluginCapabilityDiff, RudderPluginCapabilitySnapshot, RudderPluginCompatibilityComponent,
+  RudderInstalledPlugin, RudderLocalAppPlugin, RudderMcpUiResource, RudderMcpUiResourceContent, RudderPluginArchiveInput, RudderPluginCapabilityChange, RudderPluginCapabilityDiff, RudderPluginCapabilitySnapshot, RudderPluginCatalog, RudderPluginCatalogEntry, RudderPluginCatalogSourceKind, RudderPluginCompatibilityComponent,
   RudderPluginComponentLink, RudderPluginComponentStatus, RudderPluginComponentType,
-  RudderPluginDirectory, RudderPluginDiscoverEntry, RudderPluginImportReport, RudderPluginMarketplaceInput, RudderPluginPackageFileInput,
-  RudderPluginSkillConflictStrategy, RudderPluginSourceType
+  RudderPluginDetail, RudderPluginDirectory, RudderPluginDiscoverEntry, RudderPluginImportReport, RudderPluginMarketplaceInput, RudderPluginPackageFileInput,
+  RudderPluginSkillConflictStrategy, RudderPluginSourceResolution, RudderPluginSourceType
 } from "./types/plugin-v1.js";
 export {
   configureRudderPluginMarketplaceSchema, configureRudderPluginMcpSchema, configureRudderPluginSkillsSchema, customizeRudderPluginSkillSchema,
   inspectRudderPluginArchiveSchema, inspectRudderPluginSchema, installRudderPluginSchema,
-  rudderPluginPackageFileSchema, updateRudderPluginEnablementSchema,
+  previewRudderPluginSourceSchema, rudderPluginPackageFileSchema, updateRudderPluginEnablementSchema,
   type ConfigureRudderPluginMarketplace, type ConfigureRudderPluginMcp, type ConfigureRudderPluginSkills, type CustomizeRudderPluginSkill,
   type InspectRudderPlugin, type InspectRudderPluginArchive, type InstallRudderPlugin,
-  type UpdateRudderPluginEnablement
+  type PreviewRudderPluginSource, type UpdateRudderPluginEnablement
 } from "./validators/plugin-v1.js";
