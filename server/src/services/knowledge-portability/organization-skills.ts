@@ -1855,10 +1855,7 @@ export function organizationSkillService(
   async function importPackageFiles(
     orgId: string,
     files: Record<string, string>,
-    options?: {
-      onConflict?: PackageSkillConflictStrategy;
-      replaceSkillIds?: string[];
-    },
+    options?: { onConflict?: PackageSkillConflictStrategy; replaceSkillIds?: string[] },
   ): Promise<ImportPackageSkillResult[]> {
     await ensureSkillInventoryCurrent(orgId);
     const normalizedFiles = normalizePackageFileMap(files);

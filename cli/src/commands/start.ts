@@ -30,6 +30,7 @@ import {
 import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError, type RuntimeInstallResult } from "../runtime/install.js";
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
+import { buildWindowsZipExtractCommand, powershellQuote } from "./start-windows.js";
 
 export { parseChecksumFile } from "../checksum-manifest.js";
 export {
@@ -43,6 +44,7 @@ export {
   type DesktopDownloadSource
 } from "../desktop-download.js";
 export type { GithubReleaseAsset } from "../desktop-download.js";
+export { buildWindowsZipExtractCommand } from "./start-windows.js";
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 
@@ -1128,14 +1130,6 @@ function formatCommandFailure(command: string, args: string[], stdout: unknown, 
     .join("\n")
     .trim();
   return `${command} ${args.join(" ")} failed${output ? `: ${output}` : ""}`;
-}
-
-function powershellQuote(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-export function buildWindowsZipExtractCommand(zipPath: string, outputDir: string): { command: string; args: string[] } {
-  return { command: "tar.exe", args: ["--force-local", "-xf", zipPath, "-C", outputDir] };
 }
 
 export function buildWindowsRobocopyMirrorCommand(sourcePath: string, destinationPath: string): { command: string; args: string[] } {

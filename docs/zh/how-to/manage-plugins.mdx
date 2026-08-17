@@ -14,7 +14,7 @@ hreflang_zh: "https://docs.rudderhq.dev/zh/how-to/manage-plugins"
 
 Rudder 插件是由技能、MCP 服务端、应用或它们的组合构成的能力包。你可以浏览
 Rudder 精选目录，输入 `skills add` 兼容的公开 GitHub 来源，或导入 Codex 插件目录。
-所有路径都会在安装前展示不可变的兼容性 Preview。
+所有路径都会在安装前展示不可变的兼容性预览。
 
 <a id="completed-state" />
 
@@ -40,7 +40,7 @@ Rudder 精选目录，输入 `skills add` 兼容的公开 GitHub 来源，或导
    `coreyhaines31/marketingskills` 这类公开来源，或选择 **Import** 后再选
    **Plugin folder** / **Plugin ZIP**。也可以添加 **Local marketplace** 或
    **Pinned GitHub marketplace**。
-3. 在 Preview 中检查软件包身份、摘要、技能、MCP 定义、应用引用、技能中的可执行文件，
+3. 在预览中检查软件包身份、摘要、技能、MCP 定义、应用引用、技能中的可执行文件，
    以及浏览器扩展、定时任务模板和钩子等不支持的能力。检查
    过程不会执行任何内容。
 4. 如果技能与现有组织技能冲突，显式选择保留现有版本、替换，或重命名后同时安装。
@@ -51,9 +51,9 @@ Rudder 精选目录，输入 `skills add` 兼容的公开 GitHub 来源，或导
 8. 如果已启用的托管 MCP 连接提供 `HTML` 界面资源，可以从 MCP 组件中打开。
    Rudder 会在禁止网络访问的沙箱中渲染。
 
-对于精选和 URL 来源，Rudder 会把最新稳定语义化 Release 或默认分支 HEAD 解析为
-完整 `commit SHA`。Preview 和安装使用同一份不可变快照。Rudder 不会执行 `npx`、
-包 hooks 或 Skill scripts。市场策略只作为来源信息保留；即使条目声明
+对于精选和链接来源，Rudder 会把最新稳定语义化发布版本或默认分支最新提交解析为
+完整 `commit SHA`。预览和安装使用同一份不可变快照。Rudder 不会执行 `npx`、
+软件包钩子或技能脚本。市场策略只作为来源信息保留；即使条目声明
 `INSTALLED_BY_DEFAULT`，也仍要求显式安装，不会静默安装。
 
 <a id="success-signal" />
@@ -72,9 +72,9 @@ Rudder 精选目录，输入 `skills add` 兼容的公开 GitHub 来源，或导
 
 ## 更新或回滚
 
-打开新版本的 Detail Preview 后再选择 **Update**。Rudder 会展示新旧执行面；如果更新新增或
+打开新版本的详情预览后再选择 **Update**。Rudder 会展示新旧执行面；如果更新新增或
 改变可执行技能或 MCP 访问，必须显式确认权限扩张。之后 Rudder 会先准备新版本的
-组件投影，再切换当前安装。如果准备失败，现有版本继续生效，这次 Preview 也可以重试。
+组件投影，再切换当前安装。如果准备失败，现有版本继续生效，这次预览也可以重试。
 
 更新成功后，可以选择 **Roll back** 重新启用保留的上一份不可变软件包。回滚不会
 改写任何一个软件包快照。

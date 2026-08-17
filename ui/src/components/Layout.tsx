@@ -967,7 +967,6 @@ export function Layout() {
   const { orgPrefix } = useParams<{ orgPrefix: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const isPluginDetailRoute = location.pathname.includes("/hub/plugins/") || location.pathname.startsWith("/plugins/catalog/");
   const navigationType = useNavigationType();
   const inAppBackStackRef = useRef<string[]>([]);
   const macDesktopShell = useMemo(() => isMacDesktopShell(), []);
@@ -1803,7 +1802,7 @@ export function Layout() {
           )}
         </div>
       </div>
-      {isMobile && !isPluginDetailRoute && <MobileBottomNav visible={mobileNavVisible} />}
+      {isMobile && !location.pathname.includes("/hub/plugins/") && !location.pathname.startsWith("/plugins/catalog/") && <MobileBottomNav visible={mobileNavVisible} />}
       <CommandPalette />
       <NewIssueDialog />
       <NewProjectDialog />
