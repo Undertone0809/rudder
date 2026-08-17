@@ -227,67 +227,82 @@ describe("Desktop Local App runtime", () => {
     expect(parseLsofListenerProcessRecords(output, 43_123)).toBeNull();
   });
 
-  it("derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
-    const prefix = path.join(root, "node-prefix");
-    const npmBin = path.join(prefix, "lib", "node_modules", "npm", "bin");
-    const trustedBin = path.join(prefix, "bin");
-    await mkdir(npmBin, { recursive: true });
-    await mkdir(trustedBin, { recursive: true });
-    const trustedNode = path.join(trustedBin, "node");
-    await writeFile(trustedNode, [
-      "#!/bin/sh",
-      "export RUDDER_TRUSTED_NODE_PREFIX=1",
-      `exec '${process.execPath}' "$@"`,
-      "",
-    ].join("\n"));
-    await chmod(trustedNode, 0o755);
-    const npmCli = path.join(npmBin, "npm-cli.js");
-    await writeFile(npmCli, [
-      "#!/usr/bin/env node",
-      "if (process.env.RUDDER_TRUSTED_NODE_PREFIX !== '1') process.exit(86);",
-      `await import(${JSON.stringify(pathToFileURL(fixturePath).href)});`,
-      "",
-    ].join("\n"));
-    await chmod(npmCli, 0o755);
+  it.runIf(process.platform !== "win32")(
+    "derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
+      const prefix = path.join(root, "node-prefix");
+      const npmBin = path.join(prefix, "lib", "node_modules", "npm", "bin");
+      const trustedBin = path.join(prefix, "bin");
+      await mkdir(npmBin, { recursive: true });
+      await mkdir(trustedBin, { recursive: true });
+      const trustedNode = path.join(trustedBin, "node");
+      await writeFile(trustedNode, [
+        "#!/bin/sh",
+        "export RUDDER_TRUSTED_NODE_PREFIX=1",
+        `exec '${process.execPath}' "$@"`,
+        "",
+      ].join("\n"));
+      await chmod(trustedNode, 0o755);
+      const npmCli = path.join(npmBin, "npm-cli.js");
+      await writeFile(npmCli, [
+        "#!/usr/bin/env node",
+        "if (process.env.RUDDER_TRUSTED_NODE_PREFIX !== '1') process.exit(86);",
+        `await import(${JSON.stringify(pathToFileURL(fixturePath).href)});`,
+        "",
+      ].join("\n"));
+      await chmod(npmCli, 0o755);
 
-    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
-    const prepared = await registry.prepareDefinition({
-      title: "npm shebang fixture",
-      executable: npmCli,
-      argv: [],
-      cwd: root,
-      inheritedEnvNames: [],
-      readiness: { path: "/health", timeoutMs: 4_000 },
-      openPath: "/app",
-    });
-    const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
-    await registry.approveDefinition(definition.id, prepared.trustFingerprint);
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: "darwin",
-      hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
-    });
-    try {
-      const running = await manager.start(definition.id);
-      expect((await fetch(`${running.origin}/health`)).status).toBe(200);
-    } finally {
-      await manager.stop(definition.id).catch(() => undefined);
-    }
-  });
+      const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+      const prepared = await registry.prepareDefinition({
+        title: "npm shebang fixture",
+        executable: npmCli,
+        argv: [],
+        cwd: root,
+        inheritedEnvNames: [],
+        readiness: { path: "/health", timeoutMs: 4_000 },
+        openPath: "/app",
+      });
+      const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
+      await registry.approveDefinition(definition.id, prepared.trustFingerprint);
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
+        verifyListenerOwnership: acceptFixtureListenerOwnership,
+      });
+      try {
+        const running = await manager.start(definition.id);
+        expect((await fetch(`${running.origin}/health`)).status).toBe(200);
+      } finally {
+        await manager.stop(definition.id).catch(() => undefined);
+      }
+    },
+  );
 
   it("keeps an inherited attacker PATH from replacing the trusted executable path", async () => {
     const attackerRoot = await mkdtemp(path.join(tmpdir(), "rudder-local-app-path-attacker-"));
-    const attackerExecutable = path.join(attackerRoot, "node");
+    const attackerExecutable = path.join(
+      attackerRoot,
+      process.platform === "win32" ? "node.cmd" : "node",
+    );
     const attackerMarker = path.join(attackerRoot, "executed");
-    await writeFile(attackerExecutable, [
-      "#!/bin/sh",
-      `printf attacked > '${attackerMarker}'`,
-      "printf attacker-node",
-      "",
-    ].join("\n"));
-    await chmod(attackerExecutable, 0o755);
+    if (process.platform === "win32") {
+      await writeFile(attackerExecutable, [
+        "@echo off",
+        `>"${attackerMarker}" echo attacked`,
+        "echo attacker-node",
+        "",
+      ].join("\r\n"));
+    } else {
+      await writeFile(attackerExecutable, [
+        "#!/bin/sh",
+        `printf attacked > '${attackerMarker}'`,
+        "printf attacker-node",
+        "",
+      ].join("\n"));
+      await chmod(attackerExecutable, 0o755);
+    }
 
     const previousPath = process.env.PATH;
     process.env.PATH = attackerRoot;
