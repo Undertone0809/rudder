@@ -290,6 +290,7 @@ test.describe("New issue Agent creation", () => {
       identifier: string;
       title: string;
       description: string;
+      status: string;
       originKind?: string;
       originId?: string;
       originRunId?: string;
@@ -297,6 +298,7 @@ test.describe("New issue Agent creation", () => {
     expect(issue).toMatchObject({
       id: completed.createdIssueId,
       title: `Agent-created [E2E:${suffix}]`,
+      status: "todo",
       originKind: "agent_issue_creation",
       originId: accepted.id,
       originRunId: completed.runId,

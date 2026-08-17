@@ -249,6 +249,9 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
       ...(agentIssueCreationRequest
         ? {
+          // Agent-mode creation is an actionable handoff, so it must enter the
+          // assignee's Todo queue even if the runtime proposes Backlog.
+          status: "todo" as const,
           originKind: "agent_issue_creation",
           originId: agentIssueCreationRequest.id,
           originRunId: actor.runId,
