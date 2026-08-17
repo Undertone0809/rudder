@@ -271,8 +271,16 @@ test.describe("New issue Agent creation", () => {
     });
     const runDetailPane = page.getByTestId("agent-runs-detail-pane");
     await expect(runDetailPane.getByText("Create issue", { exact: true })).toBeVisible();
+    const runHistoryTrigger = page.getByTestId("agent-runs-history-trigger");
+    await expect(runHistoryTrigger).toBeVisible();
+    await runHistoryTrigger.click();
+    await expect(page.getByTestId("agent-runs-history-list").getByText("Create issue", { exact: true })).toBeVisible();
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("agent-runs-detail-pane").getByText("Create issue", { exact: true })).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-runs-history-trigger")).toBeVisible();
+    await page.getByTestId("agent-runs-history-trigger").click();
+    await expect(page.getByTestId("agent-runs-history-list").getByText("Create issue", { exact: true })).toBeVisible();
     if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
       await page.screenshot({ path: screenshotPath("agent-issue-run-label.png"), fullPage: false });
     }
