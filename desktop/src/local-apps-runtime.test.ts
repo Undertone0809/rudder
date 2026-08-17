@@ -478,6 +478,31 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     },
   );
 
+  it.runIf(process.platform === "win32")(
+    "runs an approved Local App through the real Windows Node watchdog",
+    { timeout: 90_000 },
+    async () => {
+      const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 30_000 });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "win32",
+        useNativeProcessHost: false,
+        watchdogStartTimeoutMs: 60_000,
+        listenerOwnershipRetryTimeoutMs: 30_000,
+        cleanupTimeoutMs: 30_000,
+      });
+      try {
+        const running = await manager.start(definition.id);
+        expect(running.status).toBe("running");
+        expect((await fetch(`${running.origin}/health`)).status).toBe(200);
+        await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
+        await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toBeNull();
+      } finally {
+        await manager.shutdown().catch(() => undefined);
+      }
+    },
+  );
+
   it(
     "rejects and fully cleans an approved fixture that exposes its allocated port on every interface",
     { timeout: process.platform === "win32" ? 45_000 : 30_000 },
