@@ -13,7 +13,7 @@ const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
 const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
-const DEFAULT_MULTIPART_CONCURRENCY = 4;
+const DEFAULT_MULTIPART_CONCURRENCY = 8;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
 const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
@@ -562,33 +562,35 @@ export async function mirrorDesktopReleaseToCos(options) {
     sleep,
   });
 
-  log("stage\tassume Tencent role");
-  const credentials = options.credentials ?? await getTencentStsCredentials({
-    audience: options.oidcAudience,
-    durationSeconds: options.durationSeconds,
-    endpoint: options.stsEndpoint,
-    fetchImpl,
-    providerId: options.providerId,
-    region,
-    requestToken: options.oidcRequestToken,
-    requestUrl: options.oidcRequestUrl,
-    roleArn: options.roleArn,
-    roleSessionName: options.roleSessionName,
-    networkRetries,
-    retryDelayMs,
-    sleep,
-  });
   log("stage\tmirror COS objects");
-  const mirror = new CosReleaseMirror({
-    bucket,
-    credentials,
-    endpoint,
-    fetchImpl,
-    now: options.now,
-    region,
-  });
+  const getStsCredentials = options.getStsCredentials ?? getTencentStsCredentials;
   const keys = [];
+  let mirror;
   for (const file of files) {
+    if (!options.credentials) log(`stage\tassume Tencent role\t${file.name}`);
+    const credentials = options.credentials ?? await getStsCredentials({
+      audience: options.oidcAudience,
+      durationSeconds: options.durationSeconds,
+      endpoint: options.stsEndpoint,
+      fetchImpl,
+      providerId: options.providerId,
+      region,
+      requestToken: options.oidcRequestToken,
+      requestUrl: options.oidcRequestUrl,
+      roleArn: options.roleArn,
+      roleSessionName: options.roleSessionName,
+      networkRetries,
+      retryDelayMs,
+      sleep,
+    });
+    mirror = new CosReleaseMirror({
+      bucket,
+      credentials,
+      endpoint,
+      fetchImpl,
+      now: options.now,
+      region,
+    });
     const key = objectKeyForReleaseAsset(prefix, tag, file.name);
     await mirror.mirrorFile(key, file);
     keys.push(key);

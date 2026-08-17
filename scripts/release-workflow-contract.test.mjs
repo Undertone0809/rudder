@@ -121,7 +121,7 @@ describe("unified delivery workflows", () => {
       expect(publish).not.toContain("--phase checksum");
       expect(mirror).toContain("environment: desktop-release-mirror");
       expect(mirror).toContain("id-token: write");
-      expect(mirror).toContain("timeout-minutes: 120");
+      expect(mirror).toContain("timeout-minutes: 240");
       expect(mirror).toContain("pattern: desktop-*");
       expect(mirror).toContain("mirror-desktop-release-to-cos.mjs");
       expect(mirror).toContain("TENCENT_CLOUD_OIDC_PROVIDER_ID");
@@ -146,6 +146,7 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain("inputs.mirror_recovery != true");
     expect(recovery).toContain("environment: desktop-release-mirror");
     expect(recovery).toContain("id-token: write");
+    expect(recovery).toContain("timeout-minutes: 240");
     expect(recovery).toContain("actions/download-artifact@v8");
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
     expect(recovery).toContain("ref: ${{ github.sha }}");
