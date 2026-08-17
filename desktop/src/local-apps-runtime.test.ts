@@ -324,14 +324,14 @@ describe("Desktop Local App runtime", () => {
     },
   );
 
-  it.runIf(process.platform === "darwin")(
+  it(
     "spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition",
     async () => {
       const { registry, definition } = await approvedFixture();
       const events: Array<{ type: string; monotonicNs: bigint }> = [];
       const manager = new LocalAppRuntimeManager({
         registry,
-        platform: "darwin",
+        platform: process.platform,
         maxLogBytes: 256,
         observeLifecycleEvent: (event) => events.push(event),
       });
@@ -358,12 +358,12 @@ describe("Desktop Local App runtime", () => {
     },
   );
 
-  it.runIf(process.platform === "darwin")(
+  it(
     "rejects and fully cleans an approved fixture that exposes its allocated port on every interface",
     { timeout: 30_000 },
     async () => {
       const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
-      const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+      const manager = new LocalAppRuntimeManager({ registry, platform: process.platform });
       const markerPath = path.join(root, "wildcard-listener.json");
       try {
         await expect(manager.start(definition.id)).rejects.toThrow(
@@ -388,7 +388,7 @@ describe("Desktop Local App runtime", () => {
     const { root, registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     try {
@@ -409,7 +409,7 @@ describe("Desktop Local App runtime", () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     const starting = manager.start(definition.id);
@@ -425,7 +425,7 @@ describe("Desktop Local App runtime", () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
     try {
@@ -447,7 +447,9 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it("does not start a new generation until an in-flight stop has finished clearing the old one", async () => {
+  it.runIf(process.platform !== "win32")(
+    "does not start a new generation until an in-flight stop has finished clearing the old one",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const terminationEntered = deferred<void>();
     const releaseTermination = deferred<void>();
@@ -467,7 +469,7 @@ describe("Desktop Local App runtime", () => {
     });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
@@ -494,17 +496,21 @@ describe("Desktop Local App runtime", () => {
         status: "running",
         generation: restarted.generation,
       });
-    } finally {
+      } finally {
       releaseTermination.resolve();
       await manager.shutdown();
     }
-  }, 10_000);
+    },
+    10_000,
+  );
 
-  it("keeps complete ownership orphaned when stop cannot prove the group died", async () => {
+  it.runIf(process.platform !== "win32")(
+    "keeps complete ownership orphaned when stop cannot prove the group died",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup: vi.fn(),
       verifyListenerOwnership: acceptFixtureListenerOwnership,
       terminationOptions: {
@@ -527,16 +533,19 @@ describe("Desktop Local App runtime", () => {
       });
       expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
       await expect(manager.start(definition.id)).rejects.toThrow("unverified");
-    } finally {
+      } finally {
       killFixtureProcess(ownership?.pid);
     }
-  });
+    },
+  );
 
-  it("aggregates shutdown cleanup failures with the binding id and preserves orphan ownership", async () => {
+  it.runIf(process.platform !== "win32")(
+    "aggregates shutdown cleanup failures with the binding id and preserves orphan ownership",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup: vi.fn(),
       verifyListenerOwnership: acceptFixtureListenerOwnership,
       terminationOptions: {
@@ -559,12 +568,15 @@ describe("Desktop Local App runtime", () => {
         pgid: ownership?.pgid,
         port: ownership?.port,
       });
-    } finally {
+      } finally {
       killFixtureProcess(ownership?.pid);
     }
-  });
+    },
+  );
 
-  it("closes runtime admission while shutdown drains a blocked stop and leaves no later generation", async () => {
+  it.runIf(process.platform !== "win32")(
+    "closes runtime admission while shutdown drains a blocked stop and leaves no later generation",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const terminationEntered = deferred<void>();
     const releaseTermination = deferred<void>();
@@ -584,7 +596,7 @@ describe("Desktop Local App runtime", () => {
     });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
@@ -606,12 +618,14 @@ describe("Desktop Local App runtime", () => {
       expect(first.status).toBe("running");
       expect(ownedPid).toBeTypeOf("number");
       await vi.waitFor(() => expect(() => process.kill(ownedPid!, 0)).toThrow());
-    } finally {
+      } finally {
       releaseTermination.resolve();
       await manager.stop(definition.id).catch(() => undefined);
       await manager.shutdown();
     }
-  }, 10_000);
+    },
+    10_000,
+  );
 
   it("atomically reconciles nonexistent persisted PID, PGID, and listener once, then permits a new start", async () => {
     const { registry, definition } = await approvedFixture();
@@ -627,7 +641,7 @@ describe("Desktop Local App runtime", () => {
     });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       probePersistedRuntimeLiveness,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
     });
@@ -657,7 +671,7 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it.each([
+  it.runIf(process.platform !== "win32").each([
     {
       label: "a live process group",
       liveness: { pid: "alive" as const, processGroup: "alive" as const, listener: "alive" as const },
@@ -674,7 +688,7 @@ describe("Desktop Local App runtime", () => {
     const killGroup = vi.fn();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
       probePersistedRuntimeLiveness: vi.fn(async () => liveness),
     });
@@ -690,14 +704,14 @@ describe("Desktop Local App runtime", () => {
 
   it("fails closed on readiness failure or unproven listener ownership", async () => {
     const wrongHealth = await approvedFixture({ readinessPath: "/never", readinessTimeoutMs: 1_000 });
-    const timeoutManager = new LocalAppRuntimeManager({ registry: wrongHealth.registry, platform: "darwin" });
+    const timeoutManager = new LocalAppRuntimeManager({ registry: wrongHealth.registry, platform: process.platform });
     await expect(timeoutManager.start(wrongHealth.definition.id)).rejects.toThrow("readiness");
     expect((await timeoutManager.status(wrongHealth.definition.id)).status).toBe("failed");
 
     const unowned = await approvedFixture();
     const ownershipManager = new LocalAppRuntimeManager({
       registry: unowned.registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: async () => false,
       listenerOwnershipRetryTimeoutMs: 750,
     });
@@ -712,7 +726,7 @@ describe("Desktop Local App runtime", () => {
       .mockResolvedValueOnce(true);
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership,
     });
     try {
@@ -802,7 +816,7 @@ describe("Desktop Local App runtime", () => {
     const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: () => new Promise(() => undefined),
       listenerOwnershipRetryTimeoutMs: 250,
       cleanupTimeoutMs: 250,
@@ -1014,13 +1028,15 @@ describe("Desktop Local App runtime", () => {
     });
   });
 
-  it("preserves full ownership and blocks restart when failed-start cleanup hits EPERM", async () => {
+  it.runIf(process.platform !== "win32")(
+    "preserves full ownership and blocks restart when failed-start cleanup hits EPERM",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const permissionError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
     const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: async () => false,
       killGroup: () => { throw permissionError; },
       spawnWatchdog: (() => helper) as unknown as typeof spawn,
@@ -1037,15 +1053,18 @@ describe("Desktop Local App runtime", () => {
     });
     expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
     await expect(manager.start(definition.id)).rejects.toThrow("unverified");
-  });
+    },
+  );
 
-  it("captures a late watchdog spawn after startup timeout and never overlaps a new generation", async () => {
+  it.runIf(process.platform !== "win32")(
+    "captures a late watchdog spawn after startup timeout and never overlaps a new generation",
+    async () => {
     const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
     const helper = watchdogEmittingAfter({ type: "spawned", pid: 88_881, pgid: 88_881 }, 30);
     const spawnWatchdog = vi.fn(() => helper) as unknown as typeof spawn;
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       spawnWatchdog,
       watchdogStartTimeoutMs: 10,
       cleanupTimeoutMs: 60,
@@ -1067,7 +1086,8 @@ describe("Desktop Local App runtime", () => {
     });
     await expect(manager.start(definition.id)).rejects.toThrow("unverified");
     expect(spawnWatchdog).toHaveBeenCalledTimes(1);
-  });
+    },
+  );
 
   it("keeps watchdog startup and cleanup deadlines referenced while start is pending", async () => {
     const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
@@ -1079,7 +1099,7 @@ describe("Desktop Local App runtime", () => {
     const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       spawnWatchdog,
       watchdogStartTimeoutMs: 60_001,
       cleanupTimeoutMs: 60_002,
@@ -1110,7 +1130,9 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it("keeps ownership orphaned when a running watchdog exits without acknowledging cleanup", async () => {
+  it.runIf(process.platform !== "win32")(
+    "keeps ownership orphaned when a running watchdog exits without acknowledging cleanup",
+    async () => {
     const { registry, definition } = await approvedFixture();
     let watchdog: ChildProcess | null = null;
     const spawnWatchdog = ((command: string, args: readonly string[], options: SpawnOptions) => {
@@ -1119,7 +1141,7 @@ describe("Desktop Local App runtime", () => {
     }) as unknown as typeof spawn;
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       spawnWatchdog,
       cleanupTimeoutMs: 100,
       verifyListenerOwnership: acceptFixtureListenerOwnership,
@@ -1139,12 +1161,15 @@ describe("Desktop Local App runtime", () => {
       }, { timeout: 3_000 });
       expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
       await expect(manager.start(definition.id)).rejects.toThrow("unverified");
-    } finally {
+      } finally {
       killFixtureProcess(ownership?.pid);
     }
-  });
+    },
+  );
 
-  it("uses TERM then bounded KILL only for a verified owned process group", async () => {
+  it.runIf(process.platform !== "win32")(
+    "uses TERM then bounded KILL only for a verified owned process group",
+    async () => {
     const signals: Array<[number, NodeJS.Signals]> = [];
     let alive = true;
     await terminateOwnedProcessGroup(42, {
@@ -1158,9 +1183,12 @@ describe("Desktop Local App runtime", () => {
     await expect(terminateOwnedProcessGroup(null, {
       killGroup: vi.fn(), isGroupAlive: () => false, delay: async () => undefined,
     })).rejects.toThrow("unverified");
-  });
+    },
+  );
 
-  it("rejects when TERM and KILL cannot prove the process group is dead", async () => {
+  it.runIf(process.platform !== "win32")(
+    "rejects when TERM and KILL cannot prove the process group is dead",
+    async () => {
     const signals: NodeJS.Signals[] = [];
     await expect(terminateOwnedProcessGroup(42, {
       killGroup: (_pgid, signal) => { signals.push(signal); },
@@ -1170,9 +1198,10 @@ describe("Desktop Local App runtime", () => {
       pollMs: 1,
     })).rejects.toThrow("could not be proven dead");
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-  });
+    },
+  );
 
-  it.each([1, Number.MAX_SAFE_INTEGER + 1])(
+  it.runIf(process.platform !== "win32").each([1, Number.MAX_SAFE_INTEGER + 1])(
     "never signals an unsafe process group identity %s",
     async (pgid) => {
       const killGroup = vi.fn();
@@ -1187,7 +1216,7 @@ describe("Desktop Local App runtime", () => {
     },
   );
 
-  it.each([
+  it.runIf(process.platform !== "win32").each([
     { pid: 2, pgid: 1 },
     { pid: 1, pgid: 1 },
     { pid: Number.MAX_SAFE_INTEGER + 1, pgid: Number.MAX_SAFE_INTEGER + 1 },
@@ -1197,7 +1226,7 @@ describe("Desktop Local App runtime", () => {
     const killGroup = vi.fn();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
       spawnWatchdog: (() => helper) as unknown as typeof spawn,
       cleanupTimeoutMs: 10,
@@ -1213,7 +1242,9 @@ describe("Desktop Local App runtime", () => {
     await expect(manager.start(definition.id)).rejects.toThrow("unverified");
   });
 
-  it("treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port", async () => {
+  it.runIf(process.platform !== "win32")(
+    "treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port",
+    async () => {
     const pipe = new EventEmitter();
     const cleanup = vi.fn(async () => undefined);
     installControlPipeEofCleanup(pipe, cleanup);
@@ -1240,7 +1271,7 @@ describe("Desktop Local App runtime", () => {
     await writeFile(registryPath, JSON.stringify(persisted), { mode: 0o600 });
     const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
     const killGroup = vi.fn();
-    const manager = new LocalAppRuntimeManager({ registry: reloaded, platform: "darwin", killGroup });
+    const manager = new LocalAppRuntimeManager({ registry: reloaded, platform: process.platform, killGroup });
     expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
     await expect(manager.stop(definition.id)).rejects.toThrow("unverified");
     expect(killGroup).not.toHaveBeenCalled();
@@ -1250,9 +1281,12 @@ describe("Desktop Local App runtime", () => {
       pid: null,
       pgid: null,
     });
-  });
+    },
+  );
 
-  it("uses a real watchdog whose parent control-pipe EOF cleans the owned app group", async () => {
+  it.runIf(process.platform !== "win32")(
+    "uses a real watchdog whose parent control-pipe EOF cleans the owned app group",
+    async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-watchdog-"));
     const port = await unusedLoopbackPort();
     const watchdog = spawn(process.execPath, [watchdogPath], {
@@ -1287,7 +1321,8 @@ describe("Desktop Local App runtime", () => {
     watchdog.stdin?.end();
     await once(watchdog, "exit");
     expect(() => process.kill(child.pid, 0)).toThrow();
-  });
+    },
+  );
 
   it.skipIf(!nativeHostPath)("runs an approved Local App through the opt-in Rust process host", async () => {
     const { root, registry, definition } = await approvedFixture();
