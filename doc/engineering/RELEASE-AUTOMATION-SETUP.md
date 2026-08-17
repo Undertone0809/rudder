@@ -462,10 +462,11 @@ original Release `candidate_run_id`. This path downloads only the frozen
 Desktop artifacts from that run, does not republish npm, retag Git, or rebuild
 Desktop, and publishes the GitHub checksum marker only after COS succeeds.
 The recovery job requires the current source to be an ancestor of `main`, and
-requires the candidate run's SHA to equal the existing tag's SHA; a run that
-was cancelled after publishing the candidate is acceptable when all artifacts
-remain available. Do not use a branch or a newly generated artifact run for
-`source_ref`.
+requires the candidate run to be a manual Release from the repository's `main`
+history; a run that was cancelled after publishing the candidate is acceptable
+when all artifacts remain available. The mirror step then verifies every
+downloaded candidate artifact against the existing GitHub Release before COS
+upload. Do not use a branch or a newly generated artifact run for `source_ref`.
 
 ### Optional CODEOWNERS routing does not trigger
 
