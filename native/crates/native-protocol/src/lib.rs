@@ -389,11 +389,53 @@ fn validate_size(cols: u16, rows: u16) -> Result<(), &'static str> {
 mod tests {
     use super::*;
 
+    fn fixture_executable() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\Windows\System32\cmd.exe"
+        }
+        #[cfg(not(windows))]
+        {
+            "/bin/sh"
+        }
+    }
+
+    fn fixture_cwd() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\"
+        }
+        #[cfg(not(windows))]
+        {
+            "/tmp"
+        }
+    }
+
+    fn fixture_runtime_root() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\rudder-runtime"
+        }
+        #[cfg(not(windows))]
+        {
+            "/tmp/rudder-runtime"
+        }
+    }
+
     #[test]
     fn parses_start_with_camel_case_fields() {
-        let command: Command = serde_json::from_str(
-            r#"{"type":"start","protocolVersion":{"major":1,"minor":0},"requestId":"test","executable":"/bin/sh","argv":["-c","exit 0"],"cwd":"/tmp","env":{"RUDDER_TEST":"1"},"ownerToken":"opaque","port":43123,"runtimeRoot":"/tmp/rudder-runtime"}"#,
-        )
+        let command: Command = serde_json::from_value(serde_json::json!({
+            "type": "start",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "test",
+            "executable": fixture_executable(),
+            "argv": ["-c", "exit 0"],
+            "cwd": fixture_cwd(),
+            "env": {"RUDDER_TEST": "1"},
+            "ownerToken": "opaque",
+            "port": 43123,
+            "runtimeRoot": fixture_runtime_root(),
+        }))
         .expect("valid command");
         assert!(command.validate().is_ok());
         assert!(matches!(
@@ -412,7 +454,7 @@ mod tests {
             request_id: Some("test".into()),
             executable: "node".into(),
             argv: Vec::new(),
-            cwd: "/tmp".into(),
+            cwd: fixture_cwd().into(),
             env: Default::default(),
             owner_token: None,
             port: None,
@@ -456,13 +498,13 @@ mod tests {
         let base = |owner_token| Command::Start {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some("test".into()),
-            executable: "/bin/sh".into(),
+            executable: fixture_executable().into(),
             argv: vec!["-c".into(), "exit 0".into()],
-            cwd: "/tmp".into(),
+            cwd: fixture_cwd().into(),
             env: Default::default(),
             owner_token,
             port: None,
-            runtime_root: Some("/tmp/rudder-runtime".into()),
+            runtime_root: Some(fixture_runtime_root().into()),
         };
         assert_eq!(base(None).validate(), Err("owner_token_required"));
         assert_eq!(
@@ -473,9 +515,18 @@ mod tests {
 
     #[test]
     fn validates_terminal_commands() {
-        let start: Command = serde_json::from_str(
-            r#"{"type":"startTerminal","protocolVersion":{"major":1,"minor":0},"requestId":"terminal-1","executable":"/bin/sh","argv":["-l"],"cwd":"/tmp","env":{"TERM":"xterm-256color"},"ownerToken":"opaque","cols":80,"rows":24}"#,
-        )
+        let start: Command = serde_json::from_value(serde_json::json!({
+            "type": "startTerminal",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "terminal-1",
+            "executable": fixture_executable(),
+            "argv": ["-l"],
+            "cwd": fixture_cwd(),
+            "env": {"TERM": "xterm-256color"},
+            "ownerToken": "opaque",
+            "cols": 80,
+            "rows": 24,
+        }))
         .expect("valid terminal start");
         assert_eq!(start.validate(), Ok(()));
 
@@ -497,12 +548,12 @@ mod tests {
         let base = |argument: String| Command::StartProcess {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some("test".into()),
-            executable: "/bin/sh".into(),
+            executable: fixture_executable().into(),
             argv: vec![argument],
-            cwd: "/tmp".into(),
+            cwd: fixture_cwd().into(),
             env: Default::default(),
             owner_token: Some("opaque".into()),
-            runtime_root: Some("/tmp/rudder-runtime".into()),
+            runtime_root: Some(fixture_runtime_root().into()),
             stdin: None,
             grace_ms: None,
         };
