@@ -1025,8 +1025,22 @@ fn probe(request: &UpdateRequest, install_path: &Path, lkg: bool) -> bool {
     };
     let _ = meta;
     let timeout = Duration::from_millis(request.probation.timeout_ms.max(1));
-    let mut child = match Command::new(&executable)
-        .args(&request.probation.args)
+    let mut command = if cfg!(windows)
+        && executable.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        }) {
+        let mut command = Command::new("cmd.exe");
+        command
+            .arg("/C")
+            .arg(&executable)
+            .args(&request.probation.args);
+        command
+    } else {
+        let mut command = Command::new(&executable);
+        command.args(&request.probation.args);
+        command
+    };
+    let mut child = match command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1317,12 +1331,29 @@ mod tests {
         root
     }
 
+    fn bundle_executable(path: &Path) -> PathBuf {
+        #[cfg(windows)]
+        {
+            path.join("Contents/MacOS/Rudder.cmd")
+        }
+        #[cfg(not(windows))]
+        {
+            path.join("Contents/MacOS/Rudder")
+        }
+    }
+
     fn make_bundle(path: &Path, succeeds: bool) -> String {
-        let executable = path.join("Contents/MacOS/Rudder");
+        let executable = bundle_executable(path);
         create_dir_all(executable.parent().unwrap()).unwrap();
         write(
             &executable,
-            if succeeds {
+            if cfg!(windows) {
+                if succeeds {
+                    "@echo off\r\nexit /b 0\r\n"
+                } else {
+                    "@echo off\r\nexit /b 1\r\n"
+                }
+            } else if succeeds {
                 "#!/bin/sh\nexit 0\n"
             } else {
                 "#!/bin/sh\nexit 1\n"
@@ -1387,7 +1418,7 @@ mod tests {
                 sha256: helper_sha256,
             },
             probation: Probation {
-                executable: Some(root.join("Rudder.app/Contents/MacOS/Rudder")),
+                executable: Some(bundle_executable(&root.join("Rudder.app"))),
                 args: vec![],
                 timeout_ms: 5_000,
             },
