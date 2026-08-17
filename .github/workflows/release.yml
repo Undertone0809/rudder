@@ -539,7 +539,11 @@ jobs:
     needs:
       - preflight
       - candidate-complete
-    if: needs.preflight.outputs.channel == 'stable' && needs.preflight.outputs.publish == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mirror_recovery != true &&
+      inputs.dry_run == false &&
+      needs.preflight.outputs.channel == 'stable'
     permissions:
       actions: read
       contents: write
@@ -1151,3 +1155,44 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run ci.yml --ref main -f source_sha="${{ steps.next-release.outputs.head_sha }}"
+
+  stable-release-result:
+    name: Require complete stable release
+    needs:
+      - preflight
+      - publish-stable
+      - mirror-stable
+      - stable-docs
+      - stable-install
+      - stable-surfaces
+      - stable-cleanup
+      - next-release-base
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mirror_recovery != true &&
+      inputs.dry_run == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every stable release stage
+        env:
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          PUBLISH_RESULT: ${{ needs.publish-stable.result }}
+          MIRROR_RESULT: ${{ needs.mirror-stable.result }}
+          DOCS_RESULT: ${{ needs.stable-docs.result }}
+          INSTALL_RESULT: ${{ needs.stable-install.result }}
+          SURFACES_RESULT: ${{ needs.stable-surfaces.result }}
+          CLEANUP_RESULT: ${{ needs.stable-cleanup.result }}
+          HANDOFF_RESULT: ${{ needs.next-release-base.result }}
+        run: |
+          for result in \
+            "$PREFLIGHT_RESULT" \
+            "$PUBLISH_RESULT" \
+            "$MIRROR_RESULT" \
+            "$DOCS_RESULT" \
+            "$INSTALL_RESULT" \
+            "$SURFACES_RESULT" \
+            "$CLEANUP_RESULT" \
+            "$HANDOFF_RESULT"; do
+            test "$result" = "success"
+          done

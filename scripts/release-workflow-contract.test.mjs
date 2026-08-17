@@ -280,7 +280,35 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain('if [ "${DRY_RUN:-true}" = "true" ]; then publish="false"');
     expect(workflowJob(releaseWorkflow, "npm-candidate")).not.toContain("needs.preflight.outputs.publish");
     expect(workflowJob(releaseWorkflow, "desktop-candidate")).not.toContain("needs.preflight.outputs.publish");
-    expect(workflowJob(releaseWorkflow, "publish-stable")).toContain("needs.preflight.outputs.publish == 'true'");
+    const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
+    expect(stablePublish).toContain("inputs.dry_run == false");
+    expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
+  });
+
+  it("routes real stable resumes through publish and fails closed on an incomplete chain", () => {
+    const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
+    const releaseResult = workflowJob(releaseWorkflow, "stable-release-result");
+    expect(stablePublish).toContain("github.event_name == 'workflow_dispatch'");
+    expect(stablePublish).toContain("inputs.mirror_recovery != true");
+    expect(stablePublish).toContain("inputs.dry_run == false");
+    expect(stablePublish).toContain("needs.preflight.outputs.channel == 'stable'");
+    expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
+    expect(releaseResult).toContain("always()");
+    expect(releaseResult).toContain("inputs.mirror_recovery != true");
+    expect(releaseResult).toContain("inputs.dry_run == false");
+    for (const jobName of [
+      "preflight",
+      "publish-stable",
+      "mirror-stable",
+      "stable-docs",
+      "stable-install",
+      "stable-surfaces",
+      "stable-cleanup",
+      "next-release-base",
+    ]) {
+      expect(releaseResult).toContain(`- ${jobName}`);
+    }
+    expect(releaseResult.match(/test \"\$result\" = \"success\"/g)).toHaveLength(1);
   });
 
   it("runs public install inside Release and requires stable docs before closeout", () => {
