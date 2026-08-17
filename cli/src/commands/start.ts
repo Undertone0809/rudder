@@ -31,6 +31,7 @@ import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError,
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
+export { parseChecksumFile } from "../checksum-manifest.js";
 export {
   buildReleaseMirrorAssetDownloadUrl, DEFAULT_DESKTOP_RELEASE_MIRROR_BASE_URL,
   DEFAULT_DESKTOP_RELEASE_REPO, downloadAsset,
@@ -42,7 +43,6 @@ export {
   type DesktopDownloadSource
 } from "../desktop-download.js";
 export type { GithubReleaseAsset } from "../desktop-download.js";
-export { parseChecksumFile } from "../checksum-manifest.js";
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 
@@ -1135,7 +1135,7 @@ function powershellQuote(value: string): string {
 }
 
 export function buildWindowsZipExtractCommand(zipPath: string, outputDir: string): { command: string; args: string[] } {
-  return { command: "tar.exe", args: ["-xf", zipPath, "-C", outputDir] };
+  return { command: "tar.exe", args: ["--force-local", "-xf", zipPath, "-C", outputDir] };
 }
 
 export function buildWindowsRobocopyMirrorCommand(sourcePath: string, destinationPath: string): { command: string; args: string[] } {

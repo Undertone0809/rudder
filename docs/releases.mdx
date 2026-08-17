@@ -18,6 +18,20 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="August 17, 2026" description="v0.7.9" tags={["Fixed"]}>
+
+## v0.7.9
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.9)
+
+This release restores Windows Desktop installation through the default `npx @rudderhq/cli@latest start` path.
+
+### Fixed
+
+- Fixed Windows x64 installation failing while extracting the downloaded Desktop archive because `tar.exe` treated the local drive-letter path as a remote address.
+
+</Update>
+
 <Update label="August 17, 2026" description="v0.7.8" tags={["Fixed"]}>
 
 ## v0.7.8

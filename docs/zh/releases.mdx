@@ -18,6 +18,20 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月17日" description="v0.7.9" tags={["问题修复"]}>
+
+## v0.7.9
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.9)
+
+这个版本恢复了通过默认命令 `npx @rudderhq/cli@latest start` 安装 Windows Desktop。
+
+### 问题修复
+
+- 修复 Windows x64 安装过程中，`tar.exe` 将本地盘符路径误判为远程地址，导致已下载并校验的 Desktop 压缩包解压失败的问题。
+
+</Update>
+
 <Update label="2026年8月17日" description="v0.7.8" tags={["问题修复"]}>
 
 ## v0.7.8

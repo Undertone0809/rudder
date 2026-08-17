@@ -694,7 +694,13 @@ describe("desktop start command helpers", () => {
   it("uses Windows-native archive and mirror commands for portable app installs", () => {
     expect(buildWindowsZipExtractCommand("C:\\Temp\\Rudder.zip", "C:\\Temp\\rudder-extract")).toEqual({
       command: "tar.exe",
-      args: ["-xf", "C:\\Temp\\Rudder.zip", "-C", "C:\\Temp\\rudder-extract"],
+      args: [
+        "--force-local",
+        "-xf",
+        "C:\\Temp\\Rudder.zip",
+        "-C",
+        "C:\\Temp\\rudder-extract",
+      ],
     });
     expect(buildWindowsRobocopyMirrorCommand("C:\\Temp\\win-unpacked", "C:\\Users\\test\\AppData\\Local\\Programs\\Rudder")).toEqual({
       command: "robocopy.exe",
@@ -716,6 +722,32 @@ describe("desktop start command helpers", () => {
     expect(isSuccessfulRobocopyExitCode(7)).toBe(true);
     expect(isSuccessfulRobocopyExitCode(8)).toBe(false);
     expect(isSuccessfulRobocopyExitCode(null)).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")("extracts a Desktop archive from a Windows drive-letter path", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-windows-archive-test."));
+    try {
+      const sourceDir = path.join(root, "source");
+      const archivePath = path.join(root, "Rudder.zip");
+      const outputDir = path.join(root, "output");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(path.join(sourceDir, "probe.txt"), "windows archive probe", "utf8");
+
+      const createResult = spawnSync(
+        "tar.exe",
+        ["--force-local", "-a", "-cf", archivePath, "-C", sourceDir, "."],
+        { encoding: "utf8" },
+      );
+      expect(createResult.status, createResult.stderr || createResult.stdout).toBe(0);
+
+      const extractCommand = buildWindowsZipExtractCommand(archivePath, outputDir);
+      const extractResult = spawnSync(extractCommand.command, extractCommand.args, { encoding: "utf8" });
+      expect(extractResult.status, extractResult.stderr || extractResult.stdout).toBe(0);
+      await expect(readFile(path.join(outputDir, "probe.txt"), "utf8")).resolves.toBe("windows archive probe");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("resolves the current CLI version from npm execution metadata", () => {

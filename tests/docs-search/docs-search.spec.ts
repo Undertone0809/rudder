@@ -145,9 +145,9 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       page.locator(`h2#${version}`).locator(
         "xpath=ancestor::div[contains(@class, 'update-container')]",
       );
-    await expect(page.locator("h2#v0-7-8")).toBeVisible();
-    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(39);
-    const latestUpdate = page.locator("h2#v0-7-8").locator(
+    await expect(page.locator("h2#v0-7-9")).toBeVisible();
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(40);
+    const latestUpdate = page.locator("h2#v0-7-9").locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
     await expect(latestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
@@ -158,6 +158,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       await expect(page.getByRole("button", { name: tag, exact: true })).toBeVisible();
     }
     await page.getByRole("button", { name: item.filterTag, exact: true }).click();
+    await expect(updateFor("v0-7-9")).toBeHidden();
     await expect(updateFor("v0-7-8")).toBeHidden();
     await expect(page.locator("h2#v0-7-7")).toBeVisible();
     await expect(updateFor("v0-7-5")).toBeHidden();
@@ -169,6 +170,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     await expect(page.locator("h2#v0-7-3")).toBeVisible();
 
     await page.getByRole("button", { name: item.statusTag, exact: true }).click();
+    await expect(updateFor("v0-7-9")).toBeHidden();
     await expect(updateFor("v0-7-8")).toBeHidden();
     await expect(updateFor("v0-7-7")).toBeHidden();
     await expect(updateFor("v0-7-5")).toBeVisible();
@@ -178,7 +180,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(item.route);
-    const mobileLatestUpdate = page.locator("h2#v0-7-8").locator(
+    const mobileLatestUpdate = page.locator("h2#v0-7-9").locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
     await expect(mobileLatestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
