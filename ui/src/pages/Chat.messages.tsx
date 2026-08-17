@@ -1084,6 +1084,7 @@ export function ProposalCard({
                       size="sm"
                       variant="outline"
                       className={cn("text-foreground", presentation === "side-panel" && "px-3 text-xs")}
+                      data-hover-style="inset"
                       data-testid="proposal-review-request-revision"
                       disabled={actionPending}
                       onClick={() => onApprovalAction(message.approval!.id, "requestRevision", message.id)}
@@ -1120,6 +1121,7 @@ export function ProposalCard({
                     size="sm"
                     variant="outline"
                     className="text-foreground"
+                    data-hover-style="inset"
                     disabled={actionPending}
                     onClick={() => onResolveOperationProposal(message.id, "requestRevision", decisionNote)}
                   >

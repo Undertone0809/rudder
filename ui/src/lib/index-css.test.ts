@@ -65,6 +65,9 @@ describe("index.css motion rules", () => {
     const lightOutlineCore = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]::before');
     const lightOutlineHover = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]:is(:hover, :focus-visible, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
     const lightOutlineActive = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]:is(:active, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
+    const lightInsetOutline = cssBlock(':root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]');
+    const lightInsetOutlineCore = cssBlock(':root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]::before');
+    const lightInsetOutlineInteraction = cssBlock(':root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
     const darkOutline = cssBlock('.dark .control-hover[data-variant="outline"]');
     const darkGhost = cssBlock('.dark .control-hover[data-variant="ghost"]');
     const destructive = cssBlock('.control-hover[data-variant="destructive"]');
@@ -76,6 +79,9 @@ describe("index.css motion rules", () => {
     expect(lightOutlineCore).toContain("content: none");
     expect(lightOutlineHover).toContain("var(--surface-elevated) 94%, black");
     expect(lightOutlineActive).toContain("var(--surface-elevated) 89%, black");
+    expect(lightInsetOutline).toContain("background: var(--surface-elevated)");
+    expect(lightInsetOutlineCore).toContain('content: ""');
+    expect(lightInsetOutlineInteraction).toContain("background: var(--surface-elevated)");
     expect(darkOutline).toContain("--control-hover-core: color-mix(in oklab, var(--surface-elevated) 84%, white)");
     expect(darkGhost).toContain("--control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white)");
     expect(destructive).toContain("--control-hover-core: var(--destructive)");

@@ -6144,6 +6144,19 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   --control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white);
 }
 
+/* Review actions can opt back into the shared inset treatment when they sit beside filled decisions. */
+:root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"] {
+  background: var(--surface-elevated);
+}
+
+:root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]::before {
+  content: "";
+}
+
+:root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"]) {
+  background: var(--surface-elevated);
+}
+
 /* Primary rail utilities keep their cradle fixed while the inset surface appears. */
 .control-hover.rail-utility-button {
   --rail-utility-shell: color-mix(in oklab, var(--sidebar-foreground) 8%, var(--sidebar));
