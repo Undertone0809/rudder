@@ -48,7 +48,7 @@ describe("Desktop development identity-core resolution", () => {
     const manifest = JSON.parse(readFileSync(path.join(desktopDir, "package.json"), "utf8"));
 
     expect(manifest.scripts.dev).toMatch(
-      /^pnpm --filter @rudderhq\/identity-core build && .*electron dist\/main\.js$/,
+      /^pnpm --filter @rudderhq\/identity-core build && .*stage:app-builder-toolchain && node scripts\/dev\.mjs$/,
     );
   });
 });
