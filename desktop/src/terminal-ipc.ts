@@ -1,8 +1,8 @@
-import { StringDecoder } from "node:string_decoder";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { resolveNativeProcessHostPath, spawnNativeProcessHost, type NativeProcessHost } from "./local-app-native-host.js";
 import { terminateOwnedProcessGroup } from "./local-apps-runtime.js";
