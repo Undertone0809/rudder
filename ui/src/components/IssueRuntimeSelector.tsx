@@ -389,6 +389,7 @@ export function IssueRuntimeSelector({
     const menuPanel = menuOpen && menuPosition && typeof document !== "undefined" ? createPortal(
       <div
         ref={menuRootRef}
+        data-issue-runtime-portal
         data-testid="issue-runtime-profile-panel"
         role="dialog"
         aria-label={`Model and thinking for ${agent.name}`}
@@ -483,6 +484,15 @@ export function IssueRuntimeSelector({
           <span className="min-w-0 flex-1 truncate">{`Agent default · ${configuredModel(agent)}`}</span>
           {selectedModel == null ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
         </button>
+        {adapterModelsQuery.error && options.length > 0 ? (
+          <div
+            data-testid="issue-runtime-model-discovery-error"
+            role="status"
+            className="px-2.5 py-2 text-xs text-muted-foreground"
+          >
+            Models unavailable; showing built-in defaults.
+          </div>
+        ) : null}
         {adapterModelsQuery.isPending ? (
           <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -529,6 +539,7 @@ export function IssueRuntimeSelector({
           submenuRootRef.current = node;
           submenuScrollRef(node);
         }}
+        data-issue-runtime-portal
         data-testid={`issue-runtime-${activeSubmenu}-options`}
         role="listbox"
         aria-label={activeSubmenu === "model" ? "Model options" : "Thinking options"}
@@ -636,6 +647,14 @@ export function IssueRuntimeSelector({
             <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading models...
             </div>
+          ) : adapterModelsQuery.error && options.length > 0 ? (
+            <p
+              data-testid="issue-runtime-model-discovery-error"
+              role="status"
+              className="px-2 py-2 text-xs text-muted-foreground"
+            >
+              Models unavailable; showing built-in defaults.
+            </p>
           ) : options.length > 0 ? options.map((model) => (
             <button
               key={model.id}
