@@ -143,7 +143,12 @@ describe("unified delivery workflows", () => {
     const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
     expect(releaseWorkflow).toContain("mirror_recovery:");
     expect(releaseWorkflow).toContain("recovery_tag:");
-    expect(releaseWorkflow).toContain("inputs.mirror_recovery != true");
+    expect(workflowJob(releaseWorkflow, "preflight")).toContain(
+      "github.event.inputs.mirror_recovery != 'true'",
+    );
+    expect(recovery).toContain("github.event.inputs.mirror_recovery == 'true'");
+    expect(releaseWorkflow).not.toContain("inputs.mirror_recovery != true");
+    expect(releaseWorkflow).not.toContain("inputs.mirror_recovery == true");
     expect(recovery).toContain("environment: desktop-release-mirror");
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("timeout-minutes: 240");
@@ -281,7 +286,8 @@ describe("unified delivery workflows", () => {
     expect(workflowJob(releaseWorkflow, "npm-candidate")).not.toContain("needs.preflight.outputs.publish");
     expect(workflowJob(releaseWorkflow, "desktop-candidate")).not.toContain("needs.preflight.outputs.publish");
     const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
-    expect(stablePublish).toContain("inputs.dry_run == false");
+    expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
+    expect(stablePublish).not.toContain("inputs.dry_run == false");
     expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
   });
 
@@ -289,13 +295,13 @@ describe("unified delivery workflows", () => {
     const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
     const releaseResult = workflowJob(releaseWorkflow, "stable-release-result");
     expect(stablePublish).toContain("github.event_name == 'workflow_dispatch'");
-    expect(stablePublish).toContain("inputs.mirror_recovery != true");
-    expect(stablePublish).toContain("inputs.dry_run == false");
-    expect(stablePublish).toContain("needs.preflight.outputs.channel == 'stable'");
+    expect(stablePublish).toContain("github.event.inputs.mirror_recovery != 'true'");
+    expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
+    expect(stablePublish).not.toContain("needs.preflight.outputs.channel");
     expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
     expect(releaseResult).toContain("always()");
-    expect(releaseResult).toContain("inputs.mirror_recovery != true");
-    expect(releaseResult).toContain("inputs.dry_run == false");
+    expect(releaseResult).toContain("github.event.inputs.mirror_recovery != 'true'");
+    expect(releaseResult).toContain("github.event.inputs.dry_run == 'false'");
     for (const jobName of [
       "preflight",
       "publish-stable",

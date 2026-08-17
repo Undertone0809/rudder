@@ -48,7 +48,7 @@ jobs:
   preflight:
     name: Lock source and preflight
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.mirror_recovery != true) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mirror_recovery != 'true') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -541,9 +541,8 @@ jobs:
       - candidate-complete
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      inputs.mirror_recovery != true &&
-      inputs.dry_run == false &&
-      needs.preflight.outputs.channel == 'stable'
+      github.event.inputs.mirror_recovery != 'true' &&
+      github.event.inputs.dry_run == 'false'
     permissions:
       actions: read
       contents: write
@@ -629,7 +628,7 @@ jobs:
 
   mirror-recovery:
     name: Recover stable Desktop release mirror in Tencent COS
-    if: github.event_name == 'workflow_dispatch' && inputs.mirror_recovery == true
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mirror_recovery == 'true'
     permissions:
       actions: read
       contents: write
@@ -1170,8 +1169,8 @@ jobs:
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
-      inputs.mirror_recovery != true &&
-      inputs.dry_run == false
+      github.event.inputs.mirror_recovery != 'true' &&
+      github.event.inputs.dry_run == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Require every stable release stage
