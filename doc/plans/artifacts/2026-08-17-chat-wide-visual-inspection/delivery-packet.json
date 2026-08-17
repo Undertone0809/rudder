@@ -1,0 +1,245 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "chat-wide-visual-actions-2026-08-17",
+  "status": "integration_pending",
+  "owner": {
+    "root_id": "root",
+    "agent_id": "codex-chat-wide-visual-actions"
+  },
+  "intent": {
+    "raw_request": "Implement Messenger wide visual media: keep prose readable, make Markdown images, Mermaid, and inline web visualizations use a wider lane, and expose hover/focus/touch actions to enlarge and copy the current rendered image as PNG without exposing source.",
+    "corrections": [
+      "Continue the implementation and close out after image verification.",
+      "Do not run the full repository build."
+    ],
+    "non_goals": [
+      "No database, Server API, persistence format, iframe sandbox, CSP, or inline-visual trust-boundary changes.",
+      "No full repository build or unrelated dirty-work cleanup."
+    ],
+    "authorization": "implementation"
+  },
+  "candidate": {
+    "branch": "main",
+    "source_ref": "commit:d273386905f23dc65b70ad5bcef06d0138b609fe",
+    "source_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+    "dirty_fingerprint": "sha256:bb76f42e1e318b9106137f1ce125a2068adeeebf90697bb67ac39b644cb5850c",
+    "changed_paths": [
+      "doc/plans/2026-08-17-chat-wide-visual-inspection.md",
+      "doc/plans/artifacts/2026-08-17-chat-wide-visual-inspection/delivery-packet.json",
+      "doc/product/domains/collaboration/chat-messenger-im.md",
+      "tests/e2e/chat-inline-visual.spec.ts",
+      "tests/e2e/chat-mermaid-stability.spec.ts",
+      "ui/src/components/InspectableImage.tsx",
+      "ui/src/components/MarkdownBody.test.tsx",
+      "ui/src/components/MarkdownBody.tsx",
+      "ui/src/components/VisualMediaActions.test.tsx",
+      "ui/src/components/VisualMediaActions.tsx",
+      "ui/src/index.css",
+      "ui/src/lib/image-actions.ts",
+      "ui/src/lib/rendered-visual-image.test.ts",
+      "ui/src/lib/rendered-visual-image.ts",
+      "ui/src/pages/Chat.messages.test.tsx",
+      "ui/src/pages/Chat.messages.tsx",
+      "ui/src/pages/ChatInlineVisual.test.tsx",
+      "ui/src/pages/ChatInlineVisual.tsx"
+    ],
+    "build": {
+      "id": "focused-ui-vitest-static-ui-e2e-official-pg-2026-08-17",
+      "source_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe"
+    },
+    "runtime": {
+      "id": "e2e:chat-wide-visual-verifier-officialpg-20260817; static-ui; 127.0.0.1:4062; postgres18.4",
+      "source_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe"
+    },
+    "organization_data": {
+      "organization_id": "1f04ba0e-1858-4ee2-a1ce-35ff08bb005f",
+      "data_id": "chat-wide-visual-verifier-officialpg-20260817"
+    },
+    "workload_fixture": "runtime-neutral-inline-visual-with-mermaid-and-markdown-image",
+    "budget_lease": {
+      "id": "current-task",
+      "fingerprint": "chat-wide-visual-actions",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "2",
+      "fingerprint": "chat-wide-visual-actions-wide-lane-preview-copy-bounded-png-v2",
+      "criteria": [
+        "Assistant prose remains near 72ch while Markdown images, Mermaid, and inline visuals use a responsive lane capped at 72rem.",
+        "Preview and Copy Image actions are available on hover, keyboard focus, and touch, with accessible labels, tooltips, and pending/error feedback.",
+        "Mermaid and inline visuals capture the current rendered state as PNG at no more than 2x density and 4096px per edge; source is never exposed.",
+        "Preview closes with Escape; inline details state, refresh, fork, source deletion, and mobile layout remain usable.",
+        "Ordinary Markdown image preview and Copy Image behavior remains available."
+      ],
+      "state_inventory": [
+        "Default: readable prose and wide visual media are visible; controls are deferred until hover/focus on pointer devices.",
+        "Touch/focus: preview and Copy Image icon buttons are visible and keyboard reachable.",
+        "Preview: current PNG opens in the shared image preview; Escape closes without remounting the visual.",
+        "Copy pending/success/failure: button disables while pending, toast reports success or failure, rendered visual remains unchanged.",
+        "Inline details expanded/collapsed: capture uses the current iframe size and details state.",
+        "Refresh/fork/source deletion: persisted visual remains renderable without exposing HTML source."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "candidate_fingerprint": "sha256:bb76f42e1e318b9106137f1ce125a2068adeeebf90697bb67ac39b644cb5850c",
+      "source_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+      "build_id": "focused-ui-vitest-static-ui-e2e-official-pg-2026-08-17",
+      "runtime_id": "e2e:chat-wide-visual-verifier-officialpg-20260817; static-ui; 127.0.0.1:4062; postgres18.4",
+      "data_id": "chat-wide-visual-verifier-officialpg-20260817",
+      "packet_version": "2"
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "candidate_fingerprint": "sha256:bb76f42e1e318b9106137f1ce125a2068adeeebf90697bb67ac39b644cb5850c",
+      "source_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+      "build_id": "focused-ui-vitest-static-ui-e2e-official-pg-2026-08-17",
+      "runtime_id": "e2e:chat-wide-visual-verifier-officialpg-20260817; static-ui; 127.0.0.1:4062; postgres18.4",
+      "data_id": "chat-wide-visual-verifier-officialpg-20260817",
+      "packet_version": "2"
+    },
+    "final_review": {
+      "verdict": "accept",
+      "candidate_fingerprint": "sha256:bb76f42e1e318b9106137f1ce125a2068adeeebf90697bb67ac39b644cb5850c",
+      "source_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+      "build_id": "focused-ui-vitest-static-ui-e2e-official-pg-2026-08-17",
+      "runtime_id": "e2e:chat-wide-visual-verifier-officialpg-20260817; static-ui; 127.0.0.1:4062; postgres18.4",
+      "data_id": "chat-wide-visual-verifier-officialpg-20260817",
+      "packet_version": "2"
+    }
+  },
+  "feature_evidence": {
+    "focused_vitest": {
+      "command": "node node_modules/.pnpm/vitest@3.2.7_@types+debug@4.1.13_@types+node@25.5.0_jiti@2.6.1_jsdom@28.1.0_@noble+hashes@2.0_e3tbcvhmarrv5aj33r5zllbrp4/node_modules/vitest/vitest.mjs run --config ui/vitest.config.ts ui/src/components/VisualMediaActions.test.tsx ui/src/lib/rendered-visual-image.test.ts ui/src/components/MarkdownBody.test.tsx ui/src/pages/ChatInlineVisual.test.tsx --exclude '.worktrees/**' --exclude 'node_modules/**' --reporter=dot",
+      "result": "PASS: 4 files, 122 tests; rerun on frozen exact candidate d2733869 with the scoped fingerprint bb76f42e"
+    },
+    "production_e2e_author_receipt": {
+      "command": "RUDDER_E2E_RUN_ID=chat-wide-visual-frozen-officialpg-ui-20260817 RUDDER_E2E_HOME=/tmp/rudder-chat-wide-visual-frozen-officialpg-ui-20260817 RUDDER_E2E_PRODUCTION_UI=1 RUDDER_INLINE_VIS_DARK_SCREENSHOT=/tmp/rudder-chat-wide-inline-dark-frozen.png pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/chat-inline-visual.spec.ts --reporter=line",
+      "result": "PASS: 1 passed (1.6m) on frozen exact candidate; official PostgreSQL 18.4 provider used for isolated runtime",
+      "runtime": "playwright-chat-wide-visual-frozen-officialpg-ui-20260817 / 127.0.0.1:3845 / PostgreSQL 18.4 55984",
+      "coverage": [
+        "wide media is wider than readable prose",
+        "hover and keyboard preview/copy actions",
+        "current iframe details state captured as PNG",
+        "PNG clipboard payload",
+        "refresh and mobile layout",
+        "fork, fork deletion, and source deletion durability",
+        "no HTML/source exposure"
+      ]
+    },
+    "screenshots": [
+      {
+        "path": "/tmp/rudder-chat-wide-inline.png",
+        "theme": "light",
+        "viewport": "1440x900",
+        "sha256": "48cad2408445f0ea39271596b1bcc7778f77182febc7ce3f2ecea4a1abffd606"
+      },
+      {
+        "path": "/tmp/rudder-chat-wide-inline-mobile.png",
+        "theme": "light",
+        "viewport": "390x844",
+        "sha256": "71187c5687b966e713d6ccdcdbf8c0fdb759c30c9f84c09482c1f905fc02a402"
+      },
+      {
+        "path": "/tmp/rudder-chat-wide-inline-dark-frozen.png",
+        "theme": "dark",
+        "viewport": "1440x900",
+        "sha256": "1c96509a28b73e8d6f116134f59df18c7c78e40925c9c4cd3283730b5aa84f66"
+      }
+    ],
+    "static_assets": {
+      "ui/dist/assets/index-Bd5DJO3M.js": "c2db935b28a319e27c6ba21fb4c369b03c6ffced251b9753de2aef5b41d66703",
+      "ui/dist/assets/index-CQxgA0-q.css": "fdc221db74144b576a2494ec6f2755bce290e5c55596c34bdec1a547abdadf2e"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      {
+        "kind": "source_sha_advanced_outside_scoped_paths",
+        "from": "e7362c443c1708ccfc8e78c47a40360fae67dc8f",
+        "to": "3c6216d0c3e11af3eb5beaf95951998ca14bf1ec",
+        "commit": "fix(ui): surface agent loading failures",
+        "effect": "Prior packet and production E2E receipt invalidated; scoped fingerprint unchanged."
+      },
+      {
+        "kind": "source_sha_advanced_outside_scoped_paths",
+        "from": "3c6216d0c3e11af3eb5beaf95951998ca14bf1ec",
+        "to": "331e1d2ab2c374513b5bbac9fbf4e15f0d5186c2",
+        "commit": "fix: prevent chat streaming list refresh flicker",
+        "effect": "Prior packet receipt invalidated; focused Vitest rerun passed and scoped fingerprint remained unchanged."
+      },
+      {
+        "kind": "freeze_to_isolated_worktree",
+        "from": "331e1d2ab2c374513b5bbac9fbf4e15f0d5186c2",
+        "to": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+        "commit": "detached frozen candidate",
+        "effect": "Shared main write activity is excluded from this candidate; staged task scope is now isolated."
+      }
+    ],
+    "invalidated_receipts": [
+      "reviewer-stage-3c6216d0c",
+      "production-e2e-chat-wide-visual-prod-dark-20260817-source-3c6216d0c"
+    ]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/codex/chat-wide-visual-actions",
+    "base_sha": "060de7f0226a2dd9a0202ca987e9557aec78db3c",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "96637c1a57400a3dd1e97c9e49cac337a1ec3b88",
+    "branch_refs": [
+      "refs/heads/main",
+      "refs/heads/codex/chat-wide-visual-actions",
+      "refs/remotes/origin/main"
+    ],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": null,
+    "patch_tree_sha": "sha256:bb76f42e1e318b9106137f1ce125a2068adeeebf90697bb67ac39b644cb5850c",
+    "expected_old_sha": "d273386905f23dc65b70ad5bcef06d0138b609fe",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": false,
+    "unrelated_dirty_paths": [
+      "existing user-owned dirty files outside the scoped paths",
+      ".git/sequencer active cherry-pick state"
+    ],
+    "index_fingerprint_before": "not-captured",
+    "index_fingerprint_after": "not-captured",
+    "worktree_fingerprint_before": "not-captured",
+    "worktree_fingerprint_after": "not-captured",
+    "unrelated_paths_preserved": true,
+    "index_preserved": false,
+    "evidence": [
+      "No reset, stash, clean, cherry-pick abort, or checkout operation was run.",
+      "Only the task packet and scoped test evidence were added or changed by this task."
+    ]
+  },
+  "omitted_checks": [
+    {
+      "check": "pnpm build",
+      "reason": "Explicitly omitted per the user's latest correction; focused UI tests and feature E2E were used instead."
+    },
+    {
+      "check": "full repository lint, recursive typecheck, and test suite",
+      "reason": "Not run for the requested image-verification closeout; unrelated dirty work and an active cherry-pick remain preserved."
+    }
+  ],
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

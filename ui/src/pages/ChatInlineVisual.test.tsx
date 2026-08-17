@@ -245,6 +245,10 @@ describe("ChatInlineVisualContent", () => {
     expect(iframe.getAttribute("csp")).toBe(INLINE_VISUAL_CSP);
     expect(iframe.hasAttribute("credentialless")).toBe(true);
     expect(iframe.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(iframe.closest(".rudder-inline-visual.rudder-visual-media")).not.toBeNull();
+    expect(view.querySelectorAll('[data-testid="inline-visual-actions"] button')).toHaveLength(2);
+    expect(view.querySelector('[aria-label="Open image preview"]')).not.toBeNull();
+    expect(view.querySelector('[aria-label="Copy Image"]')).not.toBeNull();
     expect(srcdoc).toContain(INLINE_VISUAL_CSP);
     expect(srcdoc).toContain("default-src 'none'");
     expect(srcdoc).toContain("script-src 'none'");

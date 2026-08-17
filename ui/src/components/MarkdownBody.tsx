@@ -14,6 +14,7 @@ import {
 } from "../lib/markdown-normalize";
 import { mentionChipInlineStyle, mentionChipNavigationPath, parseMentionChipHref, stripMentionChipLabelPrefix, type ParsedMentionChip } from "../lib/mention-chips";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
+import { captureSvgElementAsPng } from "../lib/rendered-visual-image";
 import {
   formatSkillReferenceDisplayLabel,
   parseSkillReference,
@@ -28,6 +29,7 @@ import { InspectableImage } from "./InspectableImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
+import { CapturedVisualMediaActions } from "./VisualMediaActions";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 interface MarkdownBodyProps {
@@ -41,6 +43,8 @@ interface MarkdownBodyProps {
   enableImagePreview?: boolean;
   copyMarkdownOnCopy?: boolean;
   enableCodeBlockCopy?: boolean;
+  mediaLayout?: "default" | "wide";
+  mediaActions?: "inspect" | "preview-copy";
   /** Raw-source offset when this body is a slice of a larger persisted message. */
   sourceOffsetBase?: number;
 }
@@ -774,8 +778,17 @@ function markdownSourceForSelection(root: HTMLElement, selection: Selection, sou
   return source.slice(start, end);
 }
 
-const MermaidDiagramBlock = memo(function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
+const MermaidDiagramBlock = memo(function MermaidDiagramBlock({
+  source,
+  darkMode,
+  mediaActions,
+}: {
+  source: string;
+  darkMode: boolean;
+  mediaActions: "inspect" | "preview-copy";
+}) {
   const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const containerRef = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -811,8 +824,16 @@ const MermaidDiagramBlock = memo(function MermaidDiagramBlock({ source, darkMode
     };
   }, [darkMode, renderId, source]);
 
+  const capture = useCallback(() => {
+    const svgElement = containerRef.current?.querySelector("svg");
+    if (!(svgElement instanceof SVGSVGElement)) {
+      throw new Error("The Mermaid diagram is not ready to capture.");
+    }
+    return captureSvgElementAsPng(svgElement);
+  }, []);
+
   return (
-    <div className="rudder-mermaid">
+    <div ref={containerRef} className="rudder-mermaid rudder-markdown-media rudder-visual-media">
       {svg ? (
         <div dangerouslySetInnerHTML={{ __html: svg }} />
       ) : (
@@ -820,14 +841,35 @@ const MermaidDiagramBlock = memo(function MermaidDiagramBlock({ source, darkMode
           <p className={cn("rudder-mermaid-status", error && "rudder-mermaid-status-error")}>
             {error ? `Unable to render Mermaid diagram: ${error}` : "Rendering Mermaid diagram..."}
           </p>
-          <pre className="rudder-mermaid-source">
-            <code className="language-mermaid">{source}</code>
-          </pre>
+          {mediaActions === "inspect" ? (
+            <pre className="rudder-mermaid-source">
+              <code className="language-mermaid">{source}</code>
+            </pre>
+          ) : null}
         </>
       )}
+      {svg && mediaActions === "preview-copy" ? (
+        <CapturedVisualMediaActions
+          capture={capture}
+          name="Mermaid diagram"
+          previewTestId="mermaid-image-preview-dialog"
+          testId="mermaid-visual-actions"
+        />
+      ) : null}
     </div>
   );
 });
+
+function isImageOnlyParagraph(node: unknown) {
+  if (!node || typeof node !== "object" || !("children" in node)) return false;
+  const children = (node as { children?: Array<{ type?: string; tagName?: string; value?: string }> }).children;
+  if (!Array.isArray(children)) return false;
+  return children.some((child) => child.type === "element" && child.tagName === "img")
+    && children.every((child) => (
+      (child.type === "element" && child.tagName === "img")
+      || (child.type === "text" && !child.value?.trim())
+    ));
+}
 
 function CopyableCodeBlock({
   children,
@@ -899,6 +941,8 @@ export function MarkdownBody({
   enableImagePreview = true,
   copyMarkdownOnCopy = false,
   enableCodeBlockCopy = false,
+  mediaLayout = "default",
+  mediaActions = "inspect",
   sourceOffsetBase = 0,
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
@@ -1011,7 +1055,13 @@ export function MarkdownBody({
   const renderPre = useCallback(({ node, children: preChildren, ...preProps }: ComponentProps<"pre"> & ExtraProps) => {
     const mermaidSource = extractMermaidSource(preChildren);
     if (mermaidSource) {
-      return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
+      return (
+        <MermaidDiagramBlock
+          source={mermaidSource}
+          darkMode={resolvedTheme === "dark"}
+          mediaActions={mediaActions}
+        />
+      );
     }
     const sourceAttributes = sourceAttributesForNode(node);
     const codeBlockLanguage = extractCodeBlockLanguage(preChildren);
@@ -1048,10 +1098,16 @@ export function MarkdownBody({
       );
     }
     return <pre {...preProps} {...sourceAttributes}>{preChildren}</pre>;
-  }, [enableCodeBlockCopy, resolvedTheme, sourceAttributesForNode]);
+  }, [enableCodeBlockCopy, mediaActions, resolvedTheme, sourceAttributesForNode]);
   const components: Components = {
     p: ({ node, children: paragraphChildren, ...paragraphProps }) => (
-      <p {...paragraphProps} {...sourceAttributesForNode(node)}>{paragraphChildren}</p>
+      <p
+        {...paragraphProps}
+        className={cn(paragraphProps.className, isImageOnlyParagraph(node) && "rudder-markdown-media")}
+        {...sourceAttributesForNode(node)}
+      >
+        {paragraphChildren}
+      </p>
     ),
     h1: ({ node, children: headingChildren, ...headingProps }) => (
       <h1 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h1>
@@ -1306,6 +1362,8 @@ export function MarkdownBody({
           name={alt?.trim() || "Markdown image"}
           previewTestId="markdown-body-image-preview-dialog"
           previewTitleFallback="Image preview"
+          mediaActions={mediaActions}
+          wrapperClassName={mediaActions === "preview-copy" ? "rudder-visual-media" : undefined}
         />
       );
     }
@@ -1323,6 +1381,7 @@ export function MarkdownBody({
       <div
         className={cn(
           "rudder-markdown prose prose-sm max-w-none break-words overflow-hidden",
+          mediaLayout === "wide" && "rudder-markdown--wide",
           resolvedTheme === "dark" && "prose-invert",
           className,
         )}

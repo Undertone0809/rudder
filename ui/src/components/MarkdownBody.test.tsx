@@ -598,6 +598,38 @@ describe("MarkdownBody", () => {
     expect(container.querySelector(".rudder-mermaid-source")).toBeNull();
   });
 
+  it("never exposes Mermaid source while Messenger rendering is pending or failed", async () => {
+    let rejectRender: (reason?: unknown) => void = () => undefined;
+    mermaidMocks.render.mockReturnValueOnce(new Promise((_, reject) => {
+      rejectRender = reject;
+    }));
+
+    const source = "graph TD\n  Private[Internal source] --> Result";
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody mediaLayout="wide" mediaActions="preview-copy">
+          {`\`\`\`mermaid\n${source}\n\`\`\``}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector(".rudder-mermaid-source")).toBeNull();
+    expect(container.textContent).not.toContain("Internal source");
+
+    await act(async () => {
+      rejectRender(new Error("Render failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Unable to render Mermaid diagram");
+    expect(container.querySelector(".rudder-mermaid-source")).toBeNull();
+    expect(container.textContent).not.toContain("Internal source");
+  });
+
   it("renders markdown images without a resolver", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -606,6 +638,54 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
+  });
+
+  it("shows an explicit fallback when a markdown image fails to load", async () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Missing screenshot](/api/assets/missing/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    await act(async () => {
+      image?.dispatchEvent(new Event("error"));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('[role="img"][aria-label="Missing screenshot unavailable"]')).not.toBeNull();
+    expect(container.textContent).toContain("Image unavailable");
+  });
+
+  it("separates wide visual media from prose and exposes preview-copy actions", async () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody mediaLayout="wide" mediaActions="preview-copy">
+          {"Readable prose.\n\n![Architecture](/api/assets/architecture/content)\n\n```mermaid\ngraph TD\n  A --> B\n```"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const markdown = container.querySelector(".rudder-markdown");
+    expect(markdown?.classList.contains("rudder-markdown--wide")).toBe(true);
+    const proseParagraph = Array.from(markdown?.children ?? [])
+      .find((child) => child.textContent?.includes("Readable prose"));
+    expect(proseParagraph).toBeTruthy();
+    expect(proseParagraph?.classList.contains("rudder-markdown-media")).toBe(false);
+    expect(container.querySelector("p.rudder-markdown-media img")).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="markdown-image-actions"] button')).toHaveLength(2);
+    expect(container.querySelector('[aria-label="Open image preview"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Copy Image"]')).not.toBeNull();
+    expect(container.querySelector(".rudder-inspectable-image-overlay")).toBeNull();
+    expect(container.querySelector(".rudder-mermaid.rudder-markdown-media")).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="mermaid-visual-actions"] button')).toHaveLength(2);
   });
 
   it("renders library document mentions as live Library links", () => {

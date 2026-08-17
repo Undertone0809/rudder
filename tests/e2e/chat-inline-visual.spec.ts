@@ -99,6 +99,31 @@ process.stdin.on("end", () => {
 }
 
 test("runtime-neutral visual stays inside Chat and outside manifest and Library", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const darkScreenshotPath = process.env.RUDDER_INLINE_VIS_DARK_SCREENSHOT?.trim();
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "__rudderCopiedImage", {
+      configurable: true,
+      value: null,
+      writable: true,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        copyImage: async (payload: { filename: string; contentType: string; base64: string }) => {
+          (window as typeof window & { __rudderCopiedImage: typeof payload | null }).__rudderCopiedImage = payload;
+        },
+      },
+    });
+    if (window.location.origin !== "null" && window.localStorage.getItem("rudder.captureInlineVisualDark") === "true") {
+      window.localStorage.setItem("rudder.theme", "dark");
+    }
+  });
+  if (darkScreenshotPath) {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rudder.captureInlineVisualDark", "true");
+    });
+  }
   const stubPath = await createRuntimeNeutralVisualProcessStub();
   const orgResponse = await page.request.post("/api/orgs", {
     data: { name: `Inline-Visual-V1-${Date.now()}` },
@@ -121,7 +146,7 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
-  await page.goto(`/chat?agentId=${agent.id}`);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -141,6 +166,63 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
   await expect(frame.locator("#budget-used")).toHaveText("$4.6k");
   await expect(frame.getByRole("img", { name: "Weekly completed loops: Jul 6, 18; Jul 13, 24; Jul 20, 21; Jul 27, 30." })).toBeVisible();
   await expect(frame.locator("script, link, img, iframe, object, form, input, button, a")).toHaveCount(0);
+
+  const visual = assistant.locator(".rudder-inline-visual");
+  const prose = assistant.locator(".rudder-markdown > p").first();
+  await expect.poll(async () => {
+    const visualBox = await visual.boundingBox();
+    const proseBox = await prose.boundingBox();
+    return visualBox && proseBox ? visualBox.width - proseBox.width : 0;
+  }).toBeGreaterThan(150);
+
+  await visual.hover();
+  const visualActions = visual.getByTestId("inline-visual-actions");
+  const previewButton = visualActions.getByRole("button", { name: "Open image preview" });
+  const copyButton = visualActions.getByRole("button", { name: "Copy Image" });
+  await expect(previewButton).toBeVisible();
+  await expect(copyButton).toBeVisible();
+  const collapsedHeight = await iframe.evaluate((element) => element.clientHeight);
+  await frame.locator("summary").click();
+  await expect(frame.locator("details")).toHaveAttribute("open", "");
+  await expect.poll(() => iframe.evaluate((element) => element.clientHeight)).toBeGreaterThan(collapsedHeight);
+  const expandedSize = await iframe.evaluate((element) => ({
+    height: element.clientHeight,
+    width: element.clientWidth,
+  }));
+  await previewButton.focus();
+  await expect(previewButton).toBeFocused();
+  await expect(visualActions).toBeVisible();
+  await previewButton.press("Enter");
+  const preview = page.getByTestId("inline-visual-image-preview-dialog");
+  await expect(preview).toBeVisible();
+  const previewImage = preview.locator("img");
+  await expect(previewImage).toHaveAttribute("src", /^data:image\/png;base64,/);
+  await expect.poll(() => previewImage.evaluate((image) => (
+    image.naturalHeight > 0 && image.naturalWidth > 0
+  ))).toBe(true);
+  const previewSize = await previewImage.evaluate((image) => ({
+    height: image.naturalHeight,
+    width: image.naturalWidth,
+  }));
+  expect(previewSize.height).toBeGreaterThanOrEqual(expandedSize.height);
+  expect(previewSize.height).toBeLessThanOrEqual(expandedSize.height * 2 + 2);
+  expect(previewSize.width).toBeGreaterThanOrEqual(expandedSize.width);
+  expect(previewSize.width).toBeLessThanOrEqual(expandedSize.width * 2 + 2);
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(frame.locator("details")).toHaveAttribute("open", "");
+
+  await copyButton.focus();
+  await expect(copyButton).toBeFocused();
+  await copyButton.press("Space");
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & {
+      __rudderCopiedImage?: { filename: string; contentType: string; base64: string } | null;
+    }
+  ).__rudderCopiedImage)).toMatchObject({
+    filename: "inline-visual-1.png",
+    contentType: "image/png",
+  });
 
   const chatId = new URL(page.url()).pathname.split("/").pop()!;
   const messagesResponse = await page.request.get(`/api/chats/${chatId}/messages?includeTranscript=true`);
@@ -211,6 +293,7 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(reopenedAssistant).toBeVisible();
+  await expect(reopenedAssistant.getByTestId("inline-visual-actions")).toBeVisible();
   await expect.poll(() => reopenedFrame.locator(".report-grid").evaluate((element) =>
     getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
   )).toBe(1);
@@ -220,6 +303,15 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
       fullPage: false,
       animations: "disabled",
     });
+  }
+  if (darkScreenshotPath) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => window.localStorage.setItem("rudder.theme", "dark"));
+    await page.reload();
+    const darkAssistant = page.getByTestId("chat-assistant-message").last();
+    await expect(darkAssistant.locator("iframe").contentFrame().locator("#completed-total")).toHaveText("93", { timeout: 15_000 });
+    await darkAssistant.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: darkScreenshotPath, fullPage: false, animations: "disabled" });
   }
 
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -231,7 +323,7 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
   const forkManifestResponse = await page.request.get(`/api/chats/${firstFork.id}/work-manifest`);
   expect(forkManifestResponse.ok()).toBe(true);
   expect(await forkManifestResponse.json()).toMatchObject({ totalCount: 0, outputs: [] });
-  await page.goto(`/chat/${firstFork.id}`);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${firstFork.id}`);
   const forkedAssistant = page.getByTestId("chat-assistant-message").filter({
     hasText: "Agent operations snapshot.",
   }).last();
@@ -240,7 +332,7 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
 
   const deleteForkResponse = await page.request.delete(`/api/chats/${firstFork.id}`);
   expect(deleteForkResponse.ok()).toBe(true);
-  await page.goto(`/chat/${chatId}`);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
   await expect(page.getByTestId("chat-assistant-message").last().locator("iframe").contentFrame().locator("#completed-total"))
     .toHaveText("93", { timeout: 15_000 });
 
@@ -251,7 +343,7 @@ test("runtime-neutral visual stays inside Chat and outside manifest and Library"
   const secondFork = await secondForkResponse.json() as { id: string };
   const deleteSourceResponse = await page.request.delete(`/api/chats/${chatId}`);
   expect(deleteSourceResponse.ok()).toBe(true);
-  await page.goto(`/chat/${secondFork.id}`);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${secondFork.id}`);
   await expect(page.getByTestId("chat-assistant-message").last().locator("iframe").contentFrame().locator("#completed-total"))
     .toHaveText("93", { timeout: 15_000 });
 });

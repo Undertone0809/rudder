@@ -1283,10 +1283,21 @@ placement, sanitization, iframe creation, and lifecycle.
    controls, links, external resources, storage, network, parent bridge, nested
    frames, and credential access remain unavailable. Native `<details>` is the
    only stateful interaction.
-8. Failed, stopped, timed-out, malformed, excessive, or incomplete publication
+8. In Messenger, ordinary assistant prose remains in the readable text column,
+   while Markdown images, Mermaid diagrams, and trusted inline visuals may use
+   the responsive wide-media lane. Hover, keyboard focus, and touch access
+   expose preview and Copy Image actions without exposing Markdown, Mermaid, or
+   HTML source.
+9. Preview and Copy Image capture the current rendered visual as a bounded PNG.
+   Mermaid captures the complete rendered SVG; an inline visual captures its
+   current iframe size and native `<details>` state. Capture uses at most 2x
+   pixel density and a 4096px maximum edge.
+10. Capture or clipboard failure reports non-destructive feedback and leaves the
+   rendered message and visual state unchanged.
+11. Failed, stopped, timed-out, malformed, excessive, or incomplete publication
    discards private fragment bytes and shows only an unavailable presentation;
    no internal source download is offered.
-9. Attachment/object/message failures use compensating cleanup, and normal Chat
+12. Attachment/object/message failures use compensating cleanup, and normal Chat
    deletion releases unreferenced backing assets.
 
 ## Decision Table
@@ -1308,9 +1319,12 @@ attachment-management step is required.
 
 ## Operator-Visible Output
 
-The completed answer shows surrounding Markdown and the inline visual. The raw
-envelope, canonical placement, backing attachment, and source download remain
-hidden. An unavailable visual shows a compact non-download fallback.
+The completed answer shows surrounding Markdown in a readable text column and
+the inline visual in a responsive wide-media lane. The operator can open the
+current rendering in the shared image preview or copy it as PNG. The raw
+envelope, canonical placement, backing attachment, HTML/Markdown/Mermaid source,
+and source download remain hidden. An unavailable visual shows a compact
+non-download fallback.
 
 ## Persisted Evidence
 
@@ -1348,6 +1362,8 @@ hidden. An unavailable visual shows a compact non-download fallback.
 - The backing HTML is neither Library content nor work production evidence.
 - Arbitrary JavaScript web apps, network access, and iframe authoring are not
   supported by this contract.
+- Visual preview and copying operate only on the current rendered pixels and do
+  not create a source-view or source-copy path.
 - Legacy Codex capture is compatibility input, not the canonical authoring path.
 
 ## Drift Boundaries

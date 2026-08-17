@@ -758,6 +758,8 @@ describe("assistant chat message rendering", () => {
       '[data-testid="chat-assistant-message"] > [data-message-highlight-target="true"]',
     );
     expect(messageColumn?.classList.contains("mx-auto")).toBe(false);
+    expect(messageColumn?.classList.contains("max-w-[72rem]")).toBe(true);
+    expect(container.querySelector(".rudder-markdown--wide")).not.toBeNull();
     expect(
       container.querySelector('[data-annotation-surface="assistant_body"]')?.classList.contains("md:ml-6"),
     ).toBe(false);

@@ -1,6 +1,8 @@
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { CapturedVisualMediaActions } from "@/components/VisualMediaActions";
 import { useTheme } from "@/context/ThemeContext";
 import { CHAT_ANNOTATION_IGNORE_ATTRIBUTE } from "@/lib/chat-response-annotation-selection";
+import { captureInlineVisualDocumentAsPng } from "@/lib/rendered-visual-image";
 import {
   MAX_RUDDER_INLINE_VISUAL_FRAGMENT_BYTES,
   chatInlineVisualMappingsFromStructuredPayload,
@@ -468,22 +470,41 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
     resizeObserverRef.current = observer;
   };
 
+  const capture = () => {
+    const iframe = iframeRef.current;
+    const frameDocument = iframe?.contentDocument;
+    if (!iframe || !frameDocument) throw new Error("The visual is not ready to capture.");
+    return captureInlineVisualDocumentAsPng(
+      frameDocument,
+      iframe.clientWidth,
+      iframe.clientHeight,
+    );
+  };
+
   if (failed) return <InlineVisualFallback />;
   if (!srcDoc) return <div className="my-2 h-32 animate-pulse rounded-md bg-muted/25" aria-label="Loading visual artifact" />;
   return (
-    <iframe
-      ref={iframeRef}
-      {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
-      className="my-2 block w-full border-0 bg-transparent"
-      title={attachment.originalFilename ?? "Visual artifact"}
-      sandbox="allow-same-origin"
-      {...({ csp: INLINE_VISUAL_CSP, credentialless: "" } as Record<string, string>)}
-      referrerPolicy="no-referrer"
-      srcDoc={srcDoc}
-      style={{ height }}
-      onError={() => setFailed(true)}
-      onLoad={handleFrameLoad}
-    />
+    <div className="rudder-inline-visual rudder-visual-media my-2">
+      <iframe
+        ref={iframeRef}
+        {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
+        className="block w-full border-0 bg-transparent"
+        title={attachment.originalFilename ?? "Visual artifact"}
+        sandbox="allow-same-origin"
+        {...({ csp: INLINE_VISUAL_CSP, credentialless: "" } as Record<string, string>)}
+        referrerPolicy="no-referrer"
+        srcDoc={srcDoc}
+        style={{ height }}
+        onError={() => setFailed(true)}
+        onLoad={handleFrameLoad}
+      />
+      <CapturedVisualMediaActions
+        capture={capture}
+        name={attachment.originalFilename ?? "Visual artifact"}
+        previewTestId="inline-visual-image-preview-dialog"
+        testId="inline-visual-actions"
+      />
+    </div>
   );
 }
 

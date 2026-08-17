@@ -4405,6 +4405,90 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
   margin-bottom: 0;
 }
 
+.rudder-markdown--wide > :not(.rudder-markdown-media) {
+  max-width: min(72ch, 100%);
+}
+
+.rudder-markdown--wide > .rudder-markdown-media,
+.rudder-inline-visual {
+  width: 100%;
+  max-width: 72rem;
+}
+
+.rudder-visual-media {
+  position: relative;
+  max-width: 100%;
+}
+
+.rudder-visual-media-actions {
+  position: absolute;
+  z-index: 5;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: var(--radius-sm);
+  background: rgb(18 18 20 / 0.78);
+  color: white;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -14px rgb(0 0 0 / 0.8);
+  backdrop-filter: blur(8px);
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-enter);
+}
+
+.rudder-visual-media:hover > .rudder-visual-media-actions,
+.rudder-visual-media:focus-within > .rudder-visual-media-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.rudder-visual-media-action {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: white;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.rudder-visual-media-action:hover,
+.rudder-visual-media-action:focus-visible {
+  background: rgb(255 255 255 / 0.16);
+  outline: 2px solid rgb(255 255 255 / 0.72);
+  outline-offset: -2px;
+}
+
+.rudder-visual-media-action:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .rudder-visual-media-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rudder-visual-media-actions {
+    transform: none;
+    transition-property: opacity;
+  }
+}
+
 .rudder-markdown :where(p, ul, ol, blockquote, pre, .rudder-markdown-table-scroll) {
   margin-top: 0.7rem;
   margin-bottom: 0.7rem;
@@ -5193,9 +5277,43 @@ a.rudder-skill-token[href] {
   cursor: zoom-in;
 }
 
+.rudder-inspectable-image-fallback {
+  display: inline-flex;
+  min-width: 9rem;
+  min-height: 3.5rem;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in oklab, var(--surface-active) 48%, transparent);
+  padding: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger .rudder-inspectable-image-fallback {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0.25rem;
+}
+
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger .rudder-inspectable-image-fallback-label {
+  display: none;
+}
+
 .rudder-inspectable-image-trigger:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+.rudder-inspectable-image-trigger[aria-disabled="true"] {
+  cursor: default;
 }
 
 .rudder-inspectable-image-trigger img {

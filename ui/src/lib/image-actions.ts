@@ -84,14 +84,17 @@ async function copyImageBlobWithBrowserClipboard(blob: Blob) {
   ]);
 }
 
-export async function copyImage(src: string, name: string) {
-  const blob = await fetchImageBlob(src);
+export async function copyImageBlob(blob: Blob, name: string) {
   const desktopShell = readDesktopShell();
   if (desktopShell?.copyImage) {
     await desktopShell.copyImage(await createImageDesktopPayload(blob, name));
     return;
   }
   await copyImageBlobWithBrowserClipboard(blob);
+}
+
+export async function copyImage(src: string, name: string) {
+  await copyImageBlob(await fetchImageBlob(src), name);
 }
 
 export async function showImageInFolder(src: string, name: string) {

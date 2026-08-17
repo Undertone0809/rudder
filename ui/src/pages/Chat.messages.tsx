@@ -1226,12 +1226,16 @@ export function ChatLongMessageBody({
   skillReferences,
   onMarkdownLinkClick,
   className,
+  mediaLayout = "default",
+  mediaActions = "inspect",
 }: {
   body: string;
   message?: ChatMessage;
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   className?: string;
+  mediaLayout?: "default" | "wide";
+  mediaActions?: "inspect" | "preview-copy";
 }) {
   return (
     <div className={cn("min-w-0", className)}>
@@ -1239,10 +1243,22 @@ export function ChatLongMessageBody({
         {message ? (
           <ChatInlineVisualContent
             message={message}
-            markdownProps={{ skillReferences, onLinkClick: onMarkdownLinkClick, enableCodeBlockCopy: true }}
+            markdownProps={{
+              skillReferences,
+              onLinkClick: onMarkdownLinkClick,
+              enableCodeBlockCopy: true,
+              mediaLayout,
+              mediaActions,
+            }}
           />
         ) : (
-          <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy>
+          <MarkdownBody
+            skillReferences={skillReferences}
+            onLinkClick={onMarkdownLinkClick}
+            enableCodeBlockCopy
+            mediaLayout={mediaLayout}
+            mediaActions={mediaActions}
+          >
             {body}
           </MarkdownBody>
         )}
@@ -2572,11 +2588,10 @@ export function ChatMessageItem({
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
-
   if (!isUser) {
     return (
       <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
-        <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
+        <div data-message-highlight-target="true" className="group w-full max-w-[72rem] px-1 py-1">
           <ChatAssistantAttributionRow
             replyingAgentId={message.replyingAgentId ?? null}
             conversation={conversation}
@@ -2644,7 +2659,9 @@ export function ChatMessageItem({
                 message={message}
                 skillReferences={skillReferences}
                 onMarkdownLinkClick={onMarkdownLinkClick}
-                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+                className="w-full text-[15px] leading-7 text-foreground"
+                mediaLayout="wide"
+                mediaActions="preview-copy"
               />
               <AnchoredResponseAnnotationMarkers
                 sourceRootRef={assistantAnnotationSourceRef}
@@ -3217,7 +3234,7 @@ export function AssistantDraftItem({
 
   return (
     <div className="flex justify-start transition-all duration-200">
-      <div className="group w-full max-w-3xl px-1 py-1">
+      <div className="group w-full max-w-[72rem] px-1 py-1">
         <ChatAssistantAttributionRow
           replyingAgentId={replyingAgentId}
           conversation={conversation}
@@ -3230,12 +3247,14 @@ export function AssistantDraftItem({
             </span>
           </div>
         ) : null}
-        <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
+        <div className="w-full text-[15px] leading-7 text-foreground">
           {body.trim() ? (
             <ChatLongMessageBody
               body={body}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
+              mediaLayout="wide"
+              mediaActions="preview-copy"
             />
           ) : (
             <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
