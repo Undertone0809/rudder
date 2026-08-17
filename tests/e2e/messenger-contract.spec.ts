@@ -3039,6 +3039,7 @@ test.describe("Messenger unified threads contract", () => {
         issueCreationMode: "manual_approval",
         planMode: false,
         contextLinks: [{ entityType: "project", entityId: project.id }],
+        initialMessage: { body: "Prepare this Messenger approval intake." },
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -3213,7 +3214,8 @@ test.describe("Messenger unified threads contract", () => {
     await expect(approvalCard).not.toContainText(chat.id);
     await expect(approvalCard).not.toContainText(project.id);
     await expect(approvalCard).not.toContainText(currentUserId);
-    await page.getByRole("link", { name: "Open full approval" }).click();
+    await expect(approvalCard.getByText("Open full approval", { exact: true })).toHaveCount(0);
+    await page.goto(`/${organizationPrefix}/messenger/approvals/${approval.id}`);
     await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/messenger/approvals/${approval.id}(?:\\?[^#]*)?$`));
     const approvalDialog = page.getByTestId("approval-detail-dialog");
     await expect(approvalDialog).toBeVisible();
@@ -3553,14 +3555,16 @@ test.describe("Messenger unified threads contract", () => {
     await expect(approvalCard).toContainText("Required before approval");
     await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeDisabled();
     await expect(approvalCard.getByTestId("chat-issue-approval-label-picker")).toHaveCount(0);
-    await expect(approvalCard.getByRole("link", { name: "Open full approval" })).toBeVisible();
+    await expect(approvalCard.getByTestId("approval-origin-link")).toContainText("Label approval intake");
+    await expect(approvalCard.getByText("Open full approval", { exact: true })).toHaveCount(0);
+    await expect(approvalCard.getByText("Request changes", { exact: true })).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("messenger-approval-card-desktop.png"),
       fullPage: true,
     });
     await page.setViewportSize({ width: 768, height: 900 });
     await expect(approvalCard).toBeVisible();
-    await expect(approvalCard.getByRole("link", { name: "Open full approval" })).toBeVisible();
+    await expect(approvalCard.getByTestId("approval-origin-link")).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("messenger-approval-card-narrow.png"),
       fullPage: true,
@@ -3587,7 +3591,7 @@ test.describe("Messenger unified threads contract", () => {
     }).toContain(labels[0].id);
   });
 
-  test("keeps approval decisions in the modal review flow without a separate comments surface", async ({ page }, testInfo) => {
+  test("keeps approval detail decisions limited to approve and reject with a focused rejection reason", async ({ page }, testInfo) => {
     const organization = await createOrganization(page, `Messenger-Approval-Modal-${Date.now()}`);
 
     const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
@@ -3624,7 +3628,7 @@ test.describe("Messenger unified threads contract", () => {
     const dialog = page.getByTestId("approval-detail-dialog");
 
     await expect(dialog).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("approval-decision-note")).toBeVisible();
+    await expect(page.getByTestId("approval-decision-note")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "See full request" })).toHaveCount(0);
     await expect(dialog.getByText("Comments (10)")).toHaveCount(0);
     await expect(dialog.getByText("Scrollable approval comment 1", { exact: false })).toHaveCount(0);
@@ -3634,11 +3638,31 @@ test.describe("Messenger unified threads contract", () => {
     await expect(approvalContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(approvalContent).toHaveCSS("padding-left", "0px");
     await expect(dialog).toBeInViewport();
-    await expect(dialog.getByRole("button", { name: "Request changes" })).toBeInViewport();
-    await expect(page.getByTestId("approval-decision-note")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Approve" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Reject" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Request changes" })).toHaveCount(0);
 
-    await page.getByTestId("approval-decision-note").fill("Please tighten the execution scope before resubmitting.");
-    await page.getByRole("button", { name: "Request changes" }).click();
+    await dialog.getByRole("button", { name: "Reject" }).click();
+    const rejectDialog = page.getByTestId("approval-reject-dialog");
+    await expect(dialog).toHaveCount(0);
+    await expect(rejectDialog).toBeVisible();
+    await rejectDialog.getByTestId("approval-rejection-reason").fill("This draft should be discarded.");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Reject" }).click();
+    await expect(page.getByTestId("approval-rejection-reason")).toHaveValue("");
+    await page.getByTestId("approval-rejection-reason").fill("Please tighten the execution scope before resubmitting.");
+
+    await page.route(`**/api/approvals/${approval.id}/reject`, async (route) => {
+      await route.fulfill({ status: 500, json: { error: "Simulated reject failure" } });
+    });
+    await rejectDialog.getByRole("button", { name: "Reject" }).click();
+    await expect(rejectDialog.getByRole("alert")).toContainText("Could not reject request");
+    await expect(page.getByTestId("approval-rejection-reason")).toHaveValue(
+      "Please tighten the execution scope before resubmitting.",
+    );
+    await page.unroute(`**/api/approvals/${approval.id}/reject`);
+    await rejectDialog.getByRole("button", { name: "Reject" }).click();
 
     await expect.poll(async () => {
       const approvalStateRes = await page.request.get(`/api/approvals/${approval.id}`);
@@ -3648,7 +3672,7 @@ test.describe("Messenger unified threads contract", () => {
         decisionNote: approvalState.decisionNote,
       });
     }).toBe(JSON.stringify({
-      status: "revision_requested",
+      status: "rejected",
       decisionNote: "Please tighten the execution scope before resubmitting.",
     }));
 

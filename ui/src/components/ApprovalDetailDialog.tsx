@@ -12,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { queryKeys } from "@/lib/queryKeys";
@@ -32,6 +31,7 @@ import {
   defaultTypeIcon,
   typeIcon,
 } from "./ApprovalPayload";
+import { ApprovalRejectDialog } from "./ApprovalRejectDialog";
 import { StatusBadge } from "./StatusBadge";
 
 interface ApprovalDetailDialogProps {
@@ -50,7 +50,7 @@ export function ApprovalDetailDialog({
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [decisionNote, setDecisionNote] = useState("");
+  const [rejectOpen, setRejectOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>([]);
 
@@ -106,7 +106,7 @@ export function ApprovalDetailDialog({
   const currentBoardUserId = currentBoardAccess?.user?.id ?? currentBoardAccess?.userId ?? null;
 
   useEffect(() => {
-    setDecisionNote("");
+    setRejectOpen(false);
     setError(null);
     setSelectedChatIssueLabelIds([]);
   }, [approvalId]);
@@ -147,10 +147,9 @@ export function ApprovalDetailDialog({
         approval?.type === "chat_issue_creation"
           ? approvalPayloadWithChatIssueLabelIds(payload, selectedChatIssueLabelIds)
           : undefined;
-      return approvalsApi.approve(approvalId!, decisionNote.trim() || undefined, nextPayload);
+      return approvalsApi.approve(approvalId!, undefined, nextPayload);
     },
     onSuccess: () => {
-      setDecisionNote("");
       setError(null);
       refresh();
       navigate(`/messenger/approvals/${approvalId}?resolved=approved`, { replace: true });
@@ -159,23 +158,12 @@ export function ApprovalDetailDialog({
   });
 
   const rejectMutation = useMutation({
-    mutationFn: () => approvalsApi.reject(approvalId!, decisionNote.trim() || undefined),
+    mutationFn: (decisionNote?: string) => approvalsApi.reject(approvalId!, decisionNote),
     onSuccess: () => {
-      setDecisionNote("");
       setError(null);
       refresh();
     },
     onError: (err) => setError(err instanceof Error ? err.message : "Reject failed"),
-  });
-
-  const revisionMutation = useMutation({
-    mutationFn: () => approvalsApi.requestRevision(approvalId!, decisionNote.trim() || undefined),
-    onSuccess: () => {
-      setDecisionNote("");
-      setError(null);
-      refresh();
-    },
-    onError: (err) => setError(err instanceof Error ? err.message : "Revision request failed"),
   });
 
   const resubmitMutation = useMutation({
@@ -223,11 +211,12 @@ export function ApprovalDetailDialog({
         : null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="!flex max-h-[calc(100vh-2rem)] !flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
-        data-testid="approval-detail-dialog"
-      >
+    <>
+      <Dialog open={open && !rejectOpen} onOpenChange={onOpenChange}>
+        <DialogContent
+          className="!flex max-h-[calc(100vh-2rem)] !flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+          data-testid="approval-detail-dialog"
+        >
         <DialogHeader className="sr-only">
           <DialogTitle>
             {approval ? approvalLabel(approval.type, approval.payload as Record<string, unknown> | null) : "Approval"}
@@ -343,22 +332,6 @@ export function ApprovalDetailDialog({
 
                   {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-                  {approval.status === "pending" ? (
-                    <label className="block space-y-2">
-                      <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                        Decision note
-                      </span>
-                      <Textarea
-                        value={decisionNote}
-                        onChange={(event) => setDecisionNote(event.target.value)}
-                        placeholder="Optional note for approval, rejection, or requested changes."
-                        rows={3}
-                        className="min-h-[112px] rounded-[calc(var(--radius-sm)-1px)] border-border/80 bg-background/70"
-                        data-testid="approval-decision-note"
-                      />
-                    </label>
-                  ) : null}
-
                   {linkedIssues && linkedIssues.length > 0 ? (
                     <div className="space-y-2 border-t border-border/60 pt-3">
                       <p className="text-xs text-muted-foreground">Linked issues</p>
@@ -396,7 +369,10 @@ export function ApprovalDetailDialog({
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => rejectMutation.mutate()}
+                          onClick={() => {
+                            setError(null);
+                            setRejectOpen(true);
+                          }}
                           disabled={rejectMutation.isPending}
                         >
                           Reject
@@ -410,17 +386,6 @@ export function ApprovalDetailDialog({
                         <Link to="/costs" className="underline underline-offset-2">/costs</Link>.
                       </p>
                     ) : null}
-
-                    {approval.status === "pending" && !isGoalChangeApproval ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => revisionMutation.mutate()}
-                        disabled={revisionMutation.isPending}
-                      >
-                          Request changes
-                        </Button>
-                      ) : null}
 
                     {approval.status === "revision_requested" && isChatReviewApproval ? (
                       <p className="text-sm text-muted-foreground">
@@ -466,7 +431,15 @@ export function ApprovalDetailDialog({
             )}
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <ApprovalRejectDialog
+        open={open && rejectOpen}
+        onOpenChange={setRejectOpen}
+        onReject={(decisionNote) => rejectMutation.mutateAsync(decisionNote)}
+        isPending={rejectMutation.isPending}
+        error={error}
+      />
+    </>
   );
 }

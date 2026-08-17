@@ -25,6 +25,7 @@ import {
   ensurePostgresDatabase,
   heartbeatRuns,
   invites,
+  issueApprovals,
   issueComments,
   issueDocuments,
   issueFollows,
@@ -10632,6 +10633,134 @@ describe("messengerService and issue follows", () => {
     expect(item?.preview).not.toContain(chatId);
     expect(item?.preview).not.toContain(projectId);
     expect(item?.preview).not.toContain(assigneeUserId);
+  });
+
+  it("projects clickable chat and issue origins while limiting request actions to approve and reject", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const chatId = randomUUID();
+    const issueId = randomUUID();
+    const payloadChatApprovalId = randomUUID();
+    const runChatApprovalId = randomUUID();
+    const issueApprovalId = randomUUID();
+    const runId = randomUUID();
+    const issueIdentifier = "AOR-1";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Approval Origins Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Approval Origins Org"),
+      issuePrefix: `AO${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Origin Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(chatConversations).values({
+      id: chatId,
+      orgId,
+      title: "Create an operations agent",
+      preferredAgentId: agentId,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      identifier: issueIdentifier,
+      title: "Create a release agent",
+      status: "todo",
+      priority: "medium",
+    });
+    await db.insert(approvals).values([
+      {
+        id: payloadChatApprovalId,
+        orgId,
+        type: "hire_agent",
+        status: "pending",
+        requestedByAgentId: agentId,
+        payload: { name: "Payload chat hire", chatConversationId: chatId },
+      },
+      {
+        id: runChatApprovalId,
+        orgId,
+        type: "hire_agent",
+        status: "pending",
+        requestedByAgentId: agentId,
+        payload: { name: "Run chat hire" },
+      },
+      {
+        id: issueApprovalId,
+        orgId,
+        type: "hire_agent",
+        status: "pending",
+        requestedByAgentId: agentId,
+        payload: { name: "Issue hire" },
+      },
+    ]);
+    await db.insert(issueApprovals).values({
+      orgId,
+      issueId,
+      approvalId: issueApprovalId,
+      linkedByAgentId: agentId,
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "chat",
+      triggerDetail: "chat_message",
+      status: "completed",
+      chatConversationId: chatId,
+      contextSnapshot: {
+        scene: "chat",
+        targetType: "chat_conversation",
+        conversationId: chatId,
+      },
+    });
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId,
+      action: "approval.created",
+      entityType: "approval",
+      entityId: runChatApprovalId,
+    });
+
+    const thread = await messengerSvc.getApprovalsThread(orgId, "board-user");
+    const byId = new Map(thread.detail.items.map((item) => [item.id, item]));
+
+    expect(byId.get(payloadChatApprovalId)?.origin).toEqual({
+      kind: "chat",
+      conversationId: chatId,
+      title: "Create an operations agent",
+      href: `/messenger/chat/${chatId}`,
+    });
+    expect(byId.get(runChatApprovalId)?.origin).toEqual({
+      kind: "chat",
+      conversationId: chatId,
+      title: "Create an operations agent",
+      href: `/messenger/chat/${chatId}`,
+    });
+    expect(byId.get(issueApprovalId)?.origin).toEqual({
+      kind: "issue",
+      issueId,
+      identifier: issueIdentifier,
+      title: "Create a release agent",
+      href: `/issues/${issueIdentifier}`,
+    });
+    expect(byId.get(issueApprovalId)?.actions.map((action) => action.label)).toEqual([
+      "Approve",
+      "Reject",
+    ]);
   });
 
   it("preserves the requesting agent identity for approvals after the agent is terminated", async () => {

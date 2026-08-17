@@ -1407,8 +1407,6 @@ function CommonComponentsSection() {
             requesterAgent={fixtureAgent}
             onApprove={() => {}}
             onReject={() => {}}
-            onRequestRevision={() => {}}
-            onOpen={() => {}}
             isPending={false}
             supportingText="Approval surfaces combine request context, payload review, and decision actions."
           />

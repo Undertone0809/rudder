@@ -1,7 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
-import type { Agent, Approval } from "@rudderhq/shared";
+import type { Agent, Approval, MessengerApprovalOrigin } from "@rudderhq/shared";
+import { CircleCheckBig, MessageSquare } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { timeAgo } from "../lib/timeAgo";
 import { AgentIdentity } from "./AgentAvatar";
 import { ApprovalInset, ApprovalPanel } from "./approval-ui";
@@ -12,17 +14,15 @@ import {
   typeIcon,
   type ApprovalPayloadContext,
 } from "./ApprovalPayload";
+import { ApprovalRejectDialog } from "./ApprovalRejectDialog";
 import { StatusBadge } from "./StatusBadge";
 
 export function ApprovalCard({
   approval,
   requesterAgent,
+  origin,
   onApprove,
   onReject,
-  onRequestRevision,
-  onOpen,
-  detailLink,
-  detailLabel = "View details",
   supportingText,
   payloadContext,
   extraActions,
@@ -32,12 +32,9 @@ export function ApprovalCard({
 }: {
   approval: Approval;
   requesterAgent: Pick<Agent, "name" | "icon" | "role"> | null;
+  origin?: MessengerApprovalOrigin | null;
   onApprove: () => void;
-  onReject: () => void;
-  onRequestRevision?: () => void;
-  onOpen?: () => void;
-  detailLink?: string;
-  detailLabel?: string;
+  onReject: (reason?: string) => void | Promise<unknown>;
   supportingText?: ReactNode;
   payloadContext?: ApprovalPayloadContext;
   extraActions?: ReactNode;
@@ -45,29 +42,47 @@ export function ApprovalCard({
   isPending: boolean;
   approveDisabled?: boolean;
 }) {
+  const [rejectOpen, setRejectOpen] = useState(false);
   const Icon = typeIcon[approval.type] ?? defaultTypeIcon;
   const label = approvalLabel(approval.type, approval.payload as Record<string, unknown> | null);
   const isActionable = approval.status === "pending";
   const showResolutionButtons = (allowBudgetActions || approval.type !== "budget_override_required") && isActionable;
-  const showRequestRevision = Boolean(onRequestRevision) && approval.status === "pending";
-  const showActions = showResolutionButtons || showRequestRevision || Boolean(extraActions) || Boolean(detailLink || onOpen);
+  const showActions = showResolutionButtons || Boolean(extraActions);
+  const OriginIcon = origin?.kind === "chat" ? MessageSquare : CircleCheckBig;
+  const originLabel = origin?.kind === "issue" && origin.identifier
+    ? `${origin.identifier} · ${origin.title}`
+    : origin?.title;
 
   return (
     <ApprovalPanel className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex items-start gap-2.5">
-          <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex min-h-5 min-w-0 items-center gap-2.5" data-testid="approval-title-row">
+            <Icon className="h-4 w-4 shrink-0 text-muted-foreground" data-testid="approval-type-icon" />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{label}</span>
               <StatusBadge status={approval.status} />
             </div>
-            {requesterAgent && (
-              <span className="text-xs text-muted-foreground">
-                requested by <AgentIdentity name={requesterAgent.name} icon={requesterAgent.icon} role={requesterAgent.role} size="sm" className="inline-flex" />
-              </span>
-            )}
           </div>
+          {requesterAgent ? (
+            <span className="block pl-[26px] text-xs text-muted-foreground">
+              requested by <AgentIdentity name={requesterAgent.name} icon={requesterAgent.icon} role={requesterAgent.role} size="sm" className="inline-flex" />
+            </span>
+          ) : null}
+          {origin ? (
+            <div className="flex min-w-0 items-center gap-1.5 pl-[26px] text-xs text-muted-foreground">
+              <span className="shrink-0">From</span>
+              <Link
+                to={origin.href}
+                className="flex min-w-0 items-center gap-1.5 font-medium text-foreground/80 underline-offset-4 hover:underline"
+                aria-label={`Open source ${origin.kind} ${originLabel}`}
+                data-testid="approval-origin-link"
+              >
+                <OriginIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{originLabel}</span>
+              </Link>
+            </div>
+          ) : null}
         </div>
         <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
           {timeAgo(approval.createdAt)}
@@ -101,35 +116,22 @@ export function ApprovalCard({
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={onReject}
+                onClick={() => setRejectOpen(true)}
                 disabled={isPending}
               >
                 Reject
               </Button>
             </>
           ) : null}
-          {showRequestRevision ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRequestRevision}
-              disabled={isPending}
-            >
-              Request changes
-            </Button>
-          ) : null}
           {extraActions}
-          {detailLink ? (
-            <Button variant="ghost" size="sm" className="text-xs" asChild>
-              <Link to={detailLink}>{detailLabel}</Link>
-            </Button>
-          ) : onOpen ? (
-            <Button variant="ghost" size="sm" className="text-xs" onClick={onOpen}>
-              {detailLabel}
-            </Button>
-          ) : null}
         </div>
       ) : null}
+      <ApprovalRejectDialog
+        open={rejectOpen}
+        onOpenChange={setRejectOpen}
+        onReject={onReject}
+        isPending={isPending}
+      />
     </ApprovalPanel>
   );
 }
