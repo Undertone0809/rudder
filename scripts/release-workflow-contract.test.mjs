@@ -148,6 +148,11 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("actions/download-artifact@v8");
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
+    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
+    expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
+    expect(recovery).toContain('test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"');
+    expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
     expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
     expect(recovery).toContain("success|cancelled|failure");
     expect(recovery).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");

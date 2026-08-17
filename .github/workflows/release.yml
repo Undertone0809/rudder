@@ -618,10 +618,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Require immutable recovery inputs
         env:
+          WORKFLOW_SHA: ${{ github.sha }}
           SOURCE_REF: ${{ inputs.source_ref }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
@@ -638,8 +639,9 @@ jobs:
             echo "recovery_tag must be an existing stable tag such as v0.7.7." >&2
             exit 1
           }
-          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git cat-file -e "$SOURCE_REF^{commit}"
           git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
       - name: Validate frozen candidate run and existing Release
         env:
