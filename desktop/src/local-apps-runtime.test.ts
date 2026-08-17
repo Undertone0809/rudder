@@ -105,6 +105,10 @@ async function acceptFixtureListenerOwnership(): Promise<boolean> {
   return true;
 }
 
+const fixtureListenerOwnershipOverride = process.platform === "win32"
+  ? undefined
+  : acceptFixtureListenerOwnership;
+
 function watchdogEmitting(message: unknown) {
   const helper = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
@@ -271,7 +275,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
         registry,
         platform: "darwin",
         hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
-        verifyListenerOwnership: acceptFixtureListenerOwnership,
+        verifyListenerOwnership: fixtureListenerOwnershipOverride,
       });
       try {
         const running = await manager.start(definition.id);
@@ -302,7 +306,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       const manager = new LocalAppRuntimeManager({
         registry,
         platform: "darwin",
-        verifyListenerOwnership: acceptFixtureListenerOwnership,
+        verifyListenerOwnership: fixtureListenerOwnershipOverride,
       });
       try {
         const running = await manager.start(definition.id);
@@ -397,7 +401,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const starting = manager.start(definition.id);
@@ -419,7 +423,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     const starting = manager.start(definition.id);
     const shuttingDown = manager.shutdown();
@@ -436,7 +440,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const first = await manager.start(definition.id);
@@ -481,7 +485,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       killGroup,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const first = await manager.start(definition.id);
@@ -522,7 +526,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       killGroup: vi.fn(),
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
       terminationOptions: {
         isGroupAlive: () => true,
         delay: async () => undefined,
@@ -557,7 +561,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       killGroup: vi.fn(),
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
       terminationOptions: {
         isGroupAlive: () => true,
         delay: async () => undefined,
@@ -608,7 +612,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       registry,
       platform: process.platform,
       killGroup,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     const first = await manager.start(definition.id);
     const ownedPid = (await registry.getRuntimeDescriptor(definition.id))?.pid;
@@ -654,7 +658,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       platform: process.platform,
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
       probePersistedRuntimeLiveness,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const firstStatus = manager.status(definition.id);
@@ -831,14 +835,34 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
 
   it("bounds a listener ownership probe that never returns", async () => {
     const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
-    const manager = new LocalAppRuntimeManager({
-      registry: owned.registry,
-      platform: process.platform,
-      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
-      verifyListenerOwnership: () => new Promise(() => undefined),
-      listenerOwnershipRetryTimeoutMs: 250,
-      cleanupTimeoutMs: 250,
-    });
+    const manager = new LocalAppRuntimeManager(
+      process.platform === "win32"
+        ? {
+            registry: owned.registry,
+            processPlatform: {
+              platform: "win32",
+              systemPathEntries: [],
+              terminate: vi.fn(async () => undefined),
+              probePersistedRuntime: vi.fn(async () => ({
+                pid: "dead" as const,
+                processGroup: "dead" as const,
+                listener: "dead" as const,
+              })),
+              verifyListenerOwnership: () => new Promise(() => undefined),
+            },
+            watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+            listenerOwnershipRetryTimeoutMs: 250,
+            cleanupTimeoutMs: 250,
+          }
+        : {
+            registry: owned.registry,
+            platform: process.platform,
+            watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+            verifyListenerOwnership: () => new Promise(() => undefined),
+            listenerOwnershipRetryTimeoutMs: 250,
+            cleanupTimeoutMs: 250,
+          },
+    );
     const startedAt = Date.now();
     await expect(manager.start(owned.definition.id)).rejects.toThrow(
       "listener ownership could not be proven",
@@ -1162,7 +1186,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       platform: process.platform,
       spawnWatchdog,
       cleanupTimeoutMs: 100,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     await manager.start(definition.id);
     const ownership = await registry.getRuntimeDescriptor(definition.id);
