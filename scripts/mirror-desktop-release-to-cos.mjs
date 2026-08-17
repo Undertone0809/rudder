@@ -14,6 +14,8 @@ const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
 const DEFAULT_MULTIPART_PART_SIZE = 32 * 1024 * 1024;
 const DEFAULT_MULTIPART_RETRIES = 3;
+const DEFAULT_NETWORK_RETRIES = 3;
+const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
 const SIGNABLE_HEADERS = new Set([
   "cache-control",
   "content-disposition",
@@ -89,14 +91,22 @@ export async function requestGitHubOidcToken({
   requestToken,
   audience = DEFAULT_OIDC_AUDIENCE,
   fetchImpl = fetch,
+  networkRetries = DEFAULT_NETWORK_RETRIES,
+  retryDelayMs = DEFAULT_NETWORK_RETRY_DELAY_MS,
+  sleep,
 }) {
   if (!requestUrl || !requestToken) {
     throw new Error("GitHub Actions OIDC request URL and token are required.");
   }
   const url = new URL(requestUrl);
   url.searchParams.set("audience", audience);
-  const response = await fetchImpl(url, {
+  const response = await fetchWithRetry(fetchImpl, url, {
     headers: { authorization: `Bearer ${requestToken}` },
+  }, {
+    networkRetries,
+    operation: "request GitHub OIDC token",
+    retryDelayMs,
+    sleep,
   });
   if (!response.ok) throw await httpError("request GitHub OIDC token", response);
   const payload = await response.json();
@@ -115,6 +125,9 @@ export async function assumeTencentRoleWithWebIdentity({
   durationSeconds = DEFAULT_STS_DURATION_SECONDS,
   endpoint = DEFAULT_STS_ENDPOINT,
   fetchImpl = fetch,
+  networkRetries = DEFAULT_NETWORK_RETRIES,
+  retryDelayMs = DEFAULT_NETWORK_RETRY_DELAY_MS,
+  sleep,
 }) {
   if (!providerId || !region || !roleArn || !roleSessionName || !webIdentityToken) {
     throw new Error(
@@ -133,7 +146,7 @@ export async function assumeTencentRoleWithWebIdentity({
     WebIdentityToken: webIdentityToken,
     DurationSeconds: durationSeconds,
   });
-  const response = await fetchImpl(url, {
+  const response = await fetchWithRetry(fetchImpl, url, {
     body,
     headers: {
       authorization: "SKIP",
@@ -145,6 +158,11 @@ export async function assumeTencentRoleWithWebIdentity({
       "x-tc-version": "2018-08-13",
     },
     method: "POST",
+  }, {
+    networkRetries,
+    operation: "assume Tencent role with web identity",
+    retryDelayMs,
+    sleep,
   });
   if (!response.ok) throw await httpError("assume Tencent role with web identity", response);
   const payload = await response.json();
@@ -448,21 +466,31 @@ export async function mirrorDesktopReleaseToCos(options) {
     fetchImpl = fetch,
     githubApiBase = "https://api.github.com",
     log = console.log,
+    networkRetries = DEFAULT_NETWORK_RETRIES,
+    retryDelayMs = DEFAULT_NETWORK_RETRY_DELAY_MS,
+    sleep,
   } = options;
   validateRepo(repo);
   validateObjectPath(tag, "release tag");
   if (!assetDir) throw new Error("--asset-dir is required.");
   if (!githubToken) throw new Error("GH_TOKEN or GITHUB_TOKEN is required.");
 
+  log(`stage\tinspect local release assets\t${assetDir}`);
   const files = await readLocalReleaseFiles(assetDir);
+  log(`stage\tlocal release assets ready\tassets=${files.length}`);
   await verifyChecksumManifest(files);
+  log(`stage\tread GitHub Release\t${repo}@${tag}`);
   const release = await readPublishedGitHubRelease({
     fetchImpl,
     githubApiBase,
     githubToken,
     repo,
     tag,
+    networkRetries,
+    retryDelayMs,
+    sleep,
   });
+  log(`stage\tverify GitHub Release assets\t${release.assets.length}`);
   await verifyGithubReleaseAssets({
     allowExistingChecksumMarker: options.allowExistingChecksumMarker === true,
     fetchImpl,
@@ -471,8 +499,12 @@ export async function mirrorDesktopReleaseToCos(options) {
     release,
     repo,
     tag,
+    networkRetries,
+    retryDelayMs,
+    sleep,
   });
 
+  log("stage\tassume Tencent role");
   const credentials = options.credentials ?? await getTencentStsCredentials({
     audience: options.oidcAudience,
     durationSeconds: options.durationSeconds,
@@ -484,7 +516,11 @@ export async function mirrorDesktopReleaseToCos(options) {
     requestUrl: options.oidcRequestUrl,
     roleArn: options.roleArn,
     roleSessionName: options.roleSessionName,
+    networkRetries,
+    retryDelayMs,
+    sleep,
   });
+  log("stage\tmirror COS objects");
   const mirror = new CosReleaseMirror({
     bucket,
     credentials,
@@ -507,10 +543,24 @@ export async function mirrorDesktopReleaseToCos(options) {
   };
 }
 
-async function readPublishedGitHubRelease({ fetchImpl, githubApiBase, githubToken, repo, tag }) {
+async function readPublishedGitHubRelease({
+  fetchImpl,
+  githubApiBase,
+  githubToken,
+  networkRetries,
+  retryDelayMs,
+  repo,
+  sleep,
+  tag,
+}) {
   const url = `${githubApiBase.replace(/\/$/, "")}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
-  const response = await fetchImpl(url, {
+  const response = await fetchWithRetry(fetchImpl, url, {
     headers: githubHeaders(githubToken, "application/vnd.github+json"),
+  }, {
+    networkRetries,
+    operation: `read GitHub Release ${repo}@${tag}`,
+    retryDelayMs,
+    sleep,
   });
   if (!response.ok) throw await httpError(`read GitHub Release ${repo}@${tag}`, response);
   const release = await response.json();
@@ -555,6 +605,9 @@ async function verifyGithubReleaseAssets({
   release,
   repo,
   tag,
+  networkRetries,
+  retryDelayMs,
+  sleep,
 }) {
   const localByName = new Map(files.map((file) => [file.name, file]));
   const requiredNames = files.map((file) => file.name).filter((name) => name !== "SHASUMS256.txt");
@@ -570,9 +623,14 @@ async function verifyGithubReleaseAssets({
         `GitHub Release checksum marker conflict: expected ${localChecksum.size} bytes, received ${existingChecksumMarker.size}.`,
       );
     }
-    const checksumResponse = await fetchImpl(existingChecksumMarker.url, {
+    const checksumResponse = await fetchWithRetry(fetchImpl, existingChecksumMarker.url, {
       headers: githubHeaders(githubToken, "application/octet-stream"),
       redirect: "follow",
+    }, {
+      networkRetries,
+      operation: "download GitHub Release asset SHASUMS256.txt",
+      retryDelayMs,
+      sleep,
     });
     if (!checksumResponse.ok || !checksumResponse.body) {
       throw await httpError("download GitHub Release asset SHASUMS256.txt", checksumResponse);
@@ -608,9 +666,14 @@ async function verifyGithubReleaseAssets({
       }
       continue;
     }
-    const response = await fetchImpl(asset.url, {
+    const response = await fetchWithRetry(fetchImpl, asset.url, {
       headers: githubHeaders(githubToken, "application/octet-stream"),
       redirect: "follow",
+    }, {
+      networkRetries,
+      operation: `download GitHub Release asset ${asset.name}`,
+      retryDelayMs,
+      sleep,
     });
     if (!response.ok || !response.body) {
       throw await httpError(`download GitHub Release asset ${asset.name}`, response);
@@ -834,6 +897,34 @@ async function httpError(action, response) {
   return new Error(`${action} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
 }
 
+async function fetchWithRetry(
+  fetchImpl,
+  input,
+  init,
+  { networkRetries = DEFAULT_NETWORK_RETRIES, operation = "network request", retryDelayMs = DEFAULT_NETWORK_RETRY_DELAY_MS, sleep } = {},
+) {
+  const retrySleep = sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let lastError;
+  for (let attempt = 1; attempt <= networkRetries; attempt += 1) {
+    try {
+      return await fetchImpl(input, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt === networkRetries) {
+        throw new Error(`${operation} failed after ${networkRetries} network attempts.`, { cause: error });
+      }
+      await retrySleep(retryDelayMs * attempt);
+    }
+  }
+  throw lastError;
+}
+
+function formatError(error) {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause ? `; cause=${formatError(error.cause)}` : "";
+  return `${error.name}: ${error.message}${cause}`;
+}
+
 function parseArgs(argv, env) {
   const options = {
     assetDir: "",
@@ -888,7 +979,8 @@ async function main() {
     const result = await mirrorDesktopReleaseToCos(options);
     console.log(`ok\t${options.repo}@${options.tag}\tassets=${result.assets}\tprefix=${result.prefix}`);
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
+    console.error(formatError(error));
+    if (error instanceof Error && error.stack) console.error(error.stack);
     usage();
     process.exitCode = 1;
   }

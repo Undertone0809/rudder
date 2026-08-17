@@ -684,6 +684,7 @@ jobs:
           done
           release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RECOVERY_TAG")"
           test "$(jq -r '.draft' <<< "$release_json")" = "false"
+          test "$(jq -r '.prerelease' <<< "$release_json")" = "false"
           test "$(jq '[.assets[] | select(.name | startswith("Rudder-"))] | length' <<< "$release_json")" = "7"
       - uses: actions/download-artifact@v8
         with:
@@ -705,11 +706,20 @@ jobs:
           TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
           TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
         run: |
-          node scripts/mirror-desktop-release-to-cos.mjs \
-            --tag "${{ inputs.recovery_tag }}" \
-            --asset-dir dist/desktop-assets \
-            --prefix releases \
-            --allow-existing-checksum-marker
+          for attempt in 1 2 3; do
+            echo "COS mirror attempt ${attempt}/3"
+            if node scripts/mirror-desktop-release-to-cos.mjs \
+              --tag "${{ inputs.recovery_tag }}" \
+              --asset-dir dist/desktop-assets \
+              --prefix releases \
+              --allow-existing-checksum-marker; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
       - name: Verify Tencent COS multipart abort cleanup
         env:
           TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
@@ -816,11 +826,20 @@ jobs:
           TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
           TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
         run: |
-          node scripts/mirror-desktop-release-to-cos.mjs \
-            --tag "${{ needs.preflight.outputs.tag }}" \
-            --asset-dir dist/desktop-assets \
-            --prefix releases \
-            --allow-existing-checksum-marker
+          for attempt in 1 2 3; do
+            echo "COS mirror attempt ${attempt}/3"
+            if node scripts/mirror-desktop-release-to-cos.mjs \
+              --tag "${{ needs.preflight.outputs.tag }}" \
+              --asset-dir dist/desktop-assets \
+              --prefix releases \
+              --allow-existing-checksum-marker; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
       - name: Publish GitHub checksum completion marker
         env:
           GH_TOKEN: ${{ github.token }}
@@ -867,11 +886,20 @@ jobs:
           TENCENT_COS_BUCKET: ${{ vars.TENCENT_COS_BUCKET }}
           TENCENT_COS_REGION: ${{ vars.TENCENT_COS_REGION }}
         run: |
-          node scripts/mirror-desktop-release-to-cos.mjs \
-            --tag "${{ needs.preflight.outputs.tag }}" \
-            --asset-dir dist/desktop-assets \
-            --prefix releases \
-            --allow-existing-checksum-marker
+          for attempt in 1 2 3; do
+            echo "COS mirror attempt ${attempt}/3"
+            if node scripts/mirror-desktop-release-to-cos.mjs \
+              --tag "${{ needs.preflight.outputs.tag }}" \
+              --asset-dir dist/desktop-assets \
+              --prefix releases \
+              --allow-existing-checksum-marker; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
       - name: Publish GitHub checksum completion marker
         env:
           GH_TOKEN: ${{ github.token }}
