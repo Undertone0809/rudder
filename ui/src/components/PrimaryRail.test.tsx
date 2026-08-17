@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { openAppRailItem } from "@/lib/app-primary-rail";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -196,6 +197,7 @@ function setUserAgent(userAgent: string) {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
   mockState.desktopShell.setBadgeCount.mockResolvedValue(undefined);
   mockState.desktopShell.showNotification.mockResolvedValue(undefined);
@@ -413,7 +415,8 @@ describe("PrimaryRail active motion indicator", () => {
       );
 
     expect(searchButton?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
-    expect(organizationLink?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
+    expect(organizationLink?.parentElement?.className)
+      .toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
     expect(organizationSwitcher?.className).toContain("translate-x-[var(--primary-rail-item-shift,0.25rem)]");
   });
 
@@ -530,15 +533,89 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
-  it("always shows Hub and keeps legacy App paths active under it", async () => {
+  it("always returns Hub to Plugins without treating Apps Home as the Hub destination", async () => {
     mockState.pathname = "/apps";
     await renderPrimaryRail();
 
     const hubLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Hub"));
-    expect(hubLink?.getAttribute("href")).toBe("/hub");
-    expect(hubLink?.getAttribute("aria-current")).toBe("page");
-    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("4");
+    expect(hubLink?.getAttribute("href")).toBe("/plugins");
+    expect(hubLink?.hasAttribute("aria-current")).toBe(false);
+    expect(document.querySelector(".motion-rail-nav")?.hasAttribute("data-active-index")).toBe(false);
+  });
+
+  it("shows an opened App in Primary Rail and removes the active view back to Plugins", async () => {
+    openAppRailItem("org-1", {
+      key: "local:definition-alpha",
+      title: "Alpha CRM",
+      iconDataUrl: null,
+      identity: {
+        desktopInstallationId: "installation-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+      },
+    });
+    mockState.pathname = "/apps/view/local%3Adefinition-alpha";
+
+    await renderPrimaryRail();
+
+    const railItem = document.querySelector('[data-testid="primary-rail-app-local:definition-alpha"]');
+    const appLink = railItem?.querySelector("a");
+    const closeButton = railItem?.querySelector<HTMLButtonElement>("button");
+    expect(appLink?.getAttribute("href")).toBe("/apps/view/local%3Adefinition-alpha");
+    expect(appLink?.getAttribute("aria-current")).toBe("page");
+    expect(closeButton?.getAttribute("aria-label")).toBe("Remove Alpha CRM from Primary Rail");
+    expect(closeButton?.className).toContain("group-hover:opacity-100");
+
+    await act(async () => {
+      closeButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.navigate).toHaveBeenCalledWith("/plugins");
+    expect(document.querySelector('[data-testid="primary-rail-app-local:definition-alpha"]'))
+      .toBeNull();
+    expect(document.activeElement?.getAttribute("data-primary-rail-key")).toBe("plugins");
+  });
+
+  it("removes a background App without changing the route and focuses its next neighbor", async () => {
+    openAppRailItem("org-1", {
+      key: "local:definition-alpha",
+      title: "Alpha CRM",
+      iconDataUrl: null,
+      identity: null,
+    });
+    openAppRailItem("org-1", {
+      key: "local:definition-beta",
+      title: "Beta Dashboard",
+      iconDataUrl: null,
+      identity: null,
+    });
+    openAppRailItem("org-1", {
+      key: "local:definition-gamma",
+      title: "Gamma Reports",
+      iconDataUrl: null,
+      identity: null,
+    });
+    mockState.pathname = "/apps/view/local%3Adefinition-alpha";
+
+    await renderPrimaryRail();
+    const closeButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="primary-rail-app-local:definition-beta-close"]',
+    );
+
+    await act(async () => {
+      closeButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.navigate).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="primary-rail-app-local:definition-alpha"]'))
+      .not.toBeNull();
+    expect(document.querySelector('[data-testid="primary-rail-app-local:definition-beta"]'))
+      .toBeNull();
+    expect(document.activeElement?.getAttribute("data-primary-rail-key"))
+      .toBe("open-app:local:definition-gamma");
   });
 
   it("shows Goals only after the Goals experiment is enabled", async () => {

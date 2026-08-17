@@ -40,11 +40,12 @@ test.describe("Apps workspace", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
     await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true }))
       .toBeVisible();
+    await expect(page.locator('[data-testid^="primary-rail-app-"]')).toHaveCount(0);
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
     await expect(page.getByTestId("apps-workspace")).toBeVisible();
     await expect(page.getByTestId("workspace-context-card")).toBeVisible();
-    await expect(page.getByRole("tablist", { name: "Open Apps" })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Open Apps" })).toHaveCount(0);
     await expect(page.getByRole("heading", {
       name: "Turn ideas into applications",
     })).toBeVisible();
@@ -56,8 +57,9 @@ test.describe("Apps workspace", () => {
       .toHaveCount(0);
     await expect(page.getByText("How creation works")).toHaveCount(0);
     await expect(page.locator('[data-testid="apps-home"] svg.lucide-sparkles')).toHaveCount(0);
-    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true }))
-      .toBeVisible();
+    const hubLink = page.getByTestId("primary-rail").getByRole("link", { name: "Hub" });
+    await expect(hubLink).toBeVisible();
+    await expect(hubLink).toHaveAttribute("href", /\/plugins$/);
 
     const contextCard = page.getByTestId("workspace-context-card");
     const collapseButton = page.getByRole("button", { name: "Collapse workspace sidebar" });
@@ -443,7 +445,10 @@ test.describe("Apps workspace", () => {
     await expect(alphaEntry).toBeVisible();
     await expect(betaEntry).toBeVisible();
     await alphaEntry.click();
-    await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
+    const alphaRail = page.getByTestId("primary-rail-app-local:definition-alpha");
+    const betaRail = page.getByTestId("primary-rail-app-local:definition-beta");
+    await expect(alphaRail).toBeVisible();
+    await expect(alphaRail.getByRole("link")).toHaveAttribute("aria-current", "page");
     await expect(page.getByTestId("apps-local-webview")).toBeAttached();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps
@@ -456,6 +461,9 @@ test.describe("Apps workspace", () => {
     });
     await page.getByRole("link", { name: "Organization" }).click();
     await page.getByRole("link", { name: "Hub" }).click();
+    await expect(page).toHaveURL(/\/plugins$/);
+    await expect(alphaRail).toBeVisible();
+    await alphaRail.getByRole("link").click();
     await expect(page.getByTestId("apps-local-webview")).toBeAttached();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps
@@ -474,15 +482,10 @@ test.describe("Apps workspace", () => {
       (element as HTMLElement & { __appsWebviewIdentity?: string }).__appsWebviewIdentity
     ))).toBe(alphaWebviewIdentity);
     await betaEntry.click();
-    await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
-    await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
-    await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
-      .toHaveAttribute("aria-selected", "true");
+    await expect(betaRail).toBeVisible();
+    await expect(alphaRail).toBeVisible();
+    await expect(betaRail.getByRole("link")).toHaveAttribute("aria-current", "page");
 
-    await page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab").focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
-      .toBeFocused();
     await page.getByRole("searchbox", { name: "Search Apps" }).evaluate((input) => {
       input.dispatchEvent(new KeyboardEvent("keydown", {
         bubbles: true,
@@ -491,7 +494,7 @@ test.describe("Apps workspace", () => {
         key: "w",
       }));
     });
-    await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
+    await expect(betaRail).toBeVisible();
 
     await alphaEntry.click();
     await expect(page.getByTestId("apps-local-webview")).toHaveAttribute(
@@ -549,17 +552,21 @@ test.describe("Apps workspace", () => {
     await expect(page.getByText("Source", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Stop App" })).toHaveCount(0);
 
-    await page.getByTestId("apps-tab-local:definition-beta").getByRole("tab").focus();
-    await page.keyboard.press("Delete");
-    await expect(page.getByTestId("apps-tab-local:definition-beta")).toHaveCount(0);
-    await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
-      .toBeFocused();
+    await betaRail.hover();
+    const betaRailClose = page.getByTestId("primary-rail-app-local:definition-beta-close");
+    await expect(betaRailClose).toHaveCSS("opacity", "1");
+    await betaRailClose.focus();
+    await expect(betaRailClose).toBeFocused();
+    await betaRailClose.click();
+    await expect(betaRail).toHaveCount(0);
+    await expect(alphaRail.getByRole("link")).toHaveAttribute("aria-current", "page");
+    await expect(alphaRail.getByRole("link")).toBeFocused();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
     ))).toEqual([]);
 
     await page.screenshot({
-      path: `/tmp/rudder-apps-e2e-tabs-${testInfo.workerIndex}.png`,
+      path: `/tmp/rudder-apps-e2e-primary-rail-${testInfo.workerIndex}.png`,
       fullPage: true,
     });
 
@@ -630,6 +637,9 @@ test.describe("Apps workspace", () => {
       .locator("[contenteditable='true']").first();
     await expect(composer).toContainText("A Local App could not open in Rudder Desktop.");
     await expect(composer).toContainText("Alpha CRM");
+    await page.reload();
+    await expect(alphaRail).toBeVisible();
+    await expect(betaRail).toHaveCount(0);
   });
 
   test("deletes a stopped Local App from its row menu and keeps running Apps protected", async ({
@@ -756,11 +766,12 @@ test.describe("Apps workspace", () => {
     await expect(betaEntry).toBeVisible();
 
     await alphaEntry.click();
-    await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
+    const alphaRail = page.getByTestId("primary-rail-app-local:definition-alpha");
+    const betaRail = page.getByTestId("primary-rail-app-local:definition-beta");
+    await expect(alphaRail).toBeVisible();
     await betaEntry.click();
-    await expect(page.getByTestId("apps-tab-local:definition-beta")).toBeVisible();
-    await expect(page.getByTestId("apps-tab-local:definition-beta").getByRole("tab"))
-      .toHaveAttribute("aria-selected", "true");
+    await expect(betaRail).toBeVisible();
+    await expect(betaRail.getByRole("link")).toHaveAttribute("aria-current", "page");
 
     await betaEntry.hover();
     await page.getByTestId("apps-more-local:definition-beta").click();
@@ -772,8 +783,7 @@ test.describe("Apps workspace", () => {
     ))).toEqual(["definition-beta"]);
 
     await alphaEntry.click();
-    await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
-      .toHaveAttribute("aria-selected", "true");
+    await expect(alphaRail.getByRole("link")).toHaveAttribute("aria-current", "page");
     await betaEntry.hover();
     await page.getByTestId("apps-more-local:definition-beta").click();
     await expect(page.getByTestId("apps-delete-local:definition-beta")).toBeEnabled();
@@ -794,14 +804,22 @@ test.describe("Apps workspace", () => {
       (window as typeof window & { __deletedApps?: string[] }).__deletedApps ?? []
     ))).toEqual(["definition-beta"]);
     await expect(betaEntry).toHaveCount(0);
-    await expect(page.getByTestId("apps-tab-local:definition-beta")).toHaveCount(0);
-    await expect(page.getByTestId("apps-tab-local:definition-alpha")).toBeVisible();
-    await expect(page.getByTestId("apps-tab-local:definition-alpha").getByRole("tab"))
-      .toHaveAttribute("aria-selected", "true");
+    await expect(betaRail).toHaveCount(0);
+    await expect(alphaRail).toBeVisible();
+    await expect(alphaRail.getByRole("link")).toHaveAttribute("aria-current", "page");
     await page.screenshot({
       path: `/tmp/rudder-apps-e2e-delete-${testInfo.workerIndex}.png`,
       fullPage: true,
     });
+    await alphaRail.hover();
+    await page.getByTestId("primary-rail-app-local:definition-alpha-close").click();
+    await expect(page).toHaveURL(/\/plugins$/);
+    await expect(alphaRail).toHaveCount(0);
+    await expect(page.getByTestId("primary-rail").getByRole("link", { name: "Hub" }))
+      .toBeFocused();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __stoppedApps?: string[] }).__stoppedApps ?? []
+    ))).toEqual(["definition-beta"]);
   });
 
   test("does not expose a managed local binding in another organization", async ({

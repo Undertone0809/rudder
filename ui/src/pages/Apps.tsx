@@ -2,7 +2,6 @@ import { agentsApi } from "@/api/agents";
 import { appBuilderApi } from "@/api/app-builder";
 import { chatsApi } from "@/api/chats";
 import { Button } from "@/components/ui/button";
-import { WorkspaceTab } from "@/components/workbench/WorkspaceTab";
 import { useChatGenerationActions } from "@/context/ChatGenerationContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
@@ -14,9 +13,13 @@ import {
 } from "@/lib/app-builder";
 import { launchManagedApp } from "@/lib/app-builder-launch";
 import {
+  openAppRailItem,
+  openAppRailItemFromEntry,
+  reconcileOpenAppRailItems,
+} from "@/lib/app-primary-rail";
+import {
   acknowledgeAppDirectOpen,
   activeKeyFromPath,
-  appRoute,
   localBindingKey,
   readAppDirectOpenIntent,
   shouldPreserveAppDirectOpenDuringOrganizationChange,
@@ -46,11 +49,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
   ArrowUp,
-  Home,
   Loader2,
   MessageSquare,
   Play,
-  Plus,
 } from "lucide-react";
 import {
   createElement,
@@ -60,7 +61,6 @@ import {
   useState,
   useSyncExternalStore,
   type FormEvent,
-  type KeyboardEvent,
 } from "react";
 import { mergeChatConversationsForStatus, mergeChatMessages } from "./Chat.parts";
 import {
@@ -68,11 +68,6 @@ import {
   CHAT_LIST_PREVIEW_LIMIT,
   EMPTY_CHAT_BODY_SHA256,
 } from "./Chat.workspace-helpers";
-
-type WorkspaceTab = {
-  key: string;
-  title: string;
-};
 
 function chooseBuilderAgent(agents: Agent[]) {
   const available = agents.filter((agent) => agent.status !== "terminated");
@@ -551,11 +546,6 @@ export function Apps() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const activeKey = activeKeyFromPath(location.pathname);
-  const [tabs, setTabs] = useState<WorkspaceTab[]>([
-    { key: "home", title: "Home" },
-  ]);
-  const [focusedTabKey, setFocusedTabKey] = useState("home");
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousOrganizationId = useRef(selectedOrganizationId);
 
   const {
@@ -581,8 +571,6 @@ export function Apps() {
   useEffect(() => {
     if (previousOrganizationId.current === selectedOrganizationId) return;
     previousOrganizationId.current = selectedOrganizationId;
-    setTabs([{ key: "home", title: "Home" }]);
-    setFocusedTabKey("home");
     if (!shouldPreserveAppDirectOpenDuringOrganizationChange(
       activeKey,
       openIntentVersion,
@@ -592,38 +580,17 @@ export function Apps() {
   }, [activeKey, navigate, openIntentVersion, selectedOrganizationId]);
 
   useEffect(() => {
-    if (!registryReady) return;
-    setTabs((current) => {
-      const next = current.filter((tab) => tab.key === "home" || entryByKey.has(tab.key));
-      if (next.length === current.length) return current;
-      for (const tab of current) {
-        if (!next.some((candidate) => candidate.key === tab.key)) {
-          tabRefs.current.delete(tab.key);
-        }
-      }
-      return next;
-    });
-  }, [entryByKey, registryReady]);
+    if (!selectedOrganizationId || !registryReady) return;
+    reconcileOpenAppRailItems(
+      selectedOrganizationId,
+      entries.map(openAppRailItemFromEntry),
+    );
+  }, [entries, registryReady, selectedOrganizationId]);
 
   useEffect(() => {
-    if (!registryReady) return;
-    setFocusedTabKey((current) => {
-      if (current === "home" || entryByKey.has(current)) return current;
-      return activeKey === "home" || entryByKey.has(activeKey) ? activeKey : "home";
-    });
-  }, [activeKey, entryByKey, registryReady]);
-
-  useEffect(() => {
-    if (activeKey === "home" || !activeEntry) return;
-    const title = activeEntry.kind === "managed"
-      ? activeEntry.app.name
-      : activeEntry.definition.title;
-    setTabs((current) => (
-      current.some((tab) => tab.key === activeKey)
-        ? current
-        : [...current, { key: activeKey, title }]
-    ));
-  }, [activeEntry, activeKey]);
+    if (!selectedOrganizationId || activeKey === "home" || !activeEntry) return;
+    openAppRailItem(selectedOrganizationId, openAppRailItemFromEntry(activeEntry));
+  }, [activeEntry, activeKey, selectedOrganizationId]);
 
   useEffect(() => {
     if (activeKey !== "home" && !activeEntry && registryReady) {
@@ -873,103 +840,12 @@ export function Apps() {
     },
   });
 
-  const activateTab = (key: string) => {
-    setFocusedTabKey(key);
-    navigate(key === "home" ? "/apps" : appRoute(key));
-  };
-
-  const closeTab = (key: string) => {
-    const index = tabs.findIndex((candidate) => candidate.key === key);
-    const nextTabs = tabs.filter((candidate) => candidate.key !== key);
-    const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
-    setTabs(nextTabs);
-    tabRefs.current.delete(key);
-    if (activeKey === key) {
-      activateTab(fallback?.key ?? "home");
-    } else if (focusedTabKey === key) {
-      const fallbackKey = fallback?.key ?? "home";
-      setFocusedTabKey(fallbackKey);
-      requestAnimationFrame(() => tabRefs.current.get(fallbackKey)?.focus());
-    }
-  };
-
-  const handleTabKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    index: number,
-    key: string,
-  ) => {
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = tabs.length - 1;
-    if (event.key === "Delete" && key !== "home") {
-      event.preventDefault();
-      closeTab(key);
-      return;
-    }
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const nextKey = tabs[nextIndex]?.key;
-    if (!nextKey) return;
-    setFocusedTabKey(nextKey);
-    tabRefs.current.get(nextKey)?.focus();
-  };
-
-  useEffect(() => {
-    setFocusedTabKey(activeKey);
-  }, [activeKey]);
-
   return (
     <section
-      className="flex h-full min-h-0 w-full flex-col gap-2 overflow-hidden"
+      className="flex h-full min-h-0 w-full overflow-hidden"
       data-testid="apps-workspace"
     >
-      <header className="workspace-main-card desktop-chrome flex h-11 shrink-0 items-center gap-1 overflow-x-auto rounded-[var(--desktop-workspace-radius)] px-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1" role="tablist" aria-label="Open Apps">
-          {tabs.map((tab, index) => {
-            const selected = tab.key === activeKey;
-            return (
-              <WorkspaceTab
-                key={tab.key}
-                active={selected}
-                buttonRef={(node) => {
-                  if (node) tabRefs.current.set(tab.key, node);
-                  else tabRefs.current.delete(tab.key);
-                }}
-                focused={focusedTabKey === tab.key}
-                icon={tab.key === "home"
-                  ? <Home className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  : <AppWindow className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-                id={`apps-workspace-tab-${encodeURIComponent(tab.key)}`}
-                panelId={`apps-workspace-panel-${encodeURIComponent(tab.key)}`}
-                label={tab.title}
-                onActivate={() => activateTab(tab.key)}
-                onClose={tab.key === "home" ? undefined : () => closeTab(tab.key)}
-                onFocus={() => setFocusedTabKey(tab.key)}
-                onKeyDown={(event) => handleTabKeyDown(event, index, tab.key)}
-                testId={`apps-tab-${tab.key}`}
-              />
-            );
-          })}
-        </div>
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          className="h-7 w-7 shrink-0"
-          onClick={() => activateTab("home")}
-          aria-label="New App"
-          title="New App"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden />
-        </Button>
-      </header>
-
       <div
-        id={`apps-workspace-panel-${encodeURIComponent(activeKey)}`}
-        role="tabpanel"
-        aria-labelledby={`apps-workspace-tab-${encodeURIComponent(activeKey)}`}
         className="workspace-main-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]"
       >
         {activeKey === "home" || !activeEntry ? (

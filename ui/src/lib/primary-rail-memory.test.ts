@@ -44,8 +44,9 @@ describe("primary rail memory", () => {
     expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("organization");
     expect(resolvePrimaryRailSection("/skills/skill-123/files/SKILL.md")).toBeNull();
     expect(resolvePrimaryRailSection("/automations/weekly-ci")).toBe("automations");
+    expect(resolvePrimaryRailSection("/hub")).toBe("plugins");
     expect(resolvePrimaryRailSection("/plugins")).toBe("plugins");
-    expect(resolvePrimaryRailSection("/apps/local/binding-a")).toBe("plugins");
+    expect(resolvePrimaryRailSection("/apps/local/binding-a")).toBeNull();
     expect(resolvePrimaryRailSection("/apps/saved/saved-local-a")).toBeNull();
     expect(resolvePrimaryRailSection("/organization/settings")).toBeNull();
   });
@@ -77,21 +78,22 @@ describe("primary rail memory", () => {
     expect(readRememberedPrimaryRailPath("org-1", "organization", "/dashboard")).toBe("/dashboard");
   });
 
-  it("keeps Local App routes under Plugins without remembering pinned Saved Views", () => {
+  it("does not let Apps routes replace the stable Plugins destination", () => {
+    rememberPrimaryRailPath("org-1", "/plugins");
     rememberPrimaryRailPath("org-1", "/apps/local/binding-a");
     rememberPrimaryRailPath("org-1", "/apps/saved/saved-local-a");
 
     expect(readRememberedPrimaryRailPath("org-1", "plugins", "/plugins"))
-      .toBe("/apps/local/binding-a");
+      .toBe("/plugins");
   });
 
-  it("reads legacy Apps rail memory when no Plugins path has been stored", () => {
+  it("ignores legacy Apps rail memory when no Plugins path has been stored", () => {
     storage.set("rudder.primaryRailLastPaths", JSON.stringify({
       "org-1": { apps: "/apps/local/binding-a" },
     }));
 
     expect(readRememberedPrimaryRailPath("org-1", "plugins", "/plugins"))
-      .toBe("/apps/local/binding-a");
+      .toBe("/plugins");
   });
 
   it("does not remember workspace backups as the Library rail destination", () => {

@@ -15,11 +15,18 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useInboxBadge } from "@/hooks/useInboxBadge";
 import {
+  readOpenAppRailItems,
+  removeOpenAppRailItem,
+  subscribeOpenAppRailItems,
+} from "@/lib/app-primary-rail";
+import { activeKeyFromPath, appRoute } from "@/lib/apps-workspace";
+import {
   readDesktopNotificationPermission,
   requestDesktopNotificationPermission,
 } from "@/lib/desktop-notification-permission";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { readRememberedIssueNavigationPath } from "@/lib/issue-navigation";
+import type { LocalAppOpaqueIdentity } from "@/lib/local-apps";
 import { localAppSavedViewRoute } from "@/lib/messenger-saved-views";
 import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
@@ -31,6 +38,7 @@ import { cn } from "@/lib/utils";
 import type { MessengerSavedViewTarget } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AppWindow,
   Blocks,
   Bot,
   CircleCheckBig,
@@ -47,6 +55,7 @@ import {
   Settings,
   Target,
   UsersRound,
+  X,
 } from "lucide-react";
 import {
   type CSSProperties,
@@ -55,6 +64,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 
@@ -74,7 +84,10 @@ type RailItem = {
   badgeTone?: "default" | "danger";
   badgeTestId?: string;
   active: boolean;
-  localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
+  localAppIdentity?: LocalAppOpaqueIdentity;
+  localAppIconDataUrl?: string | null;
+  onClose?: () => void;
+  testId?: string;
 };
 
 function isMessengerAttentionRoute(relativePath: string): boolean {
@@ -94,6 +107,7 @@ const railUtilityButtonClass = [
 ].join(" ");
 
 function RailNavItem({
+  railKey,
   to,
   label,
   icon: Icon,
@@ -105,8 +119,12 @@ function RailNavItem({
   onDoubleClick,
   onContextMenu,
   localAppIdentity,
+  localAppIconDataUrl,
+  onClose,
+  testId,
   end,
 }: {
+  railKey: string;
   to: string;
   label: string;
   icon: typeof Inbox;
@@ -117,58 +135,85 @@ function RailNavItem({
   active?: boolean;
   onDoubleClick?: () => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
-  localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
+  localAppIdentity?: LocalAppOpaqueIdentity;
+  localAppIconDataUrl?: string | null;
+  onClose?: () => void;
+  testId?: string;
   end?: boolean;
 }) {
   return (
-    <NavLink
-      to={to}
-      end={end}
-      aria-current={active ? "page" : undefined}
-      data-tour-target={tourTarget}
-      data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-      className={({ isActive }) =>
-        cn(
-          "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
-          (active ?? isActive)
-            ? "text-white"
-            : [
-              "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
-              "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
-              "hover:text-[color:var(--sidebar-foreground)]",
-              "dark:text-white/74 dark:hover:bg-white/[0.07] dark:hover:text-white",
-            ].join(" "),
-        )
-      }
+    <div
+      className="group relative z-10 w-[var(--primary-rail-item-width,66px)] shrink-0 translate-x-[var(--primary-rail-item-shift,0.25rem)]"
+      data-testid={testId}
     >
-      <span className="relative">
-        {localAppIdentity ? (
-          <LocalAppIdentityIcon
-            className="h-[17px] w-[17px] rounded-[4px]"
-            identity={localAppIdentity}
-            testId="primary-rail-local-app-icon"
-          />
-        ) : (
-          <Icon className="h-[17px] w-[17px]" />
-        )}
-        {badge != null && badge > 0 ? (
-          <span
-            data-testid={badgeTestId}
-            className={cn(
-              "absolute -right-2 -top-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
-              badgeTone === "danger"
-                ? "bg-red-500 text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
-                : "bg-primary text-primary-foreground",
-            )}
-          >
-            {badge > 99 ? "99+" : badge}
-          </span>
-        ) : null}
-      </span>
-      <span className="block w-full min-w-0 truncate text-center" title={label}>{label}</span>
-    </NavLink>
+      <NavLink
+        to={to}
+        data-primary-rail-key={railKey}
+        end={end}
+        aria-current={active ? "page" : undefined}
+        data-tour-target={tourTarget}
+        data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
+        onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
+        onKeyDown={(event) => {
+          if (event.key !== "Delete" || !onClose) return;
+          event.preventDefault();
+          onClose();
+        }}
+        className={({ isActive }) =>
+          cn(
+            "flex min-h-[56px] w-full flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
+            (active ?? isActive)
+              ? "text-white"
+              : [
+                "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
+                "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
+                "hover:text-[color:var(--sidebar-foreground)]",
+                "dark:text-white/74 dark:hover:bg-white/[0.07] dark:hover:text-white",
+              ].join(" "),
+          )
+        }
+      >
+        <span className="relative">
+          {localAppIdentity || localAppIconDataUrl ? (
+            <LocalAppIdentityIcon
+              className="h-[17px] w-[17px] rounded-[4px]"
+              iconDataUrl={localAppIconDataUrl}
+              identity={localAppIdentity}
+              testId="primary-rail-local-app-icon"
+            />
+          ) : (
+            <Icon className="h-[17px] w-[17px]" />
+          )}
+          {badge != null && badge > 0 ? (
+            <span
+              data-testid={badgeTestId}
+              className={cn(
+                "absolute -right-2 -top-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                badgeTone === "danger"
+                  ? "bg-red-500 text-white shadow-[0_4px_12px_-6px_rgba(220,38,38,0.85)]"
+                  : "bg-primary text-primary-foreground",
+              )}
+            >
+              {badge > 99 ? "99+" : badge}
+            </span>
+          ) : null}
+        </span>
+        <span className="block w-full min-w-0 truncate text-center" title={label}>{label}</span>
+      </NavLink>
+      {onClose ? (
+        <button
+          type="button"
+          className="pointer-events-none absolute right-0.5 top-0.5 z-20 inline-flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] bg-[color:color-mix(in_oklab,var(--sidebar)_82%,white)] text-[color:var(--sidebar-foreground)] opacity-0 shadow-sm transition-[opacity,background-color,color] hover:bg-[color:var(--surface-active)] focus:pointer-events-auto focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 dark:bg-[color:color-mix(in_oklab,var(--sidebar)_82%,black)] dark:text-white"
+          aria-label={`Remove ${label} from Primary Rail`}
+          title={`Remove ${label} from Primary Rail`}
+          onClick={onClose}
+          data-testid={testId ? `${testId}-close` : undefined}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -212,12 +257,18 @@ export function PrimaryRail({
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
+  const openAppRailItems = useSyncExternalStore(
+    subscribeOpenAppRailItems,
+    () => readOpenAppRailItems(selectedOrganizationId),
+    () => readOpenAppRailItems(null),
+  );
   const suppressInboxPopups = isMessengerAttentionRoute(relativePath);
   const isDesktopShell = readDesktopShell() !== null;
   const desktopRailPlatform = resolveDesktopRailPlatform(isDesktopShell);
   const previousInboxCountRef = useRef<number | null>(null);
   const previousInboxOrgRef = useRef<string | null | undefined>(selectedOrganizationId);
   const requestedNotificationPermissionRef = useRef(false);
+  const pendingFocusRailKeyRef = useRef<string | null>(null);
   const orgGroupActive = /^\/(?:dashboard|calendar|org|projects|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
@@ -227,7 +278,6 @@ export function PrimaryRail({
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
-  const pluginsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "plugins", "/hub");
   const railItems: RailItem[] = [
     {
       key: "messenger",
@@ -271,11 +321,10 @@ export function PrimaryRail({
     },
     {
       key: "plugins",
-      to: pluginsEntryPath,
+      to: "/plugins",
       label: "Hub",
       icon: Blocks,
-      active: /^\/(?:hub|plugins|apps)(?:\/|$)/.test(relativePath)
-        && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
+      active: /^\/(?:hub|plugins)(?:\/|$)/.test(relativePath),
     },
     {
       key: "organization",
@@ -302,17 +351,52 @@ export function PrimaryRail({
       localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
       active: relativePath === localAppSavedViewRoute(savedView.id),
     }));
+  const openedAppItems: RailItem[] = openAppRailItems.map((item) => ({
+    key: `open-app:${item.key}`,
+    to: appRoute(item.key),
+    label: item.title,
+    icon: AppWindow,
+    localAppIdentity: item.identity ?? undefined,
+    localAppIconDataUrl: item.iconDataUrl,
+    active: relativePath === appRoute(item.key),
+    testId: `primary-rail-app-${item.key}`,
+    onClose: () => {
+      if (!selectedOrganizationId) return;
+      const removedIndex = openAppRailItems.findIndex((candidate) => candidate.key === item.key);
+      const adjacentItem = openAppRailItems[removedIndex + 1] ?? openAppRailItems[removedIndex - 1];
+      const isActiveApp = activeKeyFromPath(relativePath) === item.key;
+      pendingFocusRailKeyRef.current = isActiveApp || !adjacentItem
+        ? "plugins"
+        : `open-app:${adjacentItem.key}`;
+      removeOpenAppRailItem(selectedOrganizationId, item.key);
+      if (isActiveApp) navigate("/plugins");
+    },
+  }));
+
+  useEffect(() => {
+    const pendingKey = pendingFocusRailKeyRef.current;
+    if (!pendingKey) return;
+    const nextFocusTarget = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-primary-rail-key]"),
+    ).find((element) => element.dataset.primaryRailKey === pendingKey);
+    if (!nextFocusTarget) return;
+    pendingFocusRailKeyRef.current = null;
+    nextFocusTarget.focus();
+  }, [openAppRailItems]);
   const activeFixedRailIndex = railItems.findIndex((item) => item.active);
+  const activeOpenedAppIndex = openedAppItems.findIndex((item) => item.active);
   const activePinnedRailIndex = pinnedLocalAppItems.findIndex((item) => item.active);
   const activeRailIndex = activeFixedRailIndex >= 0
     ? activeFixedRailIndex
-    : activePinnedRailIndex >= 0
-      ? railItems.length + activePinnedRailIndex
-      : -1;
+    : activeOpenedAppIndex >= 0
+      ? railItems.length + activeOpenedAppIndex
+      : activePinnedRailIndex >= 0
+        ? railItems.length + openedAppItems.length + activePinnedRailIndex
+        : -1;
   const activeRailStyle = activeRailIndex >= 0
     ? ({
         "--motion-rail-active-index": activeRailIndex,
-        "--motion-rail-active-offset": activePinnedRailIndex >= 0
+        "--motion-rail-active-offset": activeOpenedAppIndex >= 0 || activePinnedRailIndex >= 0
           ? `calc(${activeRailIndex} * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)) + 0.6875rem)`
           : `calc(${activeRailIndex} * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)))`,
       } as CSSProperties)
@@ -535,6 +619,7 @@ export function PrimaryRail({
         {railItems.map((item) => (
           <RailNavItem
             key={item.key}
+            railKey={item.key}
             to={item.to}
             label={item.label}
             icon={item.icon}
@@ -546,15 +631,33 @@ export function PrimaryRail({
             onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
             onContextMenu={item.key === "messenger" ? handleMessengerContextMenu : undefined}
             localAppIdentity={item.localAppIdentity}
+            localAppIconDataUrl={item.localAppIconDataUrl}
+            onClose={item.onClose}
+            testId={item.testId}
             end={item.key === "plugins" ? true : undefined}
           />
         ))}
-        {pinnedLocalAppItems.length > 0 ? (
+        {openedAppItems.length > 0 || pinnedLocalAppItems.length > 0 ? (
           <span className="my-1 h-px w-7 shrink-0 bg-white/10" aria-hidden="true" />
         ) : null}
+        {openedAppItems.map((item) => (
+          <RailNavItem
+            key={item.key}
+            railKey={item.key}
+            to={item.to}
+            label={item.label}
+            icon={item.icon}
+            active={item.active}
+            localAppIdentity={item.localAppIdentity}
+            localAppIconDataUrl={item.localAppIconDataUrl}
+            onClose={item.onClose}
+            testId={item.testId}
+          />
+        ))}
         {pinnedLocalAppItems.map((item) => (
           <RailNavItem
             key={item.key}
+            railKey={item.key}
             to={item.to}
             label={item.label}
             icon={item.icon}

@@ -23,6 +23,7 @@ related_code:
   - ui/src/components/AppBuilderAutoLaunchCoordinator.tsx
   - ui/src/lib/app-builder-launch.ts
   - ui/src/components/AppsContextSidebar.tsx
+  - ui/src/lib/app-primary-rail.ts
   - ui/src/pages/InstanceExperimentalSettings.tsx
   - ui/src/components/PrimaryRail.tsx
 related_tests:
@@ -39,6 +40,7 @@ related_tests:
   - desktop/src/local-app-icon-discovery.test.ts
   - ui/src/pages/InstanceExperimentalSettings.test.tsx
   - ui/src/lib/app-builder-launch.test.ts
+  - ui/src/lib/app-primary-rail.test.ts
   - ui/src/components/PrimaryRail.test.tsx
   - tests/e2e/app-builder.spec.ts
   - desktop/scripts/smoke.mjs
@@ -59,9 +61,11 @@ product that can be used as a Rudder App. New Apps use one maintained full-stack
 scaffold by default; existing web projects keep their framework and conventions.
 It is a default Rudder capability. The top-level **Hub** destination is always
 available in the Primary Rail, while the Apps workspace owns building, loading,
-and running local Apps. Local Apps appear as app-only Plugins in **Hub >
-Plugins** and remain directly openable through their existing `/apps/...`
-workspace routes.
+and running local Apps. Hub always returns to **Plugins** instead of remembering
+the Apps workspace. Local Apps appear as app-only Plugins in **Hub > Plugins**
+and remain directly openable through their existing `/apps/...` workspace
+routes. An App appears as a removable Primary Rail item only after the operator
+opens it; Apps Home itself is not a persistent rail destination.
 
 To the operator, these websites are **Rudder Apps**. Underneath, they remain
 ordinary local webpages rather than a new executable or packaging format.
@@ -145,6 +149,8 @@ promotion, or production rollback UI.
 
 - Top-level **Hub** Primary Rail destination with **Plugins**, **Skills**, and
   **Showcase** views.
+- Organization-scoped, removable Primary Rail items for Apps the operator has
+  opened.
 - The Apps workspace request composer: **Turn ideas into applications**.
 - Registered App list and sidebar **Add an App** menu:
   - **Build with Agent** opens a new Chat with an editable `$app-builder` brief.
@@ -157,15 +163,17 @@ promotion, or production rollback UI.
 
 ### Product Logic Flow
 
-1. Hub is available by default in the Primary Rail. Opening Hub, Plugins, or
-   Apps never starts a process or creates an App.
+1. Hub is available by default in the Primary Rail and always opens Plugins;
+   visiting Apps never replaces that stable return destination. Opening Hub,
+   Plugins, or Apps Home never starts a process or creates an App.
 2. The Apps execution workspace uses Rudder's established workspace shell:
-   Home/search/registered Apps
-   in the context sidebar, established Rudder tabs in the header, and Home or
-   the active full-bleed webpage in the main content. App management is
+   Home/search/registered Apps in the context sidebar and Home or the active
+   full-bleed webpage in the main content. Open Apps are represented once in
+   the Primary Rail rather than duplicated in an Apps-local header tab strip.
+   App management is
    progressively disclosed through a hover/focus More menu on each sidebar
    row; Apps has no persistent right runtime-control column. Subtle
-   entry/tab/status motion respects reduced-motion preferences.
+   entry/rail/status motion respects reduced-motion preferences.
 3. The context-sidebar **Add an App** menu separates creation from loading:
    **Build with Agent** navigates to a normal new Chat with an editable, unsent
    `$app-builder` prompt, while **Add local web project** opens the Desktop
@@ -203,16 +211,21 @@ promotion, or production rollback UI.
    `launch_failed`, and offers retry plus **Continue in Chat** recovery. It
    never claims the App opened.
 9. Registered managed Apps and manually loaded local Apps appear together in
-   the Apps navigation. Opening one creates or focuses a closable Apps header
-   tab and directly opens its reviewed revision. Rudder reuses a running
+   the Apps navigation. Opening one creates or focuses one organization-scoped,
+   closable Primary Rail item and directly opens its reviewed revision. Rudder
+   reuses a running
    generation or automatically starts one, attests its listener, and renders
    the active webpage full-bleed through its isolated Desktop webview.
-   Multiple Apps may remain tabbed and running.
-10. Closing or switching an Apps tab closes or parks only the view. It does not
-   stop the App. The process remains available in the background until Desktop
-   shutdown, a bounded failure occurs, or the operator uses
+   Multiple opened Apps may remain in the rail and continue running.
+10. Hover or keyboard focus reveals an App rail item's close control. Removing
+   a background App removes only that rail entry without changing the current
+   route. Removing the active App returns to **Hub > Plugins**. Removing or
+   switching an App rail item closes or parks only the view and never stops the
+   App. The process remains available in the background until Desktop shutdown,
+   a bounded failure occurs, or the operator uses
    **Stop App** in the sidebar row's More menu. Background route hydration and
-   Messenger Saved View navigation remain unable to start it.
+   Messenger Saved View navigation remain unable to start it. Reopening a
+   removed App adds it to the rail again without creating a duplicate.
 11. The sidebar More menu contains settings and infrequent lifecycle actions.
     While an App is running, **Copy App link** copies its current attested
     `http://127.0.0.1:<port>/...` URL and **Open in browser** sends that same URL
@@ -272,7 +285,9 @@ ownership-unverified failure handling.
 | Agent/Chat stops before verified handoff | Mark `failed` and return to Chat | Offer direct runtime retry for unverified source |
 | Foreign listener owns the port | Fail closed without killing it | Guess ownership |
 | User clicks a registered App in Apps | Reuse or auto-start its reviewed generation and render the attested webpage | Require a separate Start step or open an unattested target |
-| Apps tab closes or switches | Close/park the view and keep the generation resident | Stop or restart the App |
+| User opens an App | Add or focus one organization-scoped Primary Rail item | Permanently list every registered App in the rail or duplicate navigation in a header tab strip |
+| Active App rail item is removed | Return to Hub > Plugins and keep the generation resident | Stop or restart the App |
+| Background App rail item is removed | Remove that entry without changing the current route and keep the generation resident | Navigate away, stop, or restart either App |
 | Background hydration or Messenger Saved View opens | Restore navigation state only | Start the App |
 | User copies or externally opens the link | Use current attested loopback URL | Describe it as public, stable, or cross-device |
 | User requests a public URL | Explain that V1 has no publication path | Create a tunnel or cloud deployment |
@@ -285,13 +300,15 @@ ownership-unverified failure handling.
 - Up-front local-execution and automatic-open disclosure.
 - App direct-open actions; settings, Stop, Copy, browser,
   Chat, source, and data management through the sidebar More menu.
+- Hover/focus close action on each opened App's Primary Rail item.
 - Material data/integration choices raised by the Skill.
 
 ### Operator-Visible Output
 
 - Default Hub Primary Rail entry and an Apps execution workspace
   without a persistent right runtime-control column.
-- Searchable registered App list, Home composer, and multiple closable tabs.
+- Searchable registered App list, Home composer, and opened App rail items that
+  remain available per organization until explicitly removed.
 - A clear choice between starting an App Builder Chat and loading an existing
   local web project from the computer.
 - Normal Chat containing the explicit `$app-builder` request.

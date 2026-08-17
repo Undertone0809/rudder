@@ -24,6 +24,7 @@ related_code:
   - ui/src/components/side-panel/LocalAppPanelView.tsx
   - ui/src/components/AppsContextSidebar.tsx
   - ui/src/pages/Apps.tsx
+  - ui/src/lib/app-primary-rail.ts
   - ui/src/context/LiveSurfaceRuntimeContext.tsx
   - ui/src/components/workbench/MessengerMainWorkbench.tsx
 related_tests:
@@ -38,6 +39,8 @@ related_tests:
   - ui/src/components/side-panel/LocalAppPanelView.test.tsx
   - ui/src/context/LiveSurfaceRuntimeContext.test.tsx
   - ui/src/lib/local-apps.test.ts
+  - ui/src/lib/app-primary-rail.test.ts
+  - ui/src/components/PrimaryRail.test.tsx
   - tests/e2e/messenger-local-apps.spec.ts
   - tests/e2e/app-builder.spec.ts
   - desktop/scripts/smoke.mjs
@@ -118,7 +121,8 @@ Saved View identity and group placement.
 - Desktop Local Apps catalog and reviewed-definition flow.
 - Apps context-sidebar **Add an App** menu and its **Add local web project**
   folder-picker action; **Build with Agent** is the separate Chat path.
-- Apps workspace registered-App rows, tabs, and row More menus.
+- Apps workspace registered-App rows, opened-App Primary Rail items, and row
+  More menus.
 - Explicit `Start & open`, `Stop`, retry, and review actions.
 - Main Workbench Local App tab hover/focus More menu and its `Project settings`
   action.
@@ -189,10 +193,14 @@ Saved View identity and group placement.
 13. The Apps workspace is an application launcher, not a passive Saved View.
     Clicking a registered App is direct operator intent to open its reviewed
     revision. Rudder automatically reuses or starts its one generation,
-    attests the target, and renders the webpage in the main content. Closing or
-    switching its tab never stops the generation. Infrequent settings, link,
-    browser, and Stop actions live in the registered row's hover/focus More
-    menu rather than a persistent runtime sidebar.
+    attests the target, renders the webpage in the main content, and adds one
+    organization-scoped Primary Rail item. The App is not permanently listed
+    before it is opened. Hover or focus reveals the rail item's close action;
+    removing it closes only that navigation entry and never stops the
+    generation. Removing the active entry returns to Hub > Plugins, while
+    removing a background entry keeps the current route. Infrequent settings,
+    link, browser, and Stop actions live in the registered row's hover/focus
+    More menu rather than a persistent runtime sidebar.
 14. When an explicit Local App start fails or an active generation later enters
     `failed`, the failure surface offers **Ask AI for help** alongside retry.
     It opens a new Chat with a reviewable, unsent diagnostic draft containing
@@ -246,7 +254,9 @@ presentation metadata only and never grants runtime authority.
 | Exact Side tab moves to Messenger Main | Transfer the same guest and host lease | Reload, duplicate guest, or restart service |
 | Saved row opens while service is stopped | Show stopped/unavailable state with explicit action | Auto-start |
 | Registered App row opens in Apps after review | Reuse or auto-start the reviewed revision and render its attested guest | Require a second Start action or expose an unattested origin |
-| Apps tab closes or switches | Keep the owned generation resident | Stop or restart it |
+| App opens from Apps or Hub | Add or focus one organization-scoped Primary Rail item | Permanently list unopened Apps or add a duplicate header tab strip |
+| Active App rail item is removed | Return to Hub > Plugins and keep the owned generation resident | Stop or restart it |
+| Background App rail item is removed | Remove only that entry and preserve the current route and generations | Navigate away, stop, or restart either App |
 | Saved row opens on Web, another Desktop, or without local binding | Keep row and explain unavailability | Delete row or fabricate a runtime |
 | Remove from Messenger | Remove durable binding; keep open Main tab session-only | Close tab or stop process |
 | Close Main tab | Dispose that view; keep Saved row and running process | Remove row or stop process |
@@ -276,6 +286,7 @@ presentation metadata only and never grants runtime authority.
 - Hover/focus More menu on each Apps sidebar row for App settings, source,
   current attested link/browser actions, managed development data, and
   explicit Stop.
+- Hover/focus close control on each opened App's Primary Rail item.
 - Local runtime status and unavailable reason.
 
 ### Operator-Visible Output
@@ -283,6 +294,8 @@ presentation metadata only and never grants runtime authority.
 - A Local App tab in Side Panel or full-bleed Main Workbench.
 - A registered App opened full-bleed in the Apps main content, without a
   persistent right runtime-control column.
+- An opened App Primary Rail item that is absent before first open and remains
+  organization-scoped until explicitly removed.
 - A registered App row with its discovered project icon or framework fallback
   badge when no project icon is available.
 - A reviewed local website available directly from Rudder's Apps workspace for
@@ -369,8 +382,8 @@ unchanged and retains its explicit or `/api/health` readiness contract.
 - Opened origins are loopback listeners attested to the owned process tree.
 - One definition has at most one running generation.
 - Every guest has exactly one host lease and an isolated definition partition.
-- Move preserves the exact live guest. Remove, Close, and tab switching do not
-  start or stop the service.
+- Move preserves the exact live guest. Remove, Close, rail-item removal, and
+  view switching do not start or stop the service.
 - Navigation and view-lifecycle actions never stop a generation. Explicit Stop
   and Desktop shutdown do; failed start, readiness failure, or watchdog failure
   may also terminate a provably owned process tree as bounded safety cleanup.
