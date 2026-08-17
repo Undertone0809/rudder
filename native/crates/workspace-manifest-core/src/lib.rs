@@ -415,7 +415,17 @@ fn collect_until_quiet(
                 batch.overflow = true;
                 deadline = std::time::Instant::now() + debounce;
             }
-            Err(RecvTimeoutError::Timeout) => return batch,
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(stop) = stop {
+                    match stop.try_recv() {
+                        Ok(()) | Err(TryRecvError::Disconnected) => {
+                            batch.stopped = true;
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
+                }
+                return batch;
+            }
             Err(RecvTimeoutError::Disconnected) => {
                 batch.disconnected = true;
                 return batch;
@@ -817,5 +827,26 @@ mod tests {
         assert_eq!(states, [ManifestState::Building, ManifestState::Ready]);
         let parsed: WorkspaceManifest = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
         assert!(parsed.entries.iter().any(|entry| entry.path == "late"));
+    }
+
+    #[test]
+    fn observes_stop_arriving_during_debounce_wait() {
+        let (_event_sender, event_receiver) = mpsc::channel();
+        let (stop_sender, stop_receiver) = mpsc::channel();
+        let stopper = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            stop_sender.send(()).unwrap();
+        });
+
+        let batch = collect_until_quiet(
+            &event_receiver,
+            Path::new("manifest.json"),
+            Duration::from_millis(100),
+            Some(&stop_receiver),
+        );
+
+        stopper.join().unwrap();
+        assert!(batch.stopped);
+        assert!(!batch.dirty);
     }
 }
