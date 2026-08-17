@@ -255,6 +255,110 @@ jobs:
           RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "1"
         run: pnpm build
 
+  native-foundations:
+    name: Native foundations ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            arch: arm64
+            extension: ""
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: x64
+            extension: ""
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x64
+            extension: .exe
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: x64
+            extension: ""
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      RUDDER_NATIVE_MODE: required
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rust formatting
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo fmt --manifest-path native/Cargo.toml --all --check
+
+      - name: Rust Clippy
+        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests serially
+        run: cargo test --manifest-path native/Cargo.toml --all-targets -- --test-threads=1
+
+      - name: Stage native binaries
+        env:
+          RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}
+        run: pnpm native:build
+
+      - name: Verify staged target and protocol metadata
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+          NATIVE_EXTENSION: ${{ matrix.extension }}
+        run: |
+          node - <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const path = require("node:path");
+          const target = process.env.NATIVE_TARGET;
+          const extension = process.env.NATIVE_EXTENSION;
+          const root = path.resolve("desktop/.packaged/native", target);
+          for (const name of ["rudder-process-host", "rudder-native", "rudder-update-helper"]) {
+            const binary = path.join(root, `${name}${extension}`);
+            execFileSync(binary, ["--version"], { stdio: "pipe" });
+          }
+          const metadata = JSON.parse(execFileSync(path.join(root, `rudder-native${extension}`), ["archive", "capabilities"], { encoding: "utf8" }));
+          if (metadata.ok !== true || metadata.target !== target || metadata.protocolVersion !== 1 || metadata.effectiveEngine !== "rust") {
+            throw new Error(`Unexpected native metadata: ${JSON.stringify(metadata)}`);
+          }
+          NODE
+
+      - name: Native policy, protocol, fallback, and public workflow tests
+        env:
+          RUDDER_NATIVE_PROCESS_HOST_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-process-host${{ matrix.extension }}
+          RUDDER_NATIVE_ARCHIVE_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_EVIDENCE_INDEX_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_PAYLOAD_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+        run: |
+          RUDDER_NATIVE_MODE=required pnpm exec vitest run \
+            packages/shared/src/native-mode.test.ts \
+            packages/agent-runtime-utils/src/native-process-runner.test.ts \
+            cli/src/runtime/native-payload.test.ts \
+            desktop/src/local-app-native-host.test.ts \
+            server/src/__tests__/log-store-offsets.test.ts \
+            server/src/__tests__/workspace-manifest-native.test.ts \
+            server/src/__tests__/workspace-backups.test.ts
+          RUDDER_NATIVE_MODE=node pnpm exec vitest run desktop/src/local-apps-runtime.test.ts
+
   desktop-packaged-smoke:
     name: Desktop packaged smoke macOS arm64
     runs-on: macos-14
@@ -329,3 +433,20 @@ jobs:
 
       - name: Smoke packaged account gate
         run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
+
+      - name: Smoke packaged Rust-first Local App workflow
+        env:
+          RUDDER_NATIVE_MODE: required
+        run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=local-apps
+
+      - name: Exercise Rust-first Workspace backup workflow
+        env:
+          RUDDER_NATIVE_MODE: required
+          RUDDER_NATIVE_ARCHIVE_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
+        run: pnpm exec playwright test tests/e2e/workspace-backups.spec.ts
+
+      - name: Exercise Rust-first Agent Run process workflow
+        env:
+          RUDDER_NATIVE_MODE: required
+          RUDDER_NATIVE_PROCESS_HOST_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-process-host
+        run: pnpm exec playwright test tests/e2e/issue-active-run-steer.spec.ts

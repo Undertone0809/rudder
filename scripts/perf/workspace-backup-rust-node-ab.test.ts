@@ -5,8 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 import {
+  assessBackupComparability,
   nativeTargetLabel,
+  pairedP95Bootstrap,
   runWorkspaceBackupRustNodeAb,
+  seededArmOrders,
   stableFixtureContentHash,
 } from "./workspace-backup-rust-node-ab.js";
 
@@ -46,9 +49,11 @@ describe("workspace backup Rust/Node formal comparator", () => {
       assert.deepEqual(result.recovery.native.temporaryArtifacts, []);
       assert.equal(result.identity.fixture.treeSha256.length, 64);
       assert.equal(result.identity.fixture.contentSha256.length, 64);
-      assert.equal(result.sampler.operationBoundaries.length, 200);
-      assert.equal(result.sampler.positiveBoundaryCount, 200);
-      assert.equal(result.sampler.operationBoundaries.every((boundary) => boundary.positive && boundary.endRowIndex > boundary.startRowIndex), true);
+      assert.equal(result.comparability.status, "comparable");
+      const measuredBoundaries = result.sampler.operationBoundaries.filter((boundary) => !boundary.warmup);
+      assert.equal(measuredBoundaries.length, 200);
+      assert.equal(measuredBoundaries.filter((boundary) => boundary.positive).length, 200);
+      assert.equal(measuredBoundaries.every((boundary) => boundary.positive && boundary.endRowIndex > boundary.startRowIndex), true);
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(outputDir, { recursive: true, force: true });
@@ -65,6 +70,79 @@ describe("workspace backup Rust/Node formal comparator", () => {
       { path: "a.txt", kind: "file" as const, byteSize: 1, sha256: "a" },
     ];
     assert.equal(stableFixtureContentHash(entries), stableFixtureContentHash([...entries].reverse()));
+  });
+
+  it("creates reproducible counterbalanced arm blocks", () => {
+    const first = seededArmOrders(20260816, 100);
+    const second = seededArmOrders(20260816, 100);
+    assert.deepEqual(first, second);
+    assert.equal(first.every((order) => order.length === 2 && new Set(order).size === 2), true);
+    assert.ok(first.some((order) => order[0] === "node"));
+    assert.ok(first.some((order) => order[0] === "native"));
+  });
+
+  it("reports paired p95 bootstrap confidence intervals", () => {
+    const observations = Array.from({ length: 100 }, (_, block) => ([
+      {
+        block,
+        arm: "node" as const,
+        order: 0,
+        warmup: false,
+        sample: {
+          elapsedMs: 100 + (block % 5),
+          rssBeforeBytes: 100,
+          rssPeakBytes: 200,
+          rssAfterBytes: 100,
+          rssDeltaBytes: 100 + (block % 3),
+        },
+      },
+      {
+        block,
+        arm: "native" as const,
+        order: 1,
+        warmup: false,
+        sample: {
+          elapsedMs: 80 + (block % 5),
+          rssBeforeBytes: 100,
+          rssPeakBytes: 180,
+          rssAfterBytes: 100,
+          rssDeltaBytes: 80 + (block % 3),
+        },
+      },
+    ])).flat();
+    const result = pairedP95Bootstrap(observations, "elapsedMs", 1234, 1_000);
+    assert.equal(result.completePairs, 100);
+    assert.equal(result.nativeP95 < result.nodeP95, true);
+    assert.equal(result.pointDeltaP95 < 0, true);
+    assert.equal(result.ci95DeltaP95[0] <= result.pointDeltaP95, true);
+    assert.equal(result.ci95DeltaP95[1] >= result.pointDeltaP95, true);
+  });
+
+  it("fails closed when the formal comparison requirements are incomplete", () => {
+    const assessment = assessBackupComparability({
+      warmupsPerArm: 0,
+      measuredSamplesPerArm: { node: 1, native: 1 },
+      pairedBlocks: 1,
+      armOrders: [["node", "native"]],
+      bootstrapIterations: 10,
+      bootstrapMetrics: [],
+      measuredBoundaryCount: 2,
+      positiveMeasuredBoundaryCount: 2,
+      manifestParity: true,
+      entryParity: true,
+      contentParity: true,
+      recoveryPassed: true,
+    });
+    assert.equal(assessment.comparable, false);
+    assert.deepEqual(assessment.failures.sort(), [
+      "insufficient_bootstrap_iterations",
+      "insufficient_measured_samples",
+      "insufficient_paired_blocks",
+      "insufficient_warmups",
+      "arm_order_not_balanced",
+      "missing_elapsed_bootstrap",
+      "missing_rss_bootstrap",
+    ].sort());
   });
 
   it.skipIf(!existsSync(nativeBinary))("fails with an explicit bounded operation timeout", async () => {
@@ -100,9 +178,10 @@ describe("workspace backup Rust/Node formal comparator", () => {
         samplerPath: path.resolve("native/target/debug/rudder-process-tree-sampler"),
       });
       assert.equal(result.sampler.sessionScope, "shared-run");
-      assert.equal(result.sampler.operationBoundaries.length, 2);
-      assert.equal(result.sampler.positiveBoundaryCount, 2);
-      assert.equal(result.sampler.operationBoundaries.every((boundary) => boundary.positive), true);
+      const measuredBoundaries = result.sampler.operationBoundaries.filter((boundary) => !boundary.warmup);
+      assert.equal(measuredBoundaries.length, 2);
+      assert.equal(measuredBoundaries.filter((boundary) => boundary.positive).length, 2);
+      assert.equal(measuredBoundaries.every((boundary) => boundary.positive), true);
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(outputDir, { recursive: true, force: true });

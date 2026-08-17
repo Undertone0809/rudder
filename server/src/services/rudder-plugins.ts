@@ -35,7 +35,13 @@ import { agentEnabledSkillsService } from "./agent-enabled-skills.js";
 import type { ManagedMcpConnectionServiceOptions } from "./mcp/managed-connections.js";
 import { managedMcpConnectionService } from "./mcp/managed-connections.js";
 import { organizationSkillService } from "./organization-skills.js";
-import { enabledAgentIdsFromMetadata, inheritedPluginSkillAgentIds } from "./rudder-plugin-agent-bindings.js";
+import {
+  enabledAgentIdsFromMetadata,
+  inheritedPluginSkillAgentIds,
+  organizationSkillSelectionKey,
+  organizationSkillSelectionKeys,
+  selectedAgentIdsForSkill,
+} from "./rudder-plugin-agent-bindings.js";
 
 const MAX_PLUGIN_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -67,10 +73,6 @@ function packageIdentityKey(
   name: string,
 ) {
   return `${sourceType}:${(publisher ?? "unknown").toLocaleLowerCase("en-US")}:${name}`;
-}
-
-function organizationSkillSelectionKey(key: string) {
-  return key.startsWith("org:") ? key : `org:${key}`;
 }
 
 function decodeInputFile(file: InspectRudderPlugin["files"][number]): Buffer {
@@ -1663,15 +1665,13 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     const skillRows = skillIds.length === 0 ? [] : await db.select().from(organizationSkills)
       .where(and(eq(organizationSkills.orgId, orgId), inArray(organizationSkills.id, skillIds)));
     if (!enabled) {
-      const skillKeys = skillRows.map((skill) => organizationSkillSelectionKey(skill.key));
+      const skillKeys = organizationSkillSelectionKeys(skillRows);
       const selected = skillKeys.length === 0 ? [] : await db.select().from(agentEnabledSkills)
         .where(and(eq(agentEnabledSkills.orgId, orgId), inArray(agentEnabledSkills.skillKey, skillKeys)));
       for (const link of skillLinks) {
         const skill = skillRows.find((row) => row.id === link.targetId);
         if (!skill) continue;
-        const enabledAgentIds = selected
-          .filter((row) => row.skillKey === organizationSkillSelectionKey(skill.key))
-          .map((row) => row.agentId);
+        const enabledAgentIds = selectedAgentIdsForSkill(selected, skill.key);
         await db.update(pluginComponentLinks).set({
           status: "disabled",
           metadata: { ...link.metadata, enabledAgentIds },
@@ -1725,7 +1725,7 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     const skillIds = plugin.components.filter((component) => component.type === "skill" && component.targetId).map((component) => component.targetId!);
     const skillRows = skillIds.length === 0 ? [] : await db.select().from(organizationSkills)
       .where(and(eq(organizationSkills.orgId, orgId), inArray(organizationSkills.id, skillIds)));
-    const skillKeys = skillRows.map((skill) => organizationSkillSelectionKey(skill.key));
+    const skillKeys = organizationSkillSelectionKeys(skillRows);
     await enabledSkills.removeSkillKeys(orgId, skillKeys);
     for (const agentId of agentIds) await enabledSkills.addMissingKeys(orgId, agentId, skillKeys);
     for (const component of plugin.components.filter((entry) => entry.type === "skill")) {

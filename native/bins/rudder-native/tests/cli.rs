@@ -1,8 +1,9 @@
 use crc32fast::Hasher as Crc32;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
 const MANIFEST: &str = ".rudder-backup/manifest-v2.json";
@@ -133,7 +134,13 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "archive.create",
             "archive.inspectManifest",
             "archive.extractFile",
-            "evidence.index"
+            "evidence.index",
+            "payload.verify",
+            "payload.extract",
+            "payload.probeVersion",
+            "payload.publish",
+            "workspace.manifest",
+            "workspace.watch"
         ])
     );
     assert!(stderr.is_empty());
@@ -144,6 +151,158 @@ fn reports_version_protocol_and_capabilities_metadata() {
         serde_json::from_str::<Value>(&stdout).unwrap(),
         archive_capabilities["capabilities"]
     );
+    assert_eq!(archive_capabilities["effectiveEngine"], "rust");
+    assert_eq!(archive_capabilities["fallbackSafe"], true);
+    assert_eq!(archive_capabilities["accepted"], false);
+}
+
+#[test]
+fn verifies_extracts_publishes_and_manifests_payload_with_acceptance_receipts() {
+    let root = tempdir().unwrap();
+    let archive = root.path().join("payload.zip");
+    let staging = root.path().join("staging");
+    let destination = root.path().join("generation");
+    let manifest = root.path().join("workspace-manifest.json");
+    write_archive(&archive, b"payload-body");
+    let expected = format!("{:x}", Sha256::digest(fs::read(&archive).unwrap()));
+
+    let (code, verified, stderr) = run(&[
+        "payload",
+        "verify",
+        archive.to_str().unwrap(),
+        &expected,
+        "1000000",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(verified["capability"], "payload.verify");
+    assert_eq!(verified["accepted"], false);
+    assert_eq!(verified["fallbackSafe"], true);
+
+    let (code, extracted, stderr) = run(&[
+        "payload",
+        "extract",
+        archive.to_str().unwrap(),
+        "auto",
+        staging.to_str().unwrap(),
+        "1000000",
+        "100000",
+        "200000",
+        "1",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(extracted["accepted"], true);
+    assert_eq!(extracted["fallbackSafe"], false);
+    assert_eq!(fs::read(staging.join("file.bin")).unwrap(), b"payload-body");
+
+    let (code, published, stderr) = run(&[
+        "payload",
+        "publish",
+        staging.to_str().unwrap(),
+        destination.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(published["accepted"], true);
+    assert_eq!(published["alreadyPublished"], false);
+
+    let (code, rebuilt, stderr) = run(&[
+        "workspace",
+        "manifest",
+        destination.to_str().unwrap(),
+        manifest.to_str().unwrap(),
+        "1000",
+        "100000",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rebuilt["state"], "ready");
+    assert_eq!(rebuilt["accepted"], true);
+    let body: Value = serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
+    assert!(
+        body["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "file.bin")
+    );
+}
+
+#[test]
+fn payload_errors_bound_fallback_to_the_pre_acceptance_phase() {
+    let root = tempdir().unwrap();
+    let archive = root.path().join("payload.zip");
+    let staging = root.path().join("staging");
+    write_archive(&archive, b"payload-body");
+
+    let (code, mismatch, _) = run(&[
+        "payload",
+        "verify",
+        archive.to_str().unwrap(),
+        &"0".repeat(64),
+        "1000000",
+    ]);
+    assert_eq!(code, 2);
+    assert_eq!(mismatch["errorCode"], "sha256_mismatch");
+    assert_eq!(mismatch["accepted"], false);
+    assert_eq!(mismatch["fallbackSafe"], true);
+
+    fs::create_dir(&staging).unwrap();
+    let destination = root.path().join("destination");
+    fs::create_dir(&destination).unwrap();
+    let (code, conflict, _) = run(&[
+        "payload",
+        "publish",
+        staging.to_str().unwrap(),
+        destination.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(conflict["accepted"], true);
+    assert_eq!(conflict["fallbackSafe"], false);
+    assert!(destination.is_dir());
+}
+
+#[test]
+fn workspace_watch_streams_machine_readable_states_and_stops_on_control_eof() {
+    let root = tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    let manifest = root.path().join("manifest.json");
+    fs::write(workspace.join("file"), b"body").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rudder-native"))
+        .args([
+            "workspace",
+            "watch",
+            workspace.to_str().unwrap(),
+            manifest.to_str().unwrap(),
+            "1000",
+            "100000",
+            "50",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let lines = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines
+            .iter()
+            .map(|line| line["state"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["building", "ready", "stopped"]
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| line["capability"] == "workspace.watch")
+    );
+    assert!(lines.iter().all(|line| line["accepted"] == true));
 }
 
 #[test]

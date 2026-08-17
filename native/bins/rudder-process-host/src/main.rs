@@ -9,17 +9,41 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject,
+};
 
 const TERM_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
-const MAX_FRAME_BYTES: usize = 64 * 1024;
+const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+fn native_target() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-unknown-linux-gnu"
+    } else {
+        "unsupported"
+    }
+}
 
 struct LifecycleWriter {
     writer: Mutex<BufWriter<Box<dyn Write + Send>>>,
@@ -37,7 +61,7 @@ enum Input {
 }
 
 enum MonitorCommand {
-    Stop,
+    Stop { grace: Option<Duration> },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
 }
@@ -66,6 +90,60 @@ struct ActiveChild {
     events: mpsc::Receiver<MonitorEvent>,
     output_done: Vec<mpsc::Receiver<bool>>,
     evidence: Option<Arc<OperationEvidence>>,
+    output_gate: Option<Arc<AtomicBool>>,
+}
+
+struct OwnedProcessBoundary {
+    #[cfg(windows)]
+    job: HANDLE,
+}
+
+impl OwnedProcessBoundary {
+    fn attach(child: &Child) -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            let _ = child;
+            Ok(Self {})
+        }
+        #[cfg(windows)]
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of_val(&info) as u32,
+            ) == 0
+                || AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) == 0
+            {
+                CloseHandle(job);
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self { job })
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminate(&self) -> bool {
+        unsafe { TerminateJobObject(self.job, 1) != 0 }
+    }
+}
+
+#[cfg(windows)]
+unsafe impl Send for OwnedProcessBoundary {}
+
+#[cfg(windows)]
+impl Drop for OwnedProcessBoundary {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.job);
+        }
+    }
 }
 
 struct OperationEvidence {
@@ -78,10 +156,12 @@ struct OperationEvidence {
     owner_token: String,
     child_pid: u32,
     process_group: u32,
-    port: u16,
+    port: Option<u16>,
+    owner_kind: &'static str,
 }
 
 #[derive(Debug)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 enum ListenerOwnership {
     NotListening,
     Owned,
@@ -127,7 +207,8 @@ impl OperationEvidence {
         owner_token: String,
         child_pid: u32,
         process_group: u32,
-        port: u16,
+        port: Option<u16>,
+        owner_kind: &'static str,
     ) -> Result<Arc<Self>, &'static str> {
         let root = fs::canonicalize(runtime_root).map_err(|_| "runtime_root_unavailable")?;
         if !root.is_dir() {
@@ -152,6 +233,7 @@ impl OperationEvidence {
             child_pid,
             process_group,
             port,
+            owner_kind,
         });
         evidence.write_owner_descriptor()?;
         Ok(evidence)
@@ -159,7 +241,7 @@ impl OperationEvidence {
     fn write_owner_descriptor(&self) -> Result<(), &'static str> {
         atomic_json(
             &self.operation_root.join("owner-descriptor.json"),
-            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"ownerKind":"local_app_generation","opaqueOwnerToken":self.owner_token,"hostPid":std::process::id(),"childPid":self.child_pid,"platformOwnerIdentity":format!("process-group:{}",self.process_group),"port":self.port,"outputIndexPath":"output-index.jsonl","terminalReceiptPath":"terminal-receipt.json"}),
+            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"ownerKind":self.owner_kind,"opaqueOwnerToken":self.owner_token,"hostPid":std::process::id(),"childPid":self.child_pid,"platformOwnerIdentity":format!("process-group:{}",self.process_group),"port":self.port,"outputIndexPath":"output-index.jsonl","terminalReceiptPath":"terminal-receipt.json"}),
         )
     }
     fn record_output(&self, stream: &str, bytes: &[u8]) -> Result<(), &'static str> {
@@ -233,6 +315,28 @@ impl TerminalStartError {
     }
 }
 
+#[derive(Debug)]
+struct SpawnChildError {
+    code: &'static str,
+    cleanup_proven: bool,
+}
+
+impl SpawnChildError {
+    fn before_spawn(code: &'static str) -> Self {
+        Self {
+            code,
+            cleanup_proven: true,
+        }
+    }
+
+    fn after_spawn(code: &'static str, cleanup: CleanupResult) -> Self {
+        Self {
+            code,
+            cleanup_proven: cleanup.proven,
+        }
+    }
+}
+
 fn main() {
     if handle_metadata_args() {
         return;
@@ -275,6 +379,9 @@ fn main() {
             "protocolVersion": { "major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR },
             "capabilities": CAPABILITIES,
             "binary": "rudder-process-host",
+            "target": native_target(),
+            "binaryVersion": env!("CARGO_PKG_VERSION"),
+            "effectiveEngine": "rust",
         }),
     );
 
@@ -301,7 +408,7 @@ fn main() {
                 Ok(MonitorEvent::ListenerOwnerMismatch) => {
                     listener_mismatch = true;
                     if let Some(child) = active.as_ref() {
-                        let _ = child.control.send(MonitorCommand::Stop);
+                        let _ = child.control.send(MonitorCommand::Stop { grace: None });
                     }
                 }
                 Ok(MonitorEvent::Exited {
@@ -461,6 +568,16 @@ fn main() {
                 let port = port.expect("validated port");
                 let runtime_root = runtime_root.expect("validated runtime root");
                 set_owner_token(&lifecycle, owner_token.clone());
+                if let Err(code) = spawn_path_preflight(&executable, &cwd) {
+                    send_error(&lifecycle, code);
+                    send(
+                        &lifecycle,
+                        terminal_message("failed", Some(code), true, started_at, &counters),
+                    );
+                    process_exit_code = 1;
+                    terminal_sent = true;
+                    continue;
+                }
                 send(
                     &lifecycle,
                     json!({"type":"accepted","ownerToken":owner_token,"port":port}),
@@ -470,32 +587,162 @@ fn main() {
                     argv,
                     cwd,
                     env,
+                    None,
                     stdout.clone(),
                     stderr.clone(),
+                    lifecycle.clone(),
                     counters.clone(),
                     runtime_root,
                     owner_token.clone(),
-                    port,
+                    Some(port),
+                    "local_app_generation",
+                    TERM_TIMEOUT,
+                    false,
                 ) {
                     Ok((active_child, pid, pgid)) => {
+                        active = Some(active_child);
                         send(
                             &lifecycle,
                             json!({"type":"spawned","pid":pid,"pgid":pgid,"ownerToken":owner_token}),
                         );
-                        active = Some(active_child);
                     }
                     Err(error) => {
-                        send_error(&lifecycle, error);
+                        send_error(&lifecycle, error.code);
+                        let mut terminal = terminal_message(
+                            "failed",
+                            Some(error.code),
+                            error.cleanup_proven,
+                            started_at,
+                            &counters,
+                        );
+                        terminal["receiptWritten"] = Value::Bool(false);
+                        send(&lifecycle, terminal);
+                        process_exit_code = 1;
+                        terminal_sent = true;
+                    }
+                }
+            }
+            Ok(Input::Command(Command::StartProcess {
+                protocol_version,
+                request_id,
+                executable,
+                argv,
+                cwd,
+                env,
+                owner_token,
+                runtime_root,
+                stdin,
+                grace_ms,
+            })) => {
+                if active.is_some() {
+                    send_error(&lifecycle, "already_started");
+                    continue;
+                }
+                let command = Command::StartProcess {
+                    protocol_version,
+                    request_id,
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    owner_token,
+                    runtime_root,
+                    stdin,
+                    grace_ms,
+                };
+                set_request_id(
+                    &lifecycle,
+                    command_request_id(&command).unwrap_or_else(|| "agent-run".to_string()),
+                );
+                if let Err(code) = command.validate() {
+                    send_error(&lifecycle, code);
+                    send(
+                        &lifecycle,
+                        terminal_message("failed", Some(code), true, started_at, &counters),
+                    );
+                    process_exit_code = 3;
+                    terminal_sent = true;
+                    continue;
+                }
+                let Command::StartProcess {
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    owner_token,
+                    runtime_root,
+                    stdin,
+                    grace_ms,
+                    ..
+                } = command
+                else {
+                    unreachable!();
+                };
+                let owner_token = owner_token.expect("validated owner token");
+                let runtime_root = runtime_root.expect("validated runtime root");
+                set_owner_token(&lifecycle, owner_token.clone());
+                let grace = Duration::from_millis(grace_ms.unwrap_or(2_000).clamp(1, 60_000));
+                if let Err(code) = spawn_path_preflight(&executable, &cwd) {
+                    send_error(&lifecycle, code);
+                    let mut terminal =
+                        terminal_message("failed", Some(code), true, started_at, &counters);
+                    terminal["receiptWritten"] = Value::Bool(false);
+                    send(&lifecycle, terminal);
+                    process_exit_code = 1;
+                    terminal_sent = true;
+                    continue;
+                }
+                send(
+                    &lifecycle,
+                    json!({"type":"accepted","ownerToken":owner_token,"mode":"process"}),
+                );
+                match spawn_child(
+                    executable,
+                    argv,
+                    cwd,
+                    env,
+                    stdin,
+                    stdout.clone(),
+                    stderr.clone(),
+                    lifecycle.clone(),
+                    counters.clone(),
+                    runtime_root,
+                    owner_token.clone(),
+                    None,
+                    "agent_run_attempt",
+                    grace,
+                    true,
+                ) {
+                    Ok((active_child, pid, pgid)) => {
+                        active = Some(active_child);
+                        if let Some(gate) =
+                            active.as_ref().and_then(|child| child.output_gate.as_ref())
+                        {
+                            gate.store(true, Ordering::Release);
+                        }
+                        if std::env::var("RUDDER_PROCESS_HOST_TEST_AFTER_ACCEPT_FRAME")
+                            .ok()
+                            .as_deref()
+                            == Some("unknown")
+                        {
+                            send(&lifecycle, json!({"type":"injected-unknown-frame"}));
+                        }
                         send(
                             &lifecycle,
-                            terminal_message(
-                                "failed",
-                                Some("spawn_failed"),
-                                false,
-                                started_at,
-                                &counters,
-                            ),
+                            json!({"type":"spawned","pid":pid,"pgid":pgid,"ownerToken":owner_token,"mode":"process"}),
                         );
+                    }
+                    Err(error) => {
+                        send_error(&lifecycle, error.code);
+                        let mut terminal = terminal_message(
+                            "failed",
+                            Some(error.code),
+                            error.cleanup_proven,
+                            started_at,
+                            &counters,
+                        );
+                        terminal["receiptWritten"] = Value::Bool(false);
+                        send(&lifecycle, terminal);
                         process_exit_code = 1;
                         terminal_sent = true;
                     }
@@ -626,7 +873,7 @@ fn main() {
                     send_error(&lifecycle, "not_started");
                 }
             }
-            Ok(Input::Command(ref command @ Command::Stop { .. })) => {
+            Ok(Input::Command(ref command @ Command::Stop { grace_ms, .. })) => {
                 set_request_id(
                     &lifecycle,
                     command_request_id(command).unwrap_or_else(|| "local-app".to_string()),
@@ -646,7 +893,9 @@ fn main() {
                         stop_admitted = true;
                         send(&lifecycle, json!({"type":"stop-accepted"}));
                     }
-                    let _ = child.control.send(MonitorCommand::Stop);
+                    let _ = child.control.send(MonitorCommand::Stop {
+                        grace: grace_ms.map(|value| Duration::from_millis(value.clamp(1, 60_000))),
+                    });
                 } else {
                     send(
                         &lifecycle,
@@ -673,7 +922,7 @@ fn main() {
             }
             Ok(Input::Eof) => {
                 if let Some(child) = active.as_ref() {
-                    let _ = child.control.send(MonitorCommand::Stop);
+                    let _ = child.control.send(MonitorCommand::Stop { grace: None });
                 } else {
                     send(
                         &lifecycle,
@@ -685,7 +934,7 @@ fn main() {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if let Some(child) = active.as_ref() {
-                    let _ = child.control.send(MonitorCommand::Stop);
+                    let _ = child.control.send(MonitorCommand::Stop { grace: None });
                 } else {
                     send(
                         &lifecycle,
@@ -789,59 +1038,148 @@ fn spawn_child(
     argv: Vec<String>,
     cwd: String,
     env: BTreeMap<String, String>,
+    stdin: Option<String>,
     stdout: RawOutput,
     stderr: RawOutput,
+    lifecycle: Lifecycle,
     counters: Arc<Counters>,
     runtime_root: String,
     owner_token: String,
-    port: u16,
-) -> Result<(ActiveChild, u32, u32), &'static str> {
-    if !Path::new(&executable).exists() || !Path::new(&cwd).is_dir() {
-        return Err("launch_path_unavailable");
-    }
+    port: Option<u16>,
+    owner_kind: &'static str,
+    grace: Duration,
+    relay_lifecycle: bool,
+) -> Result<(ActiveChild, u32, u32), SpawnChildError> {
+    spawn_path_preflight(&executable, &cwd).map_err(SpawnChildError::before_spawn)?;
     let mut command = ProcessCommand::new(executable);
     command.args(argv).current_dir(cwd).env_clear().envs(env);
     command
-        .stdin(Stdio::null())
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command.spawn().map_err(|_| "spawn_failed")?;
+    let mut child = command
+        .spawn()
+        .map_err(|_| SpawnChildError::before_spawn("spawn_failed"))?;
     let pid = child.id();
     let pgid = pid;
-    let evidence =
-        OperationEvidence::create(Path::new(&runtime_root), owner_token, pid, pgid, port)?;
-    let child_stdout = child.stdout.take().ok_or("stdout_unavailable")?;
-    let child_stderr = child.stderr.take().ok_or("stderr_unavailable")?;
+    let boundary = match OwnedProcessBoundary::attach(&child) {
+        Ok(boundary) => boundary,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(SpawnChildError::after_spawn(
+                "process_boundary_unavailable",
+                CleanupResult {
+                    proven: false,
+                    had_surviving_group: false,
+                },
+            ));
+        }
+    };
+    if injected_process_setup_failure() {
+        let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
+        return Err(SpawnChildError::after_spawn(
+            "process_setup_failed",
+            cleanup,
+        ));
+    }
+    let evidence = match OperationEvidence::create(
+        Path::new(&runtime_root),
+        owner_token,
+        pid,
+        pgid,
+        port,
+        owner_kind,
+    ) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
+            return Err(SpawnChildError::after_spawn(error, cleanup));
+        }
+    };
+    if let Some(input) = stdin {
+        let Some(mut child_stdin) = child.stdin.take() else {
+            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
+            return Err(SpawnChildError::after_spawn("stdin_unavailable", cleanup));
+        };
+        if child_stdin.write_all(input.as_bytes()).is_err() {
+            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
+            return Err(SpawnChildError::after_spawn("stdin_write_failed", cleanup));
+        }
+        drop(child_stdin);
+    }
+    let child_stdout = match child.stdout.take() {
+        Some(output) => output,
+        None => {
+            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
+            return Err(SpawnChildError::after_spawn("stdout_unavailable", cleanup));
+        }
+    };
+    let child_stderr = match child.stderr.take() {
+        Some(output) => output,
+        None => {
+            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
+            return Err(SpawnChildError::after_spawn("stderr_unavailable", cleanup));
+        }
+    };
+    let output_gate = relay_lifecycle.then(|| Arc::new(AtomicBool::new(false)));
     let stdout_done = relay(
         child_stdout,
         stdout,
+        relay_lifecycle.then(|| lifecycle.clone()),
         counters.clone(),
         Some(Arc::clone(&evidence)),
+        output_gate.clone(),
         "stdout",
     );
     let stderr_done = relay(
         child_stderr,
         stderr,
+        relay_lifecycle.then_some(lifecycle),
         counters.clone(),
         Some(Arc::clone(&evidence)),
+        output_gate.clone(),
         "stderr",
     );
 
     let (control_tx, control_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
-    thread::spawn(move || monitor_child(&mut child, control_rx, event_tx, pgid, port));
+    thread::spawn(move || {
+        monitor_child(
+            &mut child, control_rx, event_tx, pgid, port, grace, boundary,
+        )
+    });
     Ok((
         ActiveChild {
             control: control_tx,
             events: event_rx,
             output_done: vec![stdout_done, stderr_done],
             evidence: Some(evidence),
+            output_gate,
         },
         pid,
         pgid,
     ))
+}
+
+fn spawn_path_preflight(executable: &str, cwd: &str) -> Result<(), &'static str> {
+    if !Path::new(executable).exists() || !Path::new(cwd).is_dir() {
+        return Err("launch_path_unavailable");
+    }
+    Ok(())
+}
+
+fn injected_process_setup_failure() -> bool {
+    std::env::var("RUDDER_PROCESS_HOST_TEST_PROCESS_SETUP_FAILURE")
+        .ok()
+        .as_deref()
+        == Some("after_spawn")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -920,7 +1258,7 @@ fn spawn_terminal(
             ));
         }
     };
-    let output_done = relay(reader, stdout, counters, None, "stdout");
+    let output_done = relay(reader, stdout, None, counters, None, None, "stdout");
     let (control_tx, control_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -930,7 +1268,7 @@ fn spawn_terminal(
         loop {
             while let Ok(control) = control_rx.try_recv() {
                 match control {
-                    MonitorCommand::Stop => {
+                    MonitorCommand::Stop { .. } => {
                         stopping = true;
                         requested_cleanup = Some(request_pty_tree_termination(pid));
                         let _ = child.kill();
@@ -991,6 +1329,7 @@ fn spawn_terminal(
             events: event_rx,
             output_done: vec![output_done],
             evidence: None,
+            output_gate: None,
         },
         pid,
     ))
@@ -1099,12 +1438,19 @@ fn finish_pty_tree_cleanup(pid: u32, requested: CleanupResult) -> CleanupResult 
 fn relay<R: Read + Send + 'static>(
     mut input: R,
     output: RawOutput,
+    lifecycle: Option<Lifecycle>,
     counters: Arc<Counters>,
     evidence: Option<Arc<OperationEvidence>>,
+    output_gate: Option<Arc<AtomicBool>>,
     stream: &'static str,
 ) -> mpsc::Receiver<bool> {
     let (done_tx, done_rx) = mpsc::channel();
     thread::spawn(move || {
+        if let Some(gate) = output_gate {
+            while !gate.load(Ordering::Acquire) {
+                thread::sleep(POLL_INTERVAL);
+            }
+        }
         let mut buffer = [0_u8; 16 * 1024];
         let mut successful = true;
         loop {
@@ -1125,6 +1471,16 @@ fn relay<R: Read + Send + 'static>(
             {
                 successful = false;
                 break;
+            }
+            if let Some(lifecycle) = lifecycle.as_ref() {
+                send(
+                    lifecycle,
+                    json!({
+                        "type": "output",
+                        "stream": stream,
+                        "data": String::from_utf8_lossy(&buffer[..read]),
+                    }),
+                );
             }
             let Ok(mut writer) = output.lock() else {
                 successful = false;
@@ -1148,7 +1504,9 @@ fn monitor_child(
     control: mpsc::Receiver<MonitorCommand>,
     events: mpsc::Sender<MonitorEvent>,
     pgid: u32,
-    port: u16,
+    port: Option<u16>,
+    grace: Duration,
+    boundary: OwnedProcessBoundary,
 ) {
     let mut stopping = false;
     let mut cleanup = None;
@@ -1156,23 +1514,32 @@ fn monitor_child(
     let mut listener_owner_mismatch = false;
     loop {
         match control.try_recv() {
-            Ok(MonitorCommand::Stop) => {
+            Ok(MonitorCommand::Stop {
+                grace: requested_grace,
+            }) => {
                 stopping = true;
-                cleanup = Some(terminate_owned_process(child, pgid));
+                cleanup = Some(terminate_owned_process(
+                    child,
+                    pgid,
+                    requested_grace.unwrap_or(grace),
+                    &boundary,
+                ));
             }
             Ok(MonitorCommand::Input(_)) | Ok(MonitorCommand::Resize { .. }) => {}
             Err(_) => {}
         }
-        if !stopping && !listener_verified {
-            match listener_owned_by_process_group(port, pgid) {
+        if let Some(expected_port) = port.filter(|_| !stopping && !listener_verified) {
+            match listener_owned_by_process_group(expected_port, pgid) {
                 Ok(ListenerOwnership::Owned) => {
                     listener_verified = true;
-                    let _ = events.send(MonitorEvent::ListenerVerified { port });
+                    let _ = events.send(MonitorEvent::ListenerVerified {
+                        port: expected_port,
+                    });
                 }
                 Ok(ListenerOwnership::Foreign) => {
                     stopping = true;
                     listener_owner_mismatch = true;
-                    cleanup = Some(terminate_owned_process(child, pgid));
+                    cleanup = Some(terminate_owned_process(child, pgid, grace, &boundary));
                     let _ = events.send(MonitorEvent::ListenerOwnerMismatch);
                 }
                 Ok(ListenerOwnership::NotListening) | Err(_) => {}
@@ -1180,7 +1547,7 @@ fn monitor_child(
         }
         match child.try_wait() {
             Ok(Some(status)) => {
-                let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid));
+                let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid, &boundary));
                 let _ = events.send(MonitorEvent::Exited {
                     code: status.code(),
                     signal: signal_name(&status),
@@ -1192,7 +1559,7 @@ fn monitor_child(
             }
             Ok(None) => thread::sleep(POLL_INTERVAL),
             Err(_) => {
-                let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid));
+                let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid, &boundary));
                 let _ = events.send(MonitorEvent::Exited {
                     code: Some(1),
                     signal: None,
@@ -1211,7 +1578,12 @@ struct CleanupResult {
     had_surviving_group: bool,
 }
 
-fn terminate_owned_process(child: &mut Child, pgid: u32) -> CleanupResult {
+fn terminate_owned_process(
+    child: &mut Child,
+    pgid: u32,
+    grace: Duration,
+    _boundary: &OwnedProcessBoundary,
+) -> CleanupResult {
     #[cfg(unix)]
     {
         if process_group_exists(pgid).unwrap_or(true) {
@@ -1219,7 +1591,7 @@ fn terminate_owned_process(child: &mut Child, pgid: u32) -> CleanupResult {
                 libc::kill(-(pgid as libc::pid_t), libc::SIGTERM);
             }
         }
-        let deadline = Instant::now() + TERM_TIMEOUT;
+        let deadline = Instant::now() + grace;
         while Instant::now() < deadline {
             if matches!(child.try_wait(), Ok(Some(_))) {
                 break;
@@ -1236,16 +1608,17 @@ fn terminate_owned_process(child: &mut Child, pgid: u32) -> CleanupResult {
     }
     #[cfg(windows)]
     {
-        let _ = child.kill();
+        let _ = (pgid, grace);
+        let terminated = _boundary.terminate();
         let _ = child.wait();
-        return CleanupResult {
-            proven: true,
+        CleanupResult {
+            proven: terminated,
             had_surviving_group: false,
-        };
+        }
     }
 }
 
-fn cleanup_after_child_exit(pgid: u32) -> CleanupResult {
+fn cleanup_after_child_exit(pgid: u32, _boundary: &OwnedProcessBoundary) -> CleanupResult {
     #[cfg(unix)]
     {
         let group_exists = process_group_exists(pgid).unwrap_or(true);
@@ -1259,8 +1632,9 @@ fn cleanup_after_child_exit(pgid: u32) -> CleanupResult {
     #[cfg(windows)]
     {
         let _ = pgid;
+        let terminated = _boundary.terminate();
         CleanupResult {
-            proven: true,
+            proven: terminated,
             had_surviving_group: false,
         }
     }
@@ -1407,6 +1781,7 @@ fn set_owner_token(writer: &Lifecycle, owner_token: String) {
 fn command_request_id(command: &Command) -> Option<String> {
     match command {
         Command::Start { request_id, .. }
+        | Command::StartProcess { request_id, .. }
         | Command::StartTerminal { request_id, .. }
         | Command::Input { request_id, .. }
         | Command::Resize { request_id, .. }

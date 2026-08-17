@@ -148,10 +148,20 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("actions/download-artifact@v8");
     expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
+    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
+    expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
+    expect(recovery).toContain('test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"');
+    expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
     expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
-    expect(recovery).toContain("jq -r '.head_sha' <<< \"$run_json\"");
-    expect(recovery).toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$remote_tag_sha\"");
-    expect(recovery).toContain("success|cancelled");
+    expect(recovery).toContain("success|cancelled|failure");
+    expect(recovery).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");
+    expect(recovery).toContain(".name == \"Publish stable\" and .conclusion == \"success\"");
+    expect(recovery).toContain(".name == \"Mirror stable Desktop release to Tencent COS\" and .conclusion == \"failure\"");
+    expect(recovery).toContain("test \"$SOURCE_REF\" = \"$remote_tag_sha\"");
+    expect(recovery).not.toContain("jq -r '.head_sha' <<< \"$run_json\"");
+    expect(recovery).toContain("SOURCE_REF: ${{ inputs.source_ref }}");
+    expect(recovery).toContain(".prerelease");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
     expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
     expect(recovery).toContain("--phase checksum");
@@ -161,12 +171,20 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("multipartThreshold: 1");
     expect(recovery).toContain("expected 204");
     expect(recovery).toContain("publicObject.status !== 404");
+    expect(recovery).toContain("COS mirror attempt ${attempt}/3");
   });
 
-  it("documents the distinct COS HeadObject permission used by the signed existence check", () => {
-    expect(releaseSetup).toContain("name/cos:HeadObject");
-    expect(releaseSetup).toContain("name/cos:GetObject");
-    expect(releaseSetup).toContain("name/cos:PutObject");
+  it("documents the complete COS object and multipart permission set", () => {
+    const requiredActions = [
+      "name/cos:HeadObject",
+      "name/cos:GetObject",
+      "name/cos:PutObject",
+      "name/cos:InitiateMultipartUpload",
+      "name/cos:UploadPart",
+      "name/cos:CompleteMultipartUpload",
+      "name/cos:AbortMultipartUpload",
+    ];
+    for (const action of requiredActions) expect(releaseSetup).toContain(action);
     expect(releaseSetup).toContain("name/cos:GetObject` alone returns `403`");
     expect(releaseSetup).not.toContain("HEAD` existence check is covered by COS's `GetObject`");
   });
@@ -181,6 +199,13 @@ describe("unified delivery workflows", () => {
     expect(stableInstall).toContain("needs.mirror-stable.result == 'success'");
     expect(stableSurfaces).toContain("- mirror-stable");
     expect(stableSurfaces).toContain("needs.mirror-stable.result == 'success'");
+  });
+
+  it("retries transient COS mirror failures before failing the release gate", () => {
+    for (const jobName of ["mirror-canary", "mirror-stable"]) {
+      expect(workflowJob(releaseWorkflow, jobName)).toContain("for attempt in 1 2 3");
+      expect(workflowJob(releaseWorkflow, jobName)).toContain("COS mirror attempt ${attempt}/3");
+    }
   });
 
   it("waits for the exact manifest versions before creating public release surfaces", () => {
@@ -231,6 +256,8 @@ describe("unified delivery workflows", () => {
     expect(install).toContain("node scripts/smoke-public-install.mjs");
     expect(docs).toContain("uses: ./.github/workflows/docs-production.yml");
     expect(docs).toContain("source_ref: ${{ needs.preflight.outputs.tag }}");
+    expect(docs).toContain("- mirror-stable");
+    expect(docs).toContain("needs.mirror-stable.result == 'success'");
     expect(surfaces).toContain("- stable-docs");
     expect(surfaces).toContain("- stable-install");
     expect(handoff).toContain("- stable-surfaces");

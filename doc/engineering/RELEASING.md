@@ -571,7 +571,10 @@ Do not upload or overwrite `SHASUMS256.txt` manually and do not republish npm.
 Fix the OIDC/STS, CAM policy, COS availability, or immutable-object conflict,
 then re-run the failed `mirror-stable` or `mirror-canary` job. Stable partial
 recovery must use the original Release `candidate_run_id`, which downloads the
-same frozen Desktop artifacts. Identical existing GitHub/COS bytes are accepted;
+same frozen Desktop artifacts. The recovery workflow must run from a reviewed
+main-history revision, while `source_ref` identifies the original stable tag
+commit. The mirror step verifies the downloaded artifacts against the existing
+GitHub Release before upload. Identical existing GitHub/COS bytes are accepted;
 any same-name content conflict blocks completion.
 
 ### If `latest` is broken after stable publish

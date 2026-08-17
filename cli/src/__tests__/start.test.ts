@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { powershellQuote } from "../commands/start-windows.js";
 import {
   assertChecksumMatch,
   buildGithubReleaseAssetDownloadUrl,
@@ -693,13 +694,14 @@ describe("desktop start command helpers", () => {
 
   it("uses Windows-native archive and mirror commands for portable app installs", () => {
     expect(buildWindowsZipExtractCommand("C:\\Temp\\Rudder.zip", "C:\\Temp\\rudder-extract")).toEqual({
-      command: "tar.exe",
+      command: "powershell.exe",
       args: [
-        "--force-local",
-        "-xf",
-        "C:\\Temp\\Rudder.zip",
-        "-C",
-        "C:\\Temp\\rudder-extract",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath 'C:\\Temp\\Rudder.zip' -DestinationPath 'C:\\Temp\\rudder-extract' -Force",
       ],
     });
     expect(buildWindowsRobocopyMirrorCommand("C:\\Temp\\win-unpacked", "C:\\Users\\test\\AppData\\Local\\Programs\\Rudder")).toEqual({
@@ -724,21 +726,24 @@ describe("desktop start command helpers", () => {
     expect(isSuccessfulRobocopyExitCode(null)).toBe(false);
   });
 
-  it.runIf(process.platform === "win32")("extracts a Desktop archive from a Windows drive-letter path", async () => {
+  it.runIf(process.platform === "win32")("extracts a Desktop archive from Windows paths with spaces and apostrophes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-windows-archive-test."));
     try {
-      const sourceDir = path.join(root, "source");
-      const archivePath = path.join(root, "Rudder.zip");
-      const outputDir = path.join(root, "output");
+      const sourceDir = path.join(root, "source files' input");
+      const archivePath = path.join(root, "Rudder's release archive.zip");
+      const outputDir = path.join(root, "output files' extracted");
       await mkdir(sourceDir, { recursive: true });
       await mkdir(outputDir, { recursive: true });
       await writeFile(path.join(sourceDir, "probe.txt"), "windows archive probe", "utf8");
 
-      const createResult = spawnSync(
-        "tar.exe",
-        ["--force-local", "-a", "-cf", archivePath, "-C", sourceDir, "."],
-        { encoding: "utf8" },
-      );
+      const createResult = spawnSync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath ${powershellQuote(path.join(sourceDir, "probe.txt"))} -DestinationPath ${powershellQuote(archivePath)} -Force`,
+      ], { encoding: "utf8" });
       expect(createResult.status, createResult.stderr || createResult.stdout).toBe(0);
 
       const extractCommand = buildWindowsZipExtractCommand(archivePath, outputDir);
