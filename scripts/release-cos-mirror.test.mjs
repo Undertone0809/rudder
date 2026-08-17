@@ -332,6 +332,9 @@ describe("Tencent COS Desktop release mirror", () => {
       credentials,
       endpoint,
       fetchImpl,
+      getStsCredentials: async () => {
+        throw new Error("fixed credentials must bypass STS refresh");
+      },
       githubApiBase: "https://api.github.test",
       githubToken: "github-token",
       log: () => {},
@@ -401,6 +404,61 @@ describe("Tencent COS Desktop release mirror", () => {
       tag: "v0.7.5",
     })).resolves.toEqual({ assets: 2, prefix: "releases/v0.7.5" });
     expect(githubAssetDownloads).toBe(0);
+  });
+
+  it("refreshes Tencent STS credentials before each mirrored asset", async () => {
+    const assetDir = await releaseFixture("desktop-binary");
+    const binary = Buffer.from("desktop-binary");
+    const checksum = checksumBytes();
+    const credentialTokens = [];
+    const signedTokensByKey = new Map();
+    const getStsCredentials = async () => {
+      const sequence = credentialTokens.length + 1;
+      const next = {
+        secretId: `temporary-id-${sequence}`,
+        secretKey: `temporary-key-${sequence}`,
+        token: `temporary-token-${sequence}`,
+      };
+      credentialTokens.push(next.token);
+      return next;
+    };
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.hostname === "api.github.test") {
+        return jsonResponse({
+          assets: [githubAsset("Rudder-test.zip", binary, { digest: `sha256:${sha256(binary)}` })],
+          draft: false,
+        });
+      }
+      const headers = new Headers(init.headers);
+      const key = decodeURIComponent(url.pathname.slice(1));
+      const token = headers.get("x-cos-security-token");
+      if (token) signedTokensByKey.set(key, token);
+      if (url.searchParams.has("prefix")) return new Response("denied", { status: 403 });
+      if (init.method === "PUT" && !headers.get("authorization")) return new Response("denied", { status: 403 });
+      if (init.method === "HEAD") return new Response(null, { status: 200 });
+      return new Response(key.endsWith("SHASUMS256.txt") ? checksum : binary);
+    };
+
+    await expect(mirrorDesktopReleaseToCos({
+      assetDir,
+      bucket,
+      endpoint,
+      fetchImpl,
+      getStsCredentials,
+      githubApiBase: "https://api.github.test",
+      githubToken: "github-token",
+      log: () => {},
+      now: () => 1_700_000_000_000,
+      region,
+      repo: "Undertone0809/rudder",
+      tag: "v0.7.5",
+    })).resolves.toEqual({ assets: 2, prefix: "releases/v0.7.5" });
+    expect(credentialTokens).toEqual(["temporary-token-1", "temporary-token-2"]);
+    expect(signedTokensByKey).toEqual(new Map([
+      ["releases/v0.7.5/Rudder-test.zip", "temporary-token-1"],
+      ["releases/v0.7.5/SHASUMS256.txt", "temporary-token-2"],
+    ]));
   });
 
   it("accepts a byte-identical existing GitHub checksum marker for an immutable retry", async () => {
@@ -581,7 +639,7 @@ describe("Tencent COS Desktop release mirror", () => {
   it("uses a smaller default multipart part size for slow cross-region uploads", () => {
     const mirror = createMirror(async () => new Response(null));
     expect(mirror.multipartPartSize).toBe(1024 * 1024);
-    expect(mirror.multipartConcurrency).toBe(4);
+    expect(mirror.multipartConcurrency).toBe(8);
     expect(mirror.fileConcurrency).toBe(4);
   });
 
@@ -758,7 +816,7 @@ describe("Tencent COS Desktop release mirror", () => {
 
     expect(observed).toBe(deterministicFailure);
     expect(exitCodeForMirrorError(observed)).toBe(1);
-    expect(scheduledParts.sort((left, right) => left - right)).toEqual([1, 2]);
+    expect([...scheduledParts].sort((left, right) => left - right)).toEqual([1, 2]);
     expect(abortCount).toBe(1);
   });
 

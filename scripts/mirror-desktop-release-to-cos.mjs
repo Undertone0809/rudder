@@ -13,7 +13,7 @@ const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
 const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
-const DEFAULT_MULTIPART_CONCURRENCY = 4;
+const DEFAULT_MULTIPART_CONCURRENCY = 8;
 const DEFAULT_FILE_CONCURRENCY = 4;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
@@ -286,36 +286,7 @@ export class CosReleaseMirror {
   }
 
   async mirrorFiles(entries, onVerified) {
-    if (!Array.isArray(entries)) throw new Error("COS mirror entries must be an array.");
-    if (entries.length === 0) return;
-
-    let nextIndex = 0;
-    let stopped = false;
-    const worker = async () => {
-      while (true) {
-        if (stopped) return;
-        const entry = entries[nextIndex];
-        nextIndex += 1;
-        if (!entry) return;
-        try {
-          await this.mirrorFile(entry.key, entry.file);
-          await onVerified?.(entry);
-        } catch (error) {
-          stopped = true;
-          throw error;
-        }
-      }
-    };
-
-    const workerCount = Math.min(this.fileConcurrency, entries.length);
-    // In-flight files are allowed to settle: each file verifies immutable bytes, and multipart failures abort.
-    const workerResults = await Promise.allSettled(
-      Array.from({ length: workerCount }, () => worker()),
-    );
-    const rejectedWorkers = workerResults.filter((result) => result.status === "rejected");
-    const rejectedWorker = rejectedWorkers.find((result) => exitCodeForMirrorError(result.reason) !== 75) ??
-      rejectedWorkers[0];
-    if (rejectedWorker) throw rejectedWorker.reason;
+    return mirrorEntries(entries, this.fileConcurrency, async () => this, onVerified);
   }
 
   async assertAnonymousAccessDenied(prefix = DEFAULT_PREFIX) {
@@ -558,6 +529,43 @@ export class CosReleaseMirror {
   }
 }
 
+async function mirrorEntries(entries, fileConcurrency, createMirror, onVerified) {
+  if (!Array.isArray(entries)) throw new Error("COS mirror entries must be an array.");
+  if (entries.length === 0) return;
+  if (!Number.isSafeInteger(fileConcurrency) || fileConcurrency < 1 || fileConcurrency > 8) {
+    throw new Error("COS file concurrency must be an integer from 1 through 8.");
+  }
+
+  let nextIndex = 0;
+  let stopped = false;
+  const worker = async () => {
+    while (true) {
+      if (stopped) return;
+      const entry = entries[nextIndex];
+      nextIndex += 1;
+      if (!entry) return;
+      try {
+        const mirror = await createMirror(entry);
+        await mirror.mirrorFile(entry.key, entry.file);
+        await onVerified?.(entry);
+      } catch (error) {
+        stopped = true;
+        throw error;
+      }
+    }
+  };
+
+  const workerCount = Math.min(fileConcurrency, entries.length);
+  // In-flight files are allowed to settle: each file verifies immutable bytes, and multipart failures abort.
+  const workerResults = await Promise.allSettled(
+    Array.from({ length: workerCount }, () => worker()),
+  );
+  const rejectedWorkers = workerResults.filter((result) => result.status === "rejected");
+  const rejectedWorker = rejectedWorkers.find((result) => exitCodeForMirrorError(result.reason) !== 75) ??
+    rejectedWorkers[0];
+  if (rejectedWorker) throw rejectedWorker.reason;
+}
+
 export async function mirrorDesktopReleaseToCos(options) {
   const {
     repo,
@@ -610,40 +618,45 @@ export async function mirrorDesktopReleaseToCos(options) {
     sleep,
   });
 
-  log("stage\tassume Tencent role");
-  const credentials = options.credentials ?? await getTencentStsCredentials({
-    audience: options.oidcAudience,
-    durationSeconds: options.durationSeconds,
-    endpoint: options.stsEndpoint,
-    fetchImpl,
-    providerId: options.providerId,
-    region,
-    requestToken: options.oidcRequestToken,
-    requestUrl: options.oidcRequestUrl,
-    roleArn: options.roleArn,
-    roleSessionName: options.roleSessionName,
-    networkRetries,
-    retryDelayMs,
-    sleep,
-  });
   log("stage\tmirror COS objects");
-  const mirror = new CosReleaseMirror({
-    bucket,
-    credentials,
-    endpoint,
-    fetchImpl,
-    fileConcurrency,
-    now: options.now,
-    region,
-  });
+  const getStsCredentials = options.getStsCredentials ?? getTencentStsCredentials;
+  let policyMirror;
   const entries = files.map((file) => ({
     file,
     key: objectKeyForReleaseAsset(prefix, tag, file.name),
   }));
-  await mirror.mirrorFiles(entries, ({ file, key }) => {
+  await mirrorEntries(entries, fileConcurrency ?? DEFAULT_FILE_CONCURRENCY, async (entry) => {
+    if (!options.credentials) log(`stage\tassume Tencent role\t${entry.file.name}`);
+    const credentials = options.credentials ?? await getStsCredentials({
+      audience: options.oidcAudience,
+      durationSeconds: options.durationSeconds,
+      endpoint: options.stsEndpoint,
+      fetchImpl,
+      providerId: options.providerId,
+      region,
+      requestToken: options.oidcRequestToken,
+      requestUrl: options.oidcRequestUrl,
+      roleArn: options.roleArn,
+      roleSessionName: options.roleSessionName,
+      networkRetries,
+      retryDelayMs,
+      sleep,
+    });
+    const mirror = new CosReleaseMirror({
+      bucket,
+      credentials,
+      endpoint,
+      fetchImpl,
+      fileConcurrency,
+      now: options.now,
+      region,
+    });
+    policyMirror = mirror;
+    return mirror;
+  }, ({ file, key }) => {
     log(`verified\t${file.sha256}\tcos://${bucket}/${key}`);
   });
-  await mirror.assertAnonymousAccessDenied(prefix);
+  await policyMirror.assertAnonymousAccessDenied(prefix);
   return {
     assets: files.length,
     prefix: [...validateObjectPath(prefix), ...validateObjectPath(tag)].join("/"),
