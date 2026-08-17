@@ -13,6 +13,7 @@ const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
 const DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const DEFAULT_MULTIPART_CONCURRENCY = 4;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
 const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
@@ -196,6 +197,7 @@ export class CosReleaseMirror {
     now = Date.now,
     multipartThreshold = DEFAULT_MULTIPART_THRESHOLD,
     multipartPartSize = DEFAULT_MULTIPART_PART_SIZE,
+    multipartConcurrency = DEFAULT_MULTIPART_CONCURRENCY,
     multipartRetries = DEFAULT_MULTIPART_RETRIES,
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   }) {
@@ -211,11 +213,15 @@ export class CosReleaseMirror {
     if (!Number.isSafeInteger(multipartPartSize) || multipartPartSize < 1_048_576) {
       throw new Error("COS multipart part size must be a safe integer of at least 1 MiB.");
     }
+    if (!Number.isSafeInteger(multipartConcurrency) || multipartConcurrency < 1 || multipartConcurrency > 8) {
+      throw new Error("COS multipart concurrency must be an integer from 1 through 8.");
+    }
     if (!Number.isSafeInteger(multipartRetries) || multipartRetries < 1 || multipartRetries > 10) {
       throw new Error("COS multipart retries must be an integer from 1 through 10.");
     }
     this.multipartThreshold = multipartThreshold;
     this.multipartPartSize = multipartPartSize;
+    this.multipartConcurrency = multipartConcurrency;
     this.multipartRetries = multipartRetries;
     this.sleep = sleep;
   }
@@ -322,19 +328,35 @@ export class CosReleaseMirror {
     let handle;
     try {
       handle = await open(file.path, "r");
-      const parts = [];
-      for (let offset = 0, partNumber = 1; offset < file.size; offset += this.multipartPartSize, partNumber += 1) {
-        const length = Math.min(this.multipartPartSize, file.size - offset);
-        const bytes = Buffer.alloc(length);
-        const { bytesRead } = await handle.read(bytes, 0, length, offset);
-        if (bytesRead !== length) {
-          throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+      const partCount = Math.ceil(file.size / this.multipartPartSize);
+      const parts = new Array(partCount);
+      let nextPartIndex = 0;
+      const uploadPart = async () => {
+        while (true) {
+          const partIndex = nextPartIndex;
+          nextPartIndex += 1;
+          if (partIndex >= partCount) return;
+          const partNumber = partIndex + 1;
+          const offset = partIndex * this.multipartPartSize;
+          const length = Math.min(this.multipartPartSize, file.size - offset);
+          const bytes = Buffer.alloc(length);
+          // Positional reads keep concurrent workers independent of the file handle cursor.
+          const { bytesRead } = await handle.read(bytes, 0, length, offset);
+          if (bytesRead !== length) {
+            throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+          }
+          parts[partIndex] = {
+            etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
+            partNumber,
+          };
         }
-        parts.push({
-          etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
-          partNumber,
-        });
-      }
+      };
+      const workerCount = Math.min(this.multipartConcurrency, partCount);
+      const workerResults = await Promise.allSettled(
+        Array.from({ length: workerCount }, () => uploadPart()),
+      );
+      const rejectedWorker = workerResults.find((result) => result.status === "rejected");
+      if (rejectedWorker) throw rejectedWorker.reason;
       const completeBody = `<CompleteMultipartUpload>${parts
         .map(({ etag, partNumber }) => `<Part><PartNumber>${partNumber}</PartNumber><ETag>${escapeXml(etag)}</ETag></Part>`)
         .join("")}</CompleteMultipartUpload>`;

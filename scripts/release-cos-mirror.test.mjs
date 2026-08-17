@@ -465,6 +465,7 @@ describe("Tencent COS Desktop release mirror", () => {
   it("uses a smaller default multipart part size for slow cross-region uploads", () => {
     const mirror = createMirror(async () => new Response(null));
     expect(mirror.multipartPartSize).toBe(8 * 1024 * 1024);
+    expect(mirror.multipartConcurrency).toBe(4);
   });
 
   it("reuses a byte-identical object when multipart completion loses an overwrite race", async () => {
