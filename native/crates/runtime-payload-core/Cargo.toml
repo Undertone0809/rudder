@@ -1,0 +1,17 @@
+[package]
+name = "rudder-runtime-payload-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2 = "1.1"
+sha2 = "0.10"
+tar = "0.4"
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }

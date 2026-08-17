@@ -78,6 +78,21 @@ export {
   type OrganizationIntelligenceProfileStatus, type OrganizationResourceKind,
   type OrganizationResourceSourceType, type OrganizationSecretPurpose, type OrganizationStatus, type PauseReason, type PermissionKey, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RequestKind, type RequestStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
+export {
+  RUDDER_NATIVE_CAPABILITIES,
+  RUDDER_NATIVE_MODES,
+  createRudderNativeDiagnostic,
+  parseRudderNativeMode,
+  resolveRudderNativeCapability,
+  resolveRudderNativeTarget,
+  rudderNativeCapabilityDisableEnv,
+  type ResolveRudderNativeCapabilityOptions,
+  type RudderNativeCapability,
+  type RudderNativeCapabilityPolicy,
+  type RudderNativeDiagnostic,
+  type RudderNativeEngine,
+  type RudderNativeMode
+} from "./native-mode.js";
 export type {
   AppBuilderApp,
   AppBuilderBuildStatus,

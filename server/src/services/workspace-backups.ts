@@ -8,6 +8,7 @@ import {
   type Db,
 } from "@rudderhq/db";
 import {
+  resolveRudderNativeCapability,
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
   WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
@@ -41,6 +42,7 @@ import {
   workspaceBackupV2NativeDiagnostic,
   type WorkspaceBackupV2ArchiveIndex
 } from "./workspace-backup-v2.js";
+export { reconcileWorkspaceRestoreReceipts } from "./workspace-restore-reconciliation.js";
 
 const ARTIFACT_VERSION = 1;
 const MAX_PREVIEW_BYTES = 200_000;
@@ -76,11 +78,15 @@ const SPARSE_WORKSPACE_RECOVERY_MAX_RATIO = 0.25;
 const SPARSE_WORKSPACE_RECOVERY_MIN_BACKUP_FILES = 10;
 
 export function isWorkspaceBackupV2Enabled() {
-  return process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED === "true";
+  return process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED?.trim().toLowerCase() !== "false";
 }
 
 export function isWorkspaceBackupV2NativeEnabled() {
-  return isWorkspaceBackupV2Enabled() && process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE === "true";
+  return isWorkspaceBackupV2Enabled() && resolveRudderNativeCapability({
+    capability: "workspace-backup",
+    env: process.env,
+    legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"],
+  }).enabled;
 }
 
 type WorkspaceBackupArtifactEntry = {
@@ -618,129 +624,6 @@ async function readRestoreReceipt(filePath: string): Promise<WorkspaceRestoreRec
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
-}
-
-function isOwnedRestoreRoot(root: string, workspaceRoot: string, operationId: string, kind: "staging" | "rollback") {
-  const parent = path.dirname(workspaceRoot);
-  return path.resolve(root) !== path.resolve(workspaceRoot)
-    && path.resolve(root) === path.resolve(parent, `.rudder-workspace-restore-${kind}-${operationId}`);
-}
-
-/** Reconcile only validated receipts and their exact operation-owned roots. */
-export async function reconcileWorkspaceRestoreReceipts(db?: Db): Promise<{
-  recovered: string[];
-  blocked: Array<{ receiptPath: string; operationId: string; error: string }>;
-}> {
-  const receiptRoot = path.resolve(resolveDefaultBackupDir(), "workspace-restore-receipts");
-  const recovered: string[] = [];
-  const blocked: Array<{ receiptPath: string; operationId: string; error: string }> = [];
-  let names: string[];
-  try {
-    names = await fs.readdir(receiptRoot);
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return { recovered, blocked };
-    throw error;
-  }
-  for (const name of names.filter((entry) => entry.endsWith(".json"))) {
-    const receiptPath = path.join(receiptRoot, name);
-    let receipt: WorkspaceRestoreReceipt | null = null;
-    try {
-      receipt = await readRestoreReceipt(receiptPath);
-    } catch (error) {
-      blocked.push({ receiptPath, operationId: "unknown", error: error instanceof Error ? error.message : String(error) });
-      continue;
-    }
-    let canonicalWorkspaceRoot: string | null = null;
-    try {
-      if (receipt?.orgId) canonicalWorkspaceRoot = path.resolve(resolveOrganizationWorkspaceRoot(receipt.orgId));
-    } catch {
-      canonicalWorkspaceRoot = null;
-    }
-    if (
-      !receipt
-      || !canonicalWorkspaceRoot
-      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(receipt.operationId)
-      || path.resolve(receipt.workspaceRoot) !== canonicalWorkspaceRoot
-      || !isOwnedRestoreRoot(receipt.stagingRoot, receipt.workspaceRoot, receipt.operationId, "staging")
-      || !isOwnedRestoreRoot(receipt.rollbackRoot, receipt.workspaceRoot, receipt.operationId, "rollback")
-    ) {
-      blocked.push({ receiptPath, operationId: receipt?.operationId ?? "unknown", error: "invalid_or_unowned_receipt" });
-      continue;
-    }
-    try {
-      const workspace = await pathExists(receipt.workspaceRoot);
-      const rollback = await pathExists(receipt.rollbackRoot);
-      const expectedPublishedTree = receipt.expectedTreeSha256 ?? receipt.stagingTreeSha256;
-      let publishedRestore = false;
-
-      if (receipt.phase === "prepared") {
-        if (workspace && rollback) throw new Error("prepared receipt has conflicting live and rollback roots");
-        if (!workspace && rollback) {
-          if (!receipt.liveTreeSha256) throw new Error("prepared receipt has rollback root without a recorded live tree");
-          const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
-          if (rollbackTree !== receipt.liveTreeSha256) throw new Error("prepared rollback tree does not match recorded live tree");
-          // Crash window: workspace was renamed before the phase receipt advanced.
-          await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
-          await syncDirectory(path.dirname(receipt.workspaceRoot));
-        }
-      } else if (receipt.phase === "committed") {
-        if (!workspace) throw new Error("committed receipt workspace is missing");
-        const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
-        if (publishedTree !== expectedPublishedTree) throw new Error("committed workspace tree does not match receipt");
-        publishedRestore = true;
-      } else if (receipt.phase === "rolled_back") {
-        if (!workspace) throw new Error("rolled_back receipt workspace is missing");
-        if (receipt.liveTreeSha256) {
-          const liveTree = await workspaceTreeSha256(receipt.workspaceRoot);
-          if (liveTree !== receipt.liveTreeSha256) throw new Error("rolled_back workspace tree does not match recorded live tree");
-        }
-      } else if (receipt.phase === "live_moved" || receipt.phase === "recovery_required") {
-        if (!workspace && rollback) {
-          if (!receipt.liveTreeSha256) throw new Error("restore receipt has rollback root without a recorded live tree");
-          const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
-          if (rollbackTree !== receipt.liveTreeSha256) throw new Error("rollback tree does not match recorded live tree");
-          await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
-          await syncDirectory(path.dirname(receipt.workspaceRoot));
-        } else if (workspace && !rollback) {
-          const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
-          if (publishedTree !== expectedPublishedTree) throw new Error("published workspace tree does not match receipt");
-          publishedRestore = true;
-        } else if (workspace && rollback) {
-          const publishedTree = await workspaceTreeSha256(receipt.workspaceRoot);
-          if (publishedTree === expectedPublishedTree) {
-            publishedRestore = true;
-          } else if (receipt.liveTreeSha256) {
-            const rollbackTree = await workspaceTreeSha256(receipt.rollbackRoot);
-            if (rollbackTree !== receipt.liveTreeSha256) throw new Error("workspace and rollback roots match neither recorded tree");
-            await fs.rm(receipt.workspaceRoot, { recursive: true, force: true });
-            await fs.rename(receipt.rollbackRoot, receipt.workspaceRoot);
-            await syncDirectory(path.dirname(receipt.workspaceRoot));
-          } else {
-            throw new Error("workspace and rollback roots both exist without a recorded live tree");
-          }
-        } else {
-          throw new Error("workspace and rollback roots are both missing");
-        }
-      }
-
-      if (publishedRestore && db) {
-        const [updated] = await db
-          .update(workspaceBackups)
-          .set({ status: "restored", updatedAt: new Date() })
-          .where(and(eq(workspaceBackups.id, receipt.backupId), eq(workspaceBackups.orgId, receipt.orgId)))
-          .returning({ id: workspaceBackups.id });
-        if (!updated) throw new Error("restore receipt backup row is missing");
-      }
-      await fs.rm(receipt.stagingRoot, { recursive: true, force: true });
-      await fs.rm(receipt.rollbackRoot, { recursive: true, force: true });
-      await fs.rm(receiptPath, { force: true });
-      await syncDirectory(receiptRoot);
-      recovered.push(receipt.operationId);
-    } catch (error) {
-      blocked.push({ receiptPath, operationId: receipt.operationId, error: error instanceof Error ? error.message : String(error) });
-    }
-  }
-  return { recovered, blocked };
 }
 
 async function assertNoUnresolvedRestoreReceipt(orgId: string) {
@@ -1408,7 +1291,13 @@ export function workspaceBackupService(db: Db) {
       const layout = await ensureOrganizationWorkspaceLayout(runningRow.orgId);
       if (path.extname(artifactRef).toLowerCase() === ".zip") {
         let nativeFallbackWarning: string | null = null;
-        if (isWorkspaceBackupV2NativeEnabled()) {
+        let nativeStarted = false;
+        const nativePolicy = resolveRudderNativeCapability({
+          capability: "workspace-backup",
+          env: process.env,
+          legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"],
+        });
+        if (isWorkspaceBackupV2Enabled() && nativePolicy.enabled) {
           try {
             const artifact = await createWorkspaceBackupV2Native({
               rootPath: layout.root,
@@ -1416,6 +1305,9 @@ export function workspaceBackupService(db: Db) {
               instanceId: resolveRudderInstanceId(),
               artifactPath: artifactRef,
               createdAt: runningRow.startedAt ?? runningRow.createdAt,
+              onNativeStart: () => {
+                nativeStarted = true;
+              },
             });
             const stat = await fs.stat(artifact.artifactPath);
             const finishedAt = new Date();
@@ -1440,11 +1332,8 @@ export function workspaceBackupService(db: Db) {
             if (currentRow) return mapBackupRow(currentRow);
             throw new Error("Workspace backup row was not updated.");
           } catch (error) {
-            // Native is opt-in and never changes the default Node comparator. A
-            // failed native operation falls through to the same contract-equivalent
-            // Node writer while retaining the DB row and TypeScript decisions.
             const diagnostic = workspaceBackupV2NativeDiagnostic(error);
-            if (!diagnostic.fallbackAllowed || await fs.stat(artifactRef).then(() => true).catch(() => false)) {
+            if (nativeStarted || !nativePolicy.fallbackAllowed || !diagnostic.fallbackAllowed || await fs.stat(artifactRef).then(() => true).catch(() => false)) {
               throw new Error(`Native workspace backup cannot fall back [${diagnostic.category}/${diagnostic.code}]: ${diagnostic.detail}`);
             }
             nativeFallbackWarning = formatWorkspaceBackupV2NativeFallback(error);
