@@ -6342,3 +6342,24 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
     column-gap: 2rem;
   }
 }
+.rudder-inspectable-image-fallback {
+  display: inline-flex;
+  min-width: 9rem;
+  min-height: 3.5rem;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in oklab, var(--surface-active) 48%, transparent);
+  padding: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+.rudder-inspectable-image-trigger[aria-disabled="true"] {
+  cursor: default;
+}

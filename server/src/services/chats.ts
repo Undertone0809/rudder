@@ -100,6 +100,7 @@ import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
+import type { StorageService } from "../storage/types.js";
 import {
   completeProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,
@@ -119,10 +120,10 @@ class InvalidQueueDeliveryActionLinkError extends Error {}
 
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
-export function chatService(db: Db) {
+export function chatService(db: Db, storage?: StorageService) {
   const generationProtocol = chatGenerationProtocolService(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
-  const issuesSvc = issueService(db);
+  const issuesSvc = issueService(db, storage);
   const approvalsSvc = approvalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);

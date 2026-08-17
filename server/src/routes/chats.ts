@@ -119,9 +119,9 @@ export function chatRoutes(
   backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
 ) {
   const router = Router();
-  const svc = chatService(db);
+  const svc = chatService(db, storage);
   const organizationsSvc = organizationService(db);
-  const issuesSvc = issueService(db);
+  const issuesSvc = issueService(db, storage);
   const projectsSvc = projectService(db);
   const agentsSvc = agentService(db);
   const automationsSvc = automationService(db);

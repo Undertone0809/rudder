@@ -608,6 +608,25 @@ describe("MarkdownBody", () => {
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
   });
 
+  it("shows an explicit fallback when a markdown image fails to load", async () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Missing screenshot](/api/assets/missing/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    await act(async () => {
+      image?.dispatchEvent(new Event("error"));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('[role="img"][aria-label="Missing screenshot unavailable"]')).not.toBeNull();
+    expect(container.textContent).toContain("Image unavailable");
+  });
+
   it("renders library document mentions as live Library links", () => {
     const href = buildLibraryDocMentionHref("doc-123", "Product principles");
     const html = renderToStaticMarkup(
