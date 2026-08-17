@@ -3,6 +3,7 @@ import {
   agents,
   applyPendingMigrations,
   createDb,
+  createLocalPostgresInstance,
   ensurePostgresDatabase,
   heartbeatRuns,
   organizations,
@@ -29,22 +30,6 @@ type EmbeddedPostgresInstance = {
   start(): Promise<void>;
   stop(): Promise<void>;
 };
-
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
-
-async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
-  const mod = await import("embedded-postgres");
-  return mod.default as EmbeddedPostgresCtor;
-}
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -153,8 +138,7 @@ async function runRestoreCrashChild(input: Record<string, string>) {
 async function startTempDatabase() {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backups-db-"));
   const port = await getAvailablePort();
-  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
-  const instance = new EmbeddedPostgres({
+  const { instance } = await createLocalPostgresInstance({
     databaseDir: dataDir,
     user: "rudder",
     password: "rudder",
