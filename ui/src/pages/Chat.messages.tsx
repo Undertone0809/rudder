@@ -437,7 +437,7 @@ function ProposalPrincipalSelector({
         const agent = selection.assigneeAgentId
           ? (agents ?? []).find((candidate) => candidate.id === selection.assigneeAgentId) ?? null
           : null;
-        if (agent) return <AgentMenuLabel agent={agent} />;
+        if (agent) return <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />;
         return (
           <ProposalPrincipalLabel
             principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)}

@@ -71,6 +71,12 @@ test.describe("Current user avatar", () => {
     await assigneeButton.click();
     await expect(page.locator('[data-slot="assignee-self-action-label"]')).toHaveAttribute("data-slot", "assignee-self-action-label");
     await expect(page.locator('[data-slot="assignee-self-action-label"] img')).toHaveAttribute("src", AVATAR);
+    await expect(page.locator('[data-slot="agent-menu-avatar-frame"]')).toHaveCount(0);
+    const agentMenuAvatar = page.locator('[data-slot="agent-menu-label"]').first().locator("img, svg");
+    await expect(agentMenuAvatar).toBeVisible();
+    const agentMenuAvatarBox = await agentMenuAvatar.boundingBox();
+    expect(agentMenuAvatarBox?.width ?? 0).toBeGreaterThanOrEqual(20);
+    expect(agentMenuAvatarBox?.height ?? 0).toBeGreaterThanOrEqual(20);
     await page.keyboard.press("Escape");
 
     await page.goto(`/${organization.issuePrefix}/issues`);

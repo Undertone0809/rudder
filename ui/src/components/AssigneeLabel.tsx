@@ -116,7 +116,11 @@ export function AgentMenuLabel({
   const supportingLabel = agentTitleBadgeLabel(agent);
 
   return (
-    <span data-slot="agent-menu-label" className="flex min-w-0 flex-1 items-center gap-2">
+    <span
+      data-slot="agent-menu-label"
+      data-agent-avatar-style={agentAvatarStyle}
+      className="flex min-w-0 flex-1 items-center gap-2"
+    >
       {agentAvatarStyle === "bare" ? (
         <AgentIcon icon={agent.icon} role={agent.role} className="h-6 w-6 shrink-0 text-muted-foreground" />
       ) : (
