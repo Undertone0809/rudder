@@ -387,6 +387,16 @@ fn collect_until_quiet(
     debounce: Duration,
     stop: Option<&Receiver<()>>,
 ) -> EventBatch {
+    collect_until_quiet_with_hook(receiver, output, debounce, stop, None)
+}
+
+fn collect_until_quiet_with_hook(
+    receiver: &Receiver<WatchSignal>,
+    output: &Path,
+    debounce: Duration,
+    stop: Option<&Receiver<()>>,
+    mut before_wait: Option<&mut dyn FnMut()>,
+) -> EventBatch {
     let mut batch = EventBatch::default();
     let mut deadline = std::time::Instant::now() + debounce;
     loop {
@@ -402,6 +412,9 @@ fn collect_until_quiet(
         let wait = deadline.saturating_duration_since(std::time::Instant::now());
         if wait.is_zero() {
             return batch;
+        }
+        if let Some(before_wait) = before_wait.as_deref_mut() {
+            before_wait();
         }
         match receiver.recv_timeout(wait.min(Duration::from_millis(50))) {
             Ok(WatchSignal::Event(event)) => {
@@ -833,19 +846,16 @@ mod tests {
     fn observes_stop_arriving_during_debounce_wait() {
         let (_event_sender, event_receiver) = mpsc::channel();
         let (stop_sender, stop_receiver) = mpsc::channel();
-        let stopper = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(10));
-            stop_sender.send(()).unwrap();
-        });
+        let mut send_stop = || stop_sender.send(()).unwrap();
 
-        let batch = collect_until_quiet(
+        let batch = collect_until_quiet_with_hook(
             &event_receiver,
             Path::new("manifest.json"),
             Duration::from_millis(100),
             Some(&stop_receiver),
+            Some(&mut send_stop),
         );
 
-        stopper.join().unwrap();
         assert!(batch.stopped);
         assert!(!batch.dirty);
     }
