@@ -258,6 +258,21 @@ test.describe("New issue Agent creation", () => {
       }),
     });
 
+    await page.goto(`/${organizationPath(organization)}/agents/${agent.id}/runs/${completed.runId}`, {
+      waitUntil: "domcontentloaded",
+    });
+    const runHistoryTrigger = page.getByTestId("agent-runs-history-trigger");
+    await expect(runHistoryTrigger).toBeVisible();
+    await runHistoryTrigger.click();
+    await expect(page.getByTestId("agent-runs-history-list").getByText("Create issue", { exact: true })).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-runs-history-trigger")).toBeVisible();
+    await page.getByTestId("agent-runs-history-trigger").click();
+    await expect(page.getByTestId("agent-runs-history-list").getByText("Create issue", { exact: true })).toBeVisible();
+    if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
+      await page.screenshot({ path: screenshotPath("agent-issue-run-label.png"), fullPage: false });
+    }
+
     const runIssuesResponse = await page.request.get(`${E2E_BASE_URL}/api/agent-runs/${completed.runId}/issues`);
     expect(runIssuesResponse.ok()).toBe(true);
     expect(await runIssuesResponse.json()).toEqual(expect.arrayContaining([

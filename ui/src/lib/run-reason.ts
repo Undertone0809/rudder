@@ -60,6 +60,18 @@ export function describeRunReason(run: RunReasonInput): RunReasonSummary {
     };
   }
 
+  if (
+    wakeReason === "agent_issue_creation_requested"
+    || asNonEmptyString(context?.agentIssueCreationRequestId)
+    || asNonEmptyString(asRecord(context?.agentIssueCreationRequest)?.id)
+  ) {
+    return {
+      label: "Create issue",
+      description: "This run started because the agent was asked to create an Issue.",
+      tone: "task",
+    };
+  }
+
   switch (wakeReason) {
     case "heartbeat_timer":
       return {
