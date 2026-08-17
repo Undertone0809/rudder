@@ -1553,12 +1553,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         });
         return;
       } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; activeStreamScopeKey = streamScopeKey; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
+      // Keep the composer responsive while a legacy chat's missing agent binding is persisted.
+      setChatSendInFlight(streamScopeKey, true);
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
       if (newConversationLockAcquired || newConversationSendLockRef.current) { releaseNewConversationSendLock();
         newConversationLockAcquired = false; }
       if (usesComposerState) { setBranchPreview(null); setDraft("");
-        clearPendingFilesForCurrentScope(); } setChatSendInFlight(streamScopeKey, true); const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(streamScopeKey, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
+        clearPendingFilesForCurrentScope(); } const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(streamScopeKey, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
       setStreamDraftForChat(streamScopeKey, {
         chatId,
         streamKey,
