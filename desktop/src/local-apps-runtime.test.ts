@@ -487,6 +487,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
         registry,
         platform: process.platform,
         watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+        ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       });
       const markerPath = path.join(root, "wildcard-listener.json");
       try {
@@ -775,7 +776,9 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     const manager = new LocalAppRuntimeManager({
       registry,
       platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
       watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       probePersistedRuntimeLiveness,
       verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
