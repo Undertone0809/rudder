@@ -16,31 +16,6 @@ Current implementation status:
 - Node.js 20+
 - pnpm 9+
 
-## Risk-Based Local Verification
-
-Local verification should be proportional to the change. The goal is the
-smallest evidence set that can expose a regression in the touched surface, not
-running every repository command after every edit. CI remains the broad safety
-net; local development should stop once the selected tier is satisfied.
-
-| Tier | Typical change | Local verification |
-| --- | --- | --- |
-| 1: presentation-only or mechanical | CSS, tokens, static visual props/assets, contributor docs; no behavior or build boundary | `git diff --check`, `pnpm lint:changed`, owning package typecheck when typed source changed, focused test if one directly covers the surface, and rendered screenshot for UI |
-| 2: scoped behavior | One package or one bounded user workflow | changed-file lint, owning package typecheck, focused unit/integration tests, relevant E2E, and rendered UI inspection |
-| 3: cross-cutting or build-sensitive | dependencies, build config, public exports, shared contracts, migrations, runtimes, Desktop/packaging, release, or broad refactors | full lint, recursive typecheck, full tests, build, plus task-specific gates |
-
-A pure visual correction such as removing a redundant background layer is Tier
-1 when it does not change layout structure, interaction, accessibility
-semantics, state, routing, data, dependencies, or build configuration. Verify
-the real surface and relevant viewport/theme, then stop. Do not run
-`pnpm test:run`, `pnpm build`, Desktop packaging, or unrelated suites for that
-change.
-
-Escalate one tier only when the diff crosses a boundary above, the blast radius
-cannot be bounded, or a scoped check exposes a broader problem. Do not escalate
-merely for reassurance. `AGENTS.md` contains the authoritative hand-off gates
-and the exact Tier 3 triggers.
-
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.
