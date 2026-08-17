@@ -103,7 +103,7 @@ describe("Rust Agent Run process host", () => {
     let deliveredBytes = 0;
     const result = await runNativeChildProcess("slow-consumer-flood", process.execPath, [
       "-e",
-      "const chunk='x'.repeat(16384);for(let i=0;i<64;i++)process.stdout.write(chunk)",
+      "const chunk='x'.repeat(16384);let i=0;const write=()=>{while(i<64){i+=1;if(!process.stdout.write(chunk)){process.stdout.once('drain',write);return}}};write()",
     ], {
       cwd: root,
       env: { PATH: process.env.PATH ?? "" },

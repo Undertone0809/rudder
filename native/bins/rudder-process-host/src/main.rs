@@ -1056,7 +1056,8 @@ fn spawn_child(
 ) -> Result<(ActiveChild, u32, u32), SpawnChildError> {
     spawn_path_preflight(&executable, &cwd).map_err(SpawnChildError::before_spawn)?;
     let mut command = ProcessCommand::new(executable);
-    command.args(argv).current_dir(cwd).env_clear().envs(env);
+    command.args(argv).current_dir(cwd);
+    apply_process_environment(&mut command, &env);
     command
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -1211,10 +1212,7 @@ fn spawn_terminal(
     let mut command = CommandBuilder::new(executable);
     command.args(argv);
     command.cwd(cwd);
-    command.env_clear();
-    for (name, value) in env {
-        command.env(name, value);
-    }
+    apply_pty_environment(&mut command, &env);
     let mut child = pair
         .slave
         .spawn_command(command)
@@ -1337,6 +1335,52 @@ fn spawn_terminal(
         },
         pid,
     ))
+}
+
+fn windows_runtime_environment() -> Vec<(String, std::ffi::OsString)> {
+    #[cfg(windows)]
+    {
+        return [
+            "SystemRoot",
+            "WINDIR",
+            "ComSpec",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "LOCALAPPDATA",
+            "PROGRAMDATA",
+            "PATHEXT",
+        ]
+        .into_iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (name.to_string(), value)))
+        .collect();
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+fn apply_process_environment(command: &mut ProcessCommand, env: &BTreeMap<String, String>) {
+    command.env_clear();
+    for (name, value) in windows_runtime_environment() {
+        command.env(name, value);
+    }
+    for (name, value) in env {
+        command.env(name, value);
+    }
+}
+
+fn apply_pty_environment(command: &mut CommandBuilder, env: &BTreeMap<String, String>) {
+    command.env_clear();
+    for (name, value) in windows_runtime_environment() {
+        command.env(name, value);
+    }
+    for (name, value) in env {
+        command.env(name, value);
+    }
 }
 
 #[cfg(debug_assertions)]

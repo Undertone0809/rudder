@@ -347,7 +347,7 @@ export async function runNativeChildProcess(
         if (fatalError) reject(fatalError);
         else resolve({
           exitCode: appExitCode,
-          signal: aborted ? "SIGTERM" : appSignal,
+          signal: aborted || timedOut ? "SIGTERM" : appSignal,
           timedOut,
           stdout,
           stderr,
