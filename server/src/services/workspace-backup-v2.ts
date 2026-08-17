@@ -414,7 +414,7 @@ export async function createWorkspaceBackupV2File(input: {
     const end = Buffer.concat([u32(0x06054b50), u16(0), u16(0), u16(entryCount), u16(entryCount), u32(directory.length), u32(offset), u16(0)]);
     await write(end);
     if (offset + directory.length + end.length > WORKSPACE_BACKUP_V2_MAX_ARCHIVE_BYTES) throw new Error("v2 backup archive exceeds the bounded archive limit");
-    await handle.sync();
+    if (process.platform !== "win32") await handle.sync();
     const archiveSha256 = archiveHash.digest("hex");
     await handle.close();
     await input.beforePublish?.();
@@ -430,7 +430,7 @@ export async function createWorkspaceBackupV2File(input: {
 
 async function syncParent(filePath: string) {
   const parent = await fs.open(path.dirname(filePath), "r");
-  try { await parent.sync(); } finally { await parent.close(); }
+  try { if (process.platform !== "win32") await parent.sync(); } finally { await parent.close(); }
 }
 
 const defaultPublicationOps: PublicationOps = {
