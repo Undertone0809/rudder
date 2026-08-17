@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "2026-08-14-plugin-discovery-hub",
-  "status": "acceptance_pending",
+  "status": "review_ready",
   "owner": {
     "root_id": "current-codex-task",
     "agent_id": "codex"
@@ -26,8 +26,8 @@
   },
   "candidate": {
     "branch": "codex/plugin-discovery-hub",
-    "source_ref": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
-    "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
+    "source_ref": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6",
+    "source_sha": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6",
     "dirty_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
     "changed_paths": [
       "doc/engineering/PLUGIN_AUTHORING_GUIDE.md",
@@ -62,11 +62,11 @@
     ],
     "build": {
       "id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f"
+      "source_sha": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6"
     },
     "runtime": {
-      "id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
-      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f"
+      "id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-23652",
+      "source_sha": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6"
     },
     "organization_data": {
       "organization_id": "d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd",
@@ -161,34 +161,34 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
+      "verdict": "accept",
       "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
-      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
+      "source_sha": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6",
       "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-23652",
       "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
       "packet_version": "21",
-      "summary": "Awaiting a fresh stage review after the disposable URL Import Preview was removed and the v21 acceptance data projection was refrozen."
+      "summary": "Independent v21 stage reviewer accepted the exact immutable source/build/runtime/org/data lease after sequential API, screenshot, implementation, Product Logic, documentation, and safety-boundary checks."
     },
     "verifier": {
-      "verdict": "pending",
+      "verdict": "PASS",
       "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
-      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
+      "source_sha": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6",
       "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-23652",
       "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
       "packet_version": "21",
-      "summary": "Awaiting a fresh black-box verification of the unchanged candidate against the refrozen v21 acceptance data projection."
+      "summary": "Independent v21 black-box verifier PASS on the exact lease: observed current Discover and persisted Detail, 7 curated entries, Marketing Skills 2.10.1 with 49 Skills and 49/49 bindings, reload/reopen continuity, 390px no-overflow, no stale controls, icon PNG, and cross-organization installed-plugin 404."
     },
     "final_review": {
-      "verdict": "pending",
+      "verdict": "accept",
       "candidate_fingerprint": "sha256:e3b0c44298fc1c149afbf4c8996fb924ae41e4649b934ca495991b7852b855",
-      "source_sha": "af9b4d2c9423fb836e91075620c74bd6e2f3364f",
+      "source_sha": "810c8e7ef6443963fea6bbdbc141d5c5a7ffc5d6",
       "build_id": "static-ui-tree:sha256-bbf957a9cce7cba209f84d239e8bf50cd0ce67b49efa4be640e1afc7dbf8a5cd:index-CqjIKfuw.js",
-      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-20710",
+      "runtime_id": "plugin-discovery-acceptance-v18@127.0.0.1:4050#pid-23652",
       "data_id": "acceptance-public-v18:org-d7fe6ef6-3771-4dd1-9c8c-41f1cdac9fbd:marketing-update-continuity-v18",
       "packet_version": "21",
-      "summary": "Awaiting final handoff review after fresh v21 stage and black-box receipts."
+      "summary": "Independent final handoff reviewer accepted the exact v21 source/build/runtime/org/data lease after confirming stage accept, verifier PASS, packet alignment, Product Logic/docs/tests evidence, screenshots, and resolved disposable-data drift; no blocking conditions remain."
     }
   },
   "drift": {
@@ -297,7 +297,7 @@
     ]
   },
   "evidence": {
-    "current_status": "Acceptance pending: v21 binds the unchanged source/build to the healthy v18 runtime after the disposable URL Import Preview was removed and the original installed projection was restored; fresh independent stage review, black-box verification, and final review are required. Rudder is not released.",
+    "current_status": "Review ready: v21 binds the unchanged source/build to the healthy v18 runtime after the disposable URL Import Preview was removed and the original installed projection was restored; stage review accepted, verifier returned PASS, and final review accepted the exact lease. Rudder is not released.",
     "author_claimed_checks": [
       "Server typecheck passed after the Skill binding lifecycle fix.",
       "Plugin catalog/lifecycle focused tests passed 34/34.",
