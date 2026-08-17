@@ -10,7 +10,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { isWorkspaceCsvFilePath, isWorkspaceTextDocumentFilePath } from "@/lib/workspace-document-policy";
+import { isWorkspaceHtmlFilePath } from "@/lib/workspace-html-preview";
 import {
+  buildLibraryEntryMentionMarkdown,
+  buildLibraryFileMentionMarkdown,
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
   type GoalFeedbackAttachment,
@@ -658,11 +662,58 @@ function Section({
   );
 }
 
+function documentEvidenceMarkdown(item: EvidenceItem) {
+  if (!item.href || !/^Library (?:file|entry):\s*/u.test(item.label)) return null;
+
+  let href: URL;
+  try {
+    href = new URL(item.href, "http://rudder.local");
+  } catch {
+    return null;
+  }
+
+  const path = href.searchParams.get("path");
+  const label = item.label.replace(/^Library (?:file|entry):\s*/u, "").trim();
+  const isDocument = path && (
+    isWorkspaceTextDocumentFilePath(path)
+    || isWorkspaceCsvFilePath(path)
+    || isWorkspaceHtmlFilePath(path)
+    || /\.(?:pdf|docx?|rtf)$/iu.test(path)
+  );
+  if (!path || !label || !isDocument) return null;
+
+  const markdown = href.searchParams.get("entry")
+    ? buildLibraryEntryMentionMarkdown(href.searchParams.get("entry")!, label, path)
+    : buildLibraryFileMentionMarkdown(path, label);
+  return { markdown };
+}
+
+function DocumentEvidenceLink({ document }: { document: { markdown: string } }) {
+  return (
+    <div className="min-w-0 [&>p]:m-0 [&>p]:max-w-full">
+      <MarkdownBody className="min-w-0 text-sm leading-6">
+        {document.markdown}
+      </MarkdownBody>
+    </div>
+  );
+}
+
 function EvidenceItemsList({ items, ariaLabel }: { items: EvidenceItem[]; ariaLabel: string }) {
   if (items.length === 0) return null;
   return (
     <div aria-label={ariaLabel} className="mt-2 divide-y divide-border border-y border-border">
       {items.map((item, index) => {
+        const document = documentEvidenceMarkdown(item);
+        if (document && item.href) {
+          return (
+            <div
+              key={`${item.label}:${item.href}:${index}`}
+              className="min-w-0 py-2 hover:bg-accent/35"
+            >
+              <DocumentEvidenceLink document={document} />
+            </div>
+          );
+        }
         const content = (
           <>
             <span className="min-w-0 break-words">{item.label}</span>

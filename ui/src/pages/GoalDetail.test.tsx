@@ -68,6 +68,20 @@ vi.mock("../components/InlineEditor", () => ({
 vi.mock("../components/MarkdownBody", () => ({
   MarkdownBody: ({ children, className }: { children: string; className?: string }) => {
     const match = children.match(/^(.*?)\*\*(.+?)\*\*(.*?)$/);
+    const libraryLink = children.match(/^\[([^\]]+)\]\((library-(?:file|entry):\/\/[^)]+)\)$/u);
+    if (libraryLink) {
+      const mentionUrl = new URL(libraryLink[2]);
+      const mentionKind = libraryLink[2].startsWith("library-file:") ? "library_file" : "library_entry";
+      const path = mentionUrl.searchParams.get("p");
+      const target = mentionKind === "library_file"
+        ? `/library?path=${encodeURIComponent(path ?? "")}`
+        : `/library?entry=${encodeURIComponent(mentionUrl.hostname)}&path=${encodeURIComponent(path ?? "")}`;
+      return (
+        <div data-testid="markdown-body" className={className}>
+          <a href={target} data-mention-kind={mentionKind}>{libraryLink[1]}</a>
+        </div>
+      );
+    }
     return (
       <div data-testid="markdown-body" className={className}>
         {match ? <>{match[1]}<strong>{match[2]}</strong>{match[3]}</> : children}
@@ -909,8 +923,10 @@ describe("GoalDetail", () => {
     expect(evidence.textContent).toContain("Supporting work 4");
     expect(evidence.textContent).not.toContain("Agent run evidence");
     expect(evidence.textContent).toContain("External link evidence 5");
-    expect(evidence.textContent).toContain("Library file: release-check.md");
-    expect(evidence.textContent).toContain("Library entry: verification.md");
+    expect(evidence.textContent).toContain("release-check.md");
+    expect(evidence.textContent).toContain("verification.md");
+    expect(evidence.textContent).not.toContain("Library file: release-check.md");
+    expect(evidence.textContent).not.toContain("Library entry: verification.md");
     expect(evidence.textContent).toContain("Artifact evidence 8");
     expect(evidence.textContent).toContain("File evidence 9");
     expect(evidence.textContent).toContain("Measurement evidence 10");
@@ -926,6 +942,8 @@ describe("GoalDetail", () => {
     const evidenceHrefs = Array.from(evidence.querySelectorAll("a")).map((link) => link.getAttribute("href"));
     expect(evidenceHrefs).toContain("/library?path=docs%2Frelease-check.md");
     expect(evidenceHrefs).toContain("/library?entry=entry-1&path=reports%2Fverification.md");
+    expect(evidence.querySelector('a[data-mention-kind="library_file"]')?.textContent).toContain("release-check.md");
+    expect(evidence.querySelector('a[data-mention-kind="library_entry"]')?.textContent).toContain("verification.md");
     expect(evidence.querySelectorAll("a")[0]?.textContent).toContain("Open");
     expect(evidence.textContent).not.toContain("https://");
     for (const privateValue of [
@@ -1018,6 +1036,36 @@ describe("GoalDetail", () => {
     ]) {
       expect(resultBlock.innerHTML).not.toContain(privateValue);
     }
+  });
+
+  it("uses Library mention UI for canonical document extensions", async () => {
+    const documentPaths = [
+      "docs/guide.markdown",
+      "docs/notes.mdown",
+      "docs/plain.text",
+      "reports/results.csv",
+      "reports/activity.html",
+    ];
+    const evidenceRefs = documentPaths.map((path) => `library-file://file?p=${encodeURIComponent(path)}`);
+    vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
+      ...workspace,
+      resultProposals: [{
+        ...workspace.resultProposals[0],
+        candidate: { ...workspace.resultProposals[0].candidate, evidenceRefs },
+        preflight: { ...workspace.resultProposals[0].preflight, evidenceRefs },
+      }],
+    } as never);
+
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Result evidence"]')).not.toBeNull());
+    const evidence = container.querySelector<HTMLElement>('[aria-label="Result evidence"]')!;
+    expect(evidence.querySelectorAll('a[data-mention-kind="library_file"]')).toHaveLength(documentPaths.length);
+    for (const path of documentPaths) {
+      const link = evidence.querySelector<HTMLAnchorElement>(`a[href="/library?path=${encodeURIComponent(path)}"]`);
+      expect(link).not.toBeNull();
+      expect(link?.textContent).toBe(path.split("/").at(-1));
+    }
+    expect(evidence.textContent).not.toContain("Library file:");
   });
 
   it("shows feedback immediately, retains its idempotency key for retry, and restores composer focus", async () => {

@@ -675,9 +675,11 @@ test.describe("Goal Workspace v2", () => {
     await expect(progressEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
     await expect(progressEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
     const progressLibraryLink = progressEvidence.getByRole("link", {
-      name: "Library file: operator-workflow.md Open",
+      name: "operator-workflow.md",
       exact: true,
     });
+    await expect(progressLibraryLink).toHaveClass(/rudder-mention-chip/);
+    await expect(progressLibraryLink).toHaveAttribute("data-mention-kind", "library_file");
     await expect(progressLibraryLink).toHaveAttribute(
       "href",
       `/${organization.urlKey}/library?path=${encodeURIComponent(progressLibraryPath)}`,
@@ -1425,9 +1427,11 @@ test.describe("Goal Workspace v2", () => {
     await expect(proposedResultEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
     await expect(proposedResultEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
     const proposedLibraryEntryLink = proposedResultEvidence.getByRole("link", {
-      name: "Library entry: accepted-result.md Open",
+      name: "accepted-result.md",
       exact: true,
     });
+    await expect(proposedLibraryEntryLink).toHaveClass(/rudder-mention-chip/);
+    await expect(proposedLibraryEntryLink).toHaveAttribute("data-mention-kind", "library_entry");
     const resultLibraryHref = [
       `/${organization.urlKey}/library?entry=${encodeURIComponent(resultLibraryFile.libraryEntryId)}`,
       `path=${encodeURIComponent(resultLibraryPath)}`,
@@ -1463,10 +1467,13 @@ test.describe("Goal Workspace v2", () => {
     const acceptedResultEvidence = acceptedResult.getByLabel("Inspectable result evidence");
     await expect(acceptedResultEvidence.getByText("External supporting link 1", { exact: true })).toBeVisible();
     await expect(acceptedResultEvidence.getByRole("link", { name: /External supporting link 1/ })).toHaveCount(0);
-    await expect(acceptedResultEvidence.getByRole("link", {
-      name: "Library entry: accepted-result.md Open",
+    const acceptedLibraryEntryLink = acceptedResultEvidence.getByRole("link", {
+      name: "accepted-result.md",
       exact: true,
-    })).toHaveAttribute("href", resultLibraryHref);
+    });
+    await expect(acceptedLibraryEntryLink).toHaveClass(/rudder-mention-chip/);
+    await expect(acceptedLibraryEntryLink).toHaveAttribute("data-mention-kind", "library_entry");
+    await expect(acceptedLibraryEntryLink).toHaveAttribute("href", resultLibraryHref);
     await expect(acceptedResultEvidence).not.toContainText(goal.id);
     const acceptedArtifactRow = acceptedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
     await expect(acceptedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
