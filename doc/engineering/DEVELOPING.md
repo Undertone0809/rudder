@@ -16,6 +16,165 @@ Current implementation status:
 - Node.js 20+
 - pnpm 9+
 
+## Risk-Based Verification
+
+Local verification should produce the smallest evidence set that can credibly
+disprove the change. It is not a rehearsal of every CI job after every edit.
+`AGENTS.md` is authoritative for the hand-off gate; this section provides the
+classification procedure, command recipes, and examples.
+
+### Classify The Final Diff
+
+Choose one primary class. Evaluate these questions in order and stop at the
+first match:
+
+1. Does the change cross package or shared contract boundaries, alter
+   dependencies/build configuration/generated output, add a migration, affect
+   permissions or organization isolation, change a runtime adapter or release
+   candidate, form a broad refactor, or have an unbounded blast radius? Use
+   `FULL_GATE`.
+2. Does the bounded claim depend on a real rendered UI, running service,
+   packaged Desktop app, database lifecycle, external process, or another
+   domain surface that compilation and unit tests cannot establish? Use
+   `SPECIALIZED`.
+3. Does it change executable behavior inside one package or one bounded
+   workflow? Use `SCOPED`.
+4. Otherwise, when it cannot affect executable behavior, generated output,
+   packaging, or release artifacts, use `NO_BUILD`.
+
+The primary class controls generic repository build intensity. Specialized
+checks are additive: a `FULL_GATE` Desktop change still runs
+`pnpm desktop:verify`, and a `FULL_GATE` visible workflow still runs its E2E and
+rendered inspection.
+
+| Class | Stop when | Escalate when |
+| --- | --- | --- |
+| `NO_BUILD` | The scoped diff and applicable document/structure checks pass | The edit affects code generation, executable configuration, delivered assets, or another build input |
+| `SCOPED` | Changed-file lint, owning-package typecheck, and focused tests disprove no issue in the bounded surface | The diff or a failure reveals a shared contract, second package, build, migration, packaging, permission, or runtime boundary |
+| `SPECIALIZED` | The domain-specific terminal claim and the minimum supporting static/focused checks pass | The final diff also matches any `FULL_GATE` trigger or the domain scope cannot be isolated reliably |
+| `FULL_GATE` | The frozen candidate passes the full repository commands and all applicable specialized gates | Do not escalate further; report any blocked gate against the claim it prevents |
+
+`SPECIALIZED` is not a promise to run more commands than `SCOPED`. It means the
+decisive evidence comes from the real domain surface instead of a generic build.
+
+### Command Recipes
+
+For `NO_BUILD` contributor-documentation or mechanical work:
+
+```sh
+git diff --check -- <scoped-files>
+```
+
+Run a documentation or structure validator only when the changed surface owns
+one. Do not run typecheck, tests, or build merely for reassurance.
+
+For `SCOPED` executable work, adapt the package and test paths:
+
+```sh
+git diff --check -- <scoped-files>
+pnpm lint:changed
+pnpm --filter <owning-package> typecheck
+pnpm -s exec vitest run <focused-test-files>
+```
+
+The package typecheck is required when the owning package exposes that script.
+Add the relevant E2E when the bounded change alters a user-visible workflow.
+The E2E guidance later in this document still applies: use production-shaped
+fixtures and cover the highest-risk boundary or failure state.
+
+For `SPECIALIZED`, start with the minimum supporting scoped checks, then use the
+owning evidence surface:
+
+- Visible UI: inspect the real rendered workflow and capture the viewport,
+  theme, content, and interaction states that can disprove the claim. See
+  [Browser Verification](#browser-verification).
+- Desktop or packaged behavior: follow
+  [`DESKTOP.md`](./DESKTOP.md) and run its required smoke or packaged path.
+- Database lifecycle: generate and inspect migrations, run owning-package
+  checks, and exercise the relevant fresh, upgrade, restart, or recovery path.
+- External runtime or process: use an isolated real runtime and capture its
+  identity, inputs, terminal output, and relevant persistence/readback.
+
+For `FULL_GATE`, freeze the candidate and run the broad commands once:
+
+```sh
+pnpm lint
+pnpm -r typecheck
+pnpm test:run
+pnpm build
+```
+
+Then run every applicable specialized gate. Desktop startup, profile routing,
+packaging, installer, migration, or release-artifact changes require
+`pnpm desktop:verify`. Release work also follows
+[`RELEASING.md`](./RELEASING.md); its exact-source CI and public-surface gates
+are not weakened by the local classification.
+
+Domain gates do not choose the primary class by themselves. Apply them after
+classification whenever their surface is affected:
+
+- Product Logic: run `pnpm product-logic:check` and the tests/E2E that prove the
+  affected contract. See [Product Logic Registry](#product-logic-registry).
+- E2E and rendered browser checks: follow the workflow and
+  [Browser Verification](#browser-verification) guidance later in this guide.
+- Desktop, database lifecycle, external runtime, and release checks: follow the
+  owning guide or runbook in addition to the primary class requirements.
+
+### Iteration, Freeze, And Acceptance
+
+During implementation, run focused checks close to the edited surface. Before
+hand-off, classify the final diff again and freeze the candidate. Record its
+commit SHA or scoped dirty-diff fingerprint when independent acceptance is
+required, along with the relevant build/runtime and organization/data identity.
+
+After freeze:
+
+- run the selected class and all specialized gates against that candidate;
+- run independent review when the work changes non-trivial behavior,
+  architecture, security, cross-boundary behavior, runtime, release, or
+  high-risk UI;
+- use an independent verifier only for concrete terminal behavior where real
+  environment or state is material to the claim;
+- invalidate old reviewer/verifier evidence after a relevant diff, artifact,
+  runtime, fixture, or acceptance-packet change.
+
+CI remains the broad repository integration safety net. A green CI build does
+not prove a visual, runtime, packaged, migration, or release claim; conversely,
+a passing focused test should not be reported as full regression proof.
+
+### Classification Examples
+
+| Change | Primary class | Evidence shape |
+| --- | --- | --- |
+| Contributor guide wording or a plan document | `NO_BUILD` | Scoped diff check and applicable doc validator |
+| Bug fix and regression test inside one package | `SCOPED` | Changed-file lint, package typecheck, focused test |
+| CSS or token change with no build-boundary impact | `SPECIALIZED` | Minimum static checks plus real rendered inspection and screenshots |
+| Bounded UI interaction change | `SPECIALIZED` | Package checks, focused tests, relevant E2E, and real browser inspection |
+| Desktop startup, profile, migration, packaging, or installer change | `FULL_GATE` | Full repository gate plus `pnpm desktop:verify` and relevant packaged acceptance |
+| Shared DB/shared/server/UI contract change | `FULL_GATE` | Full repository gate plus migration, E2E, runtime, or Product Logic evidence as applicable |
+
+When uncertain between two classes, identify the concrete boundary that makes
+the higher class necessary. Do not escalate merely because a broader command
+exists, and do not downgrade when the final diff actually crosses that boundary.
+
+### Hand-Off Report
+
+Use this compact evidence record:
+
+```text
+Verification class: NO_BUILD | SCOPED | SPECIALIZED | FULL_GATE
+Reason: changed surface and the highest-risk boundary
+Candidate: commit SHA or scoped diff fingerprint when identity matters
+Checks run: exact commands and results
+Specialized evidence: runtime, browser, Desktop, migration, or release proof
+Intentionally omitted: higher-class checks and why they do not test this claim
+Failures or blockers: command, observed result, and claim that remains unproven
+```
+
+An intentionally omitted higher-class check is not a failed check. A required
+check that could not run is a blocker for the claim it was meant to establish
+and must be reported as such.
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.
