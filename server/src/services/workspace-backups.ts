@@ -595,7 +595,6 @@ async function syncDirectory(directoryPath: string) {
     await handle.close();
   }
 }
-
 function restoreRecoveryRequired(message: string, receipt: WorkspaceRestoreReceipt, cause?: unknown) {
   const detail = cause instanceof Error ? cause.message : cause ? String(cause) : undefined;
   return new WorkspaceRestoreRecoveryRequiredError(receipt, "rollback_failed", `${message}${detail ? `: ${detail}` : ""}`);
