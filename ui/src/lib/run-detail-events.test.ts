@@ -1,12 +1,14 @@
-import type { HeartbeatRunEvent } from "@rudderhq/shared";
+import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../agent-runtimes";
 import {
+  chatTranscriptEntriesToRunTranscriptEntries,
   heartbeatRunEventsToTranscriptEntries,
   heartbeatRunEventText,
   heartbeatRunEventToTranscriptEntry,
   mergeTranscriptEntries,
   operatorVisibleInvocationRunEvents,
+  resolveRunChatTranscriptTarget,
 } from "./run-detail-events";
 
 function makeEvent(overrides: Partial<HeartbeatRunEvent> = {}): HeartbeatRunEvent {
@@ -28,6 +30,62 @@ function makeEvent(overrides: Partial<HeartbeatRunEvent> = {}): HeartbeatRunEven
 }
 
 describe("run-detail-events", () => {
+  it("resolves the persisted chat transcript from the assistant message provenance", () => {
+    const target = resolveRunChatTranscriptTarget({
+      chatConversationId: "conversation-1",
+      contextSnapshot: {
+        conversationId: "legacy-conversation",
+        assistantMessageId: "assistant-message-1",
+        messageId: "user-message-1",
+        userMessageId: "user-message-1",
+      },
+      } as HeartbeatRun);
+
+    expect(target).toEqual({
+      conversationId: "conversation-1",
+      messageId: "assistant-message-1",
+    });
+  });
+
+  it("does not use the prompt message when assistant provenance is missing", () => {
+    expect(resolveRunChatTranscriptTarget({
+      chatConversationId: "conversation-1",
+      contextSnapshot: {
+        conversationId: "conversation-1",
+        messageId: "user-message-1",
+        userMessageId: "user-message-1",
+      },
+    } as HeartbeatRun)).toBeNull();
+  });
+
+  it("maps persisted chat transcript entries into the redacted run transcript shape", () => {
+    expect(chatTranscriptEntriesToRunTranscriptEntries([
+      {
+        kind: "assistant",
+        ts: "2026-06-17T09:00:01.000Z",
+        text: "Opened /Users/zeeland/project",
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-06-17T09:00:02.000Z",
+        name: "read",
+        input: { path: "/Users/zeeland/project/README.md" },
+      },
+    ], true)).toEqual([
+      {
+        kind: "assistant",
+        ts: "2026-06-17T09:00:01.000Z",
+        text: "Opened /Users/z******/project",
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-06-17T09:00:02.000Z",
+        name: "read",
+        input: { path: "/Users/z******/project/README.md" },
+      },
+    ]);
+  });
+
   it("maps error events to stderr transcript entries", () => {
     const entry = heartbeatRunEventToTranscriptEntry(
       makeEvent({
