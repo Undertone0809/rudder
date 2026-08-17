@@ -646,13 +646,16 @@ function invalidateActivityQueries(
   queryClient: ReturnType<typeof useQueryClient>,
   orgId: string,
   payload: Record<string, unknown>,
+  currentUserId?: string | null,
 ) {
-  queryClient.invalidateQueries({ queryKey: queryKeys.activityRoot(orgId) });
-  queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(orgId) });
-  queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
-
   const entityType = readString(payload.entityType);
   const entityId = readString(payload.entityId);
+
+  queryClient.invalidateQueries({ queryKey: queryKeys.activityRoot(orgId) });
+  queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(orgId) });
+  if (entityType !== "chat") {
+    queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(orgId) });
+  }
 
   if (entityType === "agent_issue_creation_request") {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.agentIssueCreationRequests(orgId) });
@@ -691,8 +694,11 @@ function invalidateActivityQueries(
     const details = readRecord(payload.details);
     const isStreamingMessageUpdate = action === "chat.message_updated"
       && readString(details?.status) === "streaming";
+    const isLocalUserMessageAck = action === "chat.message_added"
+      && readString(details?.role) === "user"
+      && readString(payload.actorId) === currentUserId;
 
-    if (!isStreamingMessageUpdate) {
+    if (!isStreamingMessageUpdate && !isLocalUserMessageAck) {
       void queryClient.invalidateQueries(
         { queryKey: queryKeys.chats.list(orgId, "active") },
         { cancelRefetch: false },
@@ -708,7 +714,7 @@ function invalidateActivityQueries(
         { cancelRefetch: false },
       );
     }
-    if (!isStreamingMessageUpdate) {
+    if (!isStreamingMessageUpdate && !isLocalUserMessageAck) {
       void queryClient.invalidateQueries(
         { queryKey: queryKeys.sidebarBadges(orgId) },
         { cancelRefetch: false },
@@ -868,12 +874,12 @@ function handleLiveEvent(
   }
 
   if (event.type === "issue.content_updated") {
-    invalidateActivityQueries(queryClient, expectedCompanyId, payload);
+    invalidateActivityQueries(queryClient, expectedCompanyId, payload, currentActor.userId);
     return;
   }
 
   if (event.type === "activity.logged") {
-    invalidateActivityQueries(queryClient, expectedCompanyId, payload);
+    invalidateActivityQueries(queryClient, expectedCompanyId, payload, currentActor.userId);
     const action = readString(payload.action);
     const toast =
       (notificationPreferences.issueNotifications

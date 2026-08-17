@@ -605,7 +605,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
 
 describe("LiveUpdatesProvider chat invalidation", () => {
   it("does not restart chat-list requests for streaming progress updates", () => {
-    const invalidateQueries = vi.fn(() => Promise.resolve());
+    const invalidateQueries = vi.fn<(filters: unknown, options?: unknown) => Promise<void>>(() => Promise.resolve());
     const queryClient = {
       invalidateQueries,
       getQueryData: () => undefined,
@@ -630,14 +630,16 @@ describe("LiveUpdatesProvider chat invalidation", () => {
       { queryKey: queryKeys.chats.messages("organization-1", "chat-1") },
       { cancelRefetch: false },
     );
-    expect(invalidateQueries).not.toHaveBeenCalledWith(
-      { queryKey: queryKeys.chats.list("organization-1", "active") },
-      expect.anything(),
-    );
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
+      queryKey: queryKeys.chats.list("organization-1", "active"),
+    });
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
+      queryKey: queryKeys.sidebarBadges("organization-1"),
+    });
   });
 
   it("refreshes chat lists once a progress update reaches a terminal state", () => {
-    const invalidateQueries = vi.fn(() => Promise.resolve());
+    const invalidateQueries = vi.fn<(filters: unknown, options?: unknown) => Promise<void>>(() => Promise.resolve());
     const queryClient = {
       invalidateQueries,
       getQueryData: () => undefined,
@@ -658,5 +660,101 @@ describe("LiveUpdatesProvider chat invalidation", () => {
       { queryKey: queryKeys.chats.list("organization-1", "active") },
       { cancelRefetch: false },
     );
+  });
+
+  it("does not restart chat-list requests for the locally acknowledged user message", () => {
+    const invalidateQueries = vi.fn<(filters: unknown, options?: unknown) => Promise<void>>(() => Promise.resolve());
+    const queryClient = {
+      invalidateQueries,
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        entityType: "chat",
+        entityId: "chat-1",
+        action: "chat.message_added",
+        actorId: "user-1",
+        details: { messageId: "message-1", role: "user", kind: "message" },
+      },
+      "user-1",
+    );
+
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.detail("organization-1", "chat-1") },
+      { cancelRefetch: false },
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.messages("organization-1", "chat-1") },
+      { cancelRefetch: false },
+    );
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
+      queryKey: queryKeys.chats.list("organization-1", "active"),
+    });
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
+      queryKey: queryKeys.sidebarBadges("organization-1"),
+    });
+  });
+
+  it("still refreshes chat lists for another user's message", () => {
+    const invalidateQueries = vi.fn<(filters: unknown, options?: unknown) => Promise<void>>(() => Promise.resolve());
+    const queryClient = {
+      invalidateQueries,
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        entityType: "chat",
+        entityId: "chat-1",
+        action: "chat.message_added",
+        actorId: "user-2",
+        details: { messageId: "message-1", role: "user", kind: "message" },
+      },
+      "user-1",
+    );
+
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.list("organization-1", "active") },
+      { cancelRefetch: false },
+    );
+  });
+
+  it("passes the current actor through the activity event path for local user messages", () => {
+    const invalidateQueries = vi.fn<(filters: unknown, options?: unknown) => Promise<void>>(() => Promise.resolve());
+    const queryClient = {
+      invalidateQueries,
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      queryClient as never,
+      "organization-1",
+      "/ORG/chat/chat-1",
+      {
+        type: "activity.logged",
+        orgId: "organization-1",
+        payload: {
+          entityType: "chat",
+          entityId: "chat-1",
+          action: "chat.message_added",
+          actorType: "user",
+          actorId: "user-1",
+          details: { messageId: "message-1", role: "user", kind: "message" },
+        },
+      } as never,
+      vi.fn(() => null),
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: true },
+    );
+
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
+      queryKey: queryKeys.chats.list("organization-1", "active"),
+    });
   });
 });
