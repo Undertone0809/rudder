@@ -534,6 +534,7 @@ describe("GoalDetail", () => {
     const container = renderPage();
     await waitUntil(() => expect(container.querySelector('[data-testid="issue-runtime-selector"]')).not.toBeNull());
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-selector"]')?.click());
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-model-trigger"]')?.click());
     await waitUntil(() => expect(document.body.querySelector('[data-testid="issue-runtime-option-model-gpt-5.6-terra"]')).not.toBeNull());
     act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-option-model-gpt-5.6-terra"]')?.click());
     act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-apply"]')?.click());

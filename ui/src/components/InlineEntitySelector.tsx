@@ -289,7 +289,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
                         {optionContent}
                         <Check className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground", isSelected ? "opacity-100" : "opacity-0")} />
                       </button>
-                      <div className="min-w-0 shrink-0">{accessory}</div>
+                      <div className="min-w-0 max-w-[45%] shrink-0 overflow-hidden">{accessory}</div>
                     </div>
                   );
                 }
