@@ -782,7 +782,7 @@ describe("issue lifecycle routes", () => {
 
     const res = await request(await createApp(createAgentActor()))
       .post("/api/orgs/organization-1/issues")
-      .send({ title: createdIssue.title, status: "todo", priority: "medium" });
+      .send({ title: createdIssue.title, status: "backlog", priority: "medium" });
 
     expect(res.status).toBe(201);
     expect(mockIssueService.createWithResult).toHaveBeenCalledWith(
@@ -791,6 +791,7 @@ describe("issue lifecycle routes", () => {
         originKind: "agent_issue_creation",
         originId: requestId,
         originRunId: RUN_ID,
+        status: "todo",
       }),
     );
     expect(actionOrder).toEqual(["issue.created", "agent.issue_created_notification"]);
