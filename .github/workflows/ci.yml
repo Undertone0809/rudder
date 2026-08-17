@@ -343,11 +343,11 @@ jobs:
 
       - name: Native policy, protocol, fallback, and public workflow tests
         env:
-          RUDDER_NATIVE_PROCESS_HOST_PATH: desktop/.packaged/native/${{ matrix.target }}/rudder-process-host${{ matrix.extension }}
-          RUDDER_NATIVE_ARCHIVE_PATH: desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
-          RUDDER_NATIVE_EVIDENCE_INDEX_PATH: desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
-          RUDDER_NATIVE_PAYLOAD_PATH: desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
-          RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_PROCESS_HOST_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-process-host${{ matrix.extension }}
+          RUDDER_NATIVE_ARCHIVE_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_EVIDENCE_INDEX_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_PAYLOAD_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
+          RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: ${{ github.workspace }}/desktop/.packaged/native/${{ matrix.target }}/rudder-native${{ matrix.extension }}
         run: >-
           pnpm exec vitest run
           packages/shared/src/native-mode.test.ts
