@@ -47,7 +47,7 @@ export function spawnNativeProcessHost(
   executablePath: string,
   options: NativeProcessHostOptions = {},
 ): NativeProcessHost {
-  const child = spawn(executablePath, [], {
+  const child = spawn(path.resolve(executablePath), [], {
     cwd: options.cwd,
     env: options.env,
     shell: false,

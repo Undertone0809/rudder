@@ -1,3 +1,4 @@
+import { createRudderNativeDiagnostic, resolveRudderNativeTarget, type RudderNativeDiagnostic } from "@rudderhq/shared";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
@@ -87,6 +88,7 @@ export type WorkspaceBackupV2NativeDiagnostic = {
   code: string;
   detail: string;
   fallbackAllowed: boolean;
+  native: RudderNativeDiagnostic;
 };
 
 type PublicationOps = {
@@ -501,14 +503,19 @@ function nativeDiagnostic(
     code: boundedDiagnosticDetail(code),
     detail: boundedDiagnosticDetail(detail),
     fallbackAllowed,
+    native: createRudderNativeDiagnostic({
+      capability: "workspace-backup",
+      target: resolveRudderNativeTarget(),
+      binaryVersion: "unavailable",
+      protocolVersion: String(NATIVE_PROTOCOL_VERSION),
+      effectiveEngine: "rust",
+      fallbackCode: boundedDiagnosticDetail(code),
+    }),
   });
 }
 
 function nativeTarget() {
-  if (process.platform === "darwin") return process.arch === "arm64" ? "aarch64-apple-darwin" : process.arch === "x64" ? "x86_64-apple-darwin" : null;
-  if (process.platform === "linux") return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : process.arch === "x64" ? "x86_64-unknown-linux-gnu" : null;
-  if (process.platform === "win32") return process.arch === "arm64" ? "aarch64-pc-windows-msvc" : process.arch === "x64" ? "x86_64-pc-windows-msvc" : null;
-  return null;
+  return resolveRudderNativeTarget();
 }
 
 export function resolveNativeArchiveBinary() {
@@ -598,6 +605,7 @@ export async function createWorkspaceBackupV2Native(input: {
   instanceId: string;
   artifactPath: string;
   createdAt?: Date;
+  onNativeStart?: () => void | Promise<void>;
   beforePublish?: () => Promise<void>;
   publicationOps?: PublicationOps;
 }): Promise<WorkspaceBackupV2NativeArtifact> {
@@ -611,11 +619,21 @@ export async function createWorkspaceBackupV2Native(input: {
     treeSha256: walked.treeSha256,
     warnings: walked.warnings,
   };
+  const binary = resolveNativeArchiveBinary();
+  const capabilities = await runNativeArchive(binary, ["archive", "capabilities"]);
+  if (capabilities.ok !== true || !Array.isArray(capabilities.capabilities) || !capabilities.capabilities.includes("archive.create")) {
+    throw nativeDiagnostic("capability", "create_unavailable", JSON.stringify(capabilities.capabilities));
+  }
+  if (capabilities.protocolVersion !== NATIVE_PROTOCOL_VERSION) {
+    throw nativeDiagnostic("protocol", "version_mismatch", `${String(capabilities.protocolVersion)} != ${NATIVE_PROTOCOL_VERSION}`);
+  }
+
   const staging = await fs.mkdtemp(path.join(path.dirname(input.artifactPath), ".rudder-native-archive-"));
   const manifestPath = path.join(staging, "manifest-v2.json");
   const planPath = path.join(staging, "create-plan.json");
   const nativeOutput = path.join(staging, "archive.zip");
   try {
+    await input.onNativeStart?.();
     await fs.writeFile(manifestPath, JSON.stringify(manifest), { mode: 0o600 });
     const entries = [
       { kind: "directory", archivePath: `${rootSegment(input.rootPath)}/` },
@@ -629,14 +647,6 @@ export async function createWorkspaceBackupV2Native(input: {
       treeSha256: manifest.treeSha256,
       entries,
     }), { mode: 0o600 });
-    const binary = resolveNativeArchiveBinary();
-    const capabilities = await runNativeArchive(binary, ["archive", "capabilities"]);
-    if (capabilities.ok !== true || !Array.isArray(capabilities.capabilities) || !capabilities.capabilities.includes("archive.create")) {
-      throw nativeDiagnostic("capability", "create_unavailable", JSON.stringify(capabilities.capabilities));
-    }
-    if (capabilities.protocolVersion !== NATIVE_PROTOCOL_VERSION) {
-      throw nativeDiagnostic("protocol", "version_mismatch", `${String(capabilities.protocolVersion)} != ${NATIVE_PROTOCOL_VERSION}`);
-    }
     const response = await runNativeArchive(binary, [
       "archive", "create", planPath, nativeOutput,
       String(WORKSPACE_BACKUP_V2_MAX_ARCHIVE_BYTES),

@@ -1,5 +1,4 @@
 import { chromium, _electron as electron } from "@playwright/test";
-import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
@@ -2534,7 +2533,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged"
     ? (executableOverride ? path.resolve(executableOverride) : await resolvePackagedExecutablePath())
-    : electronBinary;
+    : path.join(desktopDir, "scripts", "electron-dev-wrapper.mjs");
   // The Linux CI runner cannot use Electron's setuid sandbox helper from pnpm's store.
   const args = [
     ...(process.platform === "linux" ? ["--no-sandbox"] : []),
@@ -2559,6 +2558,11 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
       RUDDER_AGENT_JWT_AUDIENCE: smokeAgentJwtAudience,
       RUDDER_AGENT_JWT_ISSUER: smokeAgentJwtIssuer,
       RUDDER_AGENT_JWT_SECRET: smokeAgentJwtSecret,
+      ...(mode === "dev"
+        ? {
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, "--import=tsx"].filter(Boolean).join(" "),
+        }
+        : {}),
       ...(mode === "dev" ? { RUDDER_DESKTOP_AUTH_BYPASS: "1" } : {}),
       PORT: String(ports.appPort),
       RUDDER_EMBEDDED_POSTGRES_PORT: String(ports.dbPort),
