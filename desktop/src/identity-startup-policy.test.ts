@@ -17,6 +17,20 @@ describe("Desktop account startup policy", () => {
     })).toBe(true);
   });
 
+  it("permits only the explicitly marked packaged smoke bypass", () => {
+    expect(desktopAccountBypassAllowed({
+      isPackaged: true,
+      bypassRequested: false,
+      packagedSmokeBypassRequested: true,
+    })).toBe(true);
+    expect(desktopStartupRequiresAccount({
+      isPackaged: true,
+      bypassRequested: false,
+      packagedSmokeBypassRequested: true,
+      identityStatus: "signed-out",
+    })).toBe(false);
+  });
+
   it("gates signed-out startup and permits signed-in startup", () => {
     expect(desktopStartupRequiresAccount({
       isPackaged: false,
