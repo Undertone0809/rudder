@@ -14,7 +14,7 @@ import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Beaker, MonitorUp, Target } from "lucide-react";
+import { Beaker, FlaskConical, MonitorUp, Target } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 
@@ -36,6 +36,20 @@ export function InstanceExperimentalSettings() {
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+  });
+  const pluginsUpdateMutation = useMutation({
+    mutationFn: (enabled: boolean) => instanceSettingsApi.updateGeneral({
+      experimentalPluginsEnabled: enabled,
+    }),
+    onSuccess: async (nextSettings) => {
+      setActionError(null);
+      queryClient.setQueryData(queryKeys.instance.generalSettings, nextSettings);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.health });
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : t("experimental.updateFailed"));
+    },
   });
   const goalsUpdateMutation = useMutation({
     mutationFn: (enabled: boolean) => instanceSettingsApi.updateGeneral({
@@ -96,6 +110,8 @@ export function InstanceExperimentalSettings() {
     );
   }
 
+  const pluginsEnabled = (settingsQuery.data?.experimentalPluginsEnabled
+    ?? settingsQuery.data?.experimentalSitesEnabled) === true;
   const goalsEnabled = settingsQuery.data?.experimentalGoalsEnabled === true;
   const computerUseEnabled = settingsQuery.data?.experimentalComputerUseEnabled === true;
   const computerReadiness = computerReadinessQuery.data;
@@ -126,6 +142,30 @@ export function InstanceExperimentalSettings() {
           {actionError}
         </div>
       ) : null}
+
+      <SettingsSection title={t("experimental.sites.section")}>
+        <SettingsGroup>
+          <SettingsItem
+            title={t("experimental.sites.title")}
+            description={pluginsEnabled
+              ? t("experimental.sites.enabledDescription")
+              : t("experimental.sites.disabledDescription")}
+            icon={FlaskConical}
+            action={
+              <SettingsToggle
+                checked={pluginsEnabled}
+                disabled={pluginsUpdateMutation.isPending}
+                aria-label={t("experimental.sites.toggle")}
+                data-testid="experimental-sites-toggle"
+                onClick={() => pluginsUpdateMutation.mutate(!pluginsEnabled)}
+              />
+            }
+          />
+        </SettingsGroup>
+        <p className="mt-3 max-w-3xl text-xs leading-5 text-muted-foreground">
+          {t("experimental.sites.notice")}
+        </p>
+      </SettingsSection>
 
       <SettingsSection title={t("experimental.goals.section")}>
         <SettingsGroup>

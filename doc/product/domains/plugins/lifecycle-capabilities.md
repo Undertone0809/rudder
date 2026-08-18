@@ -224,9 +224,10 @@ Invariants:
 - Installed Plugins remain on their current immutable revision. A lightweight
   Release/HEAD check may show `Update available`, but only a newly opened Detail
   Preview and explicit Update can advance the installation.
-- Hub is a default Primary Rail capability with Plugins, Skills, and Showcase
-  views. It is not controlled by an Experimental setting. Existing `/apps/...`
-  routes remain directly launchable and select the Hub rail.
+- Hub is a Primary Rail capability with Plugins, Skills, and Showcase views that
+  is visible only when the instance-level Experimental Plugins capability is
+  enabled. Existing `/hub`, `/plugins`, and `/apps/...` routes remain directly
+  launchable; when Experimental Plugins is enabled, they select the Hub rail.
 
 Evidence:
 

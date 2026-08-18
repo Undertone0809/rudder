@@ -199,6 +199,9 @@ export function PrimaryRail({
     queryFn: () => healthApi.get(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
+  // The canonical flag wins so a stale legacy alias cannot undo an explicit disable.
+  const pluginsEnabled = (healthQuery.data?.features?.experimentalPluginsEnabled
+    ?? healthQuery.data?.features?.experimentalSitesEnabled) === true;
   const goalsEnabled = healthQuery.data?.features?.experimentalGoalsEnabled === true;
   const pinnedLocalAppsQuery = useQuery({
     queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId ?? "__none__"),
@@ -207,7 +210,7 @@ export function PrimaryRail({
       primaryRailPinned: true,
       limit: 100,
     }),
-    enabled: Boolean(selectedOrganizationId),
+    enabled: Boolean(selectedOrganizationId && pluginsEnabled),
   });
   const location = useLocation();
   const navigate = useNavigate();
@@ -269,14 +272,16 @@ export function PrimaryRail({
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
-    {
-      key: "plugins",
-      to: pluginsEntryPath,
-      label: "Hub",
-      icon: Blocks,
-      active: /^\/(?:hub|plugins|apps)(?:\/|$)/.test(relativePath)
-        && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
-    },
+    ...(pluginsEnabled
+      ? [{
+          key: "plugins",
+          to: pluginsEntryPath,
+          label: "Hub",
+          icon: Blocks,
+          active: /^\/(?:hub|plugins|apps)(?:\/|$)/.test(relativePath)
+            && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
+        }]
+      : []),
     {
       key: "organization",
       to: organizationEntryPath,
@@ -292,16 +297,18 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
-  const pinnedLocalAppItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
-    .filter((savedView) => savedView.targetPayload.kind === "local_app")
-    .map((savedView) => ({
-      key: `saved-view:${savedView.id}`,
-      to: localAppSavedViewRoute(savedView.id),
-      label: savedView.title,
-      icon: MessageSquare,
-      localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
-      active: relativePath === localAppSavedViewRoute(savedView.id),
-    }));
+  const pinnedLocalAppItems: RailItem[] = pluginsEnabled
+    ? (pinnedLocalAppsQuery.data?.items ?? [])
+      .filter((savedView) => savedView.targetPayload.kind === "local_app")
+      .map((savedView) => ({
+        key: `saved-view:${savedView.id}`,
+        to: localAppSavedViewRoute(savedView.id),
+        label: savedView.title,
+        icon: MessageSquare,
+        localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
+        active: relativePath === localAppSavedViewRoute(savedView.id),
+      }))
+    : [];
   const activeFixedRailIndex = railItems.findIndex((item) => item.active);
   const activePinnedRailIndex = pinnedLocalAppItems.findIndex((item) => item.active);
   const activeRailIndex = activeFixedRailIndex >= 0

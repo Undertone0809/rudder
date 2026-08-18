@@ -125,6 +125,42 @@ test.describe("Plugins V1", () => {
     });
   });
 
+  test("gates the Hub rail behind Experimental Plugins while preserving direct routes", async ({ page }, testInfo) => {
+    const organization = await createOrganization(page.request, "Plugins-Rail-Gate");
+    await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {
+      data: { experimentalPluginsEnabled: false },
+    });
+    await selectOrganization(page, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toHaveCount(0);
+    await page.screenshot({
+      path: `/tmp/rudder-hub-rail-disabled-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub`);
+    await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toHaveCount(0);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
+    await expect(page.getByTestId("apps-workspace")).toBeVisible();
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toHaveCount(0);
+
+    await page.goto(`${E2E_BASE_URL}/instance/settings/experimental`);
+    const pluginsToggle = page.getByTestId("experimental-sites-toggle");
+    await expect(pluginsToggle).toBeVisible();
+    await pluginsToggle.click();
+    await expect(pluginsToggle).toHaveAttribute("aria-checked", "true");
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: `/tmp/rudder-hub-rail-enabled-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+  });
+
   test("imports, configures, disables, restores, isolates, and uninstalls a Codex Plugin", async ({ page }, testInfo) => {
     test.setTimeout(600_000);
     const organization = await createOrganization(page.request, "Plugins-A");
@@ -140,10 +176,23 @@ test.describe("Plugins V1", () => {
     });
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
-    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toHaveCount(0);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub`);
+    await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toHaveCount(0);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/apps`);
+    await expect(page.getByTestId("apps-workspace")).toBeVisible();
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toHaveCount(0);
 
     await page.goto(`${E2E_BASE_URL}/instance/settings/experimental`);
-    await expect(page.getByText("Enable Plugins", { exact: true })).toHaveCount(0);
+    const pluginsToggle = page.getByTestId("experimental-sites-toggle");
+    await expect(pluginsToggle).toBeVisible();
+    await pluginsToggle.click();
+    await expect(pluginsToggle).toHaveAttribute("aria-checked", "true");
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
+    await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
 
     let failDirectoryRequest = true;
     const directoryRoute = (url: URL) =>

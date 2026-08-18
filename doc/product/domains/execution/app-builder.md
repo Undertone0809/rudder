@@ -57,8 +57,9 @@ edit_policy: user_confirmed_only
 App Builder turns a natural-language request into a new or improved local web
 product that can be used as a Rudder App. New Apps use one maintained full-stack
 scaffold by default; existing web projects keep their framework and conventions.
-It is a default Rudder capability. The top-level **Hub** destination is always
-available in the Primary Rail, while the Apps workspace owns building, loading,
+It is a Rudder capability gated by the instance-level Experimental Plugins
+setting. The top-level **Hub** destination appears in the Primary Rail only
+when that setting is enabled, while the Apps workspace owns building, loading,
 and running local Apps. Local Apps appear as app-only Plugins in **Hub >
 Plugins** and remain directly openable through their existing `/apps/...`
 workspace routes.
@@ -144,7 +145,8 @@ promotion, or production rollback UI.
 ### Entry Points / Inputs
 
 - Top-level **Hub** Primary Rail destination with **Plugins**, **Skills**, and
-  **Showcase** views.
+  **Showcase** views when Experimental Plugins is enabled. `/hub`, `/plugins`,
+  and `/apps/...` remain directly launchable regardless of rail visibility.
 - The Apps workspace request composer: **Turn ideas into applications**.
 - Registered App list and sidebar **Add an App** menu:
   - **Build with Agent** opens a new Chat with an editable `$app-builder` brief.
@@ -157,8 +159,10 @@ promotion, or production rollback UI.
 
 ### Product Logic Flow
 
-1. Hub is available by default in the Primary Rail. Opening Hub, Plugins, or
-   Apps never starts a process or creates an App.
+1. When Experimental Plugins is enabled, Hub is available in the Primary Rail.
+   Opening Hub, Plugins, or Apps never starts a process or creates an App;
+   these routes remain directly launchable while the rail destination is
+   hidden.
 2. The Apps execution workspace uses Rudder's established workspace shell:
    Home/search/registered Apps
    in the context sidebar, established Rudder tabs in the header, and Home or
@@ -289,8 +293,8 @@ ownership-unverified failure handling.
 
 ### Operator-Visible Output
 
-- Default Hub Primary Rail entry and an Apps execution workspace
-  without a persistent right runtime-control column.
+- Experimental Plugins-gated Hub Primary Rail entry and an Apps execution
+  workspace without a persistent right runtime-control column.
 - Searchable registered App list, Home composer, and multiple closable tabs.
 - A clear choice between starting an App Builder Chat and loading an existing
   local web project from the computer.

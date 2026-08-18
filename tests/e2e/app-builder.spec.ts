@@ -17,10 +17,10 @@ async function selectOrganization(page: Page, orgId: string) {
   }, orgId);
 }
 
-async function setSitesEnabled(request: APIRequestContext, enabled: boolean) {
+async function setPluginsEnabled(request: APIRequestContext, enabled: boolean) {
   const response = await request.patch(
     `${E2E_BASE_URL}/api/instance/settings/general`,
-    { data: { experimentalSitesEnabled: enabled } },
+    { data: { experimentalPluginsEnabled: enabled } },
   );
   expect(response.ok(), await response.text()).toBe(true);
 }
@@ -28,14 +28,14 @@ async function setSitesEnabled(request: APIRequestContext, enabled: boolean) {
 test.describe("Apps workspace", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("opens Apps as a default Hub capability and creates an App Builder Chat", async ({
+  test("opens Apps through the opt-in Hub capability and creates an App Builder Chat", async ({
     page,
   }, testInfo) => {
     const organization = await createOrganization(page.request, "Apps-Home");
     await createE2EChatAgent(page.request, organization.id, {
       name: "App Builder Agent",
     });
-    await setSitesEnabled(page.request, false);
+    await setPluginsEnabled(page.request, true);
     await selectOrganization(page, organization.id);
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
     await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true }))
@@ -152,7 +152,7 @@ test.describe("Apps workspace", () => {
     await createE2EChatAgent(page.request, organization.id, {
       name: "App Builder Agent",
     });
-    await setSitesEnabled(page.request, true);
+    await setPluginsEnabled(page.request, true);
     await page.addInitScript(() => {
       const savedDefinition = {
         id: "definition-added",
@@ -256,7 +256,7 @@ test.describe("Apps workspace", () => {
     page,
   }, testInfo) => {
     const organization = await createOrganization(page.request, "Apps-Tabs");
-    await setSitesEnabled(page.request, true);
+    await setPluginsEnabled(page.request, true);
     let appBuilderRequestCount = 0;
     await page.route(
       `${E2E_BASE_URL}/api/orgs/${organization.id}/app-builder`,
@@ -636,7 +636,7 @@ test.describe("Apps workspace", () => {
     page,
   }, testInfo) => {
     const organization = await createOrganization(page.request, "Apps-Delete");
-    await setSitesEnabled(page.request, true);
+    await setPluginsEnabled(page.request, true);
     await page.addInitScript(() => {
       const definitions = [
         {
@@ -809,7 +809,7 @@ test.describe("Apps workspace", () => {
   }) => {
     const firstOrganization = await createOrganization(page.request, "App-Binding-A");
     const secondOrganization = await createOrganization(page.request, "App-Binding-B");
-    await setSitesEnabled(page.request, true);
+    await setPluginsEnabled(page.request, true);
     const createdResponse = await page.request.post(
       `${E2E_BASE_URL}/api/orgs/${firstOrganization.id}/app-builder`,
       {
@@ -871,7 +871,7 @@ test.describe("Apps workspace", () => {
     page,
   }, testInfo) => {
     const organization = await createOrganization(page.request, "App-Auto-Open");
-    await setSitesEnabled(page.request, true);
+    await setPluginsEnabled(page.request, true);
     const createdResponse = await page.request.post(
       `${E2E_BASE_URL}/api/orgs/${organization.id}/app-builder`,
       {
@@ -1029,7 +1029,7 @@ test.describe("Apps workspace", () => {
 
   test("preserves recovery when automatic App startup fails", async ({ page }) => {
     const organization = await createOrganization(page.request, "App-Auto-Failure");
-    await setSitesEnabled(page.request, true);
+    await setPluginsEnabled(page.request, true);
     const createdResponse = await page.request.post(
       `${E2E_BASE_URL}/api/orgs/${organization.id}/app-builder`,
       {

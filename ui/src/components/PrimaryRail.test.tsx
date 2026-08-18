@@ -20,6 +20,7 @@ const mockState = vi.hoisted(() => ({
     desktopDockBadge: false,
   },
   generalSettings: {
+    experimentalPluginsEnabled: false,
     experimentalSitesEnabled: false,
     experimentalGoalsEnabled: false,
   },
@@ -204,6 +205,7 @@ beforeEach(() => {
     desktopDockBadge: false,
   };
   mockState.generalSettings = {
+    experimentalPluginsEnabled: false,
     experimentalSitesEnabled: false,
     experimentalGoalsEnabled: false,
   };
@@ -478,7 +480,7 @@ describe("PrimaryRail active motion indicator", () => {
     const nav = document.querySelector(".motion-rail-nav");
     const indicator = document.querySelector('[data-testid="primary-rail-active-indicator"]');
 
-    expect(nav?.getAttribute("data-active-index")).toBe("5");
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
     expect(indicator).not.toBeNull();
   });
 
@@ -491,7 +493,7 @@ describe("PrimaryRail active motion indicator", () => {
     const dashboardLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Dashboard"));
 
-    expect(nav?.getAttribute("data-active-index")).toBe("5");
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
     expect(dashboardLink).toBeUndefined();
   });
 
@@ -530,9 +532,25 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.getAttribute("data-active-index")).toBe("3");
   });
 
-  it("always shows Hub and keeps legacy App paths active under it", async () => {
+  it("shows Hub only after the Plugins experiment is enabled", async () => {
     mockState.pathname = "/apps";
-    await renderPrimaryRail();
+    const view = await renderPrimaryRail();
+
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Hub"))).toBeUndefined();
+
+    mockState.generalSettings.experimentalSitesEnabled = true;
+    await view.rerender();
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Hub"))).toBeUndefined();
+
+    delete (mockState.generalSettings as { experimentalPluginsEnabled?: boolean }).experimentalPluginsEnabled;
+    await view.rerender();
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Hub"))).toBeDefined();
+
+    mockState.generalSettings = { experimentalPluginsEnabled: true, experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
+    await view.rerender();
 
     const hubLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Hub"));
@@ -546,7 +564,7 @@ describe("PrimaryRail active motion indicator", () => {
     expect(Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Goals"))).toBeUndefined();
 
-    mockState.generalSettings = { experimentalSitesEnabled: false, experimentalGoalsEnabled: true };
+    mockState.generalSettings = { experimentalPluginsEnabled: false, experimentalSitesEnabled: false, experimentalGoalsEnabled: true };
     mockState.pathname = "/goals";
     await view.rerender();
 
@@ -557,7 +575,7 @@ describe("PrimaryRail active motion indicator", () => {
   });
 
   it("shows pinned Local App Saved Views after the fixed destinations", async () => {
-    mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
+    mockState.generalSettings = { experimentalPluginsEnabled: true, experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
       title: "MKT dashboard with a very long project name",
@@ -583,7 +601,7 @@ describe("PrimaryRail active motion indicator", () => {
   });
 
   it("gives an exact pinned Local App the unified active treatment", async () => {
-    mockState.generalSettings = { experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
+    mockState.generalSettings = { experimentalPluginsEnabled: true, experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
     mockState.pathname = "/apps/saved/saved-local-a";
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
