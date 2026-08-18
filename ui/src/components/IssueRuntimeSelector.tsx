@@ -340,7 +340,7 @@ export function IssueRuntimeSelector({
     <RuntimeProfileControls
       ariaContext={`${agent.name} runtime`}
       disabled={disabled}
-      errorMessage={adapterModelsQuery.error ? "Models are temporarily unavailable." : null}
+      errorMessage={adapterModelsQuery.error ? "Models unavailable; showing built-in defaults." : null}
       testIds={{
         modelTrigger: "issue-runtime-model-trigger",
         modelOptions: "issue-runtime-model-options",
