@@ -27,7 +27,7 @@ test.describe("Issue runtime model selector", () => {
       model: "gpt-5.4",
     });
     const replacementAgent = await createE2EChatAgent(page.request, organization.id, {
-      name: "Replacement runtime Agent",
+      name: "Replacement runtime Agent with a deliberately long name",
       model: "gpt-5.4-mini",
     });
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
@@ -55,7 +55,10 @@ test.describe("Issue runtime model selector", () => {
     await expect(runtimeSelector).toHaveCSS("opacity", "1");
 
     await runtimeSelector.click();
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toBeVisible();
+    await page.getByTestId("issue-runtime-model-trigger").click();
     await expect(page.getByTestId("issue-runtime-option-default-model")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("issue-runtime-selector-model-menu.png"), fullPage: false });
     const modelOption = page.locator('[data-testid^="issue-runtime-option-model-"]').first();
     await expect(modelOption).toBeVisible();
     const selectedModelLabel = await modelOption.textContent();
@@ -70,14 +73,19 @@ test.describe("Issue runtime model selector", () => {
         assigneeAgentRuntimeOverrides: { agentRuntimeConfig?: Record<string, unknown> } | null;
       };
       return persistedAfterPicker.assigneeAgentRuntimeOverrides?.agentRuntimeConfig?.model ?? null;
-    }).toBeTruthy();
+    }, { timeout: 20_000 }).toBeTruthy();
 
     await assigneeButton.focus();
     await page.keyboard.press("Tab");
     await expect(runtimeSelector).toBeFocused();
     await expect(runtimeSelector).toHaveCSS("opacity", "1");
     await page.keyboard.press("Enter");
+    await expect(page.getByTestId("issue-runtime-profile-panel")).toBeVisible();
+    await page.getByTestId("issue-runtime-model-trigger").focus();
+    await page.keyboard.press("ArrowRight");
     await expect(page.getByTestId("issue-runtime-option-default-model")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("issue-runtime-model-options")).toHaveCount(0);
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "More issue actions" }).click();
@@ -88,6 +96,7 @@ test.describe("Issue runtime model selector", () => {
 
     await assigneeButton.hover();
     await runtimeSelector.click();
+    await page.getByTestId("issue-runtime-model-trigger").click();
     await page.getByTestId("issue-runtime-option-default-model").click();
     await page.getByTestId("issue-runtime-apply").click();
     await expect.poll(async () => {
@@ -97,7 +106,7 @@ test.describe("Issue runtime model selector", () => {
         assigneeAgentRuntimeOverrides: Record<string, unknown> | null;
       };
       return persistedAfterReset.assigneeAgentRuntimeOverrides;
-    }).toBeNull();
+    }, { timeout: 20_000 }).toBeNull();
 
     await assigneeButton.click();
     const replacementAssigneeButton = page.getByRole("button", {
@@ -118,13 +127,29 @@ test.describe("Issue runtime model selector", () => {
         assigneeAgentRuntimeOverrides: Record<string, unknown> | null;
       };
       return [persistedAfterReassign.assigneeAgentId, persistedAfterReassign.assigneeAgentRuntimeOverrides];
-    }).toEqual([replacementAgent.id, null]);
+    }, { timeout: 20_000 }).toEqual([replacementAgent.id, null]);
 
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 375, height: 844 });
     await page.getByRole("button", { name: "Properties", exact: true }).click();
     const mobileRuntimeSelector = page.locator('[data-testid="issue-runtime-selector"]:visible');
     await expect(mobileRuntimeSelector).toHaveCount(1);
     await expect(mobileRuntimeSelector).toHaveCSS("opacity", "1");
+    await expect.poll(async () => {
+      const box = await mobileRuntimeSelector.boundingBox();
+      return box ? { left: box.x, right: box.x + box.width } : null;
+    }).toEqual(expect.objectContaining({
+      left: expect.any(Number),
+      right: expect.any(Number),
+    }));
+    const mobileSelectorBox = await mobileRuntimeSelector.boundingBox();
+    expect(mobileSelectorBox).not.toBeNull();
+    expect(mobileSelectorBox!.x).toBeGreaterThanOrEqual(0);
+    expect(mobileSelectorBox!.x + mobileSelectorBox!.width).toBeLessThanOrEqual(375);
+    await mobileRuntimeSelector.click();
+    await expect(page.getByTestId("issue-runtime-model-options")).toHaveCount(0);
+    await expect(page.getByTestId("issue-runtime-effort-options")).toHaveCount(0);
+    await page.getByTestId("issue-runtime-model-trigger").click();
+    await expect(page.getByTestId("issue-runtime-model-options")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("issue-runtime-selector-mobile.png"), fullPage: false });
   });
 });

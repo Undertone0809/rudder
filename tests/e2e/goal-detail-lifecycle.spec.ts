@@ -925,10 +925,12 @@ test.describe("Goal Workspace v2", () => {
       .first();
     await ownerProperty.hover();
     await page.getByRole("button", { name: `Run profile for ${owner.name}`, exact: true }).click();
-    const runtimeProfile = page.locator('[data-slot="popover-content"]').filter({ hasText: "Run profile" }).last();
+    const runtimeProfile = page.getByTestId("issue-runtime-profile-panel");
     await expect(runtimeProfile).toBeVisible();
-    await runtimeProfile.getByTestId("issue-runtime-option-model-gpt-5.6-sol").click();
-    await runtimeProfile.getByTestId("issue-runtime-option-effort-max").click();
+    await runtimeProfile.getByTestId("issue-runtime-model-trigger").click();
+    await page.getByTestId("issue-runtime-option-model-gpt-5.6-sol").click();
+    await runtimeProfile.getByTestId("issue-runtime-effort-trigger").click();
+    await page.getByTestId("issue-runtime-option-effort-max").click();
     await runtimeProfile.getByTestId("issue-runtime-apply").click();
     await expect(runtimeProfile).toBeHidden();
 
@@ -946,9 +948,13 @@ test.describe("Goal Workspace v2", () => {
     await page.reload({ waitUntil: "domcontentloaded" });
     await ownerProperty.hover();
     await page.getByRole("button", { name: `Run profile for ${owner.name}`, exact: true }).click();
-    const reloadedProfile = page.locator('[data-slot="popover-content"]').filter({ hasText: "Run profile" }).last();
-    await expect(reloadedProfile.getByTestId("issue-runtime-option-model-gpt-5.6-sol")).toHaveAttribute("aria-selected", "true");
-    await expect(reloadedProfile.getByTestId("issue-runtime-option-effort-max")).toHaveAttribute("aria-selected", "true");
+    const reloadedProfile = page.getByTestId("issue-runtime-profile-panel");
+    await reloadedProfile.getByTestId("issue-runtime-model-trigger").click();
+    await expect(page.getByTestId("issue-runtime-option-model-gpt-5.6-sol")).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Escape");
+    await reloadedProfile.getByTestId("issue-runtime-effort-trigger").click();
+    await expect(page.getByTestId("issue-runtime-option-effort-max")).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Escape");
     await reloadedProfile.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await page.getByRole("button", { name: "Change Goal owner", exact: true }).click();

@@ -334,7 +334,7 @@ describe("IssueProperties", () => {
       expect(avatar?.classList.contains("h-6")).toBe(true);
       expect(avatar?.classList.contains("w-6")).toBe(true);
       expect(trigger?.classList.contains("min-w-0")).toBe(true);
-      expect(trigger?.classList.contains("w-full")).toBe(true);
+      expect(trigger?.classList.contains("flex-1")).toBe(true);
       expect(trigger?.classList.contains("max-w-full")).toBe(true);
       expect(trigger?.classList.contains("justify-start")).toBe(true);
       expect(trigger?.classList.contains("overflow-hidden")).toBe(true);
@@ -785,6 +785,10 @@ describe("IssueProperties", () => {
     });
     act(() => {
       container.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-selector"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="issue-runtime-model-trigger"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     const modelOption = document.body.querySelector<HTMLButtonElement>('[data-testid^="issue-runtime-option-model-"]');

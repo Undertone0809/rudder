@@ -2608,7 +2608,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
             <SheetTitle className="text-sm">Properties</SheetTitle>
           </SheetHeader>
           <ScrollArea className="flex-1 overflow-y-auto">
-            <div className="space-y-3 px-4 pb-4">
+            <div className="w-[100vw] max-w-[100vw] space-y-3 overflow-x-hidden px-4 pb-4">
               <IssueProperties
                 issue={issue}
                 onUpdate={(data) => updateIssue.mutate(data)}
