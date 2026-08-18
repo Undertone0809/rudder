@@ -450,7 +450,7 @@ fn main() {
                         Some("process_group_cleanup_unproven")
                     } else if !output_relay_proven {
                         Some("output_relay_failed")
-                    } else if had_surviving_group {
+                    } else if had_surviving_group && !was_stopped {
                         Some("descendant_cleanup")
                     } else if was_stopped || code == Some(0) {
                         None

@@ -110,6 +110,7 @@ describe("Rust Local App process host transport", () => {
     expect(lifecycle.filter((frame) => frame.type === "terminal")).toEqual([
       expect.objectContaining({ status: "succeeded", cleanupProven: true }),
     ]);
+    expect(lifecycle.filter((frame) => frame.type === "terminal")[0]).not.toHaveProperty("errorCode", "descendant_cleanup");
   });
 
   nativeOnly("treats repeated Stop as one idempotent cleanup operation", async () => {
@@ -208,7 +209,7 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port: await unusedPort(),
-      script: "setInterval(()=>{},1000);",
+      script: "const b=Buffer.alloc(10240,120);setInterval(()=>process.stdout.write(b),1);",
     });
     await vi.waitFor(() => expect(lifecycle.some((frame) => frame.type === "spawned")).toBe(true));
     helper.stdin.end();
@@ -217,6 +218,7 @@ describe("Rust Local App process host transport", () => {
     expect(lifecycle.filter((frame) => frame.type === "terminal")).toEqual([
       expect.objectContaining({ status: "succeeded", cleanupProven: true }),
     ]);
+    expect(lifecycle.filter((frame) => frame.type === "terminal")[0]).not.toHaveProperty("errorCode", "descendant_cleanup");
   });
 
   nativeOnly.each(["../outside", "nested/path", "nested\\path"])(
