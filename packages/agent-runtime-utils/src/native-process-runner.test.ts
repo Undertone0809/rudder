@@ -142,7 +142,7 @@ describe("Rust Agent Run process host", () => {
       signalCode: null,
       kill: () => true,
     }) as unknown as ChildProcess;
-    const capabilities = ["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "owner_receipt", "stdout_relay", "stderr_relay"];
+    const capabilities = ["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "detached_capture", "control_loss_receipt", "owner_receipt", "stdout_relay", "stderr_relay"];
     let started = false;
     commandInput.on("data", (chunk) => {
       if (started) return;

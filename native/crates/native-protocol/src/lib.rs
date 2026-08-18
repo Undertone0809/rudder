@@ -8,6 +8,8 @@ pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
     "process_group_cleanup",
     "parent_eof_cleanup",
+    "detached_capture",
+    "control_loss_receipt",
     "listener_owner_attestation",
     "owner_receipt",
     "output_order_index",
@@ -22,6 +24,8 @@ pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
     "process_group_cleanup",
     "parent_eof_cleanup",
+    "detached_capture",
+    "control_loss_receipt",
     "listener_owner_attestation",
     "owner_receipt",
     "output_order_index",
@@ -90,6 +94,10 @@ pub enum Command {
         stdin: Option<String>,
         #[serde(rename = "graceMs", default)]
         grace_ms: Option<u64>,
+        #[serde(rename = "attemptDeadlineMs", default)]
+        attempt_deadline_ms: Option<u64>,
+        #[serde(rename = "maxDetachedSpoolBytes", default)]
+        max_detached_spool_bytes: Option<u64>,
     },
     Stop {
         #[serde(rename = "protocolVersion", default)]
@@ -244,6 +252,8 @@ impl Command {
                 runtime_root,
                 stdin,
                 grace_ms,
+                attempt_deadline_ms,
+                max_detached_spool_bytes,
             } => {
                 validate_protocol_identity(protocol_version, request_id)?;
                 validate_launch(executable, argv, cwd, env, owner_token)?;
@@ -264,6 +274,11 @@ impl Command {
                 }
                 if grace_ms.is_some_and(|value| value > 60_000) {
                     return Err("invalid_grace_ms");
+                }
+                if attempt_deadline_ms.is_some_and(|value| value == 0)
+                    || max_detached_spool_bytes.is_some_and(|value| value == 0)
+                {
+                    return Err("invalid_detached_limits");
                 }
                 Ok(())
             }
@@ -556,6 +571,8 @@ mod tests {
             runtime_root: Some(fixture_runtime_root().into()),
             stdin: None,
             grace_ms: None,
+            attempt_deadline_ms: None,
+            max_detached_spool_bytes: None,
         };
         assert_eq!(base("x".repeat(70_000)).validate(), Ok(()));
         assert_eq!(

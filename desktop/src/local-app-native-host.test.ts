@@ -141,8 +141,9 @@ describe("Rust Local App process host transport", () => {
     ]);
     const receipt = JSON.parse(
       await readFile(path.join(runtimeRoot, "repeated-stop", "terminal-receipt.json"), "utf8"),
-    ) as { terminal?: { status?: string; cleanupProven?: boolean } };
+    ) as { terminal?: { status?: string; cleanupProven?: boolean; errorCode?: string } };
     expect(receipt.terminal).toMatchObject({ status: "succeeded", cleanupProven: true });
+    expect(receipt.terminal?.errorCode).toBeUndefined();
   });
 
   nativeOnly("does not permit a Node duplicate after post-spawn native setup failure", async () => {
@@ -218,6 +219,42 @@ describe("Rust Local App process host transport", () => {
       expect.objectContaining({ status: "succeeded", cleanupProven: true }),
     ]);
   });
+
+  nativeOnly("keeps Agent Run control EOF detached until its bounded deadline", async () => {
+    const { root, runtimeRoot, helper, lifecycle } = await fixture("agent-control-eof");
+    helper.stdout.resume();
+    helper.stderr.resume();
+    const exited = once(helper, "exit");
+    helper.send({
+      type: "startProcess",
+      protocolVersion: { major: 1, minor: 0 },
+      requestId: "agent-control-eof",
+      executable: process.execPath,
+      argv: ["-e", "setInterval(()=>process.stdout.write('x'.repeat(4096)),5)"],
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      ownerToken: "agent-control-eof",
+      runtimeRoot,
+      graceMs: 100,
+      attemptDeadlineMs: Date.now() + 500,
+      maxDetachedSpoolBytes: 1024 * 1024,
+    });
+    await vi.waitFor(() => expect(lifecycle.some((frame) => frame.type === "spawned")).toBe(true));
+    helper.stdin.end();
+    const [code] = await exited as [number | null];
+    expect(code).toBe(1);
+    expect(lifecycle.some((frame) => frame.type === "stopped")).toBe(false);
+    expect(lifecycle.some((frame) => frame.type === "terminal")).toBe(false);
+    const receipt = JSON.parse(
+      await readFile(path.join(runtimeRoot, "agent-control-eof", "terminal-receipt.json"), "utf8"),
+    ) as { terminal?: { status?: string; errorCode?: string; detached?: boolean; receiptWritten?: boolean } };
+    expect(receipt.terminal).toMatchObject({
+      status: "failed",
+      errorCode: "control_lost_deadline",
+      detached: true,
+      receiptWritten: true,
+    });
+  }, 10_000);
 
   nativeOnly.each(["../outside", "nested/path", "nested\\path"])(
     "rejects unsafe owner token %s before any filesystem side effect",

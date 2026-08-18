@@ -401,12 +401,10 @@ fn collect_until_quiet_with_hook(
     let mut deadline = std::time::Instant::now() + debounce;
     let mut stop_requested = false;
     loop {
-        if !stop_requested {
-            if let Some(stop) = stop {
-                match stop.try_recv() {
-                    Ok(()) | Err(TryRecvError::Disconnected) => stop_requested = true,
-                    Err(TryRecvError::Empty) => {}
-                }
+        if !stop_requested && let Some(stop) = stop {
+            match stop.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => stop_requested = true,
+                Err(TryRecvError::Empty) => {}
             }
         }
         let wait = deadline.saturating_duration_since(std::time::Instant::now());
@@ -434,12 +432,10 @@ fn collect_until_quiet_with_hook(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                if !stop_requested {
-                    if let Some(stop) = stop {
-                        match stop.try_recv() {
-                            Ok(()) | Err(TryRecvError::Disconnected) => stop_requested = true,
-                            Err(TryRecvError::Empty) => {}
-                        }
+                if !stop_requested && let Some(stop) = stop {
+                    match stop.try_recv() {
+                        Ok(()) | Err(TryRecvError::Disconnected) => stop_requested = true,
+                        Err(TryRecvError::Empty) => {}
                     }
                 }
                 batch.stopped = stop_requested;

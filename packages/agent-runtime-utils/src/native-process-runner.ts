@@ -24,6 +24,8 @@ const MAX_LIFECYCLE_FRAME_BYTES = 64 * 1024;
 const MAX_OUTPUT_QUEUE_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
+const DEFAULT_DETACHED_SPOOL_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_DETACHED_DEADLINE_MS = 5 * 60 * 1_000;
 
 type NativeHostSpawn = (
   executable: string,
@@ -43,6 +45,8 @@ export interface NativeProcessRunOptions {
   abortSignal?: AbortSignal;
   binaryPath?: string | null;
   runtimeRoot?: string;
+  attemptDeadlineMs?: number;
+  maxDetachedSpoolBytes?: number;
   spawnHost?: NativeHostSpawn;
 }
 
@@ -453,7 +457,7 @@ export async function runNativeChildProcess(
           protocolVersion: `${version.major}.${version.minor}`,
         };
         if (!Array.isArray(capabilities)
-          || !["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "owner_receipt", "stdout_relay", "stderr_relay"]
+          || !["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "detached_capture", "control_loss_receipt", "owner_receipt", "stdout_relay", "stderr_relay"]
             .every((capability) => capabilities.includes(capability))) {
           settleReject(new NativeProcessUnavailableError(
             "Rust process host capabilities are incomplete",
@@ -474,6 +478,17 @@ export async function runNativeChildProcess(
           runtimeRoot,
           ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
           graceMs: Math.max(1, Math.min(60_000, Math.floor(opts.graceSec * 1_000))),
+          attemptDeadlineMs: Math.max(
+            Date.now() + 1,
+            Math.floor(opts.attemptDeadlineMs ?? (Date.now() + Math.max(
+              DEFAULT_DETACHED_DEADLINE_MS,
+              opts.timeoutSec > 0 ? opts.timeoutSec * 1_000 : 0,
+            ))),
+          ),
+          maxDetachedSpoolBytes: Math.max(
+            1,
+            Math.floor(opts.maxDetachedSpoolBytes ?? DEFAULT_DETACHED_SPOOL_BYTES),
+          ),
         });
         return;
       }

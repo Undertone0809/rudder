@@ -12,7 +12,7 @@ use std::process::{Child, Command as ProcessCommand, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -34,6 +34,8 @@ use windows_sys::Win32::System::Threading::GetCurrentProcess;
 const TERM_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+const DEFAULT_DETACHED_DEADLINE: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_DETACHED_SPOOL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 fn native_target() -> &'static str {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -49,6 +51,18 @@ fn native_target() -> &'static str {
     }
 }
 
+fn detached_deadline(value: Option<u64>) -> Instant {
+    let now = Instant::now();
+    let Some(deadline_ms) = value else {
+        return now + DEFAULT_DETACHED_DEADLINE;
+    };
+    let Ok(epoch_ms) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return now + DEFAULT_DETACHED_DEADLINE;
+    };
+    let now_ms = epoch_ms.as_millis() as u64;
+    now + Duration::from_millis(deadline_ms.saturating_sub(now_ms))
+}
+
 struct LifecycleWriter {
     writer: Mutex<BufWriter<Box<dyn Write + Send>>>,
     request_id: Mutex<String>,
@@ -58,6 +72,7 @@ struct LifecycleWriter {
 type Lifecycle = Arc<LifecycleWriter>;
 type RawOutput = Arc<Mutex<BufWriter<Box<dyn Write + Send>>>>;
 
+#[allow(clippy::large_enum_variant)]
 enum Input {
     Command(Command),
     Invalid(&'static str),
@@ -65,9 +80,18 @@ enum Input {
 }
 
 enum MonitorCommand {
-    Stop { grace: Option<Duration> },
+    Stop {
+        grace: Option<Duration>,
+    },
+    ControlLoss {
+        deadline: Instant,
+        max_spool_bytes: u64,
+    },
     Input(Vec<u8>),
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
 }
 
 enum MonitorEvent {
@@ -81,7 +105,51 @@ enum MonitorEvent {
         was_stopped: bool,
         cleanup_proven: bool,
         had_surviving_group: bool,
+        control_loss: Option<&'static str>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActiveMode {
+    LocalApp,
+    AgentRun,
+    Terminal,
+}
+
+struct DetachedCapture {
+    active: AtomicBool,
+    bytes: AtomicU64,
+    limit: AtomicU64,
+    overflowed: AtomicBool,
+}
+
+impl DetachedCapture {
+    fn new(limit: u64) -> Arc<Self> {
+        Arc::new(Self {
+            active: AtomicBool::new(false),
+            bytes: AtomicU64::new(0),
+            limit: AtomicU64::new(limit),
+            overflowed: AtomicBool::new(false),
+        })
+    }
+
+    fn begin(&self, limit: u64) {
+        self.limit.store(limit, Ordering::Release);
+        self.active.store(true, Ordering::Release);
+    }
+
+    fn record(&self, bytes: usize) -> bool {
+        let limit = self.limit.load(Ordering::Acquire);
+        let next = self
+            .bytes
+            .fetch_add(bytes as u64, Ordering::AcqRel)
+            .saturating_add(bytes as u64);
+        if next > limit {
+            self.overflowed.store(true, Ordering::Release);
+            return false;
+        }
+        true
+    }
 }
 
 struct Counters {
@@ -95,6 +163,9 @@ struct ActiveChild {
     output_done: Vec<mpsc::Receiver<bool>>,
     evidence: Option<Arc<OperationEvidence>>,
     output_gate: Option<Arc<AtomicBool>>,
+    mode: ActiveMode,
+    detached_deadline: Instant,
+    detached_spool_bytes: u64,
 }
 
 struct OwnedProcessBoundary {
@@ -154,6 +225,8 @@ struct OperationEvidence {
     operation_root: PathBuf,
     terminal_path: PathBuf,
     index: Mutex<BufWriter<File>>,
+    stdout: Mutex<BufWriter<File>>,
+    stderr: Mutex<BufWriter<File>>,
     sequence: AtomicU64,
     stdout_offset: AtomicU64,
     stderr_offset: AtomicU64,
@@ -226,10 +299,22 @@ impl OperationEvidence {
             .write(true)
             .open(&index_path)
             .map_err(|_| "output_index_unavailable")?;
+        let stdout = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(operation_root.join("stdout.bin"))
+            .map_err(|_| "output_spool_unavailable")?;
+        let stderr = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(operation_root.join("stderr.bin"))
+            .map_err(|_| "output_spool_unavailable")?;
         let evidence = Arc::new(Self {
             terminal_path: operation_root.join("terminal-receipt.json"),
             operation_root,
             index: Mutex::new(BufWriter::new(index)),
+            stdout: Mutex::new(BufWriter::new(stdout)),
+            stderr: Mutex::new(BufWriter::new(stderr)),
             sequence: AtomicU64::new(0),
             stdout_offset: AtomicU64::new(0),
             stderr_offset: AtomicU64::new(0),
@@ -256,6 +341,16 @@ impl OperationEvidence {
             self.stderr_offset
                 .fetch_add(bytes.len() as u64, Ordering::SeqCst)
         };
+        let spool = if stream == "stdout" {
+            &self.stdout
+        } else {
+            &self.stderr
+        };
+        let mut spool = spool.lock().map_err(|_| "output_spool_unavailable")?;
+        spool
+            .write_all(bytes)
+            .map_err(|_| "output_spool_unavailable")?;
+        spool.flush().map_err(|_| "output_spool_unavailable")?;
         let sequence = self.sequence.fetch_add(1, Ordering::SeqCst);
         let digest = format!("{:x}", Sha256::digest(bytes));
         let mut index = self.index.lock().map_err(|_| "output_index_unavailable")?;
@@ -400,6 +495,7 @@ fn main() {
     let mut active: Option<ActiveChild> = None;
     let mut stop_admitted = false;
     let mut listener_mismatch = false;
+    let mut control_lost = false;
     let mut terminal_sent = false;
     let mut process_exit_code = 0;
 
@@ -421,6 +517,7 @@ fn main() {
                     was_stopped,
                     cleanup_proven,
                     had_surviving_group,
+                    control_loss,
                 }) => {
                     let mut output_relay_proven = true;
                     if let Some(child) = active.as_ref() {
@@ -429,22 +526,30 @@ fn main() {
                                 matches!(output_done.recv_timeout(TERM_TIMEOUT), Ok(true));
                         }
                     }
-                    send(
-                        &lifecycle,
-                        json!({
-                            "type": "app-exit",
-                            "code": code,
-                            "signal": signal,
-                        }),
-                    );
-                    if was_stopped && cleanup_proven {
+                    if !control_lost {
+                        send(
+                            &lifecycle,
+                            json!({
+                                "type": "app-exit",
+                                "code": code,
+                                "signal": signal,
+                            }),
+                        );
+                    }
+                    if !control_lost && was_stopped && cleanup_proven {
                         send(&lifecycle, json!({"type":"stopped"}));
                     }
-                    let terminal_succeeded = !listener_mismatch
+                    let terminal_succeeded = control_loss.is_none()
+                        && !control_lost
+                        && !listener_mismatch
                         && cleanup_proven
                         && output_relay_proven
                         && (was_stopped || (code == Some(0) && !had_surviving_group));
-                    let error_code = if listener_mismatch {
+                    let error_code = if let Some(control_loss) = control_loss {
+                        Some(control_loss)
+                    } else if control_lost {
+                        Some("control_lost")
+                    } else if listener_mismatch {
                         Some("listener_owner_mismatch")
                     } else if !cleanup_proven {
                         Some("process_group_cleanup_unproven")
@@ -468,6 +573,9 @@ fn main() {
                         started_at,
                         &counters,
                     );
+                    if control_loss.is_some() || control_lost {
+                        terminal["detached"] = Value::Bool(true);
+                    }
                     terminal["receiptWritten"] = Value::Bool(true);
                     let receipt_written = active
                         .as_ref()
@@ -483,7 +591,9 @@ fn main() {
                         );
                         terminal["receiptWritten"] = Value::Bool(false);
                     }
-                    send(&lifecycle, terminal);
+                    if !control_lost {
+                        send(&lifecycle, terminal);
+                    }
                     process_exit_code = if terminal_succeeded && receipt_written {
                         0
                     } else {
@@ -492,16 +602,18 @@ fn main() {
                     terminal_sent = true;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    send(
-                        &lifecycle,
-                        terminal_message(
-                            "failed",
-                            Some("monitor_lost"),
-                            false,
-                            started_at,
-                            &counters,
-                        ),
-                    );
+                    if !control_lost {
+                        send(
+                            &lifecycle,
+                            terminal_message(
+                                "failed",
+                                Some("monitor_lost"),
+                                false,
+                                started_at,
+                                &counters,
+                            ),
+                        );
+                    }
                     process_exit_code = 1;
                     terminal_sent = true;
                 }
@@ -602,6 +714,9 @@ fn main() {
                     "local_app_generation",
                     TERM_TIMEOUT,
                     false,
+                    ActiveMode::LocalApp,
+                    Instant::now() + DEFAULT_DETACHED_DEADLINE,
+                    DEFAULT_DETACHED_SPOOL_BYTES,
                 ) {
                     Ok((active_child, pid, pgid)) => {
                         active = Some(active_child);
@@ -637,6 +752,8 @@ fn main() {
                 runtime_root,
                 stdin,
                 grace_ms,
+                attempt_deadline_ms,
+                max_detached_spool_bytes,
             })) => {
                 if active.is_some() {
                     send_error(&lifecycle, "already_started");
@@ -653,6 +770,8 @@ fn main() {
                     runtime_root,
                     stdin,
                     grace_ms,
+                    attempt_deadline_ms,
+                    max_detached_spool_bytes,
                 };
                 set_request_id(
                     &lifecycle,
@@ -677,6 +796,8 @@ fn main() {
                     runtime_root,
                     stdin,
                     grace_ms,
+                    attempt_deadline_ms,
+                    max_detached_spool_bytes,
                     ..
                 } = command
                 else {
@@ -716,6 +837,9 @@ fn main() {
                     "agent_run_attempt",
                     grace,
                     true,
+                    ActiveMode::AgentRun,
+                    detached_deadline(attempt_deadline_ms),
+                    max_detached_spool_bytes.unwrap_or(DEFAULT_DETACHED_SPOOL_BYTES),
                 ) {
                     Ok((active_child, pid, pgid)) => {
                         active = Some(active_child);
@@ -926,7 +1050,15 @@ fn main() {
             }
             Ok(Input::Eof) => {
                 if let Some(child) = active.as_ref() {
-                    let _ = child.control.send(MonitorCommand::Stop { grace: None });
+                    if child.mode == ActiveMode::AgentRun {
+                        control_lost = true;
+                        let _ = child.control.send(MonitorCommand::ControlLoss {
+                            deadline: child.detached_deadline,
+                            max_spool_bytes: child.detached_spool_bytes,
+                        });
+                    } else {
+                        let _ = child.control.send(MonitorCommand::Stop { grace: None });
+                    }
                 } else {
                     send(
                         &lifecycle,
@@ -938,7 +1070,15 @@ fn main() {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if let Some(child) = active.as_ref() {
-                    let _ = child.control.send(MonitorCommand::Stop { grace: None });
+                    if child.mode == ActiveMode::AgentRun {
+                        control_lost = true;
+                        let _ = child.control.send(MonitorCommand::ControlLoss {
+                            deadline: child.detached_deadline,
+                            max_spool_bytes: child.detached_spool_bytes,
+                        });
+                    } else {
+                        let _ = child.control.send(MonitorCommand::Stop { grace: None });
+                    }
                 } else {
                     send(
                         &lifecycle,
@@ -1053,6 +1193,9 @@ fn spawn_child(
     owner_kind: &'static str,
     grace: Duration,
     relay_lifecycle: bool,
+    mode: ActiveMode,
+    detached_deadline: Instant,
+    detached_spool_bytes: u64,
 ) -> Result<(ActiveChild, u32, u32), SpawnChildError> {
     spawn_path_preflight(&executable, &cwd).map_err(SpawnChildError::before_spawn)?;
     let mut command = ProcessCommand::new(executable);
@@ -1134,6 +1277,7 @@ fn spawn_child(
         }
     };
     let output_gate = relay_lifecycle.then(|| Arc::new(AtomicBool::new(false)));
+    let detached_capture = DetachedCapture::new(detached_spool_bytes);
     let stdout_done = relay(
         child_stdout,
         stdout,
@@ -1141,6 +1285,7 @@ fn spawn_child(
         counters.clone(),
         Some(Arc::clone(&evidence)),
         output_gate.clone(),
+        Some(Arc::clone(&detached_capture)),
         "stdout",
     );
     let stderr_done = relay(
@@ -1150,14 +1295,23 @@ fn spawn_child(
         counters.clone(),
         Some(Arc::clone(&evidence)),
         output_gate.clone(),
+        Some(Arc::clone(&detached_capture)),
         "stderr",
     );
 
     let (control_tx, control_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    let monitor_capture = Arc::clone(&detached_capture);
     thread::spawn(move || {
         monitor_child(
-            &mut child, control_rx, event_tx, pgid, port, grace, boundary,
+            &mut child,
+            control_rx,
+            event_tx,
+            pgid,
+            port,
+            grace,
+            boundary,
+            monitor_capture,
         )
     });
     Ok((
@@ -1167,6 +1321,9 @@ fn spawn_child(
             output_done: vec![stdout_done, stderr_done],
             evidence: Some(evidence),
             output_gate,
+            mode,
+            detached_deadline,
+            detached_spool_bytes,
         },
         pid,
         pgid,
@@ -1260,7 +1417,17 @@ fn spawn_terminal(
             ));
         }
     };
-    let output_done = relay(reader, stdout, None, counters, None, None, "stdout");
+    let detached_capture = DetachedCapture::new(DEFAULT_DETACHED_SPOOL_BYTES);
+    let output_done = relay(
+        reader,
+        stdout,
+        None,
+        counters,
+        None,
+        None,
+        Some(Arc::clone(&detached_capture)),
+        "stdout",
+    );
     let (control_tx, control_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -1275,6 +1442,7 @@ fn spawn_terminal(
                         requested_cleanup = Some(request_pty_tree_termination(pid));
                         let _ = child.kill();
                     }
+                    MonitorCommand::ControlLoss { .. } => {}
                     MonitorCommand::Input(data) => {
                         let _ = writer.write_all(&data);
                         let _ = writer.flush();
@@ -1308,6 +1476,7 @@ fn spawn_terminal(
                         was_stopped: stopping,
                         cleanup_proven: cleanup.proven,
                         had_surviving_group: cleanup.had_surviving_group,
+                        control_loss: None,
                     });
                     return;
                 }
@@ -1319,6 +1488,7 @@ fn spawn_terminal(
                         was_stopped: stopping,
                         cleanup_proven: false,
                         had_surviving_group: false,
+                        control_loss: None,
                     });
                     return;
                 }
@@ -1332,6 +1502,9 @@ fn spawn_terminal(
             output_done: vec![output_done],
             evidence: None,
             output_gate: None,
+            mode: ActiveMode::Terminal,
+            detached_deadline: Instant::now() + DEFAULT_DETACHED_DEADLINE,
+            detached_spool_bytes: DEFAULT_DETACHED_SPOOL_BYTES,
         },
         pid,
     ))
@@ -1483,6 +1656,7 @@ fn finish_pty_tree_cleanup(pid: u32, requested: CleanupResult) -> CleanupResult 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn relay<R: Read + Send + 'static>(
     mut input: R,
     output: RawOutput,
@@ -1490,6 +1664,7 @@ fn relay<R: Read + Send + 'static>(
     counters: Arc<Counters>,
     evidence: Option<Arc<OperationEvidence>>,
     output_gate: Option<Arc<AtomicBool>>,
+    detached_capture: Option<Arc<DetachedCapture>>,
     stream: &'static str,
 ) -> mpsc::Receiver<bool> {
     let (done_tx, done_rx) = mpsc::channel();
@@ -1513,6 +1688,16 @@ fn relay<R: Read + Send + 'static>(
             counters
                 .bytes_read
                 .fetch_add(read as u64, Ordering::Relaxed);
+            let detached = detached_capture
+                .as_ref()
+                .is_some_and(|capture| capture.active.load(Ordering::Acquire));
+            if detached_capture
+                .as_ref()
+                .is_some_and(|capture| detached && !capture.record(read))
+            {
+                successful = false;
+                break;
+            }
             if evidence
                 .as_ref()
                 .is_some_and(|evidence| evidence.record_output(stream, &buffer[..read]).is_err())
@@ -1520,7 +1705,7 @@ fn relay<R: Read + Send + 'static>(
                 successful = false;
                 break;
             }
-            if let Some(lifecycle) = lifecycle.as_ref() {
+            if let Some(lifecycle) = lifecycle.as_ref().filter(|_| !detached) {
                 send(
                     lifecycle,
                     json!({
@@ -1530,23 +1715,26 @@ fn relay<R: Read + Send + 'static>(
                     }),
                 );
             }
-            let Ok(mut writer) = output.lock() else {
-                successful = false;
-                break;
-            };
-            if writer.write_all(&buffer[..read]).is_err() || writer.flush().is_err() {
-                successful = false;
-                break;
+            if !detached {
+                let Ok(mut writer) = output.lock() else {
+                    successful = false;
+                    break;
+                };
+                if writer.write_all(&buffer[..read]).is_err() || writer.flush().is_err() {
+                    successful = false;
+                    break;
+                }
+                counters
+                    .bytes_written
+                    .fetch_add(read as u64, Ordering::Relaxed);
             }
-            counters
-                .bytes_written
-                .fetch_add(read as u64, Ordering::Relaxed);
         }
         let _ = done_tx.send(successful);
     });
     done_rx
 }
 
+#[allow(clippy::too_many_arguments)]
 fn monitor_child(
     child: &mut Child,
     control: mpsc::Receiver<MonitorCommand>,
@@ -1555,8 +1743,11 @@ fn monitor_child(
     port: Option<u16>,
     grace: Duration,
     boundary: OwnedProcessBoundary,
+    detached_capture: Arc<DetachedCapture>,
 ) {
     let mut stopping = false;
+    let mut control_loss = None;
+    let mut detached_deadline = None;
     let mut cleanup = None;
     let mut listener_verified = false;
     let mut listener_owner_mismatch = false;
@@ -1573,8 +1764,33 @@ fn monitor_child(
                     &boundary,
                 ));
             }
+            Ok(MonitorCommand::ControlLoss {
+                deadline,
+                max_spool_bytes,
+            }) => {
+                if !stopping && control_loss.is_none() {
+                    detached_capture.begin(max_spool_bytes);
+                    detached_deadline = Some(deadline);
+                    control_loss = Some("control_lost");
+                }
+            }
             Ok(MonitorCommand::Input(_)) | Ok(MonitorCommand::Resize { .. }) => {}
             Err(_) => {}
+        }
+        if let Some(deadline) = detached_deadline {
+            let reason = if detached_capture.overflowed.load(Ordering::Acquire) {
+                Some("control_lost_spool_limit")
+            } else if Instant::now() >= deadline {
+                Some("control_lost_deadline")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                stopping = true;
+                control_loss = Some(reason);
+                cleanup = Some(terminate_owned_process(child, pgid, grace, &boundary));
+                detached_deadline = None;
+            }
         }
         if let Some(expected_port) = port.filter(|_| !stopping && !listener_verified) {
             match listener_owned_by_process_group(expected_port, pgid) {
@@ -1602,6 +1818,7 @@ fn monitor_child(
                     was_stopped: stopping,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group || listener_owner_mismatch,
+                    control_loss,
                 });
                 return;
             }
@@ -1614,6 +1831,7 @@ fn monitor_child(
                     was_stopped: stopping,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
+                    control_loss,
                 });
                 return;
             }
@@ -1634,7 +1852,8 @@ fn terminate_owned_process(
 ) -> CleanupResult {
     #[cfg(unix)]
     {
-        if process_group_exists(pgid).unwrap_or(true) {
+        let group_exists = process_group_exists(pgid).unwrap_or(true);
+        if group_exists {
             unsafe {
                 libc::kill(-(pgid as libc::pid_t), libc::SIGTERM);
             }
@@ -1652,7 +1871,7 @@ fn terminate_owned_process(
             }
         }
         let _ = child.wait();
-        wait_for_process_group_cleanup(pgid, true)
+        wait_for_process_group_cleanup(pgid, group_exists)
     }
     #[cfg(windows)]
     {
@@ -1709,21 +1928,21 @@ fn process_group_exists(pgid: u32) -> io::Result<bool> {
 }
 
 #[cfg(unix)]
-fn wait_for_process_group_cleanup(pgid: u32, had_surviving_group: bool) -> CleanupResult {
+fn wait_for_process_group_cleanup(pgid: u32, _group_existed_before_cleanup: bool) -> CleanupResult {
     let deadline = Instant::now() + TERM_TIMEOUT;
     while Instant::now() < deadline {
         match process_group_exists(pgid) {
             Ok(false) => {
                 return CleanupResult {
                     proven: true,
-                    had_surviving_group,
+                    had_surviving_group: false,
                 };
             }
             Ok(true) => thread::sleep(POLL_INTERVAL),
             Err(_) => {
                 return CleanupResult {
                     proven: false,
-                    had_surviving_group,
+                    had_surviving_group: true,
                 };
             }
         }
@@ -1738,7 +1957,7 @@ fn wait_for_process_group_cleanup(pgid: u32, had_surviving_group: bool) -> Clean
                 Ok(false) => {
                     return CleanupResult {
                         proven: true,
-                        had_surviving_group,
+                        had_surviving_group: false,
                     };
                 }
                 Ok(true) => thread::sleep(POLL_INTERVAL),
@@ -1746,9 +1965,10 @@ fn wait_for_process_group_cleanup(pgid: u32, had_surviving_group: bool) -> Clean
             }
         }
     }
+    let surviving = process_group_exists(pgid).unwrap_or(true);
     CleanupResult {
-        proven: !process_group_exists(pgid).unwrap_or(true),
-        had_surviving_group,
+        proven: !surviving,
+        had_surviving_group: surviving,
     }
 }
 
