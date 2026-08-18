@@ -305,6 +305,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare Windows PostgreSQL test runtime
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: |
+          bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
+          echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+
       - name: Rust formatting
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo fmt --manifest-path native/Cargo.toml --all --check
@@ -443,10 +449,11 @@ jobs:
         env:
           RUDDER_NATIVE_MODE: required
           RUDDER_NATIVE_ARCHIVE_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
-        run: pnpm exec playwright test tests/e2e/workspace-backups.spec.ts
+          RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
+        run: pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/workspace-backups.spec.ts
 
       - name: Exercise Rust-first Agent Run process workflow
         env:
           RUDDER_NATIVE_MODE: required
           RUDDER_NATIVE_PROCESS_HOST_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-process-host
-        run: pnpm exec playwright test tests/e2e/issue-active-run-steer.spec.ts
+        run: pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/issue-active-run-steer.spec.ts

@@ -1,3 +1,4 @@
+import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import {
   createRudderNativeDiagnostic,
   resolveRudderNativeCapability,
@@ -91,7 +92,8 @@ async function runNativePayload(
   let stdout = "";
   let stderr = "";
   try {
-    const result = await execFileAsync(resolveNativePayloadBinary(), args, {
+    const command = resolveNativeCommand(resolveNativePayloadBinary(), args);
+    const result = await execFileAsync(command.command, command.args, {
       encoding: "utf8",
       timeout: TIMEOUT_MS,
       maxBuffer: OUTPUT_LIMIT_BYTES,

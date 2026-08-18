@@ -572,7 +572,7 @@ async function writeRestoreReceipt(filePath: string, value: Record<string, unkno
   await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   const handle = await fs.open(temporary, "r+");
   try {
-    await handle.sync();
+    if (process.platform !== "win32") await handle.sync();
   } finally {
     await handle.close();
   }
@@ -587,6 +587,7 @@ async function workspaceTreeSha256(rootPath: string) {
 }
 
 async function syncDirectory(directoryPath: string) {
+  if (process.platform === "win32") return;
   const handle = await fs.open(directoryPath, "r");
   try {
     await handle.sync();
@@ -594,7 +595,6 @@ async function syncDirectory(directoryPath: string) {
     await handle.close();
   }
 }
-
 function restoreRecoveryRequired(message: string, receipt: WorkspaceRestoreReceipt, cause?: unknown) {
   const detail = cause instanceof Error ? cause.message : cause ? String(cause) : undefined;
   return new WorkspaceRestoreRecoveryRequiredError(receipt, "rollback_failed", `${message}${detail ? `: ${detail}` : ""}`);

@@ -3241,8 +3241,14 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   }
 }
 
-async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
-  const { electronApp, page: firstPage } = await launchDesktopWindow(userDataDir, mode, ports, extraEnv);
+async function launchDesktop(userDataDir, mode, ports, extraEnv = {}, executableOverride = null) {
+  const { electronApp, page: firstPage } = await launchDesktopWindow(
+    userDataDir,
+    mode,
+    ports,
+    extraEnv,
+    executableOverride,
+  );
   const page = await waitForBoardWindow(electronApp, firstPage);
   // On macOS the Dock can change the reported work area while the boot window
   // hands off to the application window. The shared tolerance stays strict
@@ -6253,7 +6259,22 @@ async function runLocalAppsScenario(mode) {
     title: definition.title,
   }));
   const ports = await allocateSmokePorts();
-  const run = await launchDesktop(scenarioRoot, mode, ports, project.launchEnv);
+  const packagedSmokeExecutable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
+  const run = await launchDesktop(
+    scenarioRoot,
+    mode,
+    ports,
+    {
+      ...project.launchEnv,
+      ...(mode === "packaged" && process.platform === "darwin" && process.env.HOME
+        ? { HOME: process.env.HOME }
+        : {}),
+      ...(packagedSmokeExecutable ? { RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1" } : {}),
+    },
+    packagedSmokeExecutable,
+  );
   let runningDescriptor = null;
   let definitionDeleted = false;
   let scenarioError = null;

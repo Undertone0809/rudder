@@ -7,7 +7,7 @@ use std::fs::File;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const MANIFEST_PROTOCOL_VERSION: u32 = 1;
@@ -371,6 +371,7 @@ struct EventBatch {
     dirty: bool,
     overflow: bool,
     disconnected: bool,
+    stopped: bool,
 }
 
 fn relevant_event(event: &Event, output: &Path) -> bool {
@@ -384,15 +385,38 @@ fn collect_until_quiet(
     receiver: &Receiver<WatchSignal>,
     output: &Path,
     debounce: Duration,
+    stop: Option<&Receiver<()>>,
+) -> EventBatch {
+    collect_until_quiet_with_hook(receiver, output, debounce, stop, None)
+}
+
+fn collect_until_quiet_with_hook(
+    receiver: &Receiver<WatchSignal>,
+    output: &Path,
+    debounce: Duration,
+    stop: Option<&Receiver<()>>,
+    mut before_wait: Option<&mut dyn FnMut()>,
 ) -> EventBatch {
     let mut batch = EventBatch::default();
     let mut deadline = std::time::Instant::now() + debounce;
     loop {
+        if let Some(stop) = stop {
+            match stop.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => {
+                    batch.stopped = true;
+                    return batch;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
         let wait = deadline.saturating_duration_since(std::time::Instant::now());
         if wait.is_zero() {
             return batch;
         }
-        match receiver.recv_timeout(wait) {
+        if let Some(before_wait) = before_wait.as_deref_mut() {
+            before_wait();
+        }
+        match receiver.recv_timeout(wait.min(Duration::from_millis(50))) {
             Ok(WatchSignal::Event(event)) => {
                 if relevant_event(&event, output) {
                     batch.dirty = true;
@@ -404,7 +428,17 @@ fn collect_until_quiet(
                 batch.overflow = true;
                 deadline = std::time::Instant::now() + debounce;
             }
-            Err(RecvTimeoutError::Timeout) => return batch,
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(stop) = stop {
+                    match stop.try_recv() {
+                        Ok(()) | Err(TryRecvError::Disconnected) => {
+                            batch.stopped = true;
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
+                }
+                return batch;
+            }
             Err(RecvTimeoutError::Disconnected) => {
                 batch.disconnected = true;
                 return batch;
@@ -506,10 +540,13 @@ where
     let mut summary = build_manifest(root, output, limits)?;
     after_initial_build();
     loop {
-        let batch = collect_until_quiet(&event_receiver, output, debounce);
+        let batch = collect_until_quiet(&event_receiver, output, debounce, None);
         if batch.disconnected {
             emit(ManifestState::Unavailable, Some(&summary));
             return Err(watch_disconnected());
+        }
+        if batch.stopped {
+            break;
         }
         if !batch.dirty {
             break;
@@ -532,10 +569,23 @@ where
         match event_receiver.recv_timeout(Duration::from_millis(50)) {
             Ok(WatchSignal::Event(event)) if relevant_event(&event, output) => {
                 emit(ManifestState::Dirty, Some(&summary));
-                let batch = collect_until_quiet(&event_receiver, output, debounce);
+                let batch = collect_until_quiet(&event_receiver, output, debounce, Some(&stop));
                 if batch.disconnected {
                     emit(ManifestState::Unavailable, Some(&summary));
                     return Err(watch_disconnected());
+                }
+                if batch.stopped {
+                    if batch.dirty {
+                        rebuild_after_events(
+                            batch.overflow,
+                            root,
+                            output,
+                            limits,
+                            &mut summary,
+                            &mut emit,
+                        )?;
+                    }
+                    return Ok(());
                 }
                 rebuild_after_events(
                     batch.overflow,
@@ -548,10 +598,16 @@ where
             }
             Ok(WatchSignal::Event(_)) => {}
             Ok(WatchSignal::Error) => {
-                let batch = collect_until_quiet(&event_receiver, output, debounce);
+                let batch = collect_until_quiet(&event_receiver, output, debounce, Some(&stop));
                 if batch.disconnected {
                     emit(ManifestState::Unavailable, Some(&summary));
                     return Err(watch_disconnected());
+                }
+                if batch.stopped {
+                    if batch.dirty {
+                        rebuild_after_events(true, root, output, limits, &mut summary, &mut emit)?;
+                    }
+                    return Ok(());
                 }
                 rebuild_after_events(true, root, output, limits, &mut summary, &mut emit)?;
             }
@@ -784,5 +840,23 @@ mod tests {
         assert_eq!(states, [ManifestState::Building, ManifestState::Ready]);
         let parsed: WorkspaceManifest = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
         assert!(parsed.entries.iter().any(|entry| entry.path == "late"));
+    }
+
+    #[test]
+    fn observes_stop_arriving_during_debounce_wait() {
+        let (_event_sender, event_receiver) = mpsc::channel();
+        let (stop_sender, stop_receiver) = mpsc::channel();
+        let mut send_stop = || stop_sender.send(()).unwrap();
+
+        let batch = collect_until_quiet_with_hook(
+            &event_receiver,
+            Path::new("manifest.json"),
+            Duration::from_millis(100),
+            Some(&stop_receiver),
+            Some(&mut send_stop),
+        );
+
+        assert!(batch.stopped);
+        assert!(!batch.dirty);
     }
 }

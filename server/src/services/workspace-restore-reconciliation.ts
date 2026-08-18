@@ -15,7 +15,7 @@ async function pathExists(targetPath: string) {
 
 async function syncDirectory(directoryPath: string) {
   const handle = await fs.open(directoryPath, "r");
-  try { await handle.sync(); } finally { await handle.close(); }
+  try { if (process.platform !== "win32") await handle.sync(); } finally { await handle.close(); }
 }
 
 async function workspaceTreeSha256(rootPath: string) {

@@ -1,3 +1,4 @@
+import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import { resolveRudderNativeCapability, resolveRudderNativeTarget, type RudderNativeDiagnostic } from "@rudderhq/shared";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -145,14 +146,15 @@ function boundedNativeReason(value: unknown) {
 async function runNativeEvidenceIndex(binary: string, inputPath: string, outputPath: string): Promise<NativeEvidenceIndexResponse> {
   let result: { stdout: string; stderr: string };
   try {
-    result = await execFileAsync(binary, [
+    const command = resolveNativeCommand(binary, [
       "evidence",
       "index",
       inputPath,
       outputPath,
       String(NATIVE_EVIDENCE_MAX_RECORD_BYTES),
       String(NATIVE_EVIDENCE_MAX_RECORDS),
-    ], {
+    ]);
+    result = await execFileAsync(command.command, command.args, {
       encoding: "utf8",
       timeout: NATIVE_EVIDENCE_TIMEOUT_MS,
       maxBuffer: NATIVE_EVIDENCE_OUTPUT_LIMIT_BYTES,
