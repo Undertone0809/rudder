@@ -121,7 +121,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/releases",
       title: "Changelog",
-      latestDate: "August 17, 2026",
+      latestDate: "August 18, 2026",
       filterTag: "New",
       statusTag: "Status",
       tags: ["Improved", "New", "Fixed", "Status"],
@@ -129,7 +129,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/zh/releases",
       title: "更新日志",
-      latestDate: "2026年8月17日",
+      latestDate: "2026年8月18日",
       filterTag: "新功能",
       statusTag: "版本状态",
       tags: ["改进", "新功能", "问题修复", "版本状态"],
