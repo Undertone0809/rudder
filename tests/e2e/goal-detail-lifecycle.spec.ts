@@ -121,25 +121,39 @@ async function createAgent(
   return response.json() as Promise<Agent>;
 }
 
-async function setGoalTargetTime(page: Page, value: string) {
-  const target = new Date(value);
+async function setGoalTargetDate(page: Page, value: string) {
+  const target = new Date(`${value}T12:00:00`);
   const dayKey = await page.evaluate((timestamp) => new Date(timestamp).toLocaleDateString(), target.getTime());
-  const hour = String(target.getHours()).padStart(2, "0");
-  const minute = String(target.getMinutes()).padStart(2, "0");
 
-  await page.getByRole("button", { name: "Target time", exact: true }).click();
-  const targetTimePopover = page.locator('[data-slot="popover-content"]').filter({
+  await page.getByRole("button", { name: "Target date", exact: true }).click();
+  const targetDatePopover = page.locator('[data-slot="popover-content"]').filter({
     has: page.locator('[data-slot="calendar"]'),
   });
-  await expect(targetTimePopover).toBeVisible();
-  await targetTimePopover.locator(`[data-day="${dayKey}"]`).click();
+  await expect(targetDatePopover).toBeVisible();
+  await targetDatePopover.locator(`[data-day="${dayKey}"]`).click();
+  await expect(targetDatePopover.getByRole("combobox", { name: "Target hour" })).toHaveCount(0);
+  await expect(targetDatePopover.getByRole("combobox", { name: "Target minute" })).toHaveCount(0);
+  await targetDatePopover.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(targetDatePopover).toBeHidden();
+}
 
-  await targetTimePopover.getByRole("combobox", { name: "Target hour" }).click();
-  await page.getByRole("option", { name: hour, exact: true }).click();
-  await targetTimePopover.getByRole("combobox", { name: "Target minute" }).click();
-  await page.getByRole("option", { name: minute, exact: true }).click();
-  await targetTimePopover.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(targetTimePopover).toBeHidden();
+async function assertGoalTargetDateTheme(page: Page) {
+  await page.getByRole("button", { name: "Target date", exact: true }).click();
+  const targetDatePopover = page.locator('[data-slot="popover-content"]').filter({
+    has: page.locator('[data-slot="calendar"]'),
+  });
+  await expect(targetDatePopover).toBeVisible();
+  const dayButton = targetDatePopover.locator('button[data-day]:not([data-selected-single="true"])').first();
+  await expect(dayButton).toBeVisible();
+  await dayButton.hover();
+  const colors = await dayButton.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { backgroundColor: style.backgroundColor, color: style.color };
+  });
+  expect(colors.backgroundColor).not.toMatch(/transparent|rgba\(0, 0, 0, 0\)/);
+  expect(colors.color).not.toMatch(/transparent|rgba\(0, 0, 0, 0\)/);
+  await page.keyboard.press("Escape");
+  await expect(targetDatePopover).toBeHidden();
 }
 
 async function gotoAppRoute(page: Page, url: string) {
@@ -340,6 +354,41 @@ test("reveals Goals in the primary rail only after the Experimental setting is e
 });
 
 test.describe("Goal Workspace v2", () => {
+  test("uses an all-day target date in both themes and persists it at midnight", async ({ page }) => {
+    test.setTimeout(120_000);
+    const organization = await createOrganization(page.request, `Goal-target-date-${Date.now()}`);
+    const owner = await createAgent(page.request, organization.id, "Target date owner");
+    await page.addInitScript((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.goto(`/${organization.urlKey}/goals`);
+
+    await page.getByRole("button", { name: "New Goal", exact: true }).first().click();
+    await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Publish a verified date-only Goal");
+    await page.getByLabel("Expected result").fill(
+      "The selected target must remain the same calendar date after starting.",
+    );
+    await selectAgent(page, owner.name);
+    await setGoalTargetDate(page, "2026-08-20");
+    await assertGoalTargetDateTheme(page);
+    await page.locator("html").evaluate((element) => element.classList.add("dark"));
+    try {
+      await assertGoalTargetDateTheme(page);
+    } finally {
+      await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+    }
+
+    await expect(page.locator('input[type="datetime-local"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "Start Goal", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
+    const goalId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const persistedGoal = (await e2eDb.select({ evaluationDeadline: goals.evaluationDeadline })
+      .from(goals)
+      .where(eq(goals.id, goalId)))[0];
+    expect(persistedGoal?.evaluationDeadline?.toISOString()).toBe("2026-08-20T00:00:00.000Z");
+  });
+
   test.beforeEach(async ({ page }) => {
     const response = await page.request.patch("/api/instance/settings/general", {
       data: { experimentalGoalsEnabled: true },
@@ -411,7 +460,14 @@ test.describe("Goal Workspace v2", () => {
     await expect(assigneeTrigger).toBeFocused();
     await assigneeTrigger.click();
     await page.getByRole("option", { name: new RegExp(owner.name, "i") }).click();
-    await setGoalTargetTime(page, "2026-08-20T10:00");
+    await setGoalTargetDate(page, "2026-08-20");
+    await assertGoalTargetDateTheme(page);
+    await page.locator("html").evaluate((element) => element.classList.add("dark"));
+    try {
+      await assertGoalTargetDateTheme(page);
+    } finally {
+      await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+    }
 
     await expect(page.getByText("Ready to start", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Start Goal" })).toBeEnabled();
@@ -471,10 +527,14 @@ test.describe("Goal Workspace v2", () => {
     }
 
     const goalId = new URL(page.url()).pathname.split("/").at(-1)!;
+    const persistedGoal = (await e2eDb.select({ evaluationDeadline: goals.evaluationDeadline })
+      .from(goals)
+      .where(eq(goals.id, goalId)))[0];
+    expect(persistedGoal?.evaluationDeadline?.toISOString()).toBe("2026-08-20T00:00:00.000Z");
     const ownerSelector = page.getByRole("button", { name: "Change Goal owner", exact: true });
     await expect(ownerSelector).toBeVisible();
-    await expect(page.getByRole("button", { name: "Edit Goal target time", exact: true })).toHaveCount(0);
-    await expect(page.getByLabel("Goal target time", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Edit Goal target date", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Goal target date", { exact: true })).toHaveCount(0);
     await ownerSelector.click();
     await page.getByRole("option", { name: new RegExp(replacementOwner.name, "i") }).click();
     await expect(ownerSelector).toContainText(replacementOwner.name);

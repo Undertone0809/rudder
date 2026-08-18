@@ -89,17 +89,17 @@ function CalendarDayButton({ className, day, modifiers, ...props }: ComponentPro
 
   return (
     <Button
+      {...props}
       ref={ref}
       variant="ghost"
       size="icon"
       data-day={day.date.toLocaleDateString()}
       data-selected-single={modifiers.selected && !modifiers.range_start && !modifiers.range_end && !modifiers.range_middle}
       className={cn(
-        "flex aspect-square size-auto w-full min-w-(--cell-size) leading-none font-normal data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground",
+        "flex aspect-square size-auto w-full min-w-(--cell-size) leading-none font-normal hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground data-[selected-single=true]:hover:bg-primary data-[selected-single=true]:hover:text-primary-foreground data-[selected-single=true]:focus-visible:bg-primary data-[selected-single=true]:focus-visible:text-primary-foreground",
         defaultClassNames.day,
         className,
       )}
-      {...props}
     />
   );
 }

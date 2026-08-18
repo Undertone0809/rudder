@@ -10,7 +10,7 @@ import { assetsApi } from "../api/assets";
 import { goalsApi } from "../api/goals";
 import { useDialog, type NewGoalDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { fromDateTimeLocalValue } from "../lib/datetime-local";
+import { toDateOnlyValue } from "../lib/date-only";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
 import { AgentMenuLabel } from "./AssigneeLabel";
@@ -48,7 +48,7 @@ export function NewGoalDialog() {
   const [goal, setGoal] = useState("");
   const [context, setContext] = useState("");
   const [ownerAgentId, setOwnerAgentId] = useState("");
-  const [targetTime, setTargetTime] = useState("");
+  const [targetDate, setTargetDate] = useState("");
   const [documentSessionId, setDocumentSessionId] = useState(0);
   const requestRef = useRef<{ identity: string; key: string } | null>(null);
   const contextRef = useRef<MarkdownEditorRef>(null);
@@ -58,7 +58,7 @@ export function NewGoalDialog() {
     setGoal(newGoalDefaults.title ?? "");
     setContext(newGoalDefaults.context ?? "");
     setOwnerAgentId(newGoalDefaults.ownerAgentId ?? "");
-    setTargetTime(newGoalDefaults.targetTime ?? "");
+    setTargetDate(toDateOnlyValue(newGoalDefaults.targetTime));
     requestRef.current = null;
   }, [
     newGoalDefaults.context,
@@ -107,8 +107,8 @@ export function NewGoalDialog() {
     title: goal.trim(),
     context: markdownDocumentOrUndefined(context) ?? null,
     ownerAgentId: ownerAgentId || null,
-    targetTime: fromDateTimeLocalValue(targetTime),
-  }), [context, goal, ownerAgentId, targetTime]);
+    targetTime: targetDate || null,
+  }), [context, goal, ownerAgentId, targetDate]);
   const debouncedPreviewInput = useDebouncedValue(previewInput, 250);
   const currentPreviewFingerprint = JSON.stringify(previewInput);
   const previewFingerprint = JSON.stringify(debouncedPreviewInput);
@@ -138,7 +138,7 @@ export function NewGoalDialog() {
     setGoal("");
     setContext("");
     setOwnerAgentId("");
-    setTargetTime("");
+    setTargetDate("");
     requestRef.current = null;
   };
 
@@ -168,7 +168,7 @@ export function NewGoalDialog() {
           title: goal.trim(),
           description: markdownDocumentOrUndefined(context),
           ownerAgentId: ownerAgentId || null,
-          targetTime: fromDateTimeLocalValue(targetTime),
+          targetTime: targetDate || null,
           alignmentQuestion: preview?.alignmentQuestion,
         });
       }
@@ -176,7 +176,7 @@ export function NewGoalDialog() {
         title: goal.trim(),
         description: markdownDocumentOrUndefined(context),
         ownerAgentId: ownerAgentId || null,
-        targetTime: fromDateTimeLocalValue(targetTime),
+        targetTime: targetDate || null,
         alignmentQuestion: preview?.alignmentQuestion,
       });
     },
@@ -308,8 +308,8 @@ export function NewGoalDialog() {
                 ) : null}
               </div>
               <div className="min-w-0 space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">Target time</span>
-                <GoalTargetTimePicker value={targetTime} onChange={setTargetTime} />
+                <span className="text-xs font-medium text-muted-foreground">Target date</span>
+                <GoalTargetTimePicker value={targetDate} onChange={setTargetDate} />
               </div>
             </div>
 

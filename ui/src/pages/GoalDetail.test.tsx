@@ -522,8 +522,8 @@ describe("GoalDetail", () => {
     act(() => ownerOption?.click());
     await waitUntil(() => expect(goalsApi.assignOwner).toHaveBeenCalledWith("goal-1", { agentId: "agent-2" }));
     expect(goalsApi.update).not.toHaveBeenCalledWith("goal-1", { ownerAgentId: "agent-2" });
-    expect(container.querySelector('[aria-label="Edit Goal target time"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Goal target time"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Edit Goal target date"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal target date"]')).toBeNull();
   });
 
   it("uses the Issue runtime selector to persist the Goal Owner model profile", async () => {
@@ -569,8 +569,8 @@ describe("GoalDetail", () => {
     const container = renderPage();
     await waitUntil(() => expect(container.textContent).toContain("Workspace owner"));
     expect(container.querySelector('[aria-label="Change Goal owner"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Edit Goal target time"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Goal target time"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Edit Goal target date"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal target date"]')).toBeNull();
   });
 
   it("keeps a long Related list compact until the user expands it", async () => {

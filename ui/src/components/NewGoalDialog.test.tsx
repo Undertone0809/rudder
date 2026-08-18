@@ -136,15 +136,15 @@ function change(element: HTMLInputElement | HTMLTextAreaElement, value: string) 
   });
 }
 
-function targetTimeButton() {
-  const element = document.querySelector<HTMLButtonElement>('[aria-label="Target time"]');
-  if (!element) throw new Error("Missing target time picker");
+function targetDateButton() {
+  const element = document.querySelector<HTMLButtonElement>('[aria-label="Target date"]');
+  if (!element) throw new Error("Missing target date picker");
   return element;
 }
 
-async function setTargetTime(value: string) {
-  const date = new Date(value);
-  act(() => targetTimeButton().click());
+async function setTargetDate(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+  act(() => targetDateButton().click());
   await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
 
   const dateLabel = date.toLocaleDateString();
@@ -152,19 +152,6 @@ async function setTargetTime(value: string) {
     .find((candidate) => candidate.dataset.day === dateLabel);
   if (!dateButton) throw new Error(`Missing calendar day ${dateLabel}`);
   act(() => dateButton.click());
-
-  const chooseOption = async (label: string, valueToChoose: string) => {
-    act(() => document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)?.click());
-    await waitUntil(() => expect(Array.from(document.querySelectorAll('[role="option"]')).some((option) => option.textContent?.trim() === valueToChoose)).toBe(true));
-    const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
-      .find((candidate) => candidate.textContent?.trim() === valueToChoose);
-    if (!option) throw new Error(`Missing ${label} option ${valueToChoose}`);
-    act(() => option.click());
-    expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull();
-  };
-
-  await chooseOption("Target hour", String(date.getHours()).padStart(2, "0"));
-  await chooseOption("Target minute", String(date.getMinutes()).padStart(2, "0"));
   act(() => button("Done")?.click());
 }
 
@@ -201,38 +188,44 @@ afterEach(() => {
 });
 
 describe("NewGoalDialog", () => {
-  it("uses the shadcn date/time picker and can clear a selected target time", async () => {
+  it("uses the shadcn date picker, keeps target dates date-only, and can clear a selection", async () => {
     const container = renderDialog();
 
     expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
-    await setTargetTime("2026-08-20T10:00");
-    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+    await setTargetDate("2026-08-20");
+    expect(targetDateButton().textContent).toContain("Aug 20, 2026");
 
-    act(() => targetTimeButton().click());
+    act(() => targetDateButton().click());
     await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
+    expect(document.querySelector('[aria-label="Target hour"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Target minute"]')).toBeNull();
+    expect(container.textContent).not.toContain("Time");
+    const dayButton = document.querySelector<HTMLButtonElement>('button[data-day]');
+    expect(dayButton?.className).toContain("hover:bg-accent");
+    expect(dayButton?.className).toContain("hover:text-accent-foreground");
     const pendingDate = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
-      .find((candidate) => candidate.dataset.day !== new Date("2026-08-20T10:00").toLocaleDateString());
+      .find((candidate) => candidate.dataset.day !== new Date("2026-08-20T12:00").toLocaleDateString());
     expect(pendingDate).not.toBeUndefined();
     act(() => pendingDate?.click());
-    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+    expect(targetDateButton().textContent).toContain("Aug 20, 2026");
     act(() => button("Done")?.click());
-    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+    expect(targetDateButton().textContent).toContain("Aug 20, 2026");
 
-    act(() => targetTimeButton().click());
+    act(() => targetDateButton().click());
     await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
     const cancelledDate = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
-      .find((candidate) => candidate.dataset.day !== new Date("2026-08-20T10:00").toLocaleDateString());
+      .find((candidate) => candidate.dataset.day !== new Date("2026-08-20T12:00").toLocaleDateString());
     expect(cancelledDate).not.toBeUndefined();
     act(() => cancelledDate?.click());
-    act(() => targetTimeButton().click());
-    expect(targetTimeButton().textContent).toContain("Aug 20, 2026");
+    act(() => targetDateButton().click());
+    expect(targetDateButton().textContent).toContain("Aug 20, 2026");
 
-    act(() => targetTimeButton().click());
+    act(() => targetDateButton().click());
     await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
     act(() => button("Clear")?.click());
 
     expect(container.querySelector('input[type="datetime-local"]')).toBeNull();
-    expect(targetTimeButton().textContent).toContain("Set a target time");
+    expect(targetDateButton().textContent).toContain("Set a target date");
   });
 
   it("changes the Markdown document identity between create sessions", () => {
@@ -306,14 +299,14 @@ describe("NewGoalDialog", () => {
     expect(goalsApi.create).not.toHaveBeenCalled();
   });
 
-  it("does not start from a stale preview after assignee and target time change", async () => {
+  it("does not start from a stale preview after assignee and target date change", async () => {
     const updatedPreview = {
       ...validPreview,
       packetHash: "b".repeat(64),
       packet: {
         ...validPreview.packet,
         ownerAgentId: "agent-2",
-        targetTime: new Date("2026-08-25T14:30").toISOString(),
+        targetTime: "2026-08-25",
       },
       review: { ...validPreview.review, owner: "Verification owner" },
     };
@@ -326,7 +319,7 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => expect(button("Start Goal")?.disabled).toBe(false));
 
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
-    await setTargetTime("2026-08-25T14:30");
+    await setTargetDate("2026-08-25");
 
     expect(button("Start Goal")?.disabled).toBe(true);
     act(() => button("Start Goal")?.click());
@@ -338,7 +331,7 @@ describe("NewGoalDialog", () => {
 
     expect(goalsApi.previewStart).toHaveBeenLastCalledWith("org-1", expect.objectContaining({
       ownerAgentId: "agent-2",
-      targetTime: new Date("2026-08-25T14:30").toISOString(),
+      targetTime: "2026-08-25",
     }));
     expect(goalsApi.start).toHaveBeenCalledWith("org-1", expect.objectContaining({
       packetHash: updatedPreview.packetHash,
@@ -405,7 +398,7 @@ describe("NewGoalDialog", () => {
     } as never);
     const container = renderDialog();
     change(field("Goal"), "Explore");
-    await setTargetTime("2026-08-20T10:00");
+    await setTargetDate("2026-08-20");
     await waitUntil(() => {
       expect(button("Save draft")).not.toBeNull();
       expect(button("Save draft")?.disabled).toBe(false);
@@ -420,7 +413,7 @@ describe("NewGoalDialog", () => {
     await waitUntil(() => expect(goalsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
       title: "Explore",
       ownerAgentId: null,
-      targetTime: new Date("2026-08-20T10:00").toISOString(),
+      targetTime: "2026-08-20",
       alignmentQuestion: "What external result should change?",
     })));
     expect(goalsApi.start).not.toHaveBeenCalled();
@@ -451,7 +444,7 @@ describe("NewGoalDialog", () => {
       title: "Continue the Goal alignment",
       context: "Clarify the external result before work starts.",
       ownerAgentId: "agent-1",
-      targetTime: "2026-08-20T10:00",
+      targetTime: "2026-08-20",
     };
     const container = renderDialog();
     await waitUntil(() => expect(button("Start Goal")?.disabled).toBe(false));
@@ -462,13 +455,13 @@ describe("NewGoalDialog", () => {
     expect(goalsApi.update).not.toHaveBeenCalled();
   });
 
-  it("persists changed assignee and target time when an existing Draft still needs alignment", async () => {
+  it("persists changed assignee and target date when an existing Draft still needs alignment", async () => {
     newGoalDefaults = {
       draftId: "draft-1",
       title: "Explore the release path",
       context: "Keep the draft while the outcome is clarified.",
       ownerAgentId: "agent-1",
-      targetTime: "2026-08-20T10:00",
+      targetTime: "2026-08-20",
     };
     vi.mocked(goalsApi.previewStart).mockResolvedValue({
       valid: false,
@@ -486,7 +479,7 @@ describe("NewGoalDialog", () => {
       expect(container.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.textContent).toBe(agent.name);
     });
     act(() => document.querySelector<HTMLButtonElement>('[aria-label="Assignee"]')?.click());
-    await setTargetTime("2026-08-25T14:30");
+    await setTargetDate("2026-08-25");
     await waitUntil(() => {
       expect(button("Save draft")?.disabled).toBe(false);
       expect(vi.mocked(goalsApi.previewStart)).toHaveBeenLastCalledWith("org-1", expect.objectContaining({ ownerAgentId: "agent-2" }));
@@ -495,7 +488,7 @@ describe("NewGoalDialog", () => {
 
     await waitUntil(() => expect(goalsApi.update).toHaveBeenCalledWith("draft-1", expect.objectContaining({
       ownerAgentId: "agent-2",
-      targetTime: new Date("2026-08-25T14:30").toISOString(),
+      targetTime: "2026-08-25",
       alignmentQuestion: "What external result should change?",
     })));
   });

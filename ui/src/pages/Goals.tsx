@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
 import type { GoalWorkspaceFacet } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Clock3, Plus, Target, UserRound } from "lucide-react";
+import { ArrowRight, CalendarDays, Plus, Target, UserRound } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
@@ -11,8 +11,9 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { formatDateOnly } from "../lib/date-only";
 import { queryKeys } from "../lib/queryKeys";
-import { cn, formatDate } from "../lib/utils";
+import { cn } from "../lib/utils";
 
 type BoardFacet = GoalWorkspaceFacet;
 
@@ -158,8 +159,8 @@ function GoalCard({ card, ownerName, mobile = false }: { card: GoalCardView; own
         </div>
         {card.targetTime ? (
           <div className="flex min-w-0 items-start gap-1.5">
-            <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span className="min-w-0 break-words">Target {formatDate(card.targetTime)}</span>
+            <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 break-words">Target {formatDateOnly(card.targetTime)}</span>
           </div>
         ) : null}
       </div>

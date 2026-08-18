@@ -71,7 +71,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
-import { fromDateTimeLocalValue, toDateTimeLocalValue } from "../lib/datetime-local";
+import { formatDateOnly, toDateOnlyValue } from "../lib/date-only";
 import { markdownDocumentOrNull } from "../lib/markdown-document-value";
 import { findOrganizationByPrefix, getOrganizationRouteKey } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
@@ -408,7 +408,7 @@ function summarizeValue(value: unknown) {
   const parts = [
     direct ? `Outcome: ${direct}` : null,
     labels.length > 0 ? `Success: ${labels.join("; ")}` : null,
-    target ? `Target time: ${target}` : null,
+    target ? `Target date: ${target}` : null,
     ...boundaryParts,
   ].filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join("\n") : Object.keys(record).length === 0 ? "Not provided" : "The Goal direction would change.";
@@ -1439,7 +1439,7 @@ export function GoalDetail() {
     title: goal.title,
     context: goal.description ?? "",
     ownerAgentId: goal.ownerAgentId ?? "",
-    targetTime: goal.evaluationDeadline ? toDateTimeLocalValue(goal.evaluationDeadline) : "",
+    targetTime: goal.evaluationDeadline ? toDateOnlyValue(goal.evaluationDeadline) : "",
   });
   const submitFeedback = () => {
     const body = feedbackBody.trim();
@@ -1740,7 +1740,7 @@ export function GoalDetail() {
               />
             </div>
           ) : null}
-          {!isDraft && targetDate ? <span>due {formatDate(targetDate)}</span> : null}
+          {!isDraft && targetDate ? <span>due {formatDateOnly(targetDate)}</span> : null}
         </div>
         {isDraft ? (
           <InlineEditor
@@ -2302,16 +2302,16 @@ export function GoalDetail() {
                 {isDraft ? (
                   <GoalTargetTimePicker
                     value={goal.evaluationDeadline || goal.actionDeadline
-                      ? toDateTimeLocalValue(goal.evaluationDeadline ?? goal.actionDeadline!)
+                      ? toDateOnlyValue(goal.evaluationDeadline ?? goal.actionDeadline!)
                       : ""}
-                    onChange={(targetTime) => updateGoal.mutate({ targetTime: fromDateTimeLocalValue(targetTime) })}
+                    onChange={(targetDate) => updateGoal.mutate({ targetTime: targetDate || null })}
                   />
                 ) : (
                   <span className="inline-flex min-w-0 items-center gap-1.5 px-1 py-1 text-sm">
                     <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate">
                       {goal.evaluationDeadline || goal.actionDeadline
-                        ? formatDate(goal.evaluationDeadline ?? goal.actionDeadline!)
+                        ? formatDateOnly(goal.evaluationDeadline ?? goal.actionDeadline!)
                         : "Not set"}
                     </span>
                   </span>
