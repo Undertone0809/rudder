@@ -593,7 +593,7 @@ where
             emit(ManifestState::Unavailable, Some(&summary));
             return Err(watch_disconnected());
         }
-        if batch.dirty {
+        if batch.dirty || batch.stopped {
             if batch.overflow {
                 emit(ManifestState::Overflow, Some(&summary));
             }
