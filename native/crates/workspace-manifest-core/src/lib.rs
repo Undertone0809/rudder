@@ -1,8 +1,10 @@
 //! Rebuildable workspace manifests backed by cross-platform file notifications.
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "linux"))]
+use notify::RecommendedWatcher;
+#[cfg(any(target_os = "linux", test))]
 use notify::{Config, PollWatcher};
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::fs::File;
@@ -552,7 +554,24 @@ where
         return Err(ManifestError::safe("watch_output_inside_workspace"));
     }
     let (event_sender, event_receiver) = mpsc::channel();
+    #[cfg(target_os = "linux")]
+    let mut watcher = {
+        let poll_sender = event_sender.clone();
+        PollWatcher::new(
+            move |result| {
+                let signal = match result {
+                    Ok(event) => WatchSignal::Event(event),
+                    Err(_) => WatchSignal::Error,
+                };
+                let _ = poll_sender.send(signal);
+            },
+            Config::default().with_poll_interval(Duration::from_millis(250)),
+        )
+        .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?
+    };
+    #[cfg(not(target_os = "linux"))]
     let native_sender = event_sender.clone();
+    #[cfg(not(target_os = "linux"))]
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |result| {
         let signal = match result {
             Ok(event) => WatchSignal::Event(event),
@@ -564,27 +583,6 @@ where
     watcher
         .watch(root, RecursiveMode::Recursive)
         .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
-    // Some Linux filesystems can accept an inotify watch but drop subsequent
-    // events; a low-frequency poller keeps the rebuildable manifest correct.
-    #[cfg(target_os = "linux")]
-    let _poll_watcher = {
-        let poll_sender = event_sender.clone();
-        let mut poll_watcher = PollWatcher::new(
-            move |result| {
-                let signal = match result {
-                    Ok(event) => WatchSignal::Event(event),
-                    Err(_) => WatchSignal::Error,
-                };
-                let _ = poll_sender.send(signal);
-            },
-            Config::default().with_poll_interval(Duration::from_millis(250)),
-        )
-        .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
-        poll_watcher
-            .watch(root, RecursiveMode::Recursive)
-            .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
-        poll_watcher
-    };
 
     emit(ManifestState::Building, None);
     let mut summary = build_manifest(root, output, limits)?;
@@ -877,6 +875,24 @@ mod tests {
                 .count(),
             20
         );
+    }
+
+    #[test]
+    fn poll_watcher_observes_a_new_file() {
+        let outer = tempdir().unwrap();
+        let workspace = outer.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let (event_sender, event_receiver) = mpsc::channel();
+        let mut watcher = PollWatcher::new(
+            move |result: notify::Result<Event>| {
+                event_sender.send(result.is_ok()).unwrap();
+            },
+            Config::default().with_poll_interval(Duration::from_millis(50)),
+        )
+        .unwrap();
+        watcher.watch(&workspace, RecursiveMode::Recursive).unwrap();
+        fs::write(workspace.join("created"), b"created").unwrap();
+        assert!(event_receiver.recv_timeout(Duration::from_secs(3)).unwrap());
     }
 
     #[test]
