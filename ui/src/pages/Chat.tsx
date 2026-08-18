@@ -3784,12 +3784,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       chatId: selectedConversation.id,
                                       message: messageToConvert,
                                       proposalOverride: issueProposalOverridesByMessageId[messageToConvert.id], })
-                                  } onCopyMessageText={copyChatMessageText} onOpenSideChat={selectedConversationExternalBound ? undefined : (messageForSideChat) => {
-                                    openSidePanelTargetForContext(
-                                      resolveCurrentSidePanelChatContextKey(),
-                                      sideChatTargetFromMessage(selectedConversation, messageForSideChat),
-                                    );
-                                  }} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onContinueInterruptedMessage={selectedConversationExternalBound ? undefined : () => {
+                                  } onCopyMessageText={copyChatMessageText} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onContinueInterruptedMessage={selectedConversationExternalBound ? undefined : () => {
                                     void sendMessage({
                                       bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,
                                       filesOverride: [], conversationOverride: selectedConversation, });
