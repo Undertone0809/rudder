@@ -1,6 +1,7 @@
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use rudder_native_protocol::{
-    CAPABILITIES, Command, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_VERSION,
+    CAPABILITIES, Command, MAX_DETACHED_SPOOL_BYTES, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+    PROTOCOL_VERSION,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -35,7 +36,7 @@ const TERM_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_DETACHED_DEADLINE: Duration = Duration::from_secs(5 * 60);
-const DEFAULT_DETACHED_SPOOL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const DEFAULT_DETACHED_SPOOL_BYTES: u64 = MAX_DETACHED_SPOOL_BYTES;
 
 fn native_target() -> &'static str {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -60,7 +61,7 @@ fn detached_deadline(value: Option<u64>) -> Instant {
         return now + DEFAULT_DETACHED_DEADLINE;
     };
     let now_ms = epoch_ms.as_millis() as u64;
-    now + Duration::from_millis(deadline_ms.saturating_sub(now_ms))
+    now + Duration::from_millis(deadline_ms.saturating_sub(now_ms)).min(DEFAULT_DETACHED_DEADLINE)
 }
 
 struct LifecycleWriter {
@@ -121,6 +122,7 @@ struct DetachedCapture {
     bytes: AtomicU64,
     limit: AtomicU64,
     overflowed: AtomicBool,
+    dropped_bytes: AtomicU64,
 }
 
 impl DetachedCapture {
@@ -130,25 +132,55 @@ impl DetachedCapture {
             bytes: AtomicU64::new(0),
             limit: AtomicU64::new(limit),
             overflowed: AtomicBool::new(false),
+            dropped_bytes: AtomicU64::new(0),
         })
     }
 
     fn begin(&self, limit: u64) {
-        self.limit.store(limit, Ordering::Release);
+        self.limit
+            .store(limit.clamp(1, MAX_DETACHED_SPOOL_BYTES), Ordering::Release);
         self.active.store(true, Ordering::Release);
     }
 
-    fn record(&self, bytes: usize) -> bool {
-        let limit = self.limit.load(Ordering::Acquire);
-        let next = self
-            .bytes
-            .fetch_add(bytes as u64, Ordering::AcqRel)
-            .saturating_add(bytes as u64);
-        if next > limit {
-            self.overflowed.store(true, Ordering::Release);
-            return false;
+    fn reserve(&self, requested: usize) -> usize {
+        let requested = requested as u64;
+        loop {
+            let current = self.bytes.load(Ordering::Acquire);
+            let limit = self.limit.load(Ordering::Acquire);
+            let remaining = limit.saturating_sub(current);
+            let accepted = remaining.min(requested);
+            if self
+                .bytes
+                .compare_exchange(
+                    current,
+                    current.saturating_add(accepted),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                if accepted < requested {
+                    self.overflowed.store(true, Ordering::Release);
+                    self.dropped_bytes
+                        .fetch_add(requested.saturating_sub(accepted), Ordering::AcqRel);
+                }
+                return accepted as usize;
+            }
         }
-        true
+    }
+
+    fn receipt(&self) -> Value {
+        let captured = self.bytes.load(Ordering::Acquire);
+        let limit = self.limit.load(Ordering::Acquire);
+        let dropped = self.dropped_bytes.load(Ordering::Acquire);
+        json!({
+            "active": self.active.load(Ordering::Acquire),
+            "limitBytes": limit,
+            "capturedBytes": captured,
+            "droppedBytes": dropped,
+            "truncated": self.overflowed.load(Ordering::Acquire),
+            "complete": !self.overflowed.load(Ordering::Acquire),
+        })
     }
 }
 
@@ -166,6 +198,7 @@ struct ActiveChild {
     mode: ActiveMode,
     detached_deadline: Instant,
     detached_spool_bytes: u64,
+    detached_capture: Arc<DetachedCapture>,
 }
 
 struct OwnedProcessBoundary {
@@ -371,6 +404,16 @@ impl OperationEvidence {
             &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"opaqueOwnerToken":self.owner_token,"childPid":self.child_pid,"processGroup":self.process_group,"port":self.port,"terminal":terminal}),
         )
     }
+
+    fn spool_receipt(&self) -> Value {
+        json!({
+            "root": self.operation_root,
+            "stdoutPath": self.operation_root.join("stdout.bin"),
+            "stderrPath": self.operation_root.join("stderr.bin"),
+            "indexPath": self.operation_root.join("output-index.jsonl"),
+            "lastSequence": self.sequence.load(Ordering::Acquire).saturating_sub(1),
+        })
+    }
 }
 
 fn atomic_json(path: &Path, value: &Value) -> Result<(), &'static str> {
@@ -575,6 +618,12 @@ fn main() {
                     );
                     if control_loss.is_some() || control_lost {
                         terminal["detached"] = Value::Bool(true);
+                        if let Some(child) = active.as_ref() {
+                            terminal["detachedCapture"] = child.detached_capture.receipt();
+                            if let Some(evidence) = child.evidence.as_ref() {
+                                terminal["spool"] = evidence.spool_receipt();
+                            }
+                        }
                     }
                     terminal["receiptWritten"] = Value::Bool(true);
                     let receipt_written = active
@@ -1050,7 +1099,7 @@ fn main() {
             }
             Ok(Input::Eof) => {
                 if let Some(child) = active.as_ref() {
-                    if child.mode == ActiveMode::AgentRun {
+                    if child.mode == ActiveMode::AgentRun && !stop_admitted {
                         control_lost = true;
                         let _ = child.control.send(MonitorCommand::ControlLoss {
                             deadline: child.detached_deadline,
@@ -1070,7 +1119,7 @@ fn main() {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if let Some(child) = active.as_ref() {
-                    if child.mode == ActiveMode::AgentRun {
+                    if child.mode == ActiveMode::AgentRun && !stop_admitted {
                         control_lost = true;
                         let _ = child.control.send(MonitorCommand::ControlLoss {
                             deadline: child.detached_deadline,
@@ -1324,6 +1373,7 @@ fn spawn_child(
             mode,
             detached_deadline,
             detached_spool_bytes,
+            detached_capture,
         },
         pid,
         pgid,
@@ -1505,6 +1555,7 @@ fn spawn_terminal(
             mode: ActiveMode::Terminal,
             detached_deadline: Instant::now() + DEFAULT_DETACHED_DEADLINE,
             detached_spool_bytes: DEFAULT_DETACHED_SPOOL_BYTES,
+            detached_capture,
         },
         pid,
     ))
@@ -1691,17 +1742,19 @@ fn relay<R: Read + Send + 'static>(
             let detached = detached_capture
                 .as_ref()
                 .is_some_and(|capture| capture.active.load(Ordering::Acquire));
-            if detached_capture
+            let captured_read = detached_capture
                 .as_ref()
-                .is_some_and(|capture| detached && !capture.record(read))
-            {
+                .filter(|_| detached)
+                .map_or(read, |capture| capture.reserve(read));
+            if detached && captured_read == 0 {
                 successful = false;
                 break;
             }
-            if evidence
-                .as_ref()
-                .is_some_and(|evidence| evidence.record_output(stream, &buffer[..read]).is_err())
-            {
+            if evidence.as_ref().is_some_and(|evidence| {
+                evidence
+                    .record_output(stream, &buffer[..captured_read])
+                    .is_err()
+            }) {
                 successful = false;
                 break;
             }

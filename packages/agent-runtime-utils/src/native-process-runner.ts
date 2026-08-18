@@ -26,6 +26,7 @@ const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_DETACHED_SPOOL_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_DETACHED_DEADLINE_MS = 5 * 60 * 1_000;
+const MAX_DETACHED_DEADLINE_MS = DEFAULT_DETACHED_DEADLINE_MS;
 
 type NativeHostSpawn = (
   executable: string,
@@ -147,6 +148,18 @@ function defaultRuntimeRoot(env: NodeJS.ProcessEnv): string {
 
 function ownerToken(runId: string): string {
   return createHash("sha256").update(`${runId}\0${randomUUID()}`).digest("hex");
+}
+
+function boundedDetachedDeadlineMs(attemptDeadlineMs: number | undefined, timeoutSec: number): number {
+  const now = Date.now();
+  const finiteTimeoutSec = Number.isFinite(timeoutSec) ? timeoutSec : 0;
+  const defaultDuration = finiteTimeoutSec > 0
+    ? Math.min(MAX_DETACHED_DEADLINE_MS, Math.max(1, Math.floor(finiteTimeoutSec * 1_000)))
+    : DEFAULT_DETACHED_DEADLINE_MS;
+  const requested = attemptDeadlineMs === undefined || !Number.isFinite(attemptDeadlineMs)
+    ? now + defaultDuration
+    : Math.floor(attemptDeadlineMs);
+  return Math.min(now + MAX_DETACHED_DEADLINE_MS, Math.max(now + 1, requested));
 }
 
 function processGroupAlive(pid: number): boolean {
@@ -478,16 +491,15 @@ export async function runNativeChildProcess(
           runtimeRoot,
           ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
           graceMs: Math.max(1, Math.min(60_000, Math.floor(opts.graceSec * 1_000))),
-          attemptDeadlineMs: Math.max(
-            Date.now() + 1,
-            Math.floor(opts.attemptDeadlineMs ?? (Date.now() + Math.max(
-              DEFAULT_DETACHED_DEADLINE_MS,
-              opts.timeoutSec > 0 ? opts.timeoutSec * 1_000 : 0,
-            ))),
-          ),
-          maxDetachedSpoolBytes: Math.max(
-            1,
-            Math.floor(opts.maxDetachedSpoolBytes ?? DEFAULT_DETACHED_SPOOL_BYTES),
+          attemptDeadlineMs: boundedDetachedDeadlineMs(opts.attemptDeadlineMs, opts.timeoutSec),
+          maxDetachedSpoolBytes: Math.min(
+            DEFAULT_DETACHED_SPOOL_BYTES,
+            Math.max(
+              1,
+              Number.isFinite(opts.maxDetachedSpoolBytes)
+                ? Math.floor(opts.maxDetachedSpoolBytes!)
+                : DEFAULT_DETACHED_SPOOL_BYTES,
+            ),
           ),
         });
         return;

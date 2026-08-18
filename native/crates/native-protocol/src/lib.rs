@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL_MAJOR: u16 = 1;
 pub const PROTOCOL_MINOR: u16 = 0;
 pub const PROTOCOL_VERSION: &str = "1.0";
+pub const MAX_DETACHED_SPOOL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 #[cfg(unix)]
 pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
@@ -276,7 +277,8 @@ impl Command {
                     return Err("invalid_grace_ms");
                 }
                 if attempt_deadline_ms.is_some_and(|value| value == 0)
-                    || max_detached_spool_bytes.is_some_and(|value| value == 0)
+                    || max_detached_spool_bytes
+                        .is_some_and(|value| value == 0 || value > MAX_DETACHED_SPOOL_BYTES)
                 {
                     return Err("invalid_detached_limits");
                 }
@@ -579,5 +581,32 @@ mod tests {
             base("x".repeat(256 * 1024 + 1)).validate(),
             Err("invalid_arguments")
         );
+    }
+
+    #[test]
+    fn rejects_unbounded_detached_spool_limits() {
+        let mut command = Command::StartProcess {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some("test".into()),
+            executable: fixture_executable().into(),
+            argv: Vec::new(),
+            cwd: fixture_cwd().into(),
+            env: Default::default(),
+            owner_token: Some("opaque".into()),
+            runtime_root: Some(fixture_runtime_root().into()),
+            stdin: None,
+            grace_ms: None,
+            attempt_deadline_ms: None,
+            max_detached_spool_bytes: Some(MAX_DETACHED_SPOOL_BYTES + 1),
+        };
+        assert_eq!(command.validate(), Err("invalid_detached_limits"));
+        if let Command::StartProcess {
+            max_detached_spool_bytes,
+            ..
+        } = &mut command
+        {
+            *max_detached_spool_bytes = Some(MAX_DETACHED_SPOOL_BYTES);
+        }
+        assert_eq!(command.validate(), Ok(()));
     }
 }

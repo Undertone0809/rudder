@@ -132,6 +132,7 @@ describe("Rust Local App process host transport", () => {
     const stop = { type: "stop", protocolVersion: { major: 1, minor: 0 }, requestId: "repeated-stop" };
     helper.send(stop);
     helper.send(stop);
+    helper.stdin.end();
     const [code] = await exited as [number | null];
     expect(code).toBe(0);
     expect(lifecycle.filter((frame) => frame.type === "stop-accepted")).toHaveLength(1);
@@ -237,7 +238,7 @@ describe("Rust Local App process host transport", () => {
       runtimeRoot,
       graceMs: 100,
       attemptDeadlineMs: Date.now() + 500,
-      maxDetachedSpoolBytes: 1024 * 1024,
+      maxDetachedSpoolBytes: 32 * 1024,
     });
     await vi.waitFor(() => expect(lifecycle.some((frame) => frame.type === "spawned")).toBe(true));
     helper.stdin.end();
@@ -247,12 +248,36 @@ describe("Rust Local App process host transport", () => {
     expect(lifecycle.some((frame) => frame.type === "terminal")).toBe(false);
     const receipt = JSON.parse(
       await readFile(path.join(runtimeRoot, "agent-control-eof", "terminal-receipt.json"), "utf8"),
-    ) as { terminal?: { status?: string; errorCode?: string; detached?: boolean; receiptWritten?: boolean } };
-    expect(receipt.terminal).toMatchObject({
-      status: "failed",
-      errorCode: "control_lost_deadline",
-      detached: true,
-      receiptWritten: true,
+    ) as {
+      terminal?: {
+        status?: string;
+        errorCode?: string;
+        detached?: boolean;
+        receiptWritten?: boolean;
+        detachedCapture?: {
+          capturedBytes?: number;
+          limitBytes?: number;
+          droppedBytes?: number;
+          truncated?: boolean;
+          complete?: boolean;
+        };
+        spool?: { lastSequence?: number; stdoutPath?: string; stderrPath?: string; indexPath?: string };
+      };
+    };
+    expect(receipt.terminal).toMatchObject({ status: "failed", detached: true, receiptWritten: true });
+    expect(["control_lost_deadline", "control_lost_spool_limit"]).toContain(receipt.terminal?.errorCode);
+    expect(receipt.terminal?.detachedCapture).toMatchObject({
+      limitBytes: 32 * 1024,
+      truncated: expect.any(Boolean),
+      complete: expect.any(Boolean),
+    });
+    expect(receipt.terminal?.detachedCapture?.capturedBytes).toBeLessThanOrEqual(32 * 1024);
+    expect(receipt.terminal?.detachedCapture?.droppedBytes).toBeGreaterThan(0);
+    expect(receipt.terminal?.spool).toMatchObject({
+      lastSequence: expect.any(Number),
+      stdoutPath: expect.stringContaining("stdout.bin"),
+      stderrPath: expect.stringContaining("stderr.bin"),
+      indexPath: expect.stringContaining("output-index.jsonl"),
     });
   }, 10_000);
 
