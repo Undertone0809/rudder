@@ -308,6 +308,29 @@ describe("TranscriptEventRow", () => {
     expect(button?.getAttribute("aria-label")).toBe("Collapse file change details: Updated src/pages/AgentDetail.tsx");
     expect(container.textContent).toContain(rawEvent);
   });
+
+  it("uses a yellow notice treatment for error events while preserving their error tone", () => {
+    const container = render(
+      <TranscriptEventRow
+        density="compact"
+        block={{
+          type: "event",
+          ts: "2026-07-16T12:00:00.000Z",
+          label: "stderr",
+          tone: "error",
+          text: "Process lost -- server may have restarted",
+        }}
+      />,
+    );
+    const event = container.querySelector('[data-transcript-event-tone="error"]');
+
+    expect(event).not.toBeNull();
+    expect(event?.className).toContain("border-amber-500/30");
+    expect(event?.className).toContain("bg-amber-500/[0.08]");
+    expect(event?.className).toContain("text-amber-800");
+    expect(event?.className).not.toContain("border-red-500/20");
+    expect(event?.querySelector(".lucide-circle-alert")).not.toBeNull();
+  });
 });
 
 describe("TranscriptActivityRow", () => {

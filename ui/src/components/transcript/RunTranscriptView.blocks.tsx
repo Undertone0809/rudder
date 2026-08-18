@@ -1458,7 +1458,7 @@ export function TranscriptEventRow({
   const preview = truncate(compactWhitespace(block.text), compact ? 96 : 140);
   const toneClasses =
     block.tone === "error"
-      ? "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3 text-red-700 dark:text-red-300"
+      ? "rounded-xl border border-amber-500/30 bg-amber-500/[0.08] p-3 text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/[0.08] dark:text-amber-200"
       : block.tone === "warn"
         ? "text-amber-700 dark:text-amber-300"
         : block.tone === "info"
@@ -1534,7 +1534,12 @@ export function TranscriptEventRow({
   }
 
   return (
-    <div className={toneClasses} title={getTranscriptTimestampTitle(block.ts)}>
+    <div
+      className={toneClasses}
+      data-transcript-event-label={block.label}
+      data-transcript-event-tone={block.tone}
+      title={getTranscriptTimestampTitle(block.ts)}
+    >
       <div className="flex items-start gap-2">
         {block.tone === "error" ? (
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -1548,7 +1553,7 @@ export function TranscriptEventRow({
             <button
               type="button"
               className={cn(
-                "mb-1 inline-flex max-w-full items-center gap-1 rounded-md text-left font-medium transition-colors hover:text-red-800 dark:hover:text-red-100",
+                "mb-1 inline-flex max-w-full items-center gap-1 rounded-md text-left font-medium transition-colors hover:text-amber-900 dark:hover:text-amber-100",
                 compact ? "text-[11px]" : "text-xs",
               )}
               onClick={() => setOpen((value) => !value)}
