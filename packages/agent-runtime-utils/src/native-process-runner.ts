@@ -302,7 +302,10 @@ export async function runNativeChildProcess(
     let aborted = false;
     let operatorInterrupted = false;
     let stopSent = false;
-    let rawOutputTransport = false;
+    let rawOutputTransport: boolean | null = null;
+    let rawStdoutEnded = false;
+    let rawStderrEnded = false;
+    let rawOutputWaiters: Array<() => void> = [];
     let settled = false;
     let stdout = "";
     let stderr = "";
@@ -311,6 +314,8 @@ export async function runNativeChildProcess(
     let frameParts: Buffer[] = [];
     let frameBytes = 0;
     const pendingOutput: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
+    const pendingRawOutput: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
+    let pendingRawOutputBytes = 0;
     const outputQueue: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
     let queuedOutputBytes = 0;
     let fatalError: Error | null = null;
@@ -338,13 +343,24 @@ export async function runNativeChildProcess(
       if (!logDeliveryActive && outputQueue.length === 0) return Promise.resolve();
       return new Promise<void>((resolveDelivery) => logDeliveryWaiters.push(resolveDelivery));
     };
+    const waitForRawOutput = () => {
+      if (rawOutputTransport !== true || (rawStdoutEnded && rawStderrEnded)) return Promise.resolve();
+      return new Promise<void>((resolveDelivery) => rawOutputWaiters.push(resolveDelivery));
+    };
+    const markRawOutputEnded = (stream: "stdout" | "stderr") => {
+      if (stream === "stdout") rawStdoutEnded = true;
+      else rawStderrEnded = true;
+      if (rawStdoutEnded && rawStderrEnded) {
+        for (const resolveDelivery of rawOutputWaiters.splice(0)) resolveDelivery();
+      }
+    };
     const finish = () => {
       if (settled || !terminalSeen) return;
       settled = true;
       clearTimeout(handshakeTimeout);
       if (timeout) clearTimeout(timeout);
       abortCleanup?.();
-      void waitForLogDelivery().finally(() => {
+      void Promise.all([waitForLogDelivery(), waitForRawOutput()]).finally(() => {
         if (fatalError) reject(fatalError);
         else resolve({
           exitCode: appExitCode,
@@ -410,12 +426,32 @@ export async function runNativeChildProcess(
     // Agent Run output is byte-relayed on the host's dedicated fd 4/5
     // channels. Keep accepting lifecycle output frames for older hosts, but
     // consume the dedicated channels so large writes cannot fill lifecycle.
-    rawStdout.on("data", (chunk: Buffer | string) => {
-      if (rawOutputTransport) appendOutput("stdout", String(chunk));
-    });
-    rawStderr.on("data", (chunk: Buffer | string) => {
-      if (rawOutputTransport) appendOutput("stderr", String(chunk));
-    });
+    const handleRawOutput = (stream: "stdout" | "stderr", chunk: Buffer | string) => {
+      const data = String(chunk);
+      if (rawOutputTransport === true) {
+        appendOutput(stream, data);
+        return;
+      }
+      if (rawOutputTransport === false) return;
+      const outputBytes = Buffer.byteLength(data);
+      if (pendingRawOutput.length >= MAX_OUTPUT_QUEUE_ITEMS
+        || pendingRawOutputBytes + outputBytes > MAX_OUTPUT_QUEUE_BYTES) {
+        settleReject(new NativeProcessUnavailableError(
+          "Rust process host pre-negotiation output spool exceeded its bounded capacity",
+          "output_spool_overflow",
+          accepted,
+        ));
+        return;
+      }
+      pendingRawOutput.push({ stream, data });
+      pendingRawOutputBytes += outputBytes;
+    };
+    rawStdout.on("data", (chunk: Buffer | string) => handleRawOutput("stdout", chunk));
+    rawStderr.on("data", (chunk: Buffer | string) => handleRawOutput("stderr", chunk));
+    rawStdout.once("end", () => markRawOutputEnded("stdout"));
+    rawStderr.once("end", () => markRawOutputEnded("stderr"));
+    rawStdout.once("close", () => markRawOutputEnded("stdout"));
+    rawStderr.once("close", () => markRawOutputEnded("stderr"));
     const send = (message: Record<string, unknown>) => {
       if (commandInput.destroyed || commandInput.writableEnded) return false;
       return commandInput.write(`${JSON.stringify(message)}\n`);
@@ -519,6 +555,10 @@ export async function runNativeChildProcess(
         }
         accepted = true;
         rawOutputTransport = frame.outputTransport === "raw";
+        if (rawOutputTransport) {
+          for (const output of pendingRawOutput.splice(0)) appendOutput(output.stream, output.data);
+        }
+        pendingRawOutputBytes = 0;
         outputQueue.push(...pendingOutput.splice(0));
         void drainOutput();
         return;

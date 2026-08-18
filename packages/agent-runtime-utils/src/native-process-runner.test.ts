@@ -181,6 +181,96 @@ describe("Rust Agent Run process host", () => {
     });
   });
 
+  it("buffers raw output before acceptance and drains it after terminal", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-raw-order-"));
+    const commandInput = new PassThrough();
+    const lifecycle = new PassThrough();
+    const rawStdout = new PassThrough();
+    const rawStderr = new PassThrough();
+    const fakeHost = Object.assign(new EventEmitter(), {
+      stdin: commandInput,
+      stdio: [null, null, null, lifecycle, rawStdout, rawStderr],
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+    const capabilities = [
+      "process_spawn",
+      "process_group_cleanup",
+      "parent_eof_cleanup",
+      "owner_receipt",
+      "stdout_relay",
+      "stderr_relay",
+    ];
+    let started = false;
+    commandInput.on("data", (chunk) => {
+      if (started) return;
+      started = true;
+      const requestId = (JSON.parse(String(chunk)) as { requestId: string }).requestId;
+      rawStdout.write("before-accepted-");
+      lifecycle.write(`${JSON.stringify({
+        type: "accepted",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        outputTransport: "raw",
+      })}\n`);
+      lifecycle.write(`${JSON.stringify({
+        type: "spawned",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        ownerToken: requestId,
+        pid: 12345,
+      })}\n`);
+      lifecycle.write(`${JSON.stringify({
+        type: "app-exit",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        ownerToken: requestId,
+        code: 0,
+      })}\n`);
+      lifecycle.write(`${JSON.stringify({
+        type: "terminal",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        ownerToken: requestId,
+        cleanupProven: true,
+        receiptWritten: true,
+      })}\n`);
+      lifecycle.end();
+      fakeHost.emit("close", 0, null);
+      setTimeout(() => {
+        rawStdout.end("after-terminal");
+        rawStderr.end();
+      }, 10);
+    });
+    setImmediate(() => {
+      lifecycle.write(`${JSON.stringify({
+        type: "handshake",
+        protocolVersion: { major: 1, minor: 0 },
+        capabilities,
+        target: "test",
+        binaryVersion: "test",
+      })}\n`);
+    });
+
+    const logs: string[] = [];
+    const result = await runNativeChildProcess("raw-order", process.execPath, [], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 10,
+      graceSec: 1,
+      onLog: async (_stream, data) => { logs.push(data); },
+      onLogError: () => {},
+      binaryPath: "fake-process-host",
+      runtimeRoot: path.join(root, "receipts"),
+      spawnHost: () => fakeHost,
+    });
+
+    expect(result.stdout).toBe("before-accepted-after-terminal");
+    expect(logs.join("")).toBe(result.stdout);
+  });
+
   nativeOnly("times out through host Stop and leaves no owned process", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-timeout-"));
     const result = await runNativeChildProcess("native-timeout", process.execPath, [

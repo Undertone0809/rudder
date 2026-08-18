@@ -175,9 +175,19 @@ fn collect_entries(
         // observed in one event may be gone by the time its children are read;
         // skip that stale branch and let the next quiet generation converge.
         let mut children = match fs::read_dir(&directory) {
-            Ok(entries) => entries
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?,
+            Ok(entries) => {
+                let mut children = Vec::new();
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => children.push(entry),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                        Err(error) => {
+                            return Err(ManifestError::safe_source("workspace_read_failed", error));
+                        }
+                    }
+                }
+                children
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound && directory != root => continue,
             Err(error) => return Err(ManifestError::safe_source("workspace_read_failed", error)),
         };
