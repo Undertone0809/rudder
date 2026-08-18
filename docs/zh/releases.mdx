@@ -18,6 +18,32 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月18日" description="v0.7.10" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.10
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.10)
+
+这个版本让 Chat、Issue、Messenger 和打包版 Desktop 中的 Agent 工作更容易配置和跟进，并增加更安全的本地原生运行时支持。
+
+### 新功能
+
+- 为 Desktop Chat 增加可选的实验性本地语音输入，支持麦克风权限处理、本地转写和取消操作。
+- 为打包版 Desktop 增加本地原生运行时基础能力，用于进程托管、工作区/运行时载荷和本地语音支持。
+
+### 改进
+
+- 在 Chat 和 Issue 工作流的 Agent 运行时选择中增加模型和思考强度控制，并改善键盘操作和窄屏布局。
+- 改进 Messenger 审批卡片，提供更清晰的来源上下文，并支持返回关联的 Chat 或 Issue。
+- 改进 Agent 运行记录的可见性，提供更清晰的加载和失败状态、更受控的记录详情，以及显示工具调用失败标记的选项。
+
+### 问题修复
+
+- 修复 Chat 流式输出期间列表刷新闪烁和发送反馈时序问题，并改善打开 Issue 引用、图片和运行证据时的上下文连续性。
+- 修复打包版 Desktop 中若干本地运行时进程、工作区备份和恢复边界问题。
+
+</Update>
+
 <Update label="2026年8月17日" description="v0.7.9" tags={["问题修复"]}>
 
 ## v0.7.9
