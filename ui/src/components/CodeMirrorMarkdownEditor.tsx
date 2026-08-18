@@ -763,6 +763,7 @@ function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor) {
         || event.currentTarget.matches("[data-mention-kind], [data-skill-token='true']");
       if (!isToken) return false;
     }
+    if (!isPrimaryPlainMouseEvent(event.nativeEvent)) return false;
     // Atomic token activation is owned by the widget's native listener. It
     // runs after React's delegated handler and keeps the same DOM alive across
     // mousedown/click, while this return prevents MarkdownBody's ordinary-link

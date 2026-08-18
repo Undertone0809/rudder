@@ -309,6 +309,42 @@ export class MarkdownPortalWidget extends WidgetType {
 
   toDOM(view: EditorView) {
     const host = document.createElement("span");
+    let pendingInlineToken: HTMLElement | null = null;
+    let suppressNextInlineTokenClick = false;
+    const markInlineTokenActivated = () => {
+      suppressNextInlineTokenClick = true;
+    };
+    const consumeSuppressedInlineTokenClick = (event: MouseEvent) => {
+      if (!suppressNextInlineTokenClick) return false;
+      suppressNextInlineTokenClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    };
+    const activatePendingInlineToken = (
+      event: MouseEvent,
+      reference: AtomicMarkdownReference,
+      tokenElement: HTMLElement | null,
+    ) => {
+      if (!tokenElement || pendingInlineToken !== tokenElement) {
+        pendingInlineToken = null;
+        return false;
+      }
+      pendingInlineToken = null;
+      if (
+        emitInlineTokenClick(
+          this.propsRef.current,
+          reference,
+          tokenElement,
+          event,
+        )
+      ) {
+        markInlineTokenActivated();
+        event.stopPropagation();
+        return true;
+      }
+      return false;
+    };
     host.className = this.registration.type === "block"
       ? "rudder-codemirror-markdown-preview"
       : this.registration.type === "website"
@@ -324,14 +360,18 @@ export class MarkdownPortalWidget extends WidgetType {
       host.addEventListener("mousedown", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
-        if (
-          tokenElement
-          || target?.closest(".rudder-code-block-copy-button")
-        ) {
+        if (tokenElement && event.button === 0) {
           // CodeMirror's pointer handler may otherwise move the selection and
-          // replace this widget before mouseup, so the browser never delivers
-          // the token's click. Keep the atomic/widget DOM stable for the full
-          // pointer sequence.
+          // replace this widget before mouseup. Keep the atomic/widget DOM
+          // stable for the full pointer sequence and finish activation on
+          // mouseup because Chromium may omit click for atomic widgets.
+          event.preventDefault();
+          event.stopPropagation();
+          suppressNextInlineTokenClick = false;
+          pendingInlineToken = tokenElement;
+          return;
+        }
+        if (target?.closest(".rudder-code-block-copy-button")) {
           event.preventDefault();
           event.stopPropagation();
           return;
@@ -358,10 +398,18 @@ export class MarkdownPortalWidget extends WidgetType {
         event.preventDefault();
         this.activateBlock(block, view);
       });
+      host.addEventListener("mouseup", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
+        const reference = tokenElement ? sourceReferenceForTarget(block, tokenElement) : null;
+        if (reference) activatePendingInlineToken(event, reference, tokenElement ?? null);
+        else pendingInlineToken = null;
+      });
       host.addEventListener("click", (event) => {
         const target = event.target instanceof Element ? event.target : null;
         const tokenElement = target?.closest<HTMLElement>("[data-mention-kind], [data-skill-token='true']");
-        if (tokenElement) {
+        if (tokenElement && (isPrimaryPlainMouseEvent(event) || this.propsRef.current.onInlineTokenClick)) {
+          if (consumeSuppressedInlineTokenClick(event)) return;
           const reference = sourceReferenceForTarget(block, tokenElement);
           if (
             reference
@@ -413,7 +461,18 @@ export class MarkdownPortalWidget extends WidgetType {
         ) {
           event.preventDefault();
           event.stopPropagation();
+          suppressNextInlineTokenClick = false;
+          pendingInlineToken = target.closest<HTMLElement>(
+            "[data-mention-kind], [data-skill-token='true']",
+          );
         }
+      });
+      host.addEventListener("mouseup", (event) => {
+        const target = event.target instanceof HTMLElement ? event.target : null;
+        const tokenElement = target?.closest<HTMLElement>(
+          "[data-mention-kind], [data-skill-token='true']",
+        );
+        activatePendingInlineToken(event, reference, tokenElement ?? null);
       });
       host.addEventListener("click", (event) => {
         const target = event.target instanceof HTMLElement ? event.target : null;
@@ -421,6 +480,8 @@ export class MarkdownPortalWidget extends WidgetType {
           "[data-mention-kind], [data-skill-token='true']",
         );
         if (!tokenElement) return;
+        if (!isPrimaryPlainMouseEvent(event) && !this.propsRef.current.onInlineTokenClick) return;
+        if (consumeSuppressedInlineTokenClick(event)) return;
         if (
           emitInlineTokenClick(
             this.propsRef.current,
