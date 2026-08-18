@@ -158,7 +158,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       await expect(page.getByRole("button", { name: tag, exact: true })).toBeVisible();
     }
     await page.getByRole("button", { name: item.filterTag, exact: true }).click();
-    await expect(updateFor("v0-7-10")).toBeHidden();
+    await expect(updateFor("v0-7-10")).toBeVisible();
     await expect(updateFor("v0-7-8")).toBeHidden();
     await expect(page.locator("h2#v0-7-7")).toBeVisible();
     await expect(updateFor("v0-7-5")).toBeHidden();
