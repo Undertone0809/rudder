@@ -38,7 +38,9 @@ import {
   createWorkspaceBackupV2Native,
   formatWorkspaceBackupV2NativeFallback,
   inspectWorkspaceBackupV2File,
+  inspectWorkspaceBackupV2FileNative,
   readWorkspaceBackupV2File,
+  readWorkspaceBackupV2FileNative,
   workspaceBackupV2NativeDiagnostic,
   type WorkspaceBackupV2ArchiveIndex
 } from "./workspace-backup-v2.js";
@@ -156,7 +158,10 @@ export type WorkspaceBackupDownload = {
 
 type WorkspaceBackupV2Payload = {
   filePath: string;
-  index: WorkspaceBackupV2ArchiveIndex;
+  index?: WorkspaceBackupV2ArchiveIndex;
+  native: boolean;
+  archiveSize: number;
+  rootPath: string;
 };
 
 type WorkspaceBackupPayload = {
@@ -1081,12 +1086,52 @@ export function workspaceBackupService(db: Db) {
     }
   }
 
+  function workspaceBackupArchiveNativePolicy() {
+    return resolveRudderNativeCapability({
+      capability: "workspace-backup",
+      env: process.env,
+      legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"],
+    });
+  }
+
   async function readArtifactPayload(row: WorkspaceBackupRow): Promise<WorkspaceBackupPayload> {
     assertReadableBackup(row);
     if (!(await fileExists(row.artifactRef))) {
       throw notFound("Workspace backup artifact not found");
     }
     if (path.extname(row.artifactRef).toLowerCase() === ".zip") {
+      const nativePolicy = workspaceBackupArchiveNativePolicy();
+      let nativeFallbackWarning: string | null = null;
+      if (nativePolicy.enabled) {
+        try {
+          const inspected = await inspectWorkspaceBackupV2FileNative(row.artifactRef);
+          if (row.archiveSha256 && await sha256File(row.artifactRef) !== row.archiveSha256) {
+            throw new Error("Workspace backup artifact checksum does not match the recorded backup metadata");
+          }
+          const manifest = inspected.manifest;
+          const artifact: WorkspaceBackupArtifact = {
+            version: ARTIFACT_VERSION,
+            orgId: manifest.identity.orgId,
+            instanceId: manifest.identity.instanceId,
+            createdAt: manifest.createdAt,
+            rootPath: manifest.identity.rootPath,
+            entries: manifest.entries.map((entry) => ({ ...entry, dataBase64: undefined })),
+            warnings: manifest.warnings,
+          };
+          if (artifact.orgId !== row.orgId) throw new Error("organization identity mismatch");
+          return {
+            raw: null,
+            artifact,
+            v2: { filePath: row.artifactRef, native: true, archiveSize: inspected.archiveSize, rootPath: manifest.identity.rootPath },
+          };
+        } catch (error) {
+          const diagnostic = workspaceBackupV2NativeDiagnostic(error);
+          if (!nativePolicy.fallbackAllowed || !diagnostic.fallbackAllowed) {
+            throw unprocessable(`Workspace backup native inspect failed [${diagnostic.category}/${diagnostic.code}]: ${diagnostic.detail}`);
+          }
+          nativeFallbackWarning = formatWorkspaceBackupV2NativeFallback(error);
+        }
+      }
       try {
         const index = await inspectWorkspaceBackupV2File(row.artifactRef);
         if (row.archiveSha256 && await sha256File(row.artifactRef) !== row.archiveSha256) {
@@ -1106,9 +1151,10 @@ export function workspaceBackupService(db: Db) {
           warnings: manifest.warnings,
         };
         if (artifact.orgId !== row.orgId) throw new Error("organization identity mismatch");
-        return { raw: null, artifact, v2: { filePath: row.artifactRef, index } };
+        return { raw: null, artifact, v2: { filePath: row.artifactRef, index, native: false, archiveSize: index.archiveSize, rootPath: artifact.rootPath } };
       } catch (error) {
-        throw unprocessable(error instanceof Error ? `Workspace backup v2 artifact is invalid: ${error.message}` : "Workspace backup v2 artifact is invalid");
+        const suffix = nativeFallbackWarning ? `; ${nativeFallbackWarning}` : "";
+        throw unprocessable(error instanceof Error ? `Workspace backup v2 artifact is invalid: ${error.message}${suffix}` : `Workspace backup v2 artifact is invalid${suffix}`);
       }
     }
     const raw = await fs.readFile(row.artifactRef);
@@ -1125,12 +1171,26 @@ export function workspaceBackupService(db: Db) {
     return { raw, artifact: parsed };
   }
 
+  async function readV2Entry(payload: WorkspaceBackupV2Payload, relativePath: string): Promise<Buffer> {
+    if (!payload.native) return readWorkspaceBackupV2File(payload.filePath, payload.index!, relativePath);
+    try {
+      return await readWorkspaceBackupV2FileNative(payload.filePath, relativePath, payload.rootPath);
+    } catch (error) {
+      const diagnostic = workspaceBackupV2NativeDiagnostic(error);
+      const policy = workspaceBackupArchiveNativePolicy();
+      if (!policy.fallbackAllowed || !diagnostic.fallbackAllowed) throw error;
+      const index = await inspectWorkspaceBackupV2File(payload.filePath);
+      return readWorkspaceBackupV2File(payload.filePath, index, relativePath);
+    }
+  }
+
   async function readArtifact(row: WorkspaceBackupRow): Promise<WorkspaceBackupArtifact> {
     const payload = await readArtifactPayload(row);
     if (payload.v2) {
       const entries = await Promise.all(payload.artifact.entries.map(async (entry) => {
         if (entry.kind !== "file") return entry;
-        const data = await readWorkspaceBackupV2File(payload.v2!.filePath, payload.v2!.index, entry.path);
+        const data = await readV2Entry(payload.v2!, entry.path);
+        if (entry.sha256 && sha256Buffer(data) !== entry.sha256) throw new Error(`Workspace backup checksum mismatch: ${entry.path}`);
         return { ...entry, dataBase64: data.toString("base64") };
       }));
       return { ...payload.artifact, entries };
@@ -1502,9 +1562,10 @@ export function workspaceBackupService(db: Db) {
       const file = findArtifactFile(artifact, normalizedPath);
       if (!file) throw notFound("File not found inside the workspace backup");
       const buffer = payload.v2
-        ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, normalizedPath)
+        ? await readV2Entry(payload.v2, normalizedPath)
         : file.dataBase64 ? Buffer.from(file.dataBase64, "base64") : null;
       if (!buffer) throw notFound("File not found inside the workspace backup");
+      if (file.sha256 && sha256Buffer(buffer) !== file.sha256) throw unprocessable(`Workspace backup checksum mismatch: ${normalizedPath}`);
       if (isBinaryBuffer(buffer)) {
         return {
           source: "org_root",
@@ -1550,7 +1611,7 @@ export function workspaceBackupService(db: Db) {
           artifactRef: row.artifactRef,
           filename: `${path.basename(row.artifactRef, path.extname(row.artifactRef))}.zip`,
           contentType: "application/zip",
-          byteSize: payload.v2.index.archiveSize,
+          byteSize: payload.v2.archiveSize,
           archiveSha256: row.archiveSha256,
           contentStream: createReadStream(row.artifactRef),
         };
@@ -1817,7 +1878,7 @@ export function workspaceBackupService(db: Db) {
           const { resolvedTarget } = resolveWithinRoot(stagingRoot, entry.path);
           await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
           const data = payload.v2
-            ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, entry.path)
+            ? await readV2Entry(payload.v2, entry.path)
             : Buffer.from(entry.dataBase64 ?? "", "base64");
           await fs.writeFile(resolvedTarget, data, { mode: entry.mode ?? 0o600 });
         }

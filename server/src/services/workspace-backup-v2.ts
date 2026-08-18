@@ -478,14 +478,20 @@ async function removePublishedForFallback(finalPath: string, overrides?: Publica
 
 type NativeArchiveJson = {
   ok?: unknown;
+  accepted?: unknown;
   operation?: unknown;
   protocolVersion?: unknown;
+  capability?: unknown;
+  target?: unknown;
+  binaryVersion?: unknown;
   capabilities?: unknown;
   errorCode?: unknown;
   byteSize?: unknown;
   sha256?: unknown;
   manifestSha256?: unknown;
   treeSha256?: unknown;
+  manifestBase64?: unknown;
+  entryCount?: unknown;
 };
 
 function boundedDiagnosticDetail(value: unknown) {
@@ -578,8 +584,8 @@ async function runNativeArchive(binary: string, args: string[], timeoutMs = Numb
       try {
         const parsed = JSON.parse(lines[0]!) as NativeArchiveJson;
         if (parsed && typeof parsed === "object" && typeof parsed.errorCode === "string") {
-          const publication = ["published_output_cleanup_failed", "publication_recovery_required"].includes(parsed.errorCode);
-          throw nativeDiagnostic(publication ? "publication" : "process", parsed.errorCode, stderr || `exit ${String(maybe.code ?? "unknown")}`, !publication);
+          const accepted = parsed.accepted === true;
+          throw nativeDiagnostic("process", parsed.errorCode, stderr || `exit ${String(maybe.code ?? "unknown")}`, !accepted);
         }
       } catch (parsedError) {
         if (parsedError instanceof WorkspaceBackupV2NativeError) throw parsedError;
@@ -594,6 +600,73 @@ async function runNativeArchive(binary: string, args: string[], timeoutMs = Numb
   try { parsed = JSON.parse(lines[0]!); } catch { throw nativeDiagnostic("protocol", "malformed_json", lines[0]); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw nativeDiagnostic("protocol", "malformed_envelope", typeof parsed);
   return parsed as NativeArchiveJson;
+}
+
+async function ensureNativeArchiveCapability(capability: "archive.inspectManifest" | "archive.extractFile") {
+  const response = await runNativeArchive(resolveNativeArchiveBinary(), ["archive", "capabilities"]);
+  if (response.ok !== true || response.protocolVersion !== NATIVE_PROTOCOL_VERSION || !Array.isArray(response.capabilities) || !response.capabilities.includes(capability)) {
+    throw nativeDiagnostic("capability", `${capability.replaceAll(".", "_")}_unavailable`, JSON.stringify(response.capabilities));
+  }
+}
+
+function parseNativeManifest(response: NativeArchiveJson): WorkspaceBackupV2Manifest {
+  if (response.ok !== true || response.operation !== "inspectManifest" || response.protocolVersion !== NATIVE_PROTOCOL_VERSION || typeof response.manifestBase64 !== "string") {
+    throw nativeDiagnostic("protocol", "inspect_manifest_envelope_mismatch", JSON.stringify({ operation: response.operation, protocolVersion: response.protocolVersion }));
+  }
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(response.manifestBase64, "base64");
+  } catch (error) {
+    throw nativeDiagnostic("integrity", "manifest_base64_invalid", error);
+  }
+  const manifest = parseManifest(bytes);
+  if (typeof response.sha256 === "string" && response.sha256 !== sha256(bytes)) {
+    throw nativeDiagnostic("integrity", "manifest_hash_mismatch", "native manifest hash differs from payload");
+  }
+  return manifest;
+}
+
+export async function inspectWorkspaceBackupV2FileNative(filePath: string): Promise<{
+  manifest: WorkspaceBackupV2Manifest;
+  archiveSize: number;
+}> {
+  await ensureNativeArchiveCapability("archive.inspectManifest");
+  const response = await runNativeArchive(resolveNativeArchiveBinary(), [
+    "archive", "inspect-manifest", path.resolve(filePath),
+    String(WORKSPACE_BACKUP_V2_MAX_ARCHIVE_BYTES),
+    String(WORKSPACE_BACKUP_V2_MAX_FILE_BYTES),
+  ]);
+  const manifest = parseNativeManifest(response);
+  const archiveStat = await fs.stat(filePath);
+  if (!archiveStat.isFile() || !Number.isSafeInteger(response.byteSize) || Number(response.byteSize) <= 0) {
+    throw nativeDiagnostic("integrity", "inspect_manifest_size_invalid", response.byteSize);
+  }
+  return { manifest, archiveSize: archiveStat.size };
+}
+
+export async function readWorkspaceBackupV2FileNative(filePath: string, relativePath: string, rootPath?: string): Promise<Buffer> {
+  const normalized = assertSafeWorkspaceBackupV2Path(relativePath);
+  const archiveEntry = rootPath ? `${rootSegment(rootPath)}/${normalized}` : normalized;
+  await ensureNativeArchiveCapability("archive.extractFile");
+  const staging = await fs.mkdtemp(path.join(path.dirname(path.resolve(filePath)), ".rudder-native-extract-"));
+  const output = path.join(staging, "entry");
+  try {
+    const response = await runNativeArchive(resolveNativeArchiveBinary(), [
+      "archive", "extract-file", path.resolve(filePath), archiveEntry, output,
+      String(WORKSPACE_BACKUP_V2_MAX_ARCHIVE_BYTES),
+      String(WORKSPACE_BACKUP_V2_MAX_FILE_BYTES),
+    ]);
+    if (response.ok !== true || response.operation !== "extractFile" || response.protocolVersion !== NATIVE_PROTOCOL_VERSION || response.accepted !== true) {
+      throw nativeDiagnostic("protocol", "extract_file_envelope_mismatch", JSON.stringify({ operation: response.operation, protocolVersion: response.protocolVersion, accepted: response.accepted }));
+    }
+    const data = await fs.readFile(output);
+    if (!Number.isSafeInteger(response.byteSize) || Number(response.byteSize) !== data.byteLength || typeof response.sha256 !== "string" || response.sha256 !== sha256(data)) {
+      throw nativeDiagnostic("integrity", "extracted_file_mismatch", normalized, false);
+    }
+    return data;
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true });
+  }
 }
 
 function requireNativeString(value: unknown, label: string) {
@@ -678,9 +751,9 @@ export async function createWorkspaceBackupV2Native(input: {
     }
     await input.beforePublish?.();
     await publishNoReplace(nativeOutput, input.artifactPath, input.publicationOps);
-    let index: WorkspaceBackupV2ArchiveIndex;
+    let inspected: { manifest: WorkspaceBackupV2Manifest; archiveSize: number };
     try {
-      index = await inspectWorkspaceBackupV2File(input.artifactPath);
+      inspected = await inspectWorkspaceBackupV2FileNative(input.artifactPath);
     } catch (error) {
       try {
         await removePublishedForFallback(input.artifactPath, input.publicationOps);
@@ -690,7 +763,7 @@ export async function createWorkspaceBackupV2Native(input: {
       }
       throw nativeDiagnostic("integrity", "published_archive_invalid", error instanceof Error ? error.message : error);
     }
-    if (index.manifest.identity.orgId !== input.orgId || index.manifest.identity.instanceId !== input.instanceId || index.manifest.treeSha256 !== manifest.treeSha256) {
+    if (inspected.manifest.identity.orgId !== input.orgId || inspected.manifest.identity.instanceId !== input.instanceId || inspected.manifest.treeSha256 !== manifest.treeSha256) {
       try {
         await removePublishedForFallback(input.artifactPath, input.publicationOps);
       } catch (cleanupError) {

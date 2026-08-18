@@ -324,6 +324,37 @@ describe("workspace backup service", () => {
     }
   });
 
+  it("uses native inspect and extract for browse and restore when required", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "native-read.txt"), "from native archive\n", "utf8");
+    const { resolveNativeArchiveBinary } = await import("../services/workspace-backup-v2.js");
+    const previousMode = process.env.RUDDER_NATIVE_MODE;
+    const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+    const previousToggle = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
+    delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
+    process.env.RUDDER_NATIVE_ARCHIVE_PATH = resolveNativeArchiveBinary();
+    try {
+      const backup = await service.create({ orgId });
+      await expect(service.listFiles(orgId, backup.id)).resolves.toMatchObject({
+        entries: expect.arrayContaining([expect.objectContaining({ path: "native-read.txt", isDirectory: false })]),
+      });
+      await expect(service.readFile(orgId, backup.id, "native-read.txt")).resolves.toMatchObject({ content: "from native archive\n" });
+      await fs.writeFile(path.join(workspaceRoot, "native-read.txt"), "changed live\n", "utf8");
+      await service.restore(orgId, backup.id);
+      await expect(fs.readFile(path.join(workspaceRoot, "native-read.txt"), "utf8")).resolves.toBe("from native archive\n");
+    } finally {
+      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE; else process.env.RUDDER_NATIVE_MODE = previousMode;
+      if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED; else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
+      if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
+      if (previousToggle === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE; else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousToggle;
+    }
+  });
+
   it("records a bounded native fallback diagnostic before using the Node writer", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
