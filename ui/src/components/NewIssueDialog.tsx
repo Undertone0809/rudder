@@ -11,6 +11,7 @@ import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
 import { useLocation, useNavigate } from "@/lib/router";
+import type { IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Calendar,
@@ -53,7 +54,6 @@ import {
   parseAssigneeValue,
 } from "../lib/assignees";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
-import { extractProviderIdWithFallback } from "../lib/model-utils";
 import {
   buildNewIssueCreateRequest,
   clearIssueAutosave,
@@ -89,6 +89,7 @@ import { cn } from "../lib/utils";
 import { AgentMenuLabel, AssigneeLabel } from "./AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { IssueLabelChip } from "./IssueLabelChip";
+import { IssueRuntimeSelector } from "./IssueRuntimeSelector";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
@@ -147,6 +148,34 @@ function buildAssigneeAdapterOverrides(input: {
     overrides.agentRuntimeConfig = agentRuntimeConfig;
   }
   return Object.keys(overrides).length > 0 ? overrides : null;
+}
+
+function runtimeEffortKeyForAssignee(runtimeType: string | null): string | null {
+  if (runtimeType === "codex_local") return "modelReasoningEffort";
+  if (runtimeType === "opencode_local") return "variant";
+  if (runtimeType === "claude_local") return "effort";
+  if (runtimeType === "pi_local") return "thinking";
+  if (runtimeType === "cursor") return "effort";
+  return null;
+}
+
+function readAssigneeRuntimeOverrides(
+  overrides: IssueAssigneeAgentRuntimeOverrides | null,
+  runtimeType: string | null,
+) {
+  const config = overrides?.agentRuntimeConfig ?? {};
+  const effortKey = runtimeEffortKeyForAssignee(runtimeType);
+  const model = typeof config.model === "string" ? config.model : "";
+  const effortValue = effortKey ? config[effortKey] : undefined;
+  const legacyEffortValue = effortKey === "modelReasoningEffort" ? config.reasoningEffort : undefined;
+  const thinkingEffort = typeof (effortValue ?? legacyEffortValue) === "string"
+    ? String(effortValue ?? legacyEffortValue)
+    : "";
+  return {
+    modelOverride: model,
+    thinkingEffortOverride: thinkingEffort,
+    chrome: runtimeType === "claude_local" && config.chrome === true,
+  };
 }
 
 function thinkingOptionsForAssignee(
@@ -334,6 +363,7 @@ export function NewIssueDialog() {
         : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
     queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
+    retry: false,
   });
   const assigneeModelMetadata = assigneeAgentRuntimeModels?.find(
     (candidate) => candidate.id === effectiveAssigneeModel,
@@ -777,7 +807,26 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
     }
   }, [newIssueOpen, newIssueDefaults, orderedProjects, requestedSavedIssueDraftId, selectedOrganizationId]);
-  useEffect(() => { if (!newIssueOpen) { previousAssigneeAgentIdRef.current = null; return; } const previousAgentId = previousAssigneeAgentIdRef.current; if (previousAgentId !== null && previousAgentId !== selectedAssigneeAgentId) { setAssigneeModelOverride(""); setAssigneeThinkingEffort(""); setAssigneeChrome(false); } previousAssigneeAgentIdRef.current = selectedAssigneeAgentId; }, [newIssueOpen, selectedAssigneeAgentId]);
+  useEffect(() => {
+    if (!newIssueOpen) {
+      previousAssigneeAgentIdRef.current = null;
+      return;
+    }
+    const previousAgentId = previousAssigneeAgentIdRef.current;
+    if (previousAgentId !== null && previousAgentId !== selectedAssigneeAgentId) {
+      setAssigneeModelOverride("");
+      setAssigneeThinkingEffort("");
+      setAssigneeChrome(false);
+    }
+    previousAssigneeAgentIdRef.current = selectedAssigneeAgentId;
+  }, [newIssueOpen, selectedAssigneeAgentId]);
+  useEffect(() => {
+    if (!assigneeModelOverride || !assigneeAgentRuntimeModels) return;
+    const availableModels = resolveRuntimeModels(assigneeAdapterType ?? "", assigneeAgentRuntimeModels);
+    if (availableModels.some((model) => model.id === assigneeModelOverride)) return;
+    setAssigneeModelOverride("");
+    setAssigneeThinkingEffort("");
+  }, [assigneeAdapterType, assigneeAgentRuntimeModels, assigneeModelOverride]);
   useEffect(() => {
     if (!supportsAssigneeOverrides) {
       setAssigneeOptionsOpen(false);
@@ -1078,12 +1127,6 @@ export function NewIssueDialog() {
           : assigneeAdapterType === "cursor"
             ? "Cursor options"
         : "Agent options";
-  const thinkingEffortOptions = thinkingOptionsForAssignee(
-    assigneeAdapterType,
-    effectiveAssigneeModel,
-    assigneeModelMetadata,
-  );
-  const hasThinkingEffortOptions = thinkingEffortOptions.length > 1;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () => [
@@ -1254,28 +1297,14 @@ export function NewIssueDialog() {
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
     setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(nextProject));
   }, [orderedProjects]);
-  const modelOverrideOptions = useMemo<InlineEntityOption[]>(
-    () => {
-      const models = resolveRuntimeModels(
-        assigneeAdapterType ?? "",
-        assigneeAgentRuntimeModels,
-      );
-      const orderedModels = assigneeAdapterType === "codex_local"
-        ? models
-        : [...models].sort((a, b) => {
-          const providerA = extractProviderIdWithFallback(a.id);
-          const providerB = extractProviderIdWithFallback(b.id);
-          const byProvider = providerA.localeCompare(providerB);
-          if (byProvider !== 0) return byProvider;
-          return a.id.localeCompare(b.id);
-        });
-      return orderedModels.map((model) => ({
-        id: model.id,
-        label: model.label,
-        searchText: `${model.id} ${extractProviderIdWithFallback(model.id)}`,
-      }));
-    },
-    [assigneeAdapterType, assigneeAgentRuntimeModels],
+  const assigneeRuntimeOverrides = useMemo<IssueAssigneeAgentRuntimeOverrides | null>(
+    () => buildAssigneeAdapterOverrides({
+      agentRuntimeType: assigneeAdapterType,
+      modelOverride: assigneeModelOverride,
+      thinkingEffortOverride: assigneeThinkingEffort,
+      chrome: assigneeChrome,
+    }) as IssueAssigneeAgentRuntimeOverrides | null,
+    [assigneeAdapterType, assigneeChrome, assigneeModelOverride, assigneeThinkingEffort],
   );
   const descriptionEditor = (
     <MarkdownEditor
@@ -1304,6 +1333,12 @@ export function NewIssueDialog() {
           }}
     />
   );
+  const applyAssigneeRuntimeOverrides = useCallback((nextOverrides: IssueAssigneeAgentRuntimeOverrides | null) => {
+    const next = readAssigneeRuntimeOverrides(nextOverrides, assigneeAdapterType);
+    setAssigneeModelOverride(next.modelOverride);
+    setAssigneeThinkingEffort(next.thinkingEffortOverride);
+    setAssigneeChrome(next.chrome);
+  }, [assigneeAdapterType]);
 
   return (
     <Dialog
@@ -1631,6 +1666,11 @@ export function NewIssueDialog() {
                 emptyMessage="No assignees found."
                 variant="field"
                 className={ISSUE_METADATA_SELECTOR_CLASSNAME}
+                keepOpenOnOptionChange={(option) => {
+                  const agentId = parseAssigneeValue(option.id).assigneeAgentId;
+                  const agent = agentId ? (agents ?? []).find((candidate) => candidate.id === agentId) : null;
+                  return Boolean(agent && ISSUE_OVERRIDE_ADAPTER_TYPES.has(agent.agentRuntimeType));
+                }}
                 onChange={handleAssigneeChange}
                 onConfirm={() => {
                   if (projectId) {
@@ -1659,6 +1699,17 @@ export function NewIssueDialog() {
                     ? <AgentMenuLabel agent={assignee} agentAvatarStyle="bare" />
                     : <AssigneeLabel kind="user" label={option.label} avatarUrl={parseAssigneeValue(option.id).assigneeUserId === currentUserId ? currentUserAvatarUrl : null} />;
                 }}
+                renderOptionAccessory={(option, isSelected) =>
+                  option.id && isSelected && currentAssignee && effectiveCompanyId ? (
+                    <IssueRuntimeSelector
+                      agent={currentAssignee}
+                      orgId={effectiveCompanyId}
+                      overrides={assigneeRuntimeOverrides}
+                      variant="menu"
+                      onApply={applyAssigneeRuntimeOverrides}
+                    />
+                  ) : null
+                }
               />
             </div>
             <div className="min-w-0 space-y-1">
@@ -1747,7 +1798,7 @@ export function NewIssueDialog() {
           </div>
         </div>
 
-        {supportsAssigneeOverrides && (
+        {assigneeAdapterType === "claude_local" && (
           <div className="px-4 pb-2 shrink-0">
             <button
               className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
@@ -1758,50 +1809,16 @@ export function NewIssueDialog() {
             </button>
             {assigneeOptionsOpen && (
               <div className="mt-2 rounded-md border border-border p-3 bg-muted/20 space-y-3">
-                <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">Model</div>
-                  <InlineEntitySelector
-                    value={assigneeModelOverride}
-                    options={modelOverrideOptions}
-                    placeholder="Default model"
-                    disablePortal
-                    noneLabel="Default model"
-                    searchPlaceholder="Search models..."
-                    emptyMessage="No models found."
-                    onChange={setAssigneeModelOverride}
+                <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
+                  <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
+                  <ToggleSwitch
+                    checked={assigneeChrome}
+                    size="sm"
+                    tone="success"
+                    aria-label="Enable Chrome"
+                    onClick={() => setAssigneeChrome((value) => !value)}
                   />
                 </div>
-                {hasThinkingEffortOptions ? (
-                  <div className="space-y-1.5">
-                    <div className="text-xs text-muted-foreground">Thinking effort</div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {thinkingEffortOptions.map((option) => (
-                        <button
-                          key={option.value || "default"}
-                          className={cn(
-                            "px-2 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors",
-                            assigneeThinkingEffort === option.value && "bg-accent"
-                          )}
-                          onClick={() => setAssigneeThinkingEffort(option.value)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {assigneeAdapterType === "claude_local" && (
-                  <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
-                    <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
-                    <ToggleSwitch
-                      checked={assigneeChrome}
-                      size="sm"
-                      tone="success"
-                      aria-label="Enable Chrome"
-                      onClick={() => setAssigneeChrome((value) => !value)}
-                    />
-                  </div>
-                )}
               </div>
             )}
           </div>

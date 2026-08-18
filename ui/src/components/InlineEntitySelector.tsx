@@ -9,6 +9,8 @@ export interface InlineEntityOption {
   searchText?: string;
 }
 
+type KeepOpenOnOptionChange = boolean | ((option: InlineEntityOption) => boolean);
+
 interface InlineEntitySelectorProps {
   value: string;
   options: InlineEntityOption[];
@@ -23,7 +25,7 @@ interface InlineEntitySelectorProps {
   renderTriggerValue?: (option: InlineEntityOption | null) => ReactNode;
   renderOption?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
   renderOptionAccessory?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
-  keepOpenOnOptionChange?: boolean;
+  keepOpenOnOptionChange?: KeepOpenOnOptionChange;
   /** Skip the Portal so the popover stays in the DOM tree (fixes scroll inside Dialogs). */
   disablePortal?: boolean;
   side?: "top" | "right" | "bottom" | "left";
@@ -89,6 +91,13 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     const collisionPadding = typeof window !== "undefined" && window.innerWidth < 640
       ? { top: 16, right: 16, bottom: 88, left: 16 }
       : 16;
+
+    const shouldKeepOpenOnOptionChange = (option: InlineEntityOption | undefined) => {
+      if (!option) return false;
+      return typeof keepOpenOnOptionChange === "function"
+        ? keepOpenOnOptionChange(option)
+        : Boolean(keepOpenOnOptionChange);
+    };
 
     useEffect(() => {
       if (!open) return;
@@ -240,7 +249,8 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               }
               if (event.key === "Enter") {
                 event.preventDefault();
-                commitSelection(highlightedIndex, false, keepOpenOnOptionChange);
+                const option = filteredOptions[highlightedIndex] ?? filteredOptions[0];
+                commitSelection(highlightedIndex, false, shouldKeepOpenOnOptionChange(option));
                 return;
               }
               if (event.key === "Tab" && !event.shiftKey) {
@@ -284,12 +294,16 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
                         ref={isSelected ? selectedOptionButtonRef : undefined}
                         aria-pressed={isSelected}
                         className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors touch-manipulation hover:bg-accent/80"
-                        onClick={() => commitSelection(index, false, keepOpenOnOptionChange)}
+                        onClick={() => commitSelection(
+                          index,
+                          false,
+                          shouldKeepOpenOnOptionChange(option),
+                        )}
                       >
                         {optionContent}
                         <Check className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground", isSelected ? "opacity-100" : "opacity-0")} />
                       </button>
-                      <div className="min-w-0 shrink-0">{accessory}</div>
+                      <div className="min-w-0 max-w-[50%] flex-[0_1_50%]">{accessory}</div>
                     </div>
                   );
                 }
@@ -305,8 +319,8 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => commitSelection(
                       index,
-                      keepOpenOnOptionChange ? false : true,
-                      keepOpenOnOptionChange,
+                      shouldKeepOpenOnOptionChange(option) ? false : true,
+                      shouldKeepOpenOnOptionChange(option),
                     )}
                   >
                     {optionContent}

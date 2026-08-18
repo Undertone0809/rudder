@@ -3,21 +3,36 @@
 import type { Agent } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueRuntimeSelector } from "./IssueRuntimeSelector";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const queryState = vi.hoisted(() => ({
+  status: "success" as "success" | "loading" | "empty" | "error",
+}));
+
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({
-    data: [{
-      id: "gpt-5.6-sol",
-      label: "gpt-5.6-sol",
-      variants: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    }],
-    error: null,
-    isPending: false,
-  }),
+  useQuery: () => {
+    if (queryState.status === "loading") {
+      return { data: undefined, error: null, isPending: true };
+    }
+    if (queryState.status === "empty") {
+      return { data: [], error: null, isPending: false };
+    }
+    if (queryState.status === "error") {
+      return { data: undefined, error: new Error("adapter unavailable"), isPending: false };
+    }
+    return {
+      data: [{
+        id: "gpt-5.6-sol",
+        label: "gpt-5.6-sol",
+        variants: ["low", "medium", "high", "xhigh", "max", "ultra"],
+      }],
+      error: null,
+      isPending: false,
+    };
+  },
 }));
 
 const agent = {
@@ -34,6 +49,13 @@ const agent = {
   },
 } as unknown as Agent;
 
+const providerAgent = {
+  ...agent,
+  id: "agent-2",
+  agentRuntimeType: "pi_local",
+  agentRuntimeConfig: { model: "provider/model" },
+} as unknown as Agent;
+
 let cleanup: (() => void) | null = null;
 
 afterEach(() => {
@@ -42,14 +64,18 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function renderSelector(onApply = vi.fn()) {
+beforeEach(() => {
+  queryState.status = "success";
+});
+
+function renderSelector(agentToRender: Agent = agent, onApply = vi.fn()) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
     root.render(
       <IssueRuntimeSelector
-        agent={agent}
+        agent={agentToRender}
         orgId="org-1"
         overrides={null}
         variant="menu"
@@ -90,5 +116,30 @@ describe("IssueRuntimeSelector menu", () => {
     expect(document.body.querySelector('[data-testid="issue-runtime-profile-panel"]')).toBeNull();
     expect(document.body.querySelector('[data-testid^="issue-runtime-"][role="listbox"]')).toBeNull();
     expect(document.activeElement).toBe(container.querySelector('[data-testid="issue-runtime-selector"]'));
+  });
+
+  it.each([
+    ["loading", "Loading models..."],
+    ["empty", "No models found."],
+    ["error", "Models unavailable"],
+  ] as const)("shows the %s model discovery state", (status, message) => {
+    queryState.status = status;
+    const { container } = renderSelector(providerAgent);
+
+    click(container.querySelector('[data-testid="issue-runtime-selector"]'));
+    click(document.body.querySelector('[data-testid="issue-runtime-model-trigger"]'));
+
+    expect(document.body.textContent).toContain(message);
+  });
+
+  it("explains when Codex model discovery falls back to built-in models", () => {
+    queryState.status = "error";
+    const { container } = renderSelector(agent);
+
+    click(container.querySelector('[data-testid="issue-runtime-selector"]'));
+    click(document.body.querySelector('[data-testid="issue-runtime-model-trigger"]'));
+
+    expect(document.body.textContent).toContain("Models unavailable; showing built-in defaults.");
+    expect(document.body.querySelector('[data-testid="issue-runtime-option-model-gpt-5.6-sol"]')).toBeTruthy();
   });
 });
