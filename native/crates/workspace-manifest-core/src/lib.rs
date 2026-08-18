@@ -565,7 +565,7 @@ where
     emit(ManifestState::Building, None);
     let mut summary = build_manifest(root, output, limits)?;
     after_initial_build();
-    loop {
+    let stopped_during_initial_scan = loop {
         let batch = collect_until_quiet(&event_receiver, output, debounce, Some(&stop));
         if batch.disconnected {
             emit(ManifestState::Unavailable, Some(&summary));
@@ -582,10 +582,13 @@ where
             })?;
         }
         if batch.stopped || !batch.dirty {
-            break;
+            break batch.stopped;
         }
-    }
+    };
     emit(ManifestState::Ready, Some(&summary));
+    if stopped_during_initial_scan {
+        return Ok(());
+    }
     loop {
         match stop.try_recv() {
             Ok(()) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
