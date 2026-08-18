@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import type { ReactNode } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider, useTheme } from "../../context/ThemeContext";
@@ -154,6 +154,31 @@ describe("tool call failure indicator presentation", () => {
     expect(container.textContent).toContain("Errored");
     expect(container.textContent).toContain("Failed with exit code 7");
     expect(container.innerHTML).toContain("text-red");
+  });
+
+  it("passes semantic command metadata into the expanded Chat task view", () => {
+    const container = mount(
+      <TranscriptChatToolActionRow
+        block={{
+          ts: "2026-08-17T00:00:00.000Z",
+          endTs: "2026-08-17T00:00:01.000Z",
+          name: "command_execution",
+          input: { command: "echo hello" },
+          result: "hello",
+          status: "completed",
+        }}
+        density="compact"
+        inline
+      />,
+    );
+
+    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
+    act(() => taskTab?.click());
+
+    const taskPanel = container.querySelector("[data-command-terminal-panel='task']");
+    expect(taskPanel?.textContent).toContain("echo hello");
+    expect(taskPanel?.textContent).not.toContain("Command details");
+    expect(taskPanel?.textContent).not.toContain("Not recorded");
   });
 
   it("closes only failure-driven auto expansion when the mounted preference changes", () => {

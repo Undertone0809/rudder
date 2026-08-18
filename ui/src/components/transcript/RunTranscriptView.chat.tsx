@@ -382,7 +382,8 @@ export function TranscriptChatToolActionRow({
   const failureAutoOpenRef = useRef(!inline && defaultOpenOnError && renderFailure);
   const [imageOpen, setImageOpen] = useState(false);
   const [openDiffIndexes, setOpenDiffIndexes] = useState<Set<number>>(() => new Set());
-  const duration = quiet ? null : formatTranscriptDuration(block.ts, block.endTs);
+  const taskDuration = formatTranscriptDuration(block.ts, block.endTs);
+  const duration = quiet ? null : taskDuration;
   const statusText =
     renderFailure
       ? localizeText("Failed")
@@ -765,7 +766,11 @@ export function TranscriptChatToolActionRow({
           <CommandTerminalDetail
             command={requestText}
             output={responseText}
-            status={visualStatus}
+            status={block.status}
+            showFailureIndicators={showFailureIndicators}
+            taskLabel={semantic.label}
+            taskSummary={displaySummary}
+            duration={taskDuration}
             className="motion-disclosure-enter ml-5 mt-2"
           />
         ) : (
