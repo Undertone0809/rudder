@@ -1,16 +1,24 @@
 //! Rebuildable workspace manifests backed by cross-platform file notifications.
 
+use notify::Event;
+#[cfg(target_os = "linux")]
+use notify::EventKind;
 #[cfg(not(target_os = "linux"))]
 use notify::RecommendedWatcher;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
+use notify::event::ModifyKind;
+#[cfg(test)]
 use notify::{Config, PollWatcher};
-use notify::{Event, RecursiveMode, Watcher};
+#[cfg(any(not(target_os = "linux"), test))]
+use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::fs::File;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::mpsc::Sender;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -394,6 +402,66 @@ enum WatchSignal {
     Error,
 }
 
+#[cfg(target_os = "linux")]
+struct BoundedPollWatcher {
+    stop_sender: Option<Sender<()>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "linux")]
+impl BoundedPollWatcher {
+    fn new(
+        root: &Path,
+        output: &Path,
+        limits: ManifestLimits,
+        event_sender: Sender<WatchSignal>,
+    ) -> Result<Self, ManifestError> {
+        let mut previous = collect_entries(root, output, limits)?;
+        let (stop_sender, stop_receiver) = mpsc::channel();
+        let root = root.to_path_buf();
+        let output = output.to_path_buf();
+        let handle = std::thread::spawn(move || {
+            loop {
+                match stop_receiver.recv_timeout(Duration::from_millis(250)) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => {}
+                }
+                let current = match collect_entries(&root, &output, limits) {
+                    Ok(entries) => entries,
+                    Err(_) => {
+                        let _ = event_sender.send(WatchSignal::Error);
+                        break;
+                    }
+                };
+                if current != previous {
+                    previous = current;
+                    let event =
+                        Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.clone());
+                    if event_sender.send(WatchSignal::Event(event)).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(Self {
+            stop_sender: Some(stop_sender),
+            handle: Some(handle),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for BoundedPollWatcher {
+    fn drop(&mut self) {
+        if let Some(stop_sender) = self.stop_sender.take() {
+            let _ = stop_sender.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct EventBatch {
     dirty: bool,
@@ -555,20 +623,7 @@ where
     }
     let (event_sender, event_receiver) = mpsc::channel();
     #[cfg(target_os = "linux")]
-    let mut watcher = {
-        let poll_sender = event_sender.clone();
-        PollWatcher::new(
-            move |result| {
-                let signal = match result {
-                    Ok(event) => WatchSignal::Event(event),
-                    Err(_) => WatchSignal::Error,
-                };
-                let _ = poll_sender.send(signal);
-            },
-            Config::default().with_poll_interval(Duration::from_millis(250)),
-        )
-        .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?
-    };
+    let _watcher = BoundedPollWatcher::new(root, output, limits, event_sender.clone())?;
     #[cfg(not(target_os = "linux"))]
     let native_sender = event_sender.clone();
     #[cfg(not(target_os = "linux"))]
@@ -580,6 +635,7 @@ where
         let _ = native_sender.send(signal);
     })
     .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
+    #[cfg(not(target_os = "linux"))]
     watcher
         .watch(root, RecursiveMode::Recursive)
         .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
@@ -625,16 +681,14 @@ where
                     return Err(watch_disconnected());
                 }
                 if batch.stopped {
-                    if batch.dirty {
-                        rebuild_after_events(
-                            batch.overflow,
-                            root,
-                            output,
-                            limits,
-                            &mut summary,
-                            &mut emit,
-                        )?;
-                    }
+                    rebuild_after_events(
+                        batch.overflow,
+                        root,
+                        output,
+                        limits,
+                        &mut summary,
+                        &mut emit,
+                    )?;
                     return Ok(());
                 }
                 rebuild_after_events(
@@ -654,9 +708,7 @@ where
                     return Err(watch_disconnected());
                 }
                 if batch.stopped {
-                    if batch.dirty {
-                        rebuild_after_events(true, root, output, limits, &mut summary, &mut emit)?;
-                    }
+                    rebuild_after_events(true, root, output, limits, &mut summary, &mut emit)?;
                     return Ok(());
                 }
                 rebuild_after_events(true, root, output, limits, &mut summary, &mut emit)?;
@@ -972,6 +1024,49 @@ mod tests {
         assert_eq!(states, [ManifestState::Building, ManifestState::Ready]);
         let parsed: WorkspaceManifest = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
         assert!(parsed.entries.iter().any(|entry| entry.path == "late"));
+    }
+
+    #[test]
+    fn rebuilds_consumed_mutation_before_stop_returns() {
+        let outer = tempdir().unwrap();
+        let workspace = outer.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        fs::write(workspace.join("before"), b"before").unwrap();
+        let output = outer.path().join("manifest.json");
+        let late = workspace.join("late");
+        let (stop_sender, stop_receiver) = mpsc::channel();
+        let (ready_sender, ready_receiver) = mpsc::channel();
+        let states = Arc::new(Mutex::new(Vec::new()));
+        let states_for_emit = Arc::clone(&states);
+        let output_for_thread = output.clone();
+        let handle = thread::spawn(move || {
+            watch_workspace(
+                &workspace,
+                &output_for_thread,
+                limits(),
+                Duration::from_millis(75),
+                stop_receiver,
+                move |state, _| {
+                    states_for_emit.lock().unwrap().push(state);
+                    if state == ManifestState::Ready {
+                        let _ = ready_sender.send(());
+                    }
+                    if state == ManifestState::Dirty {
+                        let _ = stop_sender.send(());
+                    }
+                },
+            )
+            .unwrap();
+        });
+        ready_receiver.recv_timeout(Duration::from_secs(3)).unwrap();
+        fs::write(&late, b"late").unwrap();
+        handle.join().unwrap();
+
+        let parsed: WorkspaceManifest = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+        assert!(parsed.entries.iter().any(|entry| entry.path == "late"));
+        let captured = states.lock().unwrap();
+        assert!(captured.contains(&ManifestState::Dirty), "{captured:?}");
+        assert_eq!(captured.last(), Some(&ManifestState::Ready));
     }
 
     #[test]
