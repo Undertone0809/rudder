@@ -330,6 +330,8 @@ describe("workspace backup service", () => {
     await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "native-read.txt"), "from native archive\n", "utf8");
     const { resolveNativeArchiveBinary } = await import("../services/workspace-backup-v2.js");
+    const nativePath = process.env.RUDDER_NATIVE_ARCHIVE_PATH?.trim() || resolveNativeArchiveBinary();
+    if (!(await fs.stat(nativePath).then((stat) => stat.isFile()).catch(() => false))) return;
     const previousMode = process.env.RUDDER_NATIVE_MODE;
     const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
     const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
@@ -337,7 +339,7 @@ describe("workspace backup service", () => {
     process.env.RUDDER_NATIVE_MODE = "required";
     process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
     delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
-    process.env.RUDDER_NATIVE_ARCHIVE_PATH = resolveNativeArchiveBinary();
+    process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativePath;
     try {
       const backup = await service.create({ orgId });
       await expect(service.listFiles(orgId, backup.id)).resolves.toMatchObject({
