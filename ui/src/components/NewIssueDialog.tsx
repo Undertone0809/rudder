@@ -1379,7 +1379,10 @@ export function NewIssueDialog() {
         }}
         >
         <DialogTitle className="sr-only">{isSubIssueDraft ? "New sub-issue" : "New issue"}</DialogTitle>
-        <div className="flex items-center justify-center border-b border-border/60 px-4 py-2 shrink-0">
+        <div
+          data-slot="new-issue-mode-bar"
+          className="relative flex shrink-0 items-center justify-center border-b border-border/60 px-4 py-2"
+        >
           <div
             className="grid h-8 w-40 grid-cols-2 overflow-hidden rounded-lg border border-border bg-muted/30 p-0.5"
             role="tablist"
@@ -1404,6 +1407,19 @@ export function NewIssueDialog() {
               </button>
             ))}
           </div>
+          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+            <Button
+              data-slot="new-issue-close-button"
+              variant="ghost"
+              size="icon-xs"
+              className="text-muted-foreground"
+              aria-label="Close new issue dialog"
+              onClick={handleCloseNewIssue}
+              disabled={isCreatingOrRedirecting}
+            >
+              <span className="text-lg leading-none">&times;</span>
+            </Button>
+          </div>
         </div>
         {redirectingIssueRef ? (
           <div
@@ -1417,7 +1433,7 @@ export function NewIssueDialog() {
         ) : null}
 
         {/* Header bar */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
+        <div data-slot="new-issue-header" className="flex shrink-0 items-center border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Popover open={companyOpen} onOpenChange={setCompanyOpen}>
               <PopoverTrigger asChild>
@@ -1475,18 +1491,6 @@ export function NewIssueDialog() {
             </Popover>
             <span className="text-muted-foreground/60">&rsaquo;</span>
             <span>{isSubIssueDraft ? "New sub-issue" : "New issue"}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              aria-label="Close new issue dialog"
-              onClick={handleCloseNewIssue}
-              disabled={isCreatingOrRedirecting}
-            >
-              <span className="text-lg leading-none">&times;</span>
-            </Button>
           </div>
         </div>
 
