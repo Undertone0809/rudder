@@ -750,6 +750,9 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(20));
         }
+        // Let the notify backend finish handing off from the initial scan
+        // before starting the high-volume mutation storm.
+        thread::sleep(Duration::from_millis(100));
         for index in 0..40 {
             let first = workspace.join(format!("file-{index}"));
             let second = workspace.join(format!("renamed-{index}"));
