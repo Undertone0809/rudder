@@ -171,18 +171,32 @@ fn collect_entries(
     let mut pending = vec![root.to_path_buf()];
     let mut path_bytes = 0_u64;
     while let Some(directory) = pending.pop() {
-        let mut children = fs::read_dir(&directory)
-            .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?;
+        // A rebuild can race with a rename/delete storm. A directory that was
+        // observed in one event may be gone by the time its children are read;
+        // skip that stale branch and let the next quiet generation converge.
+        let mut children = match fs::read_dir(&directory) {
+            Ok(entries) => entries
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound && directory != root => continue,
+            Err(error) => return Err(ManifestError::safe_source("workspace_read_failed", error)),
+        };
         children.sort_by_key(|entry| entry.file_name());
         for child in children {
             let path = child.path();
             if path == output || is_manifest_temp(&path, output) {
                 continue;
             }
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(ManifestError::safe_source(
+                        "workspace_metadata_failed",
+                        error,
+                    ));
+                }
+            };
             let relative = path
                 .strip_prefix(root)
                 .map_err(|_| ManifestError::safe("workspace_path_escape"))?;

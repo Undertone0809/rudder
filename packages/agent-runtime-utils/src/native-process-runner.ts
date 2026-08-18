@@ -367,7 +367,6 @@ export async function runNativeChildProcess(
     const drainOutput = async () => {
       if (logDeliveryActive) return;
       logDeliveryActive = true;
-      lifecycle.pause();
       while (outputQueue.length > 0) {
         const output = outputQueue.shift()!;
         queuedOutputBytes -= Buffer.byteLength(output.data);
@@ -380,7 +379,6 @@ export async function runNativeChildProcess(
         }
       }
       logDeliveryActive = false;
-      lifecycle.resume();
       for (const resolveDelivery of logDeliveryWaiters.splice(0)) resolveDelivery();
     };
     const queueOutput = (output: { stream: "stdout" | "stderr"; data: string }) => {
