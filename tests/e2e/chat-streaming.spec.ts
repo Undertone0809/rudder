@@ -1064,7 +1064,7 @@ test.describe("Chat streaming", () => {
     await composer.fill("");
     await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
 
-    await page.getByRole("button", { name: "Continue" }).click();
+    await composer.press("Enter");
 
     await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Continue from the interrupted chat run." }).last()).toBeVisible({
       timeout: 15_000,

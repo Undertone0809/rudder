@@ -3368,6 +3368,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               void queueComposerMessage(selectedConversation);
               return;
             }
+            if (sendButtonMode === "continue" && selectedConversation) {
+              void sendMessage({
+                bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,
+                filesOverride: [],
+                conversationOverride: selectedConversation,
+              });
+              return;
+            }
             if (!controlsDisabled) {
               void sendMessage(); }
           }}
