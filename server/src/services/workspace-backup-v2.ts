@@ -666,7 +666,7 @@ export async function readWorkspaceBackupV2FileNative(filePath: string, relative
       String(WORKSPACE_BACKUP_V2_MAX_FILE_BYTES),
     ]);
     if (response.ok !== true || response.operation !== "extractFile" || response.protocolVersion !== NATIVE_PROTOCOL_VERSION || response.accepted !== true) {
-      throw nativeDiagnostic("protocol", "extract_file_envelope_mismatch", JSON.stringify({ operation: response.operation, protocolVersion: response.protocolVersion, accepted: response.accepted }));
+      throw nativeDiagnostic("protocol", "extract_file_envelope_mismatch", JSON.stringify({ operation: response.operation, protocolVersion: response.protocolVersion, accepted: response.accepted }), response.accepted !== true);
     }
     const data = await fs.readFile(output);
     if (!Number.isSafeInteger(response.byteSize) || Number(response.byteSize) !== data.byteLength || typeof response.sha256 !== "string" || response.sha256 !== sha256(data)) {
