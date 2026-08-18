@@ -1,5 +1,5 @@
 import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
-import { createRudderNativeDiagnostic, resolveRudderNativeTarget, type RudderNativeDiagnostic } from "@rudderhq/shared";
+import { createRudderNativeDiagnostic, resolveRudderNativeCapability, resolveRudderNativeTarget, type RudderNativeDiagnostic } from "@rudderhq/shared";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
@@ -139,6 +139,15 @@ export type WorkspaceBackupV2ArchiveIndex = {
   manifest: WorkspaceBackupV2Manifest;
   manifestEntry: WorkspaceBackupV2ArchiveEntry;
   entries: Map<string, WorkspaceBackupV2ArchiveEntry>;
+};
+
+export type WorkspaceBackupV2ReadPayload = {
+  manifest: WorkspaceBackupV2Manifest;
+  native: boolean;
+  archiveSize: number;
+  index?: WorkspaceBackupV2ArchiveIndex;
+  rootPath: string;
+  fallbackWarning?: string;
 };
 
 function sha256(value: Uint8Array | string) {
@@ -667,6 +676,41 @@ export async function readWorkspaceBackupV2FileNative(filePath: string, relative
   } finally {
     await fs.rm(staging, { recursive: true, force: true });
   }
+}
+
+export async function inspectWorkspaceBackupV2ForService(filePath: string, orgId: string, expectedArchiveSha256?: string | null): Promise<WorkspaceBackupV2ReadPayload> {
+  const policy = resolveRudderNativeCapability({ capability: "workspace-backup", env: process.env, legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"] });
+  let fallbackWarning: string | undefined;
+  if (policy.enabled) {
+    try {
+      const inspected = await inspectWorkspaceBackupV2FileNative(filePath);
+      if (expectedArchiveSha256 && await sha256FileBounded(filePath) !== expectedArchiveSha256) throw new Error("Workspace backup artifact checksum does not match the recorded backup metadata");
+      if (inspected.manifest.identity.orgId !== orgId) throw new Error("organization identity mismatch");
+      return { ...inspected, native: true, rootPath: inspected.manifest.identity.rootPath };
+    } catch (error) {
+      const diagnostic = workspaceBackupV2NativeDiagnostic(error);
+      if (!policy.fallbackAllowed || !diagnostic.fallbackAllowed) throw error;
+      fallbackWarning = formatWorkspaceBackupV2NativeFallback(error);
+    }
+  }
+  const index = await inspectWorkspaceBackupV2File(filePath);
+  if (expectedArchiveSha256 && await sha256FileBounded(filePath) !== expectedArchiveSha256) throw new Error("Workspace backup artifact checksum does not match the recorded backup metadata");
+  if (index.manifest.identity.orgId !== orgId) throw new Error("organization identity mismatch");
+  return { manifest: index.manifest, native: false, archiveSize: index.archiveSize, index, rootPath: index.manifest.identity.rootPath, fallbackWarning };
+}
+
+export async function readWorkspaceBackupV2EntryForService(filePath: string, rootPath: string, relativePath: string): Promise<Buffer> {
+  const policy = resolveRudderNativeCapability({ capability: "workspace-backup", env: process.env, legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"] });
+  if (policy.enabled) {
+    try {
+      return await readWorkspaceBackupV2FileNative(filePath, relativePath, rootPath);
+    } catch (error) {
+      const diagnostic = workspaceBackupV2NativeDiagnostic(error);
+      if (!policy.fallbackAllowed || !diagnostic.fallbackAllowed) throw error;
+    }
+  }
+  const index = await inspectWorkspaceBackupV2File(filePath);
+  return readWorkspaceBackupV2File(filePath, index, relativePath);
 }
 
 function requireNativeString(value: unknown, label: string) {
