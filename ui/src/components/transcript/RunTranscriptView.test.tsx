@@ -1335,8 +1335,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Custom Tool");
-    expect(html).not.toContain("Failed");
-    expect(html).not.toContain("text-red-700");
+    expect(html).toContain("Failed");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).toContain("Expand tool details");
     expect(html).not.toContain("Response");
@@ -2370,7 +2369,7 @@ describe("RunTranscriptView", () => {
 
   it("highlights chat tool groups only when every tool call fails", () => {
     const html = renderToStaticMarkup(
-      <ThemeProvider initialShowToolCallFailureIndicators>
+      <ThemeProvider>
         <RunTranscriptView
           density="compact"
           presentation="chat"

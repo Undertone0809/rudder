@@ -297,37 +297,6 @@ afterEach(() => {
 });
 
 describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
-  it("updates the content accessibility label when editor props change", async () => {
-    act(() => {
-      root?.render(
-        <CodeMirrorMarkdownEditor
-          value=""
-          onChange={() => undefined}
-          placeholder="Add description..."
-        />,
-      );
-    });
-    await flushReact();
-
-    expect(editorView().contentDOM.getAttribute("aria-label")).toBe(
-      "Add description... Markdown editor",
-    );
-
-    act(() => {
-      root?.render(
-        <CodeMirrorMarkdownEditor
-          value=""
-          onChange={() => undefined}
-          ariaLabel="Instruction"
-          placeholder="Describe the Issue you want the Agent to create..."
-        />,
-      );
-    });
-    await flushReact();
-
-    expect(editorView().contentDOM.getAttribute("aria-label")).toBe("Instruction");
-  });
-
   it("blocks text and image paste mutations while read-only", async () => {
     const onChange = vi.fn();
     const imageUploadHandler = vi.fn(async () => "/api/assets/read-only/content");
@@ -835,7 +804,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(ref.current?.getMarkdown?.()).toBe(markdown);
   });
 
-  it("emits one navigation callback when an atomic reference receives a pointer sequence", async () => {
+  it("emits one navigation callback for an atomic reference click", async () => {
     const onInlineTokenClick = vi.fn();
     act(() => {
       root?.render(
@@ -862,14 +831,13 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
       bubbles: true,
       cancelable: true,
     });
-    const atomicPointerUp = new MouseEvent("mouseup", {
-      button: 0,
-      bubbles: true,
-      cancelable: true,
-    });
     act(() => {
       atomicLink?.dispatchEvent(atomicPointerDown);
-      atomicLink?.dispatchEvent(atomicPointerUp);
+      atomicLink?.dispatchEvent(new MouseEvent("click", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
     });
     expect(atomicPointerDown.defaultPrevented).toBe(true);
     expect(onInlineTokenClick).toHaveBeenCalledTimes(1);

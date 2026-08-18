@@ -1697,24 +1697,22 @@ export function Layout() {
                             <ThreeColumnContextSidebar />
                           )}
                         </div>
-                        {!isLibraryRoute ? (
-                          <div
-                            data-testid="workspace-column-resizer"
-                            aria-hidden={!contextSidebarVisible}
-                            className={cn(
-                              "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
-                              !resizingColumn && "motion-resize",
-                              contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
-                              resizingColumn && "is-resizing",
-                            )}
-                            onPointerDown={startContextColumnResize}
-                            role={contextSidebarVisible ? "separator" : undefined}
-                            aria-orientation="vertical"
-                            aria-label="Resize workspace columns"
-                          >
-                            <div className="workspace-column-resizer-line" />
-                          </div>
-                        ) : null}
+                        <div
+                          data-testid="workspace-column-resizer"
+                          aria-hidden={!contextSidebarVisible}
+                          className={cn(
+                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
+                            !resizingColumn && "motion-resize",
+                            contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
+                            resizingColumn && "is-resizing",
+                          )}
+                          onPointerDown={startContextColumnResize}
+                          role={contextSidebarVisible ? "separator" : undefined}
+                          aria-orientation="vertical"
+                          aria-label="Resize workspace columns"
+                        >
+                          <div className="workspace-column-resizer-line" />
+                        </div>
                       </>
                     ) : null}
                     {showIntegratedShellSidebar

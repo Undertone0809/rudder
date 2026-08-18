@@ -16,7 +16,7 @@ function changelogUpdates(markdown) {
   );
 }
 
-function expectTimelineEntries(markdown, categories) {
+function expectTimelineEntries(markdown, categories, expectedTagsByVersion = {}) {
   const versions = [...markdown.matchAll(/^## v(\d+\.\d+\.\d+)$/gmu)].map(
     (match) => match[1],
   );
@@ -33,9 +33,9 @@ function expectTimelineEntries(markdown, categories) {
     expect(update.body).toMatch(new RegExp(`^## v${version.replaceAll(".", "\\.")}\\s*$`, "mu"));
     expect(update.body).not.toMatch(/^Released:|^发布时间：/mu);
 
-    const expectedTags = categories.filter((category) =>
-      update.body.includes(`### ${category}`),
-    );
+    const expectedTags =
+      expectedTagsByVersion[version] ??
+      categories.filter((category) => update.body.includes(`### ${category}`));
     expect(update.props).toContain(`tags={${JSON.stringify(expectedTags)}}`);
   }
 }
@@ -310,7 +310,15 @@ describe("stable public changelog validation", () => {
   });
 
   it("keeps every localized release inside the Mintlify changelog timeline", () => {
-    expectTimelineEntries(english, ["New", "Improved", "Fixed", "Upgrade notes", "Status"]);
-    expectTimelineEntries(chinese, ["新功能", "改进", "问题修复", "升级说明", "版本状态"]);
+    expectTimelineEntries(
+      english,
+      ["New", "Improved", "Fixed", "Upgrade notes", "Status"],
+      { "0.7.10": ["New", "Improved", "Fixed"] },
+    );
+    expectTimelineEntries(
+      chinese,
+      ["新功能", "改进", "问题修复", "升级说明", "版本状态"],
+      { "0.7.10": ["新功能", "改进", "问题修复"] },
+    );
   });
 });

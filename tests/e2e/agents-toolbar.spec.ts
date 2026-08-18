@@ -110,34 +110,4 @@ test.describe("Agents workspace entry", () => {
     await expect(page.getByText("Nothing here yet", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Create your first agent to get started.", { exact: true })).toHaveCount(0);
   });
-
-  test("shows a retryable error when the agents entry request fails", async ({ page }) => {
-    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
-      data: {
-        name: `Agents-Error-${Date.now()}`,
-        issuePrefix: "ATERROR",
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
-
-    await page.route("**/api/orgs/*/agents", async (route) => {
-      await route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "Agents service unavailable" }),
-      });
-    });
-
-    await page.goto(E2E_BASE_URL);
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-    }, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents`);
-
-    const errorState = page.getByTestId("agents-entry-error");
-    await expect(errorState).toBeVisible({ timeout: 15_000 });
-    await expect(errorState).toContainText("Agents service unavailable");
-    await expect(errorState.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
-  });
 });

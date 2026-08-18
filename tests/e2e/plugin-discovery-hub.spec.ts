@@ -173,7 +173,6 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
   const uninstalledPluginIds = new Set<string>();
   const staleInstalledReads: string[] = [];
   let catalogFreshness: RudderPluginCatalog["freshness"] = "fresh";
-  let nextCatalogPreviewGate: Promise<void> | null = null;
 
   const catalog = (): RudderPluginCatalog => ({
     freshness: catalogFreshness,
@@ -214,9 +213,6 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
       await route.fulfill({ status: 404, json: { error: "Fixture Preview not found" } });
       return;
     }
-    const previewGate = nextCatalogPreviewGate;
-    nextCatalogPreviewGate = null;
-    if (previewGate) await previewGate;
     await route.fulfill({ status: 201, json: detail });
   });
   await page.route(`**/api/orgs/${organization.id}/plugins/imports/preview-source`, async (route) => {
@@ -263,24 +259,11 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
     await expect(page.getByText(displayName, { exact: true }).first()).toBeVisible();
   }
 
-  await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub/plugins/unavailable`);
-  await expect(page.getByTestId("plugin-detail-error")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub?tab=plugins`);
-
-  let releaseCatalogPreview!: () => void;
-  nextCatalogPreviewGate = new Promise<void>((resolve) => { releaseCatalogPreview = resolve; });
   await page.getByText("Superpowers", { exact: true }).first().click();
-  await expect(page.getByTestId("plugin-detail-loading")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  releaseCatalogPreview();
   await expect(page).toHaveURL(/\/hub\/plugins\/superpowers\?preview=/);
   await expect(page.getByRole("heading", { name: "Superpowers", exact: true })).toBeVisible();
-  await expect(page.getByTestId("plugin-detail-page")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(page.getByTestId("workspace-main-card")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(requestedIconThemes).toContain("light");
   await expect(page.getByRole("heading", { name: /Skills 14/ })).toBeVisible();
-  const skillsSection = page.locator('section[aria-labelledby="plugin-skills-heading"]');
-  await expect(skillsSection.locator(".lucide-boxes").first()).toBeVisible();
-  await expect(skillsSection.locator(".lucide-file-code-2")).toHaveCount(0);
   await page.getByRole("textbox", { name: "Search Plugin components" }).fill("Workflow 14");
   await expect(page.getByRole("heading", { name: /Skills 1 \/ 14/ })).toBeVisible();
   await expect(page.getByText("Workflow 14", { exact: true })).toBeVisible();
@@ -377,7 +360,6 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
   await expect(page.getByText("Unsupported", { exact: true }).last()).toBeVisible();
   await page.reload();
   await expect(page.getByRole("heading", { name: "Marketing Skills", exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("marketing-skills-detail-desktop-light.png"), fullPage: true });
   await page.getByRole("button", { name: "Install", exact: true }).click();
   await expect(page.getByRole("button", { name: "Installed", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Add to Agent", exact: true }).click();

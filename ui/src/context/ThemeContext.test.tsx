@@ -69,12 +69,10 @@ function ThemeProbe() {
     designStyle,
     baseColor,
     accentTheme,
-    showToolCallFailureIndicators,
     setTheme,
     setDesignStyle,
     setBaseColor,
     setAccentTheme,
-    setShowToolCallFailureIndicators,
   } = useTheme();
   return (
     <div>
@@ -83,13 +81,11 @@ function ThemeProbe() {
       <button type="button" onClick={() => setDesignStyle("mira")}>Mira</button>
       <button type="button" onClick={() => setBaseColor("taupe")}>Taupe</button>
       <button type="button" onClick={() => setAccentTheme("pink")}>Pink</button>
-      <button type="button" onClick={() => setShowToolCallFailureIndicators(true)}>Show tool failures</button>
       <span data-testid="theme">{theme}</span>
       <span data-testid="resolved">{resolvedTheme}</span>
       <span data-testid="design-style">{designStyle}</span>
       <span data-testid="base-color">{baseColor}</span>
       <span data-testid="accent-theme">{accentTheme}</span>
-      <span data-testid="tool-call-failure-indicators">{String(showToolCallFailureIndicators)}</span>
     </div>
   );
 }
@@ -143,14 +139,12 @@ describe("ThemeProvider desktop shell bridge", () => {
     expect(container.querySelector("[data-testid='design-style']")?.textContent).toBe("luma");
     expect(container.querySelector("[data-testid='base-color']")?.textContent).toBe("neutral");
     expect(container.querySelector("[data-testid='accent-theme']")?.textContent).toBe("emerald");
-    expect(container.querySelector("[data-testid='tool-call-failure-indicators']")?.textContent).toBe("false");
     expect(document.documentElement.dataset.style).toBe("luma");
     expect(document.documentElement.dataset.baseColor).toBe("neutral");
     expect(document.documentElement.dataset.themeColor).toBe("emerald");
     expect(localStorage.getItem("rudder.designStyle")).toBe("luma");
     expect(localStorage.getItem("rudder.baseColor")).toBe("neutral");
     expect(localStorage.getItem("rudder.accentTheme")).toBe("emerald");
-    expect(localStorage.getItem("rudder.showToolCallFailureIndicators")).toBe("false");
   });
 
   it("falls back to the Rudder appearance preset for unsupported stored values", () => {
@@ -239,28 +233,5 @@ describe("ThemeProvider desktop shell bridge", () => {
     expect(localStorage.getItem("rudder.designStyle")).toBe("mira");
     expect(localStorage.getItem("rudder.baseColor")).toBe("taupe");
     expect(localStorage.getItem("rudder.accentTheme")).toBe("pink");
-  });
-
-  it("restores and persists the tool call failure indicator preference", () => {
-    installMatchMedia(true);
-    localStorage.setItem("rudder.showToolCallFailureIndicators", "true");
-
-    const container = renderThemeProvider();
-
-    expect(container.querySelector("[data-testid='tool-call-failure-indicators']")?.textContent).toBe("true");
-
-    localStorage.setItem("rudder.showToolCallFailureIndicators", "false");
-    cleanupFn?.();
-    cleanupFn = null;
-    const freshContainer = renderThemeProvider();
-    const showButton = Array.from(freshContainer.querySelectorAll("button"))
-      .find((button) => button.textContent === "Show tool failures");
-
-    act(() => {
-      showButton?.click();
-    });
-
-    expect(freshContainer.querySelector("[data-testid='tool-call-failure-indicators']")?.textContent).toBe("true");
-    expect(localStorage.getItem("rudder.showToolCallFailureIndicators")).toBe("true");
   });
 });

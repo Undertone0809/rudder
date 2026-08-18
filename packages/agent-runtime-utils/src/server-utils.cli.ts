@@ -3,9 +3,8 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runNativeChildProcessOrFallback } from "./native-process-runner.js";
 import { defaultPathForPlatform, fileExists, quoteForCmd, resolveCommandPath, resolveSpawnTarget } from "./server-utils.instructions.js";
-import { appendWithCap, asString, buildManagedSkillOrigin, ChildProcessWithEvents, compactSkillText, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, InstalledSkillTarget, isChildProcessAlive, isMaintainerOnlySkillTarget, killChildProcessTree, LocalCliCredentialShimCommand, parseObject, PersistentSkillSnapshotOptions, readSkillMetadataFromDirectory, resolveInstalledEntryTarget, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, RudderSkillEntry, runningProcesses, RunProcessResult, skillLocationLabel, SpawnTarget } from "./server-utils.process.js";
+import { appendWithCap, asString, buildManagedSkillOrigin, ChildProcessWithEvents, compactSkillText, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, InstalledSkillTarget, isChildProcessAlive, isMaintainerOnlySkillTarget, LocalCliCredentialShimCommand, parseObject, PersistentSkillSnapshotOptions, readSkillMetadataFromDirectory, resolveInstalledEntryTarget, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, RudderSkillEntry, runningProcesses, RunProcessResult, skillLocationLabel, SpawnTarget } from "./server-utils.process.js";
 import type {
   AgentRuntimeSkillEntry,
   AgentRuntimeSkillSnapshot,
@@ -67,6 +66,35 @@ export function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): NodeJS.
     ...normalized,
     [pathKey]: current.length > 0 ? `${entry}${delimiter}${current}` : entry,
   };
+}
+
+export function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
+  if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
+    const args = ["/pid", String(child.pid), "/t"];
+    if (force) args.push("/f");
+    const killer = spawn("taskkill.exe", args, {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.on("error", () => {});
+    return;
+  }
+
+  const signal = force ? "SIGKILL" : "SIGTERM";
+  if (typeof child.pid === "number" && child.pid > 0) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child if its process group is already gone.
+    }
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // The process may have exited between the liveness check and signal.
+  }
 }
 
 function isChildProcessTreeAlive(child: ChildProcessWithEvents): boolean {
@@ -1383,7 +1411,7 @@ export async function runChildProcess(
 
     const mergedEnv = ensurePathInEnv(rawMerged);
     void resolveSpawnTarget(command, args, opts.cwd, mergedEnv)
-      .then(async (target) => {
+      .then((target) => {
         if (opts.abortSignal?.aborted) {
           resolve({
             exitCode: null,
@@ -1397,8 +1425,6 @@ export async function runChildProcess(
           return;
         }
 
-        const nativeResult = await runNativeChildProcessOrFallback(runId, target.command, target.args, mergedEnv, { ...opts, onLogError });
-        if (nativeResult) { resolve(nativeResult); return; }
         const child = spawn(target.command, target.args, {
           cwd: opts.cwd,
           detached: process.platform !== "win32",

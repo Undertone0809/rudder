@@ -1605,26 +1605,6 @@ describe("ProposalCard", () => {
     expect(html).toContain("Operation proposal");
     expect(html).toContain("Review this proposal here before continuing the conversation.");
   });
-
-  it("uses the inset hover treatment for pending operation proposal changes", () => {
-    const html = renderProposalCard(message({
-      role: "assistant",
-      kind: "operation_proposal",
-      body: "Please review this lightweight change.",
-      structuredPayload: {
-        operationProposal: {
-          targetType: "agent",
-          targetId: "agent-1",
-          summary: "Update agent title",
-          patch: { title: "Founding Engineer" },
-        },
-        operationProposalState: { status: "pending" },
-      },
-    }));
-
-    expect(html).toContain('data-hover-style="inset"');
-    expect(html).toContain(">Request changes</button>");
-  });
 });
 
 describe("proposal revision prompts", () => {

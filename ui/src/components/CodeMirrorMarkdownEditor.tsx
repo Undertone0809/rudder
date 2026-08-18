@@ -763,7 +763,6 @@ function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor) {
         || event.currentTarget.matches("[data-mention-kind], [data-skill-token='true']");
       if (!isToken) return false;
     }
-    if (!isPrimaryPlainMouseEvent(event.nativeEvent)) return false;
     // Atomic token activation is owned by the widget's native listener. It
     // runs after React's delegated handler and keeps the same DOM alive across
     // mousedown/click, while this return prevents MarkdownBody's ordinary-link
@@ -1053,7 +1052,6 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     contentClassName,
     bordered = true,
   } = props;
-  const editorAriaLabel = ariaLabel ?? (placeholder ? `${placeholder} Markdown editor` : "Markdown editor");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -2102,7 +2100,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       ])),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.contentAttributes.of({
-        "aria-label": editorAriaLabel,
+        "aria-label": ariaLabel ?? (placeholder ? `${placeholder} Markdown editor` : "Markdown editor"),
         "aria-autocomplete": "list",
         "aria-expanded": "false",
         "data-markdown-source-editor": "true",
@@ -2238,12 +2236,6 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     unregisterPortal,
     updateMentionState,
   ]);
-
-  useEffect(() => {
-    const content = viewRef.current?.contentDOM;
-    if (!content) return;
-    content.setAttribute("aria-label", editorAriaLabel);
-  }, [editorAriaLabel]);
 
   useEffect(() => {
     const view = viewRef.current;

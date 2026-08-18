@@ -730,13 +730,7 @@ function MessengerApprovalCard({
   };
 
   const decisionMutation = useMutation({
-    mutationFn: async ({
-      decision,
-      decisionNote,
-    }: {
-      decision: "approve" | "reject";
-      decisionNote?: string;
-    }) => {
+    mutationFn: async (decision: "approve" | "reject" | "requestRevision") => {
       if (decision === "approve") {
         const nextPayload =
           item.approval.type === "chat_issue_creation"
@@ -744,7 +738,8 @@ function MessengerApprovalCard({
             : undefined;
         return approvalsApi.approve(item.approval.id, undefined, nextPayload);
       }
-      return approvalsApi.reject(item.approval.id, decisionNote);
+      if (decision === "reject") return approvalsApi.reject(item.approval.id);
+      return approvalsApi.requestRevision(item.approval.id);
     },
     onSuccess: invalidateApprovalViews,
     onError: (error) => {
@@ -776,9 +771,11 @@ function MessengerApprovalCard({
         <ApprovalCard
           approval={item.approval}
           requesterAgent={null}
-          origin={item.origin}
-          onApprove={() => decisionMutation.mutate({ decision: "approve" })}
-          onReject={(decisionNote) => decisionMutation.mutateAsync({ decision: "reject", decisionNote })}
+          onApprove={() => decisionMutation.mutate("approve")}
+          onReject={() => decisionMutation.mutate("reject")}
+          onRequestRevision={pending ? () => decisionMutation.mutate("requestRevision") : undefined}
+          detailLink={`/messenger/approvals/${item.approval.id}`}
+          detailLabel="Open full approval"
           payloadContext={{
             agents,
             projects,

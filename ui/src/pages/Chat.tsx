@@ -20,7 +20,6 @@ import {
   ChatComposerSkillsMenuContent,
   ChatComposerSurface,
   ChatComposerToolbar,
-  ChatComposerVoiceButton,
 } from "@/components/chat/ChatComposer";
 import { ChatConversationHeader } from "@/components/chat/ChatConversationHeader";
 import {
@@ -60,7 +59,6 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
-import { useDesktopVoiceInput } from "@/hooks/useDesktopVoiceInput";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
@@ -1555,14 +1553,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         });
         return;
       } if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; activeStreamScopeKey = streamScopeKey; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
-      // Keep the composer responsive while a legacy chat's missing agent binding is persisted.
-      setChatSendInFlight(streamScopeKey, true);
       if (!conversation.preferredAgentId && selectedAgentId) { conversation = await chatsApi.update(conversation.id, { preferredAgentId: selectedAgentId }); setDraftPreferredAgentId(selectedAgentId); rememberChatAgentId(selectedOrganizationId, selectedAgentId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
       if (newConversationLockAcquired || newConversationSendLockRef.current) { releaseNewConversationSendLock();
         newConversationLockAcquired = false; }
       if (usesComposerState) { setBranchPreview(null); setDraft("");
-        clearPendingFilesForCurrentScope(); } const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(streamScopeKey, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
+        clearPendingFilesForCurrentScope(); } setChatSendInFlight(streamScopeKey, true); const abortController = new AbortController(); const startedAt = new Date(); const streamKey = `${chatId}:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`; activeStreamKey = streamKey; streamOwnershipRef.current[chatId] = { streamKey, controller: abortController }; setStreamAbortController(streamScopeKey, abortController); conversation = upsertOptimisticConversation(conversation, body, startedAt);
       setStreamDraftForChat(streamScopeKey, {
         chatId,
         streamKey,
@@ -2439,14 +2435,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         ? null
       : draftPreflightError
         ?? draftPreflightQuery.data?.error
-        ?? "Selected chat configuration is unavailable.";
-  const voiceInput = useDesktopVoiceInput({
-    editorRef: composerEditorRef,
-    scopeKey: draftStorageScopeKey,
-    disabled: composerUnavailable || runtimeSelectionPending,
-  });
-  const voiceInputState = voiceInput.state === "unavailable" ? "idle" : voiceInput.state;
-  const hasPendingLightweightProposal = rawMessages.some(
+        ?? "Selected chat configuration is unavailable."; const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const runtimePillLabel = chatRuntimeSelectionLabel({
     agent: activeSkillAgent,
@@ -3374,7 +3363,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }}
         />
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {[responseAnnotationAnnouncement, voiceInput.statusMessage].filter(Boolean).join(" ")}
+        {responseAnnotationAnnouncement}
       </div>
       {renderSideChatSlashCommandMenu()}
       {composerUnavailable && composerUnavailableMessage ? (
@@ -3421,21 +3410,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           >
               <ChatPlanModeMenuToggle active={activePlanMode} onChange={applyPlanMode} />
           </ChatComposerAddMenu>
-          {voiceInput.visible ? (
-            <ChatComposerVoiceButton
-              state={voiceInputState}
-              disabled={voiceInput.busy ? false : composerUnavailable || runtimeSelectionPending}
-              onClick={() => {
-                if (voiceInput.state === "recording") {
-                  voiceInput.stop();
-                } else if (voiceInput.busy) {
-                  voiceInput.cancel();
-                } else {
-                  voiceInput.start();
-                }
-              }}
-            />
-          ) : null}
           {activePlanMode ? <ChatPlanModeChip onDisable={() => applyPlanMode(false)} /> : null}
           {showProjectSelector ? (
             <ChatProjectSelectorButton

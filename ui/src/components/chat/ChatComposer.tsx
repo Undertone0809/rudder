@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { SkillMentionOption } from "@/lib/agent-skill-mentions";
 import { cn } from "@/lib/utils";
-import { ArrowUp, Boxes, Loader2, Mic, Paperclip, Plus, Square } from "lucide-react";
+import { ArrowUp, Boxes, Loader2, Paperclip, Plus, Square } from "lucide-react";
 import {
   forwardRef,
   type ClipboardEventHandler,
@@ -23,16 +23,6 @@ import {
 } from "react";
 
 export type ChatComposerSendMode = "send" | "sending" | "stop" | "stopping" | "queue";
-
-export type ChatComposerVoiceState =
-  | "idle"
-  | "requesting"
-  | "recording"
-  | "transcribing"
-  | "success"
-  | "empty"
-  | "error"
-  | "cancelled";
 
 export const ChatComposerSurface = forwardRef<
   HTMLDivElement,
@@ -133,53 +123,6 @@ export function ChatComposerToolbar({
       </div>
       {actions}
     </div>
-  );
-}
-
-export function ChatComposerVoiceButton({
-  state,
-  disabled,
-  onClick,
-}: {
-  state: ChatComposerVoiceState;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const recording = state === "recording";
-  const busy = state === "requesting" || state === "transcribing";
-  const label = recording
-    ? "Stop voice recording"
-    : state === "requesting"
-      ? "Cancel microphone request"
-      : state === "transcribing"
-        ? "Cancel voice transcription"
-        : "Voice input";
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      data-testid="chat-voice-input"
-      aria-label={label}
-      aria-busy={busy ? true : undefined}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "shrink-0 rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground",
-        "hover:bg-[color:var(--surface-active)]",
-        "focus-visible:ring-2 focus-visible:ring-ring/40",
-        recording && "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300",
-      )}
-    >
-      {recording ? (
-        <Square className="h-3.5 w-3.5 fill-current" />
-      ) : busy ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
-        <Mic className="h-4 w-4" />
-      )}
-    </Button>
   );
 }
 

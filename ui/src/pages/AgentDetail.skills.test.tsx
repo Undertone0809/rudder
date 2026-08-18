@@ -239,43 +239,6 @@ async function flushQueries() {
 }
 
 describe("AgentDetail skills tab", () => {
-  it("keeps a visible loading state while skills data is pending", async () => {
-    const pending = new Promise<never>(() => {});
-    vi.mocked(agentsApi.skills).mockReturnValue(pending);
-    vi.mocked(organizationSkillsApi.list).mockReturnValue(pending);
-
-    const container = renderAgentDetail();
-    await flushQueries();
-
-    expect(container.querySelector("[data-testid='agent-skills-loading']")).not.toBeNull();
-    expect(document.body.textContent).toContain("Loading skills...");
-  });
-
-  it("shows a retryable error when skills data fails to load", async () => {
-    vi.mocked(agentsApi.skills)
-      .mockRejectedValueOnce(new Error("Skills service unavailable"))
-      .mockResolvedValue(skillSnapshot());
-
-    const container = renderAgentDetail();
-    await flushQueries();
-
-    expect(container.querySelector("[data-testid='agent-skills-error']")?.textContent)
-      .toContain("Skills service unavailable");
-
-    const retryButton = container.querySelector<HTMLButtonElement>(
-      "[data-testid='agent-skills-error'] button",
-    );
-    expect(retryButton?.textContent).toContain("Retry");
-
-    await act(async () => {
-      retryButton?.click();
-    });
-    await flushQueries();
-
-    expect(container.querySelector("[data-testid='agent-skills-error']")).toBeNull();
-    expect(document.body.textContent).toContain("Organization skills");
-  });
-
   it("presents Tools inside Skills and offers Hub, Chat, or upload for adding a Skill", async () => {
     const container = await renderAgentDetail();
     await flushQueries();

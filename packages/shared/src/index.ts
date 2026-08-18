@@ -78,21 +78,6 @@ export {
   type OrganizationIntelligenceProfileStatus, type OrganizationResourceKind,
   type OrganizationResourceSourceType, type OrganizationSecretPurpose, type OrganizationStatus, type PauseReason, type PermissionKey, type PrincipalType, type ProjectIconName, type ProjectResourceAttachmentRole, type ProjectStatus, type RequestKind, type RequestStatus, type RudderAgentV1McpToolName, type RudderBrowserMcpToolName, type RudderCoreMcpToolName, type SecretProvider, type SideChatState, type StorageProvider, type WakeupRequestStatus, type WakeupTriggerDetail
 } from "./constants.js";
-export {
-  RUDDER_NATIVE_CAPABILITIES,
-  RUDDER_NATIVE_MODES,
-  createRudderNativeDiagnostic,
-  parseRudderNativeMode,
-  resolveRudderNativeCapability,
-  resolveRudderNativeTarget,
-  rudderNativeCapabilityDisableEnv,
-  type ResolveRudderNativeCapabilityOptions,
-  type RudderNativeCapability,
-  type RudderNativeCapabilityPolicy,
-  type RudderNativeDiagnostic,
-  type RudderNativeEngine,
-  type RudderNativeMode
-} from "./native-mode.js";
 export type {
   AppBuilderApp,
   AppBuilderBuildStatus,
@@ -288,7 +273,7 @@ export type {
   IssueSearchMatch, IssueWorkProduct, IssueWorkProductProvider, IssueWorkProductReviewState, IssueWorkProductStatus, IssueWorkProductType, JoinRequest, LibraryDocument,
   LibraryDocumentIssueLink,
   LibraryDocumentRevision,
-  LibraryDocumentSummary, LibraryEntry, LiveEvent, MessengerApprovalOrigin, MessengerApprovalThreadItem, MessengerAssistanceThreadItem, MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerThreadAction, MessengerThreadDetail,
+  LibraryDocumentSummary, LibraryEntry, LiveEvent, MessengerApprovalThreadItem, MessengerAssistanceThreadItem, MessengerBudgetThreadItem, MessengerChatThreadDetail, MessengerCustomGroup, MessengerCustomGroupEntry, MessengerCustomGroupHydratedEntry, MessengerCustomGroupHydratedSavedViewEntry, MessengerCustomGroupHydratedThreadEntry, MessengerCustomGroupWithEntries, MessengerCustomGroupsResponse, MessengerDirectoryItem, MessengerEvent, MessengerFailedRunThreadItem, MessengerHeartbeatRunThreadItem, MessengerIssueThreadItem, MessengerJoinRequestThreadItem, MessengerRequestThreadItem, MessengerRunOriginDescriptor, MessengerRunOriginSource, MessengerRunOriginSourceState, MessengerSavedView, MessengerSavedViewKeepResult, MessengerSavedViewPage, MessengerSavedViewPageInfo, MessengerSavedViewPlacement, MessengerSavedViewTarget, MessengerSavedViewTargetKind, MessengerSystemThreadItem, MessengerThreadAction, MessengerThreadDetail,
   MessengerThreadItem, MessengerThreadPageInfo,
   MessengerThreadSummary,
   MessengerThreadSummaryPage, MessengerThreadUserState, OperatorProfileSettings, Organization, OrganizationExportJob,

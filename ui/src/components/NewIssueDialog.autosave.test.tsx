@@ -183,17 +183,7 @@ vi.mock("./MarkdownEditor", () => ({
 }));
 
 vi.mock("./InlineEntitySelector", () => ({
-  InlineEntitySelector: ({
-    placeholder,
-    value,
-  }: {
-    placeholder?: string;
-    value?: string;
-  }) => (
-    <button type="button" data-selector-value={value}>
-      {placeholder ?? "selector"}
-    </button>
-  ),
+  InlineEntitySelector: ({ placeholder }: { placeholder?: string }) => <button type="button">{placeholder ?? "selector"}</button>,
 }));
 
 vi.mock("./AgentIconPicker", () => ({
@@ -308,7 +298,6 @@ beforeEach(() => {
   mockState.mutationCalls.length = 0;
   mockState.agentMutationOutcome = "success";
   mockState.newIssueDefaults = {};
-  mockState.projects = [];
 });
 
 afterEach(() => {
@@ -358,58 +347,6 @@ describe("NewIssueDialog autosave", () => {
     expect(JSON.parse(window.localStorage.getItem(ISSUE_AUTOSAVE_STORAGE_KEY) ?? "null")).toMatchObject({
       title: "Ordinary new issue",
       description: "Keep recovering this one",
-    });
-  });
-
-  it("preserves shared description, Agent, and Project state across mode switches", async () => {
-    mockState.agentMutationOutcome = "pending";
-    mockState.projects = [{ id: "project-1", name: "Build project", archivedAt: null }];
-    mockState.newIssueDefaults = {
-      title: "Shared state issue",
-      assigneeAgentId: "agent-1",
-      projectId: "project-1",
-    };
-
-    await renderDialog();
-    const sharedEditor = document.querySelector<HTMLTextAreaElement>('[aria-label="Description"]');
-    expect(sharedEditor).not.toBeNull();
-    await fillTextarea(sharedEditor!, "Keep this description when switching modes.");
-
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
-    });
-
-    const agentEditor = document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]');
-    expect(agentEditor).toBe(sharedEditor);
-    expect(agentEditor?.value)
-      .toBe("Keep this description when switching modes.");
-    expect(document.querySelector('[data-slot="agent-issue-composer"] [data-selector-value="agent:agent-1"]'))
-      .not.toBeNull();
-    expect(document.querySelector('[data-slot="agent-issue-composer"] [data-selector-value="project-1"]'))
-      .not.toBeNull();
-
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
-    });
-    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Description"]')).toBe(sharedEditor);
-    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Description"]')?.value)
-      .toBe("Keep this description when switching modes.");
-
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
-    });
-    await act(async () => {
-      [...document.querySelectorAll("button")]
-        .find((button) => button.textContent?.trim() === "Send to Agent")
-        ?.click();
-    });
-
-    expect(mockState.mutationCalls).toContainEqual({
-      variables: expect.objectContaining({
-        agentId: "agent-1",
-        projectId: "project-1",
-        instruction: "Keep this description when switching modes.",
-      }),
     });
   });
 

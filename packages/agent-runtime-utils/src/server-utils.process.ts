@@ -1,5 +1,4 @@
-import type { RudderNativeDiagnostic } from "@rudderhq/shared";
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import type {
@@ -14,7 +13,6 @@ export interface RunProcessResult {
   stderr: string;
   pid: number | null;
   startedAt: string | null;
-  diagnostic?: RudderNativeDiagnostic;
 }
 
 export interface RunningProcess {
@@ -28,7 +26,6 @@ export interface SpawnTarget {
 }
 
 export type ChildProcessWithEvents = ChildProcess & {
-  terminateTree?: (force: boolean) => void;
   on(event: "error", listener: (err: Error) => void): ChildProcess;
   on(
     event: "close",
@@ -48,31 +45,6 @@ export function isChildProcessAlive(child: ChildProcessWithEvents): boolean {
   } catch (error) {
     const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : null;
     return code === "EPERM";
-  }
-}
-
-export function killChildProcessTree(child: ChildProcessWithEvents, force: boolean): void {
-  if (child.terminateTree) return child.terminateTree(force);
-  if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
-    const args = ["/pid", String(child.pid), "/t"];
-    if (force) args.push("/f");
-    const killer = spawn("taskkill.exe", args, { stdio: "ignore", windowsHide: true });
-    killer.on("error", () => {});
-    return;
-  }
-  const signal = force ? "SIGKILL" : "SIGTERM";
-  if (typeof child.pid === "number" && child.pid > 0) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // Fall back to the direct child if its process group is already gone.
-    }
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // The process may have exited between the liveness check and signal.
   }
 }
 export const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;

@@ -238,23 +238,7 @@ export interface MessengerApprovalThreadItem extends MessengerThreadItem {
   approval: Approval;
   assistanceRequest?: never;
   requesterAgent: Pick<Agent, "id" | "name" | "icon" | "role"> | null;
-  origin: MessengerApprovalOrigin | null;
 }
-
-export type MessengerApprovalOrigin =
-  | {
-      kind: "chat";
-      conversationId: string;
-      title: string;
-      href: string;
-    }
-  | {
-      kind: "issue";
-      issueId: string;
-      identifier: string | null;
-      title: string;
-      href: string;
-    };
 
 export interface MessengerAssistanceThreadItem extends MessengerThreadItem {
   requestKind: "assistance";

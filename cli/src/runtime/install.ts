@@ -2,20 +2,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { createReadStream, createWriteStream } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
-import { tryInstallNativePayload } from "./native-payload.js";
-import { extractRuntimePostgresArchiveNode } from "./postgres-archive-node.js";
 import { copyRuntimePostgresPayload } from "./postgres-payload.js";
-import {
-  resolvePostgresRuntimeArchiveSource,
-  RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV,
-} from "./postgres-runtime-source.js";
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
 export const NPM_PUBLIC_REGISTRY_URL = "https://registry.npmjs.org";
 export const RUNTIME_METADATA_FILE = "runtime.json";
@@ -29,7 +23,9 @@ const RUNTIME_NPM_PACK_FLAGS = ["--registry", NPM_PUBLIC_REGISTRY_URL, "--silent
 const EMBEDDED_POSTGRES_PACKAGE_NAME = "embedded-postgres";
 const RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV = "RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR";
 const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
+const RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL";
 const RUDDER_POSTGRES_RUNTIME_DOWNLOAD_TIMEOUT_MS_ENV = "RUDDER_POSTGRES_RUNTIME_DOWNLOAD_TIMEOUT_MS";
+const RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256";
 const RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES";
 const DEFAULT_RUNTIME_POSTGRES_ARCHIVE_MAX_BYTES = 1_024 * 1024 * 1024;
 const RUNTIME_CACHE_PACKAGE_JSON = {
@@ -1101,9 +1097,23 @@ async function validateRuntimePostgresVersion(
   }
 }
 
+function runtimePostgresArchiveUrl(
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch,
+): string | null {
+  const explicitUrl = process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL_ENV]?.trim();
+  if (explicitUrl) return explicitUrl;
+  if (platform === "darwin" && (arch === "arm64" || arch === "x64")) {
+    return "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-osx-binaries.zip";
+  }
+  if (platform === "win32" && arch === "x64") {
+    return "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-windows-x64-binaries.zip";
+  }
+  return null;
+}
+
 async function downloadRuntimePostgresArchive(url: string, targetPath: string): Promise<void> {
-  const source = resolvePostgresRuntimeArchiveSource();
-  const expectedSha256 = source?.url === url ? source.expectedSha256 : null;
+  const expectedSha256 = process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV]?.trim().toLowerCase() || null;
   if (expectedSha256 && !/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error(`${RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV} must be a 64-character SHA-256 digest`);
   }
@@ -1174,6 +1184,26 @@ async function downloadRuntimePostgresArchive(url: string, targetPath: string): 
     }
   } finally {
     if (timeout) clearTimeout(timeout);
+  }
+}
+
+function extractRuntimePostgresArchive(archivePath: string, extractDir: string): void {
+  const result = process.platform === "win32"
+    ? spawnSync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:PG_ARCHIVE_PATH -DestinationPath $env:PG_EXTRACT_DIR -Force",
+      ], {
+        encoding: "utf8",
+        env: { ...process.env, PG_ARCHIVE_PATH: archivePath, PG_EXTRACT_DIR: extractDir },
+        windowsHide: true,
+      })
+    : spawnSync("tar", ["-xf", archivePath, "-C", extractDir], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`failed to extract PostgreSQL archive: ${result.stderr || result.stdout}`);
   }
 }
 
@@ -1331,8 +1361,7 @@ async function downloadSharedRuntimePostgresPayload(
   homeDir: string,
   postgresVersionProbe: RuntimePostgresVersionProbe,
 ): Promise<string | null> {
-  const archiveSource = resolvePostgresRuntimeArchiveSource();
-  const archiveUrl = archiveSource?.url ?? null;
+  const archiveUrl = runtimePostgresArchiveUrl();
   if (!archiveUrl) return null;
   const sharedBinDir = resolveSharedRuntimePostgresPayloadBinDir(homeDir);
   const sharedPlatformRoot = path.dirname(sharedBinDir);
@@ -1347,27 +1376,9 @@ async function downloadSharedRuntimePostgresPayload(
     const archivePath = path.join(workDir, "postgresql-18.4.zip");
     const extractDir = path.join(workDir, "extract");
     try {
-      await downloadRuntimePostgresArchive(archiveUrl, archivePath);
-      const publishStaging = `${sharedPlatformRoot}.tmp-${process.pid}-${Date.now()}`;
-      const native = await tryInstallNativePayload({
-        archivePath, extractPath: extractDir, publishStagingPath: publishStaging,
-        destinationPath: sharedPlatformRoot, maxArchiveBytes: DEFAULT_RUNTIME_POSTGRES_ARCHIVE_MAX_BYTES,
-        expectedSha256: archiveSource?.expectedSha256 ?? null,
-        preparePublish: async (nativeExtractDir, nativePublishStaging) => {
-          const nativeBinDir = await findRuntimePostgresBinDir(nativeExtractDir, cacheDir, postgresVersionProbe);
-          const templateDir = nativeBinDir && await resolveRuntimePostgresTemplateDir(nativeBinDir);
-          if (!nativeBinDir || !templateDir) throw new Error("Native PostgreSQL payload is incomplete");
-          await reconcileSharedPostgresPayloadGenerations(cacheDir, sharedPlatformRoot, postgresVersionProbe);
-          await assertSharedPostgresPayloadNotLive(cacheDir, homeDir, sharedBinDir);
-          await copyRuntimePostgresPayload(path.dirname(nativeBinDir), nativePublishStaging, resolveRuntimePostgresShareDir(nativeBinDir, templateDir));
-          await validateRuntimePostgresVersion(cacheDir, path.join(nativePublishStaging, "bin"), postgresVersionProbe);
-          return path.join("bin", runtimePostgresExecutableName("postgres"));
-        },
-        validatePublished: async () => validateRuntimePostgresVersion(cacheDir, sharedBinDir, postgresVersionProbe),
-      });
-      if (native.installed) return sharedBinDir;
       await mkdir(extractDir, { recursive: true });
-      extractRuntimePostgresArchiveNode(archivePath, extractDir);
+      await downloadRuntimePostgresArchive(archiveUrl, archivePath);
+      extractRuntimePostgresArchive(archivePath, extractDir);
       const extractedBinDir = await findRuntimePostgresBinDir(
         extractDir,
         cacheDir,

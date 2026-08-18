@@ -65,7 +65,7 @@ function nonNegativeIntegerQuery(value: unknown): number | undefined {
 
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
-  const svc = issueService(db, storage);
+  const svc = issueService(db);
   const messengerSvc = messengerService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);

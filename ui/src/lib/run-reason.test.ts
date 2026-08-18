@@ -50,40 +50,6 @@ describe("describeRunReason", () => {
     })).label).toBe("Heartbeat");
   });
 
-  it("labels Create Issue runs separately from manual heartbeats", () => {
-    expect(describeRunReason(makeRun({
-      invocationSource: "on_demand",
-      triggerDetail: "system",
-      contextSnapshot: {
-        wakeReason: "agent_issue_creation_requested",
-      },
-    })).label).toBe("Create issue");
-
-    expect(describeRunReason(makeRun({
-      invocationSource: "on_demand",
-      triggerDetail: "system",
-      contextSnapshot: {
-        agentIssueCreationRequestId: "request-1",
-      },
-    })).label).toBe("Create issue");
-
-    expect(describeRunReason(makeRun({
-      invocationSource: "on_demand",
-      triggerDetail: "system",
-      contextSnapshot: {
-        agentIssueCreationRequest: { id: "request-2" },
-      },
-    })).label).toBe("Create issue");
-  });
-
-  it("keeps ordinary manual heartbeats labeled as manual heartbeats", () => {
-    expect(describeRunReason(makeRun({
-      invocationSource: "on_demand",
-      triggerDetail: "manual",
-      contextSnapshot: null,
-    })).label).toBe("Manual heartbeat");
-  });
-
   it("shows passive follow-up attempts instead of automation", () => {
     const reason = describeRunReason(makeRun({
       invocationSource: "automation",

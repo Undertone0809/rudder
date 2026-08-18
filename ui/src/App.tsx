@@ -174,75 +174,29 @@ function AgentsEntryRedirect() {
   const { selectedOrganizationId } = useOrganization();
   const { viewedOrganizationId } = useViewedOrganization();
   const organizationId = viewedOrganizationId ?? selectedOrganizationId;
-  const { data: agents, isLoading, error, refetch } = useQuery({
+  const { data: agents, isLoading } = useQuery({
     queryKey: queryKeys.agents.list(organizationId ?? "__none__"),
     queryFn: () => agentsApi.list(organizationId!),
     enabled: !!organizationId,
-    retry: false,
   });
 
   if (!organizationId || isLoading) {
     return <AgentsEntrySkeleton />;
   }
 
-  if (error) {
-    return <AgentsEntryError error={error} onRetry={refetch} />;
-  }
-
   const targetAgent = agents ? pickAgentsEntryTarget(agents) : null;
   if (!targetAgent) {
-    return <AgentsEntrySkeleton message="No active agents yet." isLoading={false} />;
+    return <AgentsEntrySkeleton />;
   }
 
   return <Navigate to={`${agentUrl(targetAgent)}/dashboard`} replace />;
 }
 
-function AgentsEntrySkeleton({
-  message = "Loading agents...",
-  isLoading = true,
-}: {
-  message?: string;
-  isLoading?: boolean;
-} = {}) {
+function AgentsEntrySkeleton() {
   return (
-    <div
-      data-testid="agents-entry-skeleton"
-      aria-busy={isLoading ? "true" : undefined}
-      className="space-y-3"
-    >
-      <div role="status" className="text-sm text-muted-foreground">
-        {message}
-      </div>
+    <div data-testid="agents-entry-skeleton">
       <PageSkeleton variant="detail" />
     </div>
-  );
-}
-
-function AgentsEntryError({
-  error,
-  onRetry,
-}: {
-  error: unknown;
-  onRetry: () => Promise<unknown>;
-}) {
-  const message = error instanceof Error && error.message
-    ? error.message
-    : "The agents could not be loaded.";
-
-  return (
-    <section
-      data-testid="agents-entry-error"
-      role="alert"
-      className="flex max-w-xl flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-4 text-sm"
-    >
-      <div className="min-w-0 space-y-1">
-        <p className="font-medium text-foreground">Unable to load agents</p>
-        <p className="break-words text-muted-foreground">{message}</p>
-      </div>
-      <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => void onRetry()}>
-        Retry
-      </Button>
-    </section>
   );
 }
 

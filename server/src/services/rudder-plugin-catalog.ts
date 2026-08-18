@@ -14,9 +14,7 @@ import type {
   RudderPluginPackageFileInput,
   RudderPluginSourceResolution,
 } from "@rudderhq/shared";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { Unzip, UnzipInflate, UnzipPassThrough } from "fflate";
-import { JSDOM } from "jsdom";
+import { and, eq, ne } from "drizzle-orm";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { notFound, unprocessable } from "../errors.js";
@@ -105,12 +103,6 @@ type SourceDescriptor = {
 type GitTreeEntry = { path: string; type: "blob" | "tree"; sha: string; size?: number };
 type CatalogCache = { etag: string | null; fetchedAt: string; document: CatalogDocument };
 type CatalogLoad = { cache: CatalogCache; freshness: "fresh" | "stale" };
-
-class PluginSourceUnavailableError extends Error {}
-
-function isPluginSourceUnavailable(error: unknown): error is PluginSourceUnavailableError {
-  return error instanceof PluginSourceUnavailableError;
-}
 
 export function createCatalogFreshnessLease(
   durationMs = CATALOG_DEGRADED_VISIBILITY_MS,
@@ -437,127 +429,17 @@ async function responseJson(response: Response, label: string): Promise<unknown>
 }
 
 async function githubJson(fetcher: FetchLike, apiPath: string): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetchBounded(fetcher, `https://api.github.com${apiPath}`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        "user-agent": "Rudder-Plugin-Hub",
-        "x-github-api-version": "2022-11-28",
-      },
-    }, new Set(["api.github.com"]));
-  } catch (error) {
-    throw new PluginSourceUnavailableError(error instanceof Error ? error.message : String(error));
-  }
-  if (response.status === 403 || response.status === 429 || response.status >= 500) {
-    throw new PluginSourceUnavailableError(`GitHub API returned HTTP ${response.status}`);
-  }
+  const response = await fetchBounded(fetcher, `https://api.github.com${apiPath}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      "user-agent": "Rudder-Plugin-Hub",
+      "x-github-api-version": "2022-11-28",
+    },
+  }, new Set(["api.github.com"]));
   return responseJson(response, "GitHub API");
 }
 
-async function githubCommitFromAtom(
-  fetcher: FetchLike,
-  owner: string,
-  repo: string,
-  ref: string,
-): Promise<string> {
-  let response: Response;
-  try {
-    response = await fetchBounded(
-      fetcher,
-      `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}.atom`,
-      { headers: { accept: "application/atom+xml", "user-agent": "Rudder-Plugin-Hub" } },
-      new Set(["github.com"]),
-    );
-  } catch (error) {
-    throw new PluginSourceUnavailableError(error instanceof Error ? error.message : String(error));
-  }
-  if (response.status === 403 || response.status === 429 || response.status >= 500) {
-    throw new PluginSourceUnavailableError(`GitHub commit feed returned HTTP ${response.status}`);
-  }
-  if (!response.ok) throw unprocessable(`GitHub repository ref returned HTTP ${response.status}`);
-  const atom = await response.text();
-  if (Buffer.byteLength(atom, "utf8") > MAX_FILE_BYTES) {
-    throw unprocessable("GitHub commit feed exceeds the 2 MiB limit");
-  }
-  const commitSha = atom.match(/Grit::Commit\/([0-9a-f]{40})/i)?.[1];
-  if (!commitSha) throw unprocessable("GitHub did not resolve a full immutable commit SHA");
-  return commitSha.toLocaleLowerCase("en-US");
-}
-
-async function githubStableReleaseTagFromAtom(fetcher: FetchLike, owner: string, repo: string): Promise<string | null> {
-  const url = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases.atom`;
-  let response: Response;
-  try {
-    response = await fetchBounded(
-      fetcher,
-      url,
-      { headers: { accept: "application/atom+xml", "user-agent": "Rudder-Plugin-Hub" } },
-      new Set(["github.com"]),
-    );
-  } catch (error) {
-    throw new PluginSourceUnavailableError(error instanceof Error ? error.message : String(error));
-  }
-  if (!response.ok) {
-    throw new PluginSourceUnavailableError(`GitHub release feed returned HTTP ${response.status}`);
-  }
-  const atom = await response.text();
-  if (Buffer.byteLength(atom, "utf8") > MAX_FILE_BYTES) {
-    throw unprocessable("GitHub release feed exceeds the 2 MiB limit");
-  }
-  let document: Document;
-  try {
-    document = new JSDOM(atom, { contentType: "application/xml" }).window.document;
-  } catch (error) {
-    throw new PluginSourceUnavailableError(
-      `GitHub release feed is invalid XML: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (document.querySelector("parsererror")) {
-    throw new PluginSourceUnavailableError("GitHub release feed is invalid XML");
-  }
-  const expectedPrefix = `/${owner}/${repo}/releases/tag/`.toLocaleLowerCase("en-US");
-  const releases = Array.from(document.querySelectorAll("entry link[rel='alternate']"))
-    .map((link) => link.getAttribute("href"))
-    .filter((href): href is string => Boolean(href))
-    .map((href) => {
-      const target = new URL(href, url);
-      if (target.protocol !== "https:" || target.hostname !== "github.com"
-        || !target.pathname.toLocaleLowerCase("en-US").startsWith(expectedPrefix)) {
-        throw new PluginSourceUnavailableError("GitHub release feed linked outside the expected repository");
-      }
-      return decodeURIComponent(target.pathname.slice(expectedPrefix.length));
-    })
-    .filter((tag) => parseSemver(tag))
-    .map((tag) => ({ tag_name: tag }));
-  const stable = releases.sort(compareRelease)[0];
-  return stable ? requiredString(stable.tag_name, "GitHub release tag", 100) : null;
-}
-
-async function resolveGitHubVersionFromWeb(
-  fetcher: FetchLike,
-  input: { repositoryUrl: string; source: string; subdirectory: string; ref?: string | null },
-): Promise<RudderPluginSourceResolution> {
-  const { owner, repo } = parseGitHubRepository(input.repositoryUrl);
-  const releaseTag = input.ref ? null : await githubStableReleaseTagFromAtom(fetcher, owner, repo);
-  const strategy: RudderPluginSourceResolution["strategy"] = input.ref
-    ? "explicit_ref"
-    : releaseTag
-      ? "stable_release"
-      : "default_branch_head";
-  const ref = input.ref ?? releaseTag ?? "HEAD";
-  const commitSha = await githubCommitFromAtom(fetcher, owner, repo, ref);
-  return {
-    repositoryUrl: input.repositoryUrl,
-    source: input.source,
-    subdirectory: input.subdirectory,
-    strategy,
-    version: strategy === "default_branch_head" ? commitSha.slice(0, 12) : ref.replace(/^v/, ""),
-    commitSha,
-  };
-}
-
-async function resolveGitHubVersionFromApi(
+export async function resolveGitHubVersion(
   fetcher: FetchLike,
   input: { repositoryUrl: string; source: string; subdirectory: string; ref?: string | null },
 ): Promise<RudderPluginSourceResolution> {
@@ -600,18 +482,6 @@ async function resolveGitHubVersionFromApi(
   };
 }
 
-export async function resolveGitHubVersion(
-  fetcher: FetchLike,
-  input: { repositoryUrl: string; source: string; subdirectory: string; ref?: string | null },
-): Promise<RudderPluginSourceResolution> {
-  try {
-    return await resolveGitHubVersionFromApi(fetcher, input);
-  } catch (error) {
-    if (!isPluginSourceUnavailable(error)) throw error;
-    return resolveGitHubVersionFromWeb(fetcher, input);
-  }
-}
-
 function safePackageEntries(tree: GitTreeEntry[], subdirectory: string): Array<GitTreeEntry & { relativePath: string }> {
   const prefix = subdirectory ? `${subdirectory.replace(/\/$/, "")}/` : "";
   const entries = tree
@@ -640,13 +510,7 @@ async function fetchGitHubFiles(
   resolution: RudderPluginSourceResolution,
 ): Promise<{ tree: GitTreeEntry[]; files: RudderPluginPackageFileInput[] }> {
   const { owner, repo } = parseGitHubRepository(resolution.repositoryUrl);
-  let treeValue: Record<string, unknown>;
-  try {
-    treeValue = asRecord(await githubJson(fetcher, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${resolution.commitSha}?recursive=1`));
-  } catch (error) {
-    if (!isPluginSourceUnavailable(error)) throw error;
-    return fetchGitHubArchiveFiles(fetcher, resolution);
-  }
+  const treeValue = asRecord(await githubJson(fetcher, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${resolution.commitSha}?recursive=1`));
   if (treeValue.truncated === true || !Array.isArray(treeValue.tree)) throw unprocessable("GitHub package tree is unavailable or truncated");
   const tree = treeValue.tree.map((raw) => {
     const entry = asRecord(raw);
@@ -680,130 +544,6 @@ async function fetchGitHubFiles(
     }
   }
   await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, selected.length) }, () => worker()));
-  return { tree, files };
-}
-
-async function fetchGitHubArchiveFiles(
-  fetcher: FetchLike,
-  resolution: RudderPluginSourceResolution,
-): Promise<{ tree: GitTreeEntry[]; files: RudderPluginPackageFileInput[] }> {
-  const { owner, repo } = parseGitHubRepository(resolution.repositoryUrl);
-  let response: Response;
-  try {
-    response = await fetchBounded(
-      fetcher,
-      `https://codeload.github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zip/${resolution.commitSha}`,
-      { headers: { accept: "application/zip", "user-agent": "Rudder-Plugin-Hub" } },
-      new Set(["codeload.github.com"]),
-    );
-  } catch (error) {
-    throw new PluginSourceUnavailableError(error instanceof Error ? error.message : String(error));
-  }
-  if (response.status === 403 || response.status === 429 || response.status >= 500) {
-    throw new PluginSourceUnavailableError(`GitHub archive returned HTTP ${response.status}`);
-  }
-  if (!response.ok) throw unprocessable(`GitHub archive returned HTTP ${response.status}`);
-  const contentLength = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_BYTES) {
-    throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
-  }
-  const archive = Buffer.from(await response.arrayBuffer());
-  if (archive.byteLength > MAX_TOTAL_BYTES) throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
-
-  const tree: GitTreeEntry[] = [];
-  const files: RudderPluginPackageFileInput[] = [];
-  const folded = new Set<string>();
-  const sourcePrefix = resolution.subdirectory ? `${resolution.subdirectory.replace(/\/$/, "")}/` : "";
-  let archiveRoot: string | null = null;
-  let totalBytes = 0;
-  let failure: Error | null = null;
-  const unzip = new Unzip((file) => {
-    if (failure || file.name.endsWith("/")) return;
-    const slash = file.name.indexOf("/");
-    if (slash <= 0 || slash === file.name.length - 1) {
-      failure = new Error("GitHub archive is missing its repository root");
-      file.terminate();
-      return;
-    }
-    const root = file.name.slice(0, slash);
-    if (archiveRoot && archiveRoot !== root) {
-      failure = new Error("GitHub archive contains multiple repository roots");
-      file.terminate();
-      return;
-    }
-    archiveRoot = root;
-    const repositoryPath = file.name.slice(slash + 1);
-    if (sourcePrefix && !repositoryPath.startsWith(sourcePrefix)) return;
-    const relativePath = sourcePrefix ? repositoryPath.slice(sourcePrefix.length) : repositoryPath;
-    if (!relativePath) return;
-    let normalized: string;
-    try {
-      normalized = safeRelativePath(relativePath, "package file");
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error(String(error));
-      file.terminate();
-      return;
-    }
-    const lower = normalized.toLocaleLowerCase("en-US");
-    if (folded.has(lower)) {
-      failure = new Error(`Plugin contains a duplicate or case-colliding path: ${normalized}`);
-      file.terminate();
-      return;
-    }
-    if (files.length >= MAX_FILES) {
-      failure = new Error("Plugin package exceeds the 500-file V1 limit");
-      file.terminate();
-      return;
-    }
-    if (file.originalSize !== undefined && file.originalSize > MAX_FILE_BYTES) {
-      failure = new Error(`Plugin file exceeds 2 MiB: ${normalized}`);
-      file.terminate();
-      return;
-    }
-    if (file.size && file.originalSize && file.originalSize / file.size > 100) {
-      failure = new Error(`Plugin archive entry exceeds the 100:1 expansion limit: ${normalized}`);
-      file.terminate();
-      return;
-    }
-    folded.add(lower);
-    const chunks: Buffer[] = [];
-    let entryBytes = 0;
-    file.ondata = (error, data, final) => {
-      if (failure) return;
-      if (error) {
-        failure = error;
-        return;
-      }
-      entryBytes += data.byteLength;
-      totalBytes += data.byteLength;
-      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_TOTAL_BYTES) {
-        failure = new Error(entryBytes > MAX_FILE_BYTES
-          ? `Plugin file exceeds 2 MiB: ${normalized}`
-          : "Plugin package exceeds the 10 MiB V1 limit");
-        file.terminate();
-        return;
-      }
-      chunks.push(Buffer.from(data));
-      if (final) {
-        tree.push({ path: repositoryPath, type: "blob", sha: "", size: entryBytes });
-        files.push({ path: normalized, content: Buffer.concat(chunks).toString("base64"), encoding: "base64" });
-      }
-    };
-    file.start();
-  });
-  unzip.register(UnzipInflate);
-  unzip.register(UnzipPassThrough);
-  try {
-    unzip.push(archive, true);
-  } catch (error) {
-    throw unprocessable(`Invalid GitHub Plugin archive: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const archiveFailure = failure as Error | null;
-  if (archiveFailure) throw unprocessable(archiveFailure.message);
-  if (files.length === 0) throw unprocessable("Plugin source directory is empty");
-  if (totalBytes > archive.byteLength * 100) {
-    throw unprocessable("Plugin archive exceeds the 100:1 expansion limit");
-  }
   return { tree, files };
 }
 
@@ -1170,40 +910,16 @@ export function rudderPluginCatalogService(
 
   async function previewCatalog(orgId: string, slug: string) {
     const { descriptor } = await loadDescriptor(slug);
-    try {
-      const resolution = await resolveDescriptor(descriptor);
-      const current = await installedDetail(
-        orgId,
-        descriptor,
-        resolution,
-        slug,
-        `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`,
-      );
-      if (current) return current;
-      return preparePreview(orgId, descriptor, resolution, slug, `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`);
-    } catch (error) {
-      if (!isPluginSourceUnavailable(error)) throw error;
-      const stored = await db.select({ id: pluginImportReports.id })
-        .from(pluginImportReports)
-        .innerJoin(pluginSources, eq(pluginImportReports.sourceId, pluginSources.id))
-        .where(and(
-          eq(pluginImportReports.orgId, orgId),
-          inArray(pluginImportReports.status, ["review_required", "accepted"]),
-          sql`${pluginSources.metadata}->>'catalogSlug' = ${slug}`,
-        ))
-        .orderBy(desc(pluginImportReports.createdAt))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (!stored) throw error;
-      const detail = await previewDetail(orgId, stored.id);
-      return {
-        ...detail,
-        warnings: Array.from(new Set([
-          ...detail.warnings,
-          "GitHub is temporarily unavailable. Showing the most recent saved immutable Preview.",
-        ])),
-      };
-    }
+    const resolution = await resolveDescriptor(descriptor);
+    const current = await installedDetail(
+      orgId,
+      descriptor,
+      resolution,
+      slug,
+      `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`,
+    );
+    if (current) return current;
+    return preparePreview(orgId, descriptor, resolution, slug, `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`);
   }
 
   async function previewSource(orgId: string, sourceInput: string, explicitSubdirectory?: string) {

@@ -18,6 +18,26 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="August 18, 2026" description="v0.7.10" tags={["New","Improved","Fixed"]}>
+
+## v0.7.10
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.10)
+
+This release makes model selection, agent run follow-up, and local workspace recovery more predictable across everyday Rudder workflows.
+
+### Improved
+
+- Reused the same runtime profile controls across Chat and Issue workflows so model and thinking selections are easier to understand and apply.
+- Improved agent run transcript loading and live detail updates, including clearer fallback behavior when a run is still settling.
+- Improved local workspace backup and restore recovery so interrupted or ambiguous restore states are handled more safely.
+
+### Fixed
+
+- Fixed Chat streaming refresh flicker and improved continuity while opening issue references and run evidence.
+
+</Update>
+
 <Update label="August 17, 2026" description="v0.7.9" tags={["Fixed"]}>
 
 ## v0.7.9

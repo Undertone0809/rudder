@@ -1,8 +1,3 @@
-import {
-  createRudderNativeDiagnostic,
-  resolveRudderNativeCapability,
-  type RudderNativeDiagnostic,
-} from "@rudderhq/shared";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -54,7 +49,6 @@ export type LocalAppRuntimeView = {
   openPath?: string;
   partition?: string;
   error?: string;
-  nativeDiagnostic?: RudderNativeDiagnostic;
 };
 
 type RuntimeRecord = {
@@ -62,7 +56,6 @@ type RuntimeRecord = {
   generation: string;
   definition: LocalAppDefinition;
   helper: ChildProcess | NativeProcessHost | null;
-  nativeEngine: boolean;
   watchdog: WatchdogLifecycle | null;
   pid: number | null;
   pgid: number | null;
@@ -71,11 +64,9 @@ type RuntimeRecord = {
   verified: boolean;
   logText: string;
   error?: string;
-  nativeDiagnostic?: RudderNativeDiagnostic;
 };
 
 type WatchdogLifecycle = {
-  nativeMode: boolean;
   stoppedAcknowledged: boolean;
   stopAcceptedAcknowledged: boolean;
   disconnected: boolean;
@@ -89,7 +80,6 @@ type WatchdogLifecycle = {
   nativeStoppedSeen: boolean;
   nativeTerminalStatus: "succeeded" | "failed" | null;
   nativeReceiptWritten: boolean;
-  nativeDiagnostic: RudderNativeDiagnostic | null;
   terminalSeen: boolean;
   cleanupProven: boolean;
   exitCode: number | null;
@@ -337,7 +327,6 @@ function publicView(record: RuntimeRecord): LocalAppRuntimeView {
     view.openPath = record.definition.openPath;
   }
   if (record.error) view.error = record.error;
-  if (record.nativeDiagnostic) view.nativeDiagnostic = record.nativeDiagnostic;
   return view;
 }
 
@@ -357,7 +346,6 @@ export class LocalAppRuntimeManager {
   private readonly nativeRuntimeRoot: string | null;
   private readonly spawnNativeProcessHost: typeof spawnNativeProcessHost;
   private readonly useNativeProcessHost: boolean;
-  private readonly nativeFallbackAllowed: boolean;
   private readonly watchdogRunnerPath: string;
   private readonly watchdogStartTimeoutMs: number;
   private readonly listenerOwnershipRetryTimeoutMs: number;
@@ -397,13 +385,8 @@ export class LocalAppRuntimeManager {
     this.nativeProcessHostPath = options.nativeProcessHostPath ?? resolveNativeProcessHostPath();
     this.nativeRuntimeRoot = options.nativeRuntimeRoot ?? null;
     this.spawnNativeProcessHost = options.spawnNativeProcessHost ?? spawnNativeProcessHost;
-    const nativePolicy = resolveRudderNativeCapability({
-      capability: "local-app-process",
-      env: process.env,
-      legacyToggleEnvs: ["RUDDER_NATIVE_PROCESS_HOST", "RUDDER_NATIVE_LOCAL_APP_PROCESS"],
-    });
-    this.useNativeProcessHost = options.useNativeProcessHost ?? nativePolicy.enabled;
-    this.nativeFallbackAllowed = options.useNativeProcessHost === undefined && nativePolicy.fallbackAllowed;
+    this.useNativeProcessHost = options.useNativeProcessHost
+      ?? process.env.RUDDER_NATIVE_PROCESS_HOST === "1";
     this.watchdogRunnerPath = options.watchdogRunnerPath ?? WATCHDOG_RUNNER_PATH;
     this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 10_000);
     this.listenerOwnershipRetryTimeoutMs = Math.max(
@@ -448,7 +431,6 @@ export class LocalAppRuntimeManager {
       generation: descriptor?.generation ?? randomUUID(),
       definition,
       helper: null,
-      nativeEngine: false,
       watchdog: null,
       pid: persistedRunning || persistedOrphan ? descriptor?.pid ?? null : null,
       pgid: persistedRunning || persistedOrphan ? descriptor?.pgid ?? null : null,
@@ -456,7 +438,6 @@ export class LocalAppRuntimeManager {
       origin: null,
       verified: false,
       logText: "",
-      nativeDiagnostic: undefined,
       error: persistedRunning || persistedOrphan
         ? "Previous Local App ownership cannot be verified after restart"
         : undefined,
@@ -526,7 +507,7 @@ export class LocalAppRuntimeManager {
     }
   }
 
-  private createWatchdogLifecycle(nativeMode = false): WatchdogLifecycle {
+  private createWatchdogLifecycle(): WatchdogLifecycle {
     let resolveSpawned!: () => void;
     let resolveExit!: () => void;
     let resolveDisconnected!: () => void;
@@ -538,7 +519,6 @@ export class LocalAppRuntimeManager {
     const cleanupPromise = new Promise<void>((resolve) => { resolveCleanup = resolve; });
     const stopAcceptedPromise = new Promise<void>((resolve) => { resolveStopAccepted = resolve; });
     return {
-      nativeMode,
       stoppedAcknowledged: false,
       stopAcceptedAcknowledged: false,
       disconnected: false,
@@ -552,7 +532,6 @@ export class LocalAppRuntimeManager {
       nativeStoppedSeen: false,
       nativeTerminalStatus: null,
       nativeReceiptWritten: false,
-      nativeDiagnostic: null,
       terminalSeen: false,
       cleanupProven: false,
       exitCode: null,
@@ -576,7 +555,7 @@ export class LocalAppRuntimeManager {
 
   private watchdogCleanupProven(lifecycle: WatchdogLifecycle): boolean {
     if (!lifecycle.exited) return false;
-    if (lifecycle.nativeMode) {
+    if (this.useNativeProcessHost) {
       return !lifecycle.nativeLifecycleInvalid
         && lifecycle.disconnected
         && lifecycle.terminalSeen
@@ -649,7 +628,7 @@ export class LocalAppRuntimeManager {
     const canRequestWatchdogStop = Boolean(record.helper?.connected && typeof record.helper.send === "function");
     if (canRequestWatchdogStop && record.helper) {
       try {
-        record.helper.send(record.nativeEngine
+        record.helper.send(this.useNativeProcessHost
           ? {
               type: "stop",
               protocolVersion: { major: 1, minor: 0 },
@@ -678,7 +657,7 @@ export class LocalAppRuntimeManager {
         lifecycle.exitPromise,
       ]), deadline);
     }
-    if (record.nativeEngine && lifecycle && !lifecycle.disconnected) {
+    if (this.useNativeProcessHost && lifecycle && !lifecycle.disconnected) {
       await this.waitUntilDeadline(lifecycle.disconnectedPromise, deadline);
     }
 
@@ -739,11 +718,7 @@ export class LocalAppRuntimeManager {
     if (descriptor.status === "quarantined") await this.promoteLateOwnership(record);
   }
 
-  private async spawnHelper(
-    record: RuntimeRecord,
-    port: number,
-    usingNativeHost = this.useNativeProcessHost,
-  ): Promise<{ pid: number; pgid: number }> {
+  private async spawnHelper(record: RuntimeRecord, port: number): Promise<{ pid: number; pgid: number }> {
     const environment = await buildChildEnvironment(
       record.definition,
       port,
@@ -756,7 +731,7 @@ export class LocalAppRuntimeManager {
       record.definition.argv,
       port,
     );
-    if (usingNativeHost && this.nativeRuntimeRoot) {
+    if (this.useNativeProcessHost && this.nativeRuntimeRoot) {
       await mkdir(this.nativeRuntimeRoot, { recursive: true, mode: 0o700 });
     }
     return new Promise((resolve, reject) => {
@@ -770,11 +745,10 @@ export class LocalAppRuntimeManager {
         watchdogEnvironment.TEMP = process.env.TEMP ?? process.env.TMP ?? path.win32.join(systemRoot, "Temp");
         watchdogEnvironment.TMP = process.env.TMP ?? watchdogEnvironment.TEMP;
       }
-      record.nativeEngine = usingNativeHost;
-      const helper = usingNativeHost
+      const helper = this.useNativeProcessHost
         ? (() => {
             if (!nativeProcessHostRuntimeSupported) {
-              throw new Error("Rust Local App process host is unavailable for this platform target");
+              throw new Error("Rust Local App process host pilot is only enabled on macOS arm64");
             }
             if (!this.nativeProcessHostPath) {
               throw new Error("Rust Local App process host is enabled but no binary path is configured");
@@ -792,7 +766,7 @@ export class LocalAppRuntimeManager {
             stdio: ["pipe", "pipe", "pipe", "ipc"],
           });
       record.helper = helper;
-      const lifecycle = this.createWatchdogLifecycle(usingNativeHost);
+      const lifecycle = this.createWatchdogLifecycle();
       record.watchdog = lifecycle;
       helper.stdout?.on("data", (chunk: Buffer) => this.appendLog(record, chunk));
       helper.stderr?.on("data", (chunk: Buffer) => this.appendLog(record, chunk));
@@ -809,7 +783,7 @@ export class LocalAppRuntimeManager {
         else resolve(value!);
       };
       helper.once("error", (error) => {
-        if (usingNativeHost) lifecycle.nativeLifecycleInvalid = true;
+        if (this.useNativeProcessHost) lifecycle.nativeLifecycleInvalid = true;
         finish(error);
       });
       let nativeHandshakeSeen = false;
@@ -828,9 +802,6 @@ export class LocalAppRuntimeManager {
           requestId?: unknown;
           capabilities?: unknown;
           port?: unknown;
-          target?: unknown;
-          binaryVersion?: unknown;
-          effectiveEngine?: unknown;
         };
         if (typeof typed.type === "string") {
           this.observeLifecycleEvent({
@@ -839,7 +810,7 @@ export class LocalAppRuntimeManager {
             monotonicNs: process.hrtime.bigint(),
           });
         }
-        if (usingNativeHost) {
+        if (this.useNativeProcessHost) {
           const invalidateNativeLifecycle = (message: string) => {
             lifecycle.nativeLifecycleInvalid = true;
             finish(new Error(message));
@@ -877,15 +848,6 @@ export class LocalAppRuntimeManager {
               return;
             }
             nativeHandshakeSeen = true;
-            lifecycle.nativeDiagnostic = createRudderNativeDiagnostic({
-              capability: "local-app-process",
-              target: typeof typed.target === "string" ? typed.target : null,
-              binaryVersion: typeof typed.binaryVersion === "string" ? typed.binaryVersion : null,
-              protocolVersion: `${(version as { major: number }).major}.${(version as { minor: number }).minor}`,
-              effectiveEngine: "rust",
-              fallbackCode: null,
-            });
-            record.nativeDiagnostic = lifecycle.nativeDiagnostic;
             return;
           }
           if (!nativeHandshakeSeen
@@ -996,7 +958,7 @@ export class LocalAppRuntimeManager {
         lifecycle.exited = true;
         lifecycle.exitCode = code;
         lifecycle.exitSignal = signal;
-        if (usingNativeHost
+        if (this.useNativeProcessHost
           && (!lifecycle.terminalSeen
             || (lifecycle.nativeTerminalStatus === "succeeded" && (code !== 0 || signal !== null))
             || (lifecycle.nativeTerminalStatus === "failed" && code === 0 && signal === null))) {
@@ -1023,7 +985,7 @@ export class LocalAppRuntimeManager {
         argv,
         cwd: record.definition.cwd,
         env: environment,
-        ...(usingNativeHost
+        ...(this.useNativeProcessHost
           ? {
               ownerToken: record.generation,
               port,
@@ -1128,9 +1090,7 @@ export class LocalAppRuntimeManager {
         throw new Error("Local App exited before listener ownership could be proven");
       }
       if (owned) {
-        if (record.nativeEngine
-          && this.processPlatform.platform === "darwin"
-          && !record.watchdog?.nativeListenerVerified) {
+        if (this.useNativeProcessHost && !record.watchdog?.nativeListenerVerified) {
           const retryDelayMs = Math.min(75, deadline - Date.now());
           if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           continue;
@@ -1211,7 +1171,6 @@ export class LocalAppRuntimeManager {
       generation: randomUUID(),
       definition,
       helper: null,
-      nativeEngine: false,
       watchdog: null,
       pid: null,
       pgid: null,
@@ -1223,27 +1182,7 @@ export class LocalAppRuntimeManager {
     this.records.set(id, record);
     let generationClaimed = false;
     try {
-      let spawned: { pid: number; pgid: number };
-      try {
-        // Native acceptance owns the generation before spawn so setup failures
-        // cannot launch a second Node watchdog for the same app.
-        spawned = await this.spawnHelper(record, port);
-      } catch (error) {
-        const nativeAccepted = record.watchdog?.nativeAcceptedSeen === true;
-        if (!record.nativeEngine || !this.nativeFallbackAllowed || nativeAccepted) throw error;
-        record.helper?.kill("SIGKILL");
-        record.helper = null;
-        record.watchdog = null;
-        record.nativeEngine = false;
-        record.nativeDiagnostic = createRudderNativeDiagnostic({
-          capability: "local-app-process",
-          effectiveEngine: "node",
-          fallbackCode: "native_pre_accept_failure",
-        });
-        record.pid = null;
-        record.pgid = null;
-        spawned = await this.spawnHelper(record, port, false);
-      }
+      const spawned = await this.spawnHelper(record, port);
       record.pid = spawned.pid;
       record.pgid = spawned.pgid;
       generationClaimed = await this.registry.recordRuntimeDescriptorIfMatch(
@@ -1298,7 +1237,7 @@ export class LocalAppRuntimeManager {
       throw new Error("Local App runtime generation changed while stopping");
     }
     try {
-      if (record.nativeEngine) {
+      if (this.useNativeProcessHost) {
         const cleanup = await this.proveRecordCleanup(record);
         if (!cleanup.proven) {
           throw new Error(
@@ -1324,7 +1263,7 @@ export class LocalAppRuntimeManager {
       } catch {
         // The complete ownership descriptor remains quarantined below.
       }
-      const cleanupAuthority = record.nativeEngine
+      const cleanupAuthority = this.useNativeProcessHost
         ? "Rust Local App process-host cleanup"
         : "Local App process-group termination";
       const terminationError = new Error(
@@ -1338,7 +1277,7 @@ export class LocalAppRuntimeManager {
       );
       throw terminationError;
     }
-    if (!record.nativeEngine) record.helper?.stdin?.end();
+    if (!this.useNativeProcessHost) record.helper?.stdin?.end();
     const cleared = await this.registry.recordRuntimeDescriptorIfMatch(
       id,
       { generation: record.generation, status: "stopping" },

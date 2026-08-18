@@ -2,8 +2,6 @@ import { access, lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { verifyNativeReleaseVersion } from "../../scripts/native-release-version.mjs";
-import { resolveNativeTarget } from "./native-target.mjs";
 import {
   EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
   OPTIMIZATION_MANIFEST,
@@ -12,6 +10,8 @@ import {
   packageHasTypeMetadata,
 } from "./optimize-server-package.mjs";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
+import { verifyNativeReleaseVersion } from "../../scripts/native-release-version.mjs";
+import { resolveNativeTarget } from "./native-target.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -418,7 +418,6 @@ async function verifyVersionCompatibility(serverPackageDir) {
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-native.exe" : "rudder-native"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper"),
-        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-speech.exe" : "rudder-speech"),
       ]
     : [];
   try {

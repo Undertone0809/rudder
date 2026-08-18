@@ -14,7 +14,6 @@ const setTheme = vi.hoisted(() => vi.fn());
 const setDesignStyle = vi.hoisted(() => vi.fn());
 const setBaseColor = vi.hoisted(() => vi.fn());
 const setAccentTheme = vi.hoisted(() => vi.fn());
-const setShowToolCallFailureIndicators = vi.hoisted(() => vi.fn());
 
 vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs }),
@@ -79,10 +78,6 @@ vi.mock("../context/I18nContext", () => ({
         "general.appearance.theme.orange.description": "Orange action color",
         "general.appearance.theme.pink.label": "Pink",
         "general.appearance.theme.pink.description": "Pink action color",
-        "general.appearance.toolCalls.title": "Tool calls",
-        "general.appearance.toolCalls.failureIndicators.label": "Show failure indicators",
-        "general.appearance.toolCalls.failureIndicators.description": "Use red styling and a failure label when a tool call fails.",
-        "general.appearance.toolCalls.failureIndicators.ariaLabel": "Toggle tool call failure indicators",
       };
       return messages[key] ?? key;
     },
@@ -95,12 +90,10 @@ vi.mock("../context/ThemeContext", () => ({
     designStyle: "luma",
     baseColor: "neutral",
     accentTheme: "emerald",
-    showToolCallFailureIndicators: false,
     setTheme,
     setDesignStyle,
     setBaseColor,
     setAccentTheme,
-    setShowToolCallFailureIndicators,
   }),
 }));
 
@@ -114,7 +107,6 @@ afterEach(() => {
   setDesignStyle.mockReset();
   setBaseColor.mockReset();
   setAccentTheme.mockReset();
-  setShowToolCallFailureIndicators.mockReset();
 });
 
 function renderPage() {
@@ -237,22 +229,5 @@ describe("InstanceAppearanceSettings", () => {
     expect(setAccentTheme).toHaveBeenCalledWith("emerald");
     expect(setBaseColor).toHaveBeenCalledWith("taupe");
     expect(setAccentTheme).toHaveBeenCalledWith("pink");
-  });
-
-  it("renders tool call failure indicators off by default and enables them directly", () => {
-    const container = renderPage();
-    const toggle = container.querySelector<HTMLButtonElement>(
-      "button[role='switch'][aria-label='Toggle tool call failure indicators']",
-    );
-
-    expect(container.textContent).toContain("Tool calls");
-    expect(container.textContent).toContain("Show failure indicators");
-    expect(toggle?.getAttribute("aria-checked")).toBe("false");
-
-    act(() => {
-      toggle?.click();
-    });
-
-    expect(setShowToolCallFailureIndicators).toHaveBeenCalledWith(true);
   });
 });

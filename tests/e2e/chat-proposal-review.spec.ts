@@ -1,12 +1,8 @@
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { chatConversations, chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_BIN_DIR, E2E_DATABASE_URL } from "./support/e2e-env";
-
-const e2eDb = createDb(E2E_DATABASE_URL);
+import { E2E_BIN_DIR } from "./support/e2e-env";
 
 async function selectInlineEntityOption(page: Page, name: string) {
   const popover = page.locator(".motion-inline-selector-pop:visible").last();
@@ -243,22 +239,7 @@ test.describe("Chat proposal review block", () => {
       .getByTestId("proposal-review-note")
       .locator(".rudder-mdxeditor-content[contenteditable='true']")
       .fill(revisionFeedback);
-    const requestChangesButton = initialPanelReviewBlock.getByRole("button", { name: "Request changes" });
-    await expect(requestChangesButton).toHaveAttribute("data-hover-style", "inset");
-    await requestChangesButton.hover();
-    await expect.poll(async () => requestChangesButton.evaluate((button) => {
-      const before = getComputedStyle(button, "::before");
-      return {
-        isHovered: button.matches(":hover"),
-        insetContent: before.content,
-        insetOpacity: before.opacity,
-      };
-    })).toEqual({
-      isHovered: true,
-      insetContent: '""',
-      insetOpacity: "1",
-    });
-    await requestChangesButton.click();
+    await initialPanelReviewBlock.getByRole("button", { name: "Request changes" }).click();
 
     await expect(initialPanelReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
     const revisedReviewBlock = page
@@ -581,8 +562,7 @@ test.describe("Chat proposal review block", () => {
     await expect(page.locator(".chat-composer").last()).toBeVisible();
   });
 
-  test("requests proposal changes with feedback and continues the conversation", async ({ page }, testInfo) => {
-    await page.addInitScript(() => window.localStorage.setItem("rudder.theme", "light"));
+  test("requests proposal changes with feedback and continues the conversation", async ({ page }) => {
     const command = await writeProposalStub("proposal-review-request-changes", {
       kind: "issue_proposal",
       body: "Create a revised issue proposal for this request-changes test.",
@@ -617,26 +597,7 @@ test.describe("Chat proposal review block", () => {
       .getByTestId("proposal-review-note")
       .locator(".rudder-mdxeditor-content[contenteditable='true']")
       .fill(revisionFeedback);
-    const requestChangesButton = panelReviewBlock.getByRole("button", { name: "Request changes" });
-    await expect(requestChangesButton).toHaveAttribute("data-hover-style", "inset");
-    await requestChangesButton.hover();
-    await expect.poll(async () => requestChangesButton.evaluate((button) => {
-      const before = getComputedStyle(button, "::before");
-      return {
-        isHovered: button.matches(":hover"),
-        insetContent: before.content,
-        insetOpacity: before.opacity,
-      };
-    })).toEqual({
-      isHovered: true,
-      insetContent: '""',
-      insetOpacity: "1",
-    });
-    await panelReviewBlock.screenshot({
-      path: testInfo.outputPath("request-changes-hover-light.png"),
-      animations: "disabled",
-    });
-    await requestChangesButton.click();
+    await panelReviewBlock.getByRole("button", { name: "Request changes" }).click();
 
     await expect(panelReviewBlock).toHaveAttribute("data-status", "revision_requested", { timeout: 15_000 });
     await expect(page.getByText('Please revise the proposal "Review block revision test"')).toBeVisible({ timeout: 15_000 });
@@ -645,76 +606,6 @@ test.describe("Chat proposal review block", () => {
     await expect(
       page.getByTestId("chat-messages-content").getByTestId("proposal-review-block"),
     ).toHaveAttribute("data-status", "pending");
-  });
-
-  test("uses the shared inset hover treatment for pending operation proposals", async ({ page }, testInfo) => {
-    await page.addInitScript(() => window.localStorage.setItem("rudder.theme", "light"));
-    const organizationRes = await page.request.post("/api/orgs", {
-      data: { name: `OperationProposalHover-${Date.now()}` },
-    });
-    expect(organizationRes.ok(), await organizationRes.text()).toBe(true);
-    const organization = await organizationRes.json() as { id: string; issuePrefix: string };
-    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Operation Proposal Agent" });
-    const chatId = randomUUID();
-    await e2eDb.insert(chatConversations).values({
-      id: chatId,
-      orgId: organization.id,
-      title: "Operation proposal hover review",
-      preferredAgentId: agent.id,
-      issueCreationMode: "manual_approval",
-      planMode: false,
-    });
-    await e2eDb.insert(chatMessages).values({
-      id: randomUUID(),
-      orgId: organization.id,
-      conversationId: chatId,
-      role: "assistant",
-      kind: "operation_proposal",
-      status: "completed",
-      body: "Review this operation before applying it.",
-      structuredPayload: {
-        operationProposal: {
-          targetType: "agent",
-          targetId: agent.id,
-          summary: "Update agent title",
-          patch: { title: "Founding Engineer" },
-        },
-        operationProposalState: { status: "pending" },
-      },
-      replyingAgentId: agent.id,
-      chatTurnId: randomUUID(),
-      turnVariant: 0,
-    });
-
-    await page.goto("/");
-    await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
-
-    const reviewBlock = page.getByTestId("proposal-review-block").last();
-    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
-    const approveButton = reviewBlock.getByRole("button", { name: "Approve", exact: true });
-    const requestChangesButton = reviewBlock.getByRole("button", { name: "Request changes", exact: true });
-    await expect(approveButton).toBeVisible();
-    await expect(requestChangesButton).toBeVisible();
-    await expect(requestChangesButton).toHaveAttribute("data-hover-style", "inset");
-    await requestChangesButton.hover();
-    await expect.poll(async () => requestChangesButton.evaluate((button) => {
-      const before = getComputedStyle(button, "::before");
-      return {
-        isHovered: button.matches(":hover"),
-        insetContent: before.content,
-        insetOpacity: before.opacity,
-      };
-    })).toEqual({
-      isHovered: true,
-      insetContent: '""',
-      insetOpacity: "1",
-    });
-    await reviewBlock.screenshot({
-      path: testInfo.outputPath("operation-proposal-request-changes-hover-light.png"),
-      animations: "disabled",
-    });
   });
 
   test("shows approved proposals as completed review blocks", async ({ page }, testInfo) => {
@@ -756,26 +647,6 @@ test.describe("Chat proposal review block", () => {
     const approvalFeedback = "Keep feature flag on until smoke validation passes.";
     const reviewNote = reviewBlock.getByTestId("proposal-review-note");
     await reviewNote.locator(".rudder-mdxeditor-content[contenteditable='true']").fill(approvalFeedback);
-
-    const requestChangesButton = reviewBlock.getByRole("button", { name: "Request changes", exact: true });
-    await expect(requestChangesButton).toHaveAttribute("data-hover-style", "inset");
-    await requestChangesButton.hover();
-    await expect.poll(async () => requestChangesButton.evaluate((button) => {
-      const before = getComputedStyle(button, "::before");
-      return {
-        isHovered: button.matches(":hover"),
-        insetContent: before.content,
-        insetOpacity: before.opacity,
-      };
-    })).toEqual({
-      isHovered: true,
-      insetContent: '""',
-      insetOpacity: "1",
-    });
-    await reviewBlock.screenshot({
-      path: testInfo.outputPath("request-changes-hover-dark.png"),
-      animations: "disabled",
-    });
 
     await reviewBlock.getByTestId("proposal-review-approve").click();
 

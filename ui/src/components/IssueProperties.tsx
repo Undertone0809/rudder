@@ -581,7 +581,7 @@ export function IssueProperties({
                 setAssigneeOpen(false);
               }}
             >
-              <AgentMenuLabel agent={a} agentAvatarStyle="bare" />
+              <AgentMenuLabel agent={a} />
             </button>
           </div>
         ))}
@@ -656,7 +656,7 @@ export function IssueProperties({
             )}
             onClick={() => { trackRecentAssignee(a.id); onUpdate({ reviewerAgentId: a.id, reviewerUserId: null }); setReviewerOpen(false); }}
           >
-            <AgentMenuLabel agent={a} agentAvatarStyle="bare" />
+            <AgentMenuLabel agent={a} />
           </button>
         ))}
       </div>
@@ -964,7 +964,7 @@ export function IssueProperties({
           open={assigneeOpen}
           onOpenChange={(open) => { setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
           triggerContent={assigneeTrigger}
-          triggerClassName="min-w-0 w-full max-w-full justify-start overflow-hidden"
+          triggerClassName="min-w-0 max-w-full flex-1 justify-start overflow-hidden"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           rowAlign="start"
@@ -987,7 +987,7 @@ export function IssueProperties({
           open={reviewerOpen}
           onOpenChange={(open) => { setReviewerOpen(open); if (!open) setReviewerSearch(""); }}
           triggerContent={reviewerTrigger}
-          triggerClassName="min-w-0 w-full max-w-full justify-start overflow-hidden"
+          triggerClassName="min-w-0 max-w-full flex-1 justify-start overflow-hidden"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           rowAlign="start"

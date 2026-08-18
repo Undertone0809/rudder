@@ -47,9 +47,6 @@ vi.mock("@/components/ui/dialog", () => ({
   }: {
     children: ReactNode;
   }) => <button data-slot="dialog-close" {...props}>{children}</button>,
-  DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
@@ -346,7 +343,7 @@ describe("ApprovalPayloadRenderer", () => {
     expect(html).not.toContain("artifact://");
   });
 
-  it("keeps Goal change approval actions focused on approve and reject", async () => {
+  it("keeps Goal change approval actions usable around the dedicated renderer", () => {
     const onApprove = vi.fn();
     const onReject = vi.fn();
     const container = renderGoalChangeApprovalCardDom(onApprove, onReject);
@@ -360,18 +357,7 @@ describe("ApprovalPayloadRenderer", () => {
     act(() => approve?.click());
     act(() => reject?.click());
     expect(onApprove).toHaveBeenCalledOnce();
-    expect(onReject).not.toHaveBeenCalled();
-    const reason = document.querySelector<HTMLTextAreaElement>("[data-testid='approval-rejection-reason']");
-    expect(reason).not.toBeNull();
-    act(() => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-      valueSetter?.call(reason, "The scope is not ready for approval.");
-      reason?.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const confirmReject = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent === "Reject" && button !== reject);
-    await act(async () => confirmReject?.click());
-    expect(onReject).toHaveBeenCalledWith("The scope is not ready for approval.");
+    expect(onReject).toHaveBeenCalledOnce();
   });
 
   it("renders chat issue proposal Markdown and readable project/assignee labels", () => {

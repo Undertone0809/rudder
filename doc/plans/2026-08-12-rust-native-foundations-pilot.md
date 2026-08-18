@@ -2,7 +2,7 @@
 title: Rust Native Foundations Pilot
 date: 2026-08-12
 kind: implementation
-status: in_progress
+status: blocked
 area: agent_runtimes
 entities:
   - native_runtime
@@ -53,29 +53,29 @@ commit_refs:
   - cf46981e2
   - 72020b2da
   - db7cf955b
+  - 39bcc70cf
+  - cb9213e3c
+  - 8581b5cb9
+  - eea5191cf
+  - 34d85592e
+  - 621039522
+  - 5ea5d9285
+  - db19c7e8b
+  - fede632d7
+  - 2a5b289f2
+  - 1b8d36106
+  - 142c36592
+  - 47a00d611
+  - 9d4d17ba6
+  - f33081055
+  - c7f8c69c4
+  - 1d2f100cd
 updated_at: 2026-08-17
 ---
 
 # Rust Native Foundations Pilot
 
-### Six-capability delivery directive (2026-08-17)
-
-The implementation baseline is `main@6d22ad5aaf502821f2647dd547109bc89cfa5b53`.
-All six capabilities now ship Rust-first on macOS arm64/x64, Windows x64, and
-Linux x64. `RUDDER_NATIVE_MODE=auto` is the default, `node` is the global
-rollback, and `required` is the fail-closed test/diagnostic mode. Each
-capability also has an independent disable switch. Legacy capability toggles
-remain compatible.
-
-This directive replaces all earlier pilot sequencing and hosted observation
-requirements. Implementation and functional
-correctness come first; one-warmup/three-paired-trial `native_ab` runs only
-after the candidate is functionally complete. Ordinary performance differences
-are recorded but do not prevent Rust-first delivery. Crashes, leaks, data
-corruption, timeout failures, unsafe resource behavior, or fallback after Rust
-acceptance remain blocking.
-
-### Continuation status (2026-08-16)
+### Continuation status (2026-08-17)
 
 The exact `72005f4` macOS arm64 packaged candidate was rechecked from the
 portable ZIP with SHA-256
@@ -84,9 +84,29 @@ The packaged account-gate scenario reached the real board URL and passed.
 The packaged Local App scenario then stopped at the expected
 `401 account_session_required` boundary because no hosted authenticated
 fixture is available; the dev Local App scenario completed its lifecycle and
-cleanup. These historical packaged observations are supporting evidence only;
-they are not a prerequisite or admission gate for the main-bound
-implementation.
+cleanup. These results do not count as hosted dogfood.
+
+The restore recovery implementation was then hardened in `47a00d611`:
+startup reconciliation receives the live database handle, validates rollback
+and committed workspace tree hashes before cleanup, preserves ambiguous
+receipt/root state, and marks a recovered published backup `restored`.
+
+The exact-HEAD `0.7.7` packaged artifact was rebuilt from the current desktop
+release output after the sparse-recovery guard in `f33081055`. Its portable ZIP
+SHA-256 is
+`191250882595d607aa2866202f535cf9c4922ab56461365c6b34690cf68be558`, shell ZIP
+SHA-256 is `2b114e7a02b21357f42461fd0a67a3f432f38f1bbef23055b8cc1d2b0c253cd9`,
+the app executable SHA-256 is
+`b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b`, and the
+packaged `rudder-native` SHA-256 is
+`6b4ddb016dfbd75f0af58091b67364b26d2c3d634e65f12596ddfec750e440f9`.
+The exact packaged server/runtime probe now records the `1d2f100cd` candidate
+tuple and passed organization create, backup create, browse, file read, ZIP
+download, and restore against packaged PostgreSQL 18.4. This is a scoped
+supporting receipt, not authenticated packaged Desktop acceptance. The focused
+service/route regression suite is `67/67` after the sparse-recovery guard; the
+Desktop account-session gate remains blocked without an authorized hosted
+signed-in fixture.
 
 `rudder-evals` now exposes `run native-ab` (and the `native_ab` alias). It
 strictly invokes the existing three-trial OSS producer and writes a complete
@@ -99,15 +119,15 @@ ready `235.7 -> 228.1 ms`, Stop admission `22.6 -> 50.9 ms`, terminal cleanup
 `126.2 -> 170.6 ms`, and peak tree RSS `208.4 -> 164.6 MiB`. The flood
 workload was ready `238.2 -> 225.6 ms`, Stop admission `12.7 -> 12.0 ms`,
 terminal cleanup `75.5 -> 78.6 ms`, and peak tree RSS `224.8 -> 175.2 MiB`.
-These historical measurements predate the six-capability delivery directive
-and no longer determine the default policy.
+The normal lifecycle-tail regressions and the missing seven-day dogfood gate
+keep Local App at `opt-in` rather than `accepted_default`.
 
 ## Executive Decision
 
-### Continuation status (2026-08-15)
+### Historical packaged baseline (2026-08-15)
 
-The current metadata wrapper is `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
-Its native/runtime paths are unchanged from the clean packaged source
+The packaged baseline metadata wrapper was `db7cf955b06a6a86f64352cc93cf5366b298e27b`.
+Its native/runtime paths were unchanged from the clean packaged source
 `72005f4b37df05fbd987fb4c1051c8f21652ad23`; the wrapper contains only
 metadata and unrelated descendant changes. The exact macOS arm64 packaged
 candidate was rebuilt from that clean source. `desktop:dist`, server-package
@@ -122,20 +142,55 @@ packaged app executable SHA-256 is
 The staged product binaries report `0.7.7`; their hashes and the benchmark
 sampler hash are recorded in the delivery packet.
 
-The current backup comparator receipt is
-`/private/tmp/rudder-native-backup-dd8-100sample-ext25.json` with receipt
-SHA-256 `0dbecaa2f17b6c0e886f130fec0233b6df703f5938430944e57aa020aca50c29`.
-It uses a deterministic 100 MiB/10,000-file fixture, 100 paired samples per
-arm, 200/200 positive external sampler boundaries at 25 ms, and passes
-manifest, entry, content, and recovery parity. It remains explicitly
-`not_comparable`: arm order is fixed, warmups are absent, and no bootstrap
-confidence interval is recorded. Node p95 elapsed/RSS are 15330.897 ms /
-382025728 bytes; native p95 elapsed/RSS are 8323.525 ms / 389611520 bytes.
-These are descriptive observations, not a promotion claim.
+The fair backup comparator receipt is
+`/private/tmp/rudder-native-backup-fair-8581.json` with receipt SHA-256
+`e4a608aae2ade1724cdfd39cd84a2b0f05b20ade886b27d3e684a53c03225e25`.
+It uses a deterministic 100 MiB/10,000-file fixture, three warmups per arm,
+100 paired measured blocks, randomized counterbalanced order (Node first 52,
+Rust first 48), 10,000 paired-p95 bootstrap iterations, and 200/200 positive
+external sampler boundaries at 25 ms. Manifest, entry, content, and recovery
+parity pass; archive-byte parity remains intentionally not compared. Node p95
+elapsed/RSS are 6253.068 ms / 379682816 bytes; native p95 elapsed/RSS are
+3434.893 ms / 386940928 bytes. Latency improvement is 45.07% with a bootstrap
+95% CI of 35.06% to 54.95%, while native process-tree RSS peak is higher, so
+streaming Workspace backup remains `opt-in` rather than becoming default.
 
-This historical candidate was blocked under the superseded admission policy.
-Its receipts remain historical evidence only and are not reused for
-the `6d22ad5aa` main-bound candidate.
+Supporting backup workflow evidence is recorded in
+`evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
+workspace backup service, and download-route suites pass 67/67 tests. The
+tests cover archive tampering and unsafe names, limits, symlink policy,
+publication races and recovery-required paths, sparse recovery, native
+fallback diagnostics, browse/download behavior, and live-moved restore receipt
+recovery before/after publish with committed-receipt cleanup, and fail closed
+when the rollback tree is tampered, the committed workspace is missing or
+mismatched, or both the published and rollback trees mismatch their receipt.
+They are
+also exercised through a child-process crash harness across the prepared,
+live-moved, publish, and committed receipt windows on macOS. They are
+service/route supporting evidence only; malformed/corrupt/failure recovery,
+the full size/count mutation matrix, and the full APFS/Windows interruption
+matrix remain open.
+
+The real local workflow receipt in
+`evidence/rust-native-backup-e2e-receipt.json` adds two passing Playwright
+scenarios for create/browse/download/restore/delete and failed-artifact
+handling on an isolated embedded-PostgreSQL instance. This is supporting dev
+workflow evidence only; it does not upgrade the packaged acceptance gate.
+
+The scoped packaged server/runtime probe in
+`evidence/rust-native-backup-packaged-server-runtime-receipt.json` passes the
+real `startServer` API path with the source-aligned packaged PostgreSQL 18.4
+runtime and staged `rudder-native 0.7.7` binary: create, browse, file read, ZIP
+download, and restore all completed. It remains supporting evidence only; the
+packaged Desktop account gate, interruption matrix, and hosted authenticated
+Local App fixture are still separate open gates.
+
+The candidate remains blocked for Local App promotion: no authorized hosted
+authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
+cannot run. The foundation remains `accepted_default` only for the proven
+macOS arm64 packaged capability tuple; Local App and streaming backup remain
+`opt-in`, and the four dependent slices remain `not_admitted`. These are
+evidence-scoped decisions, not a claim that the pilot is complete.
 
 Release-version alignment is a hard gate. The normal Rudder product version
 is the single version for every first-party Rust package, Cargo.lock entry,
@@ -143,7 +198,8 @@ staged binary, Desktop/server manifest, and release tag; Rust packages must
 not use an independent `0.x` line. The `v0.7.7` release tag now resolves to
 `acfb8e4c7dbc963fdb32280b8055ee0604d021b6` on `origin/main`, and its
 native/runtime paths are unchanged from the `72005f4` artifact source. The
-recorded packaged artifact was not rebuilt from that tag, so release preflight
+recorded packaged artifact is source-aligned to the exact `1d2f100cd` runtime
+candidate but was not rebuilt from the release tag itself, so release preflight
 and packaged acceptance remain separately scoped; release preflight validates
 source metadata and Cargo.lock;
 packaged verification additionally validates staged binary `--version`
@@ -160,23 +216,29 @@ slices:
 5. Run evidence offset indexer/parser; and
 6. Workspace manifest/index watcher.
 
-The pilot does not authorize a general backend rewrite. It creates stable
-native boundaries and proves them on real Rudder workflows while TypeScript
-continues to own product state and decisions.
+The pilot does not authorize a general backend rewrite. It creates two stable
+native boundaries, proves them on real Rudder workflows, and uses measured
+Node-versus-Rust evidence to decide whether each boundary should become the
+default.
 
-After the shared protocol, packaging, and default-policy foundation is in
-place, implementation proceeds in three parallel workstreams:
+Implementation is sequential by dependency, not six parallel workstreams:
 
 ```text
-Foundation + RUDDER_NATIVE_MODE
-  +-- Process Core: Local App + Agent Run process/I/O
-  +-- Archive/Payload Core: Workspace backup + runtime payload
-  +-- Indexing Core: Run evidence + workspace manifest/watch
+Foundation
+  +-- Local App process host
+  |     +-- Agent Run process/I/O host
+  |
+  +-- Streaming Workspace backup
+        +-- Runtime payload installer/extractor
+        +-- Run evidence offset indexer/parser
+        +-- Workspace manifest/index watcher
 
-Each workstream
-  -> unit/protocol/fallback/restart/fault tests
-  -> exact-candidate public workflow acceptance
-  -> final native_ab comparison
+Each slice
+  -> deterministic correctness and pressure benchmark
+  -> explicit Rust opt-in
+  -> exact packaged candidate acceptance
+  -> rudder-evals native_ab comparison
+  -> promotion or rollback decision
 ```
 
 ## User And Operator Outcome
@@ -300,10 +362,9 @@ pilot must first implement or fixture these comparators:
 The 5.41 second sequential-append versus 0.178 second `WriteStream`
 microbenchmark admits log I/O optimization; it does not admit Rust by itself.
 Likewise, comparing Rust streaming against Node full-buffer download or base64
-backup would overstate language-specific value. The optimized Node path remains
-the correctness comparator and rollback path. Performance differences are
-measured after functional acceptance rather than used to postpone the
-Rust-first implementation.
+backup would overstate language-specific value. If the optimized Node path
+meets the correctness, reliability, RSS, and latency gates with lower lifecycle
+cost, the Rust slice stays opt-in or becomes `not_admitted`.
 
 ## Goals
 
@@ -313,12 +374,12 @@ Rust-first implementation.
   TypeScript services during this pilot.
 - Make native operations coarse-grained, versioned, bounded, cancellable, and
   independently observable.
-- Preserve a Node fallback until the exact Rust candidate passes correctness,
-  packaged acceptance, and safety gates.
+- Preserve a Node baseline until the exact Rust candidate passes correctness,
+  packaged acceptance, performance, and eval gates.
 - Produce immutable baseline/candidate evidence in `rudder-evals`, not only
   local benchmark prose.
-- Keep the Node implementation as a bounded rollback path after Rust becomes
-  the default; no long observation gate delays delivery.
+- Remove a Node implementation only after at least one stable release interval
+  with a proven rollback path.
 
 ## Non-Goals
 
@@ -851,8 +912,7 @@ commit or rollback before returning. Peak-disk measurement includes
 
 - Existing v1 JSON artifacts remain readable, downloadable, restorable, and
   prunable.
-- New writes use v2 Rust-first by default; v1 remains readable and the Node
-  v2 path remains the pre-side-effect fallback.
+- New writes become v2 only under explicit opt-in until acceptance.
 - No eager rewrite of historical v1 artifacts.
 - A future migration may transcode v1 to v2 only as a separately resumable,
   integrity-checked operation.
@@ -871,9 +931,11 @@ commit or rollback before returning. Peak-disk measurement includes
 - v1 and v2 produce the same eligible path set, file bytes, tree hash, browse
   results, sparse recovery result, and restored workspace hash.
 - Report the legacy v1 full-materialization footprint as risk evidence, but use
-  the streaming Node ZIP/restore comparator for language attribution. Record
-  process-tree RSS and create/restore latency without making ordinary
-  performance differences an implementation prerequisite.
+  the streaming Node ZIP/restore comparator for language attribution. For a
+  100 MiB included workspace, Rust promotion requires at least 30% lower
+  combined process-tree RSS, at least 20% create/restore p95 improvement, or
+  closure of a reproduced integrity/recovery defect versus that optimized Node
+  path; undeclared total latency may not regress more than 10%.
 
 ### Slice 3: Runtime payload installer/extractor
 
@@ -909,18 +971,22 @@ emits bounded phase progress without archive paths or response bodies.
   invalid binary version, publish interruption, and live-generation protection.
 - No partial generation becomes selectable after any injected failure.
 - The current full-buffer path's expected 280-350 MiB avoidable allocation is
-  structural risk evidence, not the language comparator. Compare Rust with the
-  optimized Node streaming download/extractor on the exact candidate after
-  functional acceptance; network-bound speed is not a required claim.
+  structural risk evidence, not the language comparator. Rust promotion
+  requires at least 30% lower combined process-tree RSS, at least 20% install
+  p95 improvement, or closure of a reproduced publish/recovery defect versus
+  the optimized Node streaming download/extractor on the exact candidate.
+- End-to-end cold install may be promoted with 0-15% latency improvement if
+  memory/reliability gates pass; network-bound speed is not a required claim.
 
 ### Slice 4: Agent Run process/I/O host
 
 #### Admission condition
 
-Reuse the accepted `process-core` protocol and implementation; do not fork a
-second process supervision implementation. Agent Run integration may proceed
-as soon as the shared host protocol and pre-accept fallback boundary pass their
-focused tests.
+Begin only after the Local App host has passed packaged acceptance and a stable
+dogfood gate: at least seven consecutive days and 100 accepted packaged
+start/Stop or parent-loss cycles, with zero unresolved ownership, duplicate
+listener, descendant-leak, or cleanup P1. Reuse `process-core`; do not fork a
+second process supervision implementation.
 
 Before implementation, freeze a contract-parity packet for
 `RUN.CHAT.AGENT.001`, `RUN.EXECUTION.001`, `RUN.RESULT.001`,
@@ -1123,10 +1189,10 @@ path, secret, or unredacted provider payload is added to diagnostics.
 - TypeScript and Rust paths produce the same ordered, redacted transcript page,
   error anchors, diagnosis inputs, and output hashes for the supported corpus.
 - The pre-index full-materialization path is reported only as eliminated-risk
-  evidence. Compare 100 MiB and larger logs against the bounded TypeScript
-  paging/index comparator and record RSS, detail latency, response bytes, and
-  corruption/recovery behavior without making ordinary performance deltas a
-  default-policy prerequisite.
+  evidence. For 100 MiB or larger logs, Rust promotion requires at least 30%
+  lower combined process-tree RSS, at least 20% detail p95 improvement, or
+  closure of a reproduced offset/corruption/recovery defect versus the bounded
+  TypeScript paging/index comparator, without returning a larger response.
 - A full-response benchmark is reported separately and cannot be used to claim
   the paged user path improved or to feed `native_ab`.
 
@@ -1134,9 +1200,10 @@ path, secret, or unredacted provider payload is added to diagnostics.
 
 #### Admission condition
 
-Implement the rebuildable manifest/watch boundary, then benchmark 1,000,
-100,000, and 1,000,000 path fixtures after functional acceptance. Record
-filesystem traversal separately from Library DB mapping.
+Run a baseline first with 1,000, 100,000, and 1,000,000 path fixtures. Record
+filesystem traversal time separately from Library DB mapping. Do not implement
+the Rust index if DB mapping or response decoration is the dominant cost and
+cannot be removed by this boundary.
 
 #### Design
 
@@ -1167,10 +1234,19 @@ limits, and Library entry ID decoration.
 An event-loop query barrier proves only that events already delivered to the
 watcher were applied; it cannot prove that the OS has delivered every mutation
 that occurred before the query. Therefore this plan does not use the term
-`verified_current`. In default `auto` mode, `building`, `dirty`, `overflow`,
-`unavailable`, or a query mismatch marks the manifest stale and returns the
-live TypeScript traversal. The manifest never weakens the existing effective
-mention freshness contract.
+`verified_current`. During `explicit_opt_in`, the response is compared against
+the current live TypeScript traversal and any mismatch marks the index dirty
+and returns the live result. Promotion to `accepted_default` requires one of:
+
+1. a bounded verification algorithm that preserves the existing effective
+   mention freshness contract and demonstrates a benefit over live traversal;
+   or
+2. an explicitly approved `LIBRARY.FILES.001` delta defining snapshot age,
+   visible freshness, query barrier, retry/fallback, and newly created/deleted
+   file behavior.
+
+Without one of those gates, this slice remains diagnostic/opt-in even when its
+benchmark is fast.
 
 #### Acceptance
 
@@ -1182,8 +1258,13 @@ mention freshness contract.
   TypeScript result.
 - Index rebuild yields the same eligible path set and ordering as the current
   TypeScript traversal for the declared policy version.
-- At 100,000 paths, record cold sparse-query p95, process-tree CPU/RSS, event
-  recovery, and live-fallback behavior versus the cached TypeScript comparator.
+- At 100,000 paths, Rust must improve cold sparse-query p95 by at least 20%,
+  reduce combined process-tree CPU/RSS at least 30%, or close a reproduced
+  watcher/rebuild correctness defect versus the cached TypeScript watcher plus
+  DB/N+1-fixed comparator. Typical small-workspace performance may not regress
+  more than 10%.
+- If the baseline does not show material traversal cost, close this slice as
+  `not_admitted` with evidence rather than shipping an unused native service.
 
 ## Cross-Slice Data And Compatibility Rules
 
@@ -1245,12 +1326,20 @@ Every comparison records:
 
 ### Sampling
 
-- The final `native_ab` campaign uses one warmup and three alternating paired
-  Node/Rust trials for every workload. Record arm order, cache state, and every
-  raw observation.
-- Report correctness, p50/p95, process-tree RSS, CPU, bytes, cleanup, and
-  reliability. Ordinary deltas are descriptive. Crash, leak, corruption,
-  timeout, cleanup failure, or unsafe resource behavior blocks delivery.
+- Deterministic micro/service benchmarks use at least 3 warmups followed by
+  randomized paired blocks. Record the random seed, block/order sequence, cache
+  state, and every raw observation.
+- A latency p95 promotion claim requires at least 100 measured operations per
+  arm and a reported bootstrap 95% confidence interval for the paired delta.
+  Twenty observations may be used for directional planning but their empirical
+  p95 is effectively a tail maximum and cannot satisfy a promotion gate.
+- A benefit threshold passes only when the point estimate reaches the declared
+  threshold (for example p95 improvement >=20% or RSS reduction >=30%) and the
+  paired 95% confidence-interval lower bound is above 0%. A non-regression
+  threshold passes only when its point estimate and 95% confidence-interval
+  upper bound are both within the allowed 10% regression. An interval crossing
+  0 for benefit, or crossing 10% for non-regression, is inconclusive and cannot
+  promote the slice on that metric.
 - Large 1 GB or destructive failure injection: enough repetitions to expose
   variance, with the lower count declared; report median/range and individual
   failures rather than inventing a p95 when 100 operations are impractical.
@@ -1400,7 +1489,7 @@ case definitions
 
 A standalone Markdown report is incomplete.
 
-### Safety and correctness gates
+### Promotion gates
 
 For each slice and the final portfolio:
 
@@ -1409,15 +1498,19 @@ For each slice and the final portfolio:
 - zero new forbidden behavior, organization leak, secret exposure, missing
   evidence, duplicate owner, or invalid terminal transition;
 - correctness outputs are identical where byte/state parity is required;
-- crash, leak, corruption, timeout, cleanup, and resource-safety checks pass;
-- ordinary performance differences and variance remain visible without acting
-  as an implementation admission gate;
+- at least one declared performance/reliability threshold for the slice is met;
+- performance benefits and non-regression limits satisfy the point-estimate and
+  confidence-interval decision rule in the Benchmark Plan; deterministic
+  reliability-defect closure may satisfy the benefit gate only when the frozen
+  reproducer passes every required repetition with no new hard-state failure;
+- no undeclared metric regresses more than 10% or has a 95% confidence-interval
+  upper bound above 10% without an accepted explanation;
 - result variance and non-comparable trials remain visible;
 - reviewer and verifier accept the same exact candidate after eval evidence is
   sealed.
 
-Failure to show a performance benefit is recorded and does not by itself
-change the Rust-first default.
+Failure to show a benefit does not justify changing the threshold. The slice
+stays opt-in, returns to Node default, or is removed.
 
 ### Portfolio comparison after all six slices
 
@@ -1437,10 +1530,8 @@ Report:
 - new binary/package size and cold-start cost;
 - failures by taxonomy, not one composite score.
 
-This final campaign records whether the native foundation improves resource and
-reliability characteristics on the unchanged candidate. It does not delay the
-Rust-first default for ordinary performance variance and does not authorize
-removing the Node rollback paths.
+This final campaign decides whether the native foundation as a whole is worth
+maintaining. It does not automatically authorize removing all Node paths.
 
 ## Test Matrix
 
@@ -1470,8 +1561,7 @@ small deterministic fixture.
 
 ### Rudder integration and E2E
 
-- Existing Local App/App Builder E2E with Rust-first defaults and explicit Node
-  fallback/global rollback coverage.
+- Existing Local App/App Builder E2E with Rust opt-in and Node baseline.
 - Workspace backup routes/service tests plus real create/browse/download/
   restore E2E.
 - Agent Run real-runtime output/Stop/evidence workflow.
@@ -1528,8 +1618,8 @@ reinterpret it as green.
 ### Before operation acceptance
 
 If the binary is missing, incompatible, corrupt, or fails handshake, record one
-bounded diagnostic. In `auto` mode, select the retained Node path only while
-the operation is still before its acceptance/side-effect boundary.
+bounded diagnostic and select the retained Node path when that capability is
+still in explicit opt-in/default-with-fallback state.
 
 ### After operation acceptance
 
@@ -1554,15 +1644,49 @@ Changing a capability from `accepted_default` back to Node requires:
 
 ## Delivery Sequence And Decision Gates
 
-| Order | Deliverable | Exit decision |
-| --- | --- | --- |
-| 1 | Shared protocol, packaging, `RUDDER_NATIVE_MODE`, rollback and diagnostics | Four targets pass protocol/fallback fixtures |
-| 2A | Process Core: Local App and Agent Run | Start/flood/Stop/timeout/control-loss/cleanup PASS |
-| 2B | Archive/Payload Core: backup and runtime payload | create/browse/download/restore/publish/recovery PASS |
-| 2C | Indexing Core: evidence and workspace manifest/watch | paging/corruption/storm/overflow/restart/live-fallback PASS |
-| 3 | Full repository, E2E, packaged Desktop, and four-platform CI | Exact functional candidate is green |
-| 4 | Final `native_ab` portfolio | Results bind to the unchanged candidate |
-| 5 | Reviewer, verifier, final review, commit and push | Exact-candidate accept/PASS/accept |
+| Phase | Deliverable | Dependency | Exit decision |
+| --- | --- | --- | --- |
+| 0A | Cargo workspace, protocol, packaging, per-target activation | none | Can every target run protocol fixtures and can the isolated macOS App execute the exact helper? |
+| 0B | optimized Node comparator harnesses | current Node paths | Are language-neutral streaming/backpressure fixes measured first? |
+| 0E | `rudder-evals native_ab` schema-to-Dashboard foundation | frozen eval candidate | Does one sealed rehearsal round-trip with `productPass: false`? |
+| 1A | Local App process host | 0A + relevant 0B comparator | Process semantics and packaged Local App PASS |
+| 1B | Streaming Workspace backup v2 | 0A + relevant 0B comparator | Parity plus RSS/reliability gate PASS |
+| 2A | Runtime payload installer/extractor | 1B archive core | Memory/atomic publish gate PASS |
+| 2B | Agent Run process/I/O host | 1A stable dogfood | Stop/evidence/backpressure gate PASS |
+| 3A | Run evidence indexer/parser | 2B log format and output contract | Paged detail parity/benefit PASS |
+| 3B | Workspace manifest/index watcher | 1B walker, comparator benchmark, and freshness contract gate | Search benefit PASS, opt-in only, or `not_admitted` |
+| 4 | Final `native_ab` portfolio and candidate `live_eval` | all admitted slices | Promote, keep opt-in, or remove per slice |
+
+Do not promote Phase 1A/1B without 0E. Do not begin Phase 2B merely because
+Phase 1A compiles. Do not begin Phase 3A until `projection=full` has been removed
+from the default detail path and eval workloads. Do not implement Phase 3B if
+its admission benchmark points to database mapping rather than traversal, and
+do not make it default without the freshness gate above.
+
+## Estimated Effort
+
+These are planning ranges, not delivery commitments:
+
+| Slice | Incremental engineering range |
+| --- | ---: |
+| Foundation and packaging | 1-2 weeks |
+| Optimized Node comparators and shared benchmark sampler | 1-2 weeks |
+| `native_ab` data model, runner, ingest, API, and Dashboard | 2-4 weeks |
+| Local App process host | 2-3 weeks |
+| Streaming Workspace backup | 2-4 weeks |
+| Runtime payload installer/extractor | 1-2 weeks after archive core |
+| Agent Run process/I/O host | 3-5 weeks after process core |
+| Run evidence indexer/parser | 2-3 weeks after output contract |
+| Workspace manifest/index watcher | 2-4 weeks if admitted |
+| Final eval campaign and evidence reconciliation | 1-2 weeks |
+
+Sequential total: approximately 17-31 engineering weeks, with decision gates
+that may stop or defer a slice. This is implementation effort, not a portfolio
+delivery date. It excludes the seven-day Local App dogfood gate, release
+calendar/at-least-one-stable-release intervals before `legacy_removed`, waiting
+for cross-platform machines, and any separately approved Product Logic work.
+The plan should not reserve the full range before Phase 1 proves the native
+foundation.
 
 ## Definition Of Done
 
@@ -1572,9 +1696,8 @@ The pilot is complete only when:
    packet.
 2. Every Rudder-owned Rust package reports the same version as the normal
    Rudder release represented by that candidate.
-3. macOS arm64/x64, Windows x64, and Linux x64 native staging, protocol,
-   fallback, and platform public workflows pass; macOS packaged Desktop also
-   passes visible Local App and backup workflows.
+3. macOS arm64 packaged public workflows pass; other platforms are labeled no
+   stronger than their real evidence.
 4. Node/Rust correctness and pressure benchmarks use comparable workloads and
    report process-tree RSS, latency, bytes, and reliability.
 5. `rudder-evals` stores the final `native_ab` campaign through immutable
@@ -1583,8 +1706,8 @@ The pilot is complete only when:
    cases and relevant real-runtime/Desktop acceptance.
 7. No new organization, permission, secret, path, evidence, terminal-state, or
    recovery regression remains.
-8. Safety and reliability gates pass; ordinary performance deltas are recorded
-   without unsupported benefit claims.
+8. Each promoted slice meets its declared performance or reliability gate;
+   unsupported benefit claims are removed.
 9. Rollback has been exercised against the exact packaged candidate.
 10. Reviewer acceptance and verifier PASS apply to the same unchanged
    candidate.
@@ -1605,6 +1728,8 @@ The pilot is complete only when:
   capability mismatch, unsafe input, integrity, I/O/resource exhaustion,
   process ownership, control loss, cancellation, and internal failure; public
   messages stay sanitized.
+- The Local App -> Agent Run dogfood gate is seven consecutive days plus 100
+  accepted lifecycle cycles with the zero-P1 conditions stated in Slice 4.
 - Phase 0E first creates the separate dated `rudder-evals` implementation plan,
   then changes schema, runner, packet, ingest, registry, API, and Dashboard in
   the dependency order specified above.

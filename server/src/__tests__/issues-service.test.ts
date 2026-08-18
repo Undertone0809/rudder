@@ -8,7 +8,6 @@ import {
   executionWorkspaces,
   goals,
   heartbeatRuns,
-  issueAttachments,
   issueComments,
   issueLabels,
   issues,
@@ -29,13 +28,11 @@ import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { errorHandler } from "../middleware/index.ts";
 import { issueRoutes } from "../routes/issues.ts";
 import { issueService } from "../services/issues.ts";
-import type { StorageService } from "../storage/types.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -2120,86 +2117,6 @@ describe("issueService.list participantAgentId", () => {
     expect(attachments[0]).toMatchObject({
       usage: "issue",
       originalFilename: "issue-level.pdf",
-    });
-  });
-
-  it("preserves referenced assets as durable Issue attachments on creation", async () => {
-    const orgId = randomUUID();
-    const sourceAssetId = randomUUID();
-    const sourceBody = Buffer.from("image bytes");
-
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Issue description assets",
-      urlKey: deriveOrganizationUrlKey("Issue description assets"),
-      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(assets).values({
-      id: sourceAssetId,
-      orgId,
-      provider: "local_disk",
-      objectKey: `${orgId}/assets/source.png`,
-      contentType: "image/png",
-      byteSize: sourceBody.length,
-      sha256: "source-sha256",
-      originalFilename: "source.png",
-    });
-
-    const storage: StorageService = {
-      provider: "local_disk",
-      putFile: vi.fn(async (input) => ({
-        provider: "local_disk" as const,
-        objectKey: `${input.orgId}/${input.namespace}/copy.png`,
-        contentType: input.contentType,
-        byteSize: input.body.length,
-        sha256: "copied-sha256",
-        originalFilename: input.originalFilename,
-      })),
-      getObject: vi.fn(async () => ({
-        stream: Readable.from(sourceBody),
-        contentType: "image/png",
-        contentLength: sourceBody.length,
-      })),
-      headObject: vi.fn(async () => ({ exists: true })),
-      deleteObject: vi.fn(async () => undefined),
-    };
-
-    const created = await issueService(db, storage).create(orgId, {
-      title: "Keep this screenshot",
-      description: `![Screenshot](/api/assets/${sourceAssetId}/content)`,
-      status: "todo",
-      priority: "medium",
-    });
-
-    expect(created.description).toMatch(/\/api\/attachments\/[0-9a-f-]+\/content/);
-    expect(created.description).not.toContain(`/api/assets/${sourceAssetId}/content`);
-    expect(storage.getObject).toHaveBeenCalledWith(orgId, `${orgId}/assets/source.png`);
-    expect(storage.putFile).toHaveBeenCalledWith(expect.objectContaining({
-      orgId,
-      namespace: `issues/${created.id}/description`,
-      originalFilename: "source.png",
-      contentType: "image/png",
-      body: sourceBody,
-    }));
-
-    const [attachment] = await db
-      .select()
-      .from(issueAttachments)
-      .where(eq(issueAttachments.issueId, created.id));
-    expect(attachment).toMatchObject({
-      orgId,
-      issueId: created.id,
-      usage: "description_inline",
-    });
-    const [copiedAsset] = await db
-      .select()
-      .from(assets)
-      .where(eq(assets.id, attachment!.assetId));
-    expect(copiedAsset).toMatchObject({
-      orgId,
-      objectKey: `${orgId}/issues/${created.id}/description/copy.png`,
-      originalFilename: "source.png",
     });
   });
 

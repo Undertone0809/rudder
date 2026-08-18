@@ -1,8 +1,8 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
 import path from "node:path";
-import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import type { Readable, Writable } from "node:stream";
 
 export type NativeProcessHost = EventEmitter & {
   readonly stdin: Writable;
@@ -47,7 +47,7 @@ export function spawnNativeProcessHost(
   executablePath: string,
   options: NativeProcessHostOptions = {},
 ): NativeProcessHost {
-  const child = spawn(path.resolve(executablePath), [], {
+  const child = spawn(executablePath, [], {
     cwd: options.cwd,
     env: options.env,
     shell: false,

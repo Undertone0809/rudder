@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
-import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { normalizeMarkdownDocumentValue } from "../lib/markdown-document-value";
 import type { MarkdownEditorEngine } from "../lib/markdown-editor-engine";
 import { cn } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
 import {
   MarkdownEditor,
-  type InlineTokenClickEvent,
   type MarkdownEditorRef,
   type MentionOption,
 } from "./MarkdownEditor";
@@ -22,7 +20,6 @@ interface InlineEditorProps {
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
   onMentionQueryChange?: (query: string | null) => void;
-  onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
   editorEngine?: MarkdownEditorEngine;
   documentIdentity?: string;
   alwaysEdit?: boolean;
@@ -54,7 +51,6 @@ export function InlineEditor({
   imageUploadHandler,
   mentions,
   onMentionQueryChange,
-  onInlineTokenClick,
   editorEngine,
   documentIdentity,
   alwaysEdit = false,
@@ -318,7 +314,6 @@ export function InlineEditor({
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
-          onInlineTokenClick={onInlineTokenClick}
           documentIdentity={documentIdentity}
           activateInlineTokensOnPlainClick={variant === "issue-description"}
           submitShortcut="mod-enter"
