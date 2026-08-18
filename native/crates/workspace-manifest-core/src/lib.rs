@@ -754,6 +754,12 @@ mod tests {
         // storm. Ready means the first manifest was published, not that the
         // watcher thread has necessarily reached its steady-state receive.
         let arm = workspace.join("watcher-arm");
+        let builds_before_arm = states
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|state| **state == ManifestState::Building)
+            .count();
         fs::write(&arm, b"arm").unwrap();
         let mut dirty_observed = false;
         for _ in 0..150 {
@@ -764,12 +770,6 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         assert!(dirty_observed, "watcher did not observe arm mutation");
-        let builds_before_arm_cleanup = states
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|state| **state == ManifestState::Building)
-            .count();
         let mut arm_rebuilt = false;
         for _ in 0..150 {
             let captured = states.lock().unwrap();
@@ -778,7 +778,7 @@ mod tests {
                     .iter()
                     .filter(|state| **state == ManifestState::Building)
                     .count()
-                    > builds_before_arm_cleanup
+                    > builds_before_arm
             {
                 arm_rebuilt = true;
                 break;
@@ -787,7 +787,7 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         assert!(arm_rebuilt, "watcher did not rebuild after arm mutation");
-        let builds_before_arm_cleanup = states
+        let builds_before_cleanup = states
             .lock()
             .unwrap()
             .iter()
@@ -802,7 +802,7 @@ mod tests {
                     .iter()
                     .filter(|state| **state == ManifestState::Building)
                     .count()
-                    > builds_before_arm_cleanup
+                    > builds_before_cleanup
             {
                 arm_cleanup_rebuilt = true;
                 break;
