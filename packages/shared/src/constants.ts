@@ -284,6 +284,7 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_goal_list",
   "rudder_goal_context",
   "rudder_goal_progress",
+  "rudder_goal_checkpoint",
   "rudder_goal_change_propose",
   "rudder_goal_result_propose",
   "rudder_issue_get",

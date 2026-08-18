@@ -327,6 +327,44 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
         },
         idempotencyKey: string("Stable key for safe retry.", { maxLength: 500 }),
       }, ["goal", "summary", "evidenceRefs", "idempotencyKey"]);
+    case "goal.checkpoint":
+      return schema({
+        goal,
+        summary: string("Plain-language bounded-run checkpoint summary."),
+        evidenceRefs: {
+          type: "array",
+          description: "URI-like references to artifacts, measurements, or other supporting evidence.",
+          maxItems: 100,
+          items: string("URI-like evidence reference.", { maxLength: 8_192 }),
+        },
+        expectedPlanRevision: number("Plan revision read before this checkpoint.", 1, 1_000_000_000),
+        plan: {
+          type: "object",
+          description: "Optional complete next Plan revision; omit when the current Plan remains valid.",
+          additionalProperties: false,
+          properties: {
+            summary: string("Plan summary."),
+            hypotheses: { type: "array", maxItems: 1000, items: {} },
+            selectedPaths: { type: "array", maxItems: 1000, items: {} },
+            rejectedPaths: { type: "array", maxItems: 1000, items: {} },
+            sequencing: { type: "array", maxItems: 1000, items: {} },
+            budgetAllocations: { type: "object", additionalProperties: true },
+            invalidationConditions: { type: "array", maxItems: 1000, items: {} },
+          },
+          required: ["summary"],
+        },
+        continuation: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            kind: string("Continuation policy.", { enum: ["commitment", "wait", "decision", "verification"] }),
+            summary: string("What should happen next or what is awaited."),
+            wakeCondition: { oneOf: [{ type: "string", minLength: 1 }, { type: "null" }] },
+          },
+          required: ["kind", "summary"],
+        },
+        idempotencyKey: string("Stable key for safe retry.", { maxLength: 500 }),
+      }, ["goal", "summary", "evidenceRefs", "expectedPlanRevision", "continuation", "idempotencyKey"]);
     case "goal.change.propose":
       return schema({
         goal,

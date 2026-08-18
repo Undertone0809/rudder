@@ -51,7 +51,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const isGoalWake = Boolean(
       existingWakeupRequestId
       && goalId
-      && ["goal_started", "goal_feedback", "goal_change_decided"].includes(reason ?? ""),
+      && ["goal_started", "goal_feedback", "goal_change_decided", "goal_continuation"].includes(reason ?? ""),
     );
     heartbeatSessions.writeSessionReuseSuppression(
       enrichedContextSnapshot,

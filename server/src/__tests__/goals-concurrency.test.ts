@@ -214,6 +214,124 @@ describe("Goal closed-state concurrency", () => {
     expect(feedbackWakeups).toEqual([]);
   }, 30_000);
 
+  it("serializes a ready Result Proposal ahead of a linked queued Goal continuation claim", async () => {
+    const orgId = randomUUID();
+    const ownerAgentId = randomUUID();
+    const orgName = `Goal continuation claim ${orgId.slice(0, 8)}`;
+    await db.insert(organizations).values({
+      id: orgId,
+      name: orgName,
+      urlKey: deriveOrganizationUrlKey(orgName),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: ownerAgentId,
+      orgId,
+      name: "Goal continuation owner",
+      role: "engineer",
+      status: "idle",
+      capabilities: "Advances Goal continuations and records evidence.",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const service = goalService(db);
+    const draft = await service.create(orgId, {
+      title: "Stop a queued continuation at human acceptance",
+      ownerAgentId,
+    });
+    const active = await service.activate(draft.id, {
+      confirmed: true,
+      ownerAgentId,
+      outcomeStatement: "The accepted Goal result is ready for review",
+      objectiveMode: "target",
+      criteria: [{ id: "result", label: "Result exists", evaluator: "artifact" }],
+      autonomyEnvelope: {},
+      humanAuthorities: {},
+      evaluationPolicy: {},
+      initialPlan: { summary: "Build and verify the accepted result" },
+      initialContinuation: { kind: "verification", summary: "Verify the next result" },
+    }, ownerAgentId);
+
+    const wakeupId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(agentWakeupRequests).values({
+      id: wakeupId,
+      orgId,
+      agentId: ownerAgentId,
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: "goal_continuation",
+      payload: {
+        goalId: active.id,
+        checkpointId: randomUUID(),
+        planRevision: active.planRevision,
+        continuation: { kind: "verification", summary: "Verify the queued continuation" },
+      },
+      status: "queued",
+      requestedByActorType: "agent",
+      requestedByActorId: ownerAgentId,
+      idempotencyKey: `goal-continuation:${randomUUID()}`,
+      requestedAt: new Date(),
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId: ownerAgentId,
+      status: "queued",
+      invocationSource: "on_demand",
+      wakeupRequestId: wakeupId,
+      // Legacy persisted Runs may carry the Goal ID but only the wake request has its reason.
+      contextSnapshot: { goalId: active.id },
+      startedAt: new Date(),
+    });
+    await db.update(agentWakeupRequests).set({ runId }).where(eq(agentWakeupRequests.id, wakeupId));
+
+    const heartbeat = heartbeatService(db);
+    const heldLock = await holdGoalRowLock(db, active.id);
+    const result = service.createResultProposal(active.id, {
+      evidenceRefs: ["artifact://goal/accepted-result"],
+      criteria: [{ id: "result", status: "met" }],
+      resultPayload: { artifact: "artifact://goal/accepted-result" },
+      contractRevision: active.contractRevision,
+      riskSummary: "No known remaining risk.",
+      idempotencyKey: `goal-result:${randomUUID()}`,
+    }, ownerAgentId);
+    let claim: Promise<unknown> | null = null;
+    let claimExpectation: Promise<void> | null = null;
+    try {
+      await waitForDatabaseLockWaiters(db, 1);
+      claim = heartbeat.startNextQueuedRunForAgent(ownerAgentId);
+      claimExpectation = expect(claim).resolves.toBeDefined();
+      await waitForDatabaseLockWaiters(db, 2);
+    } catch (error) {
+      heldLock.release();
+      await Promise.allSettled([
+        heldLock.transaction,
+        result,
+        ...(claim ? [claim] : []),
+        ...(claimExpectation ? [claimExpectation] : []),
+      ]);
+      throw error;
+    }
+
+    heldLock.release();
+    await heldLock.transaction;
+    const [proposal] = await Promise.all([result, claimExpectation!]);
+    expect(proposal).toMatchObject({ status: "ready" });
+    expect(await db.select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId)))
+      .toMatchObject([{ status: "cancelled", errorCode: "goal.result_proposal_ready" }]);
+    expect(await db.select({ status: agentWakeupRequests.status })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupId)))
+      .toMatchObject([{ status: "cancelled" }]);
+  }, 30_000);
+
   it("admits idempotent Goal start and feedback intents into exactly one Run each", async () => {
     const orgId = randomUUID();
     const ownerAgentId = randomUUID();

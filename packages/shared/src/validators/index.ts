@@ -229,7 +229,7 @@ export {
   rejectGoalResultProposalSchema,
   setGoalFocusSchema,
   startGoalSchema,
-  updateGoalPlanSchema, updateGoalSchema, type AcceptGoalResultProposal, type ActivateGoal, type ActivateGoalInput,
+  createGoalCheckpointSchema, goalCheckpointSchema, goalPlanPayloadSchema, updateGoalPlanSchema, updateGoalSchema, type AcceptGoalResultProposal, type ActivateGoal, type ActivateGoalInput,
   type AssignGoalOwner, type CreateGoal, type CreateGoalActivity, type CreateGoalChangeProposal,
   type CreateGoalFeedback, type CreateGoalResultProposal, type DecideGoalChangeProposal,
   type EvaluateGoal, type PreviewGoalStart, type RejectGoalResultProposal,

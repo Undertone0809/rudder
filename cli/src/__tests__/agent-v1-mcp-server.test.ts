@@ -44,6 +44,14 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
     evidenceRefs: ["artifact://goal/progress"],
     idempotencyKey: "goal-progress-1",
   },
+  rudder_goal_checkpoint: {
+    goal: "11111111-1111-4111-8111-111111111111",
+    summary: "Checkpointed the verified Goal result.",
+    evidenceRefs: ["artifact://goal/checkpoint"],
+    expectedPlanRevision: 1,
+    continuation: { kind: "verification", summary: "Verify the next result" },
+    idempotencyKey: "goal-checkpoint-1",
+  },
   rudder_goal_change_propose: {
     goal: "11111111-1111-4111-8111-111111111111",
     contractRevision: 1,
@@ -1336,6 +1344,22 @@ describe("agent-v1 MCP server", () => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.endsWith("/api/goals/goal-1/checkpoint")) {
+        expect(init?.method).toBe("POST");
+        expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
+        expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          summary: "Checkpointed the Goal result.",
+          evidenceRefs: ["artifact://goal/checkpoint"],
+          expectedPlanRevision: 1,
+          continuation: { kind: "verification", summary: "Verify the next result" },
+          idempotencyKey: "goal-checkpoint-1",
+        });
+        return new Response(JSON.stringify({ id: "checkpoint-1", planRevisionAfter: 1 }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (url.endsWith("/api/goals/goal-1/change-proposals")) {
         expect(init?.method).toBe("POST");
         expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
@@ -1422,9 +1446,25 @@ describe("agent-v1 MCP server", () => {
         },
       },
     }, env);
-    const changeResponse = await runAgentV1McpJsonRpcMessage({
+    const checkpointResponse = await runAgentV1McpJsonRpcMessage({
       jsonrpc: "2.0",
       id: 6,
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_checkpoint",
+        arguments: {
+          goal: "goal-1",
+          summary: "Checkpointed the Goal result.",
+          evidenceRefs: ["artifact://goal/checkpoint"],
+          expectedPlanRevision: 1,
+          continuation: { kind: "verification", summary: "Verify the next result" },
+          idempotencyKey: "goal-checkpoint-1",
+        },
+      },
+    }, env);
+    const changeResponse = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 7,
       method: "tools/call",
       params: {
         name: "rudder_goal_change_propose",
@@ -1440,7 +1480,7 @@ describe("agent-v1 MCP server", () => {
     }, env);
     const resultResponse = await runAgentV1McpJsonRpcMessage({
       jsonrpc: "2.0",
-      id: 7,
+      id: 8,
       method: "tools/call",
       params: {
         name: "rudder_goal_result_propose",
@@ -1475,6 +1515,10 @@ describe("agent-v1 MCP server", () => {
       isError: false,
       structuredContent: { id: "activity-1" },
     });
+    expect(checkpointResponse?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "checkpoint-1", planRevisionAfter: 1 },
+    });
     expect(changeResponse?.result).toMatchObject({
       isError: false,
       structuredContent: { id: "change-1", status: "pending" },
@@ -1485,7 +1529,7 @@ describe("agent-v1 MCP server", () => {
     } | undefined;
     expect(resultEnvelope?.isError, JSON.stringify(resultEnvelope?.structuredContent)).toBe(false);
     expect(resultEnvelope?.structuredContent).toMatchObject({ id: "proposal-1", status: "ready" });
-    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
   it("dispatches run inspection tools directly with CLI-equivalent bounded queries", async () => {

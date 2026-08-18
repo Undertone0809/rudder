@@ -22,6 +22,7 @@ related_code:
   - server/src/services/workspace-runtime.helpers.ts
 related_tests:
   - packages/agent-runtime-utils/src/server-utils.prompts.test.ts
+  - tests/e2e/goal-runtime-prompt.spec.ts
   - packages/agent-runtime-utils/src/server-utils.test.ts
   - server/src/__tests__/agent-instructions-service.test.ts
   - server/src/__tests__/agent-run-context.test.ts
@@ -126,6 +127,11 @@ chat, review, heartbeat, or relationship-authorized explicit work.
 - Wake context: `wakeReason`, `wakeSource`, `issue`, `comment`,
   `wakeCommentId`, session handoff fields, and recovery/passive follow-up
   fields when present.
+- Goal Runtime Context: for `goal_started`, `goal_feedback`,
+  `goal_change_decided`, and `goal_continuation`, the accepted Contract,
+  current persisted Plan, latest checkpoint facts, continuation, and
+  wake-specific feedback, continuation, or decision facts hydrated into the run
+  snapshot.
 - Persisted evidence: heartbeat run `contextSnapshot`, adapter invocation
   event payload, runtime command notes, runtime prompt metrics, run logs, and
   run intelligence metadata.
@@ -156,6 +162,12 @@ chat, review, heartbeat, or relationship-authorized explicit work.
   current status unless the user explicitly requests a lifecycle change.
 - Saved task session parameters and execution workspace settings affect the cwd
   and session handoff context that the adapter sees.
+- Goal Owner wakeups use one of four runtime-owned prompt templates:
+  `GOAL_STARTED_PROMPT_TEMPLATE`, `GOAL_FEEDBACK_PROMPT_TEMPLATE`,
+  `GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE`, or
+  `GOAL_CONTINUATION_PROMPT_TEMPLATE`. Every Goal wake hydrates the current
+  persisted Plan and latest checkpoint rather than assuming the activation Plan
+  is still current.
 
 ## Product Logic Flow
 
@@ -230,17 +242,127 @@ chat, review, heartbeat, or relationship-authorized explicit work.
    it cannot acquire the assignee rail through `issue_passive_followup`,
    `issue_changes_requested`, assignment, or comment branches.
 
-9. Each adapter combines the loaded prefix with its runtime-specific prompt
+9. For a Goal Owner wake, Rudder routes `goal_started`, `goal_feedback`,
+   `goal_change_decided`, or `goal_continuation` to its matching Goal prompt.
+   Each template receives the same runtime boundary and nine-phase advancement
+   protocol, plus an entry rule specific to the wake reason. The protocol
+   advances the Goal as far as authority, evidence, and available tools allow
+   in the current bounded Run; it is not a persisted workflow state machine.
+
+10. Each adapter combines the loaded prefix with its runtime-specific prompt
    delivery mechanism. Codex-style stdin prompts append bootstrap prompt,
    session handoff markdown, and the selected heartbeat/chat prompt after the
    instruction prefix. Claude writes the loaded prefix to an appended system
    prompt file. Cursor, Gemini, OpenCode, and Pi use the shared loaded prefix
    while preserving their adapter-specific command invocation.
 
-10. The adapter reports metadata before provider execution. Rudder persists or
+11. The adapter reports metadata before provider execution. Rudder persists or
    emits command notes, prompt metrics, loaded/realized skills, the sanitized
    prompt/model input, cwd, command, and selected runtime metadata through the
    adapter invocation event and run intelligence metadata.
+
+## Goal Wake Advancement Protocol
+
+The Goal prompt layer is a phase router over persisted Goal facts. It keeps the
+Goal Contract, mutable Plan, and bounded Run distinct, then requires the Agent
+to choose one primary continuation route from evidence. Phases may be skipped
+when their exit condition is already satisfied; the Agent must not replay the
+protocol as a ceremonial checklist or stop after planning when authorized work
+can advance in the same Run.
+
+```mermaid
+flowchart TD
+    W{"Goal wake reason"}
+    W -->|goal_started| S["Goal Started prompt"]
+    W -->|goal_feedback| F["Goal Feedback prompt"]
+    W -->|goal_change_decided| D["Goal Change Decision prompt"]
+    W -->|goal_continuation| K["Goal Continuation prompt"]
+    S --> C["Hydrated Goal Runtime Context<br/>Contract + current persisted Plan + continuation"]
+    F --> C
+    D --> C
+    K --> C
+    C --> P1["1. Reconstruct current state"]
+    P1 --> P2["2. Check executability"]
+    P2 --> P3["3. Plan or Replan"]
+    P3 --> P4["4. Optional Plan/Replan review"]
+    P4 --> P5["5. Execute one bounded commitment"]
+    P5 --> P6["6. Observe and checkpoint"]
+    P6 --> P7{"7. Choose one route"}
+    P7 -->|Continue| P5
+    P7 -->|Replan| P3
+    P7 -->|Wait or human decision| H["Named handoff or resume condition"]
+    P7 -->|Contract change| CP["Human-governed change proposal"]
+    CP --> D
+    P7 -->|Possible block| P8["8. Three-turn block audit, then Replan"]
+    P8 -->|Viable path| P3
+    P8 -->|Still at impasse| H
+    P7 -->|Result candidate| P9["9. Optional result review and Result Proposal"]
+    P9 --> A["Mandatory human Acceptance"]
+    A -->|Rejected with findings| F
+    A -->|Accepted| T["Canonical terminal evaluation"]
+```
+
+Prompt routing and entry behavior:
+
+| Wake reason | Prompt | Required entry behavior |
+| --- | --- | --- |
+| `goal_started` | `GOAL_STARTED_PROMPT_TEMPLATE` | Start at Plan/Replan because activation already confirmed the Contract; validate the persisted initial Plan, form a bounded commitment and expected Evidence, perform any required Plan review, and execute now when possible. |
+| `goal_feedback` | `GOAL_FEEDBACK_PROMPT_TEMPLATE` | Classify feedback as Evidence, in-Contract strategy guidance, Contract change, review/result finding, or clarification; reconcile it with newer Goal facts and continue from the corresponding phase without treating feedback as implicit authority. |
+| `goal_change_decided` | `GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE` | For an applied change, use the latest Contract revision and Replan; for rejection, preserve the Contract and use the decision note as feedback; for stale or unapplied decisions, refresh authoritative context before acting. |
+| `goal_continuation` | `GOAL_CONTINUATION_PROMPT_TEMPLATE` | Reconstruct the persisted checkpoint, current Plan revision, Evidence, and continuation; execute only an eligible commitment or verification once, and stop for wait/decision handoffs or ready Result Proposals. |
+
+The shared prompt drives these nine phases:
+
+1. Reconstruct the accepted Contract, current persisted Plan, continuation,
+   recent Evidence and feedback, open proposals or reviews, deadlines, and
+   autonomy envelope.
+2. Check whether the next bounded decision is executable; discover safely
+   discoverable facts instead of returning responsibility to the human.
+3. Plan or Replan around one bounded commitment, expected Evidence, and a stop
+   condition. A Replan must select a materially different path or explain why
+   none exists.
+4. Optionally review the Plan or Replan only when policy, risk, the Contract,
+   continuation, or explicit instruction requires it and a real review
+   mechanism exists.
+5. Execute one coherent bounded commitment through the owning work domain.
+6. Separate activity, output, and criterion-relevant Evidence, then record
+   meaningful progress through `rudder_goal_progress` when supported.
+7. Choose exactly one primary route: Continue, Replan, Wait, human decision,
+   Contract change, blocked audit, or Result Proposal.
+8. Audit a possible block. The first occurrence cannot establish blocked. On
+   the third consecutive materially equivalent Goal turn, first attempt a
+   materially different Replan; only a remaining demonstrated impasse may ask
+   for the exact human input or external-state change. Resuming a previously
+   blocked Goal starts a fresh three-turn audit. Equivalence is Agent judgment
+   over recent context; there is no blocker fingerprint schema.
+9. Build a criterion-to-Evidence result packet, optionally route it through a
+   policy-required Result Reviewer, submit a Result Proposal, and stop for
+   mandatory human Acceptance.
+
+Reviewer gates are optional and policy-driven. A Reviewer returns findings but
+does not become the Goal Owner, execute the Owner's work by reviewing it,
+approve Contract changes, or replace final human Acceptance. A review is real
+only when an available Review or Verification mechanism actually ran.
+
+Persistence boundaries are explicit:
+
+- The accepted Contract, initial/current Plan revision, Goal activities and
+  Evidence references, feedback, change proposals and decisions, Result
+  Proposals, and human Acceptance are persisted by their owning Goal services.
+- Every Goal wake snapshot hydrates the current persisted Plan, latest
+  checkpoint facts, and continuation.
+- The current Agent-facing managed Goal tool set can read context, record
+  progress, atomically persist a checkpoint with an optional Plan revision and
+  continuation, propose a Contract change, and propose a result.
+- Checkpoint idempotency, stale Plan revision conflicts, Owner/Run attribution,
+  append-only audit, and continuation wake routing are server-enforced. A
+  commitment or verification checkpoint queues one `goal_continuation` wake;
+  `wait` and `decision` persist the handoff without an automatic wake.
+- Optional Reviewer routing remains policy-driven and is only real when a
+  Review or Verification mechanism actually ran. Unsupported review work must
+  be labeled `Run-local and unpersisted`.
+- Operationally blocked is a prompt-level judgment and handoff, not a new Goal
+  lifecycle value, persisted state-machine node, or blocker fingerprint.
 
 ## Decision Table
 
@@ -251,6 +373,10 @@ chat, review, heartbeat, or relationship-authorized explicit work.
 | Review Run | `rudderScene = review`; reviewer routing, reviewer recovery, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, current time, and review-scene prompt; reviewer recovery preserves review wording; runtime heartbeat instruction and assignee checkout rail are excluded | Review or reviewer recovery must stay reviewer-scoped and must not become assignee implementation | Prompt contract tests, scene derivation tests, and prompt metrics show reviewer recovery plus no assignee rail or runtime heartbeat section |
 | Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded and there is no global instruction to consult `rudder-docs` | Chat prompts must not be framed as autonomous heartbeat work or force documentation lookup | Adapter metadata and prompt metrics show no runtime heartbeat section; prompt contract tests show no global docs pointer |
 | Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, current time, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
+| Goal start wake | `wakeReason = goal_started` | Goal Started prompt receives the accepted Contract, persisted initial/current Plan, and continuation, then enters at Plan/Replan and advances into bounded execution when possible | Agent must not restart broad Goal shaping, stop after restating a Plan, use Codex internal Goal tools, or claim unsupported Plan/review persistence | Prompt unit tests and `tests/e2e/goal-runtime-prompt.spec.ts` inspect the production adapter prompt |
+| Goal feedback wake | `wakeReason = goal_feedback` | Goal Feedback prompt receives current Goal facts plus feedback and routes it to Evidence, Replan, governed Contract change, remediation, or clarification | Feedback must not silently change the Contract or count as authority for a governed action | Prompt unit tests and production Goal wake E2E |
+| Goal change decision wake | `wakeReason = goal_change_decided` | Goal Change Decision prompt receives the latest persisted Contract/Plan plus decision facts and replans from the authoritative revision | Rejected, stale, or unapplied changes must not be treated as accepted Contract state | Prompt unit tests and production Goal wake E2E |
+| Goal continuation wake | `wakeReason = goal_continuation` | Goal Continuation prompt receives the persisted checkpoint, current Plan revision, Evidence, and continuation, then executes only the eligible bounded commitment or verification once | It must not replay an unknown external effect, auto-run a wait/decision handoff, or continue past a ready Result Proposal | Prompt unit tests and production Goal wake E2E |
 | No configured entry file | `instructionsFilePath` is empty | Prefix still contains runtime operating contract, prepared runtime context, current time, and heartbeat instruction only for heartbeat scene runs | A missing entry path must not drop the runtime operating contract | `commandNotes` include operating contract note; prompt metrics include operating contract chars |
 | Configured entry file missing | `instructionsFilePath` points to unreadable file | Run continues without that file, logs a warning, and records the missing-file command note | Runtime invocation must not fail solely because an operator removed an optional entry file | Runtime log warning and command note |
 | Legacy `HEARTBEAT.md` configured as entry | Entry file basename is `HEARTBEAT.md` | The file is ignored as legacy agent-owned heartbeat notes; runtime heartbeat behavior remains controlled by `rudderScene` | Legacy file content must not be loaded as durable agent instructions | Command note and stdout log say legacy `HEARTBEAT.md` was ignored |
@@ -336,6 +462,9 @@ The contract is evidenced by:
   `rudderWorkspaces`, `rudderStartupContext`, startup metrics, wake reason,
   issue/comment context, and execution workspace/runtime service updates when
   present
+- Goal Owner wake `contextSnapshot` containing the Goal Contract, current
+  persisted Plan revision, continuation, and feedback or change-decision facts
+  for the matching wake reason
 - adapter invocation event with payload derived from adapter metadata, loaded
   skills, requested/used skills, command notes, prompt metrics, command, cwd,
   and runtime type; this is metadata/readback evidence even when not all fields
@@ -408,6 +537,20 @@ The contract is evidenced by:
    - Evidence: `loadAgentInstructionsPrefix` tests for ignored
      `HEARTBEAT.md`.
 
+6. Goal Owner advancement wake:
+   - Trigger: Goal start, human feedback, or a human decision on a Goal Contract
+     change queues the Owner through `goal_started`, `goal_feedback`, or
+     `goal_change_decided`.
+   - Expected state/action: the matching prompt receives the latest Contract,
+     current persisted Plan, continuation, and wake-specific facts. The Agent
+     enters the shared nine-phase router at the relevant phase, executes a
+     bounded commitment when possible, and reports one primary continuation.
+   - Visible output: the adapter prompt names the correct wake entry, all nine
+     phases, optional reviewer boundaries, the three-turn block audit, and the
+     mandatory human Acceptance stop.
+   - Evidence: `packages/agent-runtime-utils/src/server-utils.prompts.test.ts`
+     and `tests/e2e/goal-runtime-prompt.spec.ts`.
+
 ## Invariants / Non-Goals
 
 - Runtime operating contract is always injected from runtime code.
@@ -437,6 +580,18 @@ The contract is evidenced by:
   ownership transfer. Reviewer, reviewer-recovery, generic recovery, default,
   chat, and automation prompts do not receive the assignee checkout rail.
 - Missing optional sibling files do not fail the run.
+- All four Goal Owner wake reasons use the shared nine-phase advancement
+  protocol and hydrate the current persisted Plan.
+- Goal prompt phases do not create a second persisted Goal state machine.
+- The blocked audit is prompt-level Agent judgment without a blocker
+  fingerprint schema. The third consecutive equivalent occurrence requires a
+  materially different Replan before an operationally blocked handoff.
+- Optional Plan/Replan and Result Reviewer gates cannot replace the Goal Owner,
+  change the Contract, or waive mandatory human Acceptance.
+- A ready Result Proposal stops Agent execution until a human accepts or rejects
+  it; the Agent cannot claim the Goal complete from a Run outcome alone.
+- Unsupported Plan/Wait/Review persistence must be labeled `Run-local and
+  unpersisted` rather than described as durable or automatically resumable.
 - This contract does not specify the full natural-language body of every
   prompt template. Prompt wording can change when the semantic layers, order,
   evidence, and branch behavior stay intact.
@@ -458,6 +613,9 @@ Update this contract when changing:
 - persisted context fields that explain what the agent saw
 - provider adapter prompt assembly in a way that changes the agent-visible
   order
+- Goal wake reason routing, Goal Runtime Context hydration, phase semantics,
+  blocker audit, Reviewer gates, Result Proposal stopping behavior, or the
+  boundary between persisted and Run-local Goal state
 
 This contract does not need updates for:
 
@@ -519,6 +677,7 @@ Related code:
 Related tests:
 
 - `packages/agent-runtime-utils/src/server-utils.prompts.test.ts`
+- `tests/e2e/goal-runtime-prompt.spec.ts`
 - `packages/agent-runtime-utils/src/server-utils.test.ts`
 - `server/src/__tests__/agent-instructions-service.test.ts`
 - `server/src/__tests__/agent-run-context.test.ts`
@@ -532,7 +691,10 @@ Related tests:
 
 Known gaps:
 
-- This first logic contract documents the instruction-loading contract in depth.
-  `RUN.WAKEUP.001` and `ROUTING.ATTENTION.001` remain compact and should be
-  upgraded in a later slice to complete the full comment-mention wake to
-  prompt handoff path.
+- Optional Goal Reviewer routing and review-result persistence are not
+  implemented as a dedicated Goal workflow surface. Until then, the Goal prompt
+  must report a review as `Run-local and unpersisted` unless a real Review or
+  Verification mechanism ran.
+- `RUN.WAKEUP.001` and `ROUTING.ATTENTION.001` remain compact and should be
+  upgraded in a later slice to complete the full comment-mention wake to prompt
+  handoff path.

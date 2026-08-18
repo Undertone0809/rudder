@@ -1,6 +1,7 @@
 import {
   createGoalActivitySchema,
   createGoalChangeProposalSchema,
+  createGoalCheckpointSchema,
   createGoalResultProposalSchema,
 } from "@rudderhq/shared";
 import { Command } from "commander";
@@ -17,6 +18,15 @@ interface GoalProgressOptions extends BaseClientOptions {
   summary: string;
   activityKind?: string;
   evidenceRefs: string;
+  idempotencyKey: string;
+}
+
+interface GoalCheckpointOptions extends BaseClientOptions {
+  summary: string;
+  evidenceRefs: string;
+  expectedPlanRevision: string;
+  plan?: string;
+  continuation: string;
   idempotencyKey: string;
 }
 
@@ -113,6 +123,36 @@ export function registerGoalCommands(program: Command): void {
           });
           const activity = await ctx.api.post(`/api/goals/${goalId}/activities`, payload);
           printOutput(activity, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    goal
+      .command("checkpoint")
+      .description(getAgentCliCapabilityById("goal.checkpoint").description)
+      .argument("<goalId>", "Goal ID from the current Goal Runtime Context")
+      .requiredOption("--summary <text>", "Checkpoint summary")
+      .requiredOption("--evidence-refs <json>", "JSON array of URI-like evidence references")
+      .requiredOption("--expected-plan-revision <n>", "Current Goal Plan revision")
+      .option("--plan <json>", "Optional next Plan revision payload")
+      .requiredOption("--continuation <json>", "JSON continuation payload")
+      .requiredOption("--idempotency-key <key>", "Stable key for safe retry")
+      .action(async (goalId: string, opts: GoalCheckpointOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const payload = createGoalCheckpointSchema.parse({
+            summary: opts.summary,
+            evidenceRefs: parseJsonArray(opts.evidenceRefs, "evidence refs"),
+            expectedPlanRevision: Number(opts.expectedPlanRevision),
+            ...(opts.plan !== undefined ? { plan: parseJsonObject(opts.plan, "plan") } : {}),
+            continuation: parseJsonObject(opts.continuation, "continuation"),
+            idempotencyKey: opts.idempotencyKey,
+          });
+          const checkpoint = await ctx.api.post(`/api/goals/${goalId}/checkpoint`, payload);
+          printOutput(checkpoint, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }

@@ -29,6 +29,52 @@ export interface GoalContinuation {
   wakeCondition?: string | null;
 }
 
+/** The Plan payload accepted when a bounded Goal run advances its Plan. */
+export interface GoalPlanPayload {
+  summary: string;
+  hypotheses: unknown[];
+  selectedPaths: unknown[];
+  rejectedPaths: unknown[];
+  sequencing: unknown[];
+  budgetAllocations: Record<string, unknown>;
+  invalidationConditions: unknown[];
+}
+
+export interface GoalCheckpointContinuation extends GoalContinuation {
+  kind: GoalContinuationKind;
+}
+
+/** Durable append-only handoff facts for one bounded Goal run. */
+export interface GoalCheckpoint {
+  id: string;
+  orgId: string;
+  goalId: string;
+  runId: string;
+  ownerAgentId: string;
+  submittedByAgentId: string;
+  inputHash: string;
+  idempotencyKey: string;
+  summary: string;
+  evidenceRefs: string[];
+  planPayload: Record<string, unknown> | null;
+  planRevisionBefore: number;
+  planRevisionAfter: number;
+  continuation: GoalCheckpointContinuation;
+  continuationWakeupRequestId: string | null;
+  createdAt: Date;
+}
+
+/** Wire payload for rudder_goal_checkpoint. */
+export interface GoalCheckpointInput {
+  goal: string;
+  summary: string;
+  evidenceRefs: string[];
+  expectedPlanRevision: number;
+  plan?: GoalPlanPayload;
+  continuation: GoalCheckpointContinuation;
+  idempotencyKey: string;
+}
+
 export interface GoalPlan {
   id: string;
   orgId: string;
@@ -470,7 +516,16 @@ export interface GoalAgentContext {
     actionDeadline: Date | string | null;
     evaluationDeadline: Date | string | null;
   };
-  plan: Pick<PublicGoalPlan, "revision" | "summary"> | null;
+  plan: Pick<GoalPlan, "revision" | "summary" | "hypotheses" | "selectedPaths" | "rejectedPaths" | "sequencing" | "budgetAllocations" | "invalidationConditions"> | null;
+  continuation: GoalContinuation | null;
+  latestCheckpoint: GoalCheckpoint | null;
+  recentCheckpoints: GoalCheckpoint[];
+  pendingContinuationWake: {
+    id: string;
+    status: string;
+    planRevision: number | null;
+    checkpointId: string | null;
+  } | null;
   state: Pick<GoalWorkspaceSummary,
     | "facet"
     | "currentProgress"

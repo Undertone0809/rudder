@@ -147,6 +147,18 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: true,
   },
   {
+    id: "goal.checkpoint",
+    command: "rudder goal checkpoint <goal-id> --summary <text> --evidence-refs <json> --expected-plan-revision <n> --continuation <json> --idempotency-key <key>",
+    category: "goal",
+    description: "Atomically persist a Goal checkpoint, optional Plan revision, continuation, checkpoint activity, and eligible automatic continuation wake.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: false,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
+  {
     id: "goal.change.propose",
     command: "rudder goal change propose <goal-id> --contract-revision <n> --after-contract <json> --rationale <text> --idempotency-key <key>",
     category: "goal",

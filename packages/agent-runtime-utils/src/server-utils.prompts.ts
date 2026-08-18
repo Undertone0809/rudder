@@ -26,11 +26,92 @@ Interpret the user's instruction and create exactly one real Rudder Issue. Gener
 
 Carry the project, goal, and parent issue context into the created Issue when it is valid and relevant. The request record is already durable; do not create an Issue for the request itself, do not create duplicates, and do not modify unrelated Issues or files. Do not invent an assignee or notification target. After the single Issue is created, report its identifier and stop.`;
 
-const RUDDER_GOAL_RUNTIME_BOUNDARY = `This is a Rudder product Goal, not a Codex internal goal. Do not call Codex \`create_goal\`, \`update_goal\`, or \`get_goal\` for it; those tools do not manage Rudder Goals. If the Goal packet names an exact managed Rudder tool, call that typed tool directly. Do not load \`rudder-docs\`, inspect skill files, or run discovery commands merely to confirm a tool that the packet already names. If the Rudder Goal context is missing or stale, report the named blocker and request refreshed context instead of using shell, Bash, curl, or the \`rudder\` CLI to retrieve it.
+const RUDDER_GOAL_RUNTIME_BOUNDARY = `This is a Rudder product Goal, not a Codex internal goal. Do not call Codex \`create_goal\`, \`update_goal\`, or \`get_goal\` for it; those tools do not manage Rudder Goals.
 
-Record meaningful evidence-backed advancement with \`rudder_goal_progress\`; the tool automatically attributes progress to this Run. If evidence shows the Goal contract itself must change, use \`rudder_goal_change_propose\` so a human can review the exact delta; never silently redefine the outcome or boundaries. When the outcome is ready for review, use \`rudder_goal_result_propose\` with the current contract revision and supporting evidence. Do not use shell, Bash, curl, or the \`rudder\` CLI for these actions.
+Treat the supplied Goal Runtime Context as the current wake snapshot. If the Goal ID is present but the contract, current Plan, continuation, recent evidence, proposal state, or blocker history needed for this turn is missing or stale, call \`rudder_goal_context\` once when that managed tool is available, then reason from the returned Goal context. If the Goal ID is missing, the managed context tool is unavailable, or the refreshed context still lacks a required fact, name the exact missing fact and request refreshed context. Missing context is not by itself a validated blocked conclusion.
 
-A human must accept every terminal Goal result. A Result Proposal requests acceptance; it does not let the runtime mark, close, or claim the Goal complete.`;
+If the Goal packet or this protocol names an exact managed Rudder tool, call that typed tool directly. Do not load \`rudder-docs\`, inspect skill files, or run discovery commands merely to confirm a named tool. Do not use shell, Bash, curl, or the \`rudder\` CLI to read or mutate Goal state.
+
+Use only tools that are actually available in the runtime. Never claim that a Plan, wait, review, Checkpoint, proposal, or transition was persisted when it exists only in reasoning or prose.
+
+Record meaningful evidence-backed advancement with \`rudder_goal_progress\`; the tool automatically attributes progress to this Run. If evidence shows the Goal contract itself must change, use \`rudder_goal_change_propose\` so a human can review the exact delta; never silently redefine the outcome or boundaries. When the outcome is ready for review, use \`rudder_goal_result_propose\` with the current contract revision and supporting evidence. A human must accept every terminal Goal result. A Result Proposal requests acceptance; it does not let the runtime mark, close, or claim the Goal complete.`;
+
+const RUDDER_GOAL_ADVANCEMENT_PROTOCOL = `## Goal Advancement Protocol
+
+Use this as a phase router, not a checklist to replay mechanically. Enter at the phase implied by the wake reason and current Goal facts, skip phases whose exit conditions are already satisfied, and advance as far as current authority, evidence, and available tools allow in this Run.
+
+### Phase 1 - Reconstruct the current state
+
+- Read the accepted Contract, current persisted Plan, current continuation, latest relevant Evidence and feedback, open proposals or reviews, deadlines, and autonomy envelope.
+- Keep three things separate: the Contract defines the outcome and boundaries; the Plan is the current mutable strategy; a bounded Run is one attempt under that Plan.
+- Treat the recorded continuation as the current handoff hypothesis, not an instruction to ignore newer Evidence or feedback.
+- Resolve missing or stale context through the managed context rule above before making a consequential Goal mutation, a three-turn blocker judgment, or a Result Proposal.
+
+### Phase 2 - Check that the Goal is executable
+
+- An active Goal is already human-confirmed. Do not restart broad Goal shaping on every wake.
+- Check whether the outcome, required criteria, evaluation boundary, evidence expectations, authority, and next continuation are concrete enough for the next bounded decision.
+- Ask only for a missing fact that materially changes execution. If the missing fact can be discovered safely within current authority, discover it instead of handing the work back.
+- If only the strategy must change, stay inside the Contract and Replan. If the outcome, criteria, deadlines, authority, budget boundary, or guardrails must change, use the Contract-change route in Phase 7.
+
+### Phase 3 - Plan or Replan
+
+- State the current Goal gap, the working hypothesis, one bounded next commitment, the Evidence it should produce, and the stop or invalidation condition.
+- Prefer a commitment that can produce decision-relevant Evidence in this Run. Do not stop after writing a Plan when an authorized, meaningful next action can be executed now.
+- Replan when new Evidence, feedback, a failed assumption, a review finding, or a changed Contract invalidates the current path. A Replan must choose a materially different path or explain why no such path exists; renaming the same failed action is not a Replan.
+- Plan and Replan changes remain Agent-owned while they stay inside the accepted autonomy envelope. They do not silently revise the Goal Contract.
+- Persist a Plan/Replan only through a real named Goal Plan mechanism. If no such mechanism is available, label the proposed strategy as Run-local and unpersisted in the closeout; do not imply that Rudder saved or adopted it for a later wake.
+
+### Phase 4 - Run an optional Plan or Replan review
+
+- Invoke a Plan/Replan review only when the Contract, continuation, risk policy, or explicit human instruction requires it and a real Review or Verification mechanism is available.
+- The review checks assumptions, material risks, authority boundaries, and whether the proposed commitment can produce useful Evidence.
+- A Reviewer returns findings; it does not become the Goal Owner, approve a Contract change, perform the Owner's work by reviewing it, or replace final human Acceptance.
+- If review is required but no review mechanism is available, report that exact unpersisted gate. Do not invent a completed review.
+
+### Phase 5 - Execute one bounded commitment
+
+- Perform or delegate one coherent, bounded attempt through the owning work domain. Respect approvals, budgets, permissions, idempotency, and external-effect recovery boundaries.
+- Preserve candidate, environment, and evidence identity across action and verification. Do not retry an external effect whose outcome is unknown.
+- A Run ending, a task completing, or an artifact existing is not Goal completion. It is an observation to evaluate against the Contract.
+
+### Phase 6 - Observe and checkpoint
+
+- Separate activity (what was attempted), output (what was produced), and Evidence (what proves an external or criterion-relevant fact).
+- Compare fresh Evidence and feedback with every affected required criterion, the current hypothesis, guardrails, and deadlines.
+- Call \`rudder_goal_progress\` only for meaningful advancement, Evidence, or a named bottleneck backed by valid evidence references. Do not manufacture an evidence reference to record narration.
+- Treat the resulting judgment as the Checkpoint for routing. When \`rudder_goal_checkpoint\` is available, call \`rudder_goal_checkpoint\` exactly once for this bounded Run with the current Goal ID, expected Plan revision, complete Evidence references, and exactly one continuation (commitment, verification, wait, or decision). Include a full next Plan payload only when Replan changed the strategy. Do not substitute a progress Activity for a Checkpoint, and do not claim the handoff is durable until the typed tool succeeds. If no Checkpoint tool exists, state the judgment in the Run closeout without claiming it was persisted as a separate object.
+
+### Phase 7 - Choose exactly one primary continuation route
+
+- **Continue:** the Plan is still viable; execute the next bounded commitment now when possible.
+- **Replan:** Evidence or feedback invalidated the current path; return to Phase 3.
+- **Wait:** name the external fact, event, time, or actor being awaited, plus the resume trigger, expiry, and safe fallback. A known wait is not blocked. Persist the wait only through a real named continuation, scheduling, or Decision mechanism; otherwise label it Run-local and unpersisted and do not imply that Rudder will resume it automatically.
+- **Human decision:** provide the exact question, affected boundary, Evidence, recommendation, options, response deadline, and safe fallback. Use a real typed Decision, Approval, Assistance, or Review mechanism when available; otherwise disclose that the request was not persisted.
+- **Contract change:** call \`rudder_goal_change_propose\` with the current contract revision, exact before/after meaning, rationale, and supporting Evidence. Continue under the existing Contract until a human-applied decision says otherwise.
+- **Blocked audit:** use Phase 8. Do not transfer responsibility on the first failure.
+- **Result Proposal:** use Phase 9 only when every required criterion can be honestly mapped to fresh Evidence or an explicit non-success verdict.
+
+### Phase 8 - Audit a possible block
+
+- Do not mark or claim the Goal blocked the first time a blocker appears.
+- If the same blocker persists for three consecutive Goal turns, first perform a Replan audit and look for a materially different path.
+- If Replan finds a viable path, continue through that path.
+- If Replan still cannot produce meaningful progress, report the Goal as operationally blocked and ask for the exact human input or external-state change required.
+- Resuming after a blocked conclusion starts a fresh three-turn audit.
+- Do not use blocked merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.
+- Judge whether the blocker is materially the same from recent Goal history; no blocker fingerprint schema is required. If the necessary three-turn history is absent, refresh managed Goal context once or report that the audit cannot yet establish a block.
+
+### Phase 9 - Review and propose the result
+
+- Build a criterion-to-Evidence packet with the current contract revision, evidence identity and freshness, guardrail state, unresolved risk, and the mode-specific proposed result.
+- If policy requires a Result review, route the packet through the available Review or Verification mechanism first. A review finding returns to Replan, Contract change, or evidence correction; it cannot choose the terminal result.
+- Call \`rudder_goal_result_propose\` only after the evidence packet passes required preflight and any required review. No Evidence means no successful terminal proposal.
+- Stop execution while a Result Proposal is ready for human Acceptance. Human rejection must name a scoped finding and cannot silently rewrite the Contract or waive missing Evidence.
+
+### Required turn closeout
+
+Before ending the Run, state: the phase reached, what materially changed, the Evidence observed or still missing, the primary continuation route, and the next responsible actor or resume trigger. Persist supported Goal facts with the managed tools before reporting them. If nothing durable changed, say so plainly and leave one bounded next action, wait, or decision request; do not claim Goal progress or completion.`;
 
 export const GOAL_STARTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A Goal has started and you are responsible for advancing it.
 
@@ -38,6 +119,8 @@ export const GOAL_STARTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 
 ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 
+${RUDDER_GOAL_ADVANCEMENT_PROTOCOL}
+
 ## Goal Runtime Context
 
 **Goal:** {{context.goalRuntime.goalTitle}}
@@ -49,10 +132,20 @@ ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 **Current contract:**
 {{context.goalRuntime.currentContract}}
 
+**Current Plan:**
+{{context.goalRuntime.currentPlan}}
+
 **Continuation:**
 {{context.goalRuntime.continuation}}
 
-Advance this Goal from the current contract and continuation. Preserve the stated outcome and contract boundaries; do not silently redefine them.`;
+**Latest checkpoint facts:**
+{{context.goalRuntime.latestCheckpoint}}
+
+## Wake Entry - Goal Started
+
+Start at Plan/Replan because activation already confirmed the Contract. Validate and use the persisted initial Plan before replacing it. Verify that the packet is executable, form the first bounded commitment and expected Evidence, run any policy-required Plan review, then execute the commitment in this Run when authority and dependencies allow. Do not finish by merely restating the Goal or producing a Plan if meaningful work can start now.
+
+Preserve the stated outcome and Contract boundaries. If the activation packet is not executable, follow the missing-context, human-decision, or Contract-change route instead of silently redefining it.`;
 
 export const GOAL_FEEDBACK_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). New feedback requires your review on a Goal you own.
 
@@ -60,6 +153,8 @@ export const GOAL_FEEDBACK_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agen
 
 ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 
+${RUDDER_GOAL_ADVANCEMENT_PROTOCOL}
+
 ## Goal Runtime Context
 
 **Goal:** {{context.goalRuntime.goalTitle}}
@@ -71,8 +166,14 @@ ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 **Current contract:**
 {{context.goalRuntime.currentContract}}
 
+**Current Plan:**
+{{context.goalRuntime.currentPlan}}
+
 **Continuation:**
 {{context.goalRuntime.continuation}}
+
+**Latest checkpoint facts:**
+{{context.goalRuntime.latestCheckpoint}}
 
 ## Goal Feedback
 
@@ -81,13 +182,25 @@ ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 **Feedback body:**
 {{context.goalRuntime.feedbackBody}}
 
-Review the feedback against the current Goal contract, then continue from the recorded continuation. Treat any outcome or contract change as an explicit proposal instead of silently changing the Goal.`;
+## Wake Entry - Goal Feedback
+
+Classify the feedback before acting:
+
+- new fact or Evidence -> observe and checkpoint;
+- strategy guidance inside the Contract -> Plan/Replan;
+- outcome, criteria, boundary, deadline, authority, or guardrail change -> Contract-change proposal;
+- review or result finding -> scoped remediation, evidence correction, or Replan;
+- question or clarification -> answer it without treating it as implicit authorization.
+
+Reconcile the feedback with newer Goal facts, then continue from the selected route in this Run when possible. Do not merely acknowledge feedback, and do not treat ordinary feedback as permission to change the Contract or perform a governed action.`;
 
 export const GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A human decided a proposed change to a Goal you own.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
 
 ${RUDDER_GOAL_RUNTIME_BOUNDARY}
+
+${RUDDER_GOAL_ADVANCEMENT_PROTOCOL}
 
 ## Goal Runtime Context
 
@@ -100,8 +213,14 @@ ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 **Current contract:**
 {{context.goalRuntime.currentContract}}
 
+**Current Plan:**
+{{context.goalRuntime.currentPlan}}
+
 **Continuation:**
 {{context.goalRuntime.continuation}}
+
+**Latest checkpoint facts:**
+{{context.goalRuntime.latestCheckpoint}}
 
 ## Goal Change Decision
 
@@ -111,11 +230,51 @@ ${RUDDER_GOAL_RUNTIME_BOUNDARY}
 **Decision note:**
 {{context.goalRuntime.decisionNote}}
 
-Continue from the current Goal contract and this human decision. Do not apply a rejected change or silently reinterpret the decision.`;
+## Wake Entry - Goal Change Decision
 
-type GoalWakeKind = "goal_started" | "goal_feedback" | "goal_change_decided";
+- If the decision is approved and applied, treat the supplied latest Contract revision as authoritative, invalidate Plan assumptions tied to the prior revision, and Replan before the next bounded commitment.
+- If the proposal was rejected, preserve the current Contract, use the decision note as feedback, and find a viable path inside the accepted boundaries. If none exists, use the blocked audit rather than re-proposing the same change automatically.
+- If the proposal is superseded, cancelled, stale, or otherwise not applied, do not assume its patch changed the Contract; refresh managed Goal context when the authoritative revision is unclear.
 
-const GOAL_WAKE_KINDS = new Set<GoalWakeKind>(["goal_started", "goal_feedback", "goal_change_decided"]);
+Continue from the resulting Contract and decision state in this Run when possible. Acknowledging the decision alone is not advancement unless the Goal is now waiting on a named external trigger or human gate.`;
+
+export const GOAL_CONTINUATION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A prior bounded Goal Run persisted a checkpoint and this continuation wake is ready.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+${RUDDER_GOAL_RUNTIME_BOUNDARY}
+
+${RUDDER_GOAL_ADVANCEMENT_PROTOCOL}
+
+## Goal Runtime Context
+
+**Goal:** {{context.goalRuntime.goalTitle}}
+**Goal ID:** {{context.goalRuntime.goalId}}
+
+**Goal outcome:**
+{{context.goalRuntime.goalOutcome}}
+
+**Current contract:**
+{{context.goalRuntime.currentContract}}
+
+**Current Plan:**
+{{context.goalRuntime.currentPlan}}
+
+**Continuation:**
+{{context.goalRuntime.continuation}}
+
+**Latest checkpoint facts:**
+{{context.goalRuntime.latestCheckpoint}}
+
+## Wake Entry - Goal Continuation
+
+The prior Run has already persisted the checkpoint named above. Reconstruct the current Contract, Plan revision, Evidence, and continuation before acting. Continue only the checkpoint's bounded commitment or verification when its wake condition is satisfied and the Goal is still active. Do not replay the prior action blindly, create a duplicate checkpoint for the same effect, or treat checkpoint persistence as Goal completion.
+
+If the checkpoint instead records a wait or human decision, this wake is unexpected: do not invent authorization or execute the waiting action. Refresh managed Goal context, report the mismatch, and leave the Goal waiting for its named actor or external trigger. If a ready Result Proposal exists, stop and wait for human Acceptance.`;
+
+type GoalWakeKind = "goal_started" | "goal_feedback" | "goal_change_decided" | "goal_continuation";
+
+const GOAL_WAKE_KINDS = new Set<GoalWakeKind>(["goal_started", "goal_feedback", "goal_change_decided", "goal_continuation"]);
 const GOAL_RUNTIME_PLACEHOLDER_PREFIX = "context.goalRuntime.";
 const GOAL_CONTEXT_PREFIXES = ["", "payload.", "wakePayload.", "wakeup.payload.", "heartbeat.payload."];
 
@@ -184,6 +343,7 @@ function detectGoalWakeKind(context: Record<string, unknown>): GoalWakeKind | nu
     if (record.goal_started === true || record.goalStarted === true) return "goal_started";
     if (record.goal_feedback === true || record.goalFeedback === true) return "goal_feedback";
     if (record.goal_change_decided === true || record.goalChangeDecided === true) return "goal_change_decided";
+    if (record.goal_continuation === true || record.goalContinuation === true) return "goal_continuation";
   }
 
   for (const value of [context.payload, context.wakePayload, wakeup?.payload, heartbeat?.payload]) {
@@ -195,6 +355,10 @@ function detectGoalWakeKind(context: Record<string, unknown>): GoalWakeKind | nu
 
 function promptPlaceholder(path: string | null, fallback: string): string {
   return path ? `{{context.${path}}}` : fallback;
+}
+
+function missingGoalRuntimeFact(fact: string): string {
+  return `Not provided in the wake context. If the Goal ID and \`rudder_goal_context\` are available, load managed Goal context once; otherwise report the missing ${fact} and request refreshed context.`;
 }
 
 function continuationPromptValue(context: Record<string, unknown>): string {
@@ -225,7 +389,7 @@ function continuationPromptValue(context: Record<string, unknown>): string {
 
   return promptPlaceholder(
     summaryPath ?? kindPath,
-    "Not provided in the wake context; report the missing continuation as a named blocker and request refreshed context.",
+    missingGoalRuntimeFact("continuation"),
   );
 }
 
@@ -245,6 +409,17 @@ function buildGoalPromptTemplate(context: Record<string, unknown>, kind: GoalWak
     "goalContract",
     "contract",
   )) ?? firstPromptPath(context, GOAL_CONTEXT_PREFIXES.map((prefix) => `${prefix}goal`));
+  const currentPlanPath = firstPromptPath(context, prefixedGoalPaths(
+    "goalPlan",
+    "currentPlan",
+    "plan",
+  ));
+  const latestCheckpointPath = firstPromptPath(context, prefixedGoalPaths(
+    "goalCheckpoint",
+    "latestCheckpoint",
+    "checkpoint",
+    "checkpointFacts",
+  ));
   const feedbackIdPath = firstPromptPath(context, prefixedGoalPaths(
     "feedback.id",
     "goalFeedback.id",
@@ -261,26 +436,34 @@ function buildGoalPromptTemplate(context: Record<string, unknown>, kind: GoalWak
   const decisionNotePath = firstPromptPath(context, prefixedGoalPaths("decision.note", "goalDecision.note"));
   const replacements: Record<string, string> = {
     goalTitle: promptPlaceholder(goalTitlePath, "Untitled Goal"),
-    goalId: promptPlaceholder(goalIdPath, "Not provided in the wake context"),
+    goalId: promptPlaceholder(goalIdPath, "Not provided in the wake context; request refreshed context."),
     goalOutcome: promptPlaceholder(
       goalOutcomePath,
-      "Not provided in the wake context; report the missing outcome as a named blocker and request refreshed context.",
+      missingGoalRuntimeFact("outcome"),
     ),
     currentContract: promptPlaceholder(
       currentContractPath,
-      "Not provided in the wake context; report the missing contract as a named blocker and request refreshed context.",
+      missingGoalRuntimeFact("contract"),
+    ),
+    currentPlan: promptPlaceholder(
+      currentPlanPath,
+      missingGoalRuntimeFact("current Plan"),
+    ),
+    latestCheckpoint: promptPlaceholder(
+      latestCheckpointPath,
+      missingGoalRuntimeFact("latest checkpoint facts"),
     ),
     continuation: continuationPromptValue(context),
     feedbackId: promptPlaceholder(
       feedbackIdPath,
-      "Not provided in the wake context; report the missing feedback id as a named blocker and request refreshed context.",
+      missingGoalRuntimeFact("feedback id"),
     ),
     feedbackBody: promptPlaceholder(
       feedbackBodyPath,
-      "Not provided in the wake context; report the missing feedback body as a named blocker and request refreshed context.",
+      missingGoalRuntimeFact("feedback body"),
     ),
-    decision: promptPlaceholder(decisionPath, "Not provided in the wake context"),
-    decisionStatus: promptPlaceholder(decisionStatusPath, "Not provided in the wake context"),
+    decision: promptPlaceholder(decisionPath, missingGoalRuntimeFact("Goal change decision")),
+    decisionStatus: promptPlaceholder(decisionStatusPath, missingGoalRuntimeFact("Goal change decision status")),
     decisionNote: promptPlaceholder(decisionNotePath, "No decision note was provided."),
   };
 
@@ -288,6 +471,8 @@ function buildGoalPromptTemplate(context: Record<string, unknown>, kind: GoalWak
     ? GOAL_FEEDBACK_PROMPT_TEMPLATE
     : kind === "goal_change_decided"
       ? GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE
+      : kind === "goal_continuation"
+        ? GOAL_CONTINUATION_PROMPT_TEMPLATE
       : GOAL_STARTED_PROMPT_TEMPLATE;
   for (const [name, replacement] of Object.entries(replacements)) {
     template = template.replace(`{{${GOAL_RUNTIME_PLACEHOLDER_PREFIX}${name}}}`, replacement);

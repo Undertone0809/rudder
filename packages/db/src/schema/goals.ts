@@ -1,6 +1,7 @@
 import type {
   GoalChangeProposal,
   GoalChangeProposalStatus,
+  GoalCheckpointContinuation,
   GoalFeedbackAttachment,
   GoalFeedbackKind,
   GoalResultProposal,
@@ -25,6 +26,7 @@ import {
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 import { agents } from "./agents.js";
 import { approvals } from "./approvals.js";
+import { heartbeatRuns } from "./heartbeat_runs.js";
 import { organizations } from "./organizations.js";
 
 export const goals = pgTable(
@@ -141,6 +143,49 @@ export const goalActivities = pgTable(
     idempotencyUq: uniqueIndex("goal_activities_idempotency_uq")
       .on(table.goalId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
+  }),
+);
+
+/**
+ * Append-only facts emitted by a Goal owner at the end of a bounded run.
+ * Current Goal/Plan fields remain on their existing tables; this table keeps
+ * the exact handoff facts needed to replay a continuation or audit a replan.
+ */
+export const goalCheckpoints = pgTable(
+  "goal_checkpoints",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    goalId: uuid("goal_id").notNull().references(() => goals.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").notNull().references(() => heartbeatRuns.id, { onDelete: "restrict" }),
+    ownerAgentId: uuid("owner_agent_id").notNull().references(() => agents.id, { onDelete: "restrict" }),
+    submittedByAgentId: uuid("submitted_by_agent_id").notNull().references(() => agents.id, { onDelete: "restrict" }),
+    inputHash: text("input_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    summary: text("summary").notNull(),
+    evidenceRefs: jsonb("evidence_refs").$type<string[]>().notNull().default([]),
+    planPayload: jsonb("plan_payload").$type<Record<string, unknown> | null>(),
+    planRevisionBefore: integer("plan_revision_before").notNull(),
+    planRevisionAfter: integer("plan_revision_after").notNull(),
+    continuationKind: text("continuation_kind").$type<GoalCheckpointContinuation["kind"]>().notNull(),
+    continuationSummary: text("continuation_summary").notNull(),
+    wakeCondition: text("wake_condition"),
+    continuationWakeupRequestId: uuid("continuation_wakeup_request_id").references(
+      () => agentWakeupRequests.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    goalCreatedIdx: index("goal_checkpoints_goal_created_idx").on(table.goalId, table.createdAt),
+    goalRunIdx: index("goal_checkpoints_goal_run_idx").on(table.goalId, table.runId),
+    goalIdempotencyUq: uniqueIndex("goal_checkpoints_goal_idempotency_uq").on(
+      table.goalId,
+      table.idempotencyKey,
+    ),
+    continuationWakeUq: uniqueIndex("goal_checkpoints_continuation_wake_uq")
+      .on(table.continuationWakeupRequestId)
+      .where(sql`${table.continuationWakeupRequestId} is not null`),
   }),
 );
 

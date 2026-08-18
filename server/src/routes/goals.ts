@@ -14,6 +14,7 @@ import {
   assignGoalOwnerSchema,
   createGoalActivitySchema,
   createGoalChangeProposalSchema,
+  createGoalCheckpointSchema,
   createGoalFeedbackSchema,
   createGoalResultProposalSchema,
   createGoalSchema,
@@ -33,6 +34,7 @@ import { validate } from "../middleware/validate.js";
 import {
   publicGoalActivity,
   publicGoalChangeProposal,
+  publicGoalCheckpoint,
   publicGoalDetail,
   publicGoalFeedback,
   publicGoalOwnerAssignment,
@@ -53,7 +55,7 @@ export function goalRoutes(db: Db) {
     wakeupRequestId: string;
     source: "on_demand";
     triggerDetail: "system";
-    reason: "goal_started" | "goal_feedback" | "goal_change_decided";
+    reason: "goal_started" | "goal_feedback" | "goal_change_decided" | "goal_continuation";
     payload: Record<string, unknown>;
     contextSnapshot: Record<string, unknown>;
     requestedByActorType: "user" | "agent" | "system";
@@ -178,7 +180,13 @@ export function goalRoutes(db: Db) {
     if (goal.ownerAgentId !== agentId) {
       throw forbidden("Agents can only read runtime context for Goals they own");
     }
-    const [detail, workspace] = await Promise.all([svc.detail(id), svc.workspace(id)]);
+    const [detail, workspace, latestCheckpoint, recentCheckpoints, pendingContinuationWake] = await Promise.all([
+      svc.detail(id),
+      svc.workspace(id),
+      svc.latestCheckpoint(id),
+      svc.recentCheckpoints(id),
+      svc.pendingContinuationWake(id),
+    ]);
     const publicGoal = publicGoalView(detail);
     const response: GoalAgentContext = {
       goal: {
@@ -205,7 +213,28 @@ export function goalRoutes(db: Db) {
         actionDeadline: detail.actionDeadline,
         evaluationDeadline: detail.evaluationDeadline,
       },
-      plan: detail.plan ? { revision: detail.plan.revision, summary: detail.plan.summary } : null,
+      plan: detail.plan
+        ? {
+            revision: detail.plan.revision,
+            summary: detail.plan.summary,
+            hypotheses: detail.plan.hypotheses,
+            selectedPaths: detail.plan.selectedPaths,
+            rejectedPaths: detail.plan.rejectedPaths,
+            sequencing: detail.plan.sequencing,
+            budgetAllocations: detail.plan.budgetAllocations,
+            invalidationConditions: detail.plan.invalidationConditions,
+          }
+        : null,
+      continuation: detail.continuationKind
+        ? {
+            kind: detail.continuationKind as "commitment" | "wait" | "decision" | "verification",
+            summary: detail.continuationSummary ?? "",
+            wakeCondition: detail.wakeCondition,
+          }
+        : null,
+      latestCheckpoint: latestCheckpoint ? publicGoalCheckpoint(latestCheckpoint) : null,
+      recentCheckpoints: recentCheckpoints.map(publicGoalCheckpoint),
+      pendingContinuationWake,
       state: {
         facet: workspace.facet,
         currentProgress: workspace.currentProgress,
@@ -258,6 +287,32 @@ export function goalRoutes(db: Db) {
     res.json((await svc.listActivities(id)).map((activity) => publicGoalActivity(activity, {
       runAgentId: goal?.ownerAgentId,
     })));
+  });
+
+  router.post("/goals/:id/checkpoint", validate(createGoalCheckpointSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const goal = await loadAuthorizedGoal(req, id);
+    if (!goal) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    if (actor.actorType !== "agent") throw forbidden("Only the Goal Owner Agent can create a checkpoint");
+    const result = await svc.checkpoint(id, { ...req.body, goal: id }, actor.agentId!, actor.runId!);
+    if (result.dispatch) await dispatchGoalWakeup(result.dispatch);
+    await logActivity(db, {
+      orgId: goal.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "goal.checkpointed",
+      entityType: "goal",
+      entityId: id,
+      details: { checkpointId: result.checkpoint.id, planRevision: result.checkpoint.planRevisionAfter },
+      idempotencyKey: `goal-checkpoint:${req.body.idempotencyKey}`,
+    });
+    res.status(result.dispatch ? 201 : 200).json(publicGoalCheckpoint(result.checkpoint));
   });
 
   router.post("/orgs/:orgId/goals", validate(createGoalSchema), async (req, res) => {

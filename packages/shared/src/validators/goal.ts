@@ -27,7 +27,7 @@ const continuationSchema = z.object({
   wakeCondition: z.string().trim().min(1).optional().nullable(),
 });
 
-const planPayloadSchema = z.object({
+export const goalPlanPayloadSchema = z.object({
   summary: z.string().trim().min(1),
   hypotheses: z.array(z.unknown()).optional().default([]),
   selectedPaths: z.array(z.unknown()).optional().default([]),
@@ -74,7 +74,7 @@ export const activateGoalSchema = z.object({
   actionDeadline: z.coerce.date().optional().nullable(),
   evaluationDeadline: z.coerce.date().optional().nullable(),
   initialContinuation: continuationSchema,
-  initialPlan: planPayloadSchema,
+  initialPlan: goalPlanPayloadSchema,
 }).superRefine((value, ctx) => {
   if (value.evaluationDeadline && value.actionDeadline && value.evaluationDeadline < value.actionDeadline) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["evaluationDeadline"], message: "Evaluation deadline must not precede action deadline" });
@@ -124,8 +124,18 @@ export const startGoalSchema = z.object({
 }).strict();
 export type StartGoal = z.infer<typeof startGoalSchema>;
 
-export const updateGoalPlanSchema = planPayloadSchema;
+export const updateGoalPlanSchema = goalPlanPayloadSchema;
 export type UpdateGoalPlan = z.infer<typeof updateGoalPlanSchema>;
+
+export const createGoalCheckpointSchema = z.object({
+  summary: z.string().trim().min(1),
+  evidenceRefs: z.array(evidenceRefSchema).max(100),
+  expectedPlanRevision: z.number().int().positive(),
+  plan: goalPlanPayloadSchema.optional(),
+  continuation: continuationSchema,
+  idempotencyKey: z.string().trim().min(1),
+}).strict();
+export const goalCheckpointSchema = createGoalCheckpointSchema.extend({ goal: z.string().uuid() });
 
 export const createGoalActivitySchema = z.object({
   summary: z.string().trim().min(1),

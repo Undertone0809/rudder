@@ -102,6 +102,7 @@ export type {
   GoalDependencies,
   GoalDependencyPreview, GoalEvaluationCandidate, GoalEvidenceItem, GoalFeedbackAttachment,
   GoalFeedbackEntry,
+  GoalCheckpoint, GoalCheckpointContinuation, GoalCheckpointInput, GoalPlanPayload,
   GoalHistoryAttachment,
   GoalHistoryItem,
   GoalHistoryPage,

@@ -24,6 +24,7 @@ import {
   financeEvents,
   goalActivities,
   goalChangeProposals,
+  goalCheckpoints,
   goalFeedbackEntries,
   goalOwnerAssignments,
   goalPlans,
@@ -46,6 +47,7 @@ import type {
   CreateGoalResultProposal,
   DecideGoalChangeProposal,
   EvaluateGoal,
+  GoalCheckpointInput,
   GoalContractPatch,
   GoalContractSnapshot,
   GoalDependencies,
@@ -88,7 +90,7 @@ type GoalWakeupDispatch = {
   wakeupRequestId: string;
   source: "on_demand";
   triggerDetail: "system";
-  reason: "goal_started" | "goal_feedback" | "goal_change_decided";
+  reason: "goal_started" | "goal_feedback" | "goal_change_decided" | "goal_continuation";
   payload: Record<string, unknown>;
   contextSnapshot: Record<string, unknown>;
   requestedByActorType: GoalWakeupActor["actorType"];
@@ -532,6 +534,31 @@ export function publicGoalActivity(
     }),
     occurredAt: activity.occurredAt,
     createdAt: activity.createdAt,
+  };
+}
+
+export function publicGoalCheckpoint(checkpoint: typeof goalCheckpoints.$inferSelect) {
+  return {
+    id: checkpoint.id,
+    orgId: checkpoint.orgId,
+    goalId: checkpoint.goalId,
+    runId: checkpoint.runId,
+    ownerAgentId: checkpoint.ownerAgentId,
+    submittedByAgentId: checkpoint.submittedByAgentId,
+    inputHash: checkpoint.inputHash,
+    idempotencyKey: checkpoint.idempotencyKey,
+    summary: publicGoalText(checkpoint.summary),
+    evidenceRefs: checkpoint.evidenceRefs,
+    planPayload: checkpoint.planPayload,
+    planRevisionBefore: checkpoint.planRevisionBefore,
+    planRevisionAfter: checkpoint.planRevisionAfter,
+    continuation: {
+      kind: checkpoint.continuationKind,
+      summary: publicGoalText(checkpoint.continuationSummary),
+      wakeCondition: checkpoint.wakeCondition,
+    },
+    continuationWakeupRequestId: checkpoint.continuationWakeupRequestId,
+    createdAt: checkpoint.createdAt,
   };
 }
 
@@ -1202,24 +1229,78 @@ export function goalService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  async function cancelPendingGoalContinuationWakes(database: Database, goalId: string, reason: string) {
+    const pending = await database.select({
+      id: agentWakeupRequests.id,
+      runId: agentWakeupRequests.runId,
+    }).from(agentWakeupRequests).where(and(
+      sql`${agentWakeupRequests.payload} ->> 'goalId' = ${goalId}`,
+      eq(agentWakeupRequests.reason, "goal_continuation"),
+      inArray(agentWakeupRequests.status, ["queued", "deferred_goal_focus", "deferred_agent_paused", "deferred_goal_blocked"]),
+    ));
+    if (pending.length === 0) return;
+    const now = new Date();
+    for (const wake of pending) {
+      if (wake.runId) {
+        await database.update(heartbeatRuns).set({
+          status: "cancelled",
+          finishedAt: now,
+          error: reason,
+          errorCode: "goal.result_proposal_ready",
+          updatedAt: now,
+        }).where(and(
+          eq(heartbeatRuns.id, wake.runId),
+          eq(heartbeatRuns.status, "queued"),
+        ));
+      }
+      await database.update(agentWakeupRequests).set({
+        status: "cancelled",
+        finishedAt: now,
+        error: reason,
+        updatedAt: now,
+      }).where(and(
+        eq(agentWakeupRequests.id, wake.id),
+        inArray(agentWakeupRequests.status, ["queued", "deferred_goal_focus", "deferred_agent_paused", "deferred_goal_blocked"]),
+      ));
+    }
+  }
+
   async function ensureGoalWakeupIntent(
     database: Database,
     goal: GoalRow,
     input: {
-      event: "goal_started" | "goal_feedback" | "goal_change_decided";
+      event: "goal_started" | "goal_feedback" | "goal_change_decided" | "goal_continuation";
       eventId: string;
       actor: GoalWakeupActor;
       feedback?: { id: string; body: string; kind: string };
       decision?: { decision: "approve" | "reject"; note: string | null; status: string };
+      continuation?: {
+        kind: "commitment" | "verification";
+        summary: string;
+        wakeCondition?: string | null;
+        planRevision: number;
+      };
     },
   ): Promise<GoalWakeupDispatch> {
     if (!goal.ownerAgentId) throw conflict("Goal has no Owner Agent to wake");
+    const currentPlan = goal.planRevision > 0
+      ? await database.select().from(goalPlans).where(and(
+          eq(goalPlans.goalId, goal.id),
+          eq(goalPlans.revision, goal.planRevision),
+        )).then((rows) => rows[0] ?? null)
+      : null;
+    const latestCheckpoint = await database.select().from(goalCheckpoints).where(eq(
+      goalCheckpoints.goalId,
+      goal.id,
+    )).orderBy(desc(goalCheckpoints.createdAt)).limit(1).then((rows) => rows[0] ?? null);
     const taskKey = `goal:${goal.id}:${input.event}:${input.eventId}`;
     const idempotencyKey = input.event === "goal_started"
       ? `goal-start:${input.eventId}`
       : input.event === "goal_feedback"
         ? `goal-feedback:${input.eventId}`
-        : `goal-change-decision:${input.eventId}:${input.decision?.decision ?? "unknown"}`;
+        : input.event === "goal_change_decided"
+          ? `goal-change-decision:${input.eventId}:${input.decision?.decision ?? "unknown"}`
+          : `goal-continuation:${input.eventId}`;
     const payload: Record<string, unknown> = {
       event: input.event,
       goalId: goal.id,
@@ -1227,6 +1308,15 @@ export function goalService(db: Db) {
       ...(input.event === "goal_started" ? { goalStartRequestId: input.eventId } : {}),
       ...(input.feedback ? { feedbackId: input.feedback.id } : {}),
       ...(input.decision ? { goalChangeProposalId: input.eventId, decision: input.decision.decision } : {}),
+      ...(input.continuation ? {
+        checkpointId: input.eventId,
+        planRevision: input.continuation.planRevision,
+        continuation: {
+          kind: input.continuation.kind,
+          summary: input.continuation.summary,
+          wakeCondition: input.continuation.wakeCondition ?? null,
+        },
+      } : {}),
     };
     const contextSnapshot: Record<string, unknown> = {
       goalId: goal.id,
@@ -1245,6 +1335,18 @@ export function goalService(db: Db) {
         actionDeadline: goal.actionDeadline,
         evaluationDeadline: goal.evaluationDeadline,
       },
+      goalPlan: currentPlan
+        ? {
+            revision: currentPlan.revision,
+            summary: currentPlan.summary,
+            hypotheses: currentPlan.hypotheses,
+            selectedPaths: currentPlan.selectedPaths,
+            rejectedPaths: currentPlan.rejectedPaths,
+            sequencing: currentPlan.sequencing,
+            budgetAllocations: currentPlan.budgetAllocations,
+            invalidationConditions: currentPlan.invalidationConditions,
+          }
+        : null,
       goalContinuation: {
         kind: goal.continuationKind,
         summary: goal.continuationSummary,
@@ -1263,6 +1365,21 @@ export function goalService(db: Db) {
           decision: input.decision.decision,
           note: input.decision.note,
           status: input.decision.status,
+        },
+      } : {}),
+      ...(latestCheckpoint ? {
+        goalCheckpoint: {
+          id: latestCheckpoint.id,
+          summary: latestCheckpoint.summary,
+          evidenceRefs: latestCheckpoint.evidenceRefs,
+          planRevisionBefore: latestCheckpoint.planRevisionBefore,
+          planRevisionAfter: latestCheckpoint.planRevisionAfter,
+          continuationWakeupRequestId: latestCheckpoint.continuationWakeupRequestId,
+          continuation: {
+            kind: latestCheckpoint.continuationKind,
+            summary: latestCheckpoint.continuationSummary,
+            wakeCondition: latestCheckpoint.wakeCondition,
+          },
         },
       } : {}),
     };
@@ -2189,6 +2306,39 @@ export function goalService(db: Db) {
       return { ...goal, ownerAssignment, plan, activities };
     },
 
+    latestCheckpoint: async (id: string) => db.select().from(goalCheckpoints)
+      .where(eq(goalCheckpoints.goalId, id))
+      .orderBy(desc(goalCheckpoints.createdAt)).limit(1)
+      .then((rows) => rows[0] ?? null),
+
+    recentCheckpoints: async (id: string) => db.select().from(goalCheckpoints)
+      .where(eq(goalCheckpoints.goalId, id))
+      .orderBy(desc(goalCheckpoints.createdAt)).limit(3),
+
+    pendingContinuationWake: async (id: string) => db.select({
+      id: agentWakeupRequests.id,
+      status: agentWakeupRequests.status,
+      payload: agentWakeupRequests.payload,
+    }).from(agentWakeupRequests).where(and(
+      sql`${agentWakeupRequests.payload} ->> 'goalId' = ${id}`,
+      eq(agentWakeupRequests.reason, "goal_continuation"),
+      inArray(agentWakeupRequests.status, ["queued", "deferred_goal_focus", "deferred_agent_paused", "deferred_goal_blocked"]),
+      isNull(agentWakeupRequests.runId),
+    )).orderBy(desc(agentWakeupRequests.requestedAt)).limit(1)
+      .then((rows) => {
+        const row = rows[0];
+        if (!row) return null;
+        const payload = publicGoalRecord(row.payload);
+        const continuation = publicGoalRecord(payload.continuation);
+        return {
+          id: row.id,
+          status: row.status,
+          planRevision: typeof payload.planRevision === "number" ? payload.planRevision : null,
+          checkpointId: typeof payload.checkpointId === "string" ? payload.checkpointId : null,
+          continuation,
+        };
+      }),
+
     create: async (orgId: string, data: {
       title: string;
       description?: string | null;
@@ -2334,6 +2484,130 @@ export function goalService(db: Db) {
           .returning().then((rows) => rows[0] ?? null);
         if (!changedGoal) throw conflict("Goal changed before Plan update; reload and retry");
         return plan;
+      });
+    },
+
+    checkpoint: async (
+      id: string,
+      input: GoalCheckpointInput,
+      actorAgentId: string | null,
+      actorRunId: string | null,
+    ) => {
+      if (!actorAgentId) throw forbidden("Only the Goal Owner Agent can create a checkpoint");
+      if (!actorRunId) throw unprocessable("Goal checkpoint must be attributed to the current Run");
+      const inputHash = stableGoalHash({
+        summary: input.summary,
+        evidenceRefs: input.evidenceRefs,
+        expectedPlanRevision: input.expectedPlanRevision,
+        plan: input.plan ?? null,
+        continuation: input.continuation,
+      });
+      return db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        const current = await requireGoalForUpdate(database, id);
+        assertCanonicalActiveGoal(current);
+        assertGoalOwner(current, actorAgentId);
+        const run = await requireGoalRun(database, current, actorRunId, actorAgentId);
+        const existing = await database.select().from(goalCheckpoints).where(and(
+          eq(goalCheckpoints.goalId, id),
+          eq(goalCheckpoints.idempotencyKey, input.idempotencyKey),
+        )).then((rows) => rows[0] ?? null);
+        if (existing) {
+          if (existing.runId !== actorRunId) {
+            throw conflict("Goal checkpoint idempotency key belongs to a different Run");
+          }
+          if (existing.inputHash !== inputHash) {
+            throw conflict("Goal checkpoint idempotency key was reused with a different payload");
+          }
+          return { checkpoint: existing, dispatch: null };
+        }
+        if (run.status !== "running") {
+          throw conflict("Goal checkpoint must be attributed to the current running Run");
+        }
+        const readyProposal = await database.select({ id: goalResultProposals.id }).from(goalResultProposals).where(and(
+          eq(goalResultProposals.goalId, id),
+          eq(goalResultProposals.status, "ready"),
+        )).limit(1).then((rows) => rows[0] ?? null);
+        if (readyProposal) throw conflict("Goal already has a Result Proposal ready for review");
+        if (current.planRevision !== input.expectedPlanRevision) {
+          throw conflict("Goal Plan changed before checkpoint", {
+            expectedPlanRevision: input.expectedPlanRevision,
+            currentPlanRevision: current.planRevision,
+          });
+        }
+        const nextPlanRevision = input.plan ? current.planRevision + 1 : current.planRevision;
+        if (input.plan) {
+          await database.insert(goalPlans).values({
+            orgId: current.orgId,
+            goalId: current.id,
+            revision: nextPlanRevision,
+            ...input.plan,
+            createdByAgentId: actorAgentId,
+          });
+        }
+        const now = new Date();
+        const changedGoal = await database.update(goals).set({
+          planRevision: nextPlanRevision,
+          continuationKind: input.continuation.kind,
+          continuationSummary: input.continuation.summary,
+          wakeCondition: input.continuation.wakeCondition ?? null,
+          updatedAt: now,
+        }).where(and(
+          eq(goals.id, id),
+          eq(goals.orgId, current.orgId),
+          eq(goals.lifecycle, "active"),
+          eq(goals.planRevision, input.expectedPlanRevision),
+        )).returning().then((rows) => rows[0] ?? null);
+        if (!changedGoal) throw conflict("Goal changed before checkpoint could be committed");
+        const [checkpoint] = await database.insert(goalCheckpoints).values({
+          orgId: current.orgId,
+          goalId: current.id,
+          runId: actorRunId,
+          ownerAgentId: current.ownerAgentId!,
+          submittedByAgentId: actorAgentId,
+          inputHash,
+          idempotencyKey: input.idempotencyKey,
+          summary: input.summary,
+          evidenceRefs: input.evidenceRefs,
+          planPayload: input.plan ? { ...input.plan } : null,
+          planRevisionBefore: current.planRevision,
+          planRevisionAfter: nextPlanRevision,
+          continuationKind: input.continuation.kind,
+          continuationSummary: input.continuation.summary,
+          wakeCondition: input.continuation.wakeCondition ?? null,
+        }).returning();
+        if (!checkpoint) throw conflict("Goal checkpoint could not be recorded");
+        await database.insert(goalActivities).values({
+          orgId: current.orgId,
+          goalId: current.id,
+          contractRevision: current.contractRevision,
+          submittedByAgentId: actorAgentId,
+          agentOwnerRefAtTime: current.ownerAgentId,
+          activityKind: "checkpoint",
+          runRef: actorRunId,
+          summary: input.summary,
+          evidenceRefs: input.evidenceRefs,
+          idempotencyKey: `goal-checkpoint:${input.idempotencyKey}`,
+          occurredAt: now,
+        }).onConflictDoNothing();
+        let dispatch: GoalWakeupDispatch | null = null;
+        if (input.continuation.kind === "commitment" || input.continuation.kind === "verification") {
+          dispatch = await ensureGoalWakeupIntent(database, changedGoal, {
+            event: "goal_continuation",
+            eventId: checkpoint.id,
+            actor: { actorType: "agent", actorId: actorAgentId },
+            continuation: {
+              kind: input.continuation.kind,
+              summary: input.continuation.summary,
+              wakeCondition: input.continuation.wakeCondition ?? null,
+              planRevision: nextPlanRevision,
+            },
+          });
+          const updated = await database.update(goalCheckpoints).set({ continuationWakeupRequestId: dispatch.wakeupRequestId })
+            .where(eq(goalCheckpoints.id, checkpoint.id)).returning().then((rows) => rows[0] ?? null);
+          if (updated) return { checkpoint: updated, dispatch };
+        }
+        return { checkpoint, dispatch };
       });
     },
 
@@ -2709,6 +2983,11 @@ export function goalService(db: Db) {
       const candidateHash = stableGoalHash(candidate);
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        // Heartbeat claims hold the Owner Agent row before Goal and Run rows;
+        // take the same lock first so Result Proposal cancellation cannot
+        // deadlock on heartbeat_runs.agent_id foreign-key checks.
+        await database.select({ id: agents.id }).from(agents)
+          .where(eq(agents.id, actorAgentId)).for("update");
         const current = await requireGoalForUpdate(database, id);
         assertGoalOwner(current, actorAgentId);
         if (actorRunId) await requireGoalRun(database, current, actorRunId, actorAgentId);
@@ -2738,6 +3017,11 @@ export function goalService(db: Db) {
           if (readyProposal) {
             throw conflict("This Goal already has a Result Proposal ready for review");
           }
+          await cancelPendingGoalContinuationWakes(
+            database,
+            id,
+            "Cancelled because a Goal Result Proposal is ready for human Acceptance",
+          );
         }
         const [proposal] = await database.insert(goalResultProposals).values({
           orgId: current.orgId,

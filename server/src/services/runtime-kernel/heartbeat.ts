@@ -7,6 +7,7 @@ import {
   agents,
   agentTaskSessions,
   agentWakeupRequests,
+  goalResultProposals,
   goals,
   heartbeatRunEvents,
   heartbeatRuns,
@@ -1085,6 +1086,9 @@ export function heartbeatService(
 
   async function claimQueuedRun(run: typeof heartbeatRuns.$inferSelect) {
     if (run.status !== "queued") return run;
+    const initialContext = parseObject(run.contextSnapshot);
+    const initialGoalContext = parseObject(initialContext.goal);
+    const initialGoalId = readNonEmptyString(initialContext.goalId) ?? readNonEmptyString(initialGoalContext.id);
     let wakeup: {
       requestedAt: Date;
       reason: string | null;
@@ -1104,6 +1108,13 @@ export function heartbeatService(
         return null;
       }
     }
+    const initialWakeReason = readNonEmptyString(initialContext.wakeReason) ?? readNonEmptyString(wakeup?.reason);
+    const initialIsGoalWake = Boolean(
+      run.wakeupRequestId
+      && initialGoalId
+      && initialWakeReason
+      && ["goal_started", "goal_feedback", "goal_change_decided", "goal_continuation"].includes(initialWakeReason),
+    );
 
     async function cancelQueuedRunDuringClaim(reason: string) {
       const cancelled = await transitionRunToTerminal(run.id, "cancelled", {
@@ -1185,6 +1196,9 @@ export function heartbeatService(
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (pendingTerminalEffects) return null;
+      if (initialIsGoalWake) {
+        await tx.execute(sql`select id from goals where id = ${initialGoalId} and org_id = ${run.orgId} for update`);
+      }
       await tx.execute(sql`select id from heartbeat_runs where id = ${run.id} for update`);
       const currentRun = await tx
         .select()
@@ -1201,8 +1215,37 @@ export function heartbeatService(
         currentRun.wakeupRequestId
         && goalId
         && wakeReason
-        && ["goal_started", "goal_feedback", "goal_change_decided"].includes(wakeReason)
+        && ["goal_started", "goal_feedback", "goal_change_decided", "goal_continuation"].includes(wakeReason)
       ) {
+        await tx.execute(sql`select id from goals where id = ${goalId} and org_id = ${currentRun.orgId} for update`);
+        const readyResult = await tx.select({ id: goalResultProposals.id }).from(goalResultProposals).where(and(
+          eq(goalResultProposals.goalId, goalId),
+          eq(goalResultProposals.status, "ready"),
+        )).limit(1).then((rows) => rows[0] ?? null);
+        if (readyResult) {
+          const cancelledAt = new Date();
+          const cancelled = await tx.update(heartbeatRuns).set({
+            status: "cancelled",
+            finishedAt: cancelledAt,
+            error: "Cancelled because a Goal Result Proposal is ready for human Acceptance",
+            errorCode: "goal.result_proposal_ready",
+            updatedAt: cancelledAt,
+          }).where(and(
+            eq(heartbeatRuns.id, currentRun.id),
+            eq(heartbeatRuns.status, "queued"),
+          )).returning().then((rows) => rows[0] ?? null);
+          if (!cancelled) return null;
+          await tx.update(agentWakeupRequests).set({
+            status: "cancelled",
+            finishedAt: cancelledAt,
+            error: cancelled.error,
+            updatedAt: cancelledAt,
+          }).where(and(
+            eq(agentWakeupRequests.id, currentRun.wakeupRequestId),
+            inArray(agentWakeupRequests.status, ["queued", "deferred_goal_focus", "deferred_agent_paused", "deferred_goal_blocked"]),
+          ));
+          return cancelled;
+        }
         await tx.execute(sql`select id from organizations where id = ${currentRun.orgId} for update`);
         const focusedGoal = await tx.select({ id: goals.id }).from(goals).where(and(
           eq(goals.orgId, currentRun.orgId),
@@ -1321,6 +1364,16 @@ export function heartbeatService(
       return claimedRun;
     });
     if (!claimed) return null;
+    if (claimed.status === "cancelled" && claimed.errorCode === "goal.result_proposal_ready") {
+      await appendRunEvent(claimed, {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "warn",
+        message: "run cancelled",
+      });
+      await completeTerminalControlEffects(claimed, { startNext: false });
+      return null;
+    }
 
     publishLiveEvent({
       orgId: claimed.orgId,

@@ -330,6 +330,7 @@ contracts:
     related_tests:
       - server/src/__tests__/heartbeat-workspace-preflight.test.ts
       - packages/agent-runtime-utils/src/server-utils.prompts.test.ts
+      - tests/e2e/goal-runtime-prompt.spec.ts
       - packages/agent-runtime-utils/src/server-utils.test.ts
       - server/src/__tests__/agent-instructions-service.test.ts
       - server/src/__tests__/agent-run-context.test.ts
@@ -943,6 +944,8 @@ contracts:
       - ui/src/pages/GoalDetail.tsx
     related_tests:
       - tests/e2e/goal-detail-lifecycle.spec.ts
+      - packages/agent-runtime-utils/src/server-utils.prompts.test.ts
+      - tests/e2e/goal-runtime-prompt.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-23-codemirror-markdown-live-preview.md

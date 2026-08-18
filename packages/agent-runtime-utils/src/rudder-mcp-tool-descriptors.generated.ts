@@ -91,6 +91,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   },
   {
+    "capabilityId": "goal.checkpoint",
+    "name": "rudder_goal_checkpoint",
+    "description": "Atomically persist a Goal checkpoint, optional Plan revision, continuation, checkpoint activity, and eligible automatic continuation wake.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
     "capabilityId": "goal.change.propose",
     "name": "rudder_goal_change_propose",
     "description": "Propose a reviewable change to the current Goal contract when evidence shows its outcome, criteria, boundaries, or deadlines should change.",
@@ -901,5 +910,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "e2647b35c1bb057e7379c0465074ab75bd9f9e450aaecfc2d0744b75deb183fb";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "818451caa714327ac6de17700cdcc138ab0f47970219a4d446a62bae7ea38505";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

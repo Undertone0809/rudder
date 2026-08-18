@@ -53,6 +53,7 @@ export { financeEvents } from "./finance_events.js";
 export {
   goalActivities,
   goalChangeProposals,
+  goalCheckpoints,
   goalFeedbackEntries,
   goalOwnerAssignments,
   goalPlans,

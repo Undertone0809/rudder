@@ -25,6 +25,7 @@ import {
   computerUseActionSchemas,
   createGoalActivitySchema,
   createGoalChangeProposalSchema,
+  createGoalCheckpointSchema,
   createGoalResultProposalSchema,
 } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
@@ -114,6 +115,7 @@ const LEGACY_ARGUMENT_ALIASES: Record<string, Record<string, string>> = {
   },
   "goal.context": { goalId: "goal" },
   "goal.progress": { goalId: "goal" },
+  "goal.checkpoint": { goalId: "goal" },
   "goal.change.propose": { goalId: "goal" },
   "goal.result.propose": { goalId: "goal" },
   "issue.get": { issueId: "issue" },
@@ -662,6 +664,21 @@ async function callToolDirectlyIfSupported(
         payload,
       ));
     }
+    case "goal.checkpoint": {
+      const goalId = requiredAnyString(input, ["goal", "goalId"]);
+      const payload = createGoalCheckpointSchema.parse({
+        summary: requiredString(input, "summary"),
+        evidenceRefs: input.evidenceRefs,
+        expectedPlanRevision: input.expectedPlanRevision,
+        plan: input.plan,
+        continuation: input.continuation,
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      });
+      return success(await api.post(
+        `/api/goals/${encodeURIComponent(goalId)}/checkpoint`,
+        payload,
+      ));
+    }
     case "goal.change.propose": {
       const payload = createGoalChangeProposalSchema.parse({
         expectedContractRevision: input.contractRevision,
@@ -1120,6 +1137,25 @@ function cliArgsForCapability(
         requiredString(input, "idempotencyKey"),
       ];
       pushOptional(args, "--activity-kind", input.activityKind);
+      return args;
+    }
+    case "goal.checkpoint": {
+      const args = [
+        "goal",
+        "checkpoint",
+        requiredAnyString(input, ["goal", "goalId"]),
+        "--summary",
+        requiredString(input, "summary"),
+        "--evidence-refs",
+        JSON.stringify(input.evidenceRefs),
+        "--expected-plan-revision",
+        String(input.expectedPlanRevision),
+        "--continuation",
+        JSON.stringify(input.continuation),
+        "--idempotency-key",
+        requiredString(input, "idempotencyKey"),
+      ];
+      if (input.plan !== undefined) args.push("--plan", JSON.stringify(input.plan));
       return args;
     }
     case "goal.change.propose": {
