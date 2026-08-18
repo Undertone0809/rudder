@@ -418,6 +418,7 @@ async function verifyVersionCompatibility(serverPackageDir) {
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-native.exe" : "rudder-native"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper"),
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-speech.exe" : "rudder-speech"),
       ]
     : [];
   try {

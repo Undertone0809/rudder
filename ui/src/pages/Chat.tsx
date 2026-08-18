@@ -20,6 +20,7 @@ import {
   ChatComposerSkillsMenuContent,
   ChatComposerSurface,
   ChatComposerToolbar,
+  ChatComposerVoiceButton,
 } from "@/components/chat/ChatComposer";
 import { ChatConversationHeader } from "@/components/chat/ChatConversationHeader";
 import {
@@ -59,6 +60,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
+import { useDesktopVoiceInput } from "@/hooks/useDesktopVoiceInput";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
@@ -2437,7 +2439,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         ? null
       : draftPreflightError
         ?? draftPreflightQuery.data?.error
-        ?? "Selected chat configuration is unavailable."; const hasPendingLightweightProposal = rawMessages.some(
+        ?? "Selected chat configuration is unavailable.";
+  const voiceInput = useDesktopVoiceInput({
+    editorRef: composerEditorRef,
+    scopeKey: draftStorageScopeKey,
+    disabled: composerUnavailable || runtimeSelectionPending,
+  });
+  const voiceInputState = voiceInput.state === "unavailable" ? "idle" : voiceInput.state;
+  const hasPendingLightweightProposal = rawMessages.some(
     (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
   const runtimePillLabel = chatRuntimeSelectionLabel({
     agent: activeSkillAgent,
@@ -3365,7 +3374,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }}
         />
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {responseAnnotationAnnouncement}
+        {[responseAnnotationAnnouncement, voiceInput.statusMessage].filter(Boolean).join(" ")}
       </div>
       {renderSideChatSlashCommandMenu()}
       {composerUnavailable && composerUnavailableMessage ? (
@@ -3412,6 +3421,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           >
               <ChatPlanModeMenuToggle active={activePlanMode} onChange={applyPlanMode} />
           </ChatComposerAddMenu>
+          {voiceInput.visible ? (
+            <ChatComposerVoiceButton
+              state={voiceInputState}
+              disabled={voiceInput.busy ? false : composerUnavailable || runtimeSelectionPending}
+              onClick={() => {
+                if (voiceInput.state === "recording") {
+                  voiceInput.stop();
+                } else if (voiceInput.busy) {
+                  voiceInput.cancel();
+                } else {
+                  voiceInput.start();
+                }
+              }}
+            />
+          ) : null}
           {activePlanMode ? <ChatPlanModeChip onDisable={() => applyPlanMode(false)} /> : null}
           {showProjectSelector ? (
             <ChatProjectSelectorButton

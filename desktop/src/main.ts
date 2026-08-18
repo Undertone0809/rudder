@@ -162,6 +162,10 @@ import {
 } from "./runtime-cache.js";
 import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
 import {
+  createSpeechRuntime,
+  SpeechRuntimeError,
+} from "./speech-runtime.js";
+import {
   isDesktopSystemPermissionId,
   resolveDesktopSystemPermissions,
   resolveSystemPermissionSettingsUrl,
@@ -576,6 +580,11 @@ function applyDesktopAppIdentity(profile: LocalEnvProfile): string {
 const initialProfile = resolveDesktopLocalEnvProfile();
 const APP_NAME = applyDesktopAppIdentity(initialProfile);
 const desktopCapabilities = resolveDesktopCapabilities();
+const speechRuntime = createSpeechRuntime({
+  isPackaged: app.isPackaged,
+  moduleDir: MODULE_DIR,
+  resourcesPath: process.resourcesPath,
+});
 function readCurrentDesktopSystemPermissions(): DesktopSystemPermissions {
   return resolveDesktopSystemPermissions({
     isAccessibilityTrusted: () => systemPreferences.isTrustedAccessibilityClient(false),
@@ -749,6 +758,7 @@ const desktopQuitFlow = createDesktopQuitFlow({
   getServerHandle: () => serverHandle,
   fetchApi: (input, init) => session.defaultSession.fetch(input, init),
   prepareForQuit: async () => {
+    speechRuntime.dispose();
     await Promise.all([
       browserProfileController?.shutdown() ?? Promise.resolve(),
       localAppGuestRegistry.closeAll(),
@@ -1261,6 +1271,59 @@ function assertStartupRecoveryFrame(event: IpcMainInvokeEvent, action: string): 
   if (currentMainWindowKind !== "boot") {
     throw new Error(`${action} is available only from the Desktop startup window.`);
   }
+}
+
+type DesktopMicrophonePermissionStatus =
+  | "authorized"
+  | "denied"
+  | "restricted"
+  | "unsupported"
+  | "unknown";
+
+async function requestDesktopMicrophoneAccess(): Promise<DesktopMicrophonePermissionStatus> {
+  if (!speechRuntime.getStatus().available) return "denied";
+  if (process.platform !== "darwin") return "authorized";
+
+  try {
+    const current = systemPreferences.getMediaAccessStatus("microphone");
+    if (current === "granted") return "authorized";
+    if (current === "restricted") return "restricted";
+    if (current === "denied") return "denied";
+    return (await systemPreferences.askForMediaAccess("microphone")) ? "authorized" : "denied";
+  } catch {
+    return "unknown";
+  }
+}
+
+function installDesktopSpeechPermissionPolicy(): void {
+  if (!speechRuntime.getStatus().available) return;
+  const defaultSession = session.defaultSession;
+  defaultSession.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details) => {
+    if (permission !== "media") return true;
+    const renderer = getCurrentMainRenderer();
+    return Boolean(
+      renderer
+      && webContents === renderer
+      && details.isMainFrame,
+    );
+  });
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission !== "media") {
+      callback(true);
+      return;
+    }
+    const mediaTypes = (details as { mediaTypes?: unknown } | undefined)?.mediaTypes;
+    const requestsOnlyAudio = Array.isArray(mediaTypes)
+      && mediaTypes.length === 1
+      && mediaTypes[0] === "audio";
+    const renderer = getCurrentMainRenderer();
+    callback(Boolean(
+      requestsOnlyAudio
+      && renderer
+      && webContents === renderer
+      && details?.isMainFrame === true,
+    ));
+  });
 }
 
 function collectRudderAppOrigins(...additionalOrigins: Array<string | null | undefined>): string[] {
@@ -2582,6 +2645,33 @@ function registerIpc(): void {
     assertEnabled: assertPluginsFeatureEnabled,
   });
   requireDesktopIdentityRuntime().registerIpc();
+  installDesktopSpeechPermissionPolicy();
+  ipcMain.handle("desktop:speech-status", async (event) => {
+    assertCurrentMainFrame(event, "Desktop speech status");
+    return speechRuntime.getStatus();
+  });
+  ipcMain.handle("desktop:speech-request-microphone", async (event) => {
+    assertCurrentMainFrame(event, "Desktop speech microphone permission");
+    return requestDesktopMicrophoneAccess();
+  });
+  ipcMain.handle("desktop:speech-transcribe", async (event, input: unknown) => {
+    assertCurrentMainFrame(event, "Desktop speech transcription");
+    try {
+      return await speechRuntime.transcribe(input);
+    } catch (error) {
+      if (error instanceof SpeechRuntimeError) {
+        throw new Error(`speech:${error.code}`);
+      }
+      throw error;
+    }
+  });
+  ipcMain.handle("desktop:speech-cancel", async (event, requestId: unknown) => {
+    assertCurrentMainFrame(event, "Desktop speech cancellation");
+    if (typeof requestId !== "string" || !/^[A-Za-z0-9:_-]{1,128}$/u.test(requestId.trim())) {
+      throw new Error("speech:invalid_audio");
+    }
+    speechRuntime.cancel(requestId.trim());
+  });
   ipcMain.handle("desktop:get-boot-state", async (event) => {
     assertCurrentMainFrame(event, "Desktop boot state");
     refreshDesktopSystemPermissions();

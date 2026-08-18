@@ -1068,6 +1068,19 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const updateHelperPath = nativeTarget
     ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper")
     : null;
+  const speechPath = nativeTarget
+    ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-speech.exe" : "rudder-speech")
+    : null;
+  if (speechPath) {
+    assert.equal(await pathExists(speechPath), true, "packaged Desktop should stage the local speech worker");
+    const speechStats = await stat(speechPath);
+    assert.equal(speechStats.isFile(), true, "packaged local speech worker should be a file");
+    if (process.platform !== "win32") assert.notEqual(speechStats.mode & 0o111, 0, "packaged local speech worker should be executable");
+    const speechMetadata = await runCapturedProcess(speechPath, ["--version"]);
+    assert.equal(speechMetadata.code, 0, "packaged local speech worker should expose metadata");
+    assert.match(speechMetadata.stdout, new RegExp(`^rudder-speech ${escapedReleaseVersion}\\n$`, "u"));
+    console.log(`[desktop-smoke] packaged local speech worker staged (model=${await pathExists(path.join(resourcesDir, "models", "whisper", "ggml-base.bin")) ? "present" : "unavailable"})`);
+  }
   if (process.platform === "darwin" && process.arch === "arm64") {
     assert.ok(nativeHostPath, "packaged Desktop should stage a Rust process host target");
     const nativeStats = await stat(nativeHostPath);

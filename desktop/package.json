@@ -72,6 +72,14 @@
       {
         "from": ".packaged/native",
         "to": "native"
+      },
+      {
+        "from": ".packaged/models",
+        "to": "models"
+      },
+      {
+        "from": "../native/THIRD_PARTY_NOTICES.md",
+        "to": "native/THIRD_PARTY_NOTICES.md"
       }
     ],
     "dmg": {
@@ -92,6 +100,9 @@
     "mac": {
       "identity": null,
       "icon": "build/icon.icns",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Rudder uses your microphone only for optional local Chat voice transcription."
+      },
       "target": [
         "dir"
       ],
