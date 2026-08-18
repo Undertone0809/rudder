@@ -65,6 +65,19 @@ describe("getRunFailureDisplay", () => {
     });
   });
 
+  it("shows the dependency repair diagnostic and next step for assignment preflight failures", () => {
+    const error = "Assignment dependency preflight failed. Next step: pnpm install --frozen-lockfile once, then retry.";
+    expect(getRunFailureDisplay({
+      error,
+      errorCode: "assignment_dependency_preflight_failed",
+    })).toEqual({
+      title: "Assignment dependency repair needed",
+      body: error,
+      code: "assignment_dependency_preflight_failed",
+      tone: "destructive",
+    });
+  });
+
   it("uses a generic user-facing message for runtime failures", () => {
     expect(getRunFailureDisplay({
       error: "Chat adapter completed without the required Rudder result sentinel",

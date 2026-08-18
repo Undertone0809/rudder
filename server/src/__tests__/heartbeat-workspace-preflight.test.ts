@@ -82,6 +82,10 @@ const mockPreflight = vi.hoisted(() => ({
   calls: [] as unknown[],
 }));
 
+const mockAssignmentGuardrail = vi.hoisted(() => ({
+  repair: vi.fn(),
+}));
+
 vi.mock("../services/budgets.ts", async () => {
   const actual = await vi.importActual("../services/budgets.ts");
   return {
@@ -148,6 +152,15 @@ vi.mock("../services/managed-workspace-preflight.js", async (importOriginal) => 
       }
       return actual.preflightManagedAgentWorkspace(input);
     }),
+  };
+});
+
+vi.mock("../services/runtime-kernel/assignment-run-guardrail.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/runtime-kernel/assignment-run-guardrail.js")>();
+  return {
+    ...actual,
+    repairAssignmentRunWorkspace: (...args: Parameters<typeof actual.repairAssignmentRunWorkspace>) =>
+      mockAssignmentGuardrail.repair(...args),
   };
 });
 
@@ -277,6 +290,13 @@ describe("heartbeat managed workspace preflight", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockRuntimeAdapter.reset();
+    mockAssignmentGuardrail.repair.mockReset();
+    mockAssignmentGuardrail.repair.mockImplementation(async (input: any) => {
+      const actual = await vi.importActual<typeof import("../services/runtime-kernel/assignment-run-guardrail.js")>(
+        "../services/runtime-kernel/assignment-run-guardrail.js",
+      );
+      return actual.repairAssignmentRunWorkspace(input);
+    });
     mockBudgetService.evaluateCostEvent.mockResolvedValue(undefined);
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockPreflight.fail = false;
@@ -710,6 +730,223 @@ describe("heartbeat managed workspace preflight", () => {
       projectWorkingSetCwd: workingSetCwd,
       cwdMatchesProjectWorkingSet: true,
       cwdPresent: true,
+    });
+    await fs.rm(workingSetCwd, { recursive: true, force: true });
+  });
+
+  it("repairs missing assignment dependencies before adapter invocation", async () => {
+    const { orgId, agentId } = await seedAgentFixture();
+    const projectId = randomUUID();
+    const issueId = randomUUID();
+    const workingSetCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-dependency-repair-"));
+    const resourceId = randomUUID();
+    await fs.writeFile(
+      path.join(workingSetCwd, "package.json"),
+      JSON.stringify({ name: "assignment-repair-fixture", packageManager: "pnpm@9.15.4" }),
+      "utf8",
+    );
+    await fs.writeFile(path.join(workingSetCwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+    await db.insert(projects).values({ id: projectId, orgId, name: "Assignment dependency repair" });
+    await db.insert(organizationResources).values({
+      id: resourceId,
+      orgId,
+      name: "Source repository",
+      kind: "directory",
+      sourceType: "external",
+      locator: workingSetCwd,
+    });
+    await db.insert(projectResourceAttachments).values({
+      orgId,
+      projectId,
+      resourceId,
+      role: "working_set",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      projectId,
+      title: "Repair dependencies before assignment",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      identifier: "RD-DEP-1",
+    });
+
+    mockAssignmentGuardrail.repair.mockImplementationOnce(async ({ preflight }: any) => ({
+      initial: preflight,
+      final: {
+        ...preflight,
+        nodeModulesPresent: true,
+        pnpmVirtualStorePresent: true,
+        dependencyGraphAvailable: true,
+        ready: true,
+        recoveryCommand: null,
+      },
+      command: "pnpm install --frozen-lockfile",
+      attempted: true,
+      coalesced: false,
+      rechecked: true,
+      succeeded: true,
+      output: "dependencies repaired",
+      skippedReason: null,
+      workspaceFingerprint: preflight.workspaceFingerprint,
+      readinessFingerprint: preflight.readinessFingerprint,
+    }));
+    let adapterCwd: string | null = null;
+    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
+      adapterCwd = ctx.config.cwd;
+      return {
+        summary: "repaired dependencies observed",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: { issueId, projectId, taskKey: `issue:${issueId}`, wakeSource: "assignment" },
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(run!.id);
+      return current?.status === "succeeded" && current.terminalEffectsPending === false;
+    });
+
+    expect(adapterCwd).toBe(workingSetCwd);
+    expect(mockAssignmentGuardrail.repair).toHaveBeenCalledTimes(1);
+    const events = await getRunEvents(run!.id);
+    expect(events.find((event) => event.eventType === "runtime.assignment_dependency_repair")?.payload).toMatchObject({
+      command: "pnpm install --frozen-lockfile",
+      attempted: true,
+      rechecked: true,
+      succeeded: true,
+      initialReady: false,
+      finalReady: true,
+    });
+    expect(events.find((event) => event.eventType === "runtime.assignment_preflight")).toMatchObject({
+      level: "info",
+      message: "assignment run workspace preflight passed after dependency repair",
+      payload: expect.objectContaining({
+        ready: true,
+        initialReady: false,
+        dependencyRepair: expect.objectContaining({
+          attempted: true,
+          succeeded: true,
+        }),
+      }),
+    });
+    await fs.rm(workingSetCwd, { recursive: true, force: true });
+  });
+
+  it("records dependency repair diagnostics when assignment dependencies remain unavailable", async () => {
+    const { orgId, agentId } = await seedAgentFixture();
+    const projectId = randomUUID();
+    const issueId = randomUUID();
+    const workingSetCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-dependency-failure-"));
+    const resourceId = randomUUID();
+    await fs.writeFile(
+      path.join(workingSetCwd, "package.json"),
+      JSON.stringify({ name: "assignment-repair-failure-fixture", packageManager: "pnpm@9.15.4" }),
+      "utf8",
+    );
+    await fs.writeFile(path.join(workingSetCwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+    await db.insert(projects).values({ id: projectId, orgId, name: "Assignment dependency failure" });
+    await db.insert(organizationResources).values({
+      id: resourceId,
+      orgId,
+      name: "Source repository",
+      kind: "directory",
+      sourceType: "external",
+      locator: workingSetCwd,
+    });
+    await db.insert(projectResourceAttachments).values({
+      orgId,
+      projectId,
+      resourceId,
+      role: "working_set",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      projectId,
+      title: "Report dependency repair failure",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      identifier: "RD-DEP-2",
+    });
+
+    mockAssignmentGuardrail.repair.mockImplementationOnce(async ({ preflight }: any) => ({
+      initial: preflight,
+      final: {
+        ...preflight,
+        ready: false,
+        recoveryCommand: "pnpm install --frozen-lockfile",
+      },
+      command: "pnpm install --frozen-lockfile",
+      attempted: true,
+      coalesced: false,
+      rechecked: true,
+      succeeded: false,
+      output: "ERR_PNPM_REGISTRY_UNAVAILABLE",
+      skippedReason: null,
+      workspaceFingerprint: preflight.workspaceFingerprint,
+      readinessFingerprint: preflight.readinessFingerprint,
+    }));
+
+    const run = await heartbeatService(db).wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      contextSnapshot: { issueId, projectId, taskKey: `issue:${issueId}`, wakeSource: "assignment" },
+    });
+    await waitForCondition(async () => {
+      const current = await getRun(run!.id);
+      if (current?.status !== "failed" || current.terminalEffectsPending) return false;
+      const events = await getRunEvents(run!.id);
+      return events.some((event) => event.eventType === "runtime.assignment_preflight_failed");
+    });
+
+    const failedRun = await getRun(run!.id);
+    expect(failedRun).toMatchObject({
+      status: "failed",
+      errorCode: "assignment_dependency_preflight_failed",
+      error: expect.stringContaining("ERR_PNPM_REGISTRY_UNAVAILABLE"),
+    });
+    expect(mockRuntimeAdapter.execute).not.toHaveBeenCalled();
+
+    const events = await getRunEvents(run!.id);
+    expect(events.find((event) => event.eventType === "runtime.assignment_dependency_repair")).toMatchObject({
+      level: "warn",
+      payload: expect.objectContaining({
+        attempted: true,
+        rechecked: true,
+        succeeded: false,
+        output: "ERR_PNPM_REGISTRY_UNAVAILABLE",
+      }),
+    });
+    expect(events.find((event) => event.eventType === "runtime.assignment_preflight")).toMatchObject({
+      level: "error",
+      message: "assignment run workspace preflight failed",
+      payload: expect.objectContaining({
+        ready: false,
+        dependencyRepair: expect.objectContaining({
+          attempted: true,
+          succeeded: false,
+        }),
+      }),
+    });
+    expect(events.find((event) => event.eventType === "runtime.assignment_preflight_failed")).toMatchObject({
+      level: "error",
+      payload: expect.objectContaining({
+        errorCode: "assignment_dependency_preflight_failed",
+        dependencyRepair: expect.objectContaining({
+          output: "ERR_PNPM_REGISTRY_UNAVAILABLE",
+        }),
+      }),
     });
     await fs.rm(workingSetCwd, { recursive: true, force: true });
   });

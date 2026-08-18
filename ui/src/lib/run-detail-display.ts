@@ -5,6 +5,7 @@ type RunStderrExcerptInput = Pick<HeartbeatRun, "status" | "stderrExcerpt">;
 type RunFailureInput = Pick<HeartbeatRun, "error" | "errorCode"> & Partial<Pick<HeartbeatRun, "status" | "resultJson">>;
 
 const WORKSPACE_PERMISSION_REPAIR_NEEDED_CODE = "workspace_permission_repair_needed";
+const ASSIGNMENT_DEPENDENCY_PREFLIGHT_FAILURE_CODE = "assignment_dependency_preflight_failed";
 export const GENERIC_RUN_FAILURE_BODY =
   "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.";
 export const CANCELLED_RUN_BODY =
@@ -58,6 +59,15 @@ export function getRunFailureDisplay(run: RunFailureInput): {
       tone: "destructive",
       actionLabel: "Open instance details",
       actionPath: "/instance/settings/about",
+    };
+  }
+  if (run.errorCode === ASSIGNMENT_DEPENDENCY_PREFLIGHT_FAILURE_CODE) {
+    return {
+      title: "Assignment dependency repair needed",
+      body: readNonEmptyString(run.error)
+        ?? "Rudder could not verify project dependencies before starting the assignment. Run the suggested recovery command, then retry.",
+      code: run.errorCode,
+      tone: "destructive",
     };
   }
   const resultUserMessage = readResultUserMessage(run);
