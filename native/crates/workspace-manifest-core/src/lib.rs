@@ -611,7 +611,10 @@ where
                 }
                 rebuild_after_events(true, root, output, limits, &mut summary, &mut emit)?;
             }
-            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Timeout) => match stop.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => break Ok(()),
+                Err(TryRecvError::Empty) => {}
+            },
             Err(RecvTimeoutError::Disconnected) => {
                 emit(ManifestState::Unavailable, Some(&summary));
                 return Err(watch_disconnected());
