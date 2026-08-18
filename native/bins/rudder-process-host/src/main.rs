@@ -1947,7 +1947,13 @@ fn cleanup_after_child_exit(pgid: u32, _boundary: &OwnedProcessBoundary) -> Clea
                 libc::kill(-(pgid as libc::pid_t), libc::SIGTERM);
             }
         }
-        wait_for_process_group_cleanup(pgid, group_exists)
+        let cleanup = wait_for_process_group_cleanup(pgid, group_exists);
+        CleanupResult {
+            proven: cleanup.proven,
+            // A naturally exiting child that left an owned group behind is a
+            // failed terminal even when the host subsequently cleans it up.
+            had_surviving_group: group_exists,
+        }
     }
     #[cfg(windows)]
     {
