@@ -1,5 +1,7 @@
 //! Rebuildable workspace manifests backed by cross-platform file notifications.
 
+#[cfg(target_os = "linux")]
+use notify::{Config, PollWatcher};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
@@ -8,6 +10,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const MANIFEST_PROTOCOL_VERSION: u32 = 1;
@@ -550,17 +554,37 @@ where
         return Err(ManifestError::safe("watch_output_inside_workspace"));
     }
     let (event_sender, event_receiver) = mpsc::channel();
+    let native_sender = event_sender.clone();
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |result| {
         let signal = match result {
             Ok(event) => WatchSignal::Event(event),
             Err(_) => WatchSignal::Error,
         };
-        let _ = event_sender.send(signal);
+        let _ = native_sender.send(signal);
     })
     .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
     watcher
         .watch(root, RecursiveMode::Recursive)
         .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
+    #[cfg(target_os = "linux")]
+    let poll_watcher = {
+        let poll_sender = event_sender.clone();
+        let mut poll_watcher = PollWatcher::new(
+            move |result| {
+                let signal = match result {
+                    Ok(event) => WatchSignal::Event(event),
+                    Err(_) => WatchSignal::Error,
+                };
+                let _ = poll_sender.send(signal);
+            },
+            Config::default().with_manual_polling(),
+        )
+        .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
+        poll_watcher
+            .watch(root, RecursiveMode::Recursive)
+            .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
+        poll_watcher
+    };
 
     emit(ManifestState::Building, None);
     let mut summary = build_manifest(root, output, limits)?;
@@ -589,10 +613,19 @@ where
     if stopped_during_initial_scan {
         return Ok(());
     }
+    #[cfg(target_os = "linux")]
+    let mut last_poll = Instant::now();
     loop {
         match stop.try_recv() {
             Ok(()) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             Err(mpsc::TryRecvError::Empty) => {}
+        }
+        #[cfg(target_os = "linux")]
+        if last_poll.elapsed() >= Duration::from_secs(1) {
+            poll_watcher
+                .poll()
+                .map_err(|error| ManifestError::safe_source("watch_unavailable", error))?;
+            last_poll = Instant::now();
         }
         match event_receiver.recv_timeout(Duration::from_millis(50)) {
             Ok(WatchSignal::Event(event)) if relevant_event(&event, output) => {
