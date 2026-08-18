@@ -169,7 +169,7 @@ describe("agent startup context prompt", () => {
       ],
       recentChats: [
         {
-          id: "chat_01JY9M2V8Q6Z",
+          id: "14ff96a7-2518-456a-8aae-480360f0d9aa",
           activityAt: new Date("2026-06-19T00:33:00.000Z"),
           title: "Agent run | startup memory",
           snippet: "我现在想的是所有的 agent run\n把每次启动的时候默认装载今天和昨天的 memory md 进来",
@@ -201,8 +201,9 @@ describe("agent startup context prompt", () => {
     expect(prompt).toContain("#### recent chats");
     expect(prompt).toContain("| Chat | Last active | Title | Summary |");
     expect(prompt).toContain(
-      "| `chat_01JY9M2V8Q6Z` | 2026-06-19T00:33:00.000Z | Agent run \\| startup memory | 我现在想的是所有的 agent run 把每次启动的时候默认装载今天和昨天的 memory md 进来 |",
+      "| `cht_14ff96a7` | 2026-06-19T00:33:00.000Z | Agent run \\| startup memory | 我现在想的是所有的 agent run 把每次启动的时候默认装载今天和昨天的 memory md 进来 |",
     );
+    expect(prompt).not.toContain("14ff96a7-2518-456a-8aae-480360f0d9aa");
     expect(prompt).not.toContain("#### startup context metadata");
     expect(prompt).not.toContain("version |||| `agent-startup-context/v1`");
     expect(prompt).not.toContain("date_basis |||| UTC");
@@ -418,10 +419,13 @@ describe("agent startup context service", () => {
     });
 
     expect(bundle.markdown).toContain("`RD-500`");
-    expect(bundle.markdown).toContain(`| \`${recentChatId}\` |`);
+    const recentChatRef = `cht_${recentChatId.replaceAll("-", "").slice(0, 8)}`;
+    expect(bundle.markdown).toContain(`| \`${recentChatRef}\` |`);
+    expect(bundle.sourceRefs).toContainEqual({ kind: "chat", id: recentChatId, ref: recentChatRef });
     expect(bundle.markdown).toContain("recent linked chat body");
     expect(bundle.markdown).not.toContain(currentChatId);
     expect(bundle.markdown).not.toContain("current chat body must not be duplicated");
+    expect(bundle.markdown).not.toContain(recentChatId);
     expect(bundle.markdown).not.toContain(otherOrgChatId);
     expect(bundle.markdown).not.toContain("other org body");
     expect(bundle.metrics.recentChatsCount).toBe(1);

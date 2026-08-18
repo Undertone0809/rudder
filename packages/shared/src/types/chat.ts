@@ -473,6 +473,7 @@ export interface ChatGenerationTerminalOutboxEntry {
 
 export interface ChatConversation {
   id: string;
+  shortRef?: string;
   orgId: string;
   status: "active" | "resolved" | "archived";
   conversationKind?: "chat" | "side_chat";

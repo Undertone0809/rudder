@@ -9,6 +9,7 @@ import {
   createChatQueuedMessageSchema,
   createSideChatSchema,
   forkChatConversationSchema,
+  parseShortRef,
   steerChatQueuedMessageSchema,
   updateChatConversationSchema,
   updateChatQueuedMessageSchema,
@@ -24,7 +25,7 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { conflict, forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
+import { conflict, forbidden, HttpError, notFound, unauthorized, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
@@ -78,7 +79,7 @@ import {
   sanitizeGeneratedTitle,
 } from "../services/title-generation.js";
 import type { StorageService } from "../storage/types.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 import {
   createChatBackgroundRuntime,
   type ChatBackgroundRuntime,
@@ -170,6 +171,24 @@ export function chatRoutes(
   const messageUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 10 },
+  });
+
+  router.param("id", async (req, _res, next, rawId) => {
+    try {
+      if (parseShortRef(rawId)?.kind !== "chat") {
+        next();
+        return;
+      }
+      const resolved = await svc.resolveByReference(rawId, getAuthorizedOrgScope(req));
+      if (resolved.ambiguous) {
+        throw conflict(`Chat reference ${rawId} is ambiguous; use a longer reference or the full UUID`);
+      }
+      if (!resolved.conversation) throw notFound("Chat conversation not found");
+      req.params.id = resolved.conversation.id;
+      next();
+    } catch (error) {
+      next(error);
+    }
   });
 
   async function runSingleFileUpload(req: Request, res: Response) {

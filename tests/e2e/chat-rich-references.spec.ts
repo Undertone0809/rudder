@@ -7,6 +7,70 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 test.describe("Chat rich references", () => {
+  test("opens a Chat by its typed short reference", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Short-Ref-${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Short Reference Agent",
+    }) as { id: string };
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Typed short reference",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open this conversation through its compact reference." },
+      },
+    });
+    expect(chatRes.ok(), await chatRes.text()).toBe(true);
+    const chat = await chatRes.json() as { id: string; shortRef?: string };
+    const expectedShortRef = `cht_${chat.id.replaceAll("-", "").slice(0, 8)}`;
+    expect(chat.shortRef).toBe(expectedShortRef);
+
+    const shortGet = await page.request.get(`/api/chats/${expectedShortRef}`);
+    expect(shortGet.ok(), await shortGet.text()).toBe(true);
+    await expect(shortGet.json()).resolves.toMatchObject({ id: chat.id, shortRef: expectedShortRef });
+
+    const messagesGet = await page.request.get(`/api/chats/${expectedShortRef}/messages`);
+    expect(messagesGet.ok(), await messagesGet.text()).toBe(true);
+    await expect(messagesGet.json()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ body: "Open this conversation through its compact reference." }),
+    ]));
+
+    const queueGet = await page.request.get(`/api/chats/${expectedShortRef}/queue`);
+    expect(queueGet.ok(), await queueGet.text()).toBe(true);
+    await expect(queueGet.json()).resolves.toMatchObject({ items: [] });
+
+    const manifestGet = await page.request.get(`/api/chats/${expectedShortRef}/work-manifest`);
+    expect(manifestGet.ok(), await manifestGet.text()).toBe(true);
+
+    const updateRes = await page.request.patch(`/api/chats/${expectedShortRef}`, {
+      data: { title: "Typed short reference updated" },
+    });
+    expect(updateRes.ok(), await updateRes.text()).toBe(true);
+    await expect(updateRes.json()).resolves.toMatchObject({
+      id: chat.id,
+      shortRef: expectedShortRef,
+      title: "Typed short reference updated",
+    });
+
+    const missingGet = await page.request.get("/api/chats/cht_ffffffff");
+    expect(missingGet.status()).toBe(404);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.urlKey}/messenger/chat/${expectedShortRef}`);
+
+    await expect(page.getByText("Open this conversation through its compact reference.", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(".chat-composer").last()).toBeVisible();
+  });
+
   test("opens an assistant skill token's SKILL.md in the current Chat Side Panel", async ({ page }) => {
     const suffix = Date.now();
     const orgRes = await page.request.post("/api/orgs", {

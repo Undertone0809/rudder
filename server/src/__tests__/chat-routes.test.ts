@@ -29,6 +29,7 @@ const mockChatService = vi.hoisted(() => ({
   },
   list: vi.fn(),
   getById: vi.fn(),
+  resolveByReference: vi.fn(),
   create: vi.fn(),
   createWithInitialMessage: vi.fn(),
   forkConversation: vi.fn(),
@@ -788,6 +789,31 @@ describe("chat routes", { retry: 2 }, () => {
     mockChatService.generationProtocol.retryTerminalProjection.mockResolvedValue(null);
     mockChatService.generationProtocol.recoverStaleControlOwners.mockResolvedValue([]);
     mockChatService.assetHasAttachments.mockResolvedValue(false);
+  });
+
+  it("resolves a typed short chat reference within the actor organization scope", async () => {
+    const conversationId = "14ff96a7-2518-456a-8aae-480360f0d9aa";
+    const conversation = createConversation({ id: conversationId, shortRef: "cht_14ff96a7" });
+    mockChatService.resolveByReference.mockResolvedValue({ conversation, ambiguous: false });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatAssistantService.enrichConversation.mockResolvedValue(conversation);
+
+    const res = await request(createApp()).get("/api/chats/cht_14ff96a7");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: conversationId, shortRef: "cht_14ff96a7" });
+    expect(mockChatService.resolveByReference).toHaveBeenCalledWith("cht_14ff96a7", ["organization-1"]);
+    expect(mockChatService.getById).toHaveBeenCalledWith(conversationId);
+  });
+
+  it("rejects an ambiguous typed short chat reference", async () => {
+    mockChatService.resolveByReference.mockResolvedValue({ conversation: null, ambiguous: true });
+
+    const res = await request(createApp()).get("/api/chats/cht_14ff96a7");
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("ambiguous");
+    expect(mockChatService.getById).not.toHaveBeenCalled();
   });
 
   it("passes chat search query and status to the chat list service", async () => {

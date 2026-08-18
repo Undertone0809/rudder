@@ -401,7 +401,8 @@ describe("CLI automation/chat/runs parity", () => {
   it("uses server chat search and clips human snippets", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify([
       {
-        id: "chat-1",
+        id: "14ff96a7-2518-456a-8aae-480360f0d9aa",
+        shortRef: "cht_14ff96a7",
         title: "CLI parity",
         status: "active",
         preferredAgentId: null,
@@ -438,7 +439,49 @@ describe("CLI automation/chat/runs parity", () => {
     expect(requestedUrl.pathname).toBe("/api/orgs/org-1/chats");
     expect(requestedUrl.searchParams.get("q")).toBe("needle");
     expect(requestedUrl.searchParams.get("status")).toBe("all");
+    expect(output.stdoutText()).toContain("id=cht_14ff96a7");
+    expect(output.stdoutText()).not.toContain("14ff96a7-2518-456a-8aae-480360f0d9aa");
     expect(output.stdoutText()).toContain("snippet=needle xxxxxxxxxxxx…");
+  });
+
+  it("prefers chat short refs in human list output while JSON preserves both identities", async () => {
+    const row = {
+      id: "14ff96a7-2518-456a-8aae-480360f0d9aa",
+      shortRef: "cht_14ff96a7",
+      title: "Short reference",
+      status: "active",
+      preferredAgentId: null,
+      unreadCount: 0,
+      lastMessageAt: "2026-06-11T00:00:00.000Z",
+      latestReplyPreview: null,
+      latestUserMessagePreview: "Compact discovery",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([row]), { status: 200 })));
+    const output = captureOutput();
+    const args = [
+      process.execPath,
+      "rudder",
+      "chat",
+      "list",
+      "--org-id",
+      "org-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+    ];
+
+    await expect(runCli(args)).resolves.toBe(0);
+    expect(output.stdoutText()).toContain("id=cht_14ff96a7");
+    expect(output.stdoutText()).not.toContain(row.id);
+
+    output.stdout.mockClear();
+    output.log.mockClear();
+    await expect(runCli([...args, "--json", "--full-ids"])).resolves.toBe(0);
+    expect(JSON.parse(output.stdoutText())).toEqual([expect.objectContaining({
+      id: row.id,
+      shortRef: row.shortRef,
+    })]);
   });
 
   it("requests paginated chat messages with transcript output controls", async () => {

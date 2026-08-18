@@ -140,7 +140,7 @@ export function registerChatCommands(program: Command): void {
     chat
       .command("get")
       .description(getAgentCliCapabilityById("chat.get").description)
-      .argument("<chatId>", "Chat conversation ID")
+      .argument("<chatId>", "Chat conversation UUID or cht_<uuid-prefix> short ref")
       .action(async (chatId: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -156,7 +156,7 @@ export function registerChatCommands(program: Command): void {
     chat
       .command("messages")
       .description(getAgentCliCapabilityById("chat.messages").description)
-      .argument("<chatId>", "Chat conversation ID")
+      .argument("<chatId>", "Chat conversation UUID or cht_<uuid-prefix> short ref")
       .option("--include-transcript", "Include assistant transcript entries")
       .option("--include-output", "Alias for --include-transcript")
       .option("--include-outputs", "Alias for --include-transcript")
@@ -185,7 +185,7 @@ export function registerChatCommands(program: Command): void {
     chat
       .command("transcript")
       .description(getAgentCliCapabilityById("chat.transcript").description)
-      .argument("<chatId>", "Chat conversation ID")
+      .argument("<chatId>", "Chat conversation UUID or cht_<uuid-prefix> short ref")
       .option("--limit <n>", "Maximum messages to print")
       .option("--cursor <cursor>", "Stable message cursor returned in page.nextCursor")
       .option("--max-chars <n>", "Maximum transcript chars per message", "1200")
@@ -213,7 +213,7 @@ export function registerChatCommands(program: Command): void {
     chat
       .command("read")
       .description(getAgentCliCapabilityById("chat.read").description)
-      .argument("<chatId>", "Chat conversation ID")
+      .argument("<chatId>", "Chat conversation UUID or cht_<uuid-prefix> short ref")
       .option("--include-transcript", "Include assistant transcript entries")
       .option("--include-output", "Alias for --include-transcript")
       .option("--include-outputs", "Alias for --include-transcript")
@@ -303,7 +303,7 @@ export function registerChatCommands(program: Command): void {
     chat
       .command("send")
       .description(getAgentCliCapabilityById("chat.send").description)
-      .argument("<chatId>", "Chat conversation ID")
+      .argument("<chatId>", "Chat conversation UUID or cht_<uuid-prefix> short ref")
       .option("--body <text>", "Message body")
       .option("--edit-user-message-id <id>", "Regenerate/edit from a prior user message")
       .addHelpText("after", formatExamplesAndCautions({
@@ -342,7 +342,7 @@ export function registerChatCommands(program: Command): void {
     chat
       .command("archive")
       .description(getAgentCliCapabilityById("chat.archive").description)
-      .argument("<chatId>", "Chat conversation ID")
+      .argument("<chatId>", "Chat conversation UUID or cht_<uuid-prefix> short ref")
       .action(async (chatId: string, opts: BaseClientOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -395,7 +395,7 @@ function filterChatSearchRows(rows: ChatConversation[], query: string, scope: st
 
 function formatChatConversation(row: ChatConversation) {
   return {
-    id: row.id,
+    id: row.shortRef ?? row.id,
     title: row.title,
     status: row.status,
     preferredAgentId: row.preferredAgentId ?? "-",
@@ -407,7 +407,7 @@ function formatChatConversation(row: ChatConversation) {
 
 function formatChatSearchResult(row: ChatConversation, maxChars: number) {
   return {
-    id: row.id,
+    id: row.shortRef ?? row.id,
     title: row.title,
     status: row.status,
     lastMessageAt: row.lastMessageAt ?? "-",

@@ -1,6 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { chatContextLinks, chatConversations, chatMessages, issues } from "@rudderhq/db";
-import type { AgentRunScene } from "@rudderhq/shared";
+import { shortRefFor, type AgentRunScene } from "@rudderhq/shared";
 import { and, desc, eq, or, sql, type SQLWrapper } from "drizzle-orm";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -122,6 +122,14 @@ function markdownCodeCell(value: string | null | undefined) {
   return compact === "empty" ? "empty" : `\`${compact.replace(/`/g, "'")}\``;
 }
 
+function chatReference(id: string) {
+  try {
+    return shortRefFor("chat", id);
+  } catch {
+    return id;
+  }
+}
+
 function appendMarkdownTable(lines: string[], headers: string[], rows: string[][]) {
   lines.push(`| ${headers.join(" | ")} |`);
   lines.push(`| ${headers.map(() => "---").join(" | ")} |`);
@@ -195,7 +203,7 @@ export function buildAgentStartupContextPrompt(
       "Title",
       "Summary",
     ], input.recentChats.map((chat) => [
-      markdownCodeCell(chat.id),
+      markdownCodeCell(chatReference(chat.id)),
       markdownTableCell(formatDate(chat.activityAt)),
       markdownTableCell(clip(chat.title, 120)),
       markdownTableCell(clip(chat.snippet, resolvedLimits.chatSnippetChars)),
@@ -415,7 +423,7 @@ export function agentStartupContextService(db: Db) {
         { kind: "memory", id: todayKey, ref: todayMemory.relativePath },
         { kind: "memory", id: yesterdayKey, ref: yesterdayMemory.relativePath },
         ...recentIssues.items.map((issue) => ({ kind: "issue" as const, id: issue.id, ref: issue.identifier ?? issue.id })),
-        ...recentChats.items.map((chat) => ({ kind: "chat" as const, id: chat.id, ref: chat.id })),
+        ...recentChats.items.map((chat) => ({ kind: "chat" as const, id: chat.id, ref: chatReference(chat.id) })),
       ],
       markdown,
       metrics,
