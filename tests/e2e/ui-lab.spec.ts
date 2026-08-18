@@ -38,7 +38,7 @@ test.describe("UI Lab", () => {
     };
 
     await assertDurationColumn(6);
-    await expect(page.getByRole("button", { name: /Expand command details: Ran pnpm test:run$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Expand command details: Ran pnpm test:run Failed/ })).toBeVisible();
 
     await page.getByRole("button", { name: /Expand tool activity group 6/ }).click();
     await assertDurationColumn(9);

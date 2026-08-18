@@ -50,18 +50,18 @@ vi.mock("@/components/ApprovalCard", () => ({
     approval,
     requesterAgent,
     supportingText,
-    origin,
+    detailLabel,
   }: {
     approval: { type: string };
     requesterAgent?: { name: string } | null;
     supportingText?: string | null;
-    origin?: { title: string } | null;
+    detailLabel?: string;
   }) => (
     <div data-testid="mock-approval-card">
       <div>{approval.type}</div>
       {requesterAgent ? <div>requested-by: {requesterAgent.name}</div> : null}
       <div>{supportingText}</div>
-      <div>{origin?.title}</div>
+      <div>{detailLabel}</div>
     </div>
   ),
 }));
@@ -360,12 +360,6 @@ describe("Messenger page headers", () => {
             icon: null,
             role: "engineer",
           },
-          origin: {
-            kind: "chat",
-            conversationId: "chat-1",
-            title: "Create a release manager",
-            href: "/messenger/chat/chat-1",
-          },
         },
       ],
     };
@@ -375,9 +369,7 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Requests");
     expect(html).toContain("Approvals and assistance stay in one thread while preserving their distinct decisions.");
     expect(html).toContain("budget_override_required");
-    expect(html).toContain("Create a release manager");
-    expect(html).not.toContain("Open full approval");
-    expect(html).not.toContain("Request changes");
+    expect(html).toContain("Open full approval");
     expect(html).toContain("Noah");
     expect(html).not.toContain("requested-by: Noah");
     expect(html).not.toContain("Approval update");

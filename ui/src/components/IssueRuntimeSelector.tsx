@@ -221,37 +221,6 @@ export function IssueRuntimeSelector({
     };
   };
 
-  const positionSubmenuFor = (rect: DOMRect, width: number, height: number): CSSProperties => {
-    const viewportPadding = 12;
-    const gap = 8;
-    const right = window.innerWidth - rect.right;
-    const left = right >= width + gap + viewportPadding
-      ? rect.right + gap
-      : Math.max(viewportPadding, rect.left - width - gap);
-    const availableBelow = Math.max(0, window.innerHeight - viewportPadding - rect.top);
-    const availableAbove = Math.max(0, rect.bottom - viewportPadding);
-    const keepTriggerAligned = availableBelow >= 120;
-    const maxHeight = Math.min(
-      height,
-      keepTriggerAligned ? availableBelow : Math.max(availableAbove, availableBelow),
-    );
-    const top = keepTriggerAligned
-      ? Math.max(viewportPadding, rect.top)
-      : Math.max(
-        viewportPadding,
-        Math.min(rect.top, window.innerHeight - viewportPadding - maxHeight),
-      );
-    const boundedLeft = Math.min(
-      Math.max(viewportPadding, left),
-      Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
-    );
-    return {
-      left: boundedLeft,
-      top,
-      maxHeight: `${maxHeight}px`,
-    };
-  };
-
   const openMenu = () => {
     if (disabled || !menuTriggerRef.current) return;
     setDraftModel(currentModel);
@@ -447,94 +416,6 @@ export function IssueRuntimeSelector({
       document.body,
     ) : null;
 
-    const submenuOptions = activeSubmenu === "model" ? (
-      <>
-        <button
-          ref={firstModelOptionRef}
-          type="button"
-          role="option"
-          aria-selected={selectedModel == null}
-          data-testid="issue-runtime-option-default-model"
-          className="chat-composer-menu-row"
-          onClick={() => selectMenuModel(null)}
-        >
-          <span className="min-w-0 flex-1 truncate">{`Agent default · ${configuredModel(agent)}`}</span>
-          {selectedModel == null ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-        </button>
-        {adapterModelsQuery.error && options.length > 0 ? (
-          <div
-            data-testid="issue-runtime-model-discovery-error"
-            role="status"
-            className="px-2.5 py-2 text-xs text-muted-foreground"
-          >
-            Models unavailable; showing built-in defaults.
-          </div>
-        ) : null}
-        {adapterModelsQuery.isPending ? (
-          <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            Loading models...
-          </div>
-        ) : options.length > 0 ? options.map((model) => (
-          <button
-            key={model.id}
-            type="button"
-            role="option"
-            aria-selected={selectedModel === model.id}
-            data-testid={`issue-runtime-option-model-${model.id}`}
-            className="chat-composer-menu-row"
-            onClick={() => selectMenuModel(model.id)}
-          >
-            <span className="min-w-0 flex-1 truncate">{model.label}</span>
-            {selectedModel === model.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-          </button>
-        )) : (
-          <div className="px-2.5 py-2 text-xs text-muted-foreground">
-            {adapterModelsQuery.error ? "Models unavailable" : "No models found."}
-          </div>
-        )}
-      </>
-    ) : hasThinkingOptions ? thinkingOptions.map((option) => (
-      <button
-        key={option.id ?? "default"}
-        ref={option.id == null ? firstEffortOptionRef : undefined}
-        type="button"
-        role="option"
-        aria-selected={effectiveEffort === option.id}
-        data-testid={`issue-runtime-option-effort-${option.id ?? "default"}`}
-        className="chat-composer-menu-row"
-        onClick={() => selectMenuEffort(option.id)}
-      >
-        <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
-        {effectiveEffort === option.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-      </button>
-    )) : null;
-
-    const submenu = menuOpen && activeSubmenu && submenuPosition && typeof document !== "undefined" ? createPortal(
-      <div
-        ref={(node) => {
-          submenuRootRef.current = node;
-          submenuScrollRef(node);
-        }}
-        data-issue-runtime-portal
-        data-testid={`issue-runtime-${activeSubmenu}-options`}
-        role="listbox"
-        aria-label={activeSubmenu === "model" ? "Model options" : "Thinking options"}
-        className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
-        style={submenuPosition}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" || event.key === "ArrowLeft") {
-            event.preventDefault();
-            event.stopPropagation();
-            closeSubmenu(activeSubmenu);
-          }
-        }}
-      >
-        {submenuOptions}
-      </div>,
-      document.body,
-    ) : null;
-
     return (
       <>
         <button
@@ -619,67 +500,6 @@ export function IssueRuntimeSelector({
         <div className="border-t border-[color:var(--border-soft)] pt-1">
           {runtimeControls("staged")}
         </div>
-        <div className="space-y-1" role="listbox" aria-label="Model">
-          <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Model</p>
-          <button
-            type="button"
-            role="option"
-            aria-selected={selectedModel == null}
-            data-testid="issue-runtime-option-default-model"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-            onClick={() => selectModel(null)}
-          >
-            <span className="min-w-0 flex-1 truncate">Agent default · {configuredModel(agent)}</span>
-            {draftModel == null ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-          </button>
-          {adapterModelsQuery.isPending ? (
-            <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading models...
-            </div>
-          ) : adapterModelsQuery.error && options.length > 0 ? (
-            <p
-              data-testid="issue-runtime-model-discovery-error"
-              role="status"
-              className="px-2 py-2 text-xs text-muted-foreground"
-            >
-              Models unavailable; showing built-in defaults.
-            </p>
-          ) : options.length > 0 ? options.map((model) => (
-            <button
-              key={model.id}
-              type="button"
-              role="option"
-              aria-selected={selectedModel === model.id}
-              data-testid={`issue-runtime-option-model-${model.id}`}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-              onClick={() => selectModel(model.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{model.label}</span>
-              {selectedModel === model.id ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-            </button>
-          )) : (
-            <p className="px-2 py-2 text-xs text-muted-foreground">No models found.</p>
-          )}
-        </div>
-        {hasThinkingOptions ? (
-          <div className="mt-2 border-t border-border pt-2" role="listbox" aria-label="Thinking">
-            <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Thinking</p>
-            {thinkingOptions.map((option) => (
-              <button
-                key={option.id ?? "default"}
-                type="button"
-                role="option"
-                aria-selected={effectiveEffort === option.id}
-                data-testid={`issue-runtime-option-effort-${option.id ?? "default"}`}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-                onClick={() => setDraftEffort(option.id)}
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
-                {effectiveEffort === option.id ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-              </button>
-            ))}
-          </div>
-        ) : null}
         <div className="mt-2 flex justify-end gap-2 border-t border-border pt-2">
           <button type="button" className="rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60" onClick={() => setOpen(false)}>
             Cancel

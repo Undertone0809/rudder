@@ -1822,28 +1822,16 @@ function AgentSkillsTab({
   const initialDesiredSkillKeysRef = useRef<string[] | null>(null);
   const initialDesiredSkillKeysAgentIdRef = useRef<string | null>(null);
 
-  const {
-    data: skillSnapshot,
-    isLoading,
-    error: skillSnapshotError,
-    refetch: refetchSkillSnapshot,
-  } = useQuery({
+  const { data: skillSnapshot, isLoading } = useQuery({
     queryKey: queryKeys.agents.skills(agent.id),
     queryFn: () => agentsApi.skills(agent.id, orgId),
     enabled: Boolean(orgId),
-    retry: false,
   });
 
-  const {
-    data: organizationSkills,
-    isLoading: organizationSkillsLoading,
-    error: organizationSkillsError,
-    refetch: refetchOrganizationSkills,
-  } = useQuery({
+  const { data: organizationSkills, isLoading: organizationSkillsLoading } = useQuery({
     queryKey: queryKeys.organizationSkills.list(orgId ?? ""),
     queryFn: () => organizationSkillsApi.list(orgId!),
     enabled: Boolean(orgId),
-    retry: false,
   });
 
   if (initialDesiredSkillKeysAgentIdRef.current !== agent.id) {
@@ -2150,13 +2138,6 @@ function AgentSkillsTab({
   );
 
   const isSkillsLoading = isLoading || organizationSkillsLoading;
-  const skillsLoadError = skillSnapshotError ?? organizationSkillsError;
-  const retrySkillsQueries = useCallback(() => {
-    void Promise.all([
-      refetchSkillSnapshot(),
-      refetchOrganizationSkills(),
-    ]);
-  }, [refetchOrganizationSkills, refetchSkillSnapshot]);
   const saveStatusLabel = syncSkills.isPending ? "Saving..." : null;
 
   const controlsHelperText = "Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.";
@@ -2432,33 +2413,7 @@ function AgentSkillsTab({
       ) : null}
 
       {isSkillsLoading ? (
-        <div
-          data-testid="agent-skills-loading"
-          role="status"
-          aria-busy="true"
-          className="space-y-3"
-        >
-          <p className="text-sm text-muted-foreground">Loading skills...</p>
-          <PageSkeleton variant="list" />
-        </div>
-      ) : skillsLoadError ? (
-        <section
-          data-testid="agent-skills-error"
-          role="alert"
-          className="flex flex-col gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-4 text-sm"
-        >
-          <div className="min-w-0 space-y-1">
-            <p className="font-medium text-foreground">Unable to load skills</p>
-            <p className="break-words text-muted-foreground">
-              {skillsLoadError instanceof Error && skillsLoadError.message
-                ? skillsLoadError.message
-                : "The skills data could not be loaded."}
-            </p>
-          </div>
-          <Button type="button" variant="outline" size="sm" className="w-fit" onClick={retrySkillsQueries}>
-            Retry
-          </Button>
-        </section>
+        <PageSkeleton variant="list" />
       ) : (
         <>
           {organizationSkillRows.length === 0 && agentSkillRows.length === 0 && externalSkillRows.length === 0 ? (

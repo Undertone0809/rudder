@@ -585,7 +585,7 @@ export function IssueProperties({
                 setAssigneeOpen(false);
               }}
             >
-              <AgentMenuLabel agent={a} agentAvatarStyle="bare" />
+              <AgentMenuLabel agent={a} />
             </button>
           </div>
         ))}
@@ -660,7 +660,7 @@ export function IssueProperties({
             )}
             onClick={() => { trackRecentAssignee(a.id); onUpdate({ reviewerAgentId: a.id, reviewerUserId: null }); setReviewerOpen(false); }}
           >
-            <AgentMenuLabel agent={a} agentAvatarStyle="bare" />
+            <AgentMenuLabel agent={a} />
           </button>
         ))}
       </div>

@@ -531,12 +531,6 @@ export const en = {
   "general.appearance.theme.orange.description": "Orange action color",
   "general.appearance.theme.pink.label": "Pink",
   "general.appearance.theme.pink.description": "Pink action color",
-  "general.appearance.toolCalls.title": "Tool calls",
-  "general.appearance.toolCalls.failureIndicators.label": "Show failure indicators",
-  "general.appearance.toolCalls.failureIndicators.description":
-    "Use red styling and a failure label when a tool call fails.",
-  "general.appearance.toolCalls.failureIndicators.ariaLabel":
-    "Toggle tool call failure indicators",
   "notifications.title": "Notifications",
   "notifications.description":
     "Manage unread inbox alerts for this Rudder instance.",

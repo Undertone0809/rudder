@@ -34,12 +34,10 @@ interface ThemeContextValue {
   designStyle: DesignStyle;
   baseColor: BaseColor;
   accentTheme: AccentTheme;
-  showToolCallFailureIndicators: boolean;
   setTheme: (theme: Theme) => void;
   setDesignStyle: (style: DesignStyle) => void;
   setBaseColor: (baseColor: BaseColor) => void;
   setAccentTheme: (accentTheme: AccentTheme) => void;
-  setShowToolCallFailureIndicators: (show: boolean) => void;
   toggleTheme: () => void;
 }
 
@@ -48,7 +46,6 @@ const DESIGN_STYLE_STORAGE_KEY = "rudder.designStyle";
 const DEFAULT_DESIGN_STYLE: DesignStyle = "luma";
 const BASE_COLOR_STORAGE_KEY = "rudder.baseColor";
 const ACCENT_THEME_STORAGE_KEY = "rudder.accentTheme";
-const TOOL_CALL_FAILURE_INDICATORS_STORAGE_KEY = "rudder.showToolCallFailureIndicators";
 const DEFAULT_ACCENT_THEME: AccentTheme = "emerald";
 const DARK_THEME_COLOR = "#1f1f1d";
 const LIGHT_THEME_COLOR = "#f1f0ef";
@@ -148,15 +145,6 @@ function getStoredAccentThemePreference(): AccentTheme {
   return DEFAULT_ACCENT_THEME;
 }
 
-function getStoredToolCallFailureIndicatorsPreference(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(TOOL_CALL_FAILURE_INDICATORS_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
 function resolveThemePreference(theme: Theme): ResolvedTheme {
   return theme === "system" ? getSystemTheme() : theme;
 }
@@ -186,20 +174,11 @@ function applyTheme(theme: Theme, designStyle: DesignStyle, baseColor: BaseColor
   void readDesktopShell()?.setAppearance?.(theme);
 }
 
-export function ThemeProvider({
-  children,
-  initialShowToolCallFailureIndicators,
-}: {
-  children: ReactNode;
-  initialShowToolCallFailureIndicators?: boolean;
-}) {
+export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => getStoredThemePreference());
   const [designStyle, setDesignStyleState] = useState<DesignStyle>(() => getStoredDesignStylePreference());
   const [baseColor, setBaseColorState] = useState<BaseColor>(() => getStoredBaseColorPreference());
   const [accentTheme, setAccentThemeState] = useState<AccentTheme>(() => getStoredAccentThemePreference());
-  const [showToolCallFailureIndicators, setShowToolCallFailureIndicatorsState] = useState(
-    () => initialShowToolCallFailureIndicators ?? getStoredToolCallFailureIndicatorsPreference(),
-  );
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveThemePreference(getStoredThemePreference()));
 
   const setTheme = useCallback((nextTheme: Theme) => {
@@ -218,10 +197,6 @@ export function ThemeProvider({
     setAccentThemeState(nextAccentTheme);
   }, []);
 
-  const setShowToolCallFailureIndicators = useCallback((show: boolean) => {
-    setShowToolCallFailureIndicatorsState(show);
-  }, []);
-
   const toggleTheme = useCallback(() => {
     setThemeState((current) => {
       const nextResolvedTheme = resolveThemePreference(current) === "dark" ? "light" : "dark";
@@ -237,14 +212,10 @@ export function ThemeProvider({
       localStorage.setItem(DESIGN_STYLE_STORAGE_KEY, designStyle);
       localStorage.setItem(BASE_COLOR_STORAGE_KEY, baseColor);
       localStorage.setItem(ACCENT_THEME_STORAGE_KEY, accentTheme);
-      localStorage.setItem(
-        TOOL_CALL_FAILURE_INDICATORS_STORAGE_KEY,
-        String(showToolCallFailureIndicators),
-      );
     } catch {
       // Ignore local storage write failures in restricted environments.
     }
-  }, [theme, designStyle, baseColor, accentTheme, showToolCallFailureIndicators]);
+  }, [theme, designStyle, baseColor, accentTheme]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -268,12 +239,10 @@ export function ThemeProvider({
       designStyle,
       baseColor,
       accentTheme,
-      showToolCallFailureIndicators,
       setTheme,
       setDesignStyle,
       setBaseColor,
       setAccentTheme,
-      setShowToolCallFailureIndicators,
       toggleTheme,
     }),
     [
@@ -282,12 +251,10 @@ export function ThemeProvider({
       designStyle,
       baseColor,
       accentTheme,
-      showToolCallFailureIndicators,
       setTheme,
       setDesignStyle,
       setBaseColor,
       setAccentTheme,
-      setShowToolCallFailureIndicators,
       toggleTheme,
     ],
   );
@@ -305,10 +272,4 @@ export function useTheme() {
     throw new Error("useTheme must be used within ThemeProvider");
   }
   return context;
-}
-
-export function useToolCallFailureIndicators() {
-  const context = useContext(ThemeContext);
-  return context?.showToolCallFailureIndicators
-    ?? getStoredToolCallFailureIndicatorsPreference();
 }

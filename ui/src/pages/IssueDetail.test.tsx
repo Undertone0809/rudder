@@ -16,7 +16,6 @@ let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let capturedInlineEditorProps: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
-const openSidePanelTarget = vi.hoisted(() => vi.fn());
 const queryErrors = new Set<string>();
 const queryRefetch = vi.fn(async () => undefined);
 
@@ -233,10 +232,6 @@ vi.mock("../context/I18nContext", () => ({
 
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
-}));
-
-vi.mock("../context/SidePanelContext", () => ({
-  useSidePanel: () => ({ openTarget: openSidePanelTarget }),
 }));
 
 vi.mock("../context/DialogContext", () => ({
@@ -675,7 +670,6 @@ describe("IssueDetail", () => {
     capturedCommentThreadProps = null;
     capturedInlineEditorProps = [];
     mockSourceBreadcrumb = null;
-    openSidePanelTarget.mockClear();
     queryErrors.clear();
     queryRefetch.mockClear();
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
@@ -860,14 +854,12 @@ describe("IssueDetail", () => {
     const descriptionEditorProps = capturedInlineEditorProps.find(
       (props) => props.placeholder === "Add a description...",
     );
-    if (!descriptionEditorProps) throw new Error("Issue description editor props were not captured");
     expect(descriptionEditorProps).toMatchObject({
       multiline: true,
       editorEngine: "codemirror",
       alwaysEdit: true,
       variant: "issue-description",
     });
-    expect(descriptionEditorProps.onInlineTokenClick).toEqual(expect.any(Function));
   });
 
   it("renders linked Library files with a stable icon affordance", () => {

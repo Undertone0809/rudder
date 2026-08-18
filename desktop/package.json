@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "pnpm --filter @rudderhq/identity-core build && pnpm --filter @rudderhq/server prepare:ui-dist && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && pnpm run stage:app-builder-toolchain && node scripts/dev.mjs",
+    "dev": "pnpm --filter @rudderhq/identity-core build && pnpm --filter @rudderhq/server prepare:ui-dist && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && pnpm run stage:app-builder-toolchain && electron dist/main.js",
     "build": "node scripts/build.mjs",
     "dist": "pnpm run build && node scripts/prune-packaging-node-modules.mjs && node scripts/dist.mjs && node scripts/verify-server-package.mjs",
     "prune:packaging-node-modules": "node scripts/prune-packaging-node-modules.mjs",
@@ -72,14 +72,6 @@
       {
         "from": ".packaged/native",
         "to": "native"
-      },
-      {
-        "from": ".packaged/models",
-        "to": "models"
-      },
-      {
-        "from": "../native/THIRD_PARTY_NOTICES.md",
-        "to": "native/THIRD_PARTY_NOTICES.md"
       }
     ],
     "dmg": {
@@ -100,9 +92,6 @@
     "mac": {
       "identity": null,
       "icon": "build/icon.icns",
-      "extendInfo": {
-        "NSMicrophoneUsageDescription": "Rudder uses your microphone only for optional local Chat voice transcription."
-      },
       "target": [
         "dir"
       ],

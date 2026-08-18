@@ -37,16 +37,14 @@ Then choose the route that matches the work:
 - Desktop app, packaging, installer, local prod startup:
   - `doc/README.md`
   - `doc/engineering/DESKTOP.md`
-  - `doc/engineering/LOCAL-DEVELOPMENT.md`
+  - `doc/engineering/DEVELOPING.md`
   - `desktop/scripts/smoke.mjs`
   - `scripts/prod-desktop.mjs`
 - Server/runtime/database work:
   - `doc/README.md`
-  - `doc/engineering/LOCAL-DEVELOPMENT.md`
+  - `doc/engineering/DEVELOPING.md`
   - `doc/engineering/DATABASE.md`
   - `doc/engineering/DEPLOYMENT-MODES.md`
-  - `doc/engineering/ARCHITECTURE-GUARDRAILS.md` when module boundaries or
-    architecture checks are affected
   - relevant `doc/product/domains/**` contracts when behavior changes
 - CLI/task-surface work:
   - `doc/README.md`
@@ -56,7 +54,6 @@ Then choose the route that matches the work:
   - `doc/README.md`
   - `doc/product/PRODUCT.md`
   - `doc/engineering/DESIGN.md`
-  - `doc/engineering/PERFORMANCE.md` for data-heavy or scale-sensitive surfaces
   - relevant `doc/product/domains/**` contracts for user-visible behavior
 - Release/publishing work:
   - `doc/README.md`
@@ -154,13 +151,6 @@ If you change schema/API behavior, update all impacted layers:
 - Budget hard-stop auto-pause behavior
 - Activity logging for mutating actions
 
-1. Explain non-obvious critical decisions.
-
-Add concise reasoning comments when behavior is policy-driven,
-ordering-sensitive, or intentionally backward-compatible. Explain why, not
-what. Follow `doc/engineering/ARCHITECTURE-GUARDRAILS.md` for comment shape,
-runtime prompt assembly guidance, and architecture ratchet commands.
-
 1. Do not replace current product contracts wholesale unless asked.
 
 Prefer additive updates. Keep `doc/product/**` as the current source of product truth. `doc/archive/**` is historical context only.
@@ -177,9 +167,7 @@ Repository-based agent skills for local development, maintenance, release, debug
 
 New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.
 When using plan mode, write the plan in `doc/plans/` before starting implementation work.
-New plan docs should follow `doc/plans/_template.md`, use the most specific
-supported `kind`, and choose `area` / `entities` using
-`doc/plans/_taxonomy.md` plus relevant prior plans.
+New plan docs should start with the standard YAML frontmatter described in `doc/engineering/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
 
 1. Treat `doc/product/` as the guarded Product Logic Registry.
 
@@ -263,34 +251,7 @@ Notes:
 
 ## 7. Verification Before Hand-off
 
-Choose exactly one primary verification class for the final diff. Evaluate the
-table from top to bottom and use the first matching row. The class describes the
-default repository build intensity; required domain-specific checks still
-apply.
-
-| Class | Use when | Required local evidence |
-| --- | --- | --- |
-| `FULL_GATE` | The change crosses package or contract boundaries; changes dependencies, build configuration, generated outputs, migrations, permissions, organization boundaries, runtime adapters, or release candidates; is a broad refactor; or has a blast radius that cannot be bounded reliably | Full lint, recursive typecheck, full tests, and repository build, plus every applicable specialized gate |
-| `SPECIALIZED` | The scope is bounded, but the claim depends on a real UI, runtime, packaged Desktop app, database lifecycle, external process, or another domain surface that a generic build cannot prove | The owning domain's real validation plus the minimum relevant static and focused checks; no full repository build by default |
-| `SCOPED` | Executable behavior changes inside one package or one bounded workflow without crossing a shared contract, build, packaging, migration, or runtime boundary | Changed-file lint, owning-package typecheck, focused tests, and relevant E2E when a user-visible workflow changes |
-| `NO_BUILD` | Contributor documentation, comments, prose, or mechanical changes cannot affect executable behavior, generated output, packaging, or release artifacts | `git diff --check` and any applicable documentation or structure validator; no typecheck, test suite, or build by default |
-
-`SPECIALIZED` is a different evidence shape, not a linear step between
-`SCOPED` and `FULL_GATE`. If a change matches `FULL_GATE`, use that as the
-primary class and add every relevant specialized check.
-
-Use this decision order on the final diff:
-
-1. Choose `FULL_GATE` if any full-gate trigger applies.
-2. Otherwise choose `SPECIALIZED` if the acceptance claim depends on a real
-   domain surface rather than generic compilation or unit tests.
-3. Otherwise choose `SCOPED` for bounded executable changes.
-4. Use `NO_BUILD` only when the change cannot affect executable or delivered
-   behavior.
-
-During iteration, run the smallest checks that can disprove the current edit.
-For `FULL_GATE`, run the full command set once after the final candidate is
-frozen:
+Run this full check before claiming done:
 
 ```sh
 pnpm lint
@@ -299,58 +260,21 @@ pnpm test:run
 pnpm build
 ```
 
-Typical `NO_BUILD` evidence is a scoped diff check:
-
-```sh
-git diff --check -- AGENTS.md
-```
-
-For `SCOPED`, adapt this concrete UI-package example to the owning package and
-focused test files:
-
-```sh
-git diff --check -- ui/src
-pnpm lint:changed
-pnpm --filter @rudderhq/ui typecheck
-pnpm -s exec vitest run ui/src/pages/Chat.test.tsx
-```
-
-Reclassify when the diff, runtime, fixture, or acceptance criteria change. A
-relevant candidate change invalidates reviewer or verifier evidence tied to the
-old candidate. CI remains the broad integration safety net, but it does not
-replace real UI, runtime, Desktop, migration, or release evidence.
-
-If a required check cannot run, report the command, failure, and affected
-claim. Report checks intentionally omitted by the selected class as out of
-scope, not as failed or incomplete verification. Include the selected class,
-classification reason, completed evidence, specialized gates, and intentional
-omissions in the hand-off.
+If anything cannot be run, explicitly report what was not run and why.
 
 Use `pnpm lint:fix` to automatically organize TypeScript and JavaScript imports.
 
 Task-specific additions:
 
 - Desktop or packaged-app changes:
-  - use `FULL_GATE` for startup, profile routing, packaging, installer,
-    migration, or release-artifact changes
   - `pnpm desktop:verify`
-- Product Logic changes:
-  - `pnpm product-logic:check`
-  - add or run the tests and E2E that prove the affected contract
-- Database or migration changes:
-  - generate and inspect the migration, run the owning package checks, and
-    exercise the relevant fresh/upgrade lifecycle
 - Feature work or workflow changes:
   - add or update the relevant automated E2E test coverage before hand-off
   - run the relevant E2E suite (`pnpm test:e2e`, `pnpm test:release-smoke`, or another feature-specific E2E path) when that area is affected
 - Visible UI changes:
-  - use `SPECIALIZED` unless a `FULL_GATE` trigger also applies
   - verify the rendered result in a browser or desktop shell, not just by tests
-  - when browser verification is needed, prefer `$ego-browser` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
+  - when browser verification is needed, prefer `@browser-use` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
   - store temporary screenshots and other ad-hoc verification artifacts outside the repository tree (for example under `/tmp` or the system temp dir), not in the project root
-- Release work:
-  - use `FULL_GATE` and follow `doc/engineering/RELEASING.md`; its exact-source
-    CI and public-surface requirements are unchanged
 
 ## 8. API and Auth Expectations
 
@@ -379,27 +303,13 @@ When adding endpoints:
 
 ## 9. Review and verify
 
-Use independent agents when their role adds evidence that author-run checks
-cannot provide. For non-trivial behavior, architecture, security, cross-boundary,
-runtime, release, or high-risk UI work, spawn a reviewer using
+For every non-trivial task, spawn distinct reviewer and verifier agents. Use
 `.agents/skills/maintainer/agent-work-reviewer-maintainer` for first-principles,
-functional, adversarial, product-taste, and evidence-integrity review.
-
-Spawn a verifier using
+functional, adversarial, product-taste, and evidence-integrity review. Use
 `.agents/skills/maintainer/product-acceptance-verifier-maintainer` for read-only
-black-box acceptance only when all of these are true:
+black-box acceptance in the real local or otherwise named terminal environment.
 
-1. The request has a concrete user-, agent-, runtime-, Desktop-, integration-,
-   or release-visible terminal behavior.
-2. Independent observation is materially stronger than author-run tests.
-3. The named environment or state matters to the claim.
-
-The verifier is a terminal acceptance role, not a generic test runner. Do not
-spawn it for contributor documentation, mechanical changes, ordinary test
-execution, or internal changes with no independently observable terminal
-workflow. `NO_BUILD` work needs neither reviewer nor verifier by default.
-
-When a verifier is required, the gate order is:
+The gate order is:
 
 1. Before acceptance testing, the reviewer returns a stage verdict on intent,
    implementation, product taste, risk, and the proposed acceptance packet.
@@ -414,42 +324,32 @@ When a verifier is required, the gate order is:
 5. Commit and push only after reviewer `accept` and verifier `PASS` both apply
    to the same unchanged candidate.
 
-When review is required but no terminal verifier surface exists, resolve all
-blocking reviewer findings, rerun the selected class and specialized checks on
-the final diff, and obtain a reviewer stage verdict of `accept` for that
-unchanged final diff. Record the verifier as not applicable. Do not invent a
-black-box surface merely to obtain a verdict.
+`FAIL`, `QUESTION`, `conditional accept`, `needs more evidence`, and `reject`
+all block final handoff. Any relevant code, build, runtime, organization/data,
+or acceptance-criteria change invalidates prior verdicts. Fix the blocker, rerun
+the verifier on the new candidate, then rerun final review. Spawning an agent is
+not proof that either gate completed; the parent must read and reconcile each
+terminal verdict.
 
-When a verifier is required, `FAIL`, `QUESTION`, `conditional accept`,
-`needs more evidence`, and `reject` all block final handoff. Any relevant code,
-build, runtime, organization/data, or acceptance-criteria change invalidates
-prior verdicts. Fix the blocker, rerun the verifier on the new candidate, then
-rerun final review. Spawning an agent is not proof that either gate completed;
-the parent must read and reconcile each terminal verdict.
-
-For visible UI changes where review is required, the reviewer must inspect
-current rendered evidence against `doc/engineering/DESIGN.md`, including
-cognitive load and decision sequencing. Where verifier eligibility is also
-met, the verifier must black-box the primary journey plus the highest-risk
+For visible UI changes, the reviewer must inspect current rendered evidence
+against `doc/engineering/DESIGN.md`, including cognitive load and decision
+sequencing. The verifier must black-box the primary journey plus the highest-risk
 decision-flow, content, async, interaction, continuity, viewport, and theme
-states. All visible UI changes still include current final screenshots in the
-hand-off.
+states. Include current final screenshots in the handoff.
 
-Contributor documentation and simple mechanical changes may omit spawned agents
-when no product behavior, interaction, accessibility, runtime, release, or
-build-boundary claim is involved.
+Simple mechanical changes such as correcting one README typo may omit spawned
+agents when no product behavior, runtime, release, or layout claim is involved.
 
 ## 10. Definition of Done
 
 A change is done when all are true:
 
 1. Behavior matches affected `doc/product/**` contracts, or the product logic delta has been explicitly proposed when the registry cannot be edited yet
-2. The selected verification class and every applicable specialized gate pass
-3. The hand-off records the class, rationale, evidence, and intentionally omitted checks
-4. Contracts are synced across db/shared/server/ui when those layers are affected
-5. Docs are updated when behavior or commands change
-6. UI-related changes include current screenshots of the final rendered result
-7. Git commit rules
+2. Typecheck, tests, and build pass
+3. Contracts are synced across db/shared/server/ui
+4. Docs updated when behavior or commands change
+5. Please provide screenshots if there are any UI-related changes.
+6. Git commit rules
 
 - After completing a feature, small functionality, test change, or bug fix, and after the necessary validation passes, default to running `git commit` and `git push` to the current remote branch.
 - Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).

@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const modifier = "ControlOrMeta" as const;
-
-test("issue description links open supported targets in the Side Panel", async ({ page }, testInfo) => {
+test("issue description special mention links stay inside the active organization route", async ({ page }) => {
   await page.goto("/");
 
   const orgRes = await page.request.post("/api/orgs", {
@@ -50,49 +48,29 @@ test("issue description links open supported targets in the Side Panel", async (
 
   const descriptionLink = page.getByRole("link", { name: targetIssueRef }).first();
   await expect(descriptionLink).toBeVisible();
+  await expect(descriptionLink).toHaveAttribute("href", `issue://${targetIssue.id}`);
+  await expect(page.locator(".rudder-issue-description-surface .rudder-milkdown-scope"))
+    .toHaveAttribute("data-inline-token-click-mode", "plain");
   const activeOrganizationPrefix = new URL(page.url()).pathname.split("/").filter(Boolean)[0];
   expect(activeOrganizationPrefix).toBeTruthy();
-  const sourceRoute = new RegExp(`/${activeOrganizationPrefix}/issues/${sourceIssueRef}$`);
-  const targetRoute = new RegExp(`/${activeOrganizationPrefix}/issues/${targetIssue.id}$`);
-  await expect(descriptionLink).toHaveAttribute("href", targetRoute);
 
-  const libraryFileLink = page.getByRole("link", { name: /reference-map\.md/ }).first();
+  const libraryFileLink = page.getByRole("link", { name: "Reference map" }).first();
   await expect(libraryFileLink).toHaveAttribute(
     "href",
-    new RegExp(`/${activeOrganizationPrefix}/library\\?path=docs%2Freference-map\\.md$`),
+    "library-file://file?p=docs%2Freference-map.md",
   );
   await libraryFileLink.click();
-  const sidePanel = page.getByTestId("chat-side-panel");
-  const librarySurface = page.getByTestId("library-live-surface");
-  await expect(sidePanel).toBeVisible();
-  await expect(librarySurface).toBeVisible();
-  await expect(librarySurface.getByText("Reference map", { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(sourceRoute);
-  await expect(librarySurface).toContainText("Opened from an issue description reference.");
-  await page.screenshot({ path: testInfo.outputPath("issue-description-side-panel-desktop.png"), fullPage: false });
-  await sidePanel.getByTestId("chat-side-panel-collapse").click();
-  await expect(sidePanel).not.toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`/${activeOrganizationPrefix}/library\\?path=docs%2Freference-map\\.md$`),
+  );
+  await expect(page.getByTestId("org-workspaces-markdown-editor")).toContainText(
+    "Opened from an issue description reference.",
+  );
 
   await page.goto(`/${organization.issuePrefix}/issues/${sourceIssueRef}`);
   await descriptionLink.click();
-  await expect(page).toHaveURL(sourceRoute);
-  await expect(sidePanel).toBeVisible();
-  await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
-  await expect(sidePanel.getByRole("heading", {
+  await expect(page).toHaveURL(new RegExp(`/${activeOrganizationPrefix}/issues/${targetIssue.id}$`));
+  await expect(page.locator("main").getByRole("heading", {
     name: "Target issue for special mention navigation",
   })).toBeVisible();
-
-  await sidePanel.getByTestId("chat-side-panel-collapse").click();
-  await expect(sidePanel).not.toBeVisible();
-  await page.goto(`/${organization.issuePrefix}/issues/${sourceIssueRef}`);
-  await page.getByRole("link", { name: targetIssueRef }).first().click({ modifiers: [modifier] });
-  await expect(page).toHaveURL(targetRoute);
-  await expect(sidePanel).not.toBeVisible();
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`/${organization.issuePrefix}/issues/${sourceIssueRef}`);
-  await page.getByRole("link", { name: targetIssueRef }).first().click();
-  await expect(page).toHaveURL(targetRoute);
-  await expect(sidePanel).not.toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("issue-description-side-panel-mobile.png"), fullPage: false });
 });

@@ -21,11 +21,6 @@ import type {
 } from "./local-apps-registry.js";
 import type { LocalAppRuntimeView } from "./local-apps-runtime.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
-import type {
-  DesktopSpeechInput,
-  DesktopSpeechResult,
-  DesktopSpeechStatus,
-} from "./speech-runtime.js";
 import type { DesktopSystemPermissionId, DesktopSystemPermissions } from "./system-permissions.js";
 import { TERMINAL_IPC_CHANNELS } from "./terminal-ipc.js";
 
@@ -436,18 +431,6 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   openSystemPermissionSettings: (permission: DesktopSystemPermissionId) =>
     ipcRenderer.invoke("desktop:open-system-permission-settings", permission) as Promise<void>,
-  speech: {
-    supported: ["darwin", "linux", "win32"].includes(process.platform),
-    getStatus: () => ipcRenderer.invoke("desktop:speech-status") as Promise<DesktopSpeechStatus>,
-    requestMicrophoneAccess: () =>
-      ipcRenderer.invoke("desktop:speech-request-microphone") as Promise<
-        "authorized" | "denied" | "restricted" | "unsupported" | "unknown"
-      >,
-    transcribe: (input: DesktopSpeechInput) =>
-      ipcRenderer.invoke("desktop:speech-transcribe", input) as Promise<DesktopSpeechResult>,
-    cancel: (requestId: string) =>
-      ipcRenderer.invoke("desktop:speech-cancel", requestId) as Promise<void>,
-  },
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
   forceOpenExternal: (target: string) => ipcRenderer.invoke("desktop:force-open-external", target) as Promise<void>,
@@ -678,15 +661,6 @@ declare global {
       respondDeferredUpdatePrompt(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
       openSystemPermissionSettings(permission: DesktopSystemPermissionId): Promise<void>;
-      speech: {
-        supported: boolean;
-        getStatus(): Promise<DesktopSpeechStatus>;
-        requestMicrophoneAccess(): Promise<
-          "authorized" | "denied" | "restricted" | "unsupported" | "unknown"
-        >;
-        transcribe(input: DesktopSpeechInput): Promise<DesktopSpeechResult>;
-        cancel(requestId: string): Promise<void>;
-      };
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
       forceOpenExternal(target: string): Promise<void>;

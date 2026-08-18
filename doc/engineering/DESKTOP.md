@@ -76,30 +76,24 @@ generation after that point is artifact production and cannot be the first
 database-safety signal.
 - Pass `--scenario=startup-recovery`, `--scenario=renderer-recovery`, `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
 
-## Rust native process host
+## Rust process-host pilot
 
 Desktop builds stage the current platform's precompiled `rudder-process-host`
-under `Resources/native/<target>/`. Rust is the default process host on macOS
-arm64/x64, Windows x64, and Linux x64. The retained Node watchdog is used only
-when `RUDDER_NATIVE_MODE=auto` encounters a safe failure before Rust accepts
-or owns the operation. After acceptance, the runtime must finish, clean up the
-exact Rust-owned operation, or return a failure; it must never spawn a Node
-duplicate.
-
-`RUDDER_NATIVE_MODE=node` is the global rollback and `required` is the
-fail-closed test/diagnostic mode. Set
-`RUDDER_NATIVE_LOCAL_APP_PROCESS_DISABLED=1` to disable only this capability.
-The legacy `RUDDER_NATIVE_PROCESS_HOST=1|0` toggle remains compatible:
+under `Resources/native/<target>/`. The Local App runtime keeps the Node
+watchdog as the default and enables the Rust host only for an explicit pilot
+run on macOS arm64. Windows/Linux and macOS x64 target mappings are build-only
+until their handle/process-group implementations earn a separate runtime
+acceptance:
 
 ```sh
 pnpm native:build
-RUDDER_NATIVE_MODE=required \
+RUDDER_NATIVE_PROCESS_HOST=1 \
 RUDDER_NATIVE_PROCESS_HOST_PATH="$PWD/native/target/release/rudder-process-host" \
 pnpm --filter @rudderhq/desktop smoke
 ```
 
-The Rust host is staged into packaged builds. It does not add a Cargo
-requirement to an installed end-user app, and it does not change signing,
+The Rust host is a contributor/build artifact in this pilot. It does not add a
+Cargo requirement to an installed end-user app, and it does not change signing,
 notarization, Windows signing, or Linux AppImage scope.
 
 ## Local profiles

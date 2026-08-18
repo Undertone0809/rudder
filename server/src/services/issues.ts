@@ -30,17 +30,13 @@ import {
   projects
 } from "@rudderhq/db";
 import {
-  isUuidLike,
   type IssueSearchField,
   type IssueSearchMatch,
   type ReorderIssue
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
-import { logger } from "../middleware/logger.js";
 import { redactCurrentUserText } from "../log-redaction.js";
-import type { StorageService } from "../storage/types.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
   parseProjectExecutionWorkspacePolicy,
@@ -81,119 +77,6 @@ export type { IssueFilters } from "./issues.helpers.js";
 
 const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
 const MAX_ISSUE_LIST_LIMIT = 500;
-const ISSUE_DESCRIPTION_ASSET_PATH_RE = /\/api\/assets\/([^/?#\s)]+)\/content/g;
-
-export function extractIssueDescriptionAssetIds(description: string | null | undefined): string[] {
-  if (!description) return [];
-  const ids = new Set<string>();
-  for (const match of description.matchAll(ISSUE_DESCRIPTION_ASSET_PATH_RE)) {
-    const assetId = match[1]?.trim();
-    if (assetId && isUuidLike(assetId)) ids.add(assetId.toLowerCase());
-  }
-  return [...ids];
-}
-
-export function rewriteIssueDescriptionAssetPaths(
-  description: string,
-  replacements: ReadonlyMap<string, string>,
-): string {
-  return description.replace(ISSUE_DESCRIPTION_ASSET_PATH_RE, (full, assetId: string) => {
-    return replacements.get(assetId.toLowerCase()) ?? full;
-  });
-}
-
-async function readStorageObject(stream: AsyncIterable<Buffer | string | Uint8Array>): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
-type StagedIssueDescriptionAttachment = {
-  attachmentId: string;
-  assetId: string;
-};
-
-async function stageIssueDescriptionAssets(input: {
-  tx: any;
-  storage: StorageService;
-  orgId: string;
-  issueId: string;
-  description: string | null | undefined;
-  copiedObjectKeys: Array<{ orgId: string; objectKey: string }>;
-  createdByAgentId?: string | null;
-  createdByUserId?: string | null;
-}) {
-  const sourceAssetIds = extractIssueDescriptionAssetIds(input.description);
-  if (sourceAssetIds.length === 0) {
-    return {
-      description: input.description,
-      attachments: [] as StagedIssueDescriptionAttachment[],
-    };
-  }
-
-  const sourceAssets: Array<typeof assets.$inferSelect> = await input.tx
-    .select()
-    .from(assets)
-    .where(and(eq(assets.orgId, input.orgId), inArray(assets.id, sourceAssetIds)));
-  const sourceAssetsById = new Map(sourceAssets.map((asset) => [asset.id, asset]));
-  const replacements = new Map<string, string>();
-  const attachments: StagedIssueDescriptionAttachment[] = [];
-
-  for (const sourceAssetId of sourceAssetIds) {
-    const sourceAsset = sourceAssetsById.get(sourceAssetId);
-    if (!sourceAsset) continue;
-
-    let stored: Awaited<ReturnType<StorageService["putFile"]>>;
-    try {
-      const object = await input.storage.getObject(input.orgId, sourceAsset.objectKey);
-      const body = await readStorageObject(object.stream);
-      if (body.length === 0) continue;
-      stored = await input.storage.putFile({
-        orgId: input.orgId,
-        namespace: `issues/${input.issueId}/description`,
-        originalFilename: sourceAsset.originalFilename,
-        contentType: sourceAsset.contentType || object.contentType || "application/octet-stream",
-        body,
-      });
-    } catch (error) {
-      logger.warn(
-        { err: error, orgId: input.orgId, assetId: sourceAsset.id, issueId: input.issueId },
-        "failed to preserve an Issue description asset",
-      );
-      continue;
-    }
-
-    input.copiedObjectKeys.push({ orgId: input.orgId, objectKey: stored.objectKey });
-    const [copiedAsset] = await input.tx
-      .insert(assets)
-      .values({
-        orgId: input.orgId,
-        provider: stored.provider,
-        objectKey: stored.objectKey,
-        contentType: stored.contentType,
-        byteSize: stored.byteSize,
-        sha256: stored.sha256,
-        originalFilename: stored.originalFilename,
-        createdByAgentId: input.createdByAgentId ?? null,
-        createdByUserId: input.createdByUserId ?? null,
-      })
-      .returning({ id: assets.id });
-    if (!copiedAsset) throw new Error("Failed to create preserved Issue description asset");
-
-    const attachmentId = randomUUID();
-    attachments.push({ attachmentId, assetId: copiedAsset.id });
-    replacements.set(sourceAsset.id, `/api/attachments/${attachmentId}/content`);
-  }
-
-  return {
-    description: typeof input.description === "string"
-      ? rewriteIssueDescriptionAssetPaths(input.description, replacements)
-      : input.description,
-    attachments,
-  };
-}
 
 function normalizeIssueSearchFields(fields: IssueSearchField[] | undefined): Set<IssueSearchField> {
   const allowed = new Set<IssueSearchField>(["title", "description", "comment"]);
@@ -215,7 +98,7 @@ function normalizeIssueListOffset(offset: number | undefined): number | undefine
   return normalized;
 }
 
-export function issueService(db: Db, storage?: StorageService) {
+export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
   type IssueCreateInput = Omit<typeof issues.$inferInsert, "orgId"> & { labelIds?: string[] };
   const issueCreateResults = new WeakMap<object, boolean>();
@@ -1041,9 +924,8 @@ export function issueService(db: Db, storage?: StorageService) {
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
-      const copiedObjectKeys: Array<{ orgId: string; objectKey: string }> = [];
       try {
-        const createdIssue = await db.transaction(async (tx) => {
+        return await db.transaction(async (tx) => {
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {
@@ -1089,23 +971,8 @@ export function issueService(db: Db, storage?: StorageService) {
         const issueNumber = organization.issueCounter;
         const identifier = `${organization.issuePrefix}-${issueNumber}`;
 
-        const issueId = issueData.id ?? randomUUID();
-        const stagedDescriptionAssets = storage
-          ? await stageIssueDescriptionAssets({
-            tx,
-            storage,
-            orgId,
-            issueId,
-            description: issueData.description,
-            copiedObjectKeys,
-            createdByAgentId: issueData.createdByAgentId,
-            createdByUserId: issueData.createdByUserId,
-          })
-          : null;
         const values = {
           ...issueData,
-          id: issueId,
-          ...(stagedDescriptionAssets ? { description: stagedDescriptionAssets.description } : {}),
           originKind: issueData.originKind ?? "manual",
           goalId: issueData.goalId ?? null,
           ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
@@ -1135,17 +1002,6 @@ export function issueService(db: Db, storage?: StorageService) {
 
         const resolvedLabelIds = await resolveCreateLabelIds(orgId, issueData, inputLabelIds, tx);
         const [issue] = await tx.insert(issues).values(values).returning();
-        if (stagedDescriptionAssets && stagedDescriptionAssets.attachments.length > 0) {
-          await tx.insert(issueAttachments).values(
-            stagedDescriptionAssets.attachments.map((attachment) => ({
-              id: attachment.attachmentId,
-              orgId,
-              issueId: issue.id,
-              assetId: attachment.assetId,
-              usage: "description_inline",
-            })),
-          );
-        }
         if (resolvedLabelIds) {
           await syncIssueLabels(issue.id, orgId, resolvedLabelIds, tx);
         }
@@ -1213,17 +1069,7 @@ export function issueService(db: Db, storage?: StorageService) {
         const [enriched] = await withIssueLabels(tx, [issue]);
         return rememberIssueCreateResult(enriched, true);
         });
-        copiedObjectKeys.length = 0;
-        return createdIssue;
       } catch (error) {
-        if (storage) {
-          await Promise.all(copiedObjectKeys.map((object) => storage.deleteObject(object.orgId, object.objectKey).catch((cleanupError) => {
-            logger.warn(
-              { err: cleanupError, orgId: object.orgId, objectKey: object.objectKey },
-              "failed to clean up a staged Issue description asset",
-            );
-          })));
-        }
         if (!agentIssueCreationOrigin || !isUniqueConstraintConflict(error, "issues_agent_issue_creation_origin_uq")) {
           throw error;
         }

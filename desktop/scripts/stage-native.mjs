@@ -14,8 +14,6 @@ const target = resolveNativeTarget(process.platform, targetArch);
 const binaryName = process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host";
 const archiveBinaryName = process.platform === "win32" ? "rudder-native.exe" : "rudder-native";
 const updateHelperBinaryName = process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper";
-const speechBinaryName = process.platform === "win32" ? "rudder-speech.exe" : "rudder-speech";
-const stagedModelsRoot = path.join(desktopRoot, ".packaged", "models", "whisper");
 const cargoBin = process.platform === "win32" ? "cargo.exe" : "cargo";
 
 function run(command, args, cwd) {
@@ -40,7 +38,7 @@ async function main() {
   }
   const cargoArgs = [
     "build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "--release",
-    "--bin", "rudder-process-host", "--bin", "rudder-native", "--bin", "rudder-update-helper", "--bin", "rudder-speech",
+    "--bin", "rudder-process-host", "--bin", "rudder-native", "--bin", "rudder-update-helper",
   ];
   const requestedTarget = process.env.RUDDER_NATIVE_TARGET || (target === resolveNativeTarget(process.platform, process.arch) ? null : target);
   if (requestedTarget) cargoArgs.push("--target", requestedTarget);
@@ -52,40 +50,22 @@ async function main() {
   const sourcePath = path.join(profileRoot, binaryName);
   const archiveSourcePath = path.join(profileRoot, archiveBinaryName);
   const updateHelperSourcePath = path.join(profileRoot, updateHelperBinaryName);
-  const speechSourcePath = path.join(profileRoot, speechBinaryName);
   const targetRoot = path.join(stagedNativeRoot, target);
   const destinationPath = path.join(targetRoot, binaryName);
   const archiveDestinationPath = path.join(targetRoot, archiveBinaryName);
   const updateHelperDestinationPath = path.join(targetRoot, updateHelperBinaryName);
-  const speechDestinationPath = path.join(targetRoot, speechBinaryName);
   await fs.access(sourcePath);
   await fs.access(archiveSourcePath);
   await fs.access(updateHelperSourcePath);
-  await fs.access(speechSourcePath);
   await fs.rm(targetRoot, { recursive: true, force: true });
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.copyFile(sourcePath, destinationPath);
   await fs.copyFile(archiveSourcePath, archiveDestinationPath);
   await fs.copyFile(updateHelperSourcePath, updateHelperDestinationPath);
-  await fs.copyFile(speechSourcePath, speechDestinationPath);
   if (process.platform !== "win32") await fs.chmod(destinationPath, 0o755);
   if (process.platform !== "win32") await fs.chmod(archiveDestinationPath, 0o755);
   if (process.platform !== "win32") await fs.chmod(updateHelperDestinationPath, 0o755);
-  if (process.platform !== "win32") await fs.chmod(speechDestinationPath, 0o755);
-
-  await fs.rm(stagedModelsRoot, { recursive: true, force: true });
-  await fs.mkdir(stagedModelsRoot, { recursive: true });
-  const configuredModelPath = process.env.RUDDER_SPEECH_MODEL_PATH?.trim();
-  if (configuredModelPath) {
-    if (!path.isAbsolute(configuredModelPath)) {
-      throw new Error("RUDDER_SPEECH_MODEL_PATH must be an absolute path");
-    }
-    await fs.copyFile(configuredModelPath, path.join(stagedModelsRoot, "ggml-base.bin"));
-    console.log("[desktop:stage-native] staged configured Whisper model");
-  } else {
-    console.log("[desktop:stage-native] no Whisper model configured; speech capability remains unavailable");
-  }
-  console.log(`[desktop:stage-native] staged ${target}/${binaryName}, ${speechBinaryName}, and ${updateHelperBinaryName}`);
+  console.log(`[desktop:stage-native] staged ${target}/${binaryName} and ${updateHelperBinaryName}`);
 }
 
 void main().catch((error) => {

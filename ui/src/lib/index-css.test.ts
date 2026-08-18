@@ -65,9 +65,6 @@ describe("index.css motion rules", () => {
     const lightOutlineCore = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]::before');
     const lightOutlineHover = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]:is(:hover, :focus-visible, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
     const lightOutlineActive = cssBlock(':root:not(.dark) .control-hover[data-variant="outline"]:is(:active, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
-    const lightInsetOutline = cssBlock(':root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]');
-    const lightInsetOutlineCore = cssBlock(':root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]::before');
-    const lightInsetOutlineInteraction = cssBlock(':root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"])');
     const darkOutline = cssBlock('.dark .control-hover[data-variant="outline"]');
     const darkGhost = cssBlock('.dark .control-hover[data-variant="ghost"]');
     const destructive = cssBlock('.control-hover[data-variant="destructive"]');
@@ -79,9 +76,6 @@ describe("index.css motion rules", () => {
     expect(lightOutlineCore).toContain("content: none");
     expect(lightOutlineHover).toContain("var(--surface-elevated) 94%, black");
     expect(lightOutlineActive).toContain("var(--surface-elevated) 89%, black");
-    expect(lightInsetOutline).toContain("background: var(--surface-elevated)");
-    expect(lightInsetOutlineCore).toContain('content: ""');
-    expect(lightInsetOutlineInteraction).toContain("background: var(--surface-elevated)");
     expect(darkOutline).toContain("--control-hover-core: color-mix(in oklab, var(--surface-elevated) 84%, white)");
     expect(darkGhost).toContain("--control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white)");
     expect(destructive).toContain("--control-hover-core: var(--destructive)");
@@ -554,9 +548,12 @@ describe("index.css motion rules", () => {
     expect(libraryWorkspaceShell).not.toContain("box-shadow");
   });
 
-  it("does not add a column resizer seam to the Library shell", () => {
-    expect(indexCss).not.toContain(".workspace-shell--library-transparent .workspace-column-resizer");
-    expect(indexCss).not.toContain(".dark .workspace-shell--library-transparent .workspace-column-resizer");
+  it("fills Library column resizers with the adjacent content surface", () => {
+    const libraryResizer = cssBlock(".workspace-shell--library-transparent .workspace-column-resizer");
+    const darkLibraryResizer = cssBlock(".dark .workspace-shell--library-transparent .workspace-column-resizer");
+
+    expect(libraryResizer).toContain("background: var(--desktop-content-surface-light)");
+    expect(darkLibraryResizer).toContain("background: var(--desktop-content-surface-dark)");
   });
 
   it("keeps the macOS desktop shell top chrome compact", () => {

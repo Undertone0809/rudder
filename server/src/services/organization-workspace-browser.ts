@@ -20,7 +20,6 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
-import { readNativeWorkspaceManifest } from "./workspace-manifest-native.js";
 
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
 const PROTECTED_LIBRARY_SYSTEM_ROOTS = new Set(["agents", "skills"]);
@@ -518,20 +517,6 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const normalizedQuery = options?.query?.trim().toLowerCase() ?? "";
       const requestedLimit = options?.limit ?? DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT;
       const limit = Math.max(1, Math.min(MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT, requestedLimit));
-      const nativeEntries = await readNativeWorkspaceManifest(resolvedRoot);
-      if (nativeEntries) {
-        for (const entry of nativeEntries) {
-          if (entries.length >= limit) break;
-          if (entry.kind === "symlink") continue;
-          const parts = entry.path.split("/");
-          if (parts.some(shouldHideWorkspaceEntry) || isProtectedLibraryResourcePath(entry.path)) continue;
-          const name = parts.at(-1)!;
-          if (normalizedQuery && !`${name} ${entry.path}`.toLowerCase().includes(normalizedQuery)) continue;
-          entries.push({ name, path: entry.path, isDirectory: entry.kind === "directory" });
-        }
-        const decoratedEntries = await attachLibraryEntryIds(orgId, entries);
-        return decoratedEntries.sort((left, right) => left.path.localeCompare(right.path));
-      }
       async function visit(directoryPath: string) {
         if (entries.length >= limit) return;
         if (isProtectedLibraryResourcePath(directoryPath)) return;

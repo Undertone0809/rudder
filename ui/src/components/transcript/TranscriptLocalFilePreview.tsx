@@ -8,9 +8,9 @@ import {
 } from "../../lib/desktop-shell";
 import {
   isWorkspaceFileOpenTarget,
-  workspaceUnsupportedFileLaunchTargets,
   type WorkspaceOpenTargetId,
   type WorkspaceUnsupportedFileLaunchTarget,
+  workspaceUnsupportedFileLaunchTargets,
 } from "../../lib/workspace-preferences";
 import {
   clearChatSidePanelMarkdownDraft,

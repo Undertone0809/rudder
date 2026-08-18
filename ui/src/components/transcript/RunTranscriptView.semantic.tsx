@@ -1177,15 +1177,6 @@ export function isCommandTool(name: string, input: unknown): boolean {
   return Boolean(record && (typeof record.command === "string" || typeof record.cmd === "string"));
 }
 
-export function neutralizeToolFailureSemanticInfo(
-  semantic: TranscriptToolSemanticInfo,
-): TranscriptToolSemanticInfo {
-  if (semantic.actionKind === "file_change" && semantic.summary === "File change failed") {
-    return { ...semantic, summary: "File changes" };
-  }
-  return semantic;
-}
-
 export function describeToolSemanticInfo(name: string, input: unknown, result?: string): TranscriptToolSemanticInfo {
   const normalizedName = name.trim().toLowerCase();
   const normalizedIdentifier = normalizedName.replace(/[\s_-]+/g, "");

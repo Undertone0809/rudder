@@ -1456,6 +1456,14 @@
     margin: 0;
   }
 
+  .workspace-shell--library-transparent .workspace-column-resizer {
+    background: var(--desktop-content-surface-light);
+  }
+
+  .dark .workspace-shell--library-transparent .workspace-column-resizer {
+    background: var(--desktop-content-surface-dark);
+  }
+
   .workspace-column-resizer-line {
     width: 1px;
     height: 100%;
@@ -6144,19 +6152,6 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
   --control-hover-core: color-mix(in oklab, var(--surface-active) 84%, white);
 }
 
-/* Review actions can opt back into the shared inset treatment when they sit beside filled decisions. */
-:root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"] {
-  background: var(--surface-elevated);
-}
-
-:root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]::before {
-  content: "";
-}
-
-:root:not(.dark) .control-hover[data-hover-style="inset"][data-variant="outline"]:is(:hover, :focus-visible, :active, [data-state="open"]):not(:disabled):not([aria-disabled="true"]) {
-  background: var(--surface-elevated);
-}
-
 /* Primary rail utilities keep their cradle fixed while the inset surface appears. */
 .control-hover.rail-utility-button {
   --rail-utility-shell: color-mix(in oklab, var(--sidebar-foreground) 8%, var(--sidebar));
@@ -6341,25 +6336,4 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
     border-left-width: 1px;
     column-gap: 2rem;
   }
-}
-.rudder-inspectable-image-fallback {
-  display: inline-flex;
-  min-width: 9rem;
-  min-height: 3.5rem;
-  max-width: 100%;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  border: 1px dashed var(--border-strong);
-  border-radius: calc(var(--radius) + 2px);
-  background: color-mix(in oklab, var(--surface-active) 48%, transparent);
-  padding: 0.75rem;
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-  line-height: 1.25rem;
-  text-align: center;
-}
-
-.rudder-inspectable-image-trigger[aria-disabled="true"] {
-  cursor: default;
 }

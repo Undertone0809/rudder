@@ -16,7 +16,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveDefaultBackupDir, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import {
   reconcileWorkspaceBackupArtifactStorage,
@@ -182,13 +182,6 @@ describe("workspace backup service", () => {
   let rudderHome = "";
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
-  const originalBackupV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
-
-  beforeEach(() => {
-    // Existing v1-specific assertions remain explicit while a focused test
-    // below proves the new default v2 path.
-    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "false";
-  });
 
   beforeAll(async () => {
     rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backups-home-"));
@@ -219,8 +212,6 @@ describe("workspace backup service", () => {
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
     else process.env.RUDDER_INSTANCE_ID = originalRudderInstanceId;
-    if (originalBackupV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
-    else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = originalBackupV2;
   });
 
   async function createOrganization() {
@@ -304,15 +295,13 @@ describe("workspace backup service", () => {
     }
   });
 
-  it("uses the bounded v2 file-backed path by default with the Node rollback mode", async () => {
+  it("uses the bounded v2 file-backed path only when explicitly opted in", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
     await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "v2.txt"), "v2 content\n", "utf8");
     const previousFlag = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
-    const previousMode = process.env.RUDDER_NATIVE_MODE;
-    delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
-    process.env.RUDDER_NATIVE_MODE = "node";
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
     try {
       const backup = await service.create({ orgId });
       expect(path.extname(backup.artifactRef)).toBe(".zip");
@@ -335,8 +324,6 @@ describe("workspace backup service", () => {
     } finally {
       if (previousFlag === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
       else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousFlag;
-      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
-      else process.env.RUDDER_NATIVE_MODE = previousMode;
     }
   });
 
@@ -352,10 +339,8 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
     const previousNative = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
     const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-    const previousMode = process.env.RUDDER_NATIVE_MODE;
     process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
     process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = "true";
-    process.env.RUDDER_NATIVE_MODE = "auto";
     process.env.RUDDER_NATIVE_ARCHIVE_PATH = fakeNative;
     try {
       const backup = await service.create({ orgId });
@@ -371,123 +356,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
       if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED; else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
       if (previousNative === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE; else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousNative;
       if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
-      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE; else process.env.RUDDER_NATIVE_MODE = previousMode;
     }
-  });
-
-  it("does not fall back after native archive staging has started", async () => {
-    const orgId = await createOrganization();
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(workspaceRoot, { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "native-started.txt"), "native\n", "utf8");
-    const fakeNative = path.join(rudderHome, "fake-native-create-failure.mjs");
-    await fs.writeFile(fakeNative, [
-      "#!/usr/bin/env node",
-      "const args = process.argv.slice(2);",
-      "if (args[0] === \"archive\" && args[1] === \"capabilities\") {",
-      "  console.log(JSON.stringify({ ok: true, protocolVersion: 1, capabilities: [\"archive.create\"] }));",
-      "} else {",
-      "  console.log(JSON.stringify({ ok: false, protocolVersion: 1, errorCode: \"create_failed\" }));",
-      "}",
-      "",
-    ].join("\n"), { mode: 0o755 });
-    const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
-    const previousNative = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
-    const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
-    process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = "true";
-    process.env.RUDDER_NATIVE_ARCHIVE_PATH = fakeNative;
-    try {
-      await expect(service.create({ orgId })).resolves.toMatchObject({
-        status: "failed",
-        error: expect.stringMatching(/Native workspace backup cannot fall back/),
-      });
-    } finally {
-      if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
-      else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
-      if (previousNative === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
-      else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousNative;
-      if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-      else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
-    }
-  });
-
-  it("does not fall back to Node when native backup is required", async () => {
-    const orgId = await createOrganization();
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(workspaceRoot, { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "required.txt"), "required\n", "utf8");
-    const fakeNative = path.join(rudderHome, "fake-native-required.mjs");
-    await fs.writeFile(fakeNative, "#!/usr/bin/env node\nconsole.log('not-json');\n", { mode: 0o755 });
-    const previousMode = process.env.RUDDER_NATIVE_MODE;
-    const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
-    process.env.RUDDER_NATIVE_MODE = "required";
-    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
-    process.env.RUDDER_NATIVE_ARCHIVE_PATH = fakeNative;
-    try {
-      await expect(service.create({ orgId })).resolves.toMatchObject({
-        status: "failed",
-        error: expect.stringMatching(/Native workspace backup cannot fall back/),
-      });
-      const rows = await db.select().from(workspaceBackups).where(eq(workspaceBackups.orgId, orgId));
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ status: "failed" });
-      await expect(fs.stat(rows[0]!.artifactRef)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE; else process.env.RUDDER_NATIVE_MODE = previousMode;
-      if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
-    }
-  });
-
-  it("reconciles a committed restore receipt and persists the restored backup status", async () => {
-    const orgId = await createOrganization();
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(workspaceRoot, { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "committed.txt"), "committed\n", "utf8");
-    const backup = await service.create({ orgId });
-    const operationId = randomUUID();
-    const receiptRoot = path.join(resolveDefaultBackupDir(), "workspace-restore-receipts");
-    const receiptPath = path.join(receiptRoot, `${orgId}-${operationId}.json`);
-    await fs.mkdir(receiptRoot, { recursive: true });
-    await fs.writeFile(receiptPath, `${JSON.stringify({
-      version: 1,
-      operationId,
-      orgId,
-      backupId: backup.id,
-      phase: "committed",
-      workspaceRoot,
-      stagingRoot: path.join(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`),
-      rollbackRoot: path.join(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`),
-      liveTreeSha256: null,
-      stagingTreeSha256: backup.treeSha256,
-      expectedTreeSha256: backup.treeSha256,
-      preRestoreBackupId: backup.id,
-    })}\n`, "utf8");
-
-    await expect(reconcileWorkspaceRestoreReceipts(db)).resolves.toEqual({ recovered: [operationId], blocked: [] });
-    await expect(service.list(orgId)).resolves.toContainEqual(expect.objectContaining({ id: backup.id, status: "restored" }));
-    await expect(fs.stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("blocks sparse repair while any owned restore receipt remains unresolved", async () => {
-    const orgId = await createOrganization();
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
-    await fs.mkdir(workspaceRoot, { recursive: true });
-    const operationId = randomUUID();
-    const receiptRoot = path.join(resolveDefaultBackupDir(), "workspace-restore-receipts");
-    await fs.mkdir(receiptRoot, { recursive: true });
-    await fs.writeFile(path.join(receiptRoot, `${orgId}-${operationId}.json`), JSON.stringify({
-      version: 1, operationId, orgId, backupId: randomUUID(), phase: "prepared", workspaceRoot,
-      stagingRoot: path.join(path.dirname(workspaceRoot), `.rudder-workspace-restore-staging-${operationId}`),
-      rollbackRoot: path.join(path.dirname(workspaceRoot), `.rudder-workspace-restore-rollback-${operationId}`),
-      liveTreeSha256: null, stagingTreeSha256: "0".repeat(64), expectedTreeSha256: "0".repeat(64),
-      preRestoreBackupId: randomUUID(),
-    }), "utf8");
-
-    await expect(service.recoverSparseWorkspaceFromLatestBackup(orgId)).rejects.toMatchObject({
-      status: 409,
-      details: expect.objectContaining({ code: "restore_recovery_required", operationId }),
-    });
   });
 
   it("migrates legacy full UUID backup artifact paths and metadata to the short storage key", async () => {

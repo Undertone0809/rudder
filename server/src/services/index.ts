@@ -114,7 +114,7 @@ export {
   WORKSPACE_BACKUP_RUNNING_INTERVAL_MS,
   reconcileWorkspaceBackupArtifactStorage,
   reconcileWorkspaceRestoreReceipts,
-  workspaceBackupService
+  workspaceBackupService,
 } from "./workspace-backups.js";
 export { workspaceOperationService } from "./workspace-operations.js";
 export { reconcilePersistedRuntimeServicesOnStartup } from "./workspace-runtime.js";

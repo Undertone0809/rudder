@@ -155,50 +155,6 @@ export type DesktopNotificationPayload = {
   body?: string;
 };
 
-export type DesktopSpeechStatus = {
-  enabled: boolean;
-  available: boolean;
-  reason:
-    | "disabled"
-    | "unsupported_platform"
-    | "native_unavailable"
-    | "model_unavailable"
-    | "configuration_invalid"
-    | "ready";
-  maxDurationSeconds: number;
-  maxBytes: number;
-  minSampleRate: number;
-  maxSampleRate: number;
-};
-
-export type DesktopSpeechInput = {
-  requestId: string;
-  pcm: ArrayBuffer;
-  sampleRate: number;
-  channels: 1;
-  format: "f32le";
-};
-
-export type DesktopSpeechResult = {
-  text: string;
-  language: string | null;
-};
-
-export type DesktopSpeechPermissionStatus =
-  | "authorized"
-  | "denied"
-  | "restricted"
-  | "unsupported"
-  | "unknown";
-
-export type DesktopSpeechApi = {
-  supported: boolean;
-  getStatus(): Promise<DesktopSpeechStatus>;
-  requestMicrophoneAccess(): Promise<DesktopSpeechPermissionStatus>;
-  transcribe(input: DesktopSpeechInput): Promise<DesktopSpeechResult>;
-  cancel(requestId: string): Promise<void>;
-};
-
 export type DesktopPathPickOptions = {
   kind: "file" | "directory";
   title?: string;
@@ -439,7 +395,6 @@ export type DesktopShellApi = {
   respondDeferredUpdatePrompt?(promptId: string, decision: DesktopDeferredUpdatePromptDecision): Promise<void>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   openSystemPermissionSettings?(permission: DesktopSystemPermissionId): Promise<void>;
-  speech?: DesktopSpeechApi;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;
   forceOpenExternal?(target: string): Promise<void>;

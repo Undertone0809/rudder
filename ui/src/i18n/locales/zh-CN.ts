@@ -505,12 +505,6 @@ export const zhCN: Messages = {
   "general.appearance.theme.orange.description": "橙色操作状态",
   "general.appearance.theme.pink.label": "Pink",
   "general.appearance.theme.pink.description": "粉色操作状态",
-  "general.appearance.toolCalls.title": "Tool Call",
-  "general.appearance.toolCalls.failureIndicators.label": "显示失败标识",
-  "general.appearance.toolCalls.failureIndicators.description":
-    "Tool Call 失败时使用红色样式并显示失败标签。",
-  "general.appearance.toolCalls.failureIndicators.ariaLabel":
-    "切换 Tool Call 失败标识",
   "notifications.title": "通知",
   "notifications.description": "管理这个 Rudder 实例的未读 inbox 提醒。",
   "notifications.loadFailed": "加载通知设置失败。",

@@ -16,7 +16,6 @@ import {
   authUsers,
   chatConversations,
   heartbeatRuns,
-  issueApprovals,
   issueComments,
   issueFollows,
   issues,
@@ -34,12 +33,10 @@ import {
   isUuidLike,
   issueUpdatedChangedKeys,
   messengerSavedViewIdSchema,
-  toAgentRunOrigin,
   type AgentRole,
   type Approval,
   type BudgetIncident,
   type JoinRequest,
-  type MessengerApprovalOrigin,
   type MessengerApprovalThreadItem,
   type MessengerBudgetThreadItem,
   type MessengerCustomGroupsResponse,
@@ -658,144 +655,10 @@ function approvalActions(approval: ApprovalRow) {
   return [
     buildAction("Approve", `/approvals/${approval.id}/approve`, "POST"),
     buildAction("Reject", `/approvals/${approval.id}/reject`, "POST"),
+    buildAction("Request changes", `/approvals/${approval.id}/request-revision`, "POST"),
+    buildAction("Expand details", `/messenger/approvals/${approval.id}`, "GET"),
+    buildAction("Open full approval", `/messenger/approvals/${approval.id}`, "GET"),
   ];
-}
-
-async function loadApprovalOrigins(
-  db: Db,
-  orgId: string,
-  approvalRows: ApprovalRow[],
-): Promise<Map<string, MessengerApprovalOrigin>> {
-  const approvalIds = approvalRows.map((approval) => approval.id);
-  if (approvalIds.length === 0) return new Map();
-
-  const payloadChatIds = approvalRows
-    .map((approval) => approval.payload?.chatConversationId)
-    .filter((value): value is string => typeof value === "string" && isUuidLike(value));
-
-  const [linkedIssueRows, activityRunRows] = await Promise.all([
-    db
-      .select({
-        approvalId: issueApprovals.approvalId,
-        issueId: issues.id,
-        identifier: issues.identifier,
-        title: issues.title,
-        createdAt: issueApprovals.createdAt,
-      })
-      .from(issueApprovals)
-      .innerJoin(issues, eq(issueApprovals.issueId, issues.id))
-      .where(and(
-        eq(issueApprovals.orgId, orgId),
-        eq(issues.orgId, orgId),
-        inArray(issueApprovals.approvalId, approvalIds),
-      ))
-      .orderBy(asc(issueApprovals.createdAt), asc(issueApprovals.issueId)),
-    db
-      .select({
-        approvalId: activityLog.entityId,
-        id: heartbeatRuns.id,
-        agentId: heartbeatRuns.agentId,
-        invocationSource: heartbeatRuns.invocationSource,
-        triggerDetail: heartbeatRuns.triggerDetail,
-        wakeupRequestId: heartbeatRuns.wakeupRequestId,
-        chatConversationId: heartbeatRuns.chatConversationId,
-        contextSnapshot: heartbeatRuns.contextSnapshot,
-        createdAt: activityLog.createdAt,
-      })
-      .from(activityLog)
-      .innerJoin(heartbeatRuns, eq(activityLog.runId, heartbeatRuns.id))
-      .where(and(
-        eq(activityLog.orgId, orgId),
-        eq(heartbeatRuns.orgId, orgId),
-        eq(activityLog.entityType, "approval"),
-        eq(activityLog.action, "approval.created"),
-        inArray(activityLog.entityId, approvalIds),
-      ))
-      .orderBy(desc(activityLog.createdAt)),
-  ]);
-
-  const runOriginByApproval = new Map<string, ReturnType<typeof toAgentRunOrigin>>();
-  for (const row of activityRunRows) {
-    if (!runOriginByApproval.has(row.approvalId)) {
-      runOriginByApproval.set(row.approvalId, toAgentRunOrigin(row));
-    }
-  }
-
-  const linkedIssueByApproval = new Map<string, (typeof linkedIssueRows)[number]>();
-  for (const row of linkedIssueRows) {
-    if (!linkedIssueByApproval.has(row.approvalId)) linkedIssueByApproval.set(row.approvalId, row);
-  }
-
-  const runChatIds = [...runOriginByApproval.values()]
-    .filter((origin) => origin.scene === "chat")
-    .map((origin) => origin.conversationId)
-    .filter((value): value is string => Boolean(value));
-  const runIssueIds = [...runOriginByApproval.values()]
-    .filter((origin) => origin.scene === "issue" || origin.scene === "review")
-    .map((origin) => origin.issueId)
-    .filter((value): value is string => Boolean(value));
-
-  const [conversationRows, runIssueRows] = await Promise.all([
-    payloadChatIds.length > 0 || runChatIds.length > 0
-      ? db
-        .select({ id: chatConversations.id, title: chatConversations.title })
-        .from(chatConversations)
-        .where(and(
-          eq(chatConversations.orgId, orgId),
-          inArray(chatConversations.id, [...new Set([...payloadChatIds, ...runChatIds])]),
-        ))
-      : Promise.resolve([]),
-    runIssueIds.length > 0
-      ? db
-        .select({
-          id: issues.id,
-          identifier: issues.identifier,
-          title: issues.title,
-        })
-        .from(issues)
-        .where(and(eq(issues.orgId, orgId), inArray(issues.id, [...new Set(runIssueIds)])))
-      : Promise.resolve([]),
-  ]);
-
-  const conversationById = new Map(conversationRows.map((conversation) => [conversation.id, conversation]));
-  const runIssueById = new Map(runIssueRows.map((issue) => [issue.id, issue]));
-  const result = new Map<string, MessengerApprovalOrigin>();
-
-  for (const approval of approvalRows) {
-    const payloadChatId = typeof approval.payload?.chatConversationId === "string"
-      ? approval.payload.chatConversationId
-      : null;
-    const runOrigin = runOriginByApproval.get(approval.id) ?? null;
-    const chatId = payloadChatId
-      ?? (runOrigin?.scene === "chat" ? runOrigin.conversationId : null);
-    const conversation = chatId ? conversationById.get(chatId) : null;
-    if (conversation) {
-      result.set(approval.id, {
-        kind: "chat",
-        conversationId: conversation.id,
-        title: conversation.title,
-        href: `/messenger/chat/${conversation.id}`,
-      });
-      continue;
-    }
-
-    const linkedIssue = linkedIssueByApproval.get(approval.id) ?? null;
-    const runIssue = runOrigin?.issueId ? runIssueById.get(runOrigin.issueId) : null;
-    const issueId = linkedIssue?.issueId ?? runIssue?.id ?? null;
-    const identifier = linkedIssue?.identifier ?? runIssue?.identifier ?? null;
-    const title = linkedIssue?.title ?? runIssue?.title ?? null;
-    if (!issueId || !title) continue;
-    const issueRef = identifier ?? issueId;
-    result.set(approval.id, {
-      kind: "issue",
-      issueId,
-      identifier,
-      title,
-      href: `/issues/${encodeURIComponent(issueRef)}`,
-    });
-  }
-
-  return result;
 }
 
 function issueActions(issue: IssueUniverseRow, currentUserId: string | null) {
@@ -1008,7 +871,6 @@ function approvalCard(
   latestComment: ApprovalCommentRow | null,
   currentUserId: string | null,
   latestActivityAt: Date,
-  origin: MessengerApprovalOrigin | null,
 ): MessengerApprovalThreadItem {
   const payloadPreview = summarizeApprovalPayload(approval);
   const body = latestComment ? truncate(latestComment.body) : approval.decisionNote ?? payloadPreview;
@@ -1039,7 +901,6 @@ function approvalCard(
     approval: approval as Approval,
     requestKind: "approval",
     requesterAgent,
-    origin,
   };
 }
 
@@ -2559,13 +2420,11 @@ export function messengerService(db: Db) {
     }
 
     const typedApprovalRows = approvalRows as ApprovalRow[];
-    const [approvalOrigins, requesterAgentIds] = [
-      await loadApprovalOrigins(db, orgId, typedApprovalRows),
-      [
+    const requesterAgentIds = [
       ...typedApprovalRows.map((approval) => approvalRequesterAgentId(approval)),
       ...assistanceRows.map((request) => request.requestedByAgentId),
-      ].filter((agentId): agentId is string => Boolean(agentId)),
-    ] as const;
+    ]
+      .filter((agentId): agentId is string => Boolean(agentId));
     const requesterAgents = requesterAgentIds.length > 0
       ? await db
           .select({
@@ -2593,14 +2452,7 @@ export function messengerService(db: Db) {
       const requesterAgent = requesterAgentId
         ? requesterAgentById.get(requesterAgentId) ?? null
         : null;
-      return approvalCard(
-        approval,
-        requesterAgent,
-        latestComment,
-        userId,
-        latestActivityAt,
-        approvalOrigins.get(approval.id) ?? null,
-      );
+      return approvalCard(approval, requesterAgent, latestComment, userId, latestActivityAt);
     });
     for (const request of assistanceRows) {
       const requesterAgent = request.requestedByAgentId
@@ -2717,13 +2569,13 @@ export function messengerService(db: Db) {
     if (latestApproval) {
       const latestComment = (latestApprovalCommentRows[0] ?? null) as ApprovalCommentRow | null;
       const latestActivityAt = maxDate(latestApproval.updatedAt, latestComment?.createdAt) ?? latestApproval.updatedAt;
-      candidateItems.push(approvalCard(latestApproval, null, latestComment, userId, latestActivityAt, null));
+      candidateItems.push(approvalCard(latestApproval, null, latestComment, userId, latestActivityAt));
     }
     if (latestCommentRow) {
       const approval = (latestCommentApprovalRows[0] ?? null) as ApprovalRow | null;
       if (approval) {
         const latestActivityAt = maxDate(approval.updatedAt, latestCommentRow.createdAt) ?? approval.updatedAt;
-        candidateItems.push(approvalCard(approval, null, latestCommentRow, userId, latestActivityAt, null));
+        candidateItems.push(approvalCard(approval, null, latestCommentRow, userId, latestActivityAt));
       }
     }
 

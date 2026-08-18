@@ -46,7 +46,7 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
-import { isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { accessApi } from "../api/access";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -66,7 +66,7 @@ import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
-import type { InlineTokenClickEvent, MentionOption } from "../components/MarkdownEditor";
+import type { MentionOption } from "../components/MarkdownEditor";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
@@ -76,7 +76,6 @@ import { useI18n } from "../context/I18nContext";
 import { useImagePreview } from "../context/ImagePreviewContext";
 import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useIssueFollows } from "../hooks/useIssueFollows";
@@ -90,7 +89,6 @@ import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
 import { isImageContentType } from "../lib/image-actions";
-import type { AtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { libraryCopy } from "../lib/library-copy";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
@@ -99,7 +97,6 @@ import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { formatPriorityLabel } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
-import { sidePanelFullPageHref, sidePanelTargetFromHref, type SidePanelTarget } from "../lib/side-panel-targets";
 import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
 
 export { linkedIssueRunsRefetchInterval } from "../hooks/useIssueTimelineQueries";
@@ -986,24 +983,6 @@ type IssueDetailProps = {
   embedded?: boolean;
 };
 
-function issueSidePanelTargetFromEventTarget(eventTarget: EventTarget | null): SidePanelTarget | null {
-  if (!(eventTarget instanceof Element)) return null;
-
-  const anchor = eventTarget.closest<HTMLAnchorElement>("a");
-  const markdownLink = eventTarget.closest<HTMLElement>("[data-markdown-link-href]");
-  const label = anchor?.textContent?.trim() || markdownLink?.textContent?.trim() || null;
-  const hrefs = [
-    anchor?.getAttribute("href"),
-    markdownLink?.dataset.markdownLinkHref,
-  ];
-
-  for (const href of hrefs) {
-    const target = href?.trim() ? sidePanelTargetFromHref(href.trim(), label) : null;
-    if (target) return target;
-  }
-  return null;
-}
-
 export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueDetailProps = {}) {
   const params = useParams<{ issueId: string }>();
   const issueId = embeddedIssueId ?? params.issueId;
@@ -1014,7 +993,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const location = useLocation();
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
-  const { openTarget } = useSidePanel();
   const { openImagePreview } = useImagePreview();
   const { confirm } = useDialog();
   const { locale } = useI18n();
@@ -1045,64 +1023,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   }, [issueDetailScrollRef]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
-  const openSupportedLinkFromEvent = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    if (
-      event.defaultPrevented
-      || event.button !== 0
-    ) {
-      return;
-    }
-
-    const target = issueSidePanelTargetFromEventTarget(event.target);
-    if (!target) return;
-
-    const anchorHref = event.target instanceof Element
-      ? event.target.closest<HTMLAnchorElement>("a")?.getAttribute("href")?.trim() || null
-      : null;
-    const isModified = Boolean(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
-    if (isModified) {
-      const route = anchorHref || sidePanelFullPageHref(target);
-      if (!route) return;
-      event.preventDefault();
-      event.stopPropagation();
-      navigate(route);
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    openTarget(target);
-  }, [navigate, openTarget]);
-  const handleSupportedLinkMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    if (
-      event.target instanceof Element
-      && event.target.closest("[data-mention-kind], [data-skill-token='true']")
-    ) {
-      return;
-    }
-    openSupportedLinkFromEvent(event);
-  }, [openSupportedLinkFromEvent]);
-  const handleSupportedLinkClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    if (
-      event.target instanceof Element
-      && event.target.closest(".rudder-codemirror-markdown-preview, [data-markdown-atomic-reference='true']")
-    ) {
-      return;
-    }
-    openSupportedLinkFromEvent(event);
-  }, [openSupportedLinkFromEvent]);
-  const handleInlineTokenClick = useCallback((token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => {
-    const target = sidePanelTargetFromHref(token.href, token.label);
-    const anchorHref = token.element.closest<HTMLAnchorElement>("a")?.getAttribute("href")?.trim() || null;
-    const isModified = Boolean(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey);
-
-    if (isModified || !target) {
-      if (anchorHref) navigate(anchorHref);
-      return;
-    }
-
-    openTarget(target);
-  }, [navigate, openTarget]);
 
   const { data: issue, isLoading, error } = useQuery({
     queryKey: queryKeys.issues.detail(issueId!),
@@ -2133,8 +2053,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         <div
           className="issue-detail-body min-w-0 space-y-6"
           data-testid="issue-detail-primary-content"
-          onMouseDownCapture={handleSupportedLinkMouseDownCapture}
-          onClickCapture={handleSupportedLinkClickCapture}
         >
 
         <InlineEditor
@@ -2149,7 +2067,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           variant="issue-description"
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
-          onInlineTokenClick={handleInlineTokenClick}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync({ file, usage: "description_inline" });
             return attachment.contentPath;

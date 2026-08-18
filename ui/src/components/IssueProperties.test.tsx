@@ -497,10 +497,6 @@ describe("IssueProperties", () => {
 
     expect(menuLabel?.textContent).toContain(longAgentName);
     expect(supportingLabel?.textContent).toBe("Chief Technology Officer");
-    expect(menuLabel?.getAttribute("data-agent-avatar-style")).toBe("bare");
-    expect(menuLabel?.querySelector('[data-slot="agent-menu-avatar-frame"]')).toBeNull();
-    expect(menuLabel?.querySelector("svg, img")?.classList.contains("h-6")).toBe(true);
-    expect(menuLabel?.querySelector("svg, img")?.classList.contains("w-6")).toBe(true);
     expect(menuLabel?.querySelector('[data-slot="agent-title-badge"]')).toBeNull();
     expect(supportingLabel?.classList.contains("truncate")).toBe(true);
     expect(scrollRegion?.classList.contains("scrollbar-auto-hide")).toBe(true);
@@ -533,7 +529,6 @@ describe("IssueProperties", () => {
     const reviewerScrollRegion = container.querySelector('[data-testid="issue-properties-reviewer-scroll"]');
 
     expect(selfAction?.textContent).toBe("Assign to me");
-    expect(selfAction?.querySelector('[data-avatar-url="https://example.test/current.png"]')).toBeTruthy();
     expect(reviewerScrollRegion?.textContent).toContain("Assign to me");
     expect(reviewerScrollRegion?.textContent).not.toContain("Me");
   });

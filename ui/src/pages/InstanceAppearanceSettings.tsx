@@ -1,12 +1,9 @@
 import {
   SettingsChoiceCard,
   SettingsChoiceGrid,
-  SettingsGroup,
-  SettingsItem,
   SettingsPage,
   SettingsPageHeader,
   SettingsSection,
-  SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
 import { Palette } from "lucide-react";
 import { useEffect } from "react";
@@ -384,12 +381,10 @@ export function InstanceAppearanceSettings() {
     designStyle,
     baseColor,
     accentTheme,
-    showToolCallFailureIndicators,
     setTheme,
     setDesignStyle,
     setBaseColor,
     setAccentTheme,
-    setShowToolCallFailureIndicators,
   } = useTheme();
 
   useEffect(() => {
@@ -487,22 +482,6 @@ export function InstanceAppearanceSettings() {
             />
           ))}
         </SettingsChoiceGrid>
-      </SettingsSection>
-
-      <SettingsSection title={t("general.appearance.toolCalls.title")}>
-        <SettingsGroup>
-          <SettingsItem
-            title={t("general.appearance.toolCalls.failureIndicators.label")}
-            description={t("general.appearance.toolCalls.failureIndicators.description")}
-            action={(
-              <SettingsToggle
-                checked={showToolCallFailureIndicators}
-                aria-label={t("general.appearance.toolCalls.failureIndicators.ariaLabel")}
-                onClick={() => setShowToolCallFailureIndicators(!showToolCallFailureIndicators)}
-              />
-            )}
-          />
-        </SettingsGroup>
       </SettingsSection>
     </SettingsPage>
   );

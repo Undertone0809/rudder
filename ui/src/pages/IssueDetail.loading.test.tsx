@@ -55,10 +55,6 @@ vi.mock("../context/NavigationBackContext", () => ({
   useNavigationBack: () => null,
 }));
 
-vi.mock("../context/SidePanelContext", () => ({
-  useSidePanel: () => ({ openTarget: vi.fn() }),
-}));
-
 vi.mock("../context/OrganizationContext", () => ({
   useOrganization: () => ({
     organizations: [{ id: "org-new", issuePrefix: "NEW", urlKey: "new", status: "active" }],

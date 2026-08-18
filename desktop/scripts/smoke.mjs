@@ -1,4 +1,5 @@
 import { chromium, _electron as electron } from "@playwright/test";
+import electronBinary from "electron";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
@@ -1068,19 +1069,6 @@ async function preparePackagedExternalRuntimeFixture(userDataDir) {
   const updateHelperPath = nativeTarget
     ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper")
     : null;
-  const speechPath = nativeTarget
-    ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-speech.exe" : "rudder-speech")
-    : null;
-  if (speechPath) {
-    assert.equal(await pathExists(speechPath), true, "packaged Desktop should stage the local speech worker");
-    const speechStats = await stat(speechPath);
-    assert.equal(speechStats.isFile(), true, "packaged local speech worker should be a file");
-    if (process.platform !== "win32") assert.notEqual(speechStats.mode & 0o111, 0, "packaged local speech worker should be executable");
-    const speechMetadata = await runCapturedProcess(speechPath, ["--version"]);
-    assert.equal(speechMetadata.code, 0, "packaged local speech worker should expose metadata");
-    assert.match(speechMetadata.stdout, new RegExp(`^rudder-speech ${escapedReleaseVersion}\\n$`, "u"));
-    console.log(`[desktop-smoke] packaged local speech worker staged (model=${await pathExists(path.join(resourcesDir, "models", "whisper", "ggml-base.bin")) ? "present" : "unavailable"})`);
-  }
   if (process.platform === "darwin" && process.arch === "arm64") {
     assert.ok(nativeHostPath, "packaged Desktop should stage a Rust process host target");
     const nativeStats = await stat(nativeHostPath);
@@ -2546,7 +2534,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged"
     ? (executableOverride ? path.resolve(executableOverride) : await resolvePackagedExecutablePath())
-    : path.join(desktopDir, "scripts", "electron-dev-wrapper.mjs");
+    : electronBinary;
   // The Linux CI runner cannot use Electron's setuid sandbox helper from pnpm's store.
   const args = [
     ...(process.platform === "linux" ? ["--no-sandbox"] : []),
@@ -2571,11 +2559,6 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
       RUDDER_AGENT_JWT_AUDIENCE: smokeAgentJwtAudience,
       RUDDER_AGENT_JWT_ISSUER: smokeAgentJwtIssuer,
       RUDDER_AGENT_JWT_SECRET: smokeAgentJwtSecret,
-      ...(mode === "dev"
-        ? {
-          NODE_OPTIONS: [process.env.NODE_OPTIONS, "--import=tsx"].filter(Boolean).join(" "),
-        }
-        : {}),
       ...(mode === "dev" ? { RUDDER_DESKTOP_AUTH_BYPASS: "1" } : {}),
       PORT: String(ports.appPort),
       RUDDER_EMBEDDED_POSTGRES_PORT: String(ports.dbPort),

@@ -1,8 +1,6 @@
-#[cfg(target_os = "macos")]
 use std::collections::HashSet;
 use std::env;
 use std::io::{self, BufRead, Write};
-#[cfg(target_os = "macos")]
 use std::mem::{size_of, zeroed};
 use std::process;
 use std::sync::Arc;
@@ -119,7 +117,19 @@ fn process_identity(pid: i32) -> Option<ProcessIdentity> {
     })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "macos"))]
+fn child_pids(_parent_pid: i32) -> io::Result<Vec<i32>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process-tree sampler is currently admitted only on macOS",
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_identity(_pid: i32) -> Option<ProcessIdentity> {
+    None
+}
+
 fn process_tree(root_pid: i32, sampler_pid: i32) -> io::Result<Vec<ProcessSample>> {
     let mut included = HashSet::from([root_pid]);
     let mut pending = vec![root_pid];
@@ -157,14 +167,6 @@ fn process_tree(root_pid: i32, sampler_pid: i32) -> io::Result<Vec<ProcessSample
         }
     }
     Ok(samples)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn process_tree(_root_pid: i32, _sampler_pid: i32) -> io::Result<Vec<ProcessSample>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "process-tree sampler is currently admitted only on macOS",
-    ))
 }
 
 fn required_i32(value: Option<String>, label: &str) -> Result<i32, String> {
