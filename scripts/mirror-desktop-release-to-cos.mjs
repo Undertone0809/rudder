@@ -12,10 +12,25 @@ const DEFAULT_STS_ENDPOINT = "https://sts.tencentcloudapi.com";
 const DEFAULT_STS_DURATION_SECONDS = 3600;
 const DEFAULT_OIDC_AUDIENCE = "sts.cloud.tencent.com";
 const DEFAULT_MULTIPART_THRESHOLD = 64 * 1024 * 1024;
-const DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
+const DEFAULT_MULTIPART_CONCURRENCY = 8;
+const DEFAULT_FILE_CONCURRENCY = 4;
 const DEFAULT_MULTIPART_RETRIES = 3;
 const DEFAULT_NETWORK_RETRIES = 3;
 const DEFAULT_NETWORK_RETRY_DELAY_MS = 2000;
+const RETRYABLE_NETWORK_EXIT_CODE = 75;
+const RETRYABLE_NETWORK_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 const SIGNABLE_HEADERS = new Set([
   "cache-control",
   "content-disposition",
@@ -196,6 +211,8 @@ export class CosReleaseMirror {
     now = Date.now,
     multipartThreshold = DEFAULT_MULTIPART_THRESHOLD,
     multipartPartSize = DEFAULT_MULTIPART_PART_SIZE,
+    multipartConcurrency = DEFAULT_MULTIPART_CONCURRENCY,
+    fileConcurrency = DEFAULT_FILE_CONCURRENCY,
     multipartRetries = DEFAULT_MULTIPART_RETRIES,
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   }) {
@@ -211,11 +228,19 @@ export class CosReleaseMirror {
     if (!Number.isSafeInteger(multipartPartSize) || multipartPartSize < 1_048_576) {
       throw new Error("COS multipart part size must be a safe integer of at least 1 MiB.");
     }
+    if (!Number.isSafeInteger(multipartConcurrency) || multipartConcurrency < 1 || multipartConcurrency > 8) {
+      throw new Error("COS multipart concurrency must be an integer from 1 through 8.");
+    }
+    if (!Number.isSafeInteger(fileConcurrency) || fileConcurrency < 1 || fileConcurrency > 8) {
+      throw new Error("COS file concurrency must be an integer from 1 through 8.");
+    }
     if (!Number.isSafeInteger(multipartRetries) || multipartRetries < 1 || multipartRetries > 10) {
       throw new Error("COS multipart retries must be an integer from 1 through 10.");
     }
     this.multipartThreshold = multipartThreshold;
     this.multipartPartSize = multipartPartSize;
+    this.multipartConcurrency = multipartConcurrency;
+    this.fileConcurrency = fileConcurrency;
     this.multipartRetries = multipartRetries;
     this.sleep = sleep;
   }
@@ -226,7 +251,7 @@ export class CosReleaseMirror {
       await existing.body?.cancel();
       const current = await this.readObject(key, true);
       if (current.status !== 200) {
-        throw await httpError(`read existing COS object ${key}`, current.response);
+        throw await cosHttpError(`read existing COS object ${key}`, current.response);
       }
       assertMatchingBytes(key, file, current);
     } else if (existing.status === 404) {
@@ -235,16 +260,16 @@ export class CosReleaseMirror {
         ? await this.putObjectMultipart(key, file)
         : await this.putObject(key, file);
       if (![200, 201, 409, 412].includes(upload.status)) {
-        throw await httpError(`upload COS object ${key}`, upload);
+        throw await cosHttpError(`upload COS object ${key}`, upload);
       }
       await upload.body?.cancel();
       const stored = await this.readObject(key, true);
       if (stored.status !== 200) {
-        throw await httpError(`verify authenticated COS object ${key}`, stored.response);
+        throw await cosHttpError(`verify authenticated COS object ${key}`, stored.response);
       }
       assertMatchingBytes(key, file, stored);
     } else {
-      const error = await httpError(`inspect COS object ${key}`, existing);
+      const error = await cosHttpError(`inspect COS object ${key}`, existing);
       if (existing.status === 403) {
         error.message +=
           " Tencent COS requires the distinct name/cos:HeadObject CAM action for this signed HEAD check; " +
@@ -255,9 +280,13 @@ export class CosReleaseMirror {
 
     const publicObject = await this.readObject(key, false);
     if (publicObject.status !== 200) {
-      throw await httpError(`verify anonymous COS object ${key}`, publicObject.response);
+      throw await cosHttpError(`verify anonymous COS object ${key}`, publicObject.response);
     }
     assertMatchingBytes(key, file, publicObject);
+  }
+
+  async mirrorFiles(entries, onVerified) {
+    return mirrorEntries(entries, this.fileConcurrency, async () => this, onVerified);
   }
 
   async assertAnonymousAccessDenied(prefix = DEFAULT_PREFIX) {
@@ -267,7 +296,10 @@ export class CosReleaseMirror {
     listUrl.searchParams.set("max-keys", "1");
     const listResponse = await this.fetchImpl(listUrl, { redirect: "manual" });
     if (listResponse.status !== 403) {
-      throw new Error(`Anonymous COS bucket listing must return 403, received ${listResponse.status}.`);
+      throw await cosHttpError(
+        `anonymous COS bucket listing must return 403, received ${listResponse.status}`,
+        listResponse,
+      );
     }
     await listResponse.body?.cancel();
 
@@ -282,7 +314,10 @@ export class CosReleaseMirror {
       redirect: "manual",
     });
     if (writeResponse.status !== 403) {
-      throw new Error(`Anonymous COS object write must return 403, received ${writeResponse.status}.`);
+      throw await cosHttpError(
+        `anonymous COS object write must return 403, received ${writeResponse.status}`,
+        writeResponse,
+      );
     }
     await writeResponse.body?.cancel();
   }
@@ -315,26 +350,51 @@ export class CosReleaseMirror {
         "x-cos-meta-sha256": file.sha256,
       },
     });
-    if (initiate.status !== 200) throw await httpError(`initiate multipart COS upload ${key}`, initiate);
+    if (initiate.status !== 200) throw await cosHttpError(`initiate multipart COS upload ${key}`, initiate);
     const uploadId = extractXmlTag(await initiate.text(), "UploadId");
     if (!uploadId) throw new Error(`Tencent COS did not return an UploadId for ${key}.`);
 
     let handle;
     try {
       handle = await open(file.path, "r");
-      const parts = [];
-      for (let offset = 0, partNumber = 1; offset < file.size; offset += this.multipartPartSize, partNumber += 1) {
-        const length = Math.min(this.multipartPartSize, file.size - offset);
-        const bytes = Buffer.alloc(length);
-        const { bytesRead } = await handle.read(bytes, 0, length, offset);
-        if (bytesRead !== length) {
-          throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+      const partCount = Math.ceil(file.size / this.multipartPartSize);
+      const parts = new Array(partCount);
+      let nextPartIndex = 0;
+      let stopped = false;
+      const uploadPart = async () => {
+        while (true) {
+          if (stopped) return;
+          const partIndex = nextPartIndex;
+          nextPartIndex += 1;
+          if (partIndex >= partCount) return;
+          const partNumber = partIndex + 1;
+          try {
+            const offset = partIndex * this.multipartPartSize;
+            const length = Math.min(this.multipartPartSize, file.size - offset);
+            const bytes = Buffer.alloc(length);
+            // Positional reads keep concurrent workers independent of the file handle cursor.
+            const { bytesRead } = await handle.read(bytes, 0, length, offset);
+            if (bytesRead !== length) {
+              throw new Error(`Read ${bytesRead} bytes for COS multipart part ${partNumber}; expected ${length}.`);
+            }
+            parts[partIndex] = {
+              etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
+              partNumber,
+            };
+          } catch (error) {
+            stopped = true;
+            throw error;
+          }
         }
-        parts.push({
-          etag: await this.uploadMultipartPart(key, uploadId, partNumber, bytes, file),
-          partNumber,
-        });
-      }
+      };
+      const workerCount = Math.min(this.multipartConcurrency, partCount);
+      const workerResults = await Promise.allSettled(
+        Array.from({ length: workerCount }, () => uploadPart()),
+      );
+      const rejectedWorkers = workerResults.filter((result) => result.status === "rejected");
+      const rejectedWorker = rejectedWorkers.find((result) => exitCodeForMirrorError(result.reason) !== 75) ??
+        rejectedWorkers[0];
+      if (rejectedWorker) throw rejectedWorker.reason;
       const completeBody = `<CompleteMultipartUpload>${parts
         .map(({ etag, partNumber }) => `<Part><PartNumber>${partNumber}</PartNumber><ETag>${escapeXml(etag)}</ETag></Part>`)
         .join("")}</CompleteMultipartUpload>`;
@@ -348,7 +408,7 @@ export class CosReleaseMirror {
         },
       });
       if (![200, 409, 412].includes(complete.status)) {
-        throw await httpError(`complete multipart COS upload ${key}`, complete);
+        throw await cosHttpError(`complete multipart COS upload ${key}`, complete);
       }
       if (complete.status !== 200) {
         await complete.body?.cancel();
@@ -384,8 +444,14 @@ export class CosReleaseMirror {
           },
         });
       } catch (error) {
+        if (!isRetryableNetworkError(error)) throw error;
         lastDetail = formatError(error);
-        if (attempt === this.multipartRetries) throw error;
+        if (attempt === this.multipartRetries) {
+          throw new RetryableNetworkError(
+            `upload COS multipart part ${partNumber} of ${key} failed after ${this.multipartRetries} network attempts.`,
+            { cause: error },
+          );
+        }
         await this.sleep(1000 * attempt);
         continue;
       }
@@ -400,9 +466,11 @@ export class CosReleaseMirror {
       const retryable = response.status === 408 || response.status === 429 || response.status >= 500 ||
         (response.status === 400 && lastDetail.includes("UserNetworkTooSlow"));
       if (!retryable || attempt === this.multipartRetries) {
-        throw new Error(
+        const error = new Error(
           `upload COS multipart part ${partNumber} of ${key} failed with HTTP ${response.status}${lastDetail ? `: ${lastDetail.trim().slice(0, 500)}` : ""}`,
         );
+        if (retryable) throw new RetryableNetworkError(error.message, { cause: error });
+        throw error;
       }
       await this.sleep(1000 * attempt);
     }
@@ -461,6 +529,43 @@ export class CosReleaseMirror {
   }
 }
 
+async function mirrorEntries(entries, fileConcurrency, createMirror, onVerified) {
+  if (!Array.isArray(entries)) throw new Error("COS mirror entries must be an array.");
+  if (entries.length === 0) return;
+  if (!Number.isSafeInteger(fileConcurrency) || fileConcurrency < 1 || fileConcurrency > 8) {
+    throw new Error("COS file concurrency must be an integer from 1 through 8.");
+  }
+
+  let nextIndex = 0;
+  let stopped = false;
+  const worker = async () => {
+    while (true) {
+      if (stopped) return;
+      const entry = entries[nextIndex];
+      nextIndex += 1;
+      if (!entry) return;
+      try {
+        const mirror = await createMirror(entry);
+        await mirror.mirrorFile(entry.key, entry.file);
+        await onVerified?.(entry);
+      } catch (error) {
+        stopped = true;
+        throw error;
+      }
+    }
+  };
+
+  const workerCount = Math.min(fileConcurrency, entries.length);
+  // In-flight files are allowed to settle: each file verifies immutable bytes, and multipart failures abort.
+  const workerResults = await Promise.allSettled(
+    Array.from({ length: workerCount }, () => worker()),
+  );
+  const rejectedWorkers = workerResults.filter((result) => result.status === "rejected");
+  const rejectedWorker = rejectedWorkers.find((result) => exitCodeForMirrorError(result.reason) !== 75) ??
+    rejectedWorkers[0];
+  if (rejectedWorker) throw rejectedWorker.reason;
+}
+
 export async function mirrorDesktopReleaseToCos(options) {
   const {
     repo,
@@ -472,6 +577,7 @@ export async function mirrorDesktopReleaseToCos(options) {
     githubToken,
     assetDir,
     fetchImpl = fetch,
+    fileConcurrency,
     githubApiBase = "https://api.github.com",
     log = console.log,
     networkRetries = DEFAULT_NETWORK_RETRIES,
@@ -512,39 +618,45 @@ export async function mirrorDesktopReleaseToCos(options) {
     sleep,
   });
 
-  log("stage\tassume Tencent role");
-  const credentials = options.credentials ?? await getTencentStsCredentials({
-    audience: options.oidcAudience,
-    durationSeconds: options.durationSeconds,
-    endpoint: options.stsEndpoint,
-    fetchImpl,
-    providerId: options.providerId,
-    region,
-    requestToken: options.oidcRequestToken,
-    requestUrl: options.oidcRequestUrl,
-    roleArn: options.roleArn,
-    roleSessionName: options.roleSessionName,
-    networkRetries,
-    retryDelayMs,
-    sleep,
-  });
   log("stage\tmirror COS objects");
-  const mirror = new CosReleaseMirror({
-    bucket,
-    credentials,
-    endpoint,
-    fetchImpl,
-    now: options.now,
-    region,
-  });
-  const keys = [];
-  for (const file of files) {
-    const key = objectKeyForReleaseAsset(prefix, tag, file.name);
-    await mirror.mirrorFile(key, file);
-    keys.push(key);
+  const getStsCredentials = options.getStsCredentials ?? getTencentStsCredentials;
+  let policyMirror;
+  const entries = files.map((file) => ({
+    file,
+    key: objectKeyForReleaseAsset(prefix, tag, file.name),
+  }));
+  await mirrorEntries(entries, fileConcurrency ?? DEFAULT_FILE_CONCURRENCY, async (entry) => {
+    if (!options.credentials) log(`stage\tassume Tencent role\t${entry.file.name}`);
+    const credentials = options.credentials ?? await getStsCredentials({
+      audience: options.oidcAudience,
+      durationSeconds: options.durationSeconds,
+      endpoint: options.stsEndpoint,
+      fetchImpl,
+      providerId: options.providerId,
+      region,
+      requestToken: options.oidcRequestToken,
+      requestUrl: options.oidcRequestUrl,
+      roleArn: options.roleArn,
+      roleSessionName: options.roleSessionName,
+      networkRetries,
+      retryDelayMs,
+      sleep,
+    });
+    const mirror = new CosReleaseMirror({
+      bucket,
+      credentials,
+      endpoint,
+      fetchImpl,
+      fileConcurrency,
+      now: options.now,
+      region,
+    });
+    policyMirror = mirror;
+    return mirror;
+  }, ({ file, key }) => {
     log(`verified\t${file.sha256}\tcos://${bucket}/${key}`);
-  }
-  await mirror.assertAnonymousAccessDenied(prefix);
+  });
+  await policyMirror.assertAnonymousAccessDenied(prefix);
   return {
     assets: files.length,
     prefix: [...validateObjectPath(prefix), ...validateObjectPath(tag)].join("/"),
@@ -905,6 +1017,45 @@ async function httpError(action, response) {
   return new Error(`${action} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
 }
 
+async function cosHttpError(action, response) {
+  const error = await httpError(action, response);
+  if (isRetryableCosStatus(response.status)) {
+    return new RetryableNetworkError(error.message, { cause: error });
+  }
+  return error;
+}
+
+function isRetryableCosStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+export class RetryableNetworkError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RetryableNetworkError";
+  }
+}
+
+function errorChainHasRetryableCode(error, seen = new Set()) {
+  if (!error || (typeof error !== "object" && typeof error !== "function") || seen.has(error)) return false;
+  seen.add(error);
+  if (typeof error.code === "string" && RETRYABLE_NETWORK_CODES.has(error.code)) return true;
+  if (Array.isArray(error.errors) && error.errors.some((nested) => errorChainHasRetryableCode(nested, seen))) {
+    return true;
+  }
+  return errorChainHasRetryableCode(error.cause, seen);
+}
+
+export function isRetryableNetworkError(error) {
+  return error instanceof TypeError && error.message === "fetch failed" && errorChainHasRetryableCode(error);
+}
+
+export function exitCodeForMirrorError(error) {
+  return error instanceof RetryableNetworkError || isRetryableNetworkError(error)
+    ? RETRYABLE_NETWORK_EXIT_CODE
+    : 1;
+}
+
 async function fetchWithRetry(
   fetchImpl,
   input,
@@ -917,9 +1068,12 @@ async function fetchWithRetry(
     try {
       return await fetchImpl(input, init);
     } catch (error) {
+      if (!isRetryableNetworkError(error)) throw error;
       lastError = error;
       if (attempt === networkRetries) {
-        throw new Error(`${operation} failed after ${networkRetries} network attempts.`, { cause: error });
+        throw new RetryableNetworkError(`${operation} failed after ${networkRetries} network attempts.`, {
+          cause: error,
+        });
       }
       await retrySleep(retryDelayMs * attempt);
     }
@@ -990,7 +1144,7 @@ async function main() {
     console.error(formatError(error));
     if (error instanceof Error && error.stack) console.error(error.stack);
     usage();
-    process.exitCode = 1;
+    process.exitCode = exitCodeForMirrorError(error);
   }
 }
 

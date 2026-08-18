@@ -40,7 +40,7 @@
       "urls": {"en": "/", "zh": "/zh"},
       "anchors": {"en": ["start-here"], "zh": ["start-here"]},
       "composes": ["overview", "installation"],
-      "source_docs": ["doc/product/GOAL.md", "doc/product/PRODUCT.md"],
+      "source_docs": ["doc/product/PRODUCT.md"],
       "llms": true,
       "pairing_exception": null,
       "aliases": ["home", "en-root", "en-catchall", "retire-about", "zh-retire-about"],

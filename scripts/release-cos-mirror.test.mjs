@@ -7,9 +7,12 @@ import {
   assumeTencentRoleWithWebIdentity,
   CosReleaseMirror,
   createCosAuthorization,
+  exitCodeForMirrorError,
   getTencentStsCredentials,
   mirrorDesktopReleaseToCos,
   objectKeyForReleaseAsset,
+  requestGitHubOidcToken,
+  RetryableNetworkError,
 } from "./mirror-desktop-release-to-cos.mjs";
 
 const tempDirs = [];
@@ -126,7 +129,11 @@ describe("Tencent COS Desktop release mirror", () => {
       const key = url.hostname;
       const attempt = (attempts.get(key) ?? 0) + 1;
       attempts.set(key, attempt);
-      if (attempt === 1) throw new TypeError("fetch failed", { cause: new Error("ECONNRESET") });
+      if (attempt === 1) {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+        });
+      }
       if (key === "oidc.actions.test") return jsonResponse({ value: "github-oidc-jwt" });
       expect(init.method).toBe("POST");
       return jsonResponse({
@@ -156,6 +163,113 @@ describe("Tencent COS Desktop release mirror", () => {
       ["oidc.actions.test", 2],
       ["sts.tencentcloudapi.com", 2],
     ]));
+  });
+
+  it.each([
+    ["AbortError", Object.assign(new Error("cancelled"), { name: "AbortError" })],
+    ["arbitrary error", new Error("programming failure")],
+    [
+      "non-retryable fetch cause",
+      new TypeError("fetch failed", {
+        cause: Object.assign(new Error("EINVAL"), { code: "EINVAL" }),
+      }),
+    ],
+  ])("does not retry %s", async (_label, failure) => {
+    let attempts = 0;
+    await expect(
+      requestGitHubOidcToken({
+        fetchImpl: async () => {
+          attempts += 1;
+          throw failure;
+        },
+        networkRetries: 3,
+        requestToken: "oidc-request-token",
+        requestUrl: "https://oidc.actions.test/token",
+        retryDelayMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toBe(failure);
+    expect(attempts).toBe(1);
+  });
+
+  it("marks exhausted transient fetch failures for workflow-level retry", async () => {
+    let attempts = 0;
+    await expect(
+      requestGitHubOidcToken({
+        fetchImpl: async () => {
+          attempts += 1;
+          throw new TypeError("fetch failed", {
+            cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+          });
+        },
+        networkRetries: 3,
+        requestToken: "oidc-request-token",
+        requestUrl: "https://oidc.actions.test/token",
+        retryDelayMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toBeInstanceOf(RetryableNetworkError);
+    expect(attempts).toBe(3);
+  });
+
+  it("maps a raw retryable COS fetch failure to the workflow retry exit code", async () => {
+    const failure = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+    });
+    const mirror = new CosReleaseMirror({
+      bucket,
+      credentials,
+      fetchImpl: async () => {
+        throw failure;
+      },
+      region,
+    });
+
+    let observed;
+    try {
+      await mirror.readObject("releases/v0.7.9/Rudder-test.zip", false);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toBe(failure);
+    expect(exitCodeForMirrorError(observed)).toBe(75);
+    expect(exitCodeForMirrorError(new Error("checksum conflict"))).toBe(1);
+  });
+
+  it("maps transient COS HTTP failures to the workflow retry exit code", async () => {
+    const mirror = createMirror(async (_input, init = {}) => {
+      if (init.method === "HEAD") return new Response("temporarily unavailable", { status: 503 });
+      throw new Error("unexpected request after transient HEAD failure");
+    });
+    const file = await fileFixture("retryable");
+
+    let observed;
+    try {
+      await mirror.mirrorFile("releases/v0.7.9/Rudder-test.zip", file);
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toMatchObject({ name: "RetryableNetworkError" });
+    expect(exitCodeForMirrorError(observed)).toBe(75);
+  });
+
+  it("does not retry HTTP authorization failures", async () => {
+    let attempts = 0;
+    await expect(
+      requestGitHubOidcToken({
+        fetchImpl: async () => {
+          attempts += 1;
+          return new Response("forbidden", { status: 403 });
+        },
+        networkRetries: 3,
+        requestToken: "oidc-request-token",
+        requestUrl: "https://oidc.actions.test/token",
+        retryDelayMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("HTTP 403");
+    expect(attempts).toBe(1);
   });
 
   it("rejects Tencent STS responses missing the temporary credential triplet", async () => {
@@ -218,6 +332,9 @@ describe("Tencent COS Desktop release mirror", () => {
       credentials,
       endpoint,
       fetchImpl,
+      getStsCredentials: async () => {
+        throw new Error("fixed credentials must bypass STS refresh");
+      },
       githubApiBase: "https://api.github.test",
       githubToken: "github-token",
       log: () => {},
@@ -228,10 +345,10 @@ describe("Tencent COS Desktop release mirror", () => {
     });
 
     expect(result).toEqual({ assets: 2, prefix: "releases/canary/v0.7.5-canary.1" });
-    expect([...objects]).toEqual([
+    expect([...objects].sort(([left], [right]) => left.localeCompare(right))).toEqual([
       ["releases/canary/v0.7.5-canary.1/Rudder-test.zip", binary],
       ["releases/canary/v0.7.5-canary.1/SHASUMS256.txt", checksum],
-    ]);
+    ].sort(([left], [right]) => left.localeCompare(right)));
     expect(methods.filter(({ method }) => method === "HEAD")).toHaveLength(2);
     expect(methods.filter(({ method, authorization }) => method === "PUT" && authorization)).toHaveLength(2);
     expect(methods.filter(({ method, authorization }) => method === "GET" && authorization)).toHaveLength(2);
@@ -287,6 +404,61 @@ describe("Tencent COS Desktop release mirror", () => {
       tag: "v0.7.5",
     })).resolves.toEqual({ assets: 2, prefix: "releases/v0.7.5" });
     expect(githubAssetDownloads).toBe(0);
+  });
+
+  it("refreshes Tencent STS credentials before each mirrored asset", async () => {
+    const assetDir = await releaseFixture("desktop-binary");
+    const binary = Buffer.from("desktop-binary");
+    const checksum = checksumBytes();
+    const credentialTokens = [];
+    const signedTokensByKey = new Map();
+    const getStsCredentials = async () => {
+      const sequence = credentialTokens.length + 1;
+      const next = {
+        secretId: `temporary-id-${sequence}`,
+        secretKey: `temporary-key-${sequence}`,
+        token: `temporary-token-${sequence}`,
+      };
+      credentialTokens.push(next.token);
+      return next;
+    };
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.hostname === "api.github.test") {
+        return jsonResponse({
+          assets: [githubAsset("Rudder-test.zip", binary, { digest: `sha256:${sha256(binary)}` })],
+          draft: false,
+        });
+      }
+      const headers = new Headers(init.headers);
+      const key = decodeURIComponent(url.pathname.slice(1));
+      const token = headers.get("x-cos-security-token");
+      if (token) signedTokensByKey.set(key, token);
+      if (url.searchParams.has("prefix")) return new Response("denied", { status: 403 });
+      if (init.method === "PUT" && !headers.get("authorization")) return new Response("denied", { status: 403 });
+      if (init.method === "HEAD") return new Response(null, { status: 200 });
+      return new Response(key.endsWith("SHASUMS256.txt") ? checksum : binary);
+    };
+
+    await expect(mirrorDesktopReleaseToCos({
+      assetDir,
+      bucket,
+      endpoint,
+      fetchImpl,
+      getStsCredentials,
+      githubApiBase: "https://api.github.test",
+      githubToken: "github-token",
+      log: () => {},
+      now: () => 1_700_000_000_000,
+      region,
+      repo: "Undertone0809/rudder",
+      tag: "v0.7.5",
+    })).resolves.toEqual({ assets: 2, prefix: "releases/v0.7.5" });
+    expect(credentialTokens).toEqual(["temporary-token-1", "temporary-token-2"]);
+    expect(signedTokensByKey).toEqual(new Map([
+      ["releases/v0.7.5/Rudder-test.zip", "temporary-token-1"],
+      ["releases/v0.7.5/SHASUMS256.txt", "temporary-token-2"],
+    ]));
   });
 
   it("accepts a byte-identical existing GitHub checksum marker for an immutable retry", async () => {
@@ -425,7 +597,9 @@ describe("Tencent COS Desktop release mirror", () => {
         const attempt = (partAttempts.get(partNumber) ?? 0) + 1;
         partAttempts.set(partNumber, attempt);
         if (partNumber === 1 && attempt === 1) {
-          throw new TypeError("fetch failed", { cause: new Error("HeadersTimeoutError") });
+          throw new TypeError("fetch failed", {
+            cause: Object.assign(new Error("HeadersTimeoutError"), { code: "UND_ERR_HEADERS_TIMEOUT" }),
+          });
         }
         if (partNumber === 1 && attempt === 2) {
           return new Response("<Code>UserNetworkTooSlow</Code>", { status: 400 });
@@ -464,7 +638,53 @@ describe("Tencent COS Desktop release mirror", () => {
 
   it("uses a smaller default multipart part size for slow cross-region uploads", () => {
     const mirror = createMirror(async () => new Response(null));
-    expect(mirror.multipartPartSize).toBe(8 * 1024 * 1024);
+    expect(mirror.multipartPartSize).toBe(1024 * 1024);
+    expect(mirror.multipartConcurrency).toBe(8);
+    expect(mirror.fileConcurrency).toBe(4);
+  });
+
+  it("mirrors multiple COS files with bounded file-level concurrency", async () => {
+    const mirror = createMirror(async () => new Response(null), { fileConcurrency: 2 });
+    const entries = [1, 2, 3, 4].map((index) => ({
+      file: { name: `Rudder-test-${index}.zip` },
+      key: `releases/v0.7.5/Rudder-test-${index}.zip`,
+    }));
+    const verified = [];
+    let active = 0;
+    let maximumActive = 0;
+    mirror.mirrorFile = async (key) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      verified.push(key);
+    };
+
+    await mirror.mirrorFiles(entries, ({ key }) => verified.push(`verified:${key}`));
+
+    expect(maximumActive).toBe(2);
+    expect(verified.filter((key) => key.startsWith("verified:")).map((key) => key.slice(9))).toEqual(
+      entries.map(({ key }) => key),
+    );
+  });
+
+  it("stops scheduling new files after a failure while active files settle", async () => {
+    const mirror = createMirror(async () => new Response(null), { fileConcurrency: 2 });
+    const entries = [1, 2, 3, 4].map((index) => ({
+      file: { name: `Rudder-test-${index}.zip` },
+      key: `releases/v0.7.5/Rudder-test-${index}.zip`,
+    }));
+    const failure = new Error("file mirror failure");
+    const started = [];
+    mirror.mirrorFile = async (key) => {
+      started.push(key);
+      if (key === entries[0].key) throw failure;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
+
+    await expect(mirror.mirrorFiles(entries)).rejects.toBe(failure);
+
+    expect(started.sort()).toEqual([entries[0].key, entries[1].key].sort());
   });
 
   it("reuses a byte-identical object when multipart completion loses an overwrite race", async () => {
@@ -518,6 +738,119 @@ describe("Tencent COS Desktop release mirror", () => {
     await expect(mirror.mirrorFile("releases/v0.7.5/Rudder-test.zip", file)).rejects.toThrow(
       "upload COS multipart part 1",
     );
+    expect(abortCount).toBe(1);
+  });
+
+  it("does not retry a deterministic multipart request failure", async () => {
+    const file = await fileFixture(Buffer.alloc(1024 * 1024, 5));
+    const failure = new Error("multipart programming failure");
+    let abortCount = 0;
+    let partAttempts = 0;
+    const mirror = createMirror(async (input, init = {}) => {
+      const url = new URL(input);
+      const method = init.method || "GET";
+      if (method === "HEAD") return new Response(null, { status: 404 });
+      if (url.searchParams.has("uploads")) return new Response("<UploadId>upload-fail</UploadId>", { status: 200 });
+      if (url.searchParams.has("partNumber")) {
+        partAttempts += 1;
+        throw failure;
+      }
+      if (url.searchParams.has("uploadId") && method === "DELETE") {
+        abortCount += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected COS request: ${method} ${url}`);
+    }, {
+      multipartPartSize: 1024 * 1024,
+      multipartThreshold: 1,
+      sleep: async () => {},
+    });
+
+    await expect(mirror.mirrorFile("releases/v0.7.5/Rudder-test.zip", file)).rejects.toBe(failure);
+    expect(partAttempts).toBe(1);
+    expect(abortCount).toBe(1);
+  });
+
+  it("prioritizes deterministic concurrent failures and stops scheduling new parts", async () => {
+    const file = await fileFixture(Buffer.alloc(4 * 1024 * 1024, 6));
+    const deterministicFailure = new Error("multipart programming failure");
+    const networkFailure = new RetryableNetworkError("multipart network failure");
+    const scheduledParts = [];
+    let abortCount = 0;
+    let deterministicStarted;
+    const deterministicStart = new Promise((resolve) => {
+      deterministicStarted = resolve;
+    });
+    const mirror = createMirror(async (input, init = {}) => {
+      const url = new URL(input);
+      const method = init.method || "GET";
+      if (method === "HEAD") return new Response(null, { status: 404 });
+      if (url.searchParams.has("uploads")) return new Response("<UploadId>upload-mixed</UploadId>", { status: 200 });
+      if (url.searchParams.has("uploadId") && method === "DELETE") {
+        abortCount += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected COS request: ${method} ${url}`);
+    }, {
+      multipartConcurrency: 2,
+      multipartPartSize: 1024 * 1024,
+      multipartThreshold: 1,
+      sleep: async () => {},
+    });
+    mirror.uploadMultipartPart = async (_key, _uploadId, partNumber) => {
+      scheduledParts.push(partNumber);
+      if (partNumber === 1) {
+        await deterministicStart;
+        throw networkFailure;
+      }
+      deterministicStarted();
+      throw deterministicFailure;
+    };
+
+    let observed;
+    try {
+      await mirror.mirrorFile("releases/v0.7.5/Rudder-test.zip", file);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toBe(deterministicFailure);
+    expect(exitCodeForMirrorError(observed)).toBe(1);
+    expect([...scheduledParts].sort((left, right) => left - right)).toEqual([1, 2]);
+    expect(abortCount).toBe(1);
+  });
+
+  it("stops scheduling new parts after a concurrent short read", async () => {
+    const file = await fileFixture(Buffer.alloc(4 * 1024 * 1024, 7));
+    await writeFile(file.path, Buffer.alloc(1024 * 1024, 7));
+    const uploadedParts = [];
+    let abortCount = 0;
+    const mirror = createMirror(async (input, init = {}) => {
+      const url = new URL(input);
+      const method = init.method || "GET";
+      if (method === "HEAD") return new Response(null, { status: 404 });
+      if (url.searchParams.has("uploads")) return new Response("<UploadId>upload-short-read</UploadId>", { status: 200 });
+      if (url.searchParams.has("uploadId") && method === "DELETE") {
+        abortCount += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected COS request: ${method} ${url}`);
+    }, {
+      multipartConcurrency: 2,
+      multipartPartSize: 1024 * 1024,
+      multipartThreshold: 1,
+      sleep: async () => {},
+    });
+    mirror.uploadMultipartPart = async (_key, _uploadId, partNumber) => {
+      uploadedParts.push(partNumber);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return `"etag-${partNumber}"`;
+    };
+
+    await expect(mirror.mirrorFile("releases/v0.7.5/Rudder-test.zip", file)).rejects.toThrow(
+      "Read 0 bytes for COS multipart part 2; expected 1048576.",
+    );
+    expect(uploadedParts).toEqual([1]);
     expect(abortCount).toBe(1);
   });
 

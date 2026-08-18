@@ -29,9 +29,8 @@ change contributor/product-development guidance, edit `doc/`.
 
 Start here for almost every task:
 
-1. `doc/product/GOAL.md`
-2. `doc/product/PRODUCT.md`
-3. `doc/product/README.md`
+1. `doc/product/PRODUCT.md`
+2. `doc/product/README.md`
 
 Then choose the route that matches the work:
 

@@ -120,7 +120,7 @@ describe("Goal closed-state concurrency", () => {
     await db?.$client.end({ timeout: 5 });
     await instance?.stop();
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   it("serializes result acceptance ahead of a racing feedback mutation", async () => {
     const orgId = randomUUID();

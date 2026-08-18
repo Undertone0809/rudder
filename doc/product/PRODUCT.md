@@ -1,6 +1,6 @@
-# Rudder — Product Definition
+# Rudder — Product Direction and Definition
 
-## What It Is
+## Product Promise
 
 > Build your self-improving Agent Team.
 
@@ -12,17 +12,41 @@ One Rudder instance can run multiple organizations. An **organization** is the f
 
 The current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 
+## Vision
+
+Agent teams need durable, inspectable coordination surfaces that make human teams compound: goals, conversation, explicit ownership where needed, shared context, review, feedback, operating memory, and budget discipline.
+
+Rudder makes those loops visible and repeatable. It is not the agent runtime and it is not a generic social chat product. It is the place where real work becomes inspectable enough to run, review, learn from, and improve, whether users choose Chat or issue structure.
+
+## Problem
+
+Agent work breaks down when every run is treated as an isolated execution instead of part of an agent's growth. The problem is no longer only whether the work is assigned, logged, or reviewed. The harder questions are about planning, learning, and judgment:
+
+- What long-term goal is this agent serving, and what short-term plan advances it now?
+- Which context is actually eligible for this run, and which context is stale, one-off, or out of scope?
+- Did the agent make the right tradeoffs, or did it only follow instructions literally?
+- What did human review reveal about the team's standards, taste, workflow, and judgment?
+- Should this feedback become memory, a skill update, a workflow change, a decision, an eval case, or no-op?
+- Did the last improvement actually help future work, or did it add noise, cost, or regressions?
+- What can the agent decide independently next time, and what still needs human approval?
+
+A normal task board does not answer those questions for agent work. A transcript alone does not either. Without a governed learning loop, "agent memory" becomes a junk drawer of stale rules, and "self-improvement" becomes an unreviewed prompt change.
+
 ## Product Loop
 
 Rudder is organized around one compounding loop:
 
 ```text
-Goal -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+Goal -> Plan -> Chat or Issue -> Agent run -> Review -> Feedback -> Learning proposal -> Eval/approval -> Better future runs
 ```
 
 The loop matters because agent work improves only when real work leaves behind durable evidence: the context used, the decisions made, the output produced, the review result, the cost, and the lesson that should influence future runs.
 
-Rudder should make the promotion paths explicit and reviewable. A lesson may become better Chat or issue context, a skill update, a reusable workflow, a decision record, a document, or a stronger operating rule. Rudder should not pretend every lesson is automatically promoted without human or policy review.
+Rudder should make that loop concrete without overclaiming automation. It should help agents form plans, preserve the evidence behind their work, and create explicit, reviewable promotion paths. A lesson may become better Chat or issue context, a skill update, a reusable workflow, a decision record, a document, an eval case, or a stronger operating rule. Rudder should align agents with the team's taste through real feedback and accepted work, not silently rewrite behavior or leave lessons unindexed inside transcripts.
+
+## Core Principle
+
+You should be able to look at Rudder and understand the agent team at a glance: what goal it is serving, which chats or issues are moving tasks forward, who or what owns the next step, what changed, what it cost, what needs review, and what the next run should learn from this one.
 
 ## Core Concepts
 
@@ -89,6 +113,30 @@ Chat is Rudder's conversation-driven execution surface. Chat and issues are two 
 
 Chat is part of the broader board communication shell surfaced as `Messenger`. Messenger unifies chat conversations with issue threads, blockers, failed runs, review prompts, budget alerts, and decision requests without turning Rudder into a generic chat product.
 
+## Responsibilities
+
+### Rudder
+
+Rudder is the coordination and evidence system. It manages:
+
+- agent registry and configuration
+- issue assignment and status
+- budget and token spend tracking
+- organization knowledge and reusable operating context
+- goal hierarchy and context links across organizations, teams, agents, chats, and issues
+- heartbeat monitoring so operators know when agents are alive, idle, or stuck
+
+### Agent Runtimes
+
+Agents run through local or external runtimes and report into Rudder. Agent runtimes connect Rudder to different execution environments:
+
+- local coding CLIs and processes
+- HTTP/webhook-based agents
+- gateway-backed agent systems
+- any runtime that can be called, can report progress, or can leave evidence through the API
+
+Rudder coordinates work and preserves the record. Runtimes do the actual work.
+
 ## Principles
 
 1. **Agent teams improve through real work.** Rudder must preserve the evidence and feedback that make later runs better.
@@ -113,7 +161,7 @@ Chat is part of the broader board communication shell surfaced as `Messenger`. M
 9. Preserve reusable lessons as better context, skills, decisions, or workflows.
 10. Let future runs use the improved operating context.
 
-## Guidelines
+## Operating Guidelines
 
 There are two runtime modes Rudder must support:
 
@@ -122,13 +170,7 @@ There are two runtime modes Rudder must support:
 
 Canonical mode design and command expectations live in `doc/engineering/DEPLOYMENT-MODES.md`.
 
-## Further Detail
-
-See `doc/product/README.md` and the owning product domain contracts for current
-behavior. Archived specs and legacy task notes live under `doc/archive/` for
-historical context only.
-
-## What Rudder should do vs. not do
+## Product Boundaries
 
 **Do**
 
@@ -174,3 +216,7 @@ historical context only.
 
 8. **Thin core, rich edges**
    Put optional knowledge and special-purpose surfaces into plugins/extensions rather than bloating Rudder.
+
+## Further Detail
+
+See `doc/product/README.md` and the owning product domain contracts for current behavior. Archived specs and legacy task notes live under `doc/archive/` for historical context only.

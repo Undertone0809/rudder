@@ -121,7 +121,7 @@ describe("unified delivery workflows", () => {
       expect(publish).not.toContain("--phase checksum");
       expect(mirror).toContain("environment: desktop-release-mirror");
       expect(mirror).toContain("id-token: write");
-      expect(mirror).toContain("timeout-minutes: 120");
+      expect(mirror).toContain("timeout-minutes: 240");
       expect(mirror).toContain("pattern: desktop-*");
       expect(mirror).toContain("mirror-desktop-release-to-cos.mjs");
       expect(mirror).toContain("TENCENT_CLOUD_OIDC_PROVIDER_ID");
@@ -143,14 +143,40 @@ describe("unified delivery workflows", () => {
     const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
     expect(releaseWorkflow).toContain("mirror_recovery:");
     expect(releaseWorkflow).toContain("recovery_tag:");
-    expect(releaseWorkflow).toContain("inputs.mirror_recovery != true");
+    expect(workflowJob(releaseWorkflow, "preflight")).toContain(
+      "github.event.inputs.mirror_recovery != 'true'",
+    );
+    expect(recovery).toContain("github.event.inputs.mirror_recovery == 'true'");
+    expect(releaseWorkflow).not.toContain("inputs.mirror_recovery != true");
+    expect(releaseWorkflow).not.toContain("inputs.mirror_recovery == true");
     expect(recovery).toContain("environment: desktop-release-mirror");
     expect(recovery).toContain("id-token: write");
-    expect(recovery).toContain("actions/download-artifact@v8");
-    expect(recovery).toContain("run-id: ${{ inputs.candidate_run_id }}");
+    expect(recovery).toContain("timeout-minutes: 240");
+    expect(recovery.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(3);
+    expect(recovery.match(/continue-on-error: true/g)).toHaveLength(3);
+    expect(recovery.match(/run-id: \$\{\{ inputs\.candidate_run_id \}\}/g)).toHaveLength(3);
+    for (const attempt of [1, 2, 3]) {
+      expect(recovery.match(new RegExp(`id: download_candidate_assets_attempt_${attempt}`, "g"))).toHaveLength(1);
+    }
+    expect(
+      recovery.match(/^\s+if: steps\.download_candidate_assets_attempt_1\.outcome == 'failure'$/gm),
+    ).toHaveLength(1);
+    expect(
+      recovery.match(
+        /^\s+if: steps\.download_candidate_assets_attempt_1\.outcome == 'failure' && steps\.download_candidate_assets_attempt_2\.outcome == 'failure'$/gm,
+      ),
+    ).toHaveLength(1);
+    expect(recovery).toContain("if: always()");
+    expect(recovery).toContain("Require frozen candidate desktop assets");
+    expect(recovery).toContain("steps.download_candidate_assets_attempt_1.outcome");
+    expect(recovery).toContain("steps.download_candidate_assets_attempt_2.outcome");
+    expect(recovery).toContain("steps.download_candidate_assets_attempt_3.outcome");
+    expect(recovery).toContain('= "success"');
     expect(recovery).toContain("ref: ${{ github.sha }}");
     expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
     expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
+    expect(recovery.match(/^\s+WORKFLOW_SHA:/gm)).toHaveLength(1);
+    expect(recovery).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(recovery).toContain('test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"');
     expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
     expect(recovery).toContain("git merge-base --is-ancestor \"$SOURCE_REF\" refs/remotes/origin/main");
@@ -163,6 +189,12 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("SOURCE_REF: ${{ inputs.source_ref }}");
     expect(recovery).toContain(".prerelease");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
+    const sevenBinaryAssertion = recovery.indexOf(
+      'test "$(find dist/desktop-assets -maxdepth 1 -type f -name \'Rudder-*\' | wc -l | xargs)" = "7"',
+    );
+    const cosMirror = recovery.indexOf("mirror-desktop-release-to-cos.mjs");
+    expect(sevenBinaryAssertion).toBeGreaterThan(-1);
+    expect(cosMirror).toBeGreaterThan(sevenBinaryAssertion);
     expect(recovery).toContain("--tag \"${{ inputs.recovery_tag }}\"");
     expect(recovery).toContain("--phase checksum");
     expect(recovery).not.toContain("npm publish");
@@ -202,10 +234,21 @@ describe("unified delivery workflows", () => {
   });
 
   it("retries transient COS mirror failures before failing the release gate", () => {
-    for (const jobName of ["mirror-canary", "mirror-stable"]) {
-      expect(workflowJob(releaseWorkflow, jobName)).toContain("for attempt in 1 2 3");
-      expect(workflowJob(releaseWorkflow, jobName)).toContain("COS mirror attempt ${attempt}/3");
+    for (const jobName of ["mirror-recovery", "mirror-canary", "mirror-stable"]) {
+      const job = workflowJob(releaseWorkflow, jobName);
+      expect(job).toContain("for attempt in 1 2 3");
+      expect(job).toContain("COS mirror attempt ${attempt}/3");
+      expect(job).toContain('if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]');
+      expect(job).toContain('exit "$status"');
     }
+  });
+
+  it("runs mirror recovery from trusted main workflow code while preserving the released source", () => {
+    const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
+    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).toContain('test "$GITHUB_REF" = "refs/heads/main"');
+    expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
+    expect(recovery).toContain('test "$SOURCE_REF" = "$remote_tag_sha"');
   });
 
   it("waits for the exact manifest versions before creating public release surfaces", () => {
@@ -242,7 +285,60 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain('if [ "${DRY_RUN:-true}" = "true" ]; then publish="false"');
     expect(workflowJob(releaseWorkflow, "npm-candidate")).not.toContain("needs.preflight.outputs.publish");
     expect(workflowJob(releaseWorkflow, "desktop-candidate")).not.toContain("needs.preflight.outputs.publish");
-    expect(workflowJob(releaseWorkflow, "publish-stable")).toContain("needs.preflight.outputs.publish == 'true'");
+    const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
+    expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
+    expect(stablePublish).not.toContain("inputs.dry_run == false");
+    expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
+  });
+
+  it("routes real stable resumes through publish and fails closed on an incomplete chain", () => {
+    const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
+    const releaseResult = workflowJob(releaseWorkflow, "stable-release-result");
+    expect(stablePublish).toContain("always()");
+    expect(stablePublish).toContain("needs.preflight.result == 'success'");
+    expect(stablePublish).toContain("needs.candidate-complete.result == 'success'");
+    expect(stablePublish).toContain("github.event_name == 'workflow_dispatch'");
+    expect(stablePublish).toContain("github.event.inputs.mirror_recovery != 'true'");
+    expect(stablePublish).toContain("github.event.inputs.dry_run == 'false'");
+    expect(stablePublish).not.toContain("needs.preflight.outputs.channel");
+    expect(stablePublish).not.toContain("needs.preflight.outputs.publish");
+    expect(releaseResult).toContain("always()");
+    expect(releaseResult).toContain("github.event.inputs.mirror_recovery != 'true'");
+    expect(releaseResult).toContain("github.event.inputs.dry_run == 'false'");
+    for (const jobName of [
+      "preflight",
+      "publish-stable",
+      "mirror-stable",
+      "stable-docs",
+      "stable-install",
+      "stable-surfaces",
+      "stable-cleanup",
+      "next-release-base",
+    ]) {
+      expect(releaseResult).toContain(`- ${jobName}`);
+    }
+    expect(releaseResult.match(/test \"\$result\" = \"success\"/g)).toHaveLength(1);
+  });
+
+  it("carries stable resumes through intentional candidate skips without bypassing failures", () => {
+    const requiredResults = new Map([
+      ["mirror-stable", ["preflight", "publish-stable"]],
+      ["stable-docs", ["preflight", "publish-stable", "mirror-stable"]],
+      ["stable-install", ["preflight", "publish-stable", "mirror-stable"]],
+      [
+        "stable-surfaces",
+        ["preflight", "publish-stable", "mirror-stable", "stable-docs", "stable-install"],
+      ],
+      ["stable-cleanup", ["preflight", "stable-surfaces"]],
+      ["next-release-base", ["preflight", "publish-stable", "stable-surfaces", "stable-cleanup"]],
+    ]);
+    for (const [jobName, dependencies] of requiredResults) {
+      const job = workflowJob(releaseWorkflow, jobName);
+      expect(job).toContain("always()");
+      for (const dependency of dependencies) {
+        expect(job).toContain(`needs.${dependency}.result == 'success'`);
+      }
+    }
   });
 
   it("runs public install inside Release and requires stable docs before closeout", () => {
@@ -265,6 +361,7 @@ describe("unified delivery workflows", () => {
   });
 
   it("fails closed when partial recovery finds different published artifacts", () => {
+    const preflight = workflowJob(releaseWorkflow, "preflight");
     const npmCandidate = workflowJob(releaseWorkflow, "npm-candidate");
     const desktopCandidate = workflowJob(releaseWorkflow, "desktop-candidate");
     const candidateComplete = workflowJob(releaseWorkflow, "candidate-complete");
@@ -273,10 +370,41 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain('description: "Original Release run ID containing the verified candidate artifacts (required for resume)"');
     expect(releaseWorkflow).toContain('candidate_run_id is required when resume_missing is true.');
     expect(releaseWorkflow).toContain("Require matching verified candidate run for recovery");
-    expect(releaseWorkflow).toContain("actions/runs/$CANDIDATE_RUN_ID");
-    expect(releaseWorkflow).toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$SOURCE_SHA\"");
-    expect(releaseWorkflow).toContain('test "$(jq -r \'.path\' <<< "$run_json")" = ".github/workflows/release.yml"');
-    expect(releaseWorkflow).toContain("desktop-macos-arm64");
+    expect(preflight).toContain("actions/runs/$CANDIDATE_RUN_ID");
+    expect(preflight).not.toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$SOURCE_SHA\"");
+    expect(preflight).toContain('test "$(jq -r \'.path\' <<< "$run_json")" = ".github/workflows/release.yml"');
+    expect(preflight).toContain('test "$(jq -r \'.head_branch\' <<< "$run_json")" = "main"');
+    expect(preflight).toContain('test "$(jq -r \'.head_repository.full_name\' <<< "$run_json")" = "$GITHUB_REPOSITORY"');
+    expect(preflight).toContain('candidate_workflow_sha="$(jq -r \'.head_sha\' <<< "$run_json")"');
+    expect(preflight).toContain('git cat-file -e "$candidate_workflow_sha^{commit}"');
+    expect(preflight).toContain("git merge-base --is-ancestor \"$candidate_workflow_sha\" refs/remotes/origin/main");
+    expect(preflight).toContain("success|cancelled|failure");
+    expect(preflight).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");
+    expect(preflight).toContain('.name == "Publish stable" and .conclusion == "success"');
+    expect(preflight).toContain('git ls-remote --tags origin "refs/tags/$TAG"');
+    expect(preflight).toContain('test "$SOURCE_SHA" = "$remote_tag_sha"');
+    for (const artifact of [
+      "npm-release-candidate",
+      "desktop-macos-x64",
+      "desktop-macos-arm64",
+      "desktop-windows-x64",
+      "desktop-linux-x64",
+    ]) {
+      expect(preflight).toContain(artifact);
+    }
+    expect(preflight).toContain(".artifacts | map(select(.expired == false))");
+    const identityIndex = preflight.indexOf(".head_repository.full_name");
+    const trustedWorkflowIndex = preflight.indexOf('git cat-file -e "$candidate_workflow_sha^{commit}"');
+    const terminalIndex = preflight.indexOf("success|cancelled|failure");
+    const publishIndex = preflight.indexOf('.name == "Publish stable" and .conclusion == "success"');
+    const tagIndex = preflight.indexOf('git ls-remote --tags origin "refs/tags/$TAG"');
+    const artifactsIndex = preflight.indexOf(".artifacts | map(select(.expired == false))");
+    expect(identityIndex).toBeGreaterThan(-1);
+    expect(trustedWorkflowIndex).toBeGreaterThan(identityIndex);
+    expect(terminalIndex).toBeGreaterThan(trustedWorkflowIndex);
+    expect(publishIndex).toBeGreaterThan(terminalIndex);
+    expect(tagIndex).toBeGreaterThan(publishIndex);
+    expect(artifactsIndex).toBeGreaterThan(tagIndex);
     expect(npmCandidate).toContain("if: needs.preflight.outputs.resume != 'true'");
     expect(desktopCandidate).toContain("if: needs.preflight.outputs.resume != 'true'");
     expect(candidateComplete).toContain("needs.npm-candidate.result == 'skipped'");

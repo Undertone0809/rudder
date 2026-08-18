@@ -9,6 +9,9 @@ edit_policy: user_confirmed_only
 
 `doc/product/` is Rudder's current product-logic contract.
 
+Start with `PRODUCT.md` for the shared product direction and definition. Use
+the owning domain contracts below for authoritative current behavior.
+
 It records what the product must do, why the behavior exists, where it is
 implemented, and how it is tested. It exists to prevent shipped behavior from
 being removed or changed accidentally by later agent work.

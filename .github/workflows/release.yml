@@ -48,7 +48,7 @@ jobs:
   preflight:
     name: Lock source and preflight
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.mirror_recovery != true) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mirror_recovery != 'true') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -164,10 +164,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
-          test "$(jq -r '.head_sha' <<< "$run_json")" = "$SOURCE_SHA"
           test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
+          test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
+          candidate_workflow_sha="$(jq -r '.head_sha' <<< "$run_json")"
+          git cat-file -e "$candidate_workflow_sha^{commit}"
+          git merge-base --is-ancestor "$candidate_workflow_sha" refs/remotes/origin/main
+          run_conclusion="$(jq -r '.conclusion' <<< "$run_json")"
+          case "$run_conclusion" in
+            success|cancelled|failure) ;;
+            *) echo "Candidate run $CANDIDATE_RUN_ID did not produce a usable stable candidate." >&2; exit 1 ;;
+          esac
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100")"
+          jq -e '.jobs[] | select(.name == "Publish stable" and .conclusion == "success")' <<< "$jobs" >/dev/null || {
+            echo "Candidate run $CANDIDATE_RUN_ID did not complete Publish stable successfully." >&2
+            exit 1
+          }
+          remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
+          test -n "$remote_tag_sha"
+          test "$SOURCE_SHA" = "$remote_tag_sha"
           artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" --jq '.artifacts | map(select(.expired == false)) | map(.name) | .[]')"
           for artifact in \
             npm-release-candidate \
@@ -521,7 +539,13 @@ jobs:
     needs:
       - preflight
       - candidate-complete
-    if: needs.preflight.outputs.channel == 'stable' && needs.preflight.outputs.publish == 'true'
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.candidate-complete.result == 'success' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.mirror_recovery != 'true' &&
+      github.event.inputs.dry_run == 'false'
     permissions:
       actions: read
       contents: write
@@ -607,13 +631,13 @@ jobs:
 
   mirror-recovery:
     name: Recover stable Desktop release mirror in Tencent COS
-    if: github.event_name == 'workflow_dispatch' && inputs.mirror_recovery == true
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mirror_recovery == 'true'
     permissions:
       actions: read
       contents: write
       id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     environment: desktop-release-mirror
     steps:
       - uses: actions/checkout@v6
@@ -639,6 +663,7 @@ jobs:
             echo "recovery_tag must be an existing stable tag such as v0.7.7." >&2
             exit 1
           }
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git cat-file -e "$SOURCE_REF^{commit}"
@@ -688,13 +713,45 @@ jobs:
           test "$(jq -r '.draft' <<< "$release_json")" = "false"
           test "$(jq -r '.prerelease' <<< "$release_json")" = "false"
           test "$(jq '[.assets[] | select(.name | startswith("Rudder-"))] | length' <<< "$release_json")" = "7"
-      - uses: actions/download-artifact@v8
+      - name: Download frozen candidate desktop assets (attempt 1)
+        id: download_candidate_assets_attempt_1
+        continue-on-error: true
+        uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
           path: dist/desktop-assets
           merge-multiple: true
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
+      - name: Download frozen candidate desktop assets (attempt 2)
+        id: download_candidate_assets_attempt_2
+        if: steps.download_candidate_assets_attempt_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download frozen candidate desktop assets (attempt 3)
+        id: download_candidate_assets_attempt_3
+        if: steps.download_candidate_assets_attempt_1.outcome == 'failure' && steps.download_candidate_assets_attempt_2.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Require frozen candidate desktop assets
+        if: always()
+        run: |
+          test "${{ steps.download_candidate_assets_attempt_1.outcome }}" = "success" || \
+            test "${{ steps.download_candidate_assets_attempt_2.outcome }}" = "success" || \
+            test "${{ steps.download_candidate_assets_attempt_3.outcome }}" = "success"
+          test "$(find dist/desktop-assets -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
       - name: Generate checksum trust root
         run: |
           cd dist/desktop-assets
@@ -710,15 +767,19 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "COS mirror attempt ${attempt}/3"
-            if node scripts/mirror-desktop-release-to-cos.mjs \
+            set +e
+            node scripts/mirror-desktop-release-to-cos.mjs \
               --tag "${{ inputs.recovery_tag }}" \
               --asset-dir dist/desktop-assets \
               --prefix releases \
-              --allow-existing-checksum-marker; then
+              --allow-existing-checksum-marker
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
+            if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]; then
+              exit "$status"
             fi
             sleep $((attempt * 15))
           done
@@ -804,7 +865,7 @@ jobs:
       contents: write
       id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     environment: desktop-release-mirror
     steps:
       - uses: actions/checkout@v6
@@ -830,15 +891,19 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "COS mirror attempt ${attempt}/3"
-            if node scripts/mirror-desktop-release-to-cos.mjs \
+            set +e
+            node scripts/mirror-desktop-release-to-cos.mjs \
               --tag "${{ needs.preflight.outputs.tag }}" \
               --asset-dir dist/desktop-assets \
               --prefix releases \
-              --allow-existing-checksum-marker; then
+              --allow-existing-checksum-marker
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
+            if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]; then
+              exit "$status"
             fi
             sleep $((attempt * 15))
           done
@@ -856,13 +921,13 @@ jobs:
     needs:
       - preflight
       - publish-stable
-    if: needs.publish-stable.result == 'success'
+    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success'
     permissions:
       actions: read
       contents: write
       id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     environment: desktop-release-mirror
     steps:
       - uses: actions/checkout@v6
@@ -890,15 +955,19 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             echo "COS mirror attempt ${attempt}/3"
-            if node scripts/mirror-desktop-release-to-cos.mjs \
+            set +e
+            node scripts/mirror-desktop-release-to-cos.mjs \
               --tag "${{ needs.preflight.outputs.tag }}" \
               --asset-dir dist/desktop-assets \
               --prefix releases \
-              --allow-existing-checksum-marker; then
+              --allow-existing-checksum-marker
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
+            if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]; then
+              exit "$status"
             fi
             sleep $((attempt * 15))
           done
@@ -970,7 +1039,7 @@ jobs:
       - preflight
       - publish-stable
       - mirror-stable
-    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
+    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
     permissions:
       actions: read
       contents: write
@@ -987,7 +1056,7 @@ jobs:
       - preflight
       - publish-stable
       - mirror-stable
-    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
+    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -1018,7 +1087,7 @@ jobs:
       - mirror-stable
       - stable-docs
       - stable-install
-    if: needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
+    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -1045,7 +1114,7 @@ jobs:
     needs:
       - preflight
       - stable-surfaces
-    if: needs.stable-surfaces.result == 'success'
+    if: always() && needs.preflight.result == 'success' && needs.stable-surfaces.result == 'success'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -1066,7 +1135,7 @@ jobs:
       - publish-stable
       - stable-surfaces
       - stable-cleanup
-    if: needs.publish-stable.result == 'success' && needs.stable-surfaces.result == 'success' && needs.stable-cleanup.result == 'success'
+    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.stable-surfaces.result == 'success' && needs.stable-cleanup.result == 'success'
     permissions:
       actions: write
       contents: write
@@ -1088,3 +1157,44 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run ci.yml --ref main -f source_sha="${{ steps.next-release.outputs.head_sha }}"
+
+  stable-release-result:
+    name: Require complete stable release
+    needs:
+      - preflight
+      - publish-stable
+      - mirror-stable
+      - stable-docs
+      - stable-install
+      - stable-surfaces
+      - stable-cleanup
+      - next-release-base
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.mirror_recovery != 'true' &&
+      github.event.inputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every stable release stage
+        env:
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          PUBLISH_RESULT: ${{ needs.publish-stable.result }}
+          MIRROR_RESULT: ${{ needs.mirror-stable.result }}
+          DOCS_RESULT: ${{ needs.stable-docs.result }}
+          INSTALL_RESULT: ${{ needs.stable-install.result }}
+          SURFACES_RESULT: ${{ needs.stable-surfaces.result }}
+          CLEANUP_RESULT: ${{ needs.stable-cleanup.result }}
+          HANDOFF_RESULT: ${{ needs.next-release-base.result }}
+        run: |
+          for result in \
+            "$PREFLIGHT_RESULT" \
+            "$PUBLISH_RESULT" \
+            "$MIRROR_RESULT" \
+            "$DOCS_RESULT" \
+            "$INSTALL_RESULT" \
+            "$SURFACES_RESULT" \
+            "$CLEANUP_RESULT" \
+            "$HANDOFF_RESULT"; do
+            test "$result" = "success"
+          done
