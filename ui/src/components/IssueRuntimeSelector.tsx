@@ -1,7 +1,7 @@
 import type { AgentRuntimeModel } from "@/api/agents";
 import { agentsApi } from "@/api/agents";
+import { RuntimeProfileControls } from "@/components/RuntimeProfileControls";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { queryKeys } from "@/lib/queryKeys";
 import { resolveRuntimeModels } from "@/lib/runtime-models";
 import {
@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { Agent, IssueAssigneeAgentRuntimeOverrides } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
@@ -169,20 +169,12 @@ export function IssueRuntimeSelector({
   const supported = supportsIssueRuntimeOverrides(agent);
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeSubmenu, setActiveSubmenu] = useState<"model" | "effort" | null>(null);
   const [menuPosition, setMenuPosition] = useState<CSSProperties | null>(null);
-  const [submenuPosition, setSubmenuPosition] = useState<CSSProperties | null>(null);
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
   const [draftInitialized, setDraftInitialized] = useState(false);
   const menuRootRef = useRef<HTMLDivElement | null>(null);
-  const submenuRootRef = useRef<HTMLDivElement | null>(null);
-  const submenuScrollRef = useScrollbarActivityRef();
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const firstModelOptionRef = useRef<HTMLButtonElement | null>(null);
-  const firstEffortOptionRef = useRef<HTMLButtonElement | null>(null);
   const effortKey = runtimeEffortKey(agent.agentRuntimeType)!;
   const adapterModelsQuery = useQuery({
     queryKey: queryKeys.agents.adapterModels(orgId, agent.agentRuntimeType),
@@ -204,12 +196,18 @@ export function IssueRuntimeSelector({
 
   const closeMenu = () => {
     setMenuOpen(false);
-    setActiveSubmenu(null);
     setDraftInitialized(false);
   };
 
   const positionFor = (rect: DOMRect, width: number, height: number): CSSProperties => {
     const viewportPadding = 12;
+    const mobileNavigation = document.querySelector<HTMLElement>("[data-mobile-bottom-navigation]");
+    const viewportBottom = mobileNavigation && mobileNavigation.getClientRects().length > 0
+      ? Math.min(
+        window.innerHeight - viewportPadding,
+        mobileNavigation.getBoundingClientRect().top - viewportPadding,
+      )
+      : window.innerHeight - viewportPadding;
     const right = window.innerWidth - rect.right;
     const left = right >= width + viewportPadding
       ? rect.right + 8
@@ -218,35 +216,8 @@ export function IssueRuntimeSelector({
       left,
       top: Math.max(
         viewportPadding,
-        Math.min(rect.top, window.innerHeight - viewportPadding - height),
+        Math.min(rect.top, viewportBottom - height),
       ),
-    };
-  };
-
-  const positionSubmenuFor = (rect: DOMRect, width: number, height: number): CSSProperties => {
-    const viewportPadding = 12;
-    const gap = 8;
-    const right = window.innerWidth - rect.right;
-    const left = right >= width + gap + viewportPadding
-      ? rect.right + gap
-      : Math.max(viewportPadding, rect.left - width - gap);
-    const availableBelow = Math.max(0, window.innerHeight - viewportPadding - rect.top);
-    const availableAbove = Math.max(0, rect.bottom - viewportPadding);
-    const keepTriggerAligned = availableBelow >= 120;
-    const maxHeight = Math.min(
-      height,
-      keepTriggerAligned ? availableBelow : Math.max(availableAbove, availableBelow),
-    );
-    const top = keepTriggerAligned
-      ? Math.max(viewportPadding, rect.top)
-      : Math.max(
-        viewportPadding,
-        Math.min(rect.top, window.innerHeight - viewportPadding - maxHeight),
-      );
-    return {
-      left,
-      top,
-      maxHeight: `${maxHeight}px`,
     };
   };
 
@@ -256,26 +227,7 @@ export function IssueRuntimeSelector({
     setDraftEffort(currentEffort);
     setDraftInitialized(true);
     setMenuPosition(positionFor(menuTriggerRef.current.getBoundingClientRect(), 304, 176));
-    setActiveSubmenu(null);
     setMenuOpen(true);
-  };
-
-  const openSubmenu = (kind: "model" | "effort", trigger: HTMLButtonElement | null) => {
-    if (!trigger) return;
-    setSubmenuPosition(positionSubmenuFor(trigger.getBoundingClientRect(), 256, 320));
-    setActiveSubmenu(kind);
-  };
-
-  const closeSubmenu = (kind: "model" | "effort") => {
-    setActiveSubmenu(null);
-    requestAnimationFrame(() => {
-      (kind === "model" ? modelTriggerRef : effortTriggerRef).current?.focus();
-    });
-  };
-
-  const finishMenuSelection = () => {
-    closeMenu();
-    requestAnimationFrame(() => menuTriggerRef.current?.focus());
   };
 
   useEffect(() => {
@@ -284,7 +236,7 @@ export function IssueRuntimeSelector({
       if (!(event.target instanceof Node)) return;
       if (
         menuRootRef.current?.contains(event.target)
-        || submenuRootRef.current?.contains(event.target)
+        || (event.target instanceof Element && event.target.closest("[data-runtime-profile-submenu]"))
         || menuTriggerRef.current?.contains(event.target)
       ) return;
       closeMenu();
@@ -295,17 +247,23 @@ export function IssueRuntimeSelector({
 
   useEffect(() => {
     if (!menuOpen) return;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
+      if (document.querySelector("[data-runtime-profile-submenu]")) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeMenu();
+      requestAnimationFrame(() => menuTriggerRef.current?.focus());
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
     const updatePosition = () => {
       if (menuTriggerRef.current) {
         setMenuPosition(positionFor(menuTriggerRef.current.getBoundingClientRect(), 304, 176));
-      }
-      if (activeSubmenu) {
-        const trigger = activeSubmenu === "model"
-          ? modelTriggerRef.current
-          : effortTriggerRef.current;
-        if (trigger) {
-          setSubmenuPosition(positionSubmenuFor(trigger.getBoundingClientRect(), 256, 320));
-        }
       }
     };
     window.addEventListener("resize", updatePosition);
@@ -314,19 +272,7 @@ export function IssueRuntimeSelector({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [activeSubmenu, menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    requestAnimationFrame(() => modelTriggerRef.current?.focus());
   }, [menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen || !activeSubmenu) return;
-    requestAnimationFrame(() => {
-      (activeSubmenu === "model" ? firstModelOptionRef : firstEffortOptionRef).current?.focus();
-    });
-  }, [activeSubmenu, menuOpen]);
 
   if (!supported) return null;
 
@@ -363,6 +309,11 @@ export function IssueRuntimeSelector({
     }
   };
 
+  const finishMenuSelection = () => {
+    closeMenu();
+    requestAnimationFrame(() => menuTriggerRef.current?.focus());
+  };
+
   const selectMenuModel = (nextModel: string | null) => {
     const nextEffectiveModel = nextModel ?? configuredModel(agent);
     const nextEfforts = effortOptions(
@@ -385,16 +336,55 @@ export function IssueRuntimeSelector({
     finishMenuSelection();
   };
 
+  const runtimeControls = (mode: "menu" | "staged") => (
+    <RuntimeProfileControls
+      ariaContext={`${agent.name} runtime`}
+      disabled={disabled}
+      errorMessage={adapterModelsQuery.error ? "Models are temporarily unavailable." : null}
+      testIds={{
+        modelTrigger: "issue-runtime-model-trigger",
+        modelOptions: "issue-runtime-model-options",
+        modelOption: (id) => id == null
+          ? "issue-runtime-option-default-model"
+          : `issue-runtime-option-model-${id}`,
+        effortTrigger: "issue-runtime-effort-trigger",
+        effortOptions: "issue-runtime-effort-options",
+        effortOption: (id) => `issue-runtime-option-effort-${id ?? "default"}`,
+      }}
+      model={{
+        valueLabel: effectiveModel,
+        selectedId: selectedModel,
+        defaultOption: { id: null, label: `Agent default · ${configuredModel(agent)}` },
+        options,
+        loading: adapterModelsQuery.isPending,
+        emptyLabel: adapterModelsQuery.error ? "Models unavailable" : "No models found.",
+        onSelect: mode === "menu" ? selectMenuModel : selectModel,
+      }}
+      effort={hasThinkingOptions ? {
+        valueLabel: effortLabel(effectiveEffort),
+        selectedId: effectiveEffort,
+        defaultOption: {
+          id: null,
+          label: `Agent default · ${effortLabel(configuredEffort(agent))}`,
+        },
+        options: thinkingOptions.filter((option) => option.id != null),
+        onSelect: mode === "menu" ? selectMenuEffort : setDraftEffort,
+      } : undefined}
+    />
+  );
+
   if (variant === "menu") {
     const menuPanel = menuOpen && menuPosition && typeof document !== "undefined" ? createPortal(
       <div
         ref={menuRootRef}
+        data-issue-runtime-portal
+        data-runtime-profile-panel
         data-testid="issue-runtime-profile-panel"
         role="dialog"
         aria-label={`Model and thinking for ${agent.name}`}
-        className="pointer-events-auto surface-overlay fixed z-[65] w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
+        className="pointer-events-auto surface-overlay fixed z-[75] w-[19rem] max-w-[calc(100vw-1.5rem)] rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
         style={menuPosition}
-        onKeyDown={(event) => {
+        onKeyDownCapture={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
@@ -403,12 +393,8 @@ export function IssueRuntimeSelector({
           } else if (event.key === "ArrowLeft") {
             event.preventDefault();
             event.stopPropagation();
-            if (activeSubmenu) {
-              closeSubmenu(activeSubmenu);
-            } else {
-              closeMenu();
-              requestAnimationFrame(() => menuTriggerRef.current?.focus());
-            }
+            closeMenu();
+            requestAnimationFrame(() => menuTriggerRef.current?.focus());
           }
         }}
       >
@@ -424,125 +410,8 @@ export function IssueRuntimeSelector({
           <span className="min-w-0 flex-1 truncate font-medium">{agent.name}</span>
         </button>
         <div className="border-t border-[color:var(--border-soft)] pt-1">
-          <button
-            ref={modelTriggerRef}
-            type="button"
-            data-testid="issue-runtime-model-trigger"
-            aria-haspopup="listbox"
-            aria-expanded={activeSubmenu === "model"}
-            className="chat-composer-menu-row grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2"
-            onClick={() => openSubmenu("model", modelTriggerRef.current)}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-                event.preventDefault();
-                openSubmenu("model", modelTriggerRef.current);
-              }
-            }}
-          >
-            <span className="font-medium text-foreground">Model</span>
-            <span className="min-w-0 truncate text-right text-muted-foreground">{effectiveModel}</span>
-            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-          </button>
-          {hasThinkingOptions ? (
-            <button
-              ref={effortTriggerRef}
-              type="button"
-              data-testid="issue-runtime-effort-trigger"
-              aria-haspopup="listbox"
-              aria-expanded={activeSubmenu === "effort"}
-              className="chat-composer-menu-row grid min-h-10 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2"
-              onClick={() => openSubmenu("effort", effortTriggerRef.current)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-                  event.preventDefault();
-                  openSubmenu("effort", effortTriggerRef.current);
-                }
-              }}
-            >
-              <span className="font-medium text-foreground">Thinking</span>
-              <span className="min-w-0 truncate text-right text-muted-foreground">{effortLabel(effectiveEffort)}</span>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-            </button>
-          ) : null}
+          {runtimeControls("menu")}
         </div>
-      </div>,
-      document.body,
-    ) : null;
-
-    const submenuOptions = activeSubmenu === "model" ? (
-      <>
-        <button
-          ref={firstModelOptionRef}
-          type="button"
-          role="option"
-          aria-selected={selectedModel == null}
-          data-testid="issue-runtime-option-default-model"
-          className="chat-composer-menu-row"
-          onClick={() => selectMenuModel(null)}
-        >
-          <span className="min-w-0 flex-1 truncate">{`Agent default · ${configuredModel(agent)}`}</span>
-          {selectedModel == null ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-        </button>
-        {adapterModelsQuery.isPending ? (
-          <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            Loading models...
-          </div>
-        ) : options.length > 0 ? options.map((model) => (
-          <button
-            key={model.id}
-            type="button"
-            role="option"
-            aria-selected={selectedModel === model.id}
-            data-testid={`issue-runtime-option-model-${model.id}`}
-            className="chat-composer-menu-row"
-            onClick={() => selectMenuModel(model.id)}
-          >
-            <span className="min-w-0 flex-1 truncate">{model.label}</span>
-            {selectedModel === model.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-          </button>
-        )) : (
-          <div className="px-2.5 py-2 text-xs text-muted-foreground">
-            {adapterModelsQuery.error ? "Models unavailable" : "No models found."}
-          </div>
-        )}
-      </>
-    ) : hasThinkingOptions ? thinkingOptions.map((option) => (
-      <button
-        key={option.id ?? "default"}
-        ref={option.id == null ? firstEffortOptionRef : undefined}
-        type="button"
-        role="option"
-        aria-selected={effectiveEffort === option.id}
-        data-testid={`issue-runtime-option-effort-${option.id ?? "default"}`}
-        className="chat-composer-menu-row"
-        onClick={() => selectMenuEffort(option.id)}
-      >
-        <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
-        {effectiveEffort === option.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-      </button>
-    )) : null;
-
-    const submenu = menuOpen && activeSubmenu && submenuPosition && typeof document !== "undefined" ? createPortal(
-      <div
-        ref={(node) => {
-          submenuRootRef.current = node;
-          submenuScrollRef(node);
-        }}
-        data-testid={`issue-runtime-${activeSubmenu}-options`}
-        role="listbox"
-        aria-label={activeSubmenu === "model" ? "Model options" : "Thinking options"}
-        className="pointer-events-auto surface-overlay scrollbar-auto-hide scrollbar-menu-inset fixed z-[70] max-h-80 w-64 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 shadow-lg"
-        style={submenuPosition}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" || event.key === "ArrowLeft") {
-            event.preventDefault();
-            event.stopPropagation();
-            closeSubmenu(activeSubmenu);
-          }
-        }}
-      >
-        {submenuOptions}
       </div>,
       document.body,
     ) : null;
@@ -557,7 +426,7 @@ export function IssueRuntimeSelector({
           aria-haspopup="dialog"
           aria-expanded={menuOpen}
           className={cn(
-            "chat-composer-menu-row min-w-0",
+            "chat-composer-menu-row !w-auto min-w-0 max-w-full",
             disabled && "cursor-not-allowed opacity-60",
           )}
           disabled={disabled}
@@ -576,7 +445,6 @@ export function IssueRuntimeSelector({
           <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </button>
         {menuPanel}
-        {submenu}
       </>
     );
   }
@@ -607,71 +475,31 @@ export function IssueRuntimeSelector({
         </button>
       </PopoverTrigger>
       <PopoverContent
+        data-testid="issue-runtime-profile-panel"
+        data-runtime-profile-panel
         align="end"
         side="bottom"
         sideOffset={6}
         collisionPadding={12}
-        className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-72 overflow-y-auto p-2"
+        className="surface-overlay w-[19rem] max-w-[calc(100vw-1.5rem)] p-1.5"
+        onInteractOutside={(event) => {
+          const target = event.target;
+          if (target instanceof Element && target.closest("[data-runtime-profile-submenu]")) {
+            event.preventDefault();
+          }
+        }}
       >
-        <div className="mb-2 border-b border-border pb-2">
-          <p className="text-xs font-medium text-foreground">Run profile</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Applies to runs that have not started.
-          </p>
+        <button
+          type="button"
+          className="chat-composer-menu-row mb-1"
+          onClick={() => setOpen(false)}
+        >
+          <ChevronLeft className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate font-medium">{agent.name}</span>
+        </button>
+        <div className="border-t border-[color:var(--border-soft)] pt-1">
+          {runtimeControls("staged")}
         </div>
-        <div className="space-y-1" role="listbox" aria-label="Model">
-          <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Model</p>
-          <button
-            type="button"
-            role="option"
-            aria-selected={selectedModel == null}
-            data-testid="issue-runtime-option-default-model"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-            onClick={() => selectModel(null)}
-          >
-            <span className="min-w-0 flex-1 truncate">Agent default · {configuredModel(agent)}</span>
-            {draftModel == null ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-          </button>
-          {adapterModelsQuery.isPending ? (
-            <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading models...
-            </div>
-          ) : options.length > 0 ? options.map((model) => (
-            <button
-              key={model.id}
-              type="button"
-              role="option"
-              aria-selected={selectedModel === model.id}
-              data-testid={`issue-runtime-option-model-${model.id}`}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-              onClick={() => selectModel(model.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{model.label}</span>
-              {selectedModel === model.id ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-            </button>
-          )) : (
-            <p className="px-2 py-2 text-xs text-muted-foreground">No models found.</p>
-          )}
-        </div>
-        {hasThinkingOptions ? (
-          <div className="mt-2 border-t border-border pt-2" role="listbox" aria-label="Thinking">
-            <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Thinking</p>
-            {thinkingOptions.map((option) => (
-              <button
-                key={option.id ?? "default"}
-                type="button"
-                role="option"
-                aria-selected={effectiveEffort === option.id}
-                data-testid={`issue-runtime-option-effort-${option.id ?? "default"}`}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-                onClick={() => setDraftEffort(option.id)}
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}{option.id == null ? ` · ${effortLabel(configuredEffort(agent))}` : ""}</span>
-                {effectiveEffort === option.id ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
-              </button>
-            ))}
-          </div>
-        ) : null}
         <div className="mt-2 flex justify-end gap-2 border-t border-border pt-2">
           <button type="button" className="rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60" onClick={() => setOpen(false)}>
             Cancel
