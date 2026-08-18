@@ -302,6 +302,7 @@ export async function runNativeChildProcess(
     let aborted = false;
     let operatorInterrupted = false;
     let stopSent = false;
+    let rawOutputTransport = false;
     let settled = false;
     let stdout = "";
     let stderr = "";
@@ -406,6 +407,15 @@ export async function runNativeChildProcess(
       if (operatorInterrupted) return;
       queueOutput({ stream, data });
     };
+    // Agent Run output is byte-relayed on the host's dedicated fd 4/5
+    // channels. Keep accepting lifecycle output frames for older hosts, but
+    // consume the dedicated channels so large writes cannot fill lifecycle.
+    rawStdout.on("data", (chunk: Buffer | string) => {
+      if (rawOutputTransport) appendOutput("stdout", String(chunk));
+    });
+    rawStderr.on("data", (chunk: Buffer | string) => {
+      if (rawOutputTransport) appendOutput("stderr", String(chunk));
+    });
     const send = (message: Record<string, unknown>) => {
       if (commandInput.destroyed || commandInput.writableEnded) return false;
       return commandInput.write(`${JSON.stringify(message)}\n`);
@@ -508,6 +518,7 @@ export async function runNativeChildProcess(
           return;
         }
         accepted = true;
+        rawOutputTransport = frame.outputTransport === "raw";
         outputQueue.push(...pendingOutput.splice(0));
         void drainOutput();
         return;

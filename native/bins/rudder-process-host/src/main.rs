@@ -698,7 +698,7 @@ fn main() {
                 }
                 send(
                     &lifecycle,
-                    json!({"type":"accepted","ownerToken":owner_token,"mode":"process"}),
+                    json!({"type":"accepted","ownerToken":owner_token,"mode":"process","outputTransport":"raw"}),
                 );
                 match spawn_child(
                     executable,
@@ -715,7 +715,7 @@ fn main() {
                     None,
                     "agent_run_attempt",
                     grace,
-                    true,
+                    false,
                 ) {
                     Ok((active_child, pid, pgid)) => {
                         active = Some(active_child);
