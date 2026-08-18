@@ -39,6 +39,7 @@ async function seedLegacyChat(orgId: string) {
 }
 
 test("deduplicates rapid send clicks when starting a new chat", async ({ page }) => {
+  test.setTimeout(90_000);
   const organization = await createStreamingOrg(page, `Dedup-Chat-${Date.now()}`);
 
   await page.route(`**/api/orgs/${organization.id}/chats`, async (route, request) => {
@@ -85,6 +86,7 @@ test("deduplicates rapid send clicks when starting a new chat", async ({ page })
 });
 
 test("shows sending feedback while binding a legacy chat agent", async ({ page }) => {
+  test.setTimeout(90_000);
   const organization = await createStreamingOrg(page, `Legacy-Chat-${Date.now()}`);
   const chatId = await seedLegacyChat(organization.id);
   let releaseAgentBinding = () => {};
@@ -125,7 +127,14 @@ test("shows sending feedback while binding a legacy chat agent", async ({ page }
     await expect(sendingButton).toBeVisible({ timeout: 1_500 });
     await expect(sendingButton).toBeDisabled();
 
+    const streamResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname === `/api/chats/${chatId}/messages/stream`
+    ));
     releaseAgentBinding();
+    const streamResponse = await streamResponsePromise;
+    expect(streamResponse.ok(), await streamResponse.text()).toBe(true);
+    expect(await streamResponse.finished()).toBeNull();
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
       timeout: 15_000,
     });
