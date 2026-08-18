@@ -423,18 +423,17 @@ fn collect_until_quiet_with_hook(
 ) -> EventBatch {
     let mut batch = EventBatch::default();
     let mut deadline = std::time::Instant::now() + debounce;
+    let mut stop_requested = false;
     loop {
-        if let Some(stop) = stop {
+        if !stop_requested && let Some(stop) = stop {
             match stop.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => {
-                    batch.stopped = true;
-                    return batch;
-                }
+                Ok(()) | Err(TryRecvError::Disconnected) => stop_requested = true,
                 Err(TryRecvError::Empty) => {}
             }
         }
         let wait = deadline.saturating_duration_since(std::time::Instant::now());
         if wait.is_zero() {
+            batch.stopped = stop_requested;
             return batch;
         }
         if let Some(before_wait) = before_wait.as_deref_mut() {
@@ -444,23 +443,26 @@ fn collect_until_quiet_with_hook(
             Ok(WatchSignal::Event(event)) => {
                 if relevant_event(&event, output) {
                     batch.dirty = true;
-                    deadline = std::time::Instant::now() + debounce;
+                    if !stop_requested {
+                        deadline = std::time::Instant::now() + debounce;
+                    }
                 }
             }
             Ok(WatchSignal::Error) => {
                 batch.dirty = true;
                 batch.overflow = true;
-                deadline = std::time::Instant::now() + debounce;
+                if !stop_requested {
+                    deadline = std::time::Instant::now() + debounce;
+                }
             }
             Err(RecvTimeoutError::Timeout) => {
-                if let Some(stop) = stop {
+                if !stop_requested && let Some(stop) = stop {
                     match stop.try_recv() {
-                        Ok(()) | Err(TryRecvError::Disconnected) => {
-                            batch.stopped = true;
-                        }
+                        Ok(()) | Err(TryRecvError::Disconnected) => stop_requested = true,
                         Err(TryRecvError::Empty) => {}
                     }
                 }
+                batch.stopped = stop_requested;
                 return batch;
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -564,25 +566,24 @@ where
     let mut summary = build_manifest(root, output, limits)?;
     after_initial_build();
     loop {
-        let batch = collect_until_quiet(&event_receiver, output, debounce, None);
+        let batch = collect_until_quiet(&event_receiver, output, debounce, Some(&stop));
         if batch.disconnected {
             emit(ManifestState::Unavailable, Some(&summary));
             return Err(watch_disconnected());
         }
-        if batch.stopped {
+        if batch.dirty {
+            if batch.overflow {
+                emit(ManifestState::Overflow, Some(&summary));
+            }
+            summary = build_manifest(root, output, limits).map_err(|error| ManifestError {
+                code: error.code,
+                accepted: true,
+                source: error.source,
+            })?;
+        }
+        if batch.stopped || !batch.dirty {
             break;
         }
-        if !batch.dirty {
-            break;
-        }
-        if batch.overflow {
-            emit(ManifestState::Overflow, Some(&summary));
-        }
-        summary = build_manifest(root, output, limits).map_err(|error| ManifestError {
-            code: error.code,
-            accepted: true,
-            source: error.source,
-        })?;
     }
     emit(ManifestState::Ready, Some(&summary));
     loop {
