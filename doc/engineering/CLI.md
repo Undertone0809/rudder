@@ -372,13 +372,13 @@ Bad cases to avoid:
 ```sh
 pnpm rudder chat list --org-id <org-id> [--status active|resolved|archived|all] [--query text]
 pnpm rudder chat search "keyword" --org-id <org-id> [--scope all|title|summary|messages] [--snippet-chars 220]
-pnpm rudder chat get <chat-id>
-pnpm rudder chat messages <chat-id> [--limit 20] [--cursor <cursor>] [--include-transcript|--include-output] [--max-output-chars 1200]
-pnpm rudder chat transcript <chat-id> [--limit 20] [--cursor <cursor>] [--max-chars 1200]
-pnpm rudder chat read <chat-id> [--limit 20|--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200]
+pnpm rudder chat get <chat-id-or-cht-ref>
+pnpm rudder chat messages <chat-id-or-cht-ref> [--limit 20] [--cursor <cursor>] [--include-transcript|--include-output] [--max-output-chars 1200]
+pnpm rudder chat transcript <chat-id-or-cht-ref> [--limit 20] [--cursor <cursor>] [--max-chars 1200]
+pnpm rudder chat read <chat-id-or-cht-ref> [--limit 20|--turn-limit 20] [--cursor <cursor>] [--include-output] [--max-output-chars 1200]
 pnpm rudder chat create --org-id <org-id> [--title "..."] [--preferred-agent-id <agent-id>]
-pnpm rudder chat send <chat-id> --body "..."
-pnpm rudder chat archive <chat-id>
+pnpm rudder chat send <chat-id-or-cht-ref> --body "..."
+pnpm rudder chat archive <chat-id-or-cht-ref>
 ```
 
 Chat search calls the server-side chat query and prints bounded snippets by
@@ -386,6 +386,11 @@ default. Long conversations are not dumped by `list` or `search`; use
 `messages`, `read`, or `transcript` explicitly. These commands return
 `page.nextCursor` in `--json` output for bounded follow-up reads; transcript
 entries are omitted unless `--include-transcript` / `--include-output` is set.
+Chat responses include `shortRef` when available. Chat commands accept the
+organization-scoped `cht_<uuid-prefix>` value or the full conversation UUID;
+use the full UUID when a short ref is ambiguous. Human-readable `chat list` and
+`chat search` output prefers `shortRef`; `--json` retains both `id` and
+`shortRef`, and `--full-ids` preserves the durable UUID value in `id`.
 
 When authenticated as an agent, `chat send` appends a direct agent-authored
 message to the conversation for the operator to read. It does not create an

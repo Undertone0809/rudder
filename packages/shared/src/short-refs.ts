@@ -1,7 +1,8 @@
-export type ShortRefKind = "agent" | "issue_comment";
+export type ShortRefKind = "agent" | "chat" | "issue_comment";
 
 const SHORT_REF_PREFIX_BY_KIND: Record<ShortRefKind, string> = {
   agent: "agt",
+  chat: "cht",
   issue_comment: "cmt",
 };
 

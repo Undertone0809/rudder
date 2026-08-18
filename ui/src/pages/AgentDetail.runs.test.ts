@@ -98,6 +98,27 @@ describe("getRunListSummary", () => {
     ]);
   });
 
+  it("shows compact references for UUID-backed chat run facts while preserving full link targets", () => {
+    const conversationId = "14ff96a7-2518-456a-8aae-480360f0d9aa";
+    const messageId = "4794477d-18f8-4b01-8d52-91b23df56039";
+    expect(runDetailFacts(run({
+      invocationSource: "chat",
+      triggerDetail: "chat_assistant_reply_stream",
+      chatConversationId: conversationId,
+      contextSnapshot: {
+        targetType: "chat_conversation",
+        targetId: conversationId,
+        assistantMessageId: messageId,
+      },
+    }))).toEqual([
+      { label: "Scene", value: "Chat" },
+      { label: "Target", value: "Chat conversation" },
+      { label: "Target ID", value: "cht_14ff96a7", title: conversationId },
+      { label: "Conversation", value: "cht_14ff96a7", title: conversationId, href: `/messenger/chat/${conversationId}` },
+      { label: "Message", value: "4794477d18f8", title: messageId },
+    ]);
+  });
+
   it("marks Feishu-sourced chat runs in the run detail facts", () => {
     expect(runDetailFacts(run({
       invocationSource: "chat",

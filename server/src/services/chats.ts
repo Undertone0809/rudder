@@ -16,7 +16,7 @@ import {
   chatQueuedMessages,
   organizations
 } from "@rudderhq/db";
-import { sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { parseShortRef, sanitizeChatStructuredPayload, shortRefFor, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -104,6 +104,14 @@ import {
   completeProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,
 } from "./product-analytics.js";
+
+function chatShortRef(id: string): string | null {
+  try {
+    return shortRefFor("chat", id);
+  } catch {
+    return null;
+  }
+}
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -490,8 +498,10 @@ export function chatService(db: Db) {
       const sourceMetadata = sourceMetadataByConversationId.get(row.id) ?? null;
       const isExternalBound = Boolean(sourceMetadata);
       const unreadCount = isExternalBound ? 0 : (unreadCountsByConversationId.get(row.id) ?? 0);
+      const shortRef = chatShortRef(row.id);
       return {
         ...row,
+        ...(shortRef ? { shortRef } : {}),
         primaryIssue: row.primaryIssueId ? (primaryIssuesById.get(row.primaryIssueId) ?? null) : null,
         latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
         latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
@@ -560,8 +570,10 @@ export function chatService(db: Db) {
       const sourceMetadata = sourceMetadataByConversationId.get(row.id) ?? null;
       const isExternalBound = Boolean(sourceMetadata);
       const unreadCount = isExternalBound ? 0 : (unreadCountsByConversationId.get(row.id) ?? 0);
+      const shortRef = chatShortRef(row.id);
       return {
         ...row,
+        ...(shortRef ? { shortRef } : {}),
         latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
         latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
         userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
@@ -3705,6 +3717,30 @@ export function chatService(db: Db) {
       return conversation ?? null;
   }
 
+  async function resolveByReference(reference: string, orgIds?: string[]) {
+    const parsed = parseShortRef(reference);
+    if (parsed?.kind !== "chat" || (orgIds !== undefined && orgIds.length === 0)) {
+      return { conversation: null, ambiguous: false };
+    }
+
+    const prefixFilter = sql<boolean>`replace(lower(${chatConversations.id}::text), '-', '') like ${`${parsed.prefix}%`}`;
+    const scopeFilter = orgIds === undefined
+      ? prefixFilter
+      : and(prefixFilter, inArray(chatConversations.orgId, orgIds));
+    const matches = await db
+      .select({ id: chatConversations.id })
+      .from(chatConversations)
+      .where(scopeFilter)
+      .limit(2);
+    if (matches.length !== 1) {
+      return { conversation: null, ambiguous: matches.length > 1 };
+    }
+    return {
+      conversation: await getById(matches[0].id),
+      ambiguous: false,
+    };
+  }
+
   async function create(orgId: string, data: CreateChatInput) {
     const created = await createChatConversation(db, orgId, data);
     return getById(created.id);
@@ -5160,6 +5196,7 @@ export function chatService(db: Db) {
     listPinnedSummaries,
     listSummariesByIds,
     getById,
+    resolveByReference,
     create,
     createWithInitialMessage,
     update,

@@ -129,13 +129,13 @@ operating-practices guide for operating behavior:
 | `rudder_automation_run` | `rudder automation run <automation-id>` | Trigger a manual automation run. | yes | no | no | attached when available |
 | `rudder_chat_list` | `rudder chat list --org-id <id>` | List chat conversations without dumping full message history. | no | required | no | no |
 | `rudder_chat_search` | `rudder chat search <query> --org-id <id>` | Search chats with bounded snippets and optional scope filtering. | no | required | no | no |
-| `rudder_chat_get` | `rudder chat get <chat-id>` | Read one chat conversation record. | no | no | no | no |
-| `rudder_chat_messages` | `rudder chat messages <chat-id> [--limit <n>] [--cursor <cursor>] [--include-transcript]` | Read bounded chat messages with page cursors; transcript output is omitted unless requested. | no | no | no | no |
-| `rudder_chat_transcript` | `rudder chat transcript <chat-id> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]` | Read paginated chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
-| `rudder_chat_read` | `rudder chat read <chat-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read a bounded recent-message snapshot for one chat with page cursors. | no | no | no | no |
+| `rudder_chat_get` | `rudder chat get <chat-id-or-cht-ref>` | Read one chat conversation record. | no | no | no | no |
+| `rudder_chat_messages` | `rudder chat messages <chat-id-or-cht-ref> [--limit <n>] [--cursor <cursor>] [--include-transcript]` | Read bounded chat messages with page cursors; transcript output is omitted unless requested. | no | no | no | no |
+| `rudder_chat_transcript` | `rudder chat transcript <chat-id-or-cht-ref> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]` | Read paginated chat messages with assistant transcript entries clipped in human output. | no | no | no | no |
+| `rudder_chat_read` | `rudder chat read <chat-id-or-cht-ref> [--turn-limit <n>] [--cursor <cursor>] [--include-output]` | Read a bounded recent-message snapshot for one chat with page cursors. | no | no | no | no |
 | `rudder_chat_create` | `rudder chat create --org-id <id> --body <text>` | Create a chat conversation with its first message. | yes | required | no | attached when available |
-| `rudder_chat_send` | `rudder chat send <chat-id> --body <text>` | Send an agent-authored message directly to the operator in a chat. | yes | no | required | attached when available |
-| `rudder_chat_archive` | `rudder chat archive <chat-id>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
+| `rudder_chat_send` | `rudder chat send <chat-id-or-cht-ref> --body <text>` | Send an agent-authored message directly to the operator in a chat. | yes | no | required | attached when available |
+| `rudder_chat_archive` | `rudder chat archive <chat-id-or-cht-ref>` | Archive a chat conversation without deleting it. | yes | no | no | attached when available |
 | `rudder_runs_list` | `rudder runs list --org-id <id> [--used-skill <skill>] [--loaded-skill <skill>] [--cursor <cursor>] [--full]` | List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility. | no | required | no | no |
 | `rudder_runs_by_skill` | `rudder runs by-skill <skill> --org-id <id> [--evidence <used-or-loaded>] [--cursor <cursor>] [--full]` | Build a paginated skill evidence packet from lightweight run summaries; use --full only for legacy full-row compatibility. | no | required | no | no |
 | `rudder_runs_get` | `rudder runs get <run-id> [--full]` | Read one bounded run summary; use --full only from a direct trusted CLI for raw detail. | no | no | no | no |
@@ -157,6 +157,8 @@ Operating rules live in [ownership, checkout, and wake scope](operating-practice
 Issue comment and close-out commands accept comment bodies only from files or stdin. For multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.
 
 Issue comment responses include `shortRef` when available. `rudder issue comments get <issue> <comment-id-or-cmt-ref>` accepts a full comment UUID or `cmt_<uuid-prefix>`, and `rudder issue comments list <issue> --after <comment-id-or-cmt-ref>` accepts the same forms for the pagination anchor. Use the full UUID when a short ref is ambiguous within the issue.
+
+Chat conversation responses include `shortRef` when available. Chat read and mutation commands accept the organization-scoped `cht_<uuid-prefix>` value or the full conversation UUID. Human-readable `chat list` and `chat search` output prefers `shortRef`; `--json` retains both `id` and `shortRef`, and `--full-ids` preserves the durable UUID value in `id`. Use the full UUID when a short ref is ambiguous.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.
 

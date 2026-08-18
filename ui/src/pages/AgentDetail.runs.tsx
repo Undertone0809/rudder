@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/popover";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import {
+  shortRefFor,
   toAgentRun,
   type AgentRunScene,
   type AgentRunTargetType,
@@ -48,6 +49,7 @@ import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
 import { createChatResponseAnnotationState, validateChatResponseAnnotationAdd } from "../lib/chat-response-annotations";
+import { formatShortUuid } from "../lib/display-path";
 import { queryKeys } from "../lib/queryKeys";
 import {
   GENERIC_RUN_FAILURE_BODY,
@@ -103,6 +105,16 @@ export function getRunListSummary(run: HeartbeatRun): string {
   return failureDisplay?.body ?? "";
 }
 
+const UUID_VALUE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function compactRunFactId(value: string) {
+  return UUID_VALUE_PATTERN.test(value) ? formatShortUuid(value) : value;
+}
+
+function compactChatReference(value: string) {
+  return UUID_VALUE_PATTERN.test(value) ? shortRefFor("chat", value) : value;
+}
+
 const runSceneLabels: Record<AgentRunScene, string> = {
   issue: "Issue",
   chat: "Chat",
@@ -122,7 +134,7 @@ const runTargetLabels: Record<AgentRunTargetType, string> = {
 
 export function runDetailFacts(run: HeartbeatRun) {
   const agentRun = toAgentRun(run);
-  const facts: Array<{ label: string; value: string; href?: string; badge?: boolean }> = [
+  const facts: Array<{ label: string; value: string; title?: string; href?: string; badge?: boolean }> = [
     { label: "Scene", value: runSceneLabels[agentRun.scene] },
     { label: "Target", value: runTargetLabels[agentRun.targetType] },
   ];
@@ -131,19 +143,28 @@ export function runDetailFacts(run: HeartbeatRun) {
     facts.push({ label: "Source", value: sourceBadge.label, badge: true });
   }
   if (agentRun.targetId) {
+    const value = agentRun.targetType === "chat_conversation"
+      ? compactChatReference(agentRun.targetId)
+      : compactRunFactId(agentRun.targetId);
     facts.push({
       label: "Target ID",
-      value: agentRun.targetId,
+      value,
+      ...(value !== agentRun.targetId ? { title: agentRun.targetId } : {}),
       href: agentRun.targetType === "issue" ? `/issues/${agentRun.targetId}` : undefined,
     });
   }
   if (agentRun.automationId) {
-    facts.push({ label: "Automation", value: agentRun.automationId, href: `/automations/${agentRun.automationId}` });
+    const value = compactRunFactId(agentRun.automationId);
+    facts.push({ label: "Automation", value, ...(value !== agentRun.automationId ? { title: agentRun.automationId } : {}), href: `/automations/${agentRun.automationId}` });
   }
   if (agentRun.conversationId) {
-    facts.push({ label: "Conversation", value: agentRun.conversationId, href: `/messenger/chat/${agentRun.conversationId}` });
+    const value = compactChatReference(agentRun.conversationId);
+    facts.push({ label: "Conversation", value, ...(value !== agentRun.conversationId ? { title: agentRun.conversationId } : {}), href: `/messenger/chat/${agentRun.conversationId}` });
   }
-  if (agentRun.messageId) facts.push({ label: "Message", value: agentRun.messageId });
+  if (agentRun.messageId) {
+    const value = compactRunFactId(agentRun.messageId);
+    facts.push({ label: "Message", value, ...(value !== agentRun.messageId ? { title: agentRun.messageId } : {}) });
+  }
   return facts;
 }
 
@@ -1094,18 +1115,18 @@ export function RunDetail({
                   <div key={`${fact.label}:${fact.value}`} className="min-w-0">
                     <div className="text-[11px] text-muted-foreground">{fact.label}</div>
                     {fact.href ? (
-                      <Link className="block truncate font-medium text-foreground underline-offset-2 hover:underline" title={fact.value} to={fact.href}>
+                      <Link className="block truncate font-medium text-foreground underline-offset-2 hover:underline" title={fact.title ?? fact.value} to={fact.href}>
                         {fact.value}
                       </Link>
                     ) : fact.badge ? (
                       <div
                         className="inline-flex max-w-full items-center rounded-[calc(var(--radius-sm)-2px)] border border-sky-500/35 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-sky-700 dark:text-sky-300"
-                        title={fact.value}
+                        title={fact.title ?? fact.value}
                       >
                         {fact.value}
                       </div>
                     ) : (
-                      <div className="truncate font-medium text-foreground" title={fact.value}>{fact.value}</div>
+                      <div className="truncate font-medium text-foreground" title={fact.title ?? fact.value}>{fact.value}</div>
                     )}
                   </div>
                 ))}

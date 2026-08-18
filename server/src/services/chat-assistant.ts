@@ -8,6 +8,7 @@ import type {
 import {
   createRudderInlineVisualStreamSuppressor,
   redactRudderInlineVisualSources,
+  shortRefFor,
   stripRudderInlineVisualPlacements,
 } from "@rudderhq/shared";
 import { randomUUID } from "node:crypto";
@@ -423,8 +424,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const resolved = await resolveConversationRuntime(conversation, {
       materializeMissingRuntimeSkills: false,
     });
+    let shortRef = conversation.shortRef;
+    if (!shortRef) {
+      try {
+        shortRef = shortRefFor("chat", conversation.id);
+      } catch {
+        shortRef = undefined;
+      }
+    }
     return {
       ...conversation,
+      ...(shortRef ? { shortRef } : {}),
       chatRuntime: resolved.descriptor,
     };
   }
