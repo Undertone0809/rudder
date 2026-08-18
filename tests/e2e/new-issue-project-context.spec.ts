@@ -139,7 +139,7 @@ test.describe("New issue project context", () => {
     await expect(dialog.getByRole("button", { name: project.name })).toBeVisible();
   });
 
-  test("does not preselect a goal from the selected project by default", async ({ page }) => {
+  test("hides goal selection and does not bind a goal when creating from a goal-linked project", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `New-Issue-No-Default-Goal-${Date.now()}`,
@@ -179,7 +179,8 @@ test.describe("New issue project context", () => {
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("button", { name: project.name })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Goal", exact: true })).toBeVisible();
+    await expect(dialog.getByText("Goal", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Goal", exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: goal.title, exact: true })).toHaveCount(0);
 
     const title = `No default goal issue ${Date.now()}`;
@@ -201,54 +202,6 @@ test.describe("New issue project context", () => {
 
     expect(createdIssue.projectId).toBe(project.id);
     expect(createdIssue.goalId).toBeNull();
-  });
-
-  test("creates an issue with a selected goal from the dialog", async ({ page }) => {
-    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
-      data: {
-        name: `New-Issue-Goal-${Date.now()}`,
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
-
-    const goalRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/goals`, {
-      data: {
-        title: "Launch goal visibility",
-        status: "active",
-        level: "team",
-      },
-    });
-    expect(goalRes.ok()).toBe(true);
-    const goal = await goalRes.json() as { id: string; title: string };
-
-    await page.goto(E2E_BASE_URL);
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-    }, organization.id);
-
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
-    await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
-
-    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Goal" }).click();
-    await page.getByRole("button", { name: goal.title, exact: true }).click();
-
-    const title = `Goal-linked issue ${Date.now()}`;
-    await dialog.getByPlaceholder("Issue title").fill(title);
-    const createResponse = page.waitForResponse((response) =>
-      response.request().method() === "POST"
-      && response.url().endsWith(`/api/orgs/${organization.id}/issues`)
-      && response.ok(),
-    );
-    await dialog.getByRole("button", { name: "Create Issue" }).click();
-    const createdIssue = await (await createResponse).json() as {
-      id: string;
-      goalId: string | null;
-    };
-
-    expect(createdIssue.goalId).toBe(goal.id);
   });
 
   test("keeps labels as a property chip when the organization has five labels", async ({ page }) => {

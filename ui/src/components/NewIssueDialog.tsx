@@ -27,7 +27,6 @@ import {
   Paperclip,
   Plus,
   Tag,
-  Target,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
@@ -35,7 +34,6 @@ import { agentsApi, type AgentRuntimeModel } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { authApi } from "../api/auth";
 import { ApiError } from "../api/client";
-import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
@@ -44,7 +42,6 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
-import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
@@ -256,6 +253,8 @@ export function NewIssueDialog() {
   const [assigneeValue, setAssigneeValue] = useState("");
   const [reviewerValue, setReviewerValue] = useState("");
   const [projectId, setProjectId] = useState("");
+  // Goal selection is temporarily hidden from Create Issue. Preserve explicit
+  // caller and draft context so sub-issue and draft continuity remain intact.
   const [goalId, setGoalId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
@@ -288,7 +287,6 @@ export function NewIssueDialog() {
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
-  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(effectiveCompanyId!),
@@ -301,14 +299,6 @@ export function NewIssueDialog() {
     queryFn: () => projectsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
-  const { data: goals } = useQuery({
-    queryKey: queryKeys.goals.list(effectiveCompanyId!),
-    queryFn: () => goalsApi.list(effectiveCompanyId!),
-    enabled: !!effectiveCompanyId && newIssueOpen && goalsEnabled,
-  });
-  useEffect(() => {
-    if (!goalsEnabled) setGoalId("");
-  }, [goalsEnabled]);
   const { data: allIssues } = useQuery({
     queryKey: queryKeys.issues.list(effectiveCompanyId!),
     queryFn: () => issuesApi.list(effectiveCompanyId!),
@@ -1114,7 +1104,6 @@ export function NewIssueDialog() {
     shouldShowCreateLabelOption,
   ]);
   const currentProject = orderedProjects.find((project) => project.id === projectId);
-  const currentGoal = (goals ?? []).find((goal) => goal.id === goalId) ?? null;
   const assigneeOptionsTitle =
     assigneeAdapterType === "claude_local"
       ? "Claude options"
@@ -1176,15 +1165,6 @@ export function NewIssueDialog() {
         searchText: project.description ?? "",
       })),
     [orderedProjects],
-  );
-  const goalOptions = useMemo<InlineEntityOption[]>(
-    () =>
-      (goals ?? []).map((goal) => ({
-        id: goal.id,
-        label: goal.title,
-        searchText: `${goal.title} ${goal.description ?? ""} ${goal.status}`,
-      })),
-    [goals],
   );
   const canSaveDraft = hasMeaningfulIssueDraft({
     title,
@@ -1518,7 +1498,7 @@ export function NewIssueDialog() {
             disabled={isCreatingOrRedirecting}
           >
             <div className="shrink-0 px-4 pb-3 pt-4">
-              <div className={cn("grid grid-cols-1 gap-2", goalsEnabled ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div className="min-w-0 space-y-1">
                   <div className="text-[11px] font-medium text-muted-foreground">Agent</div>
                   <InlineEntitySelector
@@ -1580,35 +1560,6 @@ export function NewIssueDialog() {
                     }
                   />
                 </div>
-                {goalsEnabled ? (
-                  <div className="min-w-0 space-y-1">
-                    <div className="text-[11px] font-medium text-muted-foreground">Goal</div>
-                    <InlineEntitySelector
-                      value={goalId}
-                      options={goalOptions}
-                      placeholder="No goal"
-                      disablePortal
-                      noneLabel="No goal"
-                      searchPlaceholder="Search goals..."
-                      emptyMessage="No goals found."
-                      variant="field"
-                      className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                      onChange={(value) => {
-                        if (!isCreatingOrRedirecting) setGoalId(value);
-                      }}
-                      renderTriggerValue={(option) =>
-                        option && currentGoal ? (
-                          <>
-                            <Target className="h-3 w-3 shrink-0 text-muted-foreground" />
-                            <span className="truncate">{option.label}</span>
-                          </>
-                        ) : (
-                          <span className="text-muted-foreground">No goal</span>
-                        )
-                      }
-                    />
-                  </div>
-                ) : null}
               </div>
             </div>
           </fieldset>
@@ -2000,48 +1951,6 @@ export function NewIssueDialog() {
               {labelPickerContent}
             </PopoverContent>
           </Popover>
-
-          {goalsEnabled ? <InlineEntitySelector
-            value={goalId}
-            options={goalOptions}
-            placeholder="Goal"
-            disablePortal
-            noneLabel="No goal"
-            searchPlaceholder="Search goals..."
-            emptyMessage="No goals found."
-            className={cn(
-              "border-border bg-transparent px-2 py-1 [font-size:0.75rem] hover:bg-accent/50",
-              currentGoal ? "text-foreground" : "text-muted-foreground",
-            )}
-            contentClassName="w-56"
-            onChange={setGoalId}
-            onConfirm={() => {
-              descriptionEditorRef.current?.focus();
-            }}
-            renderTriggerValue={(option) =>
-              option && currentGoal ? (
-                <>
-                  <Target className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <span className="max-w-40 truncate">{option.label}</span>
-                </>
-              ) : (
-                <>
-                  <Target className="h-3 w-3 shrink-0" />
-                  Goal
-                </>
-              )
-            }
-            renderOption={(option) =>
-              option.id ? (
-                <>
-                  <Target className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{option.label}</span>
-                </>
-              ) : (
-                <span className="truncate">{option.label}</span>
-              )
-            }
-          /> : null}
 
           <input
             ref={stageFileInputRef}
