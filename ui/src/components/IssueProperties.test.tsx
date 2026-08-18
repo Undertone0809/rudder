@@ -538,6 +538,31 @@ describe("IssueProperties", () => {
     expect(reviewerScrollRegion?.textContent).not.toContain("Me");
   });
 
+  it("does not show an indicator when the reviewer matches the assignee", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{ ...baseIssue, reviewerAgentId: baseIssue.assigneeAgentId }}
+          onUpdate={vi.fn()}
+          inline
+        />,
+      );
+    });
+
+    expect(container.textContent).not.toContain("Same as assignee");
+  });
+
   it("renders parent and sub-issues in the properties hierarchy section", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

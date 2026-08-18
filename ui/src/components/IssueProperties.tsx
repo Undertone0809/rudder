@@ -4,7 +4,7 @@ import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor 
 import { Link } from "@/lib/router";
 import type { Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -368,10 +368,6 @@ export function IssueProperties({
   const assigneeUserLabel = userLabel(issue.assigneeUserId);
   const reviewerUserLabel = userLabel(issue.reviewerUserId);
   const creatorUserLabel = userLabel(issue.createdByUserId);
-  const reviewerMatchesAssignee = Boolean(
-    (issue.reviewerAgentId && issue.reviewerAgentId === issue.assigneeAgentId) ||
-      (issue.reviewerUserId && issue.reviewerUserId === issue.assigneeUserId),
-  );
   const visibleGoals = useMemo(
     () => (goals ?? []).filter((goal) => {
       if (!goalSearch.trim()) return true;
@@ -995,12 +991,6 @@ export function IssueProperties({
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           rowAlign="start"
-          extra={reviewerMatchesAssignee ? (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <AlertTriangle className="h-3 w-3" />
-              Same as assignee
-            </span>
-          ) : undefined}
         >
           {reviewerContent}
         </PropertyPicker>

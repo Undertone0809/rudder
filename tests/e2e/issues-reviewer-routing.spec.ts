@@ -55,4 +55,40 @@ test.describe("Issue reviewer routing", () => {
     await expect(page.getByText("Review Bot", { exact: true })).toBeVisible();
     await expect(page.locator('[data-slot="agent-title-badge"]').filter({ hasText: "Chief Technology Officer" })).toBeVisible();
   });
+
+  test("does not show a duplicate-assignee indicator when reviewer and assignee match", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `Issue-Reviewer-Matching-Assignee-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Shared Owner Reviewer",
+        role: "engineer",
+        title: "Shared owner and reviewer",
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string; name: string };
+
+    const issueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Matching reviewer and assignee",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agent.id,
+        reviewerAgentId: agent.id,
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { identifier: string };
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues/${issue.identifier}`);
+    const properties = page.getByRole("region", { name: "Issue properties" });
+    await expect(properties).toBeVisible();
+    await expect(properties.getByText(agent.name, { exact: true })).toHaveCount(2);
+    await expect(properties.getByText("Same as assignee", { exact: true })).toHaveCount(0);
+  });
 });
