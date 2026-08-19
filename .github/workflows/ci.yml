@@ -236,6 +236,18 @@ jobs:
             sleep $((attempt * 10))
           done
 
+      - name: Stage Rust native binaries for Ubuntu verification
+        if: matrix.os == 'ubuntu-latest'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust native binaries for Ubuntu verification
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RUDDER_DESKTOP_TARGET_ARCH: x64
+        run: |
+          pnpm native:build
+          echo "RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
+
       - name: Product logic registry
         if: matrix.os == 'ubuntu-latest'
         run: pnpm product-logic:check
