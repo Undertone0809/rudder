@@ -279,7 +279,7 @@ describe("workspace backup service", () => {
       const outputDir = path.join(unzipRoot, "out");
       await fs.writeFile(archivePath, downloadContent);
       await unzipArchive(archivePath, outputDir);
-      const [rootFolderName] = await fs.readdir(outputDir);
+      const [rootFolderName] = (await fs.readdir(outputDir)).filter((name) => name !== ".rudder-backup");
       expect(rootFolderName).toBeTruthy();
       const extractedRoot = path.join(outputDir, rootFolderName!);
       await expect(fs.readFile(path.join(extractedRoot, "projects", "roadmap", "roadmap.md"), "utf8"))
