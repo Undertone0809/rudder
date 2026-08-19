@@ -491,7 +491,7 @@ describe("run intelligence routes", () => {
       },
       transcriptContext: {
         id: "step-1",
-        command: "rudder runs transcript 609695f1f90a --around-error step-1",
+      command: "rudder runs transcript run_609695f1 --around-error step-1",
       },
     });
   });

@@ -29,7 +29,7 @@ import {
   updateGoalSchema,
 } from "@rudderhq/shared";
 import { Router } from "express";
-import { badRequest, forbidden } from "../errors.js";
+import { badRequest, conflict, forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
   publicGoalActivity,
@@ -76,8 +76,14 @@ export function goalRoutes(db: Db) {
   }
 
   async function loadAuthorizedGoal(req: Parameters<typeof assertCompanyAccess>[0], id: string) {
-    if (!isUuidLike(id)) return null;
-    const goal = await svc.getById(id);
+    let resolvedId = id;
+    if (!isUuidLike(id) && req.actor.type === "agent" && req.actor.orgId) {
+      const resolved = await svc.resolveByReference(req.actor.orgId, id);
+      if (resolved.ambiguous) throw conflict("Goal short reference is ambiguous. Use a longer typed ref.");
+      resolvedId = resolved.goal?.id ?? id;
+    }
+    if (!isUuidLike(resolvedId)) return null;
+    const goal = await svc.getById(resolvedId);
     if (!goal) return null;
     assertCompanyAccess(req, goal.orgId);
     return goal;

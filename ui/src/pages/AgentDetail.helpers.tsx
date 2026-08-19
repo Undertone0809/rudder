@@ -1,6 +1,8 @@
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
 import {
+  isUuidLike,
+  shortRefFor,
   summarizeTokenUsage,
   tokenUsageCacheRatio,
   type AgentSkillEntry,
@@ -171,12 +173,61 @@ export function redactPathValue<T>(value: T, censorUsernameInLogs: boolean): T {
   return redactHomePathUserSegmentsInValue(value, { enabled: censorUsernameInLogs });
 }
 
-export function formatInvocationValueForDisplay(value: unknown, censorUsernameInLogs: boolean): string {
+const INVOCATION_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
+
+function invocationReferenceKind(key: string): Parameters<typeof shortRefFor>[0] | null {
+  const normalized = key.toLowerCase();
+  if (normalized.includes("agentid")) return "agent";
+  if (normalized.includes("chatid") || normalized.includes("conversationid")) return "chat";
+  if (normalized.includes("messageid")) return "message";
+  if (normalized.includes("runid")) return "run";
+  if (normalized.includes("projectid")) return "project";
+  if (normalized.includes("goalid")) return "goal";
+  if (normalized.includes("userid")) return "user";
+  if (normalized.includes("issueid")) return "issue";
+  if (normalized.includes("commentid")) return "issue_comment";
+  return null;
+}
+
+function compactInvocationUuid(value: string, key: string): string {
+  if (!isUuidLike(value)) return value;
+  const kind = invocationReferenceKind(key);
+  if (kind) return shortRefFor(kind, value);
+  return value.replaceAll("-", "").slice(0, 12).toLowerCase();
+}
+
+function compactInvocationValue(value: unknown, key = ""): unknown {
+  if (typeof value === "string") {
+    if (isUuidLike(value)) return compactInvocationUuid(value, key);
+    if (["path", "filepath", "href", "url", "logref", "ref"].includes(key.toLowerCase())) return value;
+    return value.replace(INVOCATION_UUID_RE, (uuid, offset, source) => {
+      const before = source[offset - 1] ?? "";
+      const after = source[offset + uuid.length] ?? "";
+      if (before === "/" || after === "/" || before === ":" || after === ":") return uuid;
+      return compactInvocationUuid(uuid, key);
+    });
+  }
+  if (Array.isArray(value)) return value.map((item) => compactInvocationValue(item, key));
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, compactInvocationValue(childValue, childKey)]));
+}
+
+export function formatInvocationValueForCopy(value: unknown, censorUsernameInLogs: boolean): string {
   if (typeof value === "string") return redactPathText(value, censorUsernameInLogs);
   try {
     return JSON.stringify(redactPathValue(value, censorUsernameInLogs), null, 2);
   } catch {
     return redactPathText(String(value), censorUsernameInLogs);
+  }
+}
+
+export function formatInvocationValueForDisplay(value: unknown, censorUsernameInLogs: boolean): string {
+  const compacted = compactInvocationValue(value);
+  if (typeof compacted === "string") return redactPathText(compacted, censorUsernameInLogs);
+  try {
+    return JSON.stringify(redactPathValue(compacted, censorUsernameInLogs), null, 2);
+  } catch {
+    return redactPathText(String(compacted), censorUsernameInLogs);
   }
 }
 

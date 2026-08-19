@@ -171,6 +171,12 @@ test.describe("Agent detail chat run context", () => {
 
     const card = page.getByTestId("run-chat-context-card");
     await expect(card).toBeVisible({ timeout: 15_000 });
+    const shortRunRef = `run_${firstRunId.replaceAll("-", "").slice(0, 8)}`;
+    const shortChatRef = `cht_${conversationId.replaceAll("-", "").slice(0, 8)}`;
+    await expect(page.getByText(shortRunRef, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(shortChatRef, { exact: true }).first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(firstRunId);
+    await expect(page.locator("body")).not.toContainText(conversationId);
     await expect(card.getByRole("link", { name: "Open conversation" })).toBeVisible();
     await expect(card.getByText("Here is the full list of enabled skills.").first()).toBeVisible();
     await expect(card.getByText("Grouped by source across bundled, user, and project skills.")).toBeVisible();

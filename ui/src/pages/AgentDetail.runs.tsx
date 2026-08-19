@@ -49,7 +49,6 @@ import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
 import { createChatResponseAnnotationState, validateChatResponseAnnotationAdd } from "../lib/chat-response-annotations";
-import { formatShortUuid } from "../lib/display-path";
 import { queryKeys } from "../lib/queryKeys";
 import {
   GENERIC_RUN_FAILURE_BODY,
@@ -108,7 +107,15 @@ export function getRunListSummary(run: HeartbeatRun): string {
 const UUID_VALUE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function compactRunFactId(value: string) {
-  return UUID_VALUE_PATTERN.test(value) ? formatShortUuid(value) : value;
+  return UUID_VALUE_PATTERN.test(value) ? shortRefFor("run", value) : value;
+}
+
+function compactGenericReference(value: string) {
+  return UUID_VALUE_PATTERN.test(value) ? value.replaceAll("-", "").slice(0, 12).toLowerCase() : value;
+}
+
+function compactMessageReference(value: string) {
+  return UUID_VALUE_PATTERN.test(value) ? shortRefFor("message", value) : value;
 }
 
 function compactChatReference(value: string) {
@@ -145,7 +152,11 @@ export function runDetailFacts(run: HeartbeatRun) {
   if (agentRun.targetId) {
     const value = agentRun.targetType === "chat_conversation"
       ? compactChatReference(agentRun.targetId)
-      : compactRunFactId(agentRun.targetId);
+      : agentRun.targetType === "chat_message"
+        ? compactMessageReference(agentRun.targetId)
+        : agentRun.targetType === "issue"
+          ? (UUID_VALUE_PATTERN.test(agentRun.targetId) ? shortRefFor("issue", agentRun.targetId) : agentRun.targetId)
+          : compactGenericReference(agentRun.targetId);
     facts.push({
       label: "Target ID",
       value,
@@ -154,7 +165,7 @@ export function runDetailFacts(run: HeartbeatRun) {
     });
   }
   if (agentRun.automationId) {
-    const value = compactRunFactId(agentRun.automationId);
+    const value = compactGenericReference(agentRun.automationId);
     facts.push({ label: "Automation", value, ...(value !== agentRun.automationId ? { title: agentRun.automationId } : {}), href: `/automations/${agentRun.automationId}` });
   }
   if (agentRun.conversationId) {
@@ -162,7 +173,7 @@ export function runDetailFacts(run: HeartbeatRun) {
     facts.push({ label: "Conversation", value, ...(value !== agentRun.conversationId ? { title: agentRun.conversationId } : {}), href: `/messenger/chat/${agentRun.conversationId}` });
   }
   if (agentRun.messageId) {
-    const value = compactRunFactId(agentRun.messageId);
+    const value = compactMessageReference(agentRun.messageId);
     facts.push({ label: "Message", value, ...(value !== agentRun.messageId ? { title: agentRun.messageId } : {}) });
   }
   return facts;
@@ -265,7 +276,7 @@ export function RunListItem({
   const StatusIcon = statusInfo.icon;
   const metrics = runMetrics(run);
   const summary = getRunListSummary(run);
-  const runLabel = run.id.slice(0, 8);
+  const runLabel = run.shortRef ?? compactRunFactId(run.id);
   const runReason = describeRunReason(run);
   const destination = appendRunSearchParams(
     isSelected ? `/agents/${agentId}/runs` : `/agents/${agentId}/runs/${run.id}`,
@@ -1224,7 +1235,7 @@ export function RunDetail({
                   <span className="text-muted-foreground w-12 shrink-0">Run ID</span>
                   <CopyText
                     text={run.id}
-                    ariaLabel={`Copy run ID ${run.id.slice(0, 8)}`}
+                    ariaLabel={`Copy run ID ${run.shortRef ?? compactRunFactId(run.id)}`}
                     title="Copy run ID"
                     containerClassName="min-w-0 max-w-full"
                     className="block min-w-0 break-all text-left font-mono"

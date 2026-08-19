@@ -113,6 +113,14 @@ function chatShortRef(id: string): string | null {
   }
 }
 
+function messageShortRef(id: string): string | null {
+  try {
+    return shortRefFor("message", id);
+  } catch {
+    return null;
+  }
+}
+
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
 type MessageRow = typeof chatMessages.$inferSelect;
@@ -3521,6 +3529,7 @@ export function chatService(db: Db) {
       const structuredPayload = effectiveStructuredPayload(row);
       return {
         ...row,
+        ...(messageShortRef(row.id) ? { shortRef: messageShortRef(row.id) } : {}),
         generationId,
         generationTerminalReason: generationId ? (generationsById.get(generationId)?.terminalReason ?? null) : null,
         structuredPayload: stripChatMetadataFromPayload(structuredPayload),
@@ -4280,6 +4289,7 @@ export function chatService(db: Db) {
       ]);
       return {
         messageId: row.id,
+        messageRef: messageShortRef(row.id),
         transcript: selectChatTranscript({
           ledger: generation.transcriptByMessageId.get(row.id),
           detached: detached.get(row.id),

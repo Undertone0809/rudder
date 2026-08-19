@@ -115,7 +115,7 @@ describe("getRunListSummary", () => {
       { label: "Target", value: "Chat conversation" },
       { label: "Target ID", value: "cht_14ff96a7", title: conversationId },
       { label: "Conversation", value: "cht_14ff96a7", title: conversationId, href: `/messenger/chat/${conversationId}` },
-      { label: "Message", value: "4794477d18f8", title: messageId },
+      { label: "Message", value: "msg_4794477d", title: messageId },
     ]);
   });
 

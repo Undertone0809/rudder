@@ -27,6 +27,7 @@ import { Link, Navigate, useBeforeUnload, useNavigate, useParams, useSearchParam
 import {
   getBundledRudderSkillSlug,
   isUuidLike,
+  shortRefFor,
   type Agent,
   type AgentDetail as AgentDetailRecord,
   type AgentSkillAnalytics,
@@ -1085,7 +1086,7 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
         <div className="flex items-center gap-2">
           <StatusIcon className={cn("h-3.5 w-3.5", statusInfo.color, run.status === "running" && "animate-spin")} />
           <StatusBadge status={run.status} />
-          <span className="font-mono text-xs text-muted-foreground">{run.id.slice(0, 8)}</span>
+          <span className="font-mono text-xs text-muted-foreground">{run.shortRef ?? (isUuidLike(run.id) ? shortRefFor("run", run.id) : run.id.slice(0, 8))}</span>
           <span className={cn(
             "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
             runReasonBadgeClassName(runReason.tone)
@@ -1372,7 +1373,7 @@ function CostsSection({
               const showInputLabel = shouldShowInlineTokenLabel(metrics.uncachedInput, maxTokens);
               const showCachedLabel = shouldShowInlineTokenLabel(metrics.cached, maxTokens);
               const showOutputLabel = shouldShowInlineTokenLabel(metrics.output, maxTokens);
-              const runLabel = run.id.slice(0, 8);
+              const runLabel = run.shortRef ?? (isUuidLike(run.id) ? shortRefFor("run", run.id) : run.id.slice(0, 8));
               const costLabel = formatRunCostUsd(metrics.cost);
               const accessibleLabel = `Run ${runLabel} cost and token usage: ${formatExactTokenLabel(totalTokens)} total, ${formatExactTokenLabel(metrics.promptTokens)} prompt input, ${formatExactTokenLabel(metrics.uncachedInput)} uncached input, ${formatExactTokenLabel(metrics.cached)} cached input, ${formatExactTokenLabel(metrics.output)} output, ${costLabel} cost`;
 

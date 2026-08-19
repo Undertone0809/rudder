@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
+  formatCliAgentId,
   formatCliRunId,
   handleCommandError,
   printOutput,
@@ -641,7 +642,7 @@ function formatSkillRunReport(report: SkillRunReport) {
     `skill=${report.skill.query} evidence=${report.skill.evidenceType} total=${report.summary.total} succeeded=${report.summary.succeeded} failed=${report.summary.failed} cancelled=${report.summary.cancelled} timedOut=${report.summary.timedOut}`,
   ];
   if (report.summary.agents.length > 0) {
-    lines.push(`agents=${report.summary.agents.map((agent) => `${agent.name ?? agent.id}:${agent.count}`).join(", ")}`);
+    lines.push(`agents=${report.summary.agents.map((agent) => `${agent.name ?? formatCliAgentId(agent.id)}:${agent.count}`).join(", ")}`);
   }
   if (report.summary.issues.length > 0) {
     lines.push(`issues=${report.summary.issues.map((issue) => `${issue.identifier ?? issue.id}:${issue.count}`).join(", ")}`);
@@ -677,7 +678,7 @@ function formatInlineSkillRun(row: RunListRow) {
   return [
     `id=${runId}`,
     `status=${runStatusOf(row)}`,
-    `agent=${row.agentName ?? runAgentIdOf(row)}`,
+    `agent=${row.agentName ?? formatCliAgentId(runAgentIdOf(row))}`,
     `issue=${issue}`,
     `runtime=${runRuntimeOf(row)}`,
     `createdAt=${runCreatedAtOf(row)}`,

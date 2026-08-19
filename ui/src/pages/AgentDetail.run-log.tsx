@@ -39,7 +39,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { chatTranscriptEntriesToRunTranscriptEntries, heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries, resolveRunChatTranscriptTarget } from "../lib/run-detail-events";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
-import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
+import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
 
 export function mergeRunEvents(
   currentEvents: HeartbeatRunEvent[],
@@ -778,7 +778,7 @@ export function LogViewer({
                   <div className="mb-1 text-xs text-muted-foreground">Agent Instruction Stack</div>
                   <div className="relative">
                     <CopyText
-                      text={invocationPromptText}
+                      text={formatInvocationValueForCopy(invocationAgentInstructionStack, censorUsernameInLogs)}
                       ariaLabel="Copy agent instruction stack"
                       title="Copy agent instruction stack"
                       containerClassName="absolute right-2 top-2"
@@ -797,7 +797,7 @@ export function LogViewer({
                 <div>
                   <div className="mb-1 text-xs text-muted-foreground">Context</div>
                   <pre className="rounded-md bg-neutral-100 p-2 text-xs whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
-                    {JSON.stringify(redactPathValue(adapterInvokePayload.context, censorUsernameInLogs), null, 2)}
+                    {formatInvocationValueForDisplay(adapterInvokePayload.context, censorUsernameInLogs)}
                   </pre>
                 </div>
               )}

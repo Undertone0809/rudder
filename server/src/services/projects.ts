@@ -6,6 +6,8 @@ import {
   deriveProjectUrlKey,
   isUuidLike,
   normalizeProjectUrlKey,
+  parseShortRef,
+  shortRefFor,
   type CreateProjectInlineResourceInput,
   type ProjectCodebase,
   type ProjectExecutionWorkspacePolicy,
@@ -75,6 +77,14 @@ interface ResolveProjectNameOptions {
   excludeProjectId?: string | null;
 }
 
+function safeShortRef(kind: "goal" | "project", id: string): string | undefined {
+  try {
+    return shortRefFor(kind, id);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Batch-load goal refs for a set of projects. */
 async function attachGoals(db: Db, rows: ProjectRow[]): Promise<ProjectWithGoals[]> {
   if (rows.length === 0) return [];
@@ -99,13 +109,14 @@ async function attachGoals(db: Db, rows: ProjectRow[]): Promise<ProjectWithGoals
       arr = [];
       map.set(link.projectId, arr);
     }
-    arr.push({ id: link.goalId, title: link.goalTitle });
+    arr.push({ id: link.goalId, ...(safeShortRef("goal", link.goalId) ? { shortRef: safeShortRef("goal", link.goalId) } : {}), title: link.goalTitle });
   }
 
   return rows.map((r) => {
     const g = map.get(r.id) ?? [];
     return {
       ...r,
+      ...(safeShortRef("project", r.id) ? { shortRef: safeShortRef("project", r.id) } : {}),
       icon: r.icon ?? DEFAULT_PROJECT_ICON,
       urlKey: deriveProjectUrlKey(r.name, r.id),
       goalIds: g.map((x) => x.id),
@@ -980,6 +991,23 @@ export function projectService(db: Db) {
           project: { id: row.id, orgId: row.orgId, urlKey: deriveProjectUrlKey(row.name, row.id) },
           ambiguous: false,
         } as const;
+      }
+
+      const shortRef = parseShortRef(raw);
+      if (shortRef?.kind === "project") {
+        const rows = await db
+          .select({ id: projects.id, orgId: projects.orgId, name: projects.name })
+          .from(projects)
+          .where(eq(projects.orgId, orgId));
+        const matches = rows.filter((row) => row.id.replaceAll("-", "").toLowerCase().startsWith(shortRef.prefix));
+        if (matches.length === 1) {
+          const match = matches[0]!;
+          return {
+            project: { id: match.id, orgId: match.orgId, urlKey: deriveProjectUrlKey(match.name, match.id) },
+            ambiguous: false,
+          } as const;
+        }
+        return { project: null, ambiguous: matches.length > 1 } as const;
       }
 
       const urlKey = normalizeProjectUrlKey(raw);

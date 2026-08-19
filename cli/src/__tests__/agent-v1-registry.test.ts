@@ -56,6 +56,7 @@ describe("agent-v1 registry", () => {
       "goal.list",
       "goal.context",
       "goal.progress",
+      "goal.checkpoint",
       "goal.change.propose",
       "goal.result.propose",
       "issue.get",
@@ -171,7 +172,7 @@ describe("agent-v1 registry", () => {
     const chatSend = manifest.capabilities.find((entry) => entry.id === "chat.send");
 
     expect(chatSend).toMatchObject({
-      command: "rudder chat send <chat-id> --body <text>",
+      command: "rudder chat send <chat-id-or-cht-ref> --body <text>",
       description: "Send an agent-authored message directly to the operator in a chat.",
       mutating: true,
       requiresAgentId: true,
@@ -183,7 +184,7 @@ describe("agent-v1 registry", () => {
     const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
     const byId = new Map(manifest.capabilities.map((entry) => [entry.id, entry]));
 
-    for (const id of ["goal.progress", "goal.change.propose", "goal.result.propose"]) {
+    for (const id of ["goal.progress", "goal.checkpoint", "goal.change.propose", "goal.result.propose"]) {
       expect(byId.get(id)).toMatchObject({
         category: "goal",
         mutating: true,

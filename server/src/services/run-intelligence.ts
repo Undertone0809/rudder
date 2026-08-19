@@ -12,6 +12,7 @@ import {
 } from "@rudderhq/run-intelligence-core";
 import {
   isUuidLike,
+  shortRefFor,
   summarizeTokenUsage,
   toHeartbeatRun,
   type HeartbeatRun,
@@ -739,6 +740,7 @@ export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Pr
 
     return {
       id: row.id,
+      shortRef: shortRefFor("run", row.id),
       orgId: row.orgId,
       orgName: row.orgName,
       agentId: row.agentId,

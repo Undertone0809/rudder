@@ -210,6 +210,7 @@ export function createProgram(): Command {
     .option("--trigger <trigger>", "Trigger detail (manual | ping | callback | system)", "manual")
     .option("--timeout-ms <ms>", "Max time to wait before giving up", "0")
     .option("--json", "Output raw JSON where applicable")
+    .option("--full-ids", "Show full UUIDs in output instead of CLI short IDs")
     .option("--debug", "Show raw adapter stdout/stderr JSON chunks")
     .action(heartbeatRun);
 

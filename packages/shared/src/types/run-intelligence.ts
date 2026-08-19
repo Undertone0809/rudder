@@ -33,6 +33,7 @@ export interface RunSummarySkillEvidence {
 
 export interface RunSummary {
   id: string;
+  shortRef?: string;
   orgId: string;
   orgName: string | null;
   agentId: string;
@@ -69,6 +70,7 @@ export interface RunSummaryPage {
 
 export interface RunInspectionHeader {
   id: string;
+  shortRef?: string;
   orgId: string;
   agentId: string;
   invocationSource: HeartbeatInvocationSource;

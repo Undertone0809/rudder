@@ -2,7 +2,7 @@ import type { Agent, HeartbeatRun, HeartbeatRunEvent, HeartbeatRunStatus } from 
 import { setTimeout as delay } from "node:timers/promises";
 import pc from "picocolors";
 import { getCLIAdapter } from "../agent-runtimes/index.js";
-import { formatCliRunId, resolveCommandContext } from "./client/common.js";
+import { formatCliAgentId, formatCliRunId, resolveCommandContext } from "./client/common.js";
 
 const HEARTBEAT_SOURCES = ["timer", "assignment", "on_demand", "automation"] as const;
 const HEARTBEAT_TRIGGERS = ["manual", "ping", "callback", "system"] as const;
@@ -28,6 +28,7 @@ interface HeartbeatRunOptions {
   timeoutMs: string;
   debug?: boolean;
   json?: boolean;
+  fullIds?: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -73,6 +74,7 @@ export async function heartbeatRun(opts: HeartbeatRunOptions): Promise<void> {
     apiBase: opts.apiBase,
     apiKey: opts.apiKey,
     json: opts.json,
+    fullIds: opts.fullIds,
   });
   const api = ctx.api;
 
@@ -99,7 +101,7 @@ export async function heartbeatRun(opts: HeartbeatRunOptions): Promise<void> {
   }
 
   const run = invokeRes as HeartbeatRun;
-  console.log(pc.cyan(`Invoked heartbeat run ${formatCliRunId(run.id)} for agent ${agent.name} (${formatCliRunId(agent.id)})`));
+  console.log(pc.cyan(`Invoked heartbeat run ${formatCliRunId(run.id)} for agent ${agent.name} (${formatCliAgentId(agent.id)})`));
 
   const runId = run.id;
   let activeRunId: string | null = null;

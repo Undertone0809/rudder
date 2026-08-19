@@ -123,6 +123,7 @@ export interface GoalOwnerAssignment {
 
 export interface Goal {
   id: string;
+  shortRef?: string;
   orgId: string;
   title: string;
   description: string | null;
@@ -163,6 +164,7 @@ export interface PublicGoalCriterion {
 
 export interface PublicGoal {
   id: string;
+  shortRef?: string;
   orgId: string;
   title: string;
   description: string | null;

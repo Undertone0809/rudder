@@ -32,14 +32,14 @@ operating-practices guide for operating behavior:
 
 - First-party MCP tools use the stable `rudder_<capability_id>` naming convention, for example `rudder_issue_checkout` for `issue.checkout`.
 - All commands support `--json`.
-- CLI output renders IDs as short IDs by default; `rudder runs ...` commands accept short run IDs. Add `--full-ids` only when a debugging or compatibility workflow needs raw UUIDs.
+- CLI output renders IDs as typed short IDs by default (`agt_`, `cht_`, `run_`, `msg_`, `cmt_`, and related refs); `rudder runs ...` commands accept typed refs, legacy bare short run IDs, or full UUIDs. Add `--full-ids` only when a debugging or compatibility workflow needs raw UUIDs.
 - `--org-id` defaults to `RUDDER_ORG_ID` when relevant.
 - `--run-id` defaults to `RUDDER_RUN_ID` and is attached to mutating requests when available.
 - `issue checkout` defaults `--agent-id` from `RUDDER_AGENT_ID`.
 
 ## JSON Output Contract
 
-`rudder ... --json` commands must write valid JSON to stdout on success. ID fields in CLI JSON use short display IDs by default; pass `--full-ids` to preserve raw UUIDs. Short run IDs returned by CLI output can be passed back into `rudder runs get`, `events`, `log`, `transcript`, `errors`, `cancel`, and `retry`. If a command cannot produce the requested JSON, it must exit nonzero and write a diagnostic error to stderr. An exit-0 command with empty stdout is a CLI/runtime defect, not a valid empty result.
+`rudder ... --json` commands must write valid JSON to stdout on success. ID fields in CLI JSON use typed short display IDs by default; pass `--full-ids` to preserve raw UUIDs. Typed or legacy short run IDs returned by CLI output can be passed back into `rudder runs get`, `events`, `log`, `transcript`, `errors`, `cancel`, and `retry`. If a command cannot produce the requested JSON, it must exit nonzero and write a diagnostic error to stderr. An exit-0 command with empty stdout is a CLI/runtime defect, not a valid empty result.
 
 ## Agent V1 Commands
 
@@ -160,6 +160,8 @@ Issue comment and close-out commands accept comment bodies only from files or st
 Issue comment responses include `shortRef` when available. `rudder issue comments get <issue> <comment-id-or-cmt-ref>` accepts a full comment UUID or `cmt_<uuid-prefix>`, and `rudder issue comments list <issue> --after <comment-id-or-cmt-ref>` accepts the same forms for the pagination anchor. Use the full UUID when a short ref is ambiguous within the issue.
 
 Chat conversation responses include `shortRef` when available. Chat read and mutation commands accept the organization-scoped `cht_<uuid-prefix>` value or the full conversation UUID. Human-readable `chat list` and `chat search` output prefers `shortRef`; `--json` retains both `id` and `shortRef`, and `--full-ids` preserves the durable UUID value in `id`. Use the full UUID when a short ref is ambiguous.
+
+Agent run and message responses include typed `shortRef` values when available. Agent-facing output prefers `run_<uuid-prefix>` and `msg_<uuid-prefix>` while preserving the durable UUID in `id`; `--full-ids` restores the UUID values. Run routes accept `run_` refs, legacy bare hex prefixes, and full UUIDs within the authorized organization scope. Ambiguous prefixes return `409` with typed candidates.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.
 

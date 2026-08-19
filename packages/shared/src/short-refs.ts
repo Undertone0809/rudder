@@ -1,9 +1,24 @@
-export type ShortRefKind = "agent" | "chat" | "issue_comment";
+export type ShortRefKind =
+  | "agent"
+  | "chat"
+  | "issue_comment"
+  | "run"
+  | "message"
+  | "project"
+  | "goal"
+  | "user"
+  | "issue";
 
 const SHORT_REF_PREFIX_BY_KIND: Record<ShortRefKind, string> = {
   agent: "agt",
   chat: "cht",
   issue_comment: "cmt",
+  run: "run",
+  message: "msg",
+  project: "prj",
+  goal: "gol",
+  user: "usr",
+  issue: "iss",
 };
 
 const SHORT_REF_KIND_BY_PREFIX = Object.fromEntries(

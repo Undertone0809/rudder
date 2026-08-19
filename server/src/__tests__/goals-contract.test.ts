@@ -529,7 +529,7 @@ describe("Goal contract", () => {
       evaluationResult: { outcome: "achieved", resultPayload: { private: true } },
     }) as any);
 
-    expect(goal).toMatchObject({ id: GOAL_ID, orgId: ORG_ID, ownerAgentId: OWNER_ID, focus: true });
+    expect(goal).toMatchObject({ id: GOAL_ID, shortRef: "gol_33333333", orgId: ORG_ID, ownerAgentId: OWNER_ID, focus: true });
     expect(goal.criteria).toEqual([{ id: "result", label: "Result exists" }]);
     expect(Object.keys(goal)).not.toEqual(expect.arrayContaining([
       "objectiveMode",

@@ -7,6 +7,7 @@ export type ProjectWorkspaceVisibility = "default" | "advanced";
 
 export interface ProjectGoalRef {
   id: string;
+  shortRef?: string;
   title: string;
 }
 
@@ -59,6 +60,7 @@ export interface ProjectCodebase {
 
 export interface Project {
   id: string;
+  shortRef?: string;
   orgId: string;
   urlKey: string;
   /** @deprecated Use goalIds / goals instead */

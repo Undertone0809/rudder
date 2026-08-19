@@ -252,6 +252,63 @@ export function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+const UUID_VALUE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHORT_REFERENCE_PATTERN = /^[a-z]{3}_[0-9a-f]{8,32}$/i;
+const SHORT_REFERENCE_PREFIXES = {
+  agent: "agt",
+  chat: "cht",
+  issue_comment: "cmt",
+  run: "run",
+  message: "msg",
+  project: "prj",
+  goal: "gol",
+  user: "usr",
+  issue: "iss",
+} as const;
+type PromptReferenceKind = keyof typeof SHORT_REFERENCE_PREFIXES;
+
+function promptReferenceKind(dottedPath: string): PromptReferenceKind | null {
+  const normalized = dottedPath.toLowerCase();
+  const segments = normalized.split(".");
+  const leaf = segments.at(-1) ?? "";
+  const parent = segments.at(-2) ?? "";
+  const base = leaf === "id" ? parent : leaf.endsWith("id") ? leaf.slice(0, -2) : "";
+
+  for (const [suffix, kind] of [
+    ["agentid", "agent"],
+    ["userid", "user"],
+    ["runid", "run"],
+    ["messageid", "message"],
+    ["projectid", "project"],
+    ["goalid", "goal"],
+    ["commentid", "issue_comment"],
+    ["issueid", "issue"],
+    ["chatid", "chat"],
+    ["conversationid", "chat"],
+    ["parentid", "issue"],
+  ] as const) {
+    if (leaf.endsWith(suffix)) return kind;
+  }
+
+  if (base === "agent") return "agent";
+  if (base === "chat" || base === "conversation") return "chat";
+  if (base === "comment") return "issue_comment";
+  if (base === "run") return "run";
+  if (base === "message") return "message";
+  if (base === "project") return "project";
+  if (base === "goal") return "goal";
+  if (base === "user") return "user";
+  if (base === "issue" || base === "parent") return "issue";
+  return null;
+}
+
+function renderPromptReference(value: string, dottedPath: string): string {
+  const kind = promptReferenceKind(dottedPath);
+  if (!kind || SHORT_REFERENCE_PATTERN.test(value) || !UUID_VALUE_PATTERN.test(value)) return value;
+  const compactId = value.replaceAll("-", "").slice(0, 8).toLowerCase();
+  return `${SHORT_REFERENCE_PREFIXES[kind]}_${compactId}`;
+}
+
 export function parseJson(value: string): Record<string, unknown> | null {
   try {
     return JSON.parse(value) as Record<string, unknown>;
@@ -286,7 +343,7 @@ export function resolvePathValue(obj: Record<string, unknown>, dottedPath: strin
       if (dottedPath === "issue.assigneeLabel" || dottedPath === "issue.reviewerLabel") return "none";
       if (dottedPath === "issue.createdAt" || dottedPath === "issue.updatedAt") return "unknown";
     }
-    return cursor;
+    return renderPromptReference(cursor, dottedPath);
   }
   if (typeof cursor === "number" || typeof cursor === "boolean") return String(cursor);
 
