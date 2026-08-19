@@ -1970,7 +1970,7 @@ describe("heartbeat managed workspace preflight", () => {
           expect.objectContaining({ kind: "memory", ref: `memory/${todayKey}.md` }),
           expect.objectContaining({ kind: "memory", ref: `memory/${yesterdayKey}.md` }),
           expect.objectContaining({ kind: "issue", ref: "RD-421" }),
-          expect.objectContaining({ kind: "chat", ref: chatId }),
+          expect.objectContaining({ kind: "chat", ref: shortRefFor("chat", chatId) }),
         ]),
       },
     });
