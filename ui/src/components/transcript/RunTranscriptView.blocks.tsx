@@ -16,13 +16,15 @@ import {
   CircleAlert,
   Copy,
   FileDiff,
+  FileText,
   Images,
+  ListTodo,
   Loader2,
   MessageSquare,
   TerminalSquare,
   User
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useScrollbarActivityRef } from "../../hooks/useScrollbarActivityRef";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
@@ -459,6 +461,65 @@ function formatCommandCopyText(command: string, output: string | null) {
   return output ? `${command}\n\n${output}` : command;
 }
 
+type CommandTerminalView = "shell" | "task" | "markdown";
+
+const COMMAND_TERMINAL_VIEWS: Array<{
+  id: CommandTerminalView;
+  label: string;
+  Icon: typeof TerminalSquare;
+}> = [
+  { id: "shell", label: "Shell", Icon: TerminalSquare },
+  { id: "task", label: "Task", Icon: ListTodo },
+  { id: "markdown", label: "Markdown", Icon: FileText },
+];
+
+function commandTerminalStatusLabel(
+  status: TranscriptToolCardEntry["status"],
+  showFailureIndicators: boolean,
+) {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "error":
+      return showFailureIndicators ? "Failed" : "Result available";
+    default:
+      return "Completed";
+  }
+}
+
+function formatCommandMarkdown({
+  command,
+  output,
+  status,
+  taskLabel,
+  taskSummary,
+  showFailureIndicators,
+}: {
+  command: string;
+  output: string | null;
+  status: TranscriptToolCardEntry["status"];
+  taskLabel: string;
+  taskSummary: string;
+  showFailureIndicators: boolean;
+}) {
+  const title = taskSummary || taskLabel || "Command";
+  const outputSection = output
+    ? `## Output\n\n${output}`
+    : "## Output\n\n_No output captured._";
+  return [
+    `# ${title}`,
+    "",
+    `- **Type:** ${taskLabel}`,
+    `- **Status:** ${commandTerminalStatusLabel(status, showFailureIndicators)}`,
+    "",
+    "~~~sh",
+    command,
+    "~~~",
+    "",
+    outputSection,
+  ].join("\n");
+}
+
 const TRANSCRIPT_RESPONSE_COLLAPSED_LINE_LIMIT = 14;
 const TRANSCRIPT_RESPONSE_COLLAPSED_CHAR_LIMIT = 1400;
 
@@ -471,10 +532,12 @@ export function ExpandableTranscriptResponsePre({
   text,
   className,
   collapsedLabel = "response",
+  testId,
 }: {
   text: string;
   className?: string;
   collapsedLabel?: string;
+  testId?: string;
 }) {
   const preRef = useRef<HTMLPreElement | null>(null);
   const scrollbarActivityRef = useScrollbarActivityRef();
@@ -532,6 +595,7 @@ export function ExpandableTranscriptResponsePre({
           !expanded && "max-h-72 overflow-y-auto overscroll-contain pr-1",
           className,
         )}
+        data-testid={testId}
         data-transcript-response-collapsed={canExpand && !expanded ? "true" : undefined}
       >
         {text}
@@ -828,20 +892,55 @@ export function CommandTerminalDetail({
   command,
   output,
   status,
+  taskLabel = "Command",
+  taskSummary = "Command details",
+  duration = null,
+  showFailureIndicators = true,
   className,
 }: {
   command: string;
   output: string | null;
   status: TranscriptToolCardEntry["status"];
+  taskLabel?: string;
+  taskSummary?: string;
+  duration?: string | null;
+  showFailureIndicators?: boolean;
   className?: string;
 }) {
+  const hasCommand = command.trim().length > 0;
+  const [activeView, setActiveView] = useState<CommandTerminalView>(() => hasCommand ? "shell" : "task");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const resetTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const viewId = useId().replace(/:/gu, "");
+  const disabledViews = useMemo(
+    () => new Set<CommandTerminalView>(hasCommand ? [] : ["shell", "markdown"]),
+    [hasCommand],
+  );
   const copyLabel =
     copyState === "copied" ? "Copied command output" : copyState === "failed" ? "Copy failed" : "Copy command output";
   const copyText = useMemo(() => formatCommandCopyText(command, output), [command, output]);
+  const markdownSource = useMemo(() => formatCommandMarkdown({
+    command,
+    output,
+    status,
+    taskLabel,
+    taskSummary,
+    showFailureIndicators,
+  }), [command, output, showFailureIndicators, status, taskLabel, taskSummary]);
+  const terminalStatusLabel = commandTerminalStatusLabel(status, showFailureIndicators);
+  const activeViewIndex = COMMAND_TERMINAL_VIEWS.findIndex((view) => view.id === activeView);
+  const activeViewMeta = COMMAND_TERMINAL_VIEWS[activeViewIndex] ?? COMMAND_TERMINAL_VIEWS[0];
+  const activeTabId = `command-terminal-${viewId}-tab-${activeViewMeta.id}`;
+  const activePanelId = `command-terminal-${viewId}-panel`;
 
   useEffect(() => () => clearTimeout(resetTimerRef.current), []);
+
+  useEffect(() => {
+    if (!disabledViews.has(activeView)) return;
+    const fallbackView = COMMAND_TERMINAL_VIEWS.find((view) => !disabledViews.has(view.id));
+    if (fallbackView) setActiveView(fallbackView.id);
+  }, [activeView, disabledViews]);
 
   const handleCopy = useCallback(async () => {
     clearTimeout(resetTimerRef.current);
@@ -854,57 +953,183 @@ export function CommandTerminalDetail({
     resetTimerRef.current = setTimeout(() => setCopyState("idle"), 1600);
   }, [copyText]);
 
+  const handleViewKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!(["ArrowLeft", "ArrowRight", "Home", "End"] as string[]).includes(event.key)) return;
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const nextIndex = event.key === "Home"
+      ? COMMAND_TERMINAL_VIEWS.findIndex((view) => !disabledViews.has(view.id))
+      : event.key === "End"
+        ? [...COMMAND_TERMINAL_VIEWS].map((view) => view.id).findLastIndex((id) => !disabledViews.has(id))
+        : (() => {
+          for (let offset = 1; offset <= COMMAND_TERMINAL_VIEWS.length; offset += 1) {
+            const candidateIndex = (index + direction * offset + COMMAND_TERMINAL_VIEWS.length) % COMMAND_TERMINAL_VIEWS.length;
+            const candidate = COMMAND_TERMINAL_VIEWS[candidateIndex];
+            if (candidate && !disabledViews.has(candidate.id)) return candidateIndex;
+          }
+          return index;
+        })();
+    const nextView = COMMAND_TERMINAL_VIEWS[nextIndex];
+    if (!nextView) return;
+    setActiveView(nextView.id);
+    tabRefs.current[nextIndex]?.focus();
+  }, [disabledViews]);
+
+  const renderShellView = () => (
+    <div className="p-3 font-mono text-[11px] leading-5 sm:p-4">
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[color:var(--code-foreground)]">
+        <span className="select-none text-[color:var(--accent-base)]">$ </span>
+        {command}
+      </pre>
+      {output ? (
+        <ExpandableTranscriptResponsePre
+          text={output}
+          collapsedLabel="output"
+          className={cn(
+            "mt-3",
+              status === "error" && showFailureIndicators
+                ? "text-red-300"
+                : "text-[color:var(--code-foreground)]",
+          )}
+        />
+      ) : null}
+    </div>
+  );
+
+  const renderTaskView = () => (
+    <div className="p-3 sm:p-4">
+      <div className="grid gap-x-4 gap-y-2 p-3 text-[11px] sm:grid-cols-[5rem_minmax(0,1fr)]">
+        <span className="font-semibold uppercase tracking-[0.12em] text-[color:var(--code-muted)]">Intent</span>
+        <span className="min-w-0 break-words text-[color:var(--code-foreground)]">{taskSummary}</span>
+        <span className="font-semibold uppercase tracking-[0.12em] text-[color:var(--code-muted)]">Type</span>
+        <span className="min-w-0 break-words text-[color:var(--code-foreground)]">{taskLabel}</span>
+        <span className="font-semibold uppercase tracking-[0.12em] text-[color:var(--code-muted)]">Status</span>
+        <span className={cn(
+          "font-medium",
+          status === "error" && showFailureIndicators
+            ? "text-red-300"
+            : status === "running"
+              ? "text-cyan-300"
+              : status === "error"
+                ? "text-[color:var(--code-foreground)]"
+                : "text-emerald-300",
+        )}>
+          {terminalStatusLabel}
+        </span>
+        <span className="font-semibold uppercase tracking-[0.12em] text-[color:var(--code-muted)]">Duration</span>
+        <span className="text-[color:var(--code-foreground)]">{duration ?? (status === "running" ? "In progress" : "Not recorded")}</span>
+      </div>
+    </div>
+  );
+
+  const renderMarkdownView = () => (
+    <div className="p-3 sm:p-4">
+      <ExpandableTranscriptResponsePre
+        text={markdownSource}
+        collapsedLabel="Markdown source"
+        className="text-[color:var(--code-foreground)]"
+        testId="command-terminal-markdown-source"
+      />
+    </div>
+  );
+
+  const renderActiveView = () => {
+    switch (activeView) {
+      case "task":
+        return renderTaskView();
+      case "markdown":
+        return renderMarkdownView();
+      default:
+        return renderShellView();
+    }
+  };
+
   return (
     <div
       data-testid="command-terminal-detail"
       className={cn(
-        "group/command-terminal relative overflow-hidden rounded-xl border border-neutral-800 bg-[#0a0a0a] text-neutral-100 shadow-[0_18px_45px_-28px_rgb(0_0_0/0.75)]",
+        "group/command-terminal relative overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--code-border)] bg-[color:var(--code-surface)] text-[color:var(--code-foreground)] shadow-[var(--shadow-sm)]",
         className,
       )}
     >
-      <div className="flex h-8 items-center gap-1.5 border-b border-white/10 bg-[#171717] px-3">
-        <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
-        <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
-        <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+      <div className="flex min-h-10 items-center justify-between gap-2 border-b border-[color:var(--code-border)] bg-[color:color-mix(in_oklab,var(--code-surface-elevated)_90%,transparent)] px-2.5 py-1.5">
+        <div
+          role="tablist"
+          aria-label="Command views"
+          className="scrollbar-auto-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pr-1"
+        >
+          {COMMAND_TERMINAL_VIEWS.map(({ id, label, Icon }, index) => {
+            const selected = activeView === id;
+            const disabled = disabledViews.has(id);
+            return (
+              <button
+                key={id}
+                ref={(element) => {
+                  tabRefs.current[index] = element;
+                }}
+                type="button"
+                role="tab"
+                id={`command-terminal-${viewId}-tab-${id}`}
+                aria-controls={activePanelId}
+                aria-selected={selected}
+                aria-label={label}
+                title={label}
+                tabIndex={selected ? 0 : -1}
+                disabled={disabled}
+                data-command-terminal-view={id}
+                data-state={selected ? "active" : "inactive"}
+                className={cn(
+                  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-base)]/60",
+                  disabled
+                    ? "cursor-not-allowed border-transparent text-[color:var(--code-muted)] opacity-45"
+                    : selected
+                    ? "border-[color:var(--code-border)] bg-[color:var(--code-surface)] text-[color:var(--code-foreground)] shadow-sm"
+                    : "border-transparent text-[color:var(--code-muted)] hover:border-[color:var(--code-border)] hover:bg-[color:var(--code-surface)]/70 hover:text-[color:var(--code-foreground)]",
+                )}
+                onClick={() => {
+                  if (!disabled) setActiveView(id);
+                }}
+                onKeyDown={(event) => handleViewKeyDown(event, index)}
+              >
+                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <TooltipProvider delayDuration={120}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[color:var(--code-border)] bg-[color:var(--code-surface)] text-[color:var(--code-muted)] opacity-0 transition-[background-color,color,opacity] hover:bg-[color:var(--code-surface-elevated)] hover:text-[color:var(--code-foreground)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent-base)]/60 group-hover/command-terminal:opacity-100 group-focus-within/command-terminal:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100"
+                aria-label={copyLabel}
+                data-testid="command-terminal-copy-button"
+                data-copy-state={copyState}
+                onClick={() => void handleCopy()}
+              >
+                {copyState === "copied" ? (
+                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="left" sideOffset={8}>
+              {copyLabel}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
-      <TooltipProvider delayDuration={120}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-[#242424]/90 text-neutral-300 opacity-0 shadow-sm transition-all hover:border-white/20 hover:bg-[#2f2f2f] hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35 group-hover/command-terminal:opacity-100"
-              aria-label={copyLabel}
-              data-testid="command-terminal-copy-button"
-              data-copy-state={copyState}
-              onClick={() => void handleCopy()}
-            >
-              {copyState === "copied" ? (
-                <Check className="h-3.5 w-3.5" aria-hidden="true" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="left" sideOffset={8}>
-            {copyLabel}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      <div className="p-4 font-mono text-[11px] leading-5">
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words text-neutral-100">
-          <span className="select-none text-emerald-400">$ </span>
-          {command}
-        </pre>
-        {output ? (
-          <ExpandableTranscriptResponsePre
-            text={output}
-            collapsedLabel="output"
-            className={cn(
-              "mt-3",
-              status === "error" ? "text-red-300" : "text-neutral-200",
-            )}
-          />
-        ) : null}
+      <div
+        id={activePanelId}
+        role="tabpanel"
+        aria-labelledby={activeTabId}
+        data-command-terminal-panel={activeView}
+        tabIndex={0}
+        className="min-w-0 outline-none"
+      >
+        {renderActiveView()}
       </div>
     </div>
   );
@@ -1016,7 +1241,14 @@ export function TranscriptToolCard({
       {canExpand && open && (
         <div className="motion-disclosure-enter mt-3">
           {command ? (
-            <CommandTerminalDetail command={requestText} output={responseText} status={block.status} />
+            <CommandTerminalDetail
+              command={requestText}
+              output={responseText}
+              status={block.status}
+              taskLabel={semantic.label}
+              taskSummary={summary}
+              duration={duration}
+            />
           ) : (
             <div className={detailsClass}>
               <div className={cn("grid gap-3", compact ? "grid-cols-1" : "lg:grid-cols-2")}>
