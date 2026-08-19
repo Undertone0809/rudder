@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempRoots: string[] = [];
+const initialNativeMode = process.env.RUDDER_NATIVE_MODE;
 
 async function makeTempRoot(prefix: string): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -12,6 +13,8 @@ async function makeTempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  if (initialNativeMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
+  else process.env.RUDDER_NATIVE_MODE = initialNativeMode;
   delete process.env.RUN_LOG_BASE_PATH;
   delete process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX;
   delete process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH;
@@ -59,7 +62,9 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
 
   it("fails closed to the Node finalize result when native indexing is unavailable", async () => {
     const root = await makeTempRoot("rudder-run-log-native-index-fallback-");
+    const previousMode = process.env.RUDDER_NATIVE_MODE;
     process.env.RUN_LOG_BASE_PATH = path.join(root, "run-logs");
+    process.env.RUDDER_NATIVE_MODE = "auto";
     process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = "1";
     process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = await writeNativeIndexFixture(root, "malformed");
     vi.resetModules();
@@ -73,6 +78,8 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     expect(summary.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.evidenceIndex).toMatchObject({ status: "fallback", indexRef: `${handle.logRef}.index.ndjson` });
     await expect(fs.stat(path.join(root, "run-logs", `${handle.logRef}.index.ndjson`))).rejects.toMatchObject({ code: "ENOENT" });
+    if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
+    else process.env.RUDDER_NATIVE_MODE = previousMode;
   });
 
   it("reports run log offsets as bytes for UTF-8 content", async () => {

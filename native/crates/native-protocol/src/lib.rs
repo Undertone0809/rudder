@@ -20,6 +20,7 @@ pub const CAPABILITIES: &[&str] = &[
 #[cfg(windows)]
 pub const CAPABILITIES: &[&str] = &[
     "process_spawn",
+    "process_group_cleanup",
     "parent_eof_cleanup",
     "listener_owner_attestation",
     "owner_receipt",
@@ -69,11 +70,34 @@ pub enum Command {
         #[serde(rename = "runtimeRoot", default)]
         runtime_root: Option<String>,
     },
+    StartProcess {
+        #[serde(rename = "protocolVersion", default)]
+        protocol_version: Option<ProtocolVersion>,
+        #[serde(rename = "requestId", default)]
+        request_id: Option<String>,
+        executable: String,
+        #[serde(default)]
+        argv: Vec<String>,
+        cwd: String,
+        #[serde(default)]
+        env: std::collections::BTreeMap<String, String>,
+        #[serde(default)]
+        #[serde(rename = "ownerToken")]
+        owner_token: Option<String>,
+        #[serde(rename = "runtimeRoot", default)]
+        runtime_root: Option<String>,
+        #[serde(default)]
+        stdin: Option<String>,
+        #[serde(rename = "graceMs", default)]
+        grace_ms: Option<u64>,
+    },
     Stop {
         #[serde(rename = "protocolVersion", default)]
         protocol_version: Option<ProtocolVersion>,
         #[serde(rename = "requestId", default)]
         request_id: Option<String>,
+        #[serde(rename = "graceMs", default)]
+        grace_ms: Option<u64>,
     },
     StartTerminal {
         #[serde(rename = "protocolVersion", default)]
@@ -209,10 +233,51 @@ impl Command {
                 validate_launch(executable, argv, cwd, env, owner_token)?;
                 validate_size(*cols, *rows)
             }
+            Self::StartProcess {
+                protocol_version,
+                request_id,
+                executable,
+                argv,
+                cwd,
+                env,
+                owner_token,
+                runtime_root,
+                stdin,
+                grace_ms,
+            } => {
+                validate_protocol_identity(protocol_version, request_id)?;
+                validate_launch(executable, argv, cwd, env, owner_token)?;
+                let Some(runtime_root) = runtime_root.as_ref() else {
+                    return Err("runtime_root_required");
+                };
+                if runtime_root.is_empty()
+                    || runtime_root.len() > 4_096
+                    || !std::path::Path::new(runtime_root).is_absolute()
+                {
+                    return Err("invalid_runtime_root");
+                }
+                if stdin
+                    .as_ref()
+                    .is_some_and(|value| value.len() > 4 * 1024 * 1024)
+                {
+                    return Err("stdin_too_large");
+                }
+                if grace_ms.is_some_and(|value| value > 60_000) {
+                    return Err("invalid_grace_ms");
+                }
+                Ok(())
+            }
             Self::Stop {
                 protocol_version,
                 request_id,
-            } => validate_protocol_identity(protocol_version, request_id),
+                grace_ms,
+            } => {
+                validate_protocol_identity(protocol_version, request_id)?;
+                if grace_ms.is_some_and(|value| value > 60_000) {
+                    return Err("invalid_grace_ms");
+                }
+                Ok(())
+            }
             Self::Input {
                 protocol_version,
                 request_id,
@@ -269,6 +334,9 @@ fn validate_launch(
     env: &std::collections::BTreeMap<String, String>,
     owner_token: &Option<String>,
 ) -> Result<(), &'static str> {
+    const MAX_ARGUMENT_BYTES: usize = 256 * 1024;
+    const MAX_ARGUMENT_TOTAL_BYTES: usize = 1024 * 1024;
+    const MAX_ENV_TOTAL_BYTES: usize = 2 * 1024 * 1024;
     if executable.is_empty() || executable.len() > 4_096 {
         return Err("invalid_executable");
     }
@@ -278,10 +346,18 @@ fn validate_launch(
     if !std::path::Path::new(executable).is_absolute() || !std::path::Path::new(cwd).is_absolute() {
         return Err("paths_must_be_absolute");
     }
-    if argv.len() > 64 || argv.iter().any(|item| item.len() > 4_096) {
+    if argv.len() > 64
+        || argv.iter().any(|item| item.len() > MAX_ARGUMENT_BYTES)
+        || argv.iter().map(String::len).sum::<usize>() > MAX_ARGUMENT_TOTAL_BYTES
+    {
         return Err("invalid_arguments");
     }
-    if env.len() > 128
+    if env.len() > 512
+        || env
+            .iter()
+            .map(|(name, value)| name.len() + value.len())
+            .sum::<usize>()
+            > MAX_ENV_TOTAL_BYTES
         || env.iter().any(|(name, value)| {
             name.is_empty()
                 || name.len() > 256
@@ -313,11 +389,53 @@ fn validate_size(cols: u16, rows: u16) -> Result<(), &'static str> {
 mod tests {
     use super::*;
 
+    fn fixture_executable() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\Windows\System32\cmd.exe"
+        }
+        #[cfg(not(windows))]
+        {
+            "/bin/sh"
+        }
+    }
+
+    fn fixture_cwd() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\"
+        }
+        #[cfg(not(windows))]
+        {
+            "/tmp"
+        }
+    }
+
+    fn fixture_runtime_root() -> &'static str {
+        #[cfg(windows)]
+        {
+            r"C:\rudder-runtime"
+        }
+        #[cfg(not(windows))]
+        {
+            "/tmp/rudder-runtime"
+        }
+    }
+
     #[test]
     fn parses_start_with_camel_case_fields() {
-        let command: Command = serde_json::from_str(
-            r#"{"type":"start","protocolVersion":{"major":1,"minor":0},"requestId":"test","executable":"/bin/sh","argv":["-c","exit 0"],"cwd":"/tmp","env":{"RUDDER_TEST":"1"},"ownerToken":"opaque","port":43123,"runtimeRoot":"/tmp/rudder-runtime"}"#,
-        )
+        let command: Command = serde_json::from_value(serde_json::json!({
+            "type": "start",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "test",
+            "executable": fixture_executable(),
+            "argv": ["-c", "exit 0"],
+            "cwd": fixture_cwd(),
+            "env": {"RUDDER_TEST": "1"},
+            "ownerToken": "opaque",
+            "port": 43123,
+            "runtimeRoot": fixture_runtime_root(),
+        }))
         .expect("valid command");
         assert!(command.validate().is_ok());
         assert!(matches!(
@@ -336,7 +454,7 @@ mod tests {
             request_id: Some("test".into()),
             executable: "node".into(),
             argv: Vec::new(),
-            cwd: "/tmp".into(),
+            cwd: fixture_cwd().into(),
             env: Default::default(),
             owner_token: None,
             port: None,
@@ -350,12 +468,14 @@ mod tests {
         let command = Command::Stop {
             protocol_version: None,
             request_id: Some("test".into()),
+            grace_ms: None,
         };
         assert_eq!(command.validate(), Err("protocol_version_required"));
 
         let command = Command::Stop {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: None,
+            grace_ms: None,
         };
         assert_eq!(command.validate(), Err("request_id_required"));
     }
@@ -368,6 +488,7 @@ mod tests {
                 minor: 0,
             }),
             request_id: Some("test".into()),
+            grace_ms: None,
         };
         assert_eq!(command.validate(), Err("protocol_version_mismatch"));
     }
@@ -377,13 +498,13 @@ mod tests {
         let base = |owner_token| Command::Start {
             protocol_version: Some(ProtocolVersion::default()),
             request_id: Some("test".into()),
-            executable: "/bin/sh".into(),
+            executable: fixture_executable().into(),
             argv: vec!["-c".into(), "exit 0".into()],
-            cwd: "/tmp".into(),
+            cwd: fixture_cwd().into(),
             env: Default::default(),
             owner_token,
             port: None,
-            runtime_root: Some("/tmp/rudder-runtime".into()),
+            runtime_root: Some(fixture_runtime_root().into()),
         };
         assert_eq!(base(None).validate(), Err("owner_token_required"));
         assert_eq!(
@@ -394,9 +515,18 @@ mod tests {
 
     #[test]
     fn validates_terminal_commands() {
-        let start: Command = serde_json::from_str(
-            r#"{"type":"startTerminal","protocolVersion":{"major":1,"minor":0},"requestId":"terminal-1","executable":"/bin/sh","argv":["-l"],"cwd":"/tmp","env":{"TERM":"xterm-256color"},"ownerToken":"opaque","cols":80,"rows":24}"#,
-        )
+        let start: Command = serde_json::from_value(serde_json::json!({
+            "type": "startTerminal",
+            "protocolVersion": {"major": 1, "minor": 0},
+            "requestId": "terminal-1",
+            "executable": fixture_executable(),
+            "argv": ["-l"],
+            "cwd": fixture_cwd(),
+            "env": {"TERM": "xterm-256color"},
+            "ownerToken": "opaque",
+            "cols": 80,
+            "rows": 24,
+        }))
         .expect("valid terminal start");
         assert_eq!(start.validate(), Ok(()));
 
@@ -411,5 +541,26 @@ mod tests {
         )
         .expect("parse input");
         assert_eq!(input.validate(), Err("invalid_terminal_input"));
+    }
+
+    #[test]
+    fn accepts_large_bounded_arguments_and_rejects_total_overflow() {
+        let base = |argument: String| Command::StartProcess {
+            protocol_version: Some(ProtocolVersion::default()),
+            request_id: Some("test".into()),
+            executable: fixture_executable().into(),
+            argv: vec![argument],
+            cwd: fixture_cwd().into(),
+            env: Default::default(),
+            owner_token: Some("opaque".into()),
+            runtime_root: Some(fixture_runtime_root().into()),
+            stdin: None,
+            grace_ms: None,
+        };
+        assert_eq!(base("x".repeat(70_000)).validate(), Ok(()));
+        assert_eq!(
+            base("x".repeat(256 * 1024 + 1)).validate(),
+            Err("invalid_arguments")
+        );
     }
 }

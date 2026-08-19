@@ -20,6 +20,7 @@ export {
   normalizeModelFallbacks,
   type ModelAttemptSpec
 } from "./model-fallbacks.js";
+export { resolveNativeCommand, type NativeCommand } from "./native-command.js";
 export {
   assertUniqueOrganizationStorageKeys,
   normalizeOrganizationStoragePathSegment,

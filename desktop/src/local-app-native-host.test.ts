@@ -7,7 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 import { spawnNativeProcessHost, type NativeProcessHost } from "./local-app-native-host.js";
 
 const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
-const nativeOnly = it.skipIf(!nativeHostPath || process.platform !== "darwin" || process.arch !== "arm64");
+const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].includes(process.arch))
+  || (process.platform === "win32" && process.arch === "x64")
+  || (process.platform === "linux" && process.arch === "x64");
+const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
+const macNativeOnly = it.skipIf(!nativeHostPath || process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch));
+const permissionNativeOnly = it.skipIf(!nativeHostPath || !supportedTarget || process.platform === "win32");
 
 async function unusedPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -44,10 +49,10 @@ function sendStart(helper: NativeProcessHost, input: {
     type: "start",
     protocolVersion: { major: 1, minor: 0 },
     requestId: input.requestId,
-    executable: "/bin/sh",
-    argv: ["-c", input.script],
+    executable: process.execPath,
+    argv: ["-e", input.script],
     cwd: input.root,
-    env: { PATH: "/usr/bin:/bin" },
+    env: { PATH: process.env.PATH ?? "" },
     ownerToken: input.requestId,
     port: input.port,
     runtimeRoot: input.runtimeRoot,
@@ -67,7 +72,7 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port: await unusedPort(),
-      script: "printf 'out\\000{\"type\":\"terminal\"}\\377\\n'; printf 'err\\000[1,2]\\376\\n' >&2",
+      script: "process.stdout.write(Buffer.from([111,117,116,0,123,34,116,121,112,101,34,58,34,116,101,114,109,105,110,97,108,34,125,255,10]));process.stderr.write(Buffer.from([101,114,114,0,91,49,44,50,93,254,10]));",
     });
     const [code] = await exited as [number | null];
     expect(code).toBe(0);
@@ -87,10 +92,10 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port,
-      script: `${JSON.stringify(process.execPath)} -e "const net=require('net');const s=net.createServer();s.listen(${port},'127.0.0.1',()=>{const b=Buffer.alloc(10240,120);setInterval(()=>process.stdout.write(b),1)});"`,
+      script: `const net=require('node:net');const s=net.createServer();s.listen(${port},'127.0.0.1',()=>{const b=Buffer.alloc(10240,120);setInterval(()=>process.stdout.write(b),1)});`,
     });
     await vi.waitFor(() => {
-      expect(lifecycle.some((frame) => frame.type === "listener-verified")).toBe(true);
+      expect(lifecycle.some((frame) => frame.type === (process.platform === "darwin" ? "listener-verified" : "spawned"))).toBe(true);
     }, { timeout: 3_000 });
     const admittedAt = performance.now();
     helper.send({ type: "stop", protocolVersion: { major: 1, minor: 0 }, requestId: "flood-stop" });
@@ -105,6 +110,7 @@ describe("Rust Local App process host transport", () => {
     expect(lifecycle.filter((frame) => frame.type === "terminal")).toEqual([
       expect.objectContaining({ status: "succeeded", cleanupProven: true }),
     ]);
+    expect(lifecycle.filter((frame) => frame.type === "terminal")[0]).not.toHaveProperty("errorCode", "descendant_cleanup");
   });
 
   nativeOnly("treats repeated Stop as one idempotent cleanup operation", async () => {
@@ -118,10 +124,10 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port,
-      script: `${JSON.stringify(process.execPath)} -e "const net=require('net');const s=net.createServer();s.listen(${port},'127.0.0.1');setInterval(()=>{},1000)"`,
+      script: `const net=require('node:net');const s=net.createServer();s.listen(${port},'127.0.0.1');setInterval(()=>{},1000);`,
     });
     await vi.waitFor(
-      () => expect(lifecycle.some((frame) => frame.type === "listener-verified")).toBe(true),
+      () => expect(lifecycle.some((frame) => frame.type === (process.platform === "darwin" ? "listener-verified" : "spawned"))).toBe(true),
       { timeout: 3_000 },
     );
     const stop = { type: "stop", protocolVersion: { major: 1, minor: 0 }, requestId: "repeated-stop" };
@@ -140,7 +146,33 @@ describe("Rust Local App process host transport", () => {
     expect(receipt.terminal).toMatchObject({ status: "succeeded", cleanupProven: true });
   });
 
-  nativeOnly("fails closed when the requested listener belongs to a foreign process", async () => {
+  nativeOnly("does not permit a Node duplicate after post-spawn native setup failure", async () => {
+    const previousInjection = process.env.RUDDER_PROCESS_HOST_TEST_PROCESS_SETUP_FAILURE;
+    process.env.RUDDER_PROCESS_HOST_TEST_PROCESS_SETUP_FAILURE = "after_spawn";
+    try {
+      const { root, runtimeRoot, helper, lifecycle } = await fixture("post-spawn-setup-failure");
+      const exited = once(helper, "exit");
+      sendStart(helper, {
+        requestId: "post-spawn-setup-failure",
+        root,
+        runtimeRoot,
+        port: await unusedPort(),
+        script: "setInterval(()=>{},1000);",
+      });
+      const [code] = await exited as [number | null];
+      expect(code).toBe(1);
+      expect(lifecycle).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "accepted" }),
+        expect.objectContaining({ type: "terminal", status: "failed", errorCode: "process_setup_failed" }),
+      ]));
+      expect(lifecycle.filter((frame) => frame.type === "accepted")).toHaveLength(1);
+    } finally {
+      if (previousInjection === undefined) delete process.env.RUDDER_PROCESS_HOST_TEST_PROCESS_SETUP_FAILURE;
+      else process.env.RUDDER_PROCESS_HOST_TEST_PROCESS_SETUP_FAILURE = previousInjection;
+    }
+  });
+
+  macNativeOnly("fails closed when the requested listener belongs to a foreign process", async () => {
     const foreign = createServer();
     await new Promise<void>((resolve, reject) => {
       foreign.once("error", reject);
@@ -155,7 +187,7 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port: address.port,
-      script: "sleep 30",
+      script: "setInterval(()=>{},1000);",
     });
     const [code] = await exited as [number | null];
     await new Promise<void>((resolve, reject) => foreign.close((error) => error ? reject(error) : resolve()));
@@ -177,7 +209,7 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port: await unusedPort(),
-      script: "sleep 30",
+      script: "const b=Buffer.alloc(10240,120);setInterval(()=>process.stdout.write(b),1);",
     });
     await vi.waitFor(() => expect(lifecycle.some((frame) => frame.type === "spawned")).toBe(true));
     helper.stdin.end();
@@ -186,6 +218,7 @@ describe("Rust Local App process host transport", () => {
     expect(lifecycle.filter((frame) => frame.type === "terminal")).toEqual([
       expect.objectContaining({ status: "succeeded", cleanupProven: true }),
     ]);
+    expect(lifecycle.filter((frame) => frame.type === "terminal")[0]).not.toHaveProperty("errorCode", "descendant_cleanup");
   });
 
   nativeOnly.each(["../outside", "nested/path", "nested\\path"])(
@@ -198,8 +231,8 @@ describe("Rust Local App process host transport", () => {
         type: "start",
         protocolVersion: { major: 1, minor: 0 },
         requestId: "unsafe-owner",
-        executable: "/bin/sh",
-        argv: ["-c", "exit 0"],
+        executable: process.execPath,
+        argv: ["-e", "process.exit(0)"],
         cwd: root,
         env: {},
         ownerToken,
@@ -227,7 +260,7 @@ describe("Rust Local App process host transport", () => {
         await mkdir(operationRoot);
         await writeFile(path.join(operationRoot, "marker"), "preserve", "utf8");
       } else {
-        await symlink(root, operationRoot);
+        await symlink(root, operationRoot, process.platform === "win32" ? "junction" : undefined);
       }
       const exited = once(helper, "exit");
       sendStart(helper, {
@@ -235,12 +268,12 @@ describe("Rust Local App process host transport", () => {
         root,
         runtimeRoot,
         port: await unusedPort(),
-        script: "sleep 30",
+        script: "setInterval(()=>{},1000);",
       });
       const [code] = await exited as [number | null];
       expect(code).toBe(1);
       expect(lifecycle).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: "terminal", status: "failed", errorCode: "spawn_failed" }),
+        expect.objectContaining({ type: "terminal", status: "failed", errorCode: "operation_root_unavailable" }),
       ]));
       await expect(readFile(marker, "utf8")).resolves.toBe("preserve");
       if (kind === "directory") {
@@ -249,7 +282,7 @@ describe("Rust Local App process host transport", () => {
     },
   );
 
-  nativeOnly("reports one failed terminal when durable receipt writing fails", async () => {
+  permissionNativeOnly("reports one failed terminal when durable receipt writing fails", async () => {
     const { root, runtimeRoot, helper, lifecycle } = await fixture("receipt-failure");
     helper.stdout.resume();
     helper.stderr.resume();
@@ -260,10 +293,10 @@ describe("Rust Local App process host transport", () => {
       root,
       runtimeRoot,
       port,
-      script: `${JSON.stringify(process.execPath)} -e "const net=require('net');const s=net.createServer();s.listen(${port},'127.0.0.1');setInterval(()=>{},1000)"`,
+      script: `const net=require('node:net');const s=net.createServer();s.listen(${port},'127.0.0.1');setInterval(()=>{},1000);`,
     });
     await vi.waitFor(
-      () => expect(lifecycle.some((frame) => frame.type === "listener-verified")).toBe(true),
+      () => expect(lifecycle.some((frame) => frame.type === (process.platform === "darwin" ? "listener-verified" : "spawned"))).toBe(true),
       { timeout: 3_000 },
     );
     const operationRoot = path.join(runtimeRoot, "receipt-failure");

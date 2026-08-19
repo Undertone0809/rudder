@@ -144,6 +144,12 @@ fn reports_version_protocol_and_capabilities_metadata() {
         serde_json::from_str::<Value>(&stdout).unwrap(),
         archive_capabilities["capabilities"]
     );
+    assert!(
+        archive_capabilities["target"]
+            .as_str()
+            .is_some_and(|target| !target.is_empty())
+    );
+    assert_eq!(archive_capabilities["effectiveEngine"], "rust");
 }
 
 #[test]
@@ -252,6 +258,7 @@ fn creates_file_backed_archive_from_bounded_plan() {
         "500000",
     ]);
     assert_eq!(code, 0, "{stderr}");
+    assert_eq!(result["accepted"], true);
     assert_eq!(result["byteSize"], body.len() as u64);
     assert_eq!(fs::read(extracted).unwrap(), body);
 }

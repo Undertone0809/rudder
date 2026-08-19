@@ -10,6 +10,7 @@ import {
 } from "./identity-credential-vault.js";
 import {
   createDesktopIdentityIpcController,
+  isPackagedTestIdentityMarker,
   registerDesktopIdentityIpcHandlers,
   resolveDesktopIdentityOrigin,
 } from "./identity-ipc.js";
@@ -122,6 +123,10 @@ export function createDesktopIdentityRuntime(options: {
     override: process.env.RUDDER_IDENTITY_ORIGIN,
     packagedTestMarkerPath: path.join(process.resourcesPath, "native", "packaged-test-identity.marker"),
   });
+  const packagedSmokeBypassRequested = app.isPackaged
+    && app.getName().startsWith("Rudder-smoke-")
+    && booleanFlagEnabled(process.env.RUDDER_DESKTOP_SMOKE_AUTH_BYPASS)
+    && isPackagedTestIdentityMarker(path.join(process.resourcesPath, "native", "packaged-test-identity.marker"));
   const safeStorage = resolveDesktopIdentitySafeStorage({
     safeStorage: options.safeStorage,
     isPackaged: app.isPackaged,
@@ -197,6 +202,7 @@ export function createDesktopIdentityRuntime(options: {
   const accountRequired = !desktopAccountBypassAllowed({
     isPackaged: app.isPackaged,
     bypassRequested: booleanFlagEnabled(process.env.RUDDER_DESKTOP_AUTH_BYPASS),
+    packagedSmokeBypassRequested,
   });
   const sessionSecret = randomBytes(32).toString("base64url");
   const telemetryStatePromise = loadOrCreateDesktopTelemetryState(app.getPath("userData"));

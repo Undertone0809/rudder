@@ -11,6 +11,7 @@ import {
   createWorkspaceBackupV2Native,
   inspectWorkspaceBackupV2,
   inspectWorkspaceBackupV2File,
+  inspectWorkspaceBackupV2FileNative,
   readWorkspaceBackupV2File,
   resolveNativeArchiveBinary,
   walkWorkspaceBackupV2,
@@ -32,7 +33,12 @@ const behavior = ${JSON.stringify(behavior)};
 if (behavior === "timeout") setTimeout(() => {}, 60000);
 else if (behavior === "nonzero") { console.log(JSON.stringify({ok:false,protocolVersion:1,errorCode:"source_changed"})); console.error("rudder-native: archive operation failed"); process.exit(2); }
 else if (behavior === "malformed") console.log("not-json");
-else if (args[1] === "capabilities") console.log(JSON.stringify(behavior === "capability" ? {ok:true,protocolVersion:1,capabilities:[]} : behavior === "protocol" ? {ok:true,protocolVersion:9,capabilities:["archive.create"]} : {ok:true,protocolVersion:1,capabilities:["archive.create"]}));
+else if (args[1] === "capabilities") console.log(JSON.stringify(behavior === "capability" ? {ok:true,protocolVersion:1,capabilities:[]} : behavior === "protocol" ? {ok:true,protocolVersion:9,capabilities:["archive.create"]} : behavior === "inspect-unlisted" ? {ok:true,protocolVersion:1,capabilities:["archive.inspectManifest"]} : {ok:true,protocolVersion:1,capabilities:["archive.create"]}));
+else if (behavior === "inspect-unlisted" && args[1] === "inspect-manifest") {
+  const manifest = Buffer.from(process.env.RUDDER_TEST_NATIVE_MANIFEST, "base64");
+  const archive = fs.readFileSync(args[2]);
+  console.log(JSON.stringify({ok:true,operation:"inspectManifest",protocolVersion:1,manifestBase64:manifest.toString("base64"),byteSize:archive.length,sha256:crypto.createHash("sha256").update(manifest).digest("hex"),entryCount:3}));
+}
 else {
   const plan = JSON.parse(fs.readFileSync(args[2], "utf8"));
   const output = args[3];
@@ -244,6 +250,27 @@ describe("workspace backup v2 comparator", () => {
       const tempArtifacts = (await readdir(f.root)).filter((entry) => entry.includes(".tmp"));
       expect(tempArtifacts).toEqual([]);
     } finally { await f.dispose(); }
+  });
+
+  it("rejects a native manifest when the ZIP contains an unlisted entry", async () => {
+    const f = await fixture();
+    const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+    const previousManifest = process.env.RUDDER_TEST_NATIVE_MANIFEST;
+    try {
+      await writeFile(path.join(f.root, "file.txt"), "content");
+      const comparator = await createWorkspaceBackupV2({ rootPath: f.root, orgId: "org", instanceId: "instance" });
+      const archivePath = path.join(f.root, "unlisted.zip");
+      await writeFile(archivePath, appendUnlistedByteEntry(comparator.archive));
+      process.env.RUDDER_NATIVE_ARCHIVE_PATH = await fakeNative(f.root, "inspect-unlisted");
+      process.env.RUDDER_TEST_NATIVE_MANIFEST = Buffer.from(JSON.stringify(comparator.manifest)).toString("base64");
+      await expect(inspectWorkspaceBackupV2FileNative(archivePath)).rejects.toMatchObject({
+        diagnostic: { category: "integrity", code: "archive_manifest_entry_mismatch" },
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
+      if (previousManifest === undefined) delete process.env.RUDDER_TEST_NATIVE_MANIFEST; else process.env.RUDDER_TEST_NATIVE_MANIFEST = previousManifest;
+      await f.dispose();
+    }
   });
 
   it("publishes and inspects exactly 100 MiB of workspace content without charging the manifest", async () => {

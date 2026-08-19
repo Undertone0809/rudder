@@ -1090,7 +1090,9 @@ export class LocalAppRuntimeManager {
         throw new Error("Local App exited before listener ownership could be proven");
       }
       if (owned) {
-        if (this.useNativeProcessHost && !record.watchdog?.nativeListenerVerified) {
+        if (this.useNativeProcessHost
+          && this.processPlatform.platform === "darwin"
+          && !record.watchdog?.nativeListenerVerified) {
           const retryDelayMs = Math.min(75, deadline - Date.now());
           if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           continue;

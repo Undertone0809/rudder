@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createDesktopIdentityIpcController,
   DESKTOP_IDENTITY_IPC_CHANNELS,
+  isPackagedTestIdentityMarker,
   registerDesktopIdentityIpcHandlers,
   resolveDesktopIdentityOrigin,
 } from "./identity-ipc.js";
@@ -96,6 +97,20 @@ function fixture() {
 }
 
 describe("Desktop Rudder Account IPC", () => {
+  it("accepts only the exact packaged smoke marker", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "rudder-packaged-test-marker-"));
+    const marker = path.join(root, "packaged-test-identity.marker");
+    try {
+      expect(isPackagedTestIdentityMarker(marker)).toBe(false);
+      writeFileSync(marker, "rudder-packaged-test-identity-v1\n", { mode: 0o600 });
+      expect(isPackagedTestIdentityMarker(marker)).toBe(true);
+      writeFileSync(marker, "not-a-rudder-packaged-test-marker\n", { mode: 0o600 });
+      expect(isPackagedTestIdentityMarker(marker)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("pins packaged builds and permits only an explicit development loopback override", () => {
     expect(resolveDesktopIdentityOrigin({
       isPackaged: true,

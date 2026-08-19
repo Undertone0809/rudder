@@ -1,3 +1,4 @@
+import type { RudderNativeDiagnostic } from "@rudderhq/shared";
 import { type ChildProcess } from "node:child_process";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
@@ -13,6 +14,7 @@ export interface RunProcessResult {
   stderr: string;
   pid: number | null;
   startedAt: string | null;
+  diagnostic?: RudderNativeDiagnostic;
 }
 
 export interface RunningProcess {

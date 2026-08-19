@@ -35,6 +35,8 @@ const nativeCapabilities = [
   "stdout_relay",
   "stderr_relay",
 ];
+const localAppRuntimeTestTimeoutMs = process.platform === "win32" ? 45_000 : 5_000;
+const localAppWatchdogStartTimeoutMs = process.platform === "win32" ? 30_000 : 10_000;
 
 async function unusedLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -103,6 +105,121 @@ async function acceptFixtureListenerOwnership(): Promise<boolean> {
   return true;
 }
 
+const fixtureListenerOwnershipOverride = acceptFixtureListenerOwnership;
+const windowsFixtureProcesses = new Map<number, ChildProcess>();
+const windowsFixtureProcessPlatform = process.platform === "win32"
+  ? {
+      platform: "win32" as const,
+      systemPathEntries: [],
+      terminate: async (ownerId: number | null) => {
+        const child = ownerId === null ? undefined : windowsFixtureProcesses.get(ownerId);
+        if (!child || child.exitCode !== null || child.signalCode !== null) return;
+        child.kill("SIGKILL");
+        await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      },
+      probePersistedRuntime: async () => ({
+        pid: "dead" as const,
+        processGroup: "dead" as const,
+        listener: "dead" as const,
+      }),
+      verifyListenerOwnership: async () => true,
+    }
+  : undefined;
+
+function fixtureWatchdogSpawner(): typeof spawn | undefined {
+  if (process.platform !== "win32") return undefined;
+  return (() => {
+    const helper = new EventEmitter() as ChildProcess & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      stdin: { end: ReturnType<typeof vi.fn> };
+      send: ReturnType<typeof vi.fn>;
+      connected: boolean;
+    };
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let app: ChildProcess | null = null;
+    let exited = false;
+    let cleanupRequested = false;
+    let exitCode: number | null = null;
+    let signalCode: NodeJS.Signals | null = null;
+    const endStdin = vi.fn(() => {
+      cleanupRequested = true;
+      if (app && app.exitCode === null && app.signalCode === null) app.kill("SIGKILL");
+    });
+    Object.defineProperties(helper, {
+      stdout: { value: stdout },
+      stderr: { value: stderr },
+      stdin: { value: { end: endStdin } },
+      connected: { get: () => !exited },
+      exitCode: { get: () => exitCode },
+      signalCode: { get: () => signalCode },
+    });
+    const emitExit = (code: number | null, signal: NodeJS.Signals | null = null) => {
+      if (exited) return;
+      exited = true;
+      exitCode = code;
+      signalCode = signal;
+      helper.emit("exit", code, signal);
+    };
+    helper.send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      const typed = message as {
+        type?: string;
+        executable?: string;
+        argv?: string[];
+        cwd?: string;
+        env?: NodeJS.ProcessEnv;
+      };
+      if (typed.type === "start") {
+        if (!typed.executable || !typed.cwd || !Array.isArray(typed.argv)) {
+          callback?.(new Error("Invalid fixture watchdog start message"));
+          return true;
+        }
+        app = spawn(typed.executable, typed.argv, {
+          cwd: typed.cwd,
+          env: typed.env,
+          shell: false,
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        app.stdout?.pipe(stdout);
+        app.stderr?.pipe(stderr);
+        if (app.pid) windowsFixtureProcesses.set(app.pid, app);
+        app.once("error", (error) => {
+          helper.emit("message", { type: "error", message: error.message });
+          emitExit(1, null);
+        });
+        app.once("spawn", () => {
+          helper.emit("message", { type: "spawned", pid: app?.pid, pgid: app?.pid });
+        });
+        app.once("exit", (code, signal) => {
+          if (app?.pid) windowsFixtureProcesses.delete(app.pid);
+          helper.emit("message", { type: "app-exit", code, signal });
+          if (cleanupRequested) {
+            helper.emit("message", { type: "stopped" });
+          }
+          emitExit(code, signal);
+        });
+      } else if (typed.type === "stop") {
+        helper.emit("message", { type: "stop-accepted" });
+      } else if (typed.type === "cleanup") {
+        cleanupRequested = true;
+        if (!app || app.exitCode !== null || app.signalCode !== null) {
+          helper.emit("message", { type: "stopped" });
+          emitExit(0, null);
+        } else {
+          app.kill("SIGKILL");
+        }
+      }
+      callback?.(null);
+      return true;
+    });
+    return helper;
+  }) as unknown as typeof spawn;
+}
+
+const windowsFixtureWatchdogSpawner = fixtureWatchdogSpawner();
+
 function watchdogEmitting(message: unknown) {
   const helper = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
@@ -165,7 +282,7 @@ function nativeHostEmitting(onStart?: (message: Record<string, unknown>, helper:
   return { helper, emitExit };
 }
 
-describe("Desktop Local App runtime", () => {
+describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs }, () => {
   it("injects Electron Node mode for the managed host executable even when the parent env omits it", async () => {
     const { registry, definition } = await approvedFixture({
       inheritedEnvNames: ["ELECTRON_RUN_AS_NODE"],
@@ -227,105 +344,114 @@ describe("Desktop Local App runtime", () => {
     expect(parseLsofListenerProcessRecords(output, 43_123)).toBeNull();
   });
 
-  it("derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
-    const prefix = path.join(root, "node-prefix");
-    const npmBin = path.join(prefix, "lib", "node_modules", "npm", "bin");
-    const trustedBin = path.join(prefix, "bin");
-    await mkdir(npmBin, { recursive: true });
-    await mkdir(trustedBin, { recursive: true });
-    const trustedNode = path.join(trustedBin, "node");
-    await writeFile(trustedNode, [
-      "#!/bin/sh",
-      "export RUDDER_TRUSTED_NODE_PREFIX=1",
-      `exec '${process.execPath}' "$@"`,
-      "",
-    ].join("\n"));
-    await chmod(trustedNode, 0o755);
-    const npmCli = path.join(npmBin, "npm-cli.js");
-    await writeFile(npmCli, [
-      "#!/usr/bin/env node",
-      "if (process.env.RUDDER_TRUSTED_NODE_PREFIX !== '1') process.exit(86);",
-      `await import(${JSON.stringify(pathToFileURL(fixturePath).href)});`,
-      "",
-    ].join("\n"));
-    await chmod(npmCli, 0o755);
+  it.runIf(process.platform !== "win32")(
+    "derives a trusted Node bin for a realpathed npm CLI when the Desktop executable has no node",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-npm-prefix-"));
+      const prefix = path.join(root, "node-prefix");
+      const npmBin = path.join(prefix, "lib", "node_modules", "npm", "bin");
+      const trustedBin = path.join(prefix, "bin");
+      await mkdir(npmBin, { recursive: true });
+      await mkdir(trustedBin, { recursive: true });
+      const trustedNode = path.join(trustedBin, "node");
+      await writeFile(trustedNode, [
+        "#!/bin/sh",
+        "export RUDDER_TRUSTED_NODE_PREFIX=1",
+        `exec '${process.execPath}' "$@"`,
+        "",
+      ].join("\n"));
+      await chmod(trustedNode, 0o755);
+      const npmCli = path.join(npmBin, "npm-cli.js");
+      await writeFile(npmCli, [
+        "#!/usr/bin/env node",
+        "if (process.env.RUDDER_TRUSTED_NODE_PREFIX !== '1') process.exit(86);",
+        `await import(${JSON.stringify(pathToFileURL(fixturePath).href)});`,
+        "",
+      ].join("\n"));
+      await chmod(npmCli, 0o755);
 
-    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
-    const prepared = await registry.prepareDefinition({
-      title: "npm shebang fixture",
-      executable: npmCli,
-      argv: [],
-      cwd: root,
-      inheritedEnvNames: [],
-      readiness: { path: "/health", timeoutMs: 4_000 },
-      openPath: "/app",
-    });
-    const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
-    await registry.approveDefinition(definition.id, prepared.trustFingerprint);
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: "darwin",
-      hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
-    });
-    try {
-      const running = await manager.start(definition.id);
-      expect((await fetch(`${running.origin}/health`)).status).toBe(200);
-    } finally {
-      await manager.stop(definition.id).catch(() => undefined);
-    }
-  });
+      const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
+      const prepared = await registry.prepareDefinition({
+        title: "npm shebang fixture",
+        executable: npmCli,
+        argv: [],
+        cwd: root,
+        inheritedEnvNames: [],
+        readiness: { path: "/health", timeoutMs: 4_000 },
+        openPath: "/app",
+      });
+      const definition = await registry.createDefinition({ ...prepared, approvedFingerprint: prepared.trustFingerprint });
+      await registry.approveDefinition(definition.id, prepared.trustFingerprint);
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        hostExecutablePath: path.join(root, "Rudder.app", "Contents", "MacOS", "Rudder"),
+        verifyListenerOwnership: fixtureListenerOwnershipOverride,
+      });
+      try {
+        const running = await manager.start(definition.id);
+        expect((await fetch(`${running.origin}/health`)).status).toBe(200);
+      } finally {
+        await manager.stop(definition.id).catch(() => undefined);
+      }
+    },
+  );
 
-  it("keeps an inherited attacker PATH from replacing the trusted executable path", async () => {
-    const attackerRoot = await mkdtemp(path.join(tmpdir(), "rudder-local-app-path-attacker-"));
-    const attackerExecutable = path.join(attackerRoot, "node");
-    const attackerMarker = path.join(attackerRoot, "executed");
-    await writeFile(attackerExecutable, [
-      "#!/bin/sh",
-      `printf attacked > '${attackerMarker}'`,
-      "printf attacker-node",
-      "",
-    ].join("\n"));
-    await chmod(attackerExecutable, 0o755);
+  it.runIf(process.platform !== "win32")(
+    "keeps an inherited attacker PATH from replacing the trusted executable path",
+    async () => {
+      const attackerRoot = await mkdtemp(path.join(tmpdir(), "rudder-local-app-path-attacker-"));
+      const attackerExecutable = path.join(attackerRoot, "node");
+      const attackerMarker = path.join(attackerRoot, "executed");
+      await writeFile(attackerExecutable, [
+        "#!/bin/sh",
+        `printf attacked > '${attackerMarker}'`,
+        "printf attacker-node",
+        "",
+      ].join("\n"));
+      await chmod(attackerExecutable, 0o755);
 
-    const previousPath = process.env.PATH;
-    process.env.PATH = attackerRoot;
-    const { registry, definition } = await approvedFixture({ inheritedEnvNames: ["PATH"] });
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: "darwin",
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
-    });
-    try {
-      const running = await manager.start(definition.id);
-      const probe = await fetch(`${running.origin}/path-probe`).then((response) => response.text());
-      const childEnvironment = await fetch(`${running.origin}/env`).then((response) => response.json()) as {
-        path?: string;
-      };
-      const childPath = childEnvironment.path?.split(path.delimiter) ?? [];
+      const previousPath = process.env.PATH;
+      process.env.PATH = attackerRoot;
+      const { registry, definition } = await approvedFixture({ inheritedEnvNames: ["PATH"] });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "darwin",
+        verifyListenerOwnership: fixtureListenerOwnershipOverride,
+      });
+      try {
+        const running = await manager.start(definition.id);
+        const probe = await fetch(`${running.origin}/path-probe`).then((response) => response.text());
+        const childEnvironment = await fetch(`${running.origin}/env`).then((response) => response.json()) as {
+          path?: string;
+        };
+        const childPath = childEnvironment.path?.split(path.delimiter) ?? [];
 
-      expect(probe).toBe(await realpath(process.execPath));
-      expect(childPath[0]).toBe(path.dirname(definition.executable));
-      expect(childPath).toContain(path.dirname(process.execPath));
-      expect(childPath).toEqual(expect.arrayContaining(["/usr/bin", "/bin", "/usr/sbin", "/sbin"]));
-      expect(childPath).not.toContain(attackerRoot);
-      await expect(access(attackerMarker)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await manager.stop(definition.id).catch(() => undefined);
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-    }
-  });
+        expect(probe).toBe(await realpath(process.execPath));
+        expect(childPath[0]).toBe(path.dirname(definition.executable));
+        expect(childPath).toContain(path.dirname(process.execPath));
+        expect(childPath).toEqual(expect.arrayContaining(["/usr/bin", "/bin", "/usr/sbin", "/sbin"]));
+        expect(childPath).not.toContain(attackerRoot);
+        await expect(access(attackerMarker)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await manager.stop(definition.id).catch(() => undefined);
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      }
+    },
+  );
 
-  it.runIf(process.platform === "darwin")(
+  it(
     "spawns shell-free on an automatic loopback port, deduplicates start, bounds logs, and attests origin/partition",
     async () => {
       const { registry, definition } = await approvedFixture();
       const events: Array<{ type: string; monotonicNs: bigint }> = [];
       const manager = new LocalAppRuntimeManager({
         registry,
-        platform: "darwin",
+        platform: process.platform,
+        ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+        watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+        ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
         maxLogBytes: 256,
         observeLifecycleEvent: (event) => events.push(event),
       });
@@ -352,12 +478,42 @@ describe("Desktop Local App runtime", () => {
     },
   );
 
-  it.runIf(process.platform === "darwin")(
+  it.runIf(process.platform === "win32")(
+    "runs an approved Local App through the real Windows Node watchdog",
+    { timeout: 90_000 },
+    async () => {
+      const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 30_000 });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "win32",
+        useNativeProcessHost: false,
+        watchdogStartTimeoutMs: 60_000,
+        listenerOwnershipRetryTimeoutMs: 30_000,
+        cleanupTimeoutMs: 30_000,
+      });
+      try {
+        const running = await manager.start(definition.id);
+        expect(running.status).toBe("running");
+        expect((await fetch(`${running.origin}/health`)).status).toBe(200);
+        await expect(manager.stop(definition.id)).resolves.toMatchObject({ status: "stopped" });
+        await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toBeNull();
+      } finally {
+        await manager.shutdown().catch(() => undefined);
+      }
+    },
+  );
+
+  it(
     "rejects and fully cleans an approved fixture that exposes its allocated port on every interface",
-    { timeout: 30_000 },
+    { timeout: process.platform === "win32" ? 45_000 : 30_000 },
     async () => {
       const { root, registry, definition } = await approvedFixture({ serverFixturePath: wildcardFixturePath });
-      const manager = new LocalAppRuntimeManager({ registry, platform: "darwin" });
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: process.platform,
+        watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+        ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+      });
       const markerPath = path.join(root, "wildcard-listener.json");
       try {
         await expect(manager.start(definition.id)).rejects.toThrow(
@@ -382,8 +538,11 @@ describe("Desktop Local App runtime", () => {
     const { root, registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const starting = manager.start(definition.id);
@@ -403,8 +562,11 @@ describe("Desktop Local App runtime", () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     const starting = manager.start(definition.id);
     const shuttingDown = manager.shutdown();
@@ -419,8 +581,11 @@ describe("Desktop Local App runtime", () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const first = await manager.start(definition.id);
@@ -441,7 +606,9 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it("does not start a new generation until an in-flight stop has finished clearing the old one", async () => {
+  it.runIf(process.platform !== "win32")(
+    "does not start a new generation until an in-flight stop has finished clearing the old one",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const terminationEntered = deferred<void>();
     const releaseTermination = deferred<void>();
@@ -461,9 +628,9 @@ describe("Desktop Local App runtime", () => {
     });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const first = await manager.start(definition.id);
@@ -488,19 +655,23 @@ describe("Desktop Local App runtime", () => {
         status: "running",
         generation: restarted.generation,
       });
-    } finally {
+      } finally {
       releaseTermination.resolve();
       await manager.shutdown();
     }
-  }, 10_000);
+    },
+    10_000,
+  );
 
-  it("keeps complete ownership orphaned when stop cannot prove the group died", async () => {
+  it.runIf(process.platform !== "win32")(
+    "keeps complete ownership orphaned when stop cannot prove the group died",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup: vi.fn(),
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
       terminationOptions: {
         isGroupAlive: () => true,
         delay: async () => undefined,
@@ -521,18 +692,21 @@ describe("Desktop Local App runtime", () => {
       });
       expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
       await expect(manager.start(definition.id)).rejects.toThrow("unverified");
-    } finally {
+      } finally {
       killFixtureProcess(ownership?.pid);
     }
-  });
+    },
+  );
 
-  it("aggregates shutdown cleanup failures with the binding id and preserves orphan ownership", async () => {
+  it.runIf(process.platform !== "win32")(
+    "aggregates shutdown cleanup failures with the binding id and preserves orphan ownership",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup: vi.fn(),
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
       terminationOptions: {
         isGroupAlive: () => true,
         delay: async () => undefined,
@@ -553,12 +727,15 @@ describe("Desktop Local App runtime", () => {
         pgid: ownership?.pgid,
         port: ownership?.port,
       });
-    } finally {
+      } finally {
       killFixtureProcess(ownership?.pid);
     }
-  });
+    },
+  );
 
-  it("closes runtime admission while shutdown drains a blocked stop and leaves no later generation", async () => {
+  it.runIf(process.platform !== "win32")(
+    "closes runtime admission while shutdown drains a blocked stop and leaves no later generation",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const terminationEntered = deferred<void>();
     const releaseTermination = deferred<void>();
@@ -578,9 +755,9 @@ describe("Desktop Local App runtime", () => {
     });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     const first = await manager.start(definition.id);
     const ownedPid = (await registry.getRuntimeDescriptor(definition.id))?.pid;
@@ -600,12 +777,14 @@ describe("Desktop Local App runtime", () => {
       expect(first.status).toBe("running");
       expect(ownedPid).toBeTypeOf("number");
       await vi.waitFor(() => expect(() => process.kill(ownedPid!, 0)).toThrow());
-    } finally {
+      } finally {
       releaseTermination.resolve();
       await manager.stop(definition.id).catch(() => undefined);
       await manager.shutdown();
     }
-  }, 10_000);
+    },
+    10_000,
+  );
 
   it("atomically reconciles nonexistent persisted PID, PGID, and listener once, then permits a new start", async () => {
     const { registry, definition } = await approvedFixture();
@@ -621,9 +800,12 @@ describe("Desktop Local App runtime", () => {
     });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       probePersistedRuntimeLiveness,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     try {
       const firstStatus = manager.status(definition.id);
@@ -651,7 +833,7 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it.each([
+  it.runIf(process.platform !== "win32").each([
     {
       label: "a live process group",
       liveness: { pid: "alive" as const, processGroup: "alive" as const, listener: "alive" as const },
@@ -668,7 +850,7 @@ describe("Desktop Local App runtime", () => {
     const killGroup = vi.fn();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
       probePersistedRuntimeLiveness: vi.fn(async () => liveness),
     });
@@ -684,14 +866,24 @@ describe("Desktop Local App runtime", () => {
 
   it("fails closed on readiness failure or unproven listener ownership", async () => {
     const wrongHealth = await approvedFixture({ readinessPath: "/never", readinessTimeoutMs: 1_000 });
-    const timeoutManager = new LocalAppRuntimeManager({ registry: wrongHealth.registry, platform: "darwin" });
+    const timeoutManager = new LocalAppRuntimeManager({
+      registry: wrongHealth.registry,
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
+    });
     await expect(timeoutManager.start(wrongHealth.definition.id)).rejects.toThrow("readiness");
     expect((await timeoutManager.status(wrongHealth.definition.id)).status).toBe("failed");
 
     const unowned = await approvedFixture();
     const ownershipManager = new LocalAppRuntimeManager({
       registry: unowned.registry,
-      platform: "darwin",
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership: async () => false,
       listenerOwnershipRetryTimeoutMs: 750,
     });
@@ -706,7 +898,10 @@ describe("Desktop Local App runtime", () => {
       .mockResolvedValueOnce(true);
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
-      platform: "darwin",
+      platform: process.platform,
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership,
     });
     try {
@@ -727,6 +922,8 @@ describe("Desktop Local App runtime", () => {
     const manager = new LocalAppRuntimeManager({
       registry: owned.registry,
       platform: "win32",
+      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
+      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership,
     });
     try {
@@ -794,18 +991,41 @@ describe("Desktop Local App runtime", () => {
 
   it("bounds a listener ownership probe that never returns", async () => {
     const owned = await approvedFixture({ readinessTimeoutMs: 2_000 });
-    const manager = new LocalAppRuntimeManager({
-      registry: owned.registry,
-      platform: "darwin",
-      verifyListenerOwnership: () => new Promise(() => undefined),
-      listenerOwnershipRetryTimeoutMs: 250,
-      cleanupTimeoutMs: 250,
-    });
+    const manager = new LocalAppRuntimeManager(
+      process.platform === "win32"
+        ? {
+            registry: owned.registry,
+            processPlatform: {
+              platform: "win32",
+              systemPathEntries: [],
+              terminate: vi.fn(async () => undefined),
+              probePersistedRuntime: vi.fn(async () => ({
+                pid: "dead" as const,
+                processGroup: "dead" as const,
+                listener: "dead" as const,
+              })),
+              verifyListenerOwnership: () => new Promise(() => undefined),
+            },
+            ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+            watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+            listenerOwnershipRetryTimeoutMs: 250,
+            cleanupTimeoutMs: 250,
+          }
+        : {
+            registry: owned.registry,
+            platform: process.platform,
+            ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
+            watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
+            verifyListenerOwnership: () => new Promise(() => undefined),
+            listenerOwnershipRetryTimeoutMs: 250,
+            cleanupTimeoutMs: 250,
+          },
+    );
     const startedAt = Date.now();
     await expect(manager.start(owned.definition.id)).rejects.toThrow(
       "listener ownership could not be proven",
     );
-    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(Date.now() - startedAt).toBeLessThan(process.platform === "win32" ? 5_000 : 1_500);
   });
 
   it("accepts an explicit watchdog stop acknowledgement before using Windows fallback cleanup", async () => {
@@ -1008,13 +1228,15 @@ describe("Desktop Local App runtime", () => {
     });
   });
 
-  it("preserves full ownership and blocks restart when failed-start cleanup hits EPERM", async () => {
+  it.runIf(process.platform !== "win32")(
+    "preserves full ownership and blocks restart when failed-start cleanup hits EPERM",
+    async () => {
     const { registry, definition } = await approvedFixture();
     const permissionError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
     const helper = watchdogEmitting({ type: "spawned", pid: 88_881, pgid: 88_881 });
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       verifyListenerOwnership: async () => false,
       killGroup: () => { throw permissionError; },
       spawnWatchdog: (() => helper) as unknown as typeof spawn,
@@ -1031,15 +1253,18 @@ describe("Desktop Local App runtime", () => {
     });
     expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
     await expect(manager.start(definition.id)).rejects.toThrow("unverified");
-  });
+    },
+  );
 
-  it("captures a late watchdog spawn after startup timeout and never overlaps a new generation", async () => {
+  it.runIf(process.platform !== "win32")(
+    "captures a late watchdog spawn after startup timeout and never overlaps a new generation",
+    async () => {
     const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
     const helper = watchdogEmittingAfter({ type: "spawned", pid: 88_881, pgid: 88_881 }, 30);
     const spawnWatchdog = vi.fn(() => helper) as unknown as typeof spawn;
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       spawnWatchdog,
       watchdogStartTimeoutMs: 10,
       cleanupTimeoutMs: 60,
@@ -1061,7 +1286,8 @@ describe("Desktop Local App runtime", () => {
     });
     await expect(manager.start(definition.id)).rejects.toThrow("unverified");
     expect(spawnWatchdog).toHaveBeenCalledTimes(1);
-  });
+    },
+  );
 
   it("keeps watchdog startup and cleanup deadlines referenced while start is pending", async () => {
     const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
@@ -1073,7 +1299,7 @@ describe("Desktop Local App runtime", () => {
     const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       spawnWatchdog,
       watchdogStartTimeoutMs: 60_001,
       cleanupTimeoutMs: 60_002,
@@ -1104,7 +1330,9 @@ describe("Desktop Local App runtime", () => {
     }
   });
 
-  it("keeps ownership orphaned when a running watchdog exits without acknowledging cleanup", async () => {
+  it.runIf(process.platform !== "win32")(
+    "keeps ownership orphaned when a running watchdog exits without acknowledging cleanup",
+    async () => {
     const { registry, definition } = await approvedFixture();
     let watchdog: ChildProcess | null = null;
     const spawnWatchdog = ((command: string, args: readonly string[], options: SpawnOptions) => {
@@ -1113,10 +1341,10 @@ describe("Desktop Local App runtime", () => {
     }) as unknown as typeof spawn;
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       spawnWatchdog,
       cleanupTimeoutMs: 100,
-      verifyListenerOwnership: acceptFixtureListenerOwnership,
+      verifyListenerOwnership: fixtureListenerOwnershipOverride,
     });
     await manager.start(definition.id);
     const ownership = await registry.getRuntimeDescriptor(definition.id);
@@ -1133,12 +1361,15 @@ describe("Desktop Local App runtime", () => {
       }, { timeout: 3_000 });
       expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
       await expect(manager.start(definition.id)).rejects.toThrow("unverified");
-    } finally {
+      } finally {
       killFixtureProcess(ownership?.pid);
     }
-  });
+    },
+  );
 
-  it("uses TERM then bounded KILL only for a verified owned process group", async () => {
+  it.runIf(process.platform !== "win32")(
+    "uses TERM then bounded KILL only for a verified owned process group",
+    async () => {
     const signals: Array<[number, NodeJS.Signals]> = [];
     let alive = true;
     await terminateOwnedProcessGroup(42, {
@@ -1152,9 +1383,12 @@ describe("Desktop Local App runtime", () => {
     await expect(terminateOwnedProcessGroup(null, {
       killGroup: vi.fn(), isGroupAlive: () => false, delay: async () => undefined,
     })).rejects.toThrow("unverified");
-  });
+    },
+  );
 
-  it("rejects when TERM and KILL cannot prove the process group is dead", async () => {
+  it.runIf(process.platform !== "win32")(
+    "rejects when TERM and KILL cannot prove the process group is dead",
+    async () => {
     const signals: NodeJS.Signals[] = [];
     await expect(terminateOwnedProcessGroup(42, {
       killGroup: (_pgid, signal) => { signals.push(signal); },
@@ -1164,9 +1398,10 @@ describe("Desktop Local App runtime", () => {
       pollMs: 1,
     })).rejects.toThrow("could not be proven dead");
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-  });
+    },
+  );
 
-  it.each([1, Number.MAX_SAFE_INTEGER + 1])(
+  it.runIf(process.platform !== "win32").each([1, Number.MAX_SAFE_INTEGER + 1])(
     "never signals an unsafe process group identity %s",
     async (pgid) => {
       const killGroup = vi.fn();
@@ -1181,7 +1416,7 @@ describe("Desktop Local App runtime", () => {
     },
   );
 
-  it.each([
+  it.runIf(process.platform !== "win32").each([
     { pid: 2, pgid: 1 },
     { pid: 1, pgid: 1 },
     { pid: Number.MAX_SAFE_INTEGER + 1, pgid: Number.MAX_SAFE_INTEGER + 1 },
@@ -1191,7 +1426,7 @@ describe("Desktop Local App runtime", () => {
     const killGroup = vi.fn();
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: "darwin",
+      platform: process.platform,
       killGroup,
       spawnWatchdog: (() => helper) as unknown as typeof spawn,
       cleanupTimeoutMs: 10,
@@ -1207,7 +1442,9 @@ describe("Desktop Local App runtime", () => {
     await expect(manager.start(definition.id)).rejects.toThrow("unverified");
   });
 
-  it("treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port", async () => {
+  it.runIf(process.platform !== "win32")(
+    "treats control-pipe EOF as idempotent cleanup and never guesses about a legacy orphan without a port",
+    async () => {
     const pipe = new EventEmitter();
     const cleanup = vi.fn(async () => undefined);
     installControlPipeEofCleanup(pipe, cleanup);
@@ -1234,7 +1471,7 @@ describe("Desktop Local App runtime", () => {
     await writeFile(registryPath, JSON.stringify(persisted), { mode: 0o600 });
     const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
     const killGroup = vi.fn();
-    const manager = new LocalAppRuntimeManager({ registry: reloaded, platform: "darwin", killGroup });
+    const manager = new LocalAppRuntimeManager({ registry: reloaded, platform: process.platform, killGroup });
     expect((await manager.status(definition.id)).status).toBe("orphaned_unverified");
     await expect(manager.stop(definition.id)).rejects.toThrow("unverified");
     expect(killGroup).not.toHaveBeenCalled();
@@ -1244,9 +1481,12 @@ describe("Desktop Local App runtime", () => {
       pid: null,
       pgid: null,
     });
-  });
+    },
+  );
 
-  it("uses a real watchdog whose parent control-pipe EOF cleans the owned app group", async () => {
+  it.runIf(process.platform !== "win32")(
+    "uses a real watchdog whose parent control-pipe EOF cleans the owned app group",
+    async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-watchdog-"));
     const port = await unusedLoopbackPort();
     const watchdog = spawn(process.execPath, [watchdogPath], {
@@ -1281,7 +1521,8 @@ describe("Desktop Local App runtime", () => {
     watchdog.stdin?.end();
     await once(watchdog, "exit");
     expect(() => process.kill(child.pid, 0)).toThrow();
-  });
+    },
+  );
 
   it.skipIf(!nativeHostPath)("runs an approved Local App through the opt-in Rust process host", async () => {
     const { root, registry, definition } = await approvedFixture();

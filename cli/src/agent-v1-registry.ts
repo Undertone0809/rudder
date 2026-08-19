@@ -236,6 +236,8 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "Issue comment responses include `shortRef` when available. `rudder issue comments get <issue> <comment-id-or-cmt-ref>` accepts a full comment UUID or `cmt_<uuid-prefix>`, and `rudder issue comments list <issue> --after <comment-id-or-cmt-ref>` accepts the same forms for the pagination anchor. Use the full UUID when a short ref is ambiguous within the issue.",
     "",
+    "Chat conversation responses include `shortRef` when available. Chat read and mutation commands accept the organization-scoped `cht_<uuid-prefix>` value or the full conversation UUID. Human-readable `chat list` and `chat search` output prefers `shortRef`; `--json` retains both `id` and `shortRef`, and `--full-ids` preserves the durable UUID value in `id`. Use the full UUID when a short ref is ambiguous.",
+    "",
     "`--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.",
     "",
     "## Renderable Library CLI Output",
