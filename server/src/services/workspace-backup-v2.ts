@@ -711,6 +711,11 @@ export async function inspectWorkspaceBackupV2ForService(filePath: string, orgId
   return { manifest: index.manifest, native: false, archiveSize: index.archiveSize, index, rootPath: index.manifest.identity.rootPath, fallbackWarning };
 }
 
+export function isWorkspaceBackupV2NativeEnabled() {
+  return process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED === "true"
+    && resolveRudderNativeCapability({ capability: "workspace-backup", env: process.env, legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"] }).enabled;
+}
+
 export async function readWorkspaceBackupV2EntryForService(filePath: string, rootPath: string, relativePath: string): Promise<Buffer> {
   const policy = resolveRudderNativeCapability({ capability: "workspace-backup", env: process.env, legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"] });
   if (policy.enabled) {

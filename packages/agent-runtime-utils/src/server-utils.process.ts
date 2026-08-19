@@ -5,6 +5,7 @@ import path from "node:path";
 import type {
   AgentRuntimeSkillEntry
 } from "./types.js";
+export { runNativeChildProcessOrFallback } from "./native-process-runner.js";
 
 export interface RunProcessResult {
   exitCode: number | null;

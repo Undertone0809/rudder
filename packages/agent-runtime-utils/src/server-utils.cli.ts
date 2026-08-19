@@ -3,9 +3,8 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runNativeChildProcessOrFallback } from "./native-process-runner.js";
 import { defaultPathForPlatform, fileExists, quoteForCmd, resolveCommandPath, resolveSpawnTarget } from "./server-utils.instructions.js";
-import { appendWithCap, asString, buildManagedSkillOrigin, ChildProcessWithEvents, compactSkillText, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, InstalledSkillTarget, isChildProcessAlive, isMaintainerOnlySkillTarget, LocalCliCredentialShimCommand, parseObject, PersistentSkillSnapshotOptions, readSkillMetadataFromDirectory, resolveInstalledEntryTarget, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, RudderSkillEntry, runningProcesses, RunProcessResult, skillLocationLabel, SpawnTarget } from "./server-utils.process.js";
+import { appendWithCap, asString, buildManagedSkillOrigin, ChildProcessWithEvents, compactSkillText, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, InstalledSkillTarget, isChildProcessAlive, isMaintainerOnlySkillTarget, LocalCliCredentialShimCommand, parseObject, PersistentSkillSnapshotOptions, readSkillMetadataFromDirectory, resolveInstalledEntryTarget, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, RudderSkillEntry, runNativeChildProcessOrFallback, runningProcesses, RunProcessResult, skillLocationLabel, SpawnTarget } from "./server-utils.process.js";
 import type {
   AgentRuntimeSkillEntry,
   AgentRuntimeSkillSnapshot,
@@ -1361,7 +1360,6 @@ export async function runChildProcess(
   },
 ): Promise<RunProcessResult> {
   const onLogError = opts.onLogError ?? ((err, id, msg) => console.warn({ err, runId: id }, msg));
-
   return new Promise<RunProcessResult>((resolve, reject) => {
     const rawMerged: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
     delete rawMerged.RUDDER_DESKTOP_CLI_ENTRY;
@@ -1402,7 +1400,6 @@ export async function runChildProcess(
         delete rawMerged[key];
       }
     }
-
     // When Rudder isolates HOME for child agents, don't let zsh keep using the
     // host user's startup dir via an inherited ZDOTDIR. That mismatch makes
     // child `zsh -lc` invocations source the host `.zshenv` with the agent HOME.
@@ -1426,21 +1423,8 @@ export async function runChildProcess(
           return;
         }
 
-        const nativeResult = await runNativeChildProcessOrFallback(
-          runId,
-          target.command,
-          target.args,
-          mergedEnv,
-          {
-            ...opts,
-            onLogError,
-          },
-        );
-        if (nativeResult) {
-          resolve(nativeResult);
-          return;
-        }
-
+        const nativeResult = await runNativeChildProcessOrFallback(runId, target.command, target.args, mergedEnv, opts);
+        if (nativeResult) return resolve(nativeResult);
         const child = spawn(target.command, target.args, {
           cwd: opts.cwd,
           detached: process.platform !== "win32",

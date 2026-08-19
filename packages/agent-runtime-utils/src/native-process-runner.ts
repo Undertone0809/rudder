@@ -78,13 +78,17 @@ export async function runNativeChildProcessOrFallback(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  opts: Omit<NativeProcessRunOptions, "env">,
+  opts: Omit<NativeProcessRunOptions, "env" | "onLogError"> & {
+    onLogError?: NativeProcessRunOptions["onLogError"];
+  },
 ): Promise<RunProcessResult | null> {
   const policy = nativeAgentRunPolicy(env);
   if (!policy.enabled) return null;
+  const onLogError = opts.onLogError ?? ((error, id, message) => console.warn({ error, runId: id }, message));
   try {
     return await runNativeChildProcess(runId, command, args, {
       ...opts,
+      onLogError,
       env: Object.fromEntries(
         Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
       ),
@@ -92,7 +96,7 @@ export async function runNativeChildProcessOrFallback(
   } catch (error) {
     const nativeError = error instanceof NativeProcessUnavailableError ? error : null;
     if (policy.required || nativeError?.accepted !== false) throw error;
-    opts.onLogError(
+    onLogError(
       error,
       runId,
       `Rust agent-run process host unavailable before acceptance; using Node (${nativeError.fallbackCode})`,
