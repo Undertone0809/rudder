@@ -67,8 +67,9 @@ jobs:
               fi
               ;;
             workflow_dispatch)
-              if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
-                compare_ref="$(git rev-parse HEAD^2)"
+              merge_commit="$(git rev-list --first-parent --merges --max-count=1 HEAD || true)"
+              if [[ -n "$merge_commit" ]] && git rev-parse --verify "$merge_commit^2" >/dev/null 2>&1; then
+                compare_ref="$(git rev-parse "$merge_commit^2")"
               elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
                 compare_ref="$(git rev-parse HEAD^)"
               fi
