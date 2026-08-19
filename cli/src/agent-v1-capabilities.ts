@@ -1169,7 +1169,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.get",
-    command: "rudder chat get <chat-id>",
+    command: "rudder chat get <chat-id-or-cht-ref>",
     category: "chat",
     description: "Read one chat conversation record.",
     mutating: false,
@@ -1181,7 +1181,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.messages",
-    command: "rudder chat messages <chat-id> [--limit <n>] [--cursor <cursor>] [--include-transcript]",
+    command: "rudder chat messages <chat-id-or-cht-ref> [--limit <n>] [--cursor <cursor>] [--include-transcript]",
     category: "chat",
     description: "Read bounded chat messages with page cursors; transcript output is omitted unless requested.",
     mutating: false,
@@ -1193,7 +1193,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.transcript",
-    command: "rudder chat transcript <chat-id> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]",
+    command: "rudder chat transcript <chat-id-or-cht-ref> [--limit <n>] [--cursor <cursor>] [--max-output-chars <n>]",
     category: "chat",
     description: "Read paginated chat messages with assistant transcript entries clipped in human output.",
     mutating: false,
@@ -1205,7 +1205,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.read",
-    command: "rudder chat read <chat-id> [--turn-limit <n>] [--cursor <cursor>] [--include-output]",
+    command: "rudder chat read <chat-id-or-cht-ref> [--turn-limit <n>] [--cursor <cursor>] [--include-output]",
     category: "chat",
     description: "Read a bounded recent-message snapshot for one chat with page cursors.",
     mutating: false,
@@ -1229,7 +1229,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.send",
-    command: "rudder chat send <chat-id> --body <text>",
+    command: "rudder chat send <chat-id-or-cht-ref> --body <text>",
     category: "chat",
     description: "Send an agent-authored message directly to the operator in a chat.",
     mutating: true,
@@ -1241,7 +1241,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "chat.archive",
-    command: "rudder chat archive <chat-id>",
+    command: "rudder chat archive <chat-id-or-cht-ref>",
     category: "chat",
     description: "Archive a chat conversation without deleting it.",
     mutating: true,
