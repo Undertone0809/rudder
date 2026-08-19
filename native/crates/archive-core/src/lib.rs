@@ -624,15 +624,15 @@ fn open_and_hash_source(
 fn validate_bound_source(path: &Path, file: &File) -> Result<(), ArchiveError> {
     let path_metadata =
         fs::symlink_metadata(path).map_err(|_| ArchiveError::new("source_changed"))?;
-    let file_metadata = file
-        .metadata()
-        .map_err(|_| ArchiveError::new("source_changed"))?;
     if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
         return Err(ArchiveError::new("source_changed"));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let file_metadata = file
+            .metadata()
+            .map_err(|_| ArchiveError::new("source_changed"))?;
         if path_metadata.dev() != file_metadata.dev() || path_metadata.ino() != file_metadata.ino()
         {
             return Err(ArchiveError::new("source_changed"));

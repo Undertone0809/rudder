@@ -144,6 +144,12 @@ fn reports_version_protocol_and_capabilities_metadata() {
         serde_json::from_str::<Value>(&stdout).unwrap(),
         archive_capabilities["capabilities"]
     );
+    assert!(
+        archive_capabilities["target"]
+            .as_str()
+            .is_some_and(|target| !target.is_empty())
+    );
+    assert_eq!(archive_capabilities["effectiveEngine"], "rust");
 }
 
 #[test]

@@ -1,8 +1,8 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 export type NativeProcessHost = EventEmitter & {
   readonly stdin: Writable;

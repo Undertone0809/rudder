@@ -12,6 +12,20 @@ const CAPABILITIES: &[&str] = &[
     "evidence.index",
 ];
 
+fn native_target() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-unknown-linux-gnu"
+    } else {
+        "unsupported"
+    }
+}
+
 fn required(
     args: &mut impl Iterator<Item = String>,
     code: &'static str,
@@ -52,6 +66,8 @@ fn run() -> Result<serde_json::Value, &'static str> {
                 "ok": true,
                 "operation": "capabilities",
                 "protocolVersion": CREATE_PROTOCOL_VERSION,
+                "target": native_target(),
+                "effectiveEngine": "rust",
                 "capabilities": CAPABILITIES
             }))
         }

@@ -646,6 +646,18 @@ export async function inspectWorkspaceBackupV2FileNative(filePath: string): Prom
     String(WORKSPACE_BACKUP_V2_MAX_FILE_BYTES),
   ]);
   const manifest = parseNativeManifest(response);
+  // Native inspection reads only the manifest entry. Independently validate
+  // the central directory before accepting it so unlisted entries cannot pass
+  // through the native path.
+  let nodeInspection: WorkspaceBackupV2ArchiveIndex;
+  try {
+    nodeInspection = await inspectWorkspaceBackupV2File(filePath);
+  } catch (error) {
+    throw nativeDiagnostic("integrity", "archive_manifest_entry_mismatch", error instanceof Error ? error.message : error);
+  }
+  if (JSON.stringify(nodeInspection.manifest) !== JSON.stringify(manifest)) {
+    throw nativeDiagnostic("integrity", "native_manifest_archive_mismatch", "native and archive manifests differ");
+  }
   const archiveStat = await fs.stat(filePath);
   if (!archiveStat.isFile() || !Number.isSafeInteger(response.byteSize) || Number(response.byteSize) <= 0) {
     throw nativeDiagnostic("integrity", "inspect_manifest_size_invalid", response.byteSize);

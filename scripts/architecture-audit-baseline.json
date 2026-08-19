@@ -114,14 +114,6 @@
       "expiry": "2027-03-31"
     },
     {
-      "path": "ui/src/components/transcript/RunTranscriptView.chat.tsx",
-      "lines": 1501,
-      "owner": "transcript-ui",
-      "rationale": "The chat transcript surface still coordinates provider rendering, tool presentation, and local continuity while its view modules are extracted.",
-      "target": "Extract chat transcript coordination and reduce the module below 1500 lines.",
-      "expiry": "2027-03-31"
-    },
-    {
       "path": "desktop/src/main.ts",
       "lines": 1562,
       "owner": "desktop-runtime",
