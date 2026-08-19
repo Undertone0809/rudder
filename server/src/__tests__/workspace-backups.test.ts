@@ -3,6 +3,7 @@ import {
   agents,
   applyPendingMigrations,
   createDb,
+  createLocalPostgresInstance,
   ensurePostgresDatabase,
   heartbeatRuns,
   organizations,
@@ -29,22 +30,6 @@ type EmbeddedPostgresInstance = {
   start(): Promise<void>;
   stop(): Promise<void>;
 };
-
-type EmbeddedPostgresCtor = new (opts: {
-  databaseDir: string;
-  user: string;
-  password: string;
-  port: number;
-  persistent: boolean;
-  initdbFlags?: string[];
-  onLog?: (message: unknown) => void;
-  onError?: (message: unknown) => void;
-}) => EmbeddedPostgresInstance;
-
-async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
-  const mod = await import("embedded-postgres");
-  return mod.default as EmbeddedPostgresCtor;
-}
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -153,8 +138,7 @@ async function runRestoreCrashChild(input: Record<string, string>) {
 async function startTempDatabase() {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backups-db-"));
   const port = await getAvailablePort();
-  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
-  const instance = new EmbeddedPostgres({
+  const { instance } = await createLocalPostgresInstance({
     databaseDir: dataDir,
     user: "rudder",
     password: "rudder",
@@ -327,6 +311,39 @@ describe("workspace backup service", () => {
     }
   });
 
+  it("uses native inspect and extract for browse and restore when required", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "native-read.txt"), "from native archive\n", "utf8");
+    const { resolveNativeArchiveBinary } = await import("../services/workspace-backup-v2.js");
+    const nativePath = process.env.RUDDER_NATIVE_ARCHIVE_PATH?.trim() || resolveNativeArchiveBinary();
+    if (!(await fs.stat(nativePath).then((stat) => stat.isFile()).catch(() => false))) return;
+    const previousMode = process.env.RUDDER_NATIVE_MODE;
+    const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
+    const previousToggle = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
+    delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
+    process.env.RUDDER_NATIVE_ARCHIVE_PATH = nativePath;
+    try {
+      const backup = await service.create({ orgId });
+      await expect(service.listFiles(orgId, backup.id)).resolves.toMatchObject({
+        entries: expect.arrayContaining([expect.objectContaining({ path: "native-read.txt", isDirectory: false })]),
+      });
+      await expect(service.readFile(orgId, backup.id, "native-read.txt")).resolves.toMatchObject({ content: "from native archive\n" });
+      await fs.writeFile(path.join(workspaceRoot, "native-read.txt"), "changed live\n", "utf8");
+      await service.restore(orgId, backup.id);
+      await expect(fs.readFile(path.join(workspaceRoot, "native-read.txt"), "utf8")).resolves.toBe("from native archive\n");
+    } finally {
+      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE; else process.env.RUDDER_NATIVE_MODE = previousMode;
+      if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED; else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
+      if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
+      if (previousToggle === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE; else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousToggle;
+    }
+  });
+
   it("records a bounded native fallback diagnostic before using the Node writer", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
@@ -337,9 +354,11 @@ describe("workspace backup service", () => {
 console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
 `, { mode: 0o755 });
     const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    const previousMode = process.env.RUDDER_NATIVE_MODE;
     const previousNative = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
     const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
     process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
+    process.env.RUDDER_NATIVE_MODE = "auto";
     process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = "true";
     process.env.RUDDER_NATIVE_ARCHIVE_PATH = fakeNative;
     try {
@@ -354,6 +373,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
       await expect(service.readFile(orgId, backup.id, "fallback.txt")).resolves.toMatchObject({ content: "fallback\n" });
     } finally {
       if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED; else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
+      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE; else process.env.RUDDER_NATIVE_MODE = previousMode;
       if (previousNative === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE; else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousNative;
       if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
     }

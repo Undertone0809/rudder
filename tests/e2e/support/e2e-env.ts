@@ -49,13 +49,29 @@ function hashPortOffset(value: string): number {
   return hash % 1000;
 }
 
-function resolvePort(name: string, fallback: number): number {
+// Chromium refuses to navigate to these ports even when a local server is
+// healthy. Keep generated app ports outside the browser's restricted list;
+// explicitly configured ports still fail loudly so CI cannot hide a typo.
+const BROWSER_RESTRICTED_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 67, 68, 69, 70,
+  79, 80, 81, 88, 110, 111, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 443,
+  444, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587,
+  601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 5060, 5061,
+  6000, 6566, 10080,
+]);
+
+function resolvePort(name: string, fallback: number, options?: { browserSafe?: boolean }): number {
   const raw = nonEmpty(process.env[name]);
   const value = raw ? Number(raw) : fallback;
   if (!Number.isInteger(value) || value <= 0 || value > 65_535) {
     throw new Error(`${name} must be a valid TCP port.`);
   }
-  return value;
+  if (!options?.browserSafe || !BROWSER_RESTRICTED_PORTS.has(value)) return value;
+  if (raw) throw new Error(`${name} must not use a browser-restricted TCP port: ${value}.`);
+  let candidate = value;
+  while (candidate <= 65_535 && BROWSER_RESTRICTED_PORTS.has(candidate)) candidate += 1;
+  if (candidate > 65_535) throw new Error(`${name} could not find a browser-safe TCP port.`);
+  return candidate;
 }
 
 const rawRunId =
@@ -90,7 +106,7 @@ function assertSafeE2EHome(home: string): string {
   return resolvedHome;
 }
 
-export const E2E_PORT = resolvePort("RUDDER_E2E_PORT", DEFAULT_APP_PORT + portOffset);
+export const E2E_PORT = resolvePort("RUDDER_E2E_PORT", DEFAULT_APP_PORT + portOffset, { browserSafe: true });
 export const E2E_DB_PORT = resolvePort("RUDDER_E2E_DB_PORT", DEFAULT_DB_PORT + portOffset);
 export const E2E_BASE_URL = nonEmpty(process.env.RUDDER_E2E_BASE_URL) ?? `http://127.0.0.1:${E2E_PORT}`;
 export const E2E_HOME = path.resolve(

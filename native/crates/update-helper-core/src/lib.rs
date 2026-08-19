@@ -620,22 +620,20 @@ fn stale_state_lock(path: &Path) -> bool {
     }
 }
 
+#[cfg(unix)]
 fn wait_for_parent_exit(parent_pid: u32) -> bool {
     for _ in 0..600 {
-        #[cfg(unix)]
-        {
-            if unsafe { libc::kill(parent_pid as i32, 0) } != 0 {
-                return true;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = parent_pid;
+        if unsafe { libc::kill(parent_pid as i32, 0) } != 0 {
             return true;
         }
         thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+#[cfg(not(unix))]
+fn wait_for_parent_exit(_parent_pid: u32) -> bool {
+    true
 }
 
 fn materialize_staged_bundle(
@@ -717,11 +715,11 @@ fn materialize_staged_bundle(
 }
 
 fn same_filesystem(left: Option<&Path>, right: Option<&Path>) -> bool {
-    let (Some(left), Some(right)) = (left, right) else {
-        return false;
-    };
     #[cfg(unix)]
     {
+        let (Some(left), Some(right)) = (left, right) else {
+            return false;
+        };
         use std::os::unix::fs::MetadataExt;
         let left_dev = fs::metadata(left).ok().map(|metadata| metadata.dev());
         let right_dev = fs::metadata(right).ok().map(|metadata| metadata.dev());
@@ -729,6 +727,7 @@ fn same_filesystem(left: Option<&Path>, right: Option<&Path>) -> bool {
     }
     #[cfg(not(unix))]
     {
+        let _ = (left, right);
         // The Windows packaged path uses one install root; directory exchange
         // is still guarded by the ownership fence and journal.
         true
@@ -1025,8 +1024,22 @@ fn probe(request: &UpdateRequest, install_path: &Path, lkg: bool) -> bool {
     };
     let _ = meta;
     let timeout = Duration::from_millis(request.probation.timeout_ms.max(1));
-    let mut child = match Command::new(&executable)
-        .args(&request.probation.args)
+    let mut command = if cfg!(windows)
+        && executable.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        }) {
+        let mut command = Command::new("cmd.exe");
+        command
+            .arg("/C")
+            .arg(&executable)
+            .args(&request.probation.args);
+        command
+    } else {
+        let mut command = Command::new(&executable);
+        command.args(&request.probation.args);
+        command
+    };
+    let mut child = match command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1317,12 +1330,29 @@ mod tests {
         root
     }
 
+    fn bundle_executable(path: &Path) -> PathBuf {
+        #[cfg(windows)]
+        {
+            path.join("Contents/MacOS/Rudder.cmd")
+        }
+        #[cfg(not(windows))]
+        {
+            path.join("Contents/MacOS/Rudder")
+        }
+    }
+
     fn make_bundle(path: &Path, succeeds: bool) -> String {
-        let executable = path.join("Contents/MacOS/Rudder");
+        let executable = bundle_executable(path);
         create_dir_all(executable.parent().unwrap()).unwrap();
         write(
             &executable,
-            if succeeds {
+            if cfg!(windows) {
+                if succeeds {
+                    "@echo off\r\nexit /b 0\r\n"
+                } else {
+                    "@echo off\r\nexit /b 1\r\n"
+                }
+            } else if succeeds {
                 "#!/bin/sh\nexit 0\n"
             } else {
                 "#!/bin/sh\nexit 1\n"
@@ -1387,7 +1417,7 @@ mod tests {
                 sha256: helper_sha256,
             },
             probation: Probation {
-                executable: Some(root.join("Rudder.app/Contents/MacOS/Rudder")),
+                executable: Some(bundle_executable(&root.join("Rudder.app"))),
                 args: vec![],
                 timeout_ms: 5_000,
             },

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::time::Duration;
 
 pub const MANIFEST_PATH: &str = ".rudder-backup/manifest-v2.json";
 pub const COPY_CHUNK_BYTES: usize = 64 * 1024;
@@ -621,17 +622,19 @@ fn open_and_hash_source(
 }
 
 fn validate_bound_source(path: &Path, file: &File) -> Result<(), ArchiveError> {
+    #[cfg(not(unix))]
+    let _ = file;
     let path_metadata =
         fs::symlink_metadata(path).map_err(|_| ArchiveError::new("source_changed"))?;
-    let file_metadata = file
-        .metadata()
-        .map_err(|_| ArchiveError::new("source_changed"))?;
     if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
         return Err(ArchiveError::new("source_changed"));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let file_metadata = file
+            .metadata()
+            .map_err(|_| ArchiveError::new("source_changed"))?;
         if path_metadata.dev() != file_metadata.dev() || path_metadata.ino() != file_metadata.ino()
         {
             return Err(ArchiveError::new("source_changed"));
@@ -746,6 +749,26 @@ trait PublicationFs {
 
 struct RealPublicationFs;
 
+fn sync_file(file: &File) -> io::Result<()> {
+    let attempts = if cfg!(windows) { 8 } else { 1 };
+    let mut last_error = None;
+    for attempt in 0..attempts {
+        match file.sync_all() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && attempt + 1 < attempts =>
+            {
+                last_error = Some(error);
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.expect("sync retry must retain its last error"))
+}
+
 impl PublicationFs for RealPublicationFs {
     fn link(&self, source: &Path, output: &Path) -> io::Result<()> {
         fs::hard_link(source, output)
@@ -756,7 +779,23 @@ impl PublicationFs for RealPublicationFs {
     }
 
     fn sync_parent(&self, output: &Path) -> io::Result<()> {
-        File::open(output.parent().unwrap())?.sync_all()
+        let directory = match File::open(output.parent().unwrap()) {
+            Ok(directory) => directory,
+            // Windows does not expose a directory handle with the access mode
+            // used by std::fs::File::open on hosted runners. The file itself
+            // is already flushed and synced; keep publication atomic while
+            // treating this metadata-only durability step as best effort.
+            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        match sync_file(&directory) {
+            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                Ok(())
+            }
+            result => result,
+        }
     }
 }
 
@@ -968,10 +1007,7 @@ pub fn create_archive(
         writer
             .flush()
             .map_err(|error| ArchiveError::io("output_flush_failed", error))?;
-        writer
-            .inner
-            .sync_all()
-            .map_err(|error| ArchiveError::io("output_flush_failed", error))?;
+        sync_file(&writer.inner).map_err(|error| ArchiveError::io("output_flush_failed", error))?;
         let byte_size = writer.bytes;
         let archive_sha256 = format!("{:x}", writer.sha.finalize());
         drop(writer.inner);
