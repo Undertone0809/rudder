@@ -18,6 +18,37 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月19日" description="v0.7.11" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.11
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.11)
+
+这个版本让 Goal 执行更加持久、可追溯，也让中断的 Chat 更容易继续，并让 Agent 运行详情更容易检查。
+
+### 新功能
+
+- 增加实验性的 Goal 推进循环和持久化检查点：限定范围的 Agent 运行可以保存证据、在需要时修订当前 Plan，并记录下一步继续方式；承诺和验证步骤还会自动唤起后续运行。
+- 将运行记录中的命令详情重新设计为终端式视图，提供 Shell、Task 和 Markdown 三种视图，显示状态和耗时，并支持复制命令输出。
+- 增加实验性的 Plugins 设置，让 Hub 导航和固定的本地应用仅在启用后显示。
+
+### 改进
+
+- 改进中断 Chat 的恢复：可以从输入框继续，也可以按 Enter 恢复保留上下文的对话；有实际草稿或附件时仍会正常发送。
+- 改进任务启动恢复：运行前检查工作区依赖，并尝试修复缺失依赖。
+
+### 问题修复
+
+- 恢复 `cht_...` Chat 短引用在 Chat 命令、路由和 Agent 启动上下文中的支持。
+- 修复 Agent 创建的 Issue 进入错误初始状态的问题；现在会从 Todo 开始。
+- 修复 Goal 目标被当作带时间的值处理的问题；现在仅使用日期。
+
+### 版本状态
+
+- 本次仅发布源码，不发布 npm 包；默认的 `npx @rudderhq/cli@latest` 安装仍然是 v0.7.10。
+
+</Update>
+
 <Update label="2026年8月18日" description="v0.7.10" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.10

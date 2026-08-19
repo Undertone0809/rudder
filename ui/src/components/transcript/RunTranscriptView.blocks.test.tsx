@@ -10,6 +10,7 @@ import { ThemeProvider } from "../../context/ThemeContext";
 import { readChatAnnotationSourceText } from "../../lib/chat-response-annotation-selection";
 import { mergeNativeSteerTranscriptEntries } from "../../lib/chat-stream-state";
 import {
+  CommandTerminalDetail,
   ExpandableTranscriptResponsePre,
   TranscriptActivityRow,
   TranscriptEventRow,
@@ -126,6 +127,125 @@ describe("ExpandableTranscriptResponsePre", () => {
         Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
       }
     }
+  });
+});
+
+describe("CommandTerminalDetail", () => {
+  it("replaces decorative controls with semantic view tabs and preserves each view's content", () => {
+    const container = render(
+      <CommandTerminalDetail
+        command="rg --files ui/src/components/transcript"
+        output="RunTranscriptView.tsx"
+        status="completed"
+        taskLabel="Explore"
+        taskSummary="Explore transcript files"
+        duration="240ms"
+      />,
+    );
+
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"));
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual(["Shell", "Task", "Markdown"]);
+    expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
+    expect(container.querySelector("[data-command-terminal-panel='shell']")?.textContent).toContain("rg --files");
+    expect(container.querySelector("[data-testid='command-terminal-copy-button']")).not.toBeNull();
+
+    act(() => {
+      tabs[1]?.click();
+    });
+    expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, 0, -1]);
+    expect(container.querySelector("[data-command-terminal-panel='task']")?.textContent).toContain("Explore transcript files");
+    expect(container.querySelector("[data-command-terminal-panel='task']")?.textContent).toContain("240ms");
+    expect(container.querySelector("[data-command-terminal-panel='task']")?.textContent).not.toContain("RunTranscriptView.tsx");
+
+    act(() => {
+      tabs[2]?.click();
+    });
+    const markdownSource = container.querySelector<HTMLElement>("[data-testid='command-terminal-markdown-source']");
+    expect(tabs[2]?.getAttribute("aria-selected")).toBe("true");
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
+    expect(markdownSource?.textContent).toContain("# Explore transcript files");
+    expect(markdownSource?.textContent).toContain("~~~sh");
+    expect(markdownSource?.textContent).toContain("RunTranscriptView.tsx");
+  });
+
+  it("supports keyboard navigation between the semantic view tabs", () => {
+    const container = render(
+      <CommandTerminalDetail command="pwd" output={null} status="running" />,
+    );
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"));
+
+    act(() => {
+      tabs[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, 0, -1]);
+    expect(document.activeElement).toBe(tabs[1]);
+
+    act(() => {
+      tabs[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    });
+    expect(tabs[2]?.getAttribute("aria-selected")).toBe("true");
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
+    expect(document.activeElement).toBe(tabs[2]);
+  });
+
+  it("keeps hidden failure indicators truthful in command task details", () => {
+    const container = render(
+      <CommandTerminalDetail
+        command="false"
+        output="exit code 1"
+        status="error"
+        showFailureIndicators={false}
+      />,
+    );
+    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
+
+    act(() => {
+      taskTab?.click();
+    });
+
+    const taskPanel = container.querySelector("[data-command-terminal-panel='task']");
+    expect(taskPanel?.textContent).toContain("Result available");
+    expect(taskPanel?.textContent).not.toContain("Completed");
+    expect(taskPanel?.textContent).not.toContain("Failed");
+  });
+
+  it.each([
+    ["error", "text-red-300"],
+    ["running", "text-cyan-300"],
+    ["completed", "text-emerald-300"],
+  ] as const)("uses readable %s status color on the dark code surface", (status, className) => {
+    const container = render(
+      <CommandTerminalDetail command="true" output="result" status={status} />,
+    );
+    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
+
+    act(() => {
+      taskTab?.click();
+    });
+
+    expect(container.querySelector(`[data-command-terminal-panel='task'] .${className}`)).not.toBeNull();
+  });
+
+  it("keeps the useful task view active and disables unavailable views without a command", () => {
+    const container = render(
+      <CommandTerminalDetail command="" output={null} status="running" />,
+    );
+    const shellTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='shell']");
+    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
+    const markdownTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='markdown']");
+
+    expect(shellTab?.disabled).toBe(true);
+    expect(markdownTab?.disabled).toBe(true);
+    expect(taskTab?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-command-terminal-panel='task']")).not.toBeNull();
+
+    act(() => {
+      taskTab?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    expect(taskTab?.getAttribute("aria-selected")).toBe("true");
   });
 });
 
@@ -307,6 +427,29 @@ describe("TranscriptEventRow", () => {
     expect(button?.getAttribute("aria-expanded")).toBe("true");
     expect(button?.getAttribute("aria-label")).toBe("Collapse file change details: Updated src/pages/AgentDetail.tsx");
     expect(container.textContent).toContain(rawEvent);
+  });
+
+  it("uses a yellow notice treatment for error events while preserving their error tone", () => {
+    const container = render(
+      <TranscriptEventRow
+        density="compact"
+        block={{
+          type: "event",
+          ts: "2026-07-16T12:00:00.000Z",
+          label: "stderr",
+          tone: "error",
+          text: "Process lost -- server may have restarted",
+        }}
+      />,
+    );
+    const event = container.querySelector('[data-transcript-event-tone="error"]');
+
+    expect(event).not.toBeNull();
+    expect(event?.className).toContain("border-amber-500/30");
+    expect(event?.className).toContain("bg-amber-500/[0.08]");
+    expect(event?.className).toContain("text-amber-800");
+    expect(event?.className).not.toContain("border-red-500/20");
+    expect(event?.querySelector(".lucide-circle-alert")).not.toBeNull();
   });
 });
 

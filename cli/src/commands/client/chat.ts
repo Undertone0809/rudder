@@ -225,11 +225,11 @@ export function registerChatCommands(program: Command): void {
         examples: [
           {
             description: "Read a bounded conversation page with transcript output when needed:",
-            command: "rudder chat read <chat-id> --turn-limit 20 --include-output",
+            command: "rudder chat read <chat-id-or-cht-ref> --turn-limit 20 --include-output",
           },
           {
             description: "Continue from a stable cursor in scripts:",
-            command: "rudder chat read <chat-id> --cursor <nextCursor> --json",
+            command: "rudder chat read <chat-id-or-cht-ref> --cursor <nextCursor> --json",
           },
         ],
         cautions: [
@@ -310,11 +310,11 @@ export function registerChatCommands(program: Command): void {
         examples: [
           {
             description: "Append a short agent-authored status note:",
-            command: "rudder chat send <chat-id> --body \"Status: validation is running\"",
+            command: "rudder chat send <chat-id-or-cht-ref> --body \"Status: validation is running\"",
           },
           {
             description: "Send a longer or multiline note through stdin:",
-            command: "printf '%s\\n' 'Multiline note' | rudder chat send <chat-id>",
+            command: "printf '%s\\n' 'Multiline note' | rudder chat send <chat-id-or-cht-ref>",
           },
         ],
         cautions: [

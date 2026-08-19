@@ -258,7 +258,6 @@ function renderChatMessageItem(
         onConvertToIssue={vi.fn()}
         actionPending={false}
         onCopyMessageText={vi.fn()}
-        onOpenSideChat={vi.fn()}
         onForkMessage={onForkMessage}
         onEditUserMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
@@ -788,7 +787,7 @@ describe("assistant chat message rendering", () => {
     expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
   });
 
-  it("exposes a fork action on persisted assistant responses", () => {
+  it("keeps adjacent assistant actions while removing the message-level Side Chat icon", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",
       kind: "message",
@@ -797,7 +796,7 @@ describe("assistant chat message rendering", () => {
     }));
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
   });
 
   it("does not expose Side Chat for an incomplete assistant response", () => {

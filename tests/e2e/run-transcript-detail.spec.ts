@@ -97,6 +97,16 @@ function formatRunOccurrenceForTest(date: Date, now: Date) {
 
 test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    const pageErrors: string[] = [];
+    const requestFailures: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("requestfailed", (request) => {
+      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
+    });
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
@@ -126,6 +136,76 @@ test.describe("Run transcript detail", () => {
     await firstProgressChunk.click();
     await expect(page.getByRole("button", { name: "Open file GOAL.md", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Open file SPEC-implementation.md", exact: true })).toBeVisible();
+
+    const commandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
+    await expect(commandDisclosure).toBeVisible();
+    await commandDisclosure.click();
+    const commandTerminal = page.getByTestId("command-terminal-detail").first();
+    await expect(commandTerminal).toBeVisible();
+    const shellView = commandTerminal.getByRole("tab", { name: "Shell", exact: true });
+    const taskView = commandTerminal.getByRole("tab", { name: "Task", exact: true });
+    const markdownView = commandTerminal.getByRole("tab", { name: "Markdown", exact: true });
+    const commandCopyButton = commandTerminal.getByTestId("command-terminal-copy-button");
+    await expect(commandCopyButton).toHaveCSS("opacity", "0");
+    await commandTerminal.hover();
+    await expect(commandCopyButton).toHaveCSS("opacity", "1");
+    await expect(shellView).toHaveAttribute("aria-selected", "true");
+    await expect(commandTerminal.locator("[role='tabpanel']")).toHaveAttribute("data-command-terminal-panel", "shell");
+    await shellView.focus();
+    await expect(shellView).toBeFocused();
+    await expect(shellView).toHaveAttribute("tabindex", "0");
+    await expect(taskView).toHaveAttribute("tabindex", "-1");
+    await page.keyboard.press("ArrowRight");
+    await expect(taskView).toBeFocused();
+    await expect(taskView).toHaveAttribute("aria-selected", "true");
+    await expect(commandTerminal.locator("[role='tabpanel']")).toHaveAttribute("data-command-terminal-panel", "task");
+    await page.keyboard.press("End");
+    await expect(markdownView).toBeFocused();
+    await expect(markdownView).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Home");
+    await expect(shellView).toBeFocused();
+    await expect(shellView).toHaveAttribute("aria-selected", "true");
+
+    await taskView.click();
+    await expect(taskView).toHaveAttribute("aria-selected", "true");
+    await expect(commandTerminal.locator("[role='tabpanel']")).toHaveAttribute("data-command-terminal-panel", "task");
+    await expect(commandTerminal.locator("[role='tabpanel']")).toContainText("Intent");
+    await expect(commandTerminal.locator("[role='tabpanel']")).toContainText("Status");
+
+    await markdownView.click();
+    await expect(markdownView).toHaveAttribute("aria-selected", "true");
+    const markdownSource = commandTerminal.getByTestId("command-terminal-markdown-source");
+    await expect(markdownSource).toContainText("~~~sh");
+    await expect(markdownSource).toContainText("#");
+
+    await shellView.click();
+    await commandTerminal.screenshot({
+      path: "/tmp/rudder-r6z-98-terminal-ui-desktop.png",
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
+    await expect(mobileCommandDisclosure).toBeVisible();
+    await mobileCommandDisclosure.click();
+    const mobileCommandTerminal = page.getByTestId("command-terminal-detail").first();
+    await expect(mobileCommandTerminal).toBeVisible();
+    const terminalOverflow = await mobileCommandTerminal.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(terminalOverflow).toBeLessThanOrEqual(1);
+    const mobileTerminalBox = await mobileCommandTerminal.boundingBox();
+    expect(mobileTerminalBox).not.toBeNull();
+    for (const tab of [
+      mobileCommandTerminal.getByRole("tab", { name: "Shell", exact: true }),
+      mobileCommandTerminal.getByRole("tab", { name: "Task", exact: true }),
+      mobileCommandTerminal.getByRole("tab", { name: "Markdown", exact: true }),
+    ]) {
+      const tabBox = await tab.boundingBox();
+      expect(tabBox).not.toBeNull();
+      expect((tabBox?.x ?? 0) + (tabBox?.width ?? 0)).toBeLessThanOrEqual(
+        (mobileTerminalBox?.x ?? 0) + (mobileTerminalBox?.width ?? 0) + 1,
+      );
+    }
+    await mobileCommandTerminal.screenshot({
+      path: "/tmp/rudder-r6z-98-terminal-ui-mobile.png",
+    });
 
     const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 2 tools" });
     await expect(externalToolGroup).toHaveCount(1);
@@ -225,6 +305,39 @@ test.describe("Run transcript detail", () => {
       path: "/tmp/rudder-run-transcript-detail-expanded.png",
       fullPage: true,
     });
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.evaluate(() => {
+      window.localStorage.setItem("rudder.theme", "light");
+    });
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Run Detail" })).toBeVisible({ timeout: 15_000 });
+    const lightSettledState = page.getByRole("button", { name: "Show settled state" });
+    if (await lightSettledState.isVisible()) await lightSettledState.click();
+    const lightCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
+    await expect(lightCommandDisclosure).toBeVisible();
+    await lightCommandDisclosure.click();
+    const lightCommandTerminal = page.getByTestId("command-terminal-detail").first();
+    await expect(lightCommandTerminal).toBeVisible();
+    await lightCommandTerminal.screenshot({
+      path: "/tmp/rudder-r6z-98-terminal-ui-light-desktop.png",
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const lightMobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
+    await lightMobileCommandDisclosure.scrollIntoViewIfNeeded();
+    await lightMobileCommandDisclosure.click();
+    const lightMobileCommandTerminal = page.getByTestId("command-terminal-detail").first();
+    await expect(lightMobileCommandTerminal).toBeVisible();
+    const lightTerminalOverflow = await lightMobileCommandTerminal.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(lightTerminalOverflow).toBeLessThanOrEqual(1);
+    await lightMobileCommandTerminal.screenshot({
+      path: "/tmp/rudder-r6z-98-terminal-ui-light-mobile.png",
+    });
+
+    expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
+    expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
+    expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
   });
 
   test("merges transcript and invocation into one card with tabs on the real run detail page", async ({ page, baseURL }) => {
@@ -1039,6 +1152,75 @@ test.describe("Run transcript detail", () => {
       path: "/tmp/rudder-agent-run-stderr-contained.png",
       fullPage: true,
     });
+  });
+
+  test("uses yellow notices for transcript error events without changing their semantic status", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Event-Notice-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Event Notice Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const startedAt = new Date("2026-05-14T08:33:42.000Z");
+    const notice = "Process lost -- server may have restarted";
+
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Scheduled heartbeat",
+      status: "failed",
+      startedAt,
+      finishedAt: new Date(startedAt.getTime() + 1_000),
+      error: notice,
+      errorCode: "process_lost",
+      createdAt: startedAt,
+      updatedAt: new Date(startedAt.getTime() + 1_000),
+    });
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 1,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "error",
+      message: "transcript event",
+      payload: {
+        kind: "stderr",
+        text: notice,
+        ts: new Date(startedAt.getTime() + 500).toISOString(),
+      },
+      createdAt: new Date(startedAt.getTime() + 500),
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText(notice, { exact: true })).toBeVisible({ timeout: 15_000 });
+    const event = detailPane.locator('[data-transcript-event-tone="error"]').filter({ hasText: notice });
+    await expect(event).toHaveClass(/border-amber-500/);
+    await expect(event).toHaveClass(/bg-amber-400/);
+    await expect(event).not.toHaveClass(/border-red-500/);
+    await expect(detailPane.getByTestId("run-summary-card").getByText("Run failed", { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   });
 
   test("shows recoverable chat failure guidance in run detail and list summaries", async ({ page }) => {

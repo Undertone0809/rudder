@@ -346,16 +346,16 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("disabled:shadow-none");
   });
 
-  it("renders primary metadata controls as field selectors and keeps goal in the footer toolbar", () => {
+  it("hides the temporarily disabled goal controls from Create Issue", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
     expect(html).toContain('data-variant="field"');
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
-    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(3);
-    expect(html).toContain("Goal");
-    expect(html).toContain("Improve issue routing");
-    expect(html.indexOf("Labels")).toBeLessThan(html.indexOf("Goal"));
-    expect(html.indexOf("Goal")).toBeLessThan(html.indexOf("Upload"));
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain(">Goal<");
+    expect(html).not.toContain("Improve issue routing");
+    expect(html).toContain("Labels");
+    expect(html).toContain("Upload");
   });
 
   it("keeps labels in the property chip when the organization has five labels", () => {

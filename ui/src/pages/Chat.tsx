@@ -4012,12 +4012,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       chatId: selectedConversation.id,
                                       message: messageToConvert,
                                       proposalOverride: issueProposalOverridesByMessageId[messageToConvert.id], })
-                                  } onCopyMessageText={copyChatMessageText} onOpenSideChat={selectedConversationExternalBound ? undefined : (messageForSideChat) => {
-                                    openSidePanelTargetForContext(
-                                      resolveCurrentSidePanelChatContextKey(),
-                                      sideChatTargetFromMessage(selectedConversation, messageForSideChat),
-                                    );
-                                  }} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
+                                  } onCopyMessageText={copyChatMessageText} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
                                     message,
                                     branchControls: refreshTurnBranchControls,
                                     hasActiveReply: selectedConversationHasActiveReply,
