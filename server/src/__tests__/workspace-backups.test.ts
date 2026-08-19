@@ -354,9 +354,11 @@ describe("workspace backup service", () => {
 console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
 `, { mode: 0o755 });
     const previousV2 = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    const previousMode = process.env.RUDDER_NATIVE_MODE;
     const previousNative = process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE;
     const previousPath = process.env.RUDDER_NATIVE_ARCHIVE_PATH;
     process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "true";
+    process.env.RUDDER_NATIVE_MODE = "auto";
     process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = "true";
     process.env.RUDDER_NATIVE_ARCHIVE_PATH = fakeNative;
     try {
@@ -371,6 +373,7 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
       await expect(service.readFile(orgId, backup.id, "fallback.txt")).resolves.toMatchObject({ content: "fallback\n" });
     } finally {
       if (previousV2 === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED; else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousV2;
+      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE; else process.env.RUDDER_NATIVE_MODE = previousMode;
       if (previousNative === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE; else process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE = previousNative;
       if (previousPath === undefined) delete process.env.RUDDER_NATIVE_ARCHIVE_PATH; else process.env.RUDDER_NATIVE_ARCHIVE_PATH = previousPath;
     }

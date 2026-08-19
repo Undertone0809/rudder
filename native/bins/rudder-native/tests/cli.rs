@@ -258,6 +258,7 @@ fn creates_file_backed_archive_from_bounded_plan() {
         "500000",
     ]);
     assert_eq!(code, 0, "{stderr}");
+    assert_eq!(result["accepted"], true);
     assert_eq!(result["byteSize"], body.len() as u64);
     assert_eq!(fs::read(extracted).unwrap(), body);
 }

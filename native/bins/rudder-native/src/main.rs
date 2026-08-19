@@ -131,7 +131,7 @@ fn run() -> Result<serde_json::Value, &'static str> {
             let result = extract_file(&input, &entry, &output, max_archive_bytes, max_file_bytes)
                 .map_err(|error| error.code())?;
             Ok(
-                json!({ "ok": true, "operation": "extractFile", "protocolVersion": CREATE_PROTOCOL_VERSION, "byteSize": result.byte_size, "sha256": result.sha256 }),
+                json!({ "ok": true, "operation": "extractFile", "protocolVersion": CREATE_PROTOCOL_VERSION, "accepted": true, "byteSize": result.byte_size, "sha256": result.sha256 }),
             )
         }
         (Some("evidence"), Some("index")) => {
