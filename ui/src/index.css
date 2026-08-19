@@ -1456,14 +1456,6 @@
     margin: 0;
   }
 
-  .workspace-shell--library-transparent .workspace-column-resizer {
-    background: var(--desktop-content-surface-light);
-  }
-
-  .dark .workspace-shell--library-transparent .workspace-column-resizer {
-    background: var(--desktop-content-surface-dark);
-  }
-
   .workspace-column-resizer-line {
     width: 1px;
     height: 100%;
