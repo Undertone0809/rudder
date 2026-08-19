@@ -266,6 +266,37 @@ describe("agent startup context prompt", () => {
     expect(prompt).toContain("[Recent Rudder Context truncated by char limit]");
     expect(prompt).not.toContain("limits ||||");
   });
+
+  it("uses typed compact refs for UUID issue principals and identifier-less issues", () => {
+    const issueId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
+    const agentId = "d573266f-af95-44e6-9303-e903a54662b8";
+    const userId = "14ff96a7-2518-456a-8aae-480360f0d9aa";
+    const prompt = buildAgentStartupContextPrompt({
+      todayMemory: { dateKey: "2026-06-19", relativePath: "memory/2026-06-19.md", content: "", existed: true, created: false },
+      yesterdayMemory: { dateKey: "2026-06-18", relativePath: "memory/2026-06-18.md", content: "", existed: true, created: false },
+      recentIssues: [{
+        id: issueId,
+        identifier: null,
+        status: "in_progress",
+        role: "assignee",
+        assignee: `agent:${agentId}`,
+        reviewer: `user:${userId}`,
+        title: "Compact references",
+        snippet: "Keep startup context token-efficient.",
+        createdAt: null,
+        updatedAt: null,
+      }],
+      recentChats: [],
+      metrics: { version: "agent-startup-context/v1", totalChars: 0, limitChars: DEFAULT_AGENT_STARTUP_CONTEXT_LIMITS.totalChars, omittedIssues: 0, omittedChats: 0 },
+    });
+
+    expect(prompt).toContain("`iss_609695f1`");
+    expect(prompt).toContain("agent:agt_d573266f");
+    expect(prompt).toContain("user:usr_14ff96a7");
+    expect(prompt).not.toContain(issueId);
+    expect(prompt).not.toContain(agentId);
+    expect(prompt).not.toContain(userId);
+  });
 });
 
 describe("agent startup context service", () => {

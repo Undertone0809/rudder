@@ -72,7 +72,7 @@ import type {
   StartGoal,
   UpdateGoalPlan,
 } from "@rudderhq/shared";
-import { activateGoalSchema, parseLibraryEntryMentionHref, parseLibraryFileMentionHref } from "@rudderhq/shared";
+import { activateGoalSchema, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseShortRef, shortRefFor } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
@@ -80,6 +80,14 @@ import { badRequest, conflict, forbidden, notFound, unprocessable } from "../err
 import { buildDeferredWakePayload, readDeferredWakePayload } from "./runtime-kernel/heartbeat.sessions.js";
 
 type GoalRow = typeof goals.$inferSelect;
+
+function safeGoalShortRef(id: string): string | undefined {
+  try {
+    return shortRefFor("goal", id);
+  } catch {
+    return undefined;
+  }
+}
 type GoalReader = Pick<Db, "select">;
 type GoalWakeupActor = {
   actorType: "user" | "agent" | "system";
@@ -496,6 +504,7 @@ export function publicGoalView(goal: GoalRow): PublicGoal {
   const evaluation = publicGoalRecord(goal.evaluationResult);
   return {
     id: goal.id,
+    ...(safeGoalShortRef(goal.id) ? { shortRef: safeGoalShortRef(goal.id) } : {}),
     orgId: goal.orgId,
     title: goal.title,
     description: goal.description,
@@ -2011,6 +2020,17 @@ export function goalService(db: Db) {
     list: (orgId: string) => db.select().from(goals).where(eq(goals.orgId, orgId)).orderBy(asc(goals.createdAt)),
 
     getById: (id: string) => db.select().from(goals).where(eq(goals.id, id)).then((rows) => rows[0] ?? null),
+
+    resolveByReference: async (orgId: string, reference: string) => {
+      const parsed = parseShortRef(reference);
+      if (parsed?.kind !== "goal") return { goal: null, ambiguous: false } as const;
+      const rows = await db.select().from(goals).where(eq(goals.orgId, orgId));
+      const matches = rows.filter((row) => row.id.replaceAll("-", "").toLowerCase().startsWith(parsed.prefix));
+      return {
+        goal: matches.length === 1 ? matches[0]! : null,
+        ambiguous: matches.length > 1,
+      } as const;
+    },
 
     getChangeProposalById: (id: string) => db.select().from(goalChangeProposals)
       .where(eq(goalChangeProposals.id, id)).then((rows) => rows[0] ?? null),

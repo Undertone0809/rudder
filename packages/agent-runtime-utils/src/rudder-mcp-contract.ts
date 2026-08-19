@@ -256,13 +256,13 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
   });
 
   const issue = string("Issue UUID, identifier, or short reference.", { maxLength: 200 });
-  const goal = string("Goal UUID from the current Goal Runtime Context.", { maxLength: 200 });
+  const goal = string("Goal UUID or typed short reference (gol_<prefix>) from the current Goal Runtime Context.", { maxLength: 200 });
   const project = string("Project UUID or shortname.", { maxLength: 200 });
   const approval = string("Approval UUID or short reference.", { maxLength: 200 });
   const automation = string("Automation UUID or short reference.", { maxLength: 200 });
   const trigger = string("Automation trigger UUID or short reference.", { maxLength: 200 });
   const chat = string("Chat conversation UUID or short reference.", { maxLength: 200 });
-  const run = string("Run UUID or short reference.", { maxLength: 200 });
+  const run = string("Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.", { maxLength: 200 });
   const cursor = string("Opaque pagination cursor.", { maxLength: 2_000 });
   const body = string("Direct Markdown body.", { maxLength: 500_000 });
   const images = strings("Local image paths to attach.", 20);

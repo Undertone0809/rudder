@@ -4,7 +4,7 @@ import {
   type ObservedRunDetail,
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
-import type { RunInspectionHeader } from "@rudderhq/shared";
+import { shortRefFor, type RunInspectionHeader } from "@rudderhq/shared";
 import { Router } from "express";
 import { badRequest, notFound } from "../errors.js";
 import { formatShortRunId } from "../services/heartbeat-run-reference.js";
@@ -97,6 +97,13 @@ function compactTranscriptRow(step: ObservedRunStep, maxChars: number, includeOu
 function compactRunHeader(run: ObservedRunDetail["run"]): RunInspectionHeader {
   return {
     id: run.id,
+    shortRef: (() => {
+      try {
+        return shortRefFor("run", run.id);
+      } catch {
+        return undefined;
+      }
+    })(),
     orgId: run.orgId,
     agentId: run.agentId,
     invocationSource: run.invocationSource,

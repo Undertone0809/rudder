@@ -1,4 +1,5 @@
 import { Link } from "@/lib/router";
+import { shortRefFor } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Square } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -137,7 +138,13 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
                       to={`/agents/${run.agentId}/runs/${run.id}`}
                       className="inline-flex items-center rounded-full border border-border/70 bg-background/70 px-2 py-1 font-mono hover:border-cyan-500/30 hover:text-foreground"
                     >
-                      {run.id.slice(0, 8)}
+                      {(() => {
+                        try {
+                          return shortRefFor("run", run.id);
+                        } catch {
+                          return run.id;
+                        }
+                      })()}
                     </Link>
                     <StatusBadge status={run.status} />
                     <span>{formatDateTime(run.startedAt ?? run.createdAt)}</span>

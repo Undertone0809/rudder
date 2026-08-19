@@ -184,7 +184,7 @@ describe("agent-v1 registry", () => {
     const manifest = buildAgentCliCapabilitiesManifest("agent-v1");
     const byId = new Map(manifest.capabilities.map((entry) => [entry.id, entry]));
 
-    for (const id of ["goal.progress", "goal.change.propose", "goal.result.propose"]) {
+    for (const id of ["goal.progress", "goal.checkpoint", "goal.change.propose", "goal.result.propose"]) {
       expect(byId.get(id)).toMatchObject({
         category: "goal",
         mutating: true,

@@ -8,7 +8,7 @@ import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLoca
 import { TranscriptThinkingBlock } from "./RunTranscriptView.blocks";
 import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
-import { describeToolSemanticInfo } from "./RunTranscriptView.semantic";
+import { describeToolSemanticInfo, extractMcpToolDetails, formatMcpSummary } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
@@ -73,6 +73,77 @@ describe("transcript file target resolution", () => {
 });
 
 describe("RunTranscriptView", () => {
+  it.each([
+    ["mcp__rudder-tools__rudder_automation_get", "Get automation"],
+    ["mcp__rudder-tools__rudder_automation_update", "Update automation"],
+    ["mcp__rudder-tools__rudder_automation_create", "Create automation"],
+    ["mcp__rudder-tools__rudder_automation_list", "List automations"],
+    ["mcp__rudder-tools__rudder_automation_triggers_delete", "Delete automation trigger"],
+    ["mcp__rudder-tools__rudder_goal_checkpoint", "Record goal checkpoint"],
+    ["mcp__rudder-tools__rudder_automation_triggers_rotate_secret", "Rotate automation trigger secret"],
+    ["mcp__rudder-tools__rudder_issue_comments_list", "List issue comments"],
+    ["mcp__rudder-tools__rudder_chat_transcript", "Read chat transcript"],
+    ["mcp__rudder-browser__rudder_browser_navigate", "Navigate browser"],
+    ["mcp__rudder-browser__rudder_browser_dom_cua", "Inspect browser DOM"],
+    ["mcp__rudder-browser__rudder_browser_close", "Close browser tab"],
+    ["mcp__github__fetch_pr", "Get pull request"],
+    ["mcp__github__github_search_code", "Search code"],
+    ["mcp__example__fetch_issue", "Get issue"],
+  ])("formats %s as %s", (name, expected) => {
+    const details = extractMcpToolDetails(name, {});
+    expect(details).not.toBeNull();
+    expect(formatMcpSummary(details!)).toBe(expected);
+  });
+
+  it("keeps Chat and Detail summaries aligned while Raw retains MCP identity and payload", () => {
+    const name = "mcp__rudder-tools__rudder_automation_get";
+    const input = {
+      id: "automation-1",
+      includeDisabled: false,
+    };
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-03-12T00:00:01.000Z",
+        name,
+        toolUseId: "mcp-raw-1",
+        input,
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-03-12T00:00:02.000Z",
+        toolUseId: "mcp-raw-1",
+        content: "automation result",
+        isError: false,
+      },
+    ];
+    const renderView = (props: { mode?: "raw"; presentation?: "chat" | "detail" }) => renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView density="compact" entries={entries} {...props} />
+      </ThemeProvider>,
+    );
+
+    expect(renderView({ presentation: "chat" })).toContain("Get automation");
+    expect(renderView({ presentation: "detail" })).toContain("Get automation");
+    const rawHtml = renderView({ mode: "raw" });
+    expect(rawHtml).toContain(name);
+    expect(rawHtml).toContain("automation-1");
+    expect(rawHtml).toContain("includeDisabled");
+  });
+
+  it("keeps a Rudder-looking tool token when the provider is not the Rudder server", () => {
+    const details = extractMcpToolDetails("mcp__not-rudder-official__rudder_chat_transcript", {});
+    expect(details).not.toBeNull();
+    expect(formatMcpSummary(details!)).toBe("Read Rudder chat transcript");
+  });
+
+  it("uses a stable humanized fallback for unknown MCP tools", () => {
+    const details = extractMcpToolDetails("mcp__example__custom_report_action", {});
+    expect(details).not.toBeNull();
+    expect(formatMcpSummary(details!)).toBe("Custom report action");
+    expect(formatMcpSummary({ server: "example", tool: null, args: null })).toBe("Unknown action");
+  });
+
   it("exposes completed Nice detail blocks with a run annotation trigger", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -1335,7 +1406,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Custom Tool");
-    expect(html).toContain("Failed");
+    expect(html).not.toContain("Failed");
+    expect(html).not.toContain("text-red-700");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).toContain("Expand tool details");
     expect(html).not.toContain("Response");
@@ -2369,7 +2441,7 @@ describe("RunTranscriptView", () => {
 
   it("highlights chat tool groups only when every tool call fails", () => {
     const html = renderToStaticMarkup(
-      <ThemeProvider>
+      <ThemeProvider initialShowToolCallFailureIndicators>
         <RunTranscriptView
           density="compact"
           presentation="chat"
@@ -2949,7 +3021,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Call fetch PR");
+    expect(html).toContain("Get pull request");
     expect(html).toContain("/brands/github-logo.svg");
     expect(html).toContain("dark:invert");
     expect(html).not.toContain("Called fetch_pr via github");
@@ -3027,7 +3099,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Call Rudder chat transcript");
+    expect(html).toContain("Read chat transcript");
     expect(html).toContain("/rudder-logo.png");
     expect(html).toContain("h-3.5 w-3.5 object-contain");
     expect(html).not.toContain("rudder-tools");

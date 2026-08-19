@@ -1211,6 +1211,12 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("org-workspaces-editor-tabs")).toBeVisible();
     await expect(page.getByTestId("org-library-context-panel")).toHaveCount(0);
     await expect(page.getByTestId("org-library-resources-panel")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-column-resizer")).toHaveCount(0);
+    const libraryContextCardBox = await page.getByTestId("workspace-context-card").boundingBox();
+    const libraryMainCardBox = await page.getByTestId("workspace-main-card").boundingBox();
+    expect(libraryContextCardBox).not.toBeNull();
+    expect(libraryMainCardBox).not.toBeNull();
+    expect(libraryMainCardBox!.x - (libraryContextCardBox!.x + libraryContextCardBox!.width)).toBeLessThanOrEqual(1);
     await page.setViewportSize({ width: 700, height: 900 });
     await expect(page.getByText("File tree", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-inline-new-file-button")).toBeVisible();

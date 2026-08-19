@@ -1,6 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { heartbeatRuns } from "@rudderhq/db";
-import { isUuidLike } from "@rudderhq/shared";
+import { isUuidLike, parseShortRef, shortRefFor } from "@rudderhq/shared";
 import { and, desc, inArray, sql } from "drizzle-orm";
 import { conflict, notFound } from "../errors.js";
 
@@ -10,11 +10,13 @@ const HEX_PREFIX_RE = /^[0-9a-f]+$/iu;
 
 export function formatShortRunId(runId: string): string {
   if (!isUuidLike(runId)) return runId;
-  return normalizedUuid(runId).slice(0, DEFAULT_SHORT_RUN_ID_LENGTH);
+  return shortRefFor("run", runId);
 }
 
 export function isShortRunIdReference(value: string): boolean {
   const normalized = value.trim();
+  const typed = parseShortRef(normalized);
+  if (typed?.kind === "run") return typed.prefix.length >= MIN_SHORT_RUN_ID_LENGTH;
   return normalized.length >= MIN_SHORT_RUN_ID_LENGTH && HEX_PREFIX_RE.test(normalized) && !isUuidLike(normalized);
 }
 
@@ -23,7 +25,10 @@ export async function resolveHeartbeatRunIdReference(
   runIdRef: string,
   scope: { orgIds?: string[]; notFoundMessage?: string } = {},
 ): Promise<string> {
-  const normalized = runIdRef.trim().toLowerCase();
+  const typedRef = parseShortRef(runIdRef);
+  const normalized = typedRef?.kind === "run"
+    ? typedRef.prefix
+    : runIdRef.trim().toLowerCase();
   if (!isShortRunIdReference(normalized)) return runIdRef;
   const notFoundMessage = scope.notFoundMessage ?? "Agent run not found";
   if (scope.orgIds?.length === 0) throw notFound(notFoundMessage);
@@ -56,8 +61,8 @@ function formatUniqueShortRunIds(runIds: string[]): string[] {
   for (let length = DEFAULT_SHORT_RUN_ID_LENGTH; length <= 32; length += 1) {
     const candidates = normalizedIds.map((id) => id.slice(0, length));
     if (new Set(candidates).size === candidates.length) {
-      return candidates;
+      return candidates.map((candidate) => `run_${candidate}`);
     }
   }
-  return normalizedIds;
+  return normalizedIds.map((id) => `run_${id}`);
 }

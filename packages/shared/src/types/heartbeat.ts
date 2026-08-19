@@ -55,6 +55,8 @@ export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
 
 export interface HeartbeatRun {
   id: string;
+  /** Organization-scoped human reference; the durable UUID remains in `id`. */
+  shortRef?: string;
   orgId: string;
   agentId: string;
   invocationSource: HeartbeatInvocationSource;

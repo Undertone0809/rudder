@@ -2,6 +2,7 @@ import type {
   AgentRunScene,
   AgentRunTargetType,
 } from "./constants.js";
+import { shortRefFor } from "./short-refs.js";
 import type { AgentRun, HeartbeatRun, HeartbeatRunContextSnapshot } from "./types/heartbeat.js";
 
 export interface AgentRunOriginInput {
@@ -39,6 +40,14 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function runShortRef(id: string): string | undefined {
+  try {
+    return shortRefFor("run", id);
+  } catch {
+    return undefined;
+  }
 }
 
 export function toPublicHeartbeatRunContextSnapshot(
@@ -186,8 +195,10 @@ export function toAgentRun(run: HeartbeatRun): AgentRun {
 }
 
 export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
+  const shortRef = runShortRef(run.id);
   return {
     id: run.id,
+    ...(shortRef ? { shortRef } : {}),
     orgId: run.orgId,
     agentId: run.agentId,
     invocationSource: run.invocationSource,

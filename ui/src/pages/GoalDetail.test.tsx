@@ -371,7 +371,7 @@ describe("GoalDetail", () => {
   });
 
   it("does not present a closed Goal as still advancing", async () => {
-    search = "?tab=evidence";
+    search = "";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       goal: {
@@ -408,14 +408,13 @@ describe("GoalDetail", () => {
   });
 
   it("renders the Goal Workspace in operational order without standard low-level fields", async () => {
-    search = "?tab=work";
+    search = "";
     const { container, rerender } = renderPageWithClient();
     await waitUntil(() => expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(true));
     const text = container.textContent ?? "";
     const orderedSections = [
       "Outcome",
       "Work",
-      "Related work",
     ];
     const headingLabels = Array.from(container.querySelectorAll("h2")).map((heading) => heading.textContent?.trim());
     for (let index = 1; index < orderedSections.length; index += 1) {
@@ -694,7 +693,7 @@ describe("GoalDetail", () => {
   });
 
   it("keeps a Draft focused on its start blocker instead of repeating empty lifecycle sections", async () => {
-    search = "?tab=work";
+    search = "";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       goal: {
@@ -724,7 +723,7 @@ describe("GoalDetail", () => {
     const container = renderPage();
     await waitUntil(() => expect(button(container, "Continue Goal")).not.toBeNull());
     expect(container.querySelector('[aria-label="Goal progress"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Goal detail views"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Goal activity views"]')).toBeNull();
     expect(container.querySelector('[aria-label="Goal properties"]')).toBeNull();
     expect(container.textContent).not.toContain("Before work starts");
     expect(container.textContent).not.toContain("Owner");
@@ -1442,7 +1441,7 @@ describe("GoalDetail", () => {
   });
 
   it("shows accepted status and exposes read-only diagnostics only with goalDebug=1", async () => {
-    search = "?goalDebug=1&tab=evidence";
+    search = "?goalDebug=1";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
       goal: { ...goal, lifecycle: "closed", status: "achieved", evaluationResult: { outcome: "achieved" } },
@@ -1457,20 +1456,27 @@ describe("GoalDetail", () => {
     expect(container.textContent).not.toContain("Evaluate from evidence");
   });
 
-  it("defaults to Conversation and persists explicit tab selection in the URL", async () => {
+  it("keeps exactly two Activity tabs, defaults to Conversation, and persists Activity in the URL", async () => {
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue(conversationWorkspace as never);
     const container = renderPage();
     await waitUntil(() => expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Conversation"));
+    const activityViews = container.querySelector('[aria-label="Goal activity views"]');
+    expect(activityViews).not.toBeNull();
+    expect(activityViews?.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(activityViews?.textContent).toContain("Conversation");
+    expect(activityViews?.textContent).toContain("Activity");
+    expect(activityViews?.textContent).not.toContain("Work");
+    expect(activityViews?.textContent).not.toContain("Evidence");
     expect(container.querySelector('[aria-label="Goal comment"]')).not.toBeNull();
     expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Comments")).toBe(true);
-    expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(false);
+    expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(true);
 
-    const workTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
-      .find((candidate) => candidate.textContent?.includes("Work"));
-    act(() => workTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
+    const activityTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+      .find((candidate) => candidate.textContent?.includes("Activity"));
+    act(() => activityTab?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
     expect(navigate).toHaveBeenCalledWith({
       pathname: "/rudder/goals/goal-1",
-      search: "?tab=work",
+      search: "?tab=activity",
       hash: "",
     }, { replace: true });
   });

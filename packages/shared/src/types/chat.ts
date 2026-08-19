@@ -519,6 +519,8 @@ export interface ChatConversation {
 
 export interface ChatMessage {
   id: string;
+  /** Organization-scoped human reference; the durable UUID remains in `id`. */
+  shortRef?: string;
   orgId: string;
   conversationId: string;
   role: "user" | "assistant" | "system";

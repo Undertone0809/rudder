@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import type { ChatMessage } from "@rudderhq/shared";
+import { formatElapsedDuration } from "./utils";
 
 function timestampMs(value: Date | string | null | undefined): number | null {
   if (!value) return null;
@@ -8,13 +9,7 @@ function timestampMs(value: Date | string | null | undefined): number | null {
 }
 
 export function formatChatProcessDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "0s";
-  if (ms < 1000) return "under 1s";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return formatElapsedDuration(ms);
 }
 
 export function lastTranscriptAtMs(entries: TranscriptEntry[]): number {

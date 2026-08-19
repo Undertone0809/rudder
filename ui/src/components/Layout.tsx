@@ -1697,22 +1697,24 @@ export function Layout() {
                             <ThreeColumnContextSidebar />
                           )}
                         </div>
-                        <div
-                          data-testid="workspace-column-resizer"
-                          aria-hidden={!contextSidebarVisible}
-                          className={cn(
-                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
-                            !resizingColumn && "motion-resize",
-                            contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
-                            resizingColumn && "is-resizing",
-                          )}
-                          onPointerDown={startContextColumnResize}
-                          role={contextSidebarVisible ? "separator" : undefined}
-                          aria-orientation="vertical"
-                          aria-label="Resize workspace columns"
-                        >
-                          <div className="workspace-column-resizer-line" />
-                        </div>
+                        {!isLibraryRoute ? (
+                          <div
+                            data-testid="workspace-column-resizer"
+                            aria-hidden={!contextSidebarVisible}
+                            className={cn(
+                              "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
+                              !resizingColumn && "motion-resize",
+                              contextSidebarVisible ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
+                              resizingColumn && "is-resizing",
+                            )}
+                            onPointerDown={startContextColumnResize}
+                            role={contextSidebarVisible ? "separator" : undefined}
+                            aria-orientation="vertical"
+                            aria-label="Resize workspace columns"
+                          >
+                            <div className="workspace-column-resizer-line" />
+                          </div>
+                        ) : null}
                       </>
                     ) : null}
                     {showIntegratedShellSidebar
@@ -1802,6 +1804,13 @@ export function Layout() {
           )}
         </div>
       </div>
+      {isMobile ? (
+        <ChatSidePanel
+          contextReady={sidePanelContextReady}
+          selectedOrganizationId={sidePanelOrganizationId}
+          expanded={false}
+        />
+      ) : null}
       {isMobile && !location.pathname.includes("/hub/plugins/") && !location.pathname.startsWith("/plugins/catalog/") && <MobileBottomNav visible={mobileNavVisible} />}
       <CommandPalette />
       <NewIssueDialog />

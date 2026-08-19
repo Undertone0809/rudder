@@ -26,6 +26,7 @@ import {
 } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
+  formatCliAgentId,
   formatInlineRecord,
   handleCommandError,
   printOutput,
@@ -785,7 +786,7 @@ export function registerAgentCommands(program: Command): void {
             return;
           }
 
-          console.log(`Agent: ${agentRow.name} (${agentRow.id})`);
+          console.log(`Agent: ${agentRow.name} (${formatCliAgentId(agentRow.id)})`);
           console.log(`API key created: ${key.name} (${key.id})`);
           if (installSummaries.length > 0) {
             for (const summary of installSummaries) {

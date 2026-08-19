@@ -56,12 +56,12 @@ describe("activity command", () => {
       expect.objectContaining({
         id: "b3c85ce0d7b4",
         orgId: "87e2f1403876",
-        actorId: "agt_d573266faf95",
+        actorId: "agt_d573266f",
         entityId: "ZST-369",
-        agentId: "agt_d573266faf95",
-        runId: "021814b86691",
+        agentId: "agt_d573266f",
+        runId: "run_021814b8",
         details: expect.objectContaining({
-          agentId: "agt_d573266faf95",
+          agentId: "agt_d573266f",
         }),
       }),
     ]);

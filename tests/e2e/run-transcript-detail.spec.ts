@@ -211,12 +211,12 @@ test.describe("Run transcript detail", () => {
     await expect(externalToolGroup).toHaveCount(1);
     await externalToolGroup.click();
     await expect(page.getByText("Web searched \"transcript UI rendering examples\"", { exact: false })).toBeVisible();
-    const githubMcpRow = page.getByRole("button", { name: /tool details: Call fetch PR/ });
-    const rudderMcpRow = page.getByRole("button", { name: /tool details: Call Rudder chat transcript/ });
+    const githubMcpRow = page.getByRole("button", { name: /tool details: Get pull request/ });
+    const rudderMcpRow = page.getByRole("button", { name: /tool details: Read chat transcript/ });
     await expect(githubMcpRow).toHaveCount(1);
     await expect(rudderMcpRow).toHaveCount(1);
-    await expect(githubMcpRow).toHaveAccessibleName("Expand tool details: Call fetch PR");
-    await expect(rudderMcpRow).toHaveAccessibleName("Expand tool details: Call Rudder chat transcript");
+    await expect(githubMcpRow).toHaveAccessibleName("Expand tool details: Get pull request");
+    await expect(rudderMcpRow).toHaveAccessibleName("Expand tool details: Read chat transcript");
     await expect(githubMcpRow.locator('img[src="/brands/github-logo.svg"]')).toBeVisible();
     await expect(rudderMcpRow.locator('img[src="/rudder-logo.png"]')).toBeVisible();
 

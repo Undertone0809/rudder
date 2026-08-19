@@ -1,4 +1,4 @@
-import { isUuidLike } from "@rudderhq/shared";
+import { isUuidLike, shortRefFor, type ShortRefKind } from "@rudderhq/shared";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getStoredBoardCredential, loginBoardCli } from "../../client/board-auth.js";
@@ -225,7 +225,11 @@ export function toCliShortIdOutput(value: unknown): unknown {
 }
 
 export function formatCliRunId(runId: string): string {
-  return isUuidLike(runId) ? shortUuid(runId) : runId;
+  return shouldShowFullIds() || !isUuidLike(runId) ? runId : formatTypedShortRef("run", runId);
+}
+
+export function formatCliAgentId(agentId: string): string {
+  return shouldShowFullIds() || !isUuidLike(agentId) ? agentId : formatTypedShortRef("agent", agentId);
 }
 
 function shortenCliValueForKey(key: string, value: unknown, parent: Record<string, unknown>): unknown {
@@ -263,8 +267,13 @@ function displayIdForCli(key: string, uuid: string, parent: Record<string, unkno
     return formatTypedShortRef("issue_comment", uuid);
   }
 
+  const typedKind = typedRefKindForIdKey(key, parent);
+  if (typedKind) {
+    return formatTypedShortRef(typedKind, uuid);
+  }
+
   if (key === "entityId" && parent.entityType === "issue") {
-    return readIssueIdentifier(parent) ?? shortUuid(uuid);
+    return readIssueIdentifier(parent) ?? formatTypedShortRef("issue", uuid);
   }
 
   return shortUuid(uuid);
@@ -300,9 +309,45 @@ function isIssueCommentIdKey(key: string): boolean {
   return key.toLowerCase().includes("commentid");
 }
 
-function formatTypedShortRef(kind: "agent" | "issue_comment", uuid: string): string {
-  const prefix = kind === "agent" ? "agt" : "cmt";
-  return `${prefix}_${shortUuid(uuid)}`;
+function typedRefKindForIdKey(key: string, parent: Record<string, unknown>): ShortRefKind | null {
+  const lowerKey = key.toLowerCase();
+  if (key === "id" && typeof parent.type === "string") {
+    const entityType = parent.type.toLowerCase();
+    const kindByEntityType: Record<string, ShortRefKind> = {
+      agent: "agent",
+      chat: "chat",
+      chat_conversation: "chat",
+      conversation: "chat",
+      conversation_message: "message",
+      chat_message: "message",
+      message: "message",
+      run: "run",
+      heartbeat_run: "run",
+      project: "project",
+      goal: "goal",
+      user: "user",
+      issue: "issue",
+      issue_comment: "issue_comment",
+      comment: "issue_comment",
+    };
+    return kindByEntityType[entityType] ?? null;
+  }
+  if (lowerKey.includes("runid")) return "run";
+  if (lowerKey.includes("messageid") || lowerKey.includes("conversationmessageid")) return "message";
+  if (lowerKey.includes("chatid") || lowerKey.includes("conversationid")) return "chat";
+  if (lowerKey.includes("projectid")) return "project";
+  if (lowerKey.includes("goalid")) return "goal";
+  if (lowerKey.includes("userid") || (key === "actorId" && parent.actorType === "user")) return "user";
+  if (lowerKey.includes("issueid")) return "issue";
+  return null;
+}
+
+function formatTypedShortRef(kind: ShortRefKind, uuid: string): string {
+  try {
+    return shortRefFor(kind, uuid);
+  } catch {
+    return `${kind}_${shortUuid(uuid)}`;
+  }
 }
 
 function shortUuid(uuid: string): string {

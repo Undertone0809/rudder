@@ -1456,14 +1456,6 @@
     margin: 0;
   }
 
-  .workspace-shell--library-transparent .workspace-column-resizer {
-    background: var(--desktop-content-surface-light);
-  }
-
-  .dark .workspace-shell--library-transparent .workspace-column-resizer {
-    background: var(--desktop-content-surface-dark);
-  }
-
   .workspace-column-resizer-line {
     width: 1px;
     height: 100%;
@@ -3446,6 +3438,18 @@ button[draggable="false"] {
 
   .issue-detail-rail {
     display: none;
+  }
+
+  .goal-detail-layout {
+    grid-template-areas:
+      "heading"
+      "body"
+      "rail";
+  }
+
+  .goal-detail-layout .issue-detail-rail {
+    position: static;
+    display: flex;
   }
 }
 

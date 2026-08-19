@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeContext } from "../client/context.js";
 import { ApiRequestError } from "../client/http.js";
 import {
+  formatCliAgentId,
   formatInlineRecord,
   handleCommandError,
   printOutput,
@@ -206,18 +207,23 @@ describe("CLI short ID output", () => {
       id: "b3c85ce0d7b4",
       orgId: "87e2f1403876",
       actorType: "agent",
-      actorId: "agt_d573266faf95",
+      actorId: "agt_d573266f",
       action: "issue.checked_out",
       entityType: "issue",
       entityId: "ZST-369",
-      agentId: "agt_d573266faf95",
-      runId: "021814b86691",
+      agentId: "agt_d573266f",
+      runId: "run_021814b8",
       details: {
-        agentId: "agt_d573266faf95",
+        agentId: "agt_d573266f",
         issueIdentifier: "ZST-369",
         title: "把 chat 整合进 Agent run",
       },
     });
+  });
+
+  it("uses the agent prefix when formatting an agent reference", () => {
+    expect(formatCliAgentId("d573266f-af95-44e6-9303-e903a54662b8")).toBe("agt_d573266f");
+    expect(formatCliAgentId("agent-legacy")).toBe("agent-legacy");
   });
 
   it("shortens UUIDs embedded in CLI-facing reference strings", () => {
@@ -232,9 +238,33 @@ describe("CLI short ID output", () => {
 
   it("uses short IDs in inline record rendering", () => {
     expect(formatInlineRecord(activityRow)).toContain("id=b3c85ce0d7b4");
-    expect(formatInlineRecord(activityRow)).toContain("actorId=agt_d573266faf95");
+    expect(formatInlineRecord(activityRow)).toContain("actorId=agt_d573266f");
     expect(formatInlineRecord(activityRow)).toContain("entityId=ZST-369");
     expect(formatInlineRecord(activityRow)).not.toContain("d573266f-af95-44e6-9303-e903a54662b8");
+  });
+
+  it("uses a typed issue ref when an activity row has no issue identifier", () => {
+    expect(toCliShortIdOutput({
+      entityType: "issue",
+      entityId: "8daeadc9-3ea2-49b6-984a-fc2a4101b59c",
+    })).toEqual({
+      entityType: "issue",
+      entityId: "iss_8daeadc9",
+    });
+  });
+
+  it("uses the target entity type when formatting nested target ids", () => {
+    expect(toCliShortIdOutput({
+      target: {
+        type: "chat_conversation",
+        id: "53d6e1b2-7d3e-4cf0-9f6c-0a5e8c8d1a11",
+      },
+    })).toEqual({
+      target: {
+        type: "chat_conversation",
+        id: "cht_53d6e1b2",
+      },
+    });
   });
 
   it("preserves full UUID output when requested", () => {

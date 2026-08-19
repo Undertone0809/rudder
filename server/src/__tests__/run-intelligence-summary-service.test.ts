@@ -280,6 +280,7 @@ describe("listRunSummaries", () => {
     const serialized = JSON.stringify(page);
 
     expect(item).toMatchObject({
+      shortRef: "run_ffffffff",
       orgId,
       agentId,
       runtime: "codex_local",

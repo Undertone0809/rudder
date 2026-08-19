@@ -264,7 +264,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       const result = await execute({
         runId: "run-1",
         agent: {
-          id: "agent-1",
+          id: "d573266f-af95-44e6-9303-e903a54662b8",
           orgId: "organization-1",
           name: "Claude Coder",
           agentRuntimeType: "claude_local",
@@ -284,7 +284,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
-          promptTemplate: "Follow the rudder heartbeat.",
+          promptTemplate: "Follow the rudder heartbeat as {{agent.id}}.",
         },
         context: {
           rudderScene: "heartbeat",
@@ -356,7 +356,8 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt.indexOf("## Current Time")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
       expect(systemPrompt.indexOf("# Rudder Heartbeat Instruction")).toBeLessThan(systemPrompt.indexOf("# Enabled Rudder Skills"));
       expect(agentInstructionStack).toContain(systemPrompt);
-      expect(agentInstructionStack).toContain("Follow the rudder heartbeat.");
+      expect(agentInstructionStack).toContain("Follow the rudder heartbeat as agt_d573266f.");
+      expect(agentInstructionStack).not.toContain("Follow the rudder heartbeat as d573266f-af95-44e6-9303-e903a54662b8.");
       expect(agentInstructionStack).toContain("# Agent Instructions");
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");

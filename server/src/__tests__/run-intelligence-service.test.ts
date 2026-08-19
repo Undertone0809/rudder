@@ -66,13 +66,14 @@ function mockRunEventsLookup(orgId: string, events: Array<Record<string, unknown
 
 describe("agent run references", () => {
   it("formats UUID run IDs as short CLI run IDs", () => {
-    expect(formatShortRunId("609695f1-f90a-4b17-be61-4f0c6fe37c42")).toBe("609695f1f90a");
+    expect(formatShortRunId("609695f1-f90a-4b17-be61-4f0c6fe37c42")).toBe("run_609695f1");
     expect(formatShortRunId("run-1")).toBe("run-1");
   });
 
   it("recognizes short run ID references without treating full UUIDs as prefixes", () => {
     expect(isShortRunIdReference("609695f1")).toBe(true);
     expect(isShortRunIdReference("609695f1f90a")).toBe(true);
+    expect(isShortRunIdReference("run_609695f1")).toBe(true);
     expect(isShortRunIdReference("609695f1-f90a-4b17-be61-4f0c6fe37c42")).toBe(false);
     expect(isShortRunIdReference("run-1")).toBe(false);
   });
@@ -84,6 +85,14 @@ describe("agent run references", () => {
       "609695f1-f90a-4b17-be61-4f0c6fe37c42",
     );
     expect(lookup.select).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves typed short run references while keeping full UUID compatibility", async () => {
+    const lookup = mockRunIdLookup([{ id: "609695f1-f90a-4b17-be61-4f0c6fe37c42" }]);
+
+    await expect(resolveHeartbeatRunIdReference(lookup.db as never, "run_609695f1")).resolves.toBe(
+      "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+    );
   });
 
   it("does not query when the run reference is already a full UUID", async () => {
@@ -126,7 +135,7 @@ describe("agent run references", () => {
       message: "Run ID prefix is ambiguous",
       details: {
         runId: "609695f1",
-        matches: ["609695f1f90a", "609695f11111"],
+        matches: ["run_609695f1f90a", "run_609695f11111"],
       },
     });
   });

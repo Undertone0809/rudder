@@ -1,6 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { chatContextLinks, chatConversations, chatMessages, issues } from "@rudderhq/db";
-import { shortRefFor, type AgentRunScene } from "@rudderhq/shared";
+import { shortRefFor, type AgentRunScene, type ShortRefKind } from "@rudderhq/shared";
 import { and, desc, eq, or, sql, type SQLWrapper } from "drizzle-orm";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -123,8 +123,12 @@ function markdownCodeCell(value: string | null | undefined) {
 }
 
 function chatReference(id: string) {
+  return shortReference("chat", id);
+}
+
+function shortReference(kind: ShortRefKind, id: string) {
   try {
-    return shortRefFor("chat", id);
+    return shortRefFor(kind, id);
   } catch {
     return id;
   }
@@ -139,9 +143,26 @@ function appendMarkdownTable(lines: string[], headers: string[], rows: string[][
 }
 
 function formatIssuePrincipal(agentId: string | null | undefined, userId: string | null | undefined) {
-  if (agentId) return `agent:${agentId}`;
-  if (userId) return `user:${userId}`;
+  if (agentId) {
+    const raw = agentId.startsWith("agent:") ? agentId.slice("agent:".length) : agentId;
+    return `agent:${shortReference("agent", raw)}`;
+  }
+  if (userId) {
+    const raw = userId.startsWith("user:") ? userId.slice("user:".length) : userId;
+    return `user:${shortReference("user", raw)}`;
+  }
   return null;
+}
+
+function issueReference(id: string, identifier: string | null) {
+  return identifier ?? shortReference("issue", id);
+}
+
+function compactPrincipal(value: string | null) {
+  if (!value) return null;
+  if (value.startsWith("agent:")) return formatIssuePrincipal(value, null);
+  if (value.startsWith("user:")) return formatIssuePrincipal(null, value);
+  return value;
 }
 
 function formatDailyMemoryHeading(label: "today" | "yesterday", relativePath: string) {
@@ -183,11 +204,11 @@ export function buildAgentStartupContextPrompt(
       "Title",
       "Summary",
     ], input.recentIssues.map((issue) => [
-      markdownCodeCell(issue.identifier ?? issue.id),
+      markdownCodeCell(issueReference(issue.id, issue.identifier)),
       markdownCodeCell(issue.status),
       markdownTableCell(issue.role),
-      markdownTableCell(issue.assignee),
-      markdownTableCell(issue.reviewer),
+      markdownTableCell(compactPrincipal(issue.assignee)),
+      markdownTableCell(compactPrincipal(issue.reviewer)),
       markdownTableCell(formatDate(issue.createdAt)),
       markdownTableCell(formatDate(issue.updatedAt)),
       markdownTableCell(clip(issue.title, 120)),
@@ -422,7 +443,7 @@ export function agentStartupContextService(db: Db) {
       sourceRefs: [
         { kind: "memory", id: todayKey, ref: todayMemory.relativePath },
         { kind: "memory", id: yesterdayKey, ref: yesterdayMemory.relativePath },
-        ...recentIssues.items.map((issue) => ({ kind: "issue" as const, id: issue.id, ref: issue.identifier ?? issue.id })),
+        ...recentIssues.items.map((issue) => ({ kind: "issue" as const, id: issue.id, ref: issueReference(issue.id, issue.identifier) })),
         ...recentChats.items.map((chat) => ({ kind: "chat" as const, id: chat.id, ref: chatReference(chat.id) })),
       ],
       markdown,

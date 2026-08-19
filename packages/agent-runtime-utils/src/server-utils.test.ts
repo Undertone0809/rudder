@@ -1008,6 +1008,49 @@ describe("selectPromptTemplate", () => {
   });
 });
 
+describe("renderTemplate short references", () => {
+  it("renders agent-facing entity UUIDs as typed short refs while preserving non-UUID values", () => {
+    const agentId = "d573266f-af95-44e6-9303-e903a54662b8";
+    const runId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
+    const issueId = "4a6dcb93-e3b8-4ab8-a56e-8ad9bc5e24a2";
+    const commentId = "091492ab-3d85-4fcb-b066-1db769eed56d";
+    const goalId = "14ff96a7-2518-456a-8aae-480360f0d9aa";
+    const projectId = "c9623d48-0f8f-4fb0-965d-2ab264f5e55d";
+    const userId = "f2131f87-d8f0-4e43-b955-161c2ac12c46";
+    const messageId = "8cbac610-f182-4dae-81dc-03ee6a156deb";
+
+    const rendered = renderTemplate(
+      [
+        "{{agent.id}}",
+        "{{context.recovery.originalRunId}}",
+        "{{issue.id}}",
+        "{{comment.id}}",
+        "{{context.goalRuntime.goalId}}",
+        "{{context.agentIssueCreationRequest.projectId}}",
+        "{{context.agentIssueCreationRequest.requestedByUserId}}",
+        "{{context.messageId}}",
+        "{{context.customId}}",
+      ].join("|"),
+      {
+        agent: { id: agentId },
+        issue: { id: issueId },
+        comment: { id: commentId },
+        context: {
+          recovery: { originalRunId: runId },
+          goalRuntime: { goalId },
+          agentIssueCreationRequest: { projectId, requestedByUserId: userId },
+          messageId,
+          customId: "legacy-identifier",
+        },
+      },
+    );
+
+    expect(rendered).toBe(
+      "agt_d573266f|run_609695f1|iss_4a6dcb93|cmt_091492ab|gol_14ff96a7|prj_c9623d48|usr_f2131f87|msg_8cbac610|legacy-identifier",
+    );
+  });
+});
+
 describe("loadAgentInstructionsPrefix", () => {
   it("loads the runtime operating contract without an instruction file", async () => {
     const currentTime = new Date("2026-06-15T12:34:56.789Z");
