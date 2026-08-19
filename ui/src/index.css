@@ -3440,17 +3440,6 @@ button[draggable="false"] {
     display: none;
   }
 
-  .goal-detail-layout {
-    grid-template-areas:
-      "heading"
-      "body"
-      "rail";
-  }
-
-  .goal-detail-layout .issue-detail-rail {
-    position: static;
-    display: flex;
-  }
 }
 
 .rudder-milkdown-content a[href^="agent://"],

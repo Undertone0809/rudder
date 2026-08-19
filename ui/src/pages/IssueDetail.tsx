@@ -18,7 +18,6 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
@@ -42,7 +41,6 @@ import {
   Plus,
   RefreshCw,
   Repeat,
-  SlidersHorizontal,
   Trash2,
   Upload
 } from "lucide-react";
@@ -68,6 +66,7 @@ import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { PriorityIcon } from "../components/PriorityIcon";
+import { PropertiesManifest, PropertiesManifestSheet, PropertiesManifestTrigger } from "../components/PropertiesManifest";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -1997,14 +1996,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
             >
               <MessageSquare className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => setMobilePropsOpen(true)}
-              title="Properties"
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-            </Button>
+            <PropertiesManifestTrigger onClick={() => setMobilePropsOpen(true)} />
           </div>
 
         </div>
@@ -2030,21 +2022,13 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
 
           <div className="issue-detail-properties min-w-0" data-testid="issue-detail-sidebar">
             <div className="space-y-3">
-              <section
-                aria-label="Issue properties"
-                className="issue-detail-properties-panel rounded-lg border border-border bg-background/80 p-3"
-              >
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                    Properties
-                  </p>
-                </div>
+              <PropertiesManifest ariaLabel="Issue properties">
                 <IssueProperties
                   issue={issue}
                   onUpdate={(data) => updateIssue.mutate(data)}
                   childIssues={orderedChildIssues}
                 />
-              </section>
+              </PropertiesManifest>
               <IssueCostSummaryPanel summary={issueCostSummary} />
             </div>
           </div>
@@ -2519,24 +2503,15 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         </div>
       </div>
 
-      <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
-        <SheetContent side="bottom" className="max-h-[85dvh] pb-[env(safe-area-inset-bottom)]">
-          <SheetHeader>
-            <SheetTitle className="text-sm">Properties</SheetTitle>
-          </SheetHeader>
-          <ScrollArea className="flex-1 overflow-y-auto">
-            <div className="w-[100vw] max-w-[100vw] space-y-3 overflow-x-hidden px-4 pb-4">
-              <IssueProperties
-                issue={issue}
-                onUpdate={(data) => updateIssue.mutate(data)}
-                inline
-                childIssues={orderedChildIssues}
-              />
-              <IssueCostSummaryPanel summary={issueCostSummary} />
-            </div>
-          </ScrollArea>
-        </SheetContent>
-      </Sheet>
+      <PropertiesManifestSheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
+        <IssueProperties
+          issue={issue}
+          onUpdate={(data) => updateIssue.mutate(data)}
+          inline
+          childIssues={orderedChildIssues}
+        />
+        <IssueCostSummaryPanel summary={issueCostSummary} />
+      </PropertiesManifestSheet>
       <ScrollToBottom />
       <WorkspaceAttachDialog
         orgId={issue.orgId ?? resolvedCompanyId ?? selectedOrganizationId}
