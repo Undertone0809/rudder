@@ -293,9 +293,13 @@ export function createLocalAppProcessPlatform(
     pgid: number;
   }): Promise<boolean> => {
     const rejectOwnership = (reason: string): false => {
-      if (!reportedLinuxOwnershipFailures.has(reason)) {
-        reportedLinuxOwnershipFailures.add(reason);
-        console.warn(`[local-app-ownership] Linux listener ownership rejected: ${reason}`);
+      const diagnosticKey = `${reason}:${input.port}:${input.pid}:${input.pgid}`;
+      if (!reportedLinuxOwnershipFailures.has(diagnosticKey)) {
+        reportedLinuxOwnershipFailures.add(diagnosticKey);
+        console.warn(
+          `[local-app-ownership] Linux listener ownership rejected: ${reason} `
+          + `(port=${input.port}, pid=${input.pid}, pgid=${input.pgid})`,
+        );
       }
       return false;
     };
