@@ -59,6 +59,17 @@ function expectZipContains(buffer: Buffer, value: string) {
   expect(buffer.toString("utf8")).toContain(value);
 }
 
+async function readDownloadContent(download: {
+  content?: Buffer;
+  contentStream?: AsyncIterable<Buffer | string>;
+}) {
+  if (download.content) return download.content;
+  if (!download.contentStream) throw new Error("Workspace backup download did not provide content");
+  const chunks: Buffer[] = [];
+  for await (const chunk of download.contentStream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
 async function unzipArchive(archivePath: string, outputDir: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     execFile("unzip", ["-q", archivePath, "-d", outputDir], (error) => {
@@ -258,14 +269,15 @@ describe("workspace backup service", () => {
     }));
     expect(download.byteSize).toBeGreaterThan(0);
     expect(download.archiveSha256).toBe(backup.archiveSha256);
-    expectZipContains(download.content, "workspace-");
-    expectZipContains(download.content, "projects/roadmap/roadmap.md");
-    expectZipContains(download.content, "# Roadmap\n");
+    const downloadContent = await readDownloadContent(download);
+    expectZipContains(downloadContent, "workspace-");
+    expectZipContains(downloadContent, "projects/roadmap/roadmap.md");
+    expectZipContains(downloadContent, "# Roadmap\n");
     const unzipRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-backup-unzip-"));
     try {
       const archivePath = path.join(unzipRoot, "workspace.zip");
       const outputDir = path.join(unzipRoot, "out");
-      await fs.writeFile(archivePath, download.content);
+      await fs.writeFile(archivePath, downloadContent);
       await unzipArchive(archivePath, outputDir);
       const [rootFolderName] = await fs.readdir(outputDir);
       expect(rootFolderName).toBeTruthy();
@@ -302,9 +314,7 @@ describe("workspace backup service", () => {
       const download = await service.getDownload(orgId, backup.id);
       expect(download.content).toBeUndefined();
       expect(download.contentStream).toBeDefined();
-      const chunks: Buffer[] = [];
-      for await (const chunk of download.contentStream!) chunks.push(Buffer.from(chunk));
-      expect(Buffer.concat(chunks)).toEqual(await fs.readFile(backup.artifactRef));
+      await expect(readDownloadContent(download)).resolves.toEqual(await fs.readFile(backup.artifactRef));
     } finally {
       if (previousFlag === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
       else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousFlag;
