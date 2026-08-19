@@ -67,7 +67,9 @@ jobs:
               fi
               ;;
             workflow_dispatch)
-              if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+                compare_ref="$(git rev-parse HEAD^2)"
+              elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
                 compare_ref="$(git rev-parse HEAD^)"
               fi
               ;;

@@ -114,6 +114,22 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/components/transcript/RunTranscriptView.chat.tsx",
+      "lines": 1501,
+      "owner": "transcript-ui",
+      "rationale": "Chat transcript rendering still combines message projection, runtime metadata, and continuation state while the transcript surface is extracted.",
+      "target": "Separate chat transcript projections from runtime coordination and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/transcript/RunTranscriptView.semantic.tsx",
+      "lines": 1501,
+      "owner": "transcript-ui",
+      "rationale": "Semantic transcript rendering still combines event normalization and display policy while the transcript surface is extracted.",
+      "target": "Separate semantic event normalization from display policy and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "desktop/src/main.ts",
       "lines": 1562,
       "owner": "desktop-runtime",
