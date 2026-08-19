@@ -133,7 +133,8 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "archive.create",
             "archive.inspectManifest",
             "archive.extractFile",
-            "evidence.index"
+            "evidence.index",
+            "workspace.watch"
         ])
     );
     assert!(stderr.is_empty());
@@ -150,6 +151,68 @@ fn reports_version_protocol_and_capabilities_metadata() {
             .is_some_and(|target| !target.is_empty())
     );
     assert_eq!(archive_capabilities["effectiveEngine"], "rust");
+}
+
+#[test]
+fn watches_workspace_and_stops_on_stdin_eof() {
+    use std::process::Stdio;
+    use std::thread;
+    use std::time::Duration;
+
+    let root = tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let data = root.path().join("data");
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(&data).unwrap();
+    fs::write(workspace.join("alpha.txt"), b"alpha").unwrap();
+    let output = data.join("manifest.json");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rudder-native"))
+        .args([
+            "workspace",
+            "watch",
+            workspace.to_str().unwrap(),
+            output.to_str().unwrap(),
+            "10000",
+            "1048576",
+            "25",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let reader = thread::spawn(move || {
+        let mut lines = String::new();
+        std::io::Read::read_to_string(&mut stdout, &mut lines).unwrap();
+        lines
+    });
+    thread::sleep(Duration::from_millis(500));
+    for index in 0..6 {
+        fs::write(
+            workspace.join("nested.txt"),
+            format!("nested-{index}\n").as_bytes(),
+        )
+        .unwrap();
+        thread::sleep(Duration::from_millis(300));
+    }
+    drop(child.stdin.take());
+    let status = child.wait().unwrap();
+    let lines = reader.join().unwrap();
+    assert!(status.success(), "watch exited with {status}: {lines}");
+    let envelopes = lines
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        envelopes
+            .iter()
+            .any(|value| value["capability"] == "workspace.watch" && value["state"] == "building")
+    );
+    assert!(envelopes.iter().any(|value| value["state"] == "ready"));
+    assert!(envelopes.iter().any(|value| value["state"] == "dirty"));
+    assert!(envelopes.iter().any(|value| value["state"] == "stopped"));
+    assert!(output.exists());
 }
 
 #[test]

@@ -23,7 +23,7 @@ export type NativeWorkspaceManifestEntry = {
   modifiedMillis: number;
 };
 
-type WatchState = "building" | "ready" | "dirty" | "overflow" | "unavailable";
+type WatchState = "building" | "ready" | "dirty" | "overflow" | "unavailable" | "stopped";
 type WatchSession = {
   child: ChildProcessWithoutNullStreams;
   manifestPath: string;
@@ -82,7 +82,7 @@ function manifestPathForRoot(rootPath: string) {
 }
 
 function watchState(value: unknown): WatchState | null {
-  return ["building", "ready", "dirty", "overflow", "unavailable"].includes(String(value))
+  return ["building", "ready", "dirty", "overflow", "unavailable", "stopped"].includes(String(value))
     ? value as WatchState
     : null;
 }
@@ -121,7 +121,7 @@ async function startSession(rootPath: string): Promise<WatchSession> {
     session.exited = true;
   });
   child.once("exit", () => {
-    session.state = "unavailable";
+    if (session.state !== "stopped") session.state = "unavailable";
     session.exited = true;
   });
   child.stderr.resume();

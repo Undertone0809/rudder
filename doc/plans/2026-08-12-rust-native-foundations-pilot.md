@@ -76,12 +76,10 @@ updated_at: 2026-08-19
 ## Current One-Shot Delivery (2026-08-19)
 
 This update supersedes the historical continuation notes and all earlier
-planning estimates and admission gates below. The user requested one
+planning estimates and staged-admission language below. The user requested one
 implementation-first delivery: merge the existing Rust work into the current
 mainline, make Rust the default engine with bounded Node fallback, finish all
-six capabilities, and run benchmark only after functional acceptance. There is
-no 17-31 week estimate, seven-day observation window, or 100-cycle dogfood
-prerequisite for this delivery.
+six capabilities, and run benchmark only after functional acceptance.
 
 The main-bound candidate is being validated as one immutable merge candidate.
 The effective mode is `RUDDER_NATIVE_MODE=auto|node|required` (default
@@ -118,7 +116,8 @@ The packaged account-gate scenario reached the real board URL and passed.
 The packaged Local App scenario then stopped at the expected
 `401 account_session_required` boundary because no hosted authenticated
 fixture is available; the dev Local App scenario completed its lifecycle and
-cleanup. These results do not count as hosted dogfood.
+cleanup. These historical fixture results are supporting evidence only and are
+not part of the current delivery verdict.
 
 The restore recovery implementation was then hardened in `47a00d611`:
 startup reconciliation receives the live database handle, validates rollback
@@ -222,9 +221,9 @@ packaged Desktop account gate, interruption matrix, and hosted authenticated
 Local App fixture are still separate open gates.
 
 The historical packaged candidate was blocked by the hosted authenticated
-fixture boundary. The current one-shot candidate removes that long observation
-gate and requires the real public workflows, cross-platform CI, and fresh
-black-box verifier evidence on one unchanged SHA.
+fixture boundary. The current one-shot candidate uses the real public
+workflows, cross-platform CI, and fresh black-box verifier evidence on one
+unchanged SHA.
 
 Release-version alignment is a hard gate. The normal Rudder product version
 is the single version for every first-party Rust package, Cargo.lock entry,
@@ -376,8 +375,8 @@ bounded result set. A query with few matches may still visit most of a large
 workspace, after which TypeScript maps paths to Library entries.
 
 Rust is suitable for a shared filesystem walker, event coalescing, and a
-rebuildable path manifest. It is not admitted as a search rewrite until a
-100,000-file fixture proves traversal is a material part of endpoint latency.
+rebuildable path manifest. TypeScript remains authoritative for organization
+scope, protected paths, sorting, result limits, and live traversal fallback.
 
 ### Strongest safe Node comparator
 
@@ -409,12 +408,11 @@ undo the Rust-first default after correctness and reliability acceptance.
   TypeScript services during this pilot.
 - Make native operations coarse-grained, versioned, bounded, cancellable, and
   independently observable.
-- Preserve a Node baseline until the exact Rust candidate passes correctness,
-  packaged acceptance, performance, and eval gates.
+- Keep the optimized Node implementation as an automatic fallback and explicit
+  rollback path after the Rust-first default is enabled.
 - Produce immutable baseline/candidate evidence in `rudder-evals`, not only
   local benchmark prose.
-- Remove a Node implementation only after at least one stable release interval
-  with a proven rollback path.
+- Retain the Node implementation for rollback; this delivery does not remove it.
 
 ## Non-Goals
 
@@ -567,7 +565,8 @@ type NativeTerminal = {
 };
 ```
 
-Phase 0 freezes `major=1`, the initial minor, feature negotiation, frame/error
+The shared foundation freezes `major=1`, the initial minor, feature
+negotiation, frame/error
 codes, and compatibility rules. A different major is rejected. Same-major
 minor compatibility is allowed only when both sides explicitly negotiate the
 required capability set; a sender cannot rely on an unknown field changing
@@ -730,18 +729,19 @@ independent state:
 
 ```text
 disabled
-compiled_unverified
-explicit_opt_in
-accepted_default
-legacy_removed
+rust_first
+node_fallback
+legacy_node
 ```
 
-Environment/instance flags may select the candidate during development, but
-the effective capability, target, binary hash, protocol version, state, and
-fallback decision must appear in health/diagnostic evidence. macOS arm64
-acceptance cannot promote macOS x64, Windows x64, or Linux x64 beyond
-`compiled_unverified`. A missing or incompatible binary may fall back to Node
-only before Rust accepts the operation.
+`RUDDER_NATIVE_MODE=auto` selects `rust_first` with safe pre-acceptance Node
+fallback, `node` selects `legacy_node` globally, and `required` fails closed
+when Rust is unavailable. Per-capability disable flags select `disabled` for
+that capability. The effective capability, target, binary hash, protocol
+version, state, and fallback decision must appear in health/diagnostic
+evidence. Every supported target is validated independently; no platform is
+promoted from a different platform's evidence. A missing or incompatible
+binary may fall back to Node only before Rust accepts the operation.
 
 After a process start is accepted, do not start a Node duplicate. After a data
 operation creates staging output, complete, clean that exact staging root, or
@@ -966,12 +966,10 @@ commit or rollback before returning. Peak-disk measurement includes
   parent fsync unavailability, and rollback failure remain explicit.
 - v1 and v2 produce the same eligible path set, file bytes, tree hash, browse
   results, sparse recovery result, and restored workspace hash.
-- Report the legacy v1 full-materialization footprint as risk evidence, but use
-  the streaming Node ZIP/restore comparator for language attribution. For a
-  100 MiB included workspace, Rust promotion requires at least 30% lower
-  combined process-tree RSS, at least 20% create/restore p95 improvement, or
-  closure of a reproduced integrity/recovery defect versus that optimized Node
-  path; undeclared total latency may not regress more than 10%.
+- Report the legacy v1 full-materialization footprint as risk evidence, and use
+  the streaming Node ZIP/restore comparator for the final benchmark. Correctness,
+  recovery, corruption handling, and resource-safety failures block delivery;
+  ordinary latency or RSS differences are recorded after acceptance.
 
 ### Slice 3: Runtime payload installer/extractor
 
@@ -1007,22 +1005,19 @@ emits bounded phase progress without archive paths or response bodies.
   invalid binary version, publish interruption, and live-generation protection.
 - No partial generation becomes selectable after any injected failure.
 - The current full-buffer path's expected 280-350 MiB avoidable allocation is
-  structural risk evidence, not the language comparator. Rust promotion
-  requires at least 30% lower combined process-tree RSS, at least 20% install
-  p95 improvement, or closure of a reproduced publish/recovery defect versus
-  the optimized Node streaming download/extractor on the exact candidate.
-- End-to-end cold install may be promoted with 0-15% latency improvement if
-  memory/reliability gates pass; network-bound speed is not a required claim.
+  structural risk evidence, not the language comparator. The final benchmark
+  records combined process-tree RSS and install p50/p95 against the optimized
+  Node streaming download/extractor; checksum, extraction, atomic publish,
+  and recovery failures block delivery.
 
 ### Slice 4: Agent Run process/I/O host
 
-#### Admission condition
+#### Delivery checks
 
-Begin after the shared process protocol and Local App implementation are in the
-same candidate. No long observation or dogfood gate is required; the Agent Run
-workflow itself must pass the required start, flood, Stop, timeout, control-loss,
-restart, and cleanup tests before acceptance. Reuse `process-core`; do not fork
-a second process supervision implementation.
+The shared process protocol and Local App implementation must be in the same
+candidate. The Agent Run workflow itself must pass the required start, flood,
+Stop, timeout, control-loss, restart, and cleanup tests before acceptance.
+Reuse `process-core`; do not fork a second process supervision implementation.
 
 Before implementation, freeze a contract-parity packet for
 `RUN.CHAT.AGENT.001`, `RUN.EXECUTION.001`, `RUN.RESULT.001`,
@@ -1178,12 +1173,12 @@ default policy is:
   the earlier detached deadline/spool threshold, uses no more than the declared
   spool ceiling plus filesystem metadata, leaves no verified descendant, and
   produces the exact non-success receipt for later reconciliation.
-- Stop admission p95 below 250 ms under pressure; process-tree terminal proof
-  remains within the existing hard deadline.
-- Under the fixed flood workload, peak RSS is at least 30% lower or a reproduced
-  unbounded-growth/Stop reliability defect is closed.
-- Ordinary model-dominated Run duration is expected to improve only 0-5% and
-  is not used as the main promotion claim.
+- Stop admission and terminal cleanup remain within the existing hard
+  deadlines under pressure; process-tree proof and bounded spool safety are
+  mandatory.
+- The final benchmark records flood-workload RSS, Stop admission, terminal
+  cleanup, bytes, and reliability. Ordinary model-dominated Run duration is
+  descriptive only.
 
 ### Slice 5: Run evidence offset indexer/parser
 
@@ -1225,21 +1220,19 @@ path, secret, or unredacted provider payload is added to diagnostics.
 - TypeScript and Rust paths produce the same ordered, redacted transcript page,
   error anchors, diagnosis inputs, and output hashes for the supported corpus.
 - The pre-index full-materialization path is reported only as eliminated-risk
-  evidence. For 100 MiB or larger logs, Rust promotion requires at least 30%
-  lower combined process-tree RSS, at least 20% detail p95 improvement, or
-  closure of a reproduced offset/corruption/recovery defect versus the bounded
-  TypeScript paging/index comparator, without returning a larger response.
+  evidence. The final benchmark records combined process-tree RSS and detail
+  p50/p95 against the bounded TypeScript paging/index comparator; offset,
+  corruption, recovery, and response-boundary failures block delivery.
 - A full-response benchmark is reported separately and cannot be used to claim
   the paged user path improved or to feed `native_ab`.
 
 ### Slice 6: Workspace manifest/index watcher
 
-#### Admission condition
+#### Delivery checks
 
-Run a baseline first with 1,000, 100,000, and 1,000,000 path fixtures. Record
-filesystem traversal time separately from Library DB mapping. Do not implement
-the Rust index if DB mapping or response decoration is the dominant cost and
-cannot be removed by this boundary.
+Use representative small, medium, and large path fixtures. Record filesystem
+traversal time separately from Library DB mapping; the watcher remains useful
+as a rebuildable acceleration structure even when mapping dominates.
 
 #### Design
 
@@ -1286,13 +1279,10 @@ and Library entry decoration.
   TypeScript result.
 - Index rebuild yields the same eligible path set and ordering as the current
   TypeScript traversal for the declared policy version.
-- At 100,000 paths, Rust must improve cold sparse-query p95 by at least 20%,
-  reduce combined process-tree CPU/RSS at least 30%, or close a reproduced
-  watcher/rebuild correctness defect versus the cached TypeScript watcher plus
-  DB/N+1-fixed comparator. Typical small-workspace performance may not regress
-  more than 10%.
-- If the baseline does not show material traversal cost, record that result and
-  retain the rebuildable Rust watcher with its live TypeScript fallback.
+- The final benchmark records cold/warm traversal p50/p95, process-tree CPU/RSS,
+  and result bytes against the TypeScript traversal. Watcher overflow,
+  restart, stale-manifest, protected-path, or live-fallback failures block
+  delivery; ordinary performance differences are descriptive.
 
 ## Cross-Slice Data And Compatibility Rules
 
@@ -1357,17 +1347,9 @@ Every comparison records:
 - Deterministic micro/service benchmarks use at least 3 warmups followed by
   randomized paired blocks. Record the random seed, block/order sequence, cache
   state, and every raw observation.
-- A latency p95 promotion claim requires at least 100 measured operations per
-  arm and a reported bootstrap 95% confidence interval for the paired delta.
-  Twenty observations may be used for directional planning but their empirical
-  p95 is effectively a tail maximum and cannot satisfy a promotion gate.
-- A benefit threshold passes only when the point estimate reaches the declared
-  threshold (for example p95 improvement >=20% or RSS reduction >=30%) and the
-  paired 95% confidence-interval lower bound is above 0%. A non-regression
-  threshold passes only when its point estimate and 95% confidence-interval
-  upper bound are both within the allowed 10% regression. An interval crossing
-  0 for benefit, or crossing 10% for non-regression, is inconclusive and cannot
-  promote the slice on that metric.
+- The final `native_ab` run uses one warmup and three alternating paired trials
+  per workload, recording raw observations and uncertainty. These measurements
+  describe the accepted candidate; they do not gate the Rust-first default.
 - Large 1 GB or destructive failure injection: enough repetitions to expose
   variance, with the lower count declared; report median/range and individual
   failures rather than inventing a p95 when 100 operations are impractical.
@@ -1437,12 +1419,11 @@ Implement this in dependency order:
    native-specific Dashboard comparison.
 6. Add schema, runner, ingest, registry, API, Dashboard, and product-pass
    regression tests, then run one sealed rehearsal packet through the full
-   flow before any Rust slice may use `native_ab` as promotion evidence.
+   flow before the final accepted candidate is benchmarked.
 
-Before Slice 1 or Slice 2 promotion, record this work as its own dated
-`rudder-evals/doc/plans/` implementation plan against a clean, frozen eval
-candidate. It is a Phase 0E dependency, not work deferred to the final
-portfolio campaign.
+Record this work as its own dated `rudder-evals/doc/plans/` implementation plan
+against a clean, frozen eval candidate. It is benchmark support and does not
+change the six-capability functional acceptance order.
 
 ### Arms
 
@@ -1517,7 +1498,7 @@ case definitions
 
 A standalone Markdown report is incomplete.
 
-### Promotion gates
+### Functional acceptance gates
 
 For each slice and the final portfolio:
 
@@ -1658,7 +1639,7 @@ still in auto/default-with-fallback state.
 
 ### Default rollback
 
-Changing a capability from `accepted_default` back to Node requires:
+Changing a capability from Rust-first back to Node requires:
 
 - a named regression or missing acceptance receipt;
 - the exact capability flag and affected versions;
@@ -1670,38 +1651,33 @@ Changing a capability from `accepted_default` back to Node requires:
 
 | Phase | Deliverable | Dependency | Exit decision |
 | --- | --- | --- | --- |
-| 0A | Cargo workspace, protocol, packaging, per-target activation | none | Can every target run protocol fixtures and can the isolated macOS App execute the exact helper? |
-| 0B | optimized Node comparator harnesses | current Node paths | Are language-neutral streaming/backpressure fixes measured first? |
-| 0E | `rudder-evals native_ab` schema-to-Dashboard foundation | frozen eval candidate | Does one sealed rehearsal round-trip with `productPass: false`? |
-| 1A | Local App process host | 0A + relevant 0B comparator | Process semantics and packaged Local App PASS |
-| 1B | Streaming Workspace backup v2 | 0A + relevant 0B comparator | Parity plus RSS/reliability gate PASS |
-| 2A | Runtime payload installer/extractor | 1B archive core | Memory/atomic publish gate PASS |
-| 2B | Agent Run process/I/O host | 1A process protocol and public adapter | Stop/evidence/backpressure gate PASS |
-| 3A | Run evidence indexer/parser | 2B log format and output contract | Paged detail parity/benefit PASS |
-| 3B | Workspace manifest/index watcher | 1B walker and fallback contract | Watcher/live traversal correctness PASS |
-| 4 | Final `native_ab` portfolio and candidate `live_eval` | all six slices | Finalize default/fallback evidence |
+| 0 | Shared mode, protocol, packaging, and fallback foundation | none | All supported targets run protocol fixtures and staged binaries report the expected metadata |
+| 1 | Process core: Local App and Agent Run | 0 | Public start, output, Stop, timeout, control-loss, restart, and cleanup workflows pass |
+| 2 | Archive/payload core: backup and runtime payload | 0 | Create, browse, download, restore, corruption, interrupted publish, and platform failure workflows pass |
+| 3 | Indexing core: evidence sidecar and workspace manifest watcher | 0 | Pagination, corruption, mutation storm, overflow, restart, and live traversal fallback pass |
+| 4 | Final candidate acceptance | all six capabilities | Cross-platform CI, reviewer stage/final review, verifier PASS, then benchmark |
 
-Do not promote Phase 1A/1B without 0E. Do not begin Phase 2B merely because
-Phase 1A compiles. Do not begin Phase 3A until `projection=full` has been removed
-from the default detail path and eval workloads. Phase 3B must always retain the
-live TypeScript traversal fallback when the watcher is not ready or trustworthy.
+All six capabilities are implemented and functionally accepted before the final
+benchmark. The TypeScript live traversal fallback remains mandatory whenever a
+manifest is building, dirty, overflowed, unavailable, or invalid.
 
 ## Execution Window
 
 The six capabilities are delivered in one continuous implementation sprint.
-Functional tests, CI, review, and black-box acceptance precede benchmark; no
-long observation window or dogfood gate is part of this plan.
+Functional tests, CI, review, and black-box acceptance precede benchmark. The
+work is organized as one continuous two-day implementation sprint, with no
+separate observation gate.
 
 ## Definition Of Done
 
 The pilot is complete only when:
 
-1. Every admitted slice has an exact source/binary/build/runtime acceptance
+1. Every capability has an exact source/binary/build/runtime acceptance
    packet.
 2. Every Rudder-owned Rust package reports the same version as the normal
    Rudder release represented by that candidate.
-3. macOS arm64 packaged public workflows pass; other platforms are labeled no
-   stronger than their real evidence.
+3. The six capabilities are Rust-first on macOS arm64/x64, Windows x64, and
+   Linux x64, and their real public workflows pass on each supported target.
 4. Node/Rust correctness and pressure benchmarks use comparable workloads and
    report process-tree RSS, latency, bytes, and reliability.
 5. `rudder-evals` stores the final `native_ab` campaign through immutable
@@ -1710,35 +1686,36 @@ The pilot is complete only when:
    cases and relevant real-runtime/Desktop acceptance.
 7. No new organization, permission, secret, path, evidence, terminal-state, or
    recovery regression remains.
-8. Each promoted slice meets its declared performance or reliability gate;
-   unsupported benefit claims are removed.
+8. Benchmark results are bound to the final candidate and ordinary performance
+   differences are recorded; crash, leak, corruption, timeout, and resource
+   safety failures remain blocking.
 9. Rollback has been exercised against the exact packaged candidate.
 10. Reviewer acceptance and verifier PASS apply to the same unchanged
    candidate.
 11. Product Logic Registry changes, if any became necessary, are proposed and
     explicitly approved separately before editing `doc/product/**`.
 
-## Phase-Gated Implementation Decisions
+## Implementation Decisions
 
 - Select and pin the Rust ZIP implementation only after archive path, ZIP64,
   streaming central-directory, and fuzzing requirements are proven.
-- Phase 0B uses one external process-tree sampler for both arms: monotonic wall
+- Use one external process-tree sampler for both arms: monotonic wall
   time plus platform process APIs (`proc_pidinfo` on macOS, `/proc` on Linux,
   and Job Object/GetProcessMemoryInfo on Windows) at a fixed recorded interval.
   JavaScript heap and Rust allocator metrics are secondary diagnostics, not the
   cross-arm RSS source. Calibrate and report sampler overhead.
-- Phase 0A freezes the exact protocol schema, initial minor, and stable error
+- Freeze the exact protocol schema, initial minor, and stable error
   namespace before side-effecting code. Required categories include protocol/
   capability mismatch, unsafe input, integrity, I/O/resource exhaustion,
   process ownership, control loss, cancellation, and internal failure; public
   messages stay sanitized.
 - Local App and Agent Run acceptance is based on the required real workflow
-  matrix on the frozen candidate; benchmark and optional dogfood follow after
-  delivery rather than gating the default.
-- Phase 0E first creates the separate dated `rudder-evals` implementation plan,
-  then changes schema, runner, packet, ingest, registry, API, and Dashboard in
-  the dependency order specified above.
+  matrix on the frozen candidate; benchmark follows only after all six
+  capabilities pass functional acceptance.
+- Create the separate dated `rudder-evals` implementation plan, then change
+  schema, runner, packet, ingest, registry, API, and Dashboard in the dependency
+  order specified above.
 
-These choices do not change the approved six-slice scope. They are bounded
-implementation decisions whose evidence must be reviewed before the relevant
-slice starts.
+These choices do not change the approved six-slice scope. They describe the
+single implementation sprint and its acceptance order; benchmark metadata is
+bound to the final accepted SHA.

@@ -17,7 +17,7 @@ import {
   type OrganizationWorkspaceFileList,
   type WorkspaceBackupRestoreResult,
   type WorkspaceBackupSummary,
-  type WorkspaceBackupTriggerSource,
+  type WorkspaceBackupTriggerSource
 } from "@rudderhq/shared";
 import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
@@ -37,6 +37,7 @@ import {
   createWorkspaceBackupV2Native,
   formatWorkspaceBackupV2NativeFallback,
   inspectWorkspaceBackupV2ForService,
+  isWorkspaceBackupV2FeatureEnabled,
   isWorkspaceBackupV2NativeEnabled,
   readWorkspaceBackupV2EntryForService,
   workspaceBackupV2NativeDiagnostic,
@@ -77,7 +78,7 @@ const SPARSE_WORKSPACE_RECOVERY_MAX_RATIO = 0.25;
 const SPARSE_WORKSPACE_RECOVERY_MIN_BACKUP_FILES = 10;
 
 export function isWorkspaceBackupV2Enabled() {
-  return process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED === "true";
+  return isWorkspaceBackupV2FeatureEnabled();
 }
 
 type WorkspaceBackupArtifactEntry = {

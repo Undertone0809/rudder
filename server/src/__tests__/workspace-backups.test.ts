@@ -253,7 +253,7 @@ describe("workspace backup service", () => {
     const download = await service.getDownload(orgId, backup.id);
     expect(download).toEqual(expect.objectContaining({
       artifactRef: backup.artifactRef,
-      filename: `${path.basename(backup.artifactRef, ".json")}.zip`,
+      filename: `${path.basename(backup.artifactRef, path.extname(backup.artifactRef))}.zip`,
       contentType: "application/zip",
     }));
     expect(download.byteSize).toBeGreaterThan(0);
@@ -279,7 +279,7 @@ describe("workspace backup service", () => {
     }
   });
 
-  it("uses the bounded v2 file-backed path only when explicitly opted in", async () => {
+  it("uses the bounded v2 file-backed path by default", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
     await fs.mkdir(workspaceRoot, { recursive: true });
@@ -305,6 +305,23 @@ describe("workspace backup service", () => {
       const chunks: Buffer[] = [];
       for await (const chunk of download.contentStream!) chunks.push(Buffer.from(chunk));
       expect(Buffer.concat(chunks)).toEqual(await fs.readFile(backup.artifactRef));
+    } finally {
+      if (previousFlag === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+      else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousFlag;
+    }
+  });
+
+  it("keeps the v1 writer available as an explicit legacy rollback", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "legacy.txt"), "legacy\n", "utf8");
+    const previousFlag = process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
+    process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = "false";
+    try {
+      const backup = await service.create({ orgId });
+      expect(path.extname(backup.artifactRef)).toBe(".json");
+      expect(JSON.parse(await fs.readFile(backup.artifactRef, "utf8"))).toMatchObject({ version: 1, orgId });
     } finally {
       if (previousFlag === undefined) delete process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED;
       else process.env.RUDDER_WORKSPACE_BACKUP_V2_ENABLED = previousFlag;
