@@ -153,7 +153,7 @@ describe("App Builder managed runner", () => {
     const devScript = packageJson.scripts?.dev ?? "";
     expect(devScript).toContain("pnpm run stage:app-builder-toolchain");
     expect(devScript.indexOf("pnpm run stage:app-builder-toolchain"))
-      .toBeLessThan(devScript.indexOf("node scripts/dev.mjs"));
+      .toBeLessThan(devScript.indexOf("electron dist/main.js"));
   });
 
   it("installs from the lockfile, verifies, and starts a loopback preview", async () => {
