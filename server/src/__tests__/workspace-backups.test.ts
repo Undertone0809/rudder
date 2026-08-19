@@ -257,7 +257,7 @@ describe("workspace backup service", () => {
       contentType: "application/zip",
     }));
     expect(download.byteSize).toBeGreaterThan(0);
-    expect(download.archiveSha256).not.toBe(backup.archiveSha256);
+    expect(download.archiveSha256).toBe(backup.archiveSha256);
     expectZipContains(download.content, "workspace-");
     expectZipContains(download.content, "projects/roadmap/roadmap.md");
     expectZipContains(download.content, "# Roadmap\n");
@@ -1051,10 +1051,10 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     const backup = await service.create({ orgId });
     await fs.writeFile(backup.artifactRef, "{\"tampered\":true}\n", "utf8");
 
-    await expect(service.getDownload(orgId, backup.id)).rejects.toMatchObject({
-      status: 422,
-      message: "Workspace backup artifact checksum does not match the recorded backup metadata",
-    });
+    await expect(service.getDownload(orgId, backup.id)).rejects.toMatchObject({ status: 422 });
+    await expect(service.getDownload(orgId, backup.id)).rejects.toThrow(
+      "Workspace backup v2 artifact is invalid:",
+    );
   });
 
   it("does not reuse a same-size corrupted artifact for scheduled unchanged detection", async () => {
@@ -1369,25 +1369,25 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
     await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
 
-    let signalRenameStarted!: () => void;
-    const renameStarted = new Promise<void>((resolve) => {
-      signalRenameStarted = resolve;
+    let signalPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      signalPublishStarted = resolve;
     });
-    let releaseRename!: () => void;
-    const renameRelease = new Promise<void>((resolve) => {
-      releaseRename = resolve;
+    let releasePublish!: () => void;
+    const publishRelease = new Promise<void>((resolve) => {
+      releasePublish = resolve;
     });
-    const originalRename = fs.rename.bind(fs);
-    const renameSpy = vi.spyOn(fs, "rename").mockImplementation(async (oldPath, newPath) => {
-      signalRenameStarted();
-      await renameRelease;
-      return await originalRename(oldPath, newPath);
+    const originalLink = fs.link.bind(fs);
+    const linkSpy = vi.spyOn(fs, "link").mockImplementation(async (oldPath, newPath) => {
+      signalPublishStarted();
+      await publishRelease;
+      return await originalLink(oldPath, newPath);
     });
 
     const scheduledPromise = service.runScheduledBackups({ now: new Date("2026-05-20T11:00:00.000Z") });
     try {
       await Promise.race([
-        renameStarted,
+        publishStarted,
         new Promise<never>((_resolve, reject) => {
           setTimeout(() => reject(new Error("Timed out waiting for scheduled artifact write")), 2_000);
         }),
@@ -1408,8 +1408,8 @@ console.log(JSON.stringify({ok:true,protocolVersion:1,capabilities:[]}));
       ]);
       expect(stateWhileBlocked).toBe("blocked");
     } finally {
-      releaseRename();
-      renameSpy.mockRestore();
+      releasePublish();
+      linkSpy.mockRestore();
     }
 
     const scheduled = await scheduledPromise;
