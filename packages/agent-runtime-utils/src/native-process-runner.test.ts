@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { runNativeChildProcess } from "./native-process-runner.js";
+import { runNativeChildProcess, runNativeChildProcessOrFallback } from "./native-process-runner.js";
 
 const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
 const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].includes(process.arch))
@@ -14,6 +14,20 @@ const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].inclu
 const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
 
 describe("Rust Agent Run process host", () => {
+  it("honors a per-run Node rollback mode before attempting the native host", async () => {
+    const result = await runNativeChildProcessOrFallback("node-mode", process.execPath, ["-e", ""], {
+      RUDDER_NATIVE_MODE: "node",
+    }, {
+      cwd: process.cwd(),
+      timeoutSec: 1,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: path.join(os.tmpdir(), "missing-rudder-process-host"),
+    });
+    expect(result).toBeNull();
+  });
+
   nativeOnly("preserves the bounded rejection code before ownership acceptance", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-reject-"));
     await expect(runNativeChildProcess("preaccept-rejection", path.join(root, "missing"), [], {

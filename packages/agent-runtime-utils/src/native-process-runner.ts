@@ -80,7 +80,7 @@ export async function runNativeChildProcessOrFallback(
   env: NodeJS.ProcessEnv,
   opts: Omit<NativeProcessRunOptions, "env">,
 ): Promise<RunProcessResult | null> {
-  const policy = nativeAgentRunPolicy();
+  const policy = nativeAgentRunPolicy(env);
   if (!policy.enabled) return null;
   try {
     return await runNativeChildProcess(runId, command, args, {

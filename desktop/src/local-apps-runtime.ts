@@ -1,3 +1,4 @@
+import { resolveRudderNativeCapability } from "@rudderhq/shared";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -385,8 +386,14 @@ export class LocalAppRuntimeManager {
     this.nativeProcessHostPath = options.nativeProcessHostPath ?? resolveNativeProcessHostPath();
     this.nativeRuntimeRoot = options.nativeRuntimeRoot ?? null;
     this.spawnNativeProcessHost = options.spawnNativeProcessHost ?? spawnNativeProcessHost;
+    const nativePolicy = resolveRudderNativeCapability({
+      capability: "local-app-process",
+      env: process.env,
+      legacyToggleEnvs: ["RUDDER_NATIVE_PROCESS_HOST"],
+    });
     this.useNativeProcessHost = options.useNativeProcessHost
-      ?? process.env.RUDDER_NATIVE_PROCESS_HOST === "1";
+      ?? (nativePolicy.enabled
+        && (nativePolicy.required || (nativeProcessHostRuntimeSupported && this.nativeProcessHostPath !== null)));
     this.watchdogRunnerPath = options.watchdogRunnerPath ?? WATCHDOG_RUNNER_PATH;
     this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 10_000);
     this.listenerOwnershipRetryTimeoutMs = Math.max(

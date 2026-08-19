@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runNativeChildProcessOrFallback } from "./native-process-runner.js";
 import { defaultPathForPlatform, fileExists, quoteForCmd, resolveCommandPath, resolveSpawnTarget } from "./server-utils.instructions.js";
 import { appendWithCap, asString, buildManagedSkillOrigin, ChildProcessWithEvents, compactSkillText, DEFAULT_LOCAL_CLI_CREDENTIAL_HOME_ENTRIES, DEFAULT_LOCAL_CLI_OPERATOR_HOME_SHIM_COMMANDS, InstalledSkillTarget, isChildProcessAlive, isMaintainerOnlySkillTarget, LocalCliCredentialShimCommand, parseObject, PersistentSkillSnapshotOptions, readSkillMetadataFromDirectory, resolveInstalledEntryTarget, RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES, RudderSkillEntry, runningProcesses, RunProcessResult, skillLocationLabel, SpawnTarget } from "./server-utils.process.js";
 import type {
@@ -1411,7 +1412,7 @@ export async function runChildProcess(
 
     const mergedEnv = ensurePathInEnv(rawMerged);
     void resolveSpawnTarget(command, args, opts.cwd, mergedEnv)
-      .then((target) => {
+      .then(async (target) => {
         if (opts.abortSignal?.aborted) {
           resolve({
             exitCode: null,
@@ -1422,6 +1423,21 @@ export async function runChildProcess(
             pid: null,
             startedAt: null,
           });
+          return;
+        }
+
+        const nativeResult = await runNativeChildProcessOrFallback(
+          runId,
+          target.command,
+          target.args,
+          mergedEnv,
+          {
+            ...opts,
+            onLogError,
+          },
+        );
+        if (nativeResult) {
+          resolve(nativeResult);
           return;
         }
 

@@ -20,6 +20,7 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
+import { readNativeWorkspaceManifest } from "./workspace-manifest-native.js";
 
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
 const PROTECTED_LIBRARY_SYSTEM_ROOTS = new Set(["agents", "skills"]);
@@ -474,16 +475,29 @@ export function organizationWorkspaceBrowserService(db: Db) {
         throw notFound("Directory not found inside the organization Library");
       }
 
-      const rawEntries = (await fs.readdir(resolvedTarget, { withFileTypes: true }))
-        .filter((entry) => !shouldHideWorkspaceEntry(entry.name));
-      const unsortedEntries: OrganizationWorkspaceFileEntry[] = rawEntries.map((entry) => {
-        const entryPath = toPortableRelativePath(path.relative(resolvedRoot, path.join(resolvedTarget, entry.name)));
-        return {
-          name: entry.name,
-          path: entryPath,
-          isDirectory: entry.isDirectory(),
-        };
-      });
+      const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
+      const unsortedEntries: OrganizationWorkspaceFileEntry[] = nativeManifest
+        ? nativeManifest
+          .filter((entry) => {
+            const entryName = workspaceFileLabel(entry.path);
+            const parentPath = entry.path.slice(0, Math.max(0, entry.path.length - entryName.length)).replace(/\/$/, "");
+            return parentPath === normalizedPath && !shouldHideWorkspaceEntry(entryName);
+          })
+          .map((entry) => ({
+            name: workspaceFileLabel(entry.path),
+            path: entry.path,
+            isDirectory: entry.kind === "directory",
+          }))
+        : (await fs.readdir(resolvedTarget, { withFileTypes: true }))
+          .filter((entry) => !shouldHideWorkspaceEntry(entry.name))
+          .map((entry) => {
+            const entryPath = toPortableRelativePath(path.relative(resolvedRoot, path.join(resolvedTarget, entry.name)));
+            return {
+              name: entry.name,
+              path: entryPath,
+              isDirectory: entry.isDirectory(),
+            };
+          });
       const decoratedEntries = await attachLibraryEntryIds(
         orgId,
         await decorateWorkspaceEntries(orgId, normalizedPath, unsortedEntries),
@@ -517,6 +531,23 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const normalizedQuery = options?.query?.trim().toLowerCase() ?? "";
       const requestedLimit = options?.limit ?? DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT;
       const limit = Math.max(1, Math.min(MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT, requestedLimit));
+
+      const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
+      if (nativeManifest) {
+        for (const entry of nativeManifest.sort((left, right) => left.path.localeCompare(right.path))) {
+          if (entries.length >= limit) break;
+          if (entry.kind === "symlink") continue;
+          const segments = entry.path.split("/");
+          if (segments.some((segment) => shouldHideWorkspaceEntry(segment))) continue;
+          if (isProtectedLibraryResourcePath(entry.path)) continue;
+          const name = workspaceFileLabel(entry.path);
+          if (normalizedQuery && !`${name} ${entry.path}`.toLowerCase().includes(normalizedQuery)) continue;
+          entries.push({ name, path: entry.path, isDirectory: entry.kind === "directory" });
+        }
+        const decoratedEntries = await attachLibraryEntryIds(orgId, entries);
+        return decoratedEntries.sort((left, right) => left.path.localeCompare(right.path));
+      }
+
       async function visit(directoryPath: string) {
         if (entries.length >= limit) return;
         if (isProtectedLibraryResourcePath(directoryPath)) return;

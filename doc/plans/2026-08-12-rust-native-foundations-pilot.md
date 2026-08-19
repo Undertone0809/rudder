@@ -2,7 +2,7 @@
 title: Rust Native Foundations Pilot
 date: 2026-08-12
 kind: implementation
-status: blocked
+status: in_progress
 area: agent_runtimes
 entities:
   - native_runtime
@@ -70,8 +70,42 @@ commit_refs:
   - f33081055
   - c7f8c69c4
   - 1d2f100cd
-updated_at: 2026-08-17
+updated_at: 2026-08-19
 ---
+
+## Current One-Shot Delivery (2026-08-19)
+
+This update supersedes the historical continuation notes and all earlier
+planning estimates and admission gates below. The user requested one
+implementation-first delivery: merge the existing Rust work into the current
+mainline, make Rust the default engine with bounded Node fallback, finish all
+six capabilities, and run benchmark only after functional acceptance. There is
+no 17-31 week estimate, seven-day observation window, or 100-cycle dogfood
+prerequisite for this delivery.
+
+The main-bound candidate is being validated as one immutable merge candidate.
+The effective mode is `RUDDER_NATIVE_MODE=auto|node|required` (default
+`auto`); each capability also has a disable flag. TypeScript retains product
+state, permissions, organization scope, and business decisions. Rust owns only
+the process, bytes, archive, index, and filesystem boundaries. Rust failure may
+fall back to Node only before acceptance or side effects; after acceptance the
+operation completes, cleans its owned staging, or returns failure.
+
+Current implementation status for the six capabilities:
+
+| Capability | Default path | Fallback boundary |
+| --- | --- | --- |
+| Local App process host | Rust-first | handshake/spawn before acceptance |
+| Workspace backup v2 | Rust-first | native unavailable before staging |
+| Agent Run process/I/O host | Rust-first | host launch before acceptance |
+| Runtime payload installer/extractor | Rust-first | verify/extract admission before publish |
+| Run evidence offset indexer/parser | Rust-first sidecar | missing/corrupt/hash mismatch reads source log |
+| Workspace manifest/index watcher | Rust-first watcher | building/dirty/overflow/unavailable uses live traversal |
+
+The final candidate must pass the four-platform native/public workflow CI,
+fresh reviewer stage and final review, and independent verifier `PASS` on the
+same SHA. Only then may it be integrated into `main`; benchmark data is bound
+to that final SHA and is not an implementation gate.
 
 # Rust Native Foundations Pilot
 
@@ -119,8 +153,9 @@ ready `235.7 -> 228.1 ms`, Stop admission `22.6 -> 50.9 ms`, terminal cleanup
 `126.2 -> 170.6 ms`, and peak tree RSS `208.4 -> 164.6 MiB`. The flood
 workload was ready `238.2 -> 225.6 ms`, Stop admission `12.7 -> 12.0 ms`,
 terminal cleanup `75.5 -> 78.6 ms`, and peak tree RSS `224.8 -> 175.2 MiB`.
-The normal lifecycle-tail regressions and the missing seven-day dogfood gate
-keep Local App at `opt-in` rather than `accepted_default`.
+Those historical comparator observations are retained for context only. They do
+not gate the current Rust-first implementation candidate; benchmark is deferred
+until functional acceptance is complete.
 
 ## Executive Decision
 
@@ -152,8 +187,9 @@ external sampler boundaries at 25 ms. Manifest, entry, content, and recovery
 parity pass; archive-byte parity remains intentionally not compared. Node p95
 elapsed/RSS are 6253.068 ms / 379682816 bytes; native p95 elapsed/RSS are
 3434.893 ms / 386940928 bytes. Latency improvement is 45.07% with a bootstrap
-95% CI of 35.06% to 54.95%, while native process-tree RSS peak is higher, so
-streaming Workspace backup remains `opt-in` rather than becoming default.
+95% CI of 35.06% to 54.95%, while native process-tree RSS peak is higher.
+This descriptive result is not an implementation gate; benchmark is run after
+functional acceptance.
 
 Supporting backup workflow evidence is recorded in
 `evidence/rust-native-backup-workflow-test-receipt.json`: the v2 comparator,
@@ -185,12 +221,10 @@ download, and restore all completed. It remains supporting evidence only; the
 packaged Desktop account gate, interruption matrix, and hosted authenticated
 Local App fixture are still separate open gates.
 
-The candidate remains blocked for Local App promotion: no authorized hosted
-authenticated fixture exists, so the real seven-day/100-cycle dogfood gate
-cannot run. The foundation remains `accepted_default` only for the proven
-macOS arm64 packaged capability tuple; Local App and streaming backup remain
-`opt-in`, and the four dependent slices remain `not_admitted`. These are
-evidence-scoped decisions, not a claim that the pilot is complete.
+The historical packaged candidate was blocked by the hosted authenticated
+fixture boundary. The current one-shot candidate removes that long observation
+gate and requires the real public workflows, cross-platform CI, and fresh
+black-box verifier evidence on one unchanged SHA.
 
 Release-version alignment is a hard gate. The normal Rudder product version
 is the single version for every first-party Rust package, Cargo.lock entry,
@@ -216,12 +250,12 @@ slices:
 5. Run evidence offset indexer/parser; and
 6. Workspace manifest/index watcher.
 
-The pilot does not authorize a general backend rewrite. It creates two stable
-native boundaries, proves them on real Rudder workflows, and uses measured
-Node-versus-Rust evidence to decide whether each boundary should become the
-default.
+The pilot does not authorize a general backend rewrite. It creates six stable
+native boundaries, proves them on real Rudder workflows, and keeps Node as a
+bounded pre-acceptance fallback.
 
-Implementation is sequential by dependency, not six parallel workstreams:
+Implementation is organized as three parallel workstreams after the shared
+mode/policy foundation:
 
 ```text
 Foundation
@@ -233,12 +267,13 @@ Foundation
         +-- Run evidence offset indexer/parser
         +-- Workspace manifest/index watcher
 
-Each slice
-  -> deterministic correctness and pressure benchmark
-  -> explicit Rust opt-in
-  -> exact packaged candidate acceptance
-  -> rudder-evals native_ab comparison
-  -> promotion or rollback decision
+Process core: Local App + Agent Run
+Archive/payload core: Workspace backup + payload installer + recovery
+Indexing core: evidence sidecar + workspace manifest watcher
+
+Each workstream -> deterministic correctness and fault tests
+  -> exact candidate acceptance
+  -> benchmark on the final accepted SHA
 ```
 
 ## User And Operator Outcome
@@ -362,9 +397,9 @@ pilot must first implement or fixture these comparators:
 The 5.41 second sequential-append versus 0.178 second `WriteStream`
 microbenchmark admits log I/O optimization; it does not admit Rust by itself.
 Likewise, comparing Rust streaming against Node full-buffer download or base64
-backup would overstate language-specific value. If the optimized Node path
-meets the correctness, reliability, RSS, and latency gates with lower lifecycle
-cost, the Rust slice stays opt-in or becomes `not_admitted`.
+backup would overstate language-specific value. The optimized Node path remains
+the fallback and benchmark comparator; ordinary performance differences do not
+undo the Rust-first default after correctness and reliability acceptance.
 
 ## Goals
 
@@ -912,7 +947,8 @@ commit or rollback before returning. Peak-disk measurement includes
 
 - Existing v1 JSON artifacts remain readable, downloadable, restorable, and
   prunable.
-- New writes become v2 only under explicit opt-in until acceptance.
+- New writes use v2 through the Rust-first `auto` mode; `node` remains the
+  explicit rollback switch.
 - No eager rewrite of historical v1 artifacts.
 - A future migration may transcode v1 to v2 only as a separately resumable,
   integrity-checked operation.
@@ -982,11 +1018,11 @@ emits bounded phase progress without archive paths or response bodies.
 
 #### Admission condition
 
-Begin only after the Local App host has passed packaged acceptance and a stable
-dogfood gate: at least seven consecutive days and 100 accepted packaged
-start/Stop or parent-loss cycles, with zero unresolved ownership, duplicate
-listener, descendant-leak, or cleanup P1. Reuse `process-core`; do not fork a
-second process supervision implementation.
+Begin after the shared process protocol and Local App implementation are in the
+same candidate. No long observation or dogfood gate is required; the Agent Run
+workflow itself must pass the required start, flood, Stop, timeout, control-loss,
+restart, and cleanup tests before acceptance. Reuse `process-core`; do not fork
+a second process supervision implementation.
 
 Before implementation, freeze a contract-parity packet for
 `RUN.CHAT.AGENT.001`, `RUN.EXECUTION.001`, `RUN.RESULT.001`,
@@ -1234,19 +1270,11 @@ limits, and Library entry ID decoration.
 An event-loop query barrier proves only that events already delivered to the
 watcher were applied; it cannot prove that the OS has delivered every mutation
 that occurred before the query. Therefore this plan does not use the term
-`verified_current`. During `explicit_opt_in`, the response is compared against
-the current live TypeScript traversal and any mismatch marks the index dirty
-and returns the live result. Promotion to `accepted_default` requires one of:
-
-1. a bounded verification algorithm that preserves the existing effective
-   mention freshness contract and demonstrates a benefit over live traversal;
-   or
-2. an explicitly approved `LIBRARY.FILES.001` delta defining snapshot age,
-   visible freshness, query barrier, retry/fallback, and newly created/deleted
-   file behavior.
-
-Without one of those gates, this slice remains diagnostic/opt-in even when its
-benchmark is fast.
+`verified_current`. In `auto`, the response uses the native manifest only when
+it is ready and valid; building, dirty, overflow, unavailable, or source-hash
+mismatch states immediately use the live TypeScript traversal. TypeScript
+remains authoritative for organization scope, protected paths, sorting, limits,
+and Library entry decoration.
 
 #### Acceptance
 
@@ -1263,8 +1291,8 @@ benchmark is fast.
   watcher/rebuild correctness defect versus the cached TypeScript watcher plus
   DB/N+1-fixed comparator. Typical small-workspace performance may not regress
   more than 10%.
-- If the baseline does not show material traversal cost, close this slice as
-  `not_admitted` with evidence rather than shipping an unused native service.
+- If the baseline does not show material traversal cost, record that result and
+  retain the rebuildable Rust watcher with its live TypeScript fallback.
 
 ## Cross-Slice Data And Compatibility Rules
 
@@ -1498,19 +1526,14 @@ For each slice and the final portfolio:
 - zero new forbidden behavior, organization leak, secret exposure, missing
   evidence, duplicate owner, or invalid terminal transition;
 - correctness outputs are identical where byte/state parity is required;
-- at least one declared performance/reliability threshold for the slice is met;
-- performance benefits and non-regression limits satisfy the point-estimate and
-  confidence-interval decision rule in the Benchmark Plan; deterministic
-  reliability-defect closure may satisfy the benefit gate only when the frozen
-  reproducer passes every required repetition with no new hard-state failure;
-- no undeclared metric regresses more than 10% or has a 95% confidence-interval
-  upper bound above 10% without an accepted explanation;
-- result variance and non-comparable trials remain visible;
+- benchmark results, variance, and non-comparable trials remain visible after
+  functional acceptance; ordinary performance differences do not block the
+  Rust-first default;
 - reviewer and verifier accept the same exact candidate after eval evidence is
   sealed.
 
-Failure to show a benefit does not justify changing the threshold. The slice
-stays opt-in, returns to Node default, or is removed.
+Crash, leak, data corruption, timeout, or resource-safety failures still block
+delivery and require a fix or a precise rollback boundary.
 
 ### Portfolio comparison after all six slices
 
@@ -1561,7 +1584,8 @@ small deterministic fixture.
 
 ### Rudder integration and E2E
 
-- Existing Local App/App Builder E2E with Rust opt-in and Node baseline.
+- Existing Local App/App Builder E2E with Rust-first `auto` mode and explicit
+  Node rollback coverage.
 - Workspace backup routes/service tests plus real create/browse/download/
   restore E2E.
 - Agent Run real-runtime output/Stop/evidence workflow.
@@ -1619,7 +1643,7 @@ reinterpret it as green.
 
 If the binary is missing, incompatible, corrupt, or fails handshake, record one
 bounded diagnostic and select the retained Node path when that capability is
-still in explicit opt-in/default-with-fallback state.
+still in auto/default-with-fallback state.
 
 ### After operation acceptance
 
@@ -1652,41 +1676,21 @@ Changing a capability from `accepted_default` back to Node requires:
 | 1A | Local App process host | 0A + relevant 0B comparator | Process semantics and packaged Local App PASS |
 | 1B | Streaming Workspace backup v2 | 0A + relevant 0B comparator | Parity plus RSS/reliability gate PASS |
 | 2A | Runtime payload installer/extractor | 1B archive core | Memory/atomic publish gate PASS |
-| 2B | Agent Run process/I/O host | 1A stable dogfood | Stop/evidence/backpressure gate PASS |
+| 2B | Agent Run process/I/O host | 1A process protocol and public adapter | Stop/evidence/backpressure gate PASS |
 | 3A | Run evidence indexer/parser | 2B log format and output contract | Paged detail parity/benefit PASS |
-| 3B | Workspace manifest/index watcher | 1B walker, comparator benchmark, and freshness contract gate | Search benefit PASS, opt-in only, or `not_admitted` |
-| 4 | Final `native_ab` portfolio and candidate `live_eval` | all admitted slices | Promote, keep opt-in, or remove per slice |
+| 3B | Workspace manifest/index watcher | 1B walker and fallback contract | Watcher/live traversal correctness PASS |
+| 4 | Final `native_ab` portfolio and candidate `live_eval` | all six slices | Finalize default/fallback evidence |
 
 Do not promote Phase 1A/1B without 0E. Do not begin Phase 2B merely because
 Phase 1A compiles. Do not begin Phase 3A until `projection=full` has been removed
-from the default detail path and eval workloads. Do not implement Phase 3B if
-its admission benchmark points to database mapping rather than traversal, and
-do not make it default without the freshness gate above.
+from the default detail path and eval workloads. Phase 3B must always retain the
+live TypeScript traversal fallback when the watcher is not ready or trustworthy.
 
-## Estimated Effort
+## Execution Window
 
-These are planning ranges, not delivery commitments:
-
-| Slice | Incremental engineering range |
-| --- | ---: |
-| Foundation and packaging | 1-2 weeks |
-| Optimized Node comparators and shared benchmark sampler | 1-2 weeks |
-| `native_ab` data model, runner, ingest, API, and Dashboard | 2-4 weeks |
-| Local App process host | 2-3 weeks |
-| Streaming Workspace backup | 2-4 weeks |
-| Runtime payload installer/extractor | 1-2 weeks after archive core |
-| Agent Run process/I/O host | 3-5 weeks after process core |
-| Run evidence indexer/parser | 2-3 weeks after output contract |
-| Workspace manifest/index watcher | 2-4 weeks if admitted |
-| Final eval campaign and evidence reconciliation | 1-2 weeks |
-
-Sequential total: approximately 17-31 engineering weeks, with decision gates
-that may stop or defer a slice. This is implementation effort, not a portfolio
-delivery date. It excludes the seven-day Local App dogfood gate, release
-calendar/at-least-one-stable-release intervals before `legacy_removed`, waiting
-for cross-platform machines, and any separately approved Product Logic work.
-The plan should not reserve the full range before Phase 1 proves the native
-foundation.
+The six capabilities are delivered in one continuous implementation sprint.
+Functional tests, CI, review, and black-box acceptance precede benchmark; no
+long observation window or dogfood gate is part of this plan.
 
 ## Definition Of Done
 
@@ -1728,8 +1732,9 @@ The pilot is complete only when:
   capability mismatch, unsafe input, integrity, I/O/resource exhaustion,
   process ownership, control loss, cancellation, and internal failure; public
   messages stay sanitized.
-- The Local App -> Agent Run dogfood gate is seven consecutive days plus 100
-  accepted lifecycle cycles with the zero-P1 conditions stated in Slice 4.
+- Local App and Agent Run acceptance is based on the required real workflow
+  matrix on the frozen candidate; benchmark and optional dogfood follow after
+  delivery rather than gating the default.
 - Phase 0E first creates the separate dated `rudder-evals` implementation plan,
   then changes schema, runner, packet, ingest, registry, API, and Dashboard in
   the dependency order specified above.

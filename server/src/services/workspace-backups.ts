@@ -8,6 +8,7 @@ import {
   type Db,
 } from "@rudderhq/db";
 import {
+  resolveRudderNativeCapability,
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
   WORKSPACE_BACKUP_OFFLINE_INTERVAL_HOURS,
@@ -80,7 +81,12 @@ export function isWorkspaceBackupV2Enabled() {
 }
 
 export function isWorkspaceBackupV2NativeEnabled() {
-  return isWorkspaceBackupV2Enabled() && process.env.RUDDER_WORKSPACE_BACKUP_V2_NATIVE === "true";
+  const policy = resolveRudderNativeCapability({
+    capability: "workspace-backup",
+    env: process.env,
+    legacyToggleEnvs: ["RUDDER_WORKSPACE_BACKUP_V2_NATIVE"],
+  });
+  return isWorkspaceBackupV2Enabled() && policy.enabled;
 }
 
 type WorkspaceBackupArtifactEntry = {
