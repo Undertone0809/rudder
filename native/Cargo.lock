@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-payload-core"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "flate2",
  "sha2",
@@ -506,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-workspace-manifest-core"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "notify",
  "serde",
