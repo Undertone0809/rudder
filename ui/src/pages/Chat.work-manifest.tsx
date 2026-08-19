@@ -50,6 +50,16 @@ export function hasChatWorkManifestContent(manifest: ChatWorkManifestResponse | 
   return outputCount + sourceCount + referenceCount + subagentCount > 0;
 }
 
+export function chatWorkManifestCount(manifest: ChatWorkManifestResponse | null | undefined) {
+  if (!manifest) return 0;
+  const itemCount = manifest.totalCount ?? (
+    (Array.isArray(manifest.outputs) ? manifest.outputs.length : 0)
+    + (Array.isArray(manifest.sources) ? manifest.sources.length : 0)
+    + (Array.isArray(manifest.references) ? manifest.references.length : 0)
+  );
+  return itemCount + (manifest.subagents?.totalCount ?? 0);
+}
+
 function websiteUrl(item: ChatWorkManifestItem) {
   if (item.targetType !== "external_url" || !item.url) return null;
   try {
@@ -193,22 +203,22 @@ function ManifestRow({
     : null;
   const issueStatusDescriptionId = `${rowId}-issue-status`;
   return (
-    <div className="group flex min-h-10 items-center gap-1">
+    <div className="group flex min-h-11 items-center gap-1">
       <button
         type="button"
         data-target-type={item.targetType}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-sm)] px-1.5 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         onClick={onOpen}
         title={item.title}
         aria-describedby={issueStatus ? issueStatusDescriptionId : undefined}
       >
-        <span className="grid size-6 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-1px)] bg-muted/65 text-muted-foreground transition-colors group-hover:bg-background/65 group-hover:text-foreground">
+        <span className="grid size-7 shrink-0 place-items-center rounded-[calc(var(--radius-sm)-1px)] bg-muted/75 text-muted-foreground transition-colors group-hover:bg-background/70 group-hover:text-foreground">
           <ManifestItemIcon item={item} localizeText={localizeText} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium leading-5 text-foreground">{item.title}</span>
+          <span className="block truncate text-[13px] font-medium leading-5 text-foreground">{item.title}</span>
           {externalUrl ? (
-            <span className="block truncate text-[11px] leading-4 text-muted-foreground">{externalUrl.href}</span>
+            <span className="block truncate text-[11px] leading-4 text-muted-foreground/90">{externalUrl.href}</span>
           ) : null}
         </span>
       </button>
@@ -259,7 +269,7 @@ function ManifestSection({
   const sectionId = `${idPrefix}-${label.toLowerCase()}`;
   const localizedLabel = localizeText(label);
   return (
-    <section aria-label={localizedLabel} className={cn(!fixedHeader && "border-t border-border/70 first:border-t-0")}>
+    <section aria-label={localizedLabel} className={cn(!fixedHeader && "border-t border-border/65 first:border-t-0")}>
       {fixedHeader ? null : (
         <ManifestSectionHeader
           label={localizedLabel}
@@ -269,7 +279,7 @@ function ManifestSection({
           reserveActionSpace={reserveActionSpace}
         />
       )}
-      <div id={sectionId} className="mt-0.5 space-y-0.5" role="list">
+      <div id={sectionId} className="space-y-0.5 px-2.5 pb-2 pt-1.5" role="list">
         {visibleItems.map((item) => (
           <div key={item.id} role="listitem">
             <ManifestRow
@@ -315,11 +325,11 @@ function ManifestSectionHeader({
   const stableTestIdLabel = (testIdLabel ?? label).toLowerCase();
   return (
     <div
-      className="flex h-9 shrink-0 items-center gap-2 border-b border-border/55 bg-muted/25 px-3 text-[11px] font-semibold text-muted-foreground"
+      className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border/55 bg-muted/20 px-3.5 text-xs font-semibold text-muted-foreground"
       data-testid={`chat-work-manifest-section-header-${stableTestIdLabel}`}
     >
-      {icon}
-      <span>{label}</span>
+      <span className="grid size-5 shrink-0 place-items-center text-muted-foreground/90" aria-hidden="true">{icon}</span>
+      <span className="text-foreground/80">{label}</span>
       <span
         className="ml-auto tabular-nums"
         data-testid={`chat-work-manifest-section-count-${stableTestIdLabel}`}
@@ -345,14 +355,14 @@ function subagentSummaryLabel(subagents: ChatWorkManifestSubagents) {
 
 function SubagentsSection({
   subagents,
-  fixedHeader,
-  reserveActionSpace,
+  fixedHeader = false,
+  reserveActionSpace = false,
   onOpen,
   localizeText,
 }: {
   subagents: ChatWorkManifestSubagents;
-  fixedHeader: boolean;
-  reserveActionSpace: boolean;
+  fixedHeader?: boolean;
+  reserveActionSpace?: boolean;
   onOpen(): void;
   localizeText: (text: string) => string;
 }) {
@@ -361,7 +371,7 @@ function SubagentsSection({
   return (
     <section
       aria-label={localizeText("Subagents")}
-      className={cn(!fixedHeader && "border-t border-border/70 first:border-t-0")}
+      className={cn(!fixedHeader && "border-t border-border/65")}
       data-testid="chat-work-manifest-subagents"
     >
       {fixedHeader ? null : (
@@ -375,29 +385,30 @@ function SubagentsSection({
       )}
       <button
         type="button"
-        className="flex min-h-12 w-full items-center gap-2 rounded-[var(--radius-sm)] px-3 py-2 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
+        className="group flex min-h-14 w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
         onClick={onOpen}
         aria-label={localizeText(`Open subagents, ${subagentSummaryLabel(subagents)}`)}
         data-testid="chat-work-manifest-subagents-summary"
       >
-        <span className="flex shrink-0 items-center pl-1">
+        <span className="flex shrink-0 items-center pl-0.5">
           {visible.map((item, index) => (
             <img
               key={item.threadId}
               src={getTranscriptAgentAvatarImageSrc(item.avatarSeed)}
               alt=""
               className={cn(
-                "size-5 rounded-full object-cover ring-1 ring-background",
-                index > 0 && "-ml-1.5",
-                item.state === "active" ? "ring-cyan-500/45" : "ring-border/60",
+                "size-6 rounded-full object-cover ring-2 ring-[color:var(--surface-overlay)]",
+                index > 0 && "-ml-2",
+                item.state === "active" ? "ring-offset-0" : "opacity-80",
               )}
               data-subagent-avatar={item.threadId}
             />
           ))}
         </span>
-        <span className="truncate text-xs font-medium text-foreground">
+        <span className="min-w-0 truncate text-[13px] font-medium text-foreground group-hover:text-foreground">
           {localizeText(subagentSummaryLabel(subagents))}
         </span>
+        <ChevronDown className="ml-auto size-4 shrink-0 -rotate-90 text-muted-foreground/70 transition-transform group-hover:text-foreground" aria-hidden="true" />
       </button>
     </section>
   );
@@ -405,7 +416,7 @@ function SubagentsSection({
 
 function ManifestStatusHeader({ action, localizeText }: { action?: ReactNode; localizeText: (text: string) => string }) {
   return (
-    <div className="flex h-9 shrink-0 items-center border-b border-border/70 px-3">
+    <div className="flex h-10 shrink-0 items-center border-b border-border/65 px-3.5">
       <span className="text-xs font-semibold text-foreground">{localizeText("Conversation items")}</span>
       {action ? <span className="ml-auto flex">{action}</span> : null}
     </div>
@@ -506,15 +517,15 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
     : subagents.totalCount > 0
       ? { label: "Subagents", count: subagents.totalCount, icon: <Bot className="size-3.5" aria-hidden="true" /> }
       : sources.length > 0
-      ? { label: "Sources", count: sources.length, icon: <Paperclip className="size-3.5" aria-hidden="true" /> }
-      : references.length > 0
-        ? { label: "References", count: references.length, icon: <Link2 className="size-3.5" aria-hidden="true" /> }
-        : null;
+        ? { label: "Sources", count: sources.length, icon: <Paperclip className="size-3.5" aria-hidden="true" /> }
+        : references.length > 0
+          ? { label: "References", count: references.length, icon: <Link2 className="size-3.5" aria-hidden="true" /> }
+          : null;
   const fixedSectionLabel = fixedSection?.label ?? null;
   const closeCompactPanel = (
     <button
       type="button"
-      className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+      className="grid size-7 place-items-center rounded-[var(--radius-sm)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
       onClick={() => setCompactOpen(false)}
       aria-label={localizeText("Close conversation files and links")}
     >
@@ -525,7 +536,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
     <div className="pointer-events-none relative z-20 shrink-0" data-testid="chat-work-manifest">
       <aside
         className={cn(
-          "hidden max-h-[min(32rem,calc(100dvh-8rem))] w-72 origin-top-right flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:flex",
+          "hidden max-h-[min(32rem,calc(100dvh-8rem))] w-[min(18rem,calc(100vw-2rem))] origin-top-right flex-col overflow-hidden rounded-[var(--radius-lg)] border border-border/70 bg-[color:var(--surface-overlay)] shadow-[var(--shadow-lg)] transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none xl:flex",
           props.wideOpen
             ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
             : "pointer-events-none -translate-y-1 scale-[0.98] opacity-0",
@@ -538,7 +549,11 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
         data-state={props.wideOpen ? "open" : "closed"}
       >
         {fixedSection ? (
-          <ManifestSectionHeader {...fixedSection} label={localizeText(fixedSection.label)} testIdLabel={fixedSection.label} />
+          <ManifestSectionHeader
+            {...fixedSection}
+            label={localizeText(fixedSection.label)}
+            testIdLabel={fixedSection.label}
+          />
         ) : (
           <ManifestStatusHeader localizeText={localizeText} />
         )}
@@ -552,7 +567,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
 
       <button
         type="button"
-        className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border/70 bg-[color:var(--surface-overlay)] px-2.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 xl:hidden"
+        className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border/70 bg-[color:var(--surface-overlay)] px-2.5 text-xs font-medium text-foreground shadow-sm transition-[background-color,color] hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 xl:hidden"
         onClick={() => setCompactOpen((value) => !value)}
         data-testid="chat-work-manifest-trigger"
         aria-expanded={compactOpen}
@@ -564,13 +579,19 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
       {compactOpen ? (
         <div
           id="chat-work-manifest-compact-panel"
-          className="pointer-events-auto absolute right-0 top-10 flex max-h-[min(32rem,calc(100dvh-6rem))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-md)] border border-border/65 bg-[color:var(--surface-overlay)] shadow-md xl:hidden"
+          className="pointer-events-auto absolute right-[-7rem] top-10 flex max-h-[min(32rem,calc(100dvh-6rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-border/70 bg-[color:var(--surface-overlay)] shadow-[var(--shadow-lg)] xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
           role="complementary"
           aria-label={localizeText("Conversation files and links")}
         >
           {fixedSection ? (
-            <ManifestSectionHeader {...fixedSection} label={localizeText(fixedSection.label)} testIdLabel={fixedSection.label} action={closeCompactPanel} reserveActionSpace />
+            <ManifestSectionHeader
+              {...fixedSection}
+              label={localizeText(fixedSection.label)}
+              testIdLabel={fixedSection.label}
+              action={closeCompactPanel}
+              reserveActionSpace
+            />
           ) : (
             <ManifestStatusHeader action={closeCompactPanel} localizeText={localizeText} />
           )}

@@ -228,7 +228,7 @@ import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-contr
 import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annotation-selection";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
-import { ChatWorkManifest, ChatWorkManifestToggle, hasChatWorkManifestContent } from "./Chat.work-manifest";
+import { ChatWorkManifest, ChatWorkManifestToggle, chatWorkManifestCount, hasChatWorkManifestContent } from "./Chat.work-manifest";
 import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatComposerSendButtonMode, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
@@ -3617,7 +3617,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   {workManifestAvailable && !sidePanelOpen ? (
                     <ChatWorkManifestToggle
                       open={workManifestWideOpen}
-                      count={workManifest?.totalCount ?? 0}
+                      count={chatWorkManifestCount(workManifest)}
                       onToggle={() => setWorkManifestWideOpen((open) => !open)}
                       localizeText={localizeChatProcessText}
                     />

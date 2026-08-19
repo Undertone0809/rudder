@@ -218,6 +218,7 @@ describe("ChatWorkManifest", () => {
     const shelf = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
     const scrollRegion = container.querySelector("[data-testid='chat-work-manifest-scroll-region']");
     expect(shelf?.className).toContain("max-h-[min(32rem,calc(100dvh-8rem))]");
+    expect(shelf?.className).toContain("w-[min(18rem,calc(100vw-2rem))]");
     expect(shelf?.className).toContain("flex-col");
     expect(scrollRegion?.className).toContain("overflow-y-auto");
     expect(scrollRegion?.className).toContain("scrollbar-auto-hide");
@@ -407,6 +408,9 @@ describe("ChatWorkManifest", () => {
       "[data-testid='chat-work-manifest-subagents-summary']",
     );
     expect(summary?.textContent).toContain("2 active · 3 done");
+    expect(container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']")?.textContent)
+      .toContain("Outputs 2");
+    expect(container.textContent).not.toContain("Work 7");
     act(() => summary?.click());
     expect(handlers.onOpenSubagents).toHaveBeenCalledTimes(1);
   });
@@ -455,7 +459,11 @@ describe("ChatWorkManifest", () => {
     );
     expect(container.querySelector("[data-testid='chat-work-manifest']")?.textContent).toContain("Manifest unavailable");
     expect(container.querySelector("[data-testid='chat-work-manifest']")?.textContent).toContain("Conversation items");
+    expect(container.querySelector("[data-testid='chat-work-manifest']")?.textContent).not.toContain("Work 0");
     expect(container.querySelector("[data-testid='chat-work-manifest']")?.textContent).not.toContain("Outputs 0");
+    expect(container.querySelector<HTMLButtonElement>("[data-testid='chat-work-manifest-trigger']")?.textContent)
+      .toBe("Conversation items");
+    expect(container.querySelector("[data-testid='chat-work-manifest']")?.textContent).not.toMatch(/\b\d+\b/u);
   });
 
   it("renders a controlled icon toggle and animatable wide state", () => {
@@ -487,7 +495,7 @@ describe("ChatWorkManifest", () => {
     expect(shelf?.className).toContain("pointer-events-none");
   });
 
-  it("uses the first category for the compact trigger", () => {
+  it("uses the first non-empty category for the compact trigger", () => {
     const container = render(
       <ChatWorkManifest manifest={manifest} loading={false} error={null} sidePanelOpen={false} {...wideProps} {...handlers} />,
     );
@@ -499,16 +507,14 @@ describe("ChatWorkManifest", () => {
     expect(compactPanel?.id).toBe("chat-work-manifest-compact-panel");
     expect(compactPanel?.textContent).toContain("Report.md");
     expect(compactPanel?.className).toContain("max-h-[min(32rem,calc(100dvh-6rem))]");
+    expect(compactPanel?.querySelectorAll("[data-testid='chat-work-manifest-panel-header']")).toHaveLength(0);
     const compactOutputsHeader = compactPanel?.querySelector("[data-testid='chat-work-manifest-section-header-outputs']");
     const compactReferencesHeader = compactPanel?.querySelector("[data-testid='chat-work-manifest-section-header-references']");
     expect(compactOutputsHeader?.className).toBe(compactReferencesHeader?.className);
-    const compactOutputsActionSlot = compactOutputsHeader
-      ?.querySelector("[data-testid='chat-work-manifest-section-count-outputs']")
-      ?.nextElementSibling;
-    const compactReferencesActionSlot = compactReferencesHeader
-      ?.querySelector("[data-testid='chat-work-manifest-section-count-references']")
-      ?.nextElementSibling;
-    expect(compactOutputsActionSlot?.className).toBe(compactReferencesActionSlot?.className);
+    expect(compactOutputsHeader?.querySelector("[data-testid='chat-work-manifest-section-count-outputs']"))
+      .not.toBeNull();
+    expect(compactReferencesHeader?.querySelector("[data-testid='chat-work-manifest-section-count-references']"))
+      .not.toBeNull();
     const closeButton = compactPanel?.querySelector<HTMLButtonElement>("button[aria-label='Close conversation files and links']");
     act(() => closeButton?.click());
     expect(container.querySelector("[data-testid='chat-work-manifest-compact-panel']")).toBeNull();
@@ -577,7 +583,7 @@ describe("ChatWorkManifest", () => {
     expect(container.querySelectorAll("section[aria-label='Outputs']")).toHaveLength(1);
     expect(Array.from(container.querySelectorAll("span")).filter((element) => element.textContent === "Outputs")).toHaveLength(1);
     expect(container.textContent).toContain("report.md");
-    expect(container.textContent).not.toContain("Work");
+    expect(container.querySelector("[data-testid='chat-work-manifest-section-header-outputs']")?.textContent).toContain("Outputs");
     expect(container.querySelector("button[aria-label='Add source']")).toBeNull();
   });
 
