@@ -1085,6 +1085,8 @@ function translateThinkingEffort(value: string) {
 function translateChatProcessDuration(value: string) {
   if (value === "under 1s") return "不足 1 秒";
   return value
+    .replace(/(\d+)d\b/g, "$1 天")
+    .replace(/(\d+)h\b/g, "$1 小时")
     .replace(/(\d+)m\b/g, "$1 分钟")
     .replace(/(\d+)s\b/g, "$1 秒");
 }

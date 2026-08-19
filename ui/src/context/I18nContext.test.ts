@@ -86,6 +86,8 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "View agent runs")).toBe("查看智能体运行记录");
     expect(translateLegacyString("zh-CN", "Worked for 147m 14s")).toBe("已完成，147 分钟 14 秒");
     expect(translateLegacyString("zh-CN", "Working for 147m 14s")).toBe("正在思考，147 分钟 14 秒");
+    expect(translateLegacyString("zh-CN", "Worked for 1h 44m")).toBe("已完成，1 小时 44 分钟");
+    expect(translateLegacyString("zh-CN", "Working for 1d 2h")).toBe("正在思考，1 天 2 小时");
     expect(translateLegacyString("zh-CN", "Working")).toBe("运行中");
     expect(translateLegacyString("zh-CN", "Use mcp-chrome-global skill")).toBe("使用 mcp-chrome-global 技能");
     expect(translateLegacyString("zh-CN", "Call Rudder automation get")).toBe("调用 Rudder automation get");

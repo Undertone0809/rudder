@@ -72,6 +72,13 @@ describe("chat process duration helpers", () => {
     expect(formatChatProcessDuration(endedAt.getTime() - startedAt.getTime())).toBe("9m");
   });
 
+  it("uses hours and days for long process durations", () => {
+    expect(formatChatProcessDuration(60 * 60 * 1_000)).toBe("1h");
+    expect(formatChatProcessDuration((60 * 60 + 44 * 60 + 53) * 1_000)).toBe("1h 44m");
+    expect(formatChatProcessDuration(24 * 60 * 60 * 1_000)).toBe("1d");
+    expect(formatChatProcessDuration((24 * 60 * 60 + 2 * 60 * 60 + 12 * 60) * 1_000)).toBe("1d 2h");
+  });
+
   it("falls back to the latest previous user message when turn metadata is unavailable", () => {
     const previousUser = makeMessage({
       id: "user-previous",
