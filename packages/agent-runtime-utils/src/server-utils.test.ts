@@ -1053,10 +1053,8 @@ describe("renderTemplate short references", () => {
 
 describe("loadAgentInstructionsPrefix", () => {
   it("loads the runtime operating contract without an instruction file", async () => {
-    const currentTime = new Date("2026-06-15T12:34:56.789Z");
     const loaded = await loadAgentInstructionsPrefix({
       instructionsFilePath: "",
-      currentTime,
       onLog: async () => {},
     });
 
@@ -1093,10 +1091,9 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("plain text agent names are not wake requests");
     expect(loaded.prefix).toContain("Use wake-intent links only when you intentionally want to wake another agent");
     expect(loaded.prefix).toContain("attach the image with the Rudder CLI `--image <path>` option");
-    expect(loaded.prefix).toContain("## Current Time");
-    expect(loaded.prefix).toContain("Instruction load time: 2026-06-15T12:34:56.789Z.");
-    expect(loaded.prefix).toContain("Treat this as the current time for this run");
-    expect(loaded.prefix).toMatch(/## Current Time[\s\S]*fresher timestamp\.$/);
+    expect(loaded.prefix).not.toContain("## Current Time");
+    expect(loaded.prefix).not.toContain("Instruction load time:");
+    expect(loaded.prefix).not.toContain("Treat this as the current time for this run");
     expect(loaded.commandNotes).toEqual(["Loaded Rudder agent operating contract from runtime code"]);
     expect(loaded.readFailed).toBe(false);
     expect(loaded.memoryFilePath).toBeNull();
@@ -1196,7 +1193,6 @@ describe("loadAgentInstructionsPrefix", () => {
     try {
       const loaded = await loadAgentInstructionsPrefix({
         instructionsFilePath: instructionsPath,
-        currentTime: new Date("2026-06-15T23:45:00.000Z"),
         onLog: async () => {},
       });
 
@@ -1205,10 +1201,10 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.prefix).toContain("# Tools");
       expect(loaded.prefix).toContain("# Tacit Memory");
       expect(loaded.prefix).not.toContain("# Heartbeat");
-      expect(loaded.prefix.indexOf("# Tacit Memory")).toBeLessThan(loaded.prefix.indexOf("## Current Time"));
+      expect(loaded.prefix).not.toContain("## Current Time");
       expect(loaded.prefix).toContain("The above AGENTS.md, SOUL.md, TOOLS.md, MEMORY.md instruction files were loaded from $AGENT_HOME/instructions.");
       expect(loaded.prefix.match(/Resolve any relative file references from \$AGENT_HOME\/instructions\/\./g)).toHaveLength(1);
-      expect(loaded.prefix).toMatch(/## Current Time\n\nInstruction load time: 2026-06-15T23:45:00\.000Z\.[\s\S]*fresher timestamp\.$/);
+      expect(loaded.prefix).not.toContain("Instruction load time:");
       expect(loaded.commandNotes).toContain("Loaded agent instructions from $AGENT_HOME/instructions/AGENTS.md");
       expect(loaded.commandNotes).toContain("Loaded agent soul instructions from $AGENT_HOME/instructions/SOUL.md");
       expect(loaded.commandNotes).toContain("Loaded agent tool notes from $AGENT_HOME/instructions/TOOLS.md");
@@ -1244,8 +1240,7 @@ describe("loadAgentInstructionsPrefix", () => {
       const loaded = await loadAgentInstructionsPrefix({
         instructionsFilePath: instructionsPath,
         includeHeartbeatInstructions: true,
-        contextSectionsBeforeCurrentTime: ["## Recent Rudder Context\n\n#### today memory: 2026-06-21.md\n- Calibrate prompt stack"],
-        currentTime: new Date("2026-06-21T05:50:43.024Z"),
+        instructionContextSections: ["## Recent Rudder Context\n\n#### today memory: 2026-06-21.md\n- Calibrate prompt stack"],
         onLog: async () => {},
       });
 
@@ -1254,7 +1249,6 @@ describe("loadAgentInstructionsPrefix", () => {
       const toolsIndex = loaded.prefix.indexOf("# Tool Notes");
       const memoryIndex = loaded.prefix.indexOf("# Memory Notes");
       const recentContextIndex = loaded.prefix.indexOf("## Recent Rudder Context");
-      const currentTimeIndex = loaded.prefix.indexOf("## Current Time");
       const heartbeatIndex = loaded.prefix.indexOf("# Rudder Heartbeat Instruction");
 
       expect(operatingContractIndex).toBeGreaterThanOrEqual(0);
@@ -1262,8 +1256,8 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(toolsIndex).toBeGreaterThan(soulIndex);
       expect(memoryIndex).toBeGreaterThan(toolsIndex);
       expect(recentContextIndex).toBeGreaterThan(memoryIndex);
-      expect(currentTimeIndex).toBeGreaterThan(recentContextIndex);
-      expect(heartbeatIndex).toBeGreaterThan(currentTimeIndex);
+      expect(heartbeatIndex).toBeGreaterThan(recentContextIndex);
+      expect(loaded.prefix).not.toContain("## Current Time");
       expect(loaded.prefix).toContain("# Persona");
       expect(loaded.prefix).toContain("# Tool Notes");
       expect(loaded.prefix).toContain("# Memory Notes");
@@ -1326,8 +1320,7 @@ describe("loadAgentInstructionsPrefix", () => {
       const loaded = await loadAgentInstructionsPrefix({
         instructionsFilePath: instructionsPath,
         includeHeartbeatInstructions: true,
-        contextSectionsBeforeCurrentTime: instructionContext.contextSectionsBeforeCurrentTime,
-        currentTime: new Date("2026-06-16T09:10:11.000Z"),
+        instructionContextSections: instructionContext.instructionContextSections,
         onLog: async () => {},
       });
 
@@ -1337,7 +1330,6 @@ describe("loadAgentInstructionsPrefix", () => {
       const toolsIndex = loaded.prefix.indexOf("# Agent Tools");
       const memoryIndex = loaded.prefix.indexOf("# Agent Memory");
       const automationsIndex = loaded.prefix.indexOf("## Your Current Automations");
-      const currentTimeIndex = loaded.prefix.indexOf("## Current Time");
       const heartbeatIndex = loaded.prefix.indexOf("# Rudder Heartbeat Instruction");
 
       expect(operatingContractIndex).toBeGreaterThanOrEqual(0);
@@ -1346,8 +1338,8 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(toolsIndex).toBeGreaterThan(soulIndex);
       expect(memoryIndex).toBeGreaterThan(toolsIndex);
       expect(automationsIndex).toBeGreaterThan(memoryIndex);
-      expect(currentTimeIndex).toBeGreaterThan(automationsIndex);
-      expect(heartbeatIndex).toBeGreaterThan(currentTimeIndex);
+      expect(heartbeatIndex).toBeGreaterThan(automationsIndex);
+      expect(loaded.prefix).not.toContain("## Current Time");
       expect(loaded.prefix).toMatch(/# Rudder Heartbeat Instruction[\s\S]*runtime\.$/);
       expect(renderTemplate(
         "{{context.rudderWorkspace.orgResourcesPrompt}}",
@@ -1363,7 +1355,7 @@ describe("loadAgentInstructionsPrefix", () => {
     const topLevelOnly = prepareAgentInstructionRuntimeContext({
       rudderResourcesPrompt: canonicalPrompt,
     });
-    expect(topLevelOnly.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(topLevelOnly.instructionContextSections).toEqual([canonicalPrompt]);
     expect(renderTemplate("{{context.rudderResourcesPrompt}}", { context: topLevelOnly.promptContext })).toBe("");
 
     const resourcesOnly = prepareAgentInstructionRuntimeContext({
@@ -1371,7 +1363,7 @@ describe("loadAgentInstructionsPrefix", () => {
         resourcesPrompt: canonicalPrompt,
       },
     });
-    expect(resourcesOnly.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(resourcesOnly.instructionContextSections).toEqual([canonicalPrompt]);
     expect(renderTemplate(
       "{{context.rudderWorkspace.resourcesPrompt}}",
       { context: resourcesOnly.promptContext },
@@ -1382,7 +1374,7 @@ describe("loadAgentInstructionsPrefix", () => {
         orgResourcesPrompt: canonicalPrompt,
       },
     });
-    expect(legacyOnly.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(legacyOnly.instructionContextSections).toEqual([canonicalPrompt]);
     expect(renderTemplate(
       "{{context.rudderWorkspace.orgResourcesPrompt}}",
       { context: legacyOnly.promptContext },
@@ -1400,7 +1392,7 @@ describe("loadAgentInstructionsPrefix", () => {
       },
     });
 
-    expect(prepared.contextSectionsBeforeCurrentTime).toEqual([canonicalPrompt]);
+    expect(prepared.instructionContextSections).toEqual([canonicalPrompt]);
     expect(renderTemplate("{{context.rudderResourcesPrompt}}", { context: prepared.promptContext })).toBe("");
     expect(renderTemplate(
       "{{context.rudderWorkspace.resourcesPrompt}}",

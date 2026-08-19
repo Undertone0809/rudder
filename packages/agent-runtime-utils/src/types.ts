@@ -123,8 +123,8 @@ export interface AgentRuntimeInvocationMeta {
   /**
    * Full Rudder-loaded instruction stack shown in run invocation diagnostics.
    * This is the operator-visible audit surface for runtime-injected contract,
-   * instruction files, memory/context sections, current time, and runtime
-   * heartbeat instructions, even when the runtime receives them through a
+   * instruction files, memory/context sections, and runtime heartbeat
+   * instructions, even when the runtime receives them through a
    * system-prompt channel instead of the main prompt field.
    */
   agentInstructionStack?: string;

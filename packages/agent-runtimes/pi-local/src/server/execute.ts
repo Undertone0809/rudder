@@ -897,7 +897,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     includeHeartbeatInstructions:
       !hasConfiguredPromptTemplate &&
       shouldIncludeRuntimeHeartbeatInstructions(context as Record<string, unknown>),
-    contextSectionsBeforeCurrentTime: instructionRuntimeContext.contextSectionsBeforeCurrentTime,
+    instructionContextSections: instructionRuntimeContext.instructionContextSections,
     onLog,
   });
   const systemPromptExtension = loadedInstructions.prefix

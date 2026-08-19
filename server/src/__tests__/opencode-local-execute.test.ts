@@ -398,6 +398,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(capture.argv).not.toContain("--dangerously-skip-permissions");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).not.toContain("## Current Time");
+      expect(capture.prompt).not.toContain("Instruction load time:");
       expect(capture.rudderEnvKeys).toEqual(expect.arrayContaining([
         "RUDDER_PROJECT_LIBRARY_PATH",
         "RUDDER_PROJECT_LIBRARY_ROOT",
