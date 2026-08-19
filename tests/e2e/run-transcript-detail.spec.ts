@@ -1041,6 +1041,75 @@ test.describe("Run transcript detail", () => {
     });
   });
 
+  test("uses yellow notices for transcript error events without changing their semantic status", async ({ page }) => {
+    const organization = await createOrganization(page, `Run-Detail-Event-Notice-${Date.now()}`);
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Event Notice Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const startedAt = new Date("2026-05-14T08:33:42.000Z");
+    const notice = "Process lost -- server may have restarted";
+
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Scheduled heartbeat",
+      status: "failed",
+      startedAt,
+      finishedAt: new Date(startedAt.getTime() + 1_000),
+      error: notice,
+      errorCode: "process_lost",
+      createdAt: startedAt,
+      updatedAt: new Date(startedAt.getTime() + 1_000),
+    });
+    await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 1,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "error",
+      message: "transcript event",
+      payload: {
+        kind: "stderr",
+        text: notice,
+        ts: new Date(startedAt.getTime() + 500).toISOString(),
+      },
+      createdAt: new Date(startedAt.getTime() + 500),
+    });
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText(notice, { exact: true })).toBeVisible({ timeout: 15_000 });
+    const event = detailPane.locator('[data-transcript-event-tone="error"]').filter({ hasText: notice });
+    await expect(event).toHaveClass(/border-amber-500/);
+    await expect(event).toHaveClass(/bg-amber-400/);
+    await expect(event).not.toHaveClass(/border-red-500/);
+    await expect(detailPane.getByTestId("run-summary-card").getByText("Run failed", { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  });
+
   test("shows recoverable chat failure guidance in run detail and list summaries", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Chat-Failure-${Date.now()}`);
 
