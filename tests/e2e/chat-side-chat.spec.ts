@@ -102,12 +102,15 @@ async function seedSideChatSource(page: Page, name: string) {
   return { organization, agent, alternateAgent, conversationId, assistantMessageId, secondAssistantMessageId };
 }
 
-async function openFromAssistantAction(page: Page, assistantMessageId: string) {
+async function openSideChatFromPanelTarget(page: Page, assistantMessageId: string) {
   const assistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${assistantMessageId}"]`);
   await assistant.hover();
-  await assistant.getByRole("button", { name: "Open Side Chat" }).click();
+  await expect(assistant.getByRole("button", { name: "Open Side Chat" })).toHaveCount(0);
+  await page.getByTestId("chat-side-panel-trigger").click();
   const panel = page.getByTestId("chat-side-panel");
-  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+  await panel.getByTestId("chat-side-panel-empty-side-chat-target").click();
+  await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
   await expect(panel.getByTestId("side-chat-anchor-preview")).toHaveCount(0);
   await expect(panel).not.toContainText("From the main chat");
   return panel;
@@ -188,9 +191,9 @@ test("Side Chat preserves the main draft, streams like Chat, and is destroyed wh
   await mainComposer.click();
   await page.keyboard.insertText("Keep this unfinished main-chat draft");
 
-  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
   await expect(mainComposer).toContainText("Keep this unfinished main-chat draft");
-  await page.screenshot({ path: testInfo.outputPath("01-assistant-action-draft.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("01-side-panel-entry-draft.png"), fullPage: true });
   await expect(panel.locator(".chat-composer")).toBeVisible();
   const mainComposerSurface = page.getByTestId("chat-composer-file-drop-target");
   const sideComposerSurface = panel.getByTestId("side-chat-composer-file-drop-target");
@@ -855,7 +858,7 @@ test("the Side Panel empty state opens the same provisional Side Chat flow", asy
 test("the Side Chat tab menu and disabled explanation fit a narrow viewport", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Narrow-${Date.now()}`);
   await page.setViewportSize({ width: 390, height: 844 });
-  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
   const { menu } = await openSideChatTabContextMenu(page, panel);
   const moveItem = menu.getByRole("menuitem", { name: "Move to Messenger" });
   await expect(moveItem).toHaveAttribute("aria-disabled", "true");
@@ -874,7 +877,7 @@ test("the Side Chat tab menu and disabled explanation fit a narrow viewport", as
 
 test("a failed Move to Messenger keeps the Side Chat tab and can be retried", async ({ page }) => {
   const source = await seedSideChatSource(page, `Side-Chat-Move-Retry-${Date.now()}`);
-  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
   let moveAttempts = 0;
   await page.route(`**/api/chats/${sideChat.id}/side-chat/keep`, async (route) => {
@@ -913,7 +916,7 @@ test("a failed Move to Messenger keeps the Side Chat tab and can be retried", as
 
 test("a Side Chat expiring after its menu opens stays in place and disables Move on refresh", async ({ page }) => {
   const source = await seedSideChatSource(page, `Side-Chat-Move-Race-${Date.now()}`);
-  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
   const sideChat = await sendFirstSideChatMessage(page, panel, source.conversationId);
   const firstMenu = (await openSideChatTabContextMenu(page, panel)).menu;
   const firstMove = firstMenu.getByRole("menuitem", { name: "Move to Messenger" });
@@ -947,7 +950,7 @@ test("a Side Chat expiring after its menu opens stays in place and disables Move
 
 test("an elapsed Side Chat becomes non-editable and can still be destroyed", async ({ page }, testInfo) => {
   const source = await seedSideChatSource(page, `Side-Chat-Expiry-${Date.now()}`);
-  const panel = await openFromAssistantAction(page, source.assistantMessageId);
+  const panel = await openSideChatFromPanelTarget(page, source.assistantMessageId);
   const createResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
     && response.url().includes(`/api/chats/${source.conversationId}/side-chats`)
