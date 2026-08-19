@@ -373,7 +373,7 @@ test("public health, package scripts, and exact-source Test cover static docs se
   );
 
   const ci = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
-  assert.match(ci, /pnpm exec playwright install --with-deps chromium/);
+  assert.match(ci, /pnpm exec playwright install chromium/);
   assert.match(ci, /pnpm test:docs-search/);
 
   const docsRelease = fs.readFileSync(
