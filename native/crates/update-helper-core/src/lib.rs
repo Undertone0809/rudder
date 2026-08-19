@@ -620,22 +620,20 @@ fn stale_state_lock(path: &Path) -> bool {
     }
 }
 
+#[cfg(unix)]
 fn wait_for_parent_exit(parent_pid: u32) -> bool {
     for _ in 0..600 {
-        #[cfg(unix)]
-        {
-            if unsafe { libc::kill(parent_pid as i32, 0) } != 0 {
-                return true;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = parent_pid;
+        if unsafe { libc::kill(parent_pid as i32, 0) } != 0 {
             return true;
         }
         thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+#[cfg(not(unix))]
+fn wait_for_parent_exit(_parent_pid: u32) -> bool {
+    true
 }
 
 fn materialize_staged_bundle(
@@ -717,11 +715,11 @@ fn materialize_staged_bundle(
 }
 
 fn same_filesystem(left: Option<&Path>, right: Option<&Path>) -> bool {
-    let (Some(left), Some(right)) = (left, right) else {
-        return false;
-    };
     #[cfg(unix)]
     {
+        let (Some(left), Some(right)) = (left, right) else {
+            return false;
+        };
         use std::os::unix::fs::MetadataExt;
         let left_dev = fs::metadata(left).ok().map(|metadata| metadata.dev());
         let right_dev = fs::metadata(right).ok().map(|metadata| metadata.dev());
@@ -729,6 +727,7 @@ fn same_filesystem(left: Option<&Path>, right: Option<&Path>) -> bool {
     }
     #[cfg(not(unix))]
     {
+        let _ = (left, right);
         // The Windows packaged path uses one install root; directory exchange
         // is still guarded by the ownership fence and journal.
         true
