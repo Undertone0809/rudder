@@ -1,5 +1,6 @@
 use crc32fast::Hasher as Crc32;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -134,7 +135,11 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "archive.inspectManifest",
             "archive.extractFile",
             "evidence.index",
-            "workspace.watch"
+            "workspace.watch",
+            "payload.verify",
+            "payload.extract",
+            "payload.probeVersion",
+            "payload.publish"
         ])
     );
     assert!(stderr.is_empty());
@@ -196,6 +201,9 @@ fn watches_workspace_and_stops_on_stdin_eof() {
         .unwrap();
         thread::sleep(Duration::from_millis(300));
     }
+    // Allow the cross-platform event queue to deliver the final mutation before
+    // EOF asks the watcher to stop.
+    thread::sleep(Duration::from_secs(1));
     drop(child.stdin.take());
     let status = child.wait().unwrap();
     let lines = reader.join().unwrap();
@@ -324,6 +332,94 @@ fn creates_file_backed_archive_from_bounded_plan() {
     assert_eq!(result["accepted"], true);
     assert_eq!(result["byteSize"], body.len() as u64);
     assert_eq!(fs::read(extracted).unwrap(), body);
+}
+
+#[test]
+fn exposes_runtime_payload_capabilities_and_runs_public_operations() {
+    let root = tempdir().unwrap();
+    let archive = root.path().join("payload.zip");
+    let staging = root.path().join("payload-staging");
+    let destination = root.path().join("payload-published");
+    let body = b"runtime-payload-body";
+    write_archive(&archive, body);
+    let archive_bytes = fs::read(&archive).unwrap();
+    let expected_sha256 = format!("{:x}", Sha256::digest(&archive_bytes));
+
+    let (code, capabilities, stderr) = run(&["payload", "capabilities"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(capabilities["effectiveEngine"], "rust");
+    assert_eq!(capabilities["protocolVersion"], 1);
+    assert!(
+        capabilities["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "payload.publish")
+    );
+
+    let (code, verified, stderr) = run(&[
+        "payload",
+        "verify",
+        archive.to_str().unwrap(),
+        &expected_sha256,
+        "1048576",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(verified["capability"], "payload.verify");
+    assert_eq!(verified["sha256"], expected_sha256);
+
+    let (code, extracted, stderr) = run(&[
+        "payload",
+        "extract",
+        archive.to_str().unwrap(),
+        "auto",
+        staging.to_str().unwrap(),
+        "1048576",
+        "1048576",
+        "2097152",
+        "0",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(extracted["capability"], "payload.extract");
+    assert_eq!(extracted["accepted"], true);
+    assert!(staging.join("workspace/file.bin").exists());
+
+    let (code, published, stderr) = run(&[
+        "payload",
+        "publish",
+        staging.to_str().unwrap(),
+        destination.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(published["capability"], "payload.publish");
+    assert_eq!(published["accepted"], true);
+    assert_eq!(
+        fs::read(destination.join("workspace/file.bin")).unwrap(),
+        body
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn probes_runtime_payload_version_without_a_shell() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempdir().unwrap();
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let executable = bin.join("postgres");
+    fs::write(&executable, b"#!/bin/sh\nprintf 'PostgreSQL 18.4\\n'\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, result, stderr) = run(&[
+        "payload",
+        "probe-version",
+        root.path().to_str().unwrap(),
+        "bin/postgres",
+        "PostgreSQL 18.4",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(result["capability"], "payload.probeVersion");
+    assert!(result["versionOutput"].as_str().unwrap().contains("18.4"));
 }
 
 #[test]

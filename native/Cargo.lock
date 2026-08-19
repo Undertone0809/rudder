@@ -430,9 +430,11 @@ dependencies = [
  "crc32fast",
  "rudder-archive-core",
  "rudder-run-evidence-core",
+ "rudder-runtime-payload-core",
  "rudder-workspace-manifest-core",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 

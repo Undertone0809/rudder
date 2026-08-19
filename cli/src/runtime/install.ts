@@ -9,6 +9,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
+import { tryInstallNativePayload } from "./native-payload.js";
 import { copyRuntimePostgresPayload } from "./postgres-payload.js";
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
 export const NPM_PUBLIC_REGISTRY_URL = "https://registry.npmjs.org";
@@ -1187,6 +1188,17 @@ async function downloadRuntimePostgresArchive(url: string, targetPath: string): 
   }
 }
 
+async function sha256RuntimeArchive(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex");
+}
+
 function extractRuntimePostgresArchive(archivePath: string, extractDir: string): void {
   const result = process.platform === "win32"
     ? spawnSync("powershell.exe", [
@@ -1378,6 +1390,66 @@ async function downloadSharedRuntimePostgresPayload(
     try {
       await mkdir(extractDir, { recursive: true });
       await downloadRuntimePostgresArchive(archiveUrl, archivePath);
+
+      const configuredMaxBytes = Number.parseInt(process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES_ENV] ?? "", 10);
+      const maxArchiveBytes = Number.isSafeInteger(configuredMaxBytes) && configuredMaxBytes > 0
+        ? configuredMaxBytes
+        : DEFAULT_RUNTIME_POSTGRES_ARCHIVE_MAX_BYTES;
+      const nativePublishStaging = `${sharedPlatformRoot}.tmp-native-${process.pid}-${Date.now()}`;
+      await mkdir(path.dirname(sharedPlatformRoot), { recursive: true });
+      const nativeInstall = await tryInstallNativePayload({
+        archivePath,
+        extractPath: extractDir,
+        publishStagingPath: nativePublishStaging,
+        destinationPath: sharedPlatformRoot,
+        maxArchiveBytes,
+        expectedSha256: process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV]
+          ?? await sha256RuntimeArchive(archivePath),
+        preparePublish: async (nativeExtractPath, publishStagingPath) => {
+          const extractedBinDir = await findRuntimePostgresBinDir(
+            nativeExtractPath,
+            cacheDir,
+            postgresVersionProbe,
+          );
+          if (!extractedBinDir) {
+            throw new RuntimeInstallError(
+              "PostgreSQL 18.4 archive did not contain a complete verified runtime",
+              { cacheDir, command: "prepare native PostgreSQL runtime payload", output: "" },
+            );
+          }
+          await validateRuntimePostgresVersion(cacheDir, extractedBinDir, postgresVersionProbe);
+          const templateDir = await resolveRuntimePostgresTemplateDir(extractedBinDir);
+          if (!templateDir) {
+            throw new RuntimeInstallError(
+              "PostgreSQL 18.4 archive did not contain initdb template files",
+              { cacheDir, command: "prepare native PostgreSQL runtime payload", output: "" },
+            );
+          }
+          await copyRuntimePostgresPayload(
+            path.dirname(extractedBinDir),
+            publishStagingPath,
+            resolveRuntimePostgresShareDir(extractedBinDir, templateDir),
+          );
+          return path.relative(
+            publishStagingPath,
+            path.join(publishStagingPath, "bin", runtimePostgresExecutableName("postgres")),
+          );
+        },
+        validatePublished: async (destinationPath) => {
+          await validateRuntimePostgresVersion(
+            cacheDir,
+            path.join(destinationPath, "bin"),
+            postgresVersionProbe,
+          );
+        },
+      });
+      if (nativeInstall.installed) {
+        return sharedBinDir;
+      }
+
+      // The native path may safely decline before staging/acceptance (for
+      // example when a trusted archive digest is unavailable in auto mode).
+      // Only then use the existing Node extractor and publication path.
       extractRuntimePostgresArchive(archivePath, extractDir);
       const extractedBinDir = await findRuntimePostgresBinDir(
         extractDir,
