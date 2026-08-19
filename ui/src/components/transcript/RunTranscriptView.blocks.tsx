@@ -57,7 +57,7 @@ import {
   truncate
 } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
-import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
 import { getTranscriptAgentAvatarInfo, TranscriptAgentAvatarIcon } from "./TranscriptAgentAvatarIcon";
@@ -1188,6 +1188,8 @@ export function TranscriptToolCard({
   const duration = formatTranscriptDuration(block.ts, block.endTs);
   const command = getToolCommand(block);
   const requestText = command ?? formatNiceToolRequest(block.name, block.input);
+  const requestLabel = getNiceToolRequestLabel(block.name, block.input);
+  const requestParameters = command ? null : formatNiceToolRequestParameters(block.name, block.input);
   const responseText = command
     ? formatCommandTerminalOutput(block.result)
     : block.result
@@ -1286,11 +1288,21 @@ export function TranscriptToolCard({
               <div className={cn("grid gap-3", compact ? "grid-cols-1" : "lg:grid-cols-2")}>
                 <div>
                   <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
-                    Request
+                    {requestLabel}
                   </div>
                   <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
                     {requestText}
                   </pre>
+                  {requestParameters ? (
+                    <div className="mt-2">
+                      <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
+                        Parameters
+                      </div>
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
+                        {requestParameters}
+                      </pre>
+                    </div>
+                  ) : null}
                 </div>
                 <div>
                   <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">

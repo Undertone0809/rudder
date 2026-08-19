@@ -207,13 +207,15 @@ test.describe("Run transcript detail", () => {
       path: "/tmp/rudder-r6z-98-terminal-ui-mobile.png",
     });
 
-    const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 2 tools" });
+    const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 3 tools" });
     await expect(externalToolGroup).toHaveCount(1);
     await externalToolGroup.click();
     await expect(page.getByText("Web searched \"transcript UI rendering examples\"", { exact: false })).toBeVisible();
     const githubMcpRow = page.getByRole("button", { name: /tool details: Get pull request/ });
+    const githubSearchMcpRow = page.getByRole("button", { name: /tool details: Search code for \"transcript renderer\"/ });
     const rudderMcpRow = page.getByRole("button", { name: /tool details: Read chat transcript/ });
     await expect(githubMcpRow).toHaveCount(1);
+    await expect(githubSearchMcpRow).toHaveCount(1);
     await expect(rudderMcpRow).toHaveCount(1);
     await expect(githubMcpRow).toHaveAccessibleName("Expand tool details: Get pull request");
     await expect(rudderMcpRow).toHaveAccessibleName("Expand tool details: Read chat transcript");
@@ -230,6 +232,18 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("repo_full_name Undertone0809/rudder", { exact: false })).toHaveCount(0);
     await expect(page.getByText("eeb73ad1-e000-4dce-9d47-23106fa36bbc", { exact: false })).toHaveCount(0);
     await expect(page.getByText("rudder-tools", { exact: false })).toHaveCount(0);
+    await expect(githubSearchMcpRow).toHaveAccessibleName("Expand tool details: Search code for \"transcript renderer\"");
+    await expect(page.getByText("query", { exact: true })).toHaveCount(0);
+
+    await githubSearchMcpRow.click();
+    const searchDetails = githubSearchMcpRow.locator("..");
+    await expect(searchDetails.getByText("Query", { exact: true })).toBeVisible();
+    await expect(searchDetails.getByText("Parameters", { exact: true })).toBeVisible();
+    await expect(searchDetails).toContainText('"transcript renderer"');
+    await expect(searchDetails).toContainText("ui/src/components/transcript");
+    await expect(searchDetails.getByText("Input", { exact: true })).toHaveCount(0);
+    await expect(searchDetails).not.toContainText('"query":');
+    await githubSearchMcpRow.click();
 
     const rudderDisclosure = rudderMcpRow.locator('[data-transcript-action-row-disclosure="true"]');
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
@@ -250,6 +264,8 @@ test.describe("Run transcript detail", () => {
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
     await githubMcpRow.focus();
+    await page.keyboard.press("Tab");
+    await expect(githubSearchMcpRow).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(rudderMcpRow).toBeFocused();
     await expect(rudderDisclosure).toHaveCSS("opacity", "1");

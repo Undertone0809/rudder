@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
-import { formatNiceToolRequest, formatNiceToolResponse } from "./RunTranscriptView.presentation";
+import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
@@ -366,6 +366,8 @@ export function TranscriptChatToolActionRow({
   const isCommand = isCommandTool(block.name, block.input);
   const command = getToolCommand(block);
   const requestText = command ?? formatNiceToolRequest(block.name, block.input);
+  const requestLabel = getNiceToolRequestLabel(block.name, block.input);
+  const requestParameters = command ? null : formatNiceToolRequestParameters(block.name, block.input);
   const responseText = shouldHideChatToolResult(semantic)
     ? null
     : command
@@ -778,12 +780,22 @@ export function TranscriptChatToolActionRow({
           <div className="motion-disclosure-enter ml-5 mt-2 space-y-2 rounded-lg border border-border/35 bg-muted/10 p-2.5">
             <div>
               <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
-                Input
+                {requestLabel}
               </div>
               <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
                 {requestText}
               </pre>
             </div>
+            {requestParameters ? (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
+                  Parameters
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
+                  {requestParameters}
+                </pre>
+              </div>
+            ) : null}
             {responseText ? (
               <div>
                 <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
