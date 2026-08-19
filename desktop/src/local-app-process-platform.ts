@@ -221,6 +221,7 @@ export function createLocalAppProcessPlatform(
     ? [windowsSystem32, systemRoot]
     : ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   const reportedWindowsOwnershipFailures = new Set<string>();
+  const reportedLinuxOwnershipFailures = new Set<string>();
   const verifiedWindowsOwnerCreationDates = new Map<number, string>();
   const verifiedWindowsOwnedProcesses = new Map<number, WindowsProcessRecord[]>();
   const snapshotWindowsProcesses = options.snapshotWindowsProcesses ?? ((rootPid: number) => (
@@ -291,6 +292,13 @@ export function createLocalAppProcessPlatform(
     pid: number;
     pgid: number;
   }): Promise<boolean> => {
+    const rejectOwnership = (reason: string): false => {
+      if (!reportedLinuxOwnershipFailures.has(reason)) {
+        reportedLinuxOwnershipFailures.add(reason);
+        console.warn(`[local-app-ownership] Linux listener ownership rejected: ${reason}`);
+      }
+      return false;
+    };
     try {
       const processGroupPids: number[] = [];
       for (const entry of await readdir("/proc", { withFileTypes: true })) {
@@ -308,21 +316,21 @@ export function createLocalAppProcessPlatform(
           // The process may exit while /proc is being inspected.
         }
       }
-      if (!processGroupPids.includes(input.pid)) return false;
+      if (!processGroupPids.includes(input.pid)) return rejectOwnership("managed root was absent from process group");
 
       const tcpTables = await Promise.all([
         readFile("/proc/net/tcp", "utf8"),
         readFile("/proc/net/tcp6", "utf8").catch(() => ""),
       ]);
       const ipv4Inodes = parseLinuxTcpListenerInodes(tcpTables[0], input.port);
-      if (!ipv4Inodes) return false;
+      if (!ipv4Inodes) return rejectOwnership("exact IPv4 loopback listener was absent");
       if (tcpTables[1].split(/\r?\n/).slice(1).some((line) => {
         const fields = line.trim().split(/\s+/);
         const [, candidatePort] = (fields[1] ?? "").split(":");
         return fields[3] === "0A"
           && candidatePort?.toUpperCase() === input.port.toString(16).toUpperCase().padStart(4, "0");
       })) {
-        return false;
+        return rejectOwnership("IPv6 listener was present for the requested port");
       }
 
       const ownedInodes = new Set<string>();
@@ -343,9 +351,11 @@ export function createLocalAppProcessPlatform(
           }
         }
       }
-      return ipv4Inodes.every((inode) => ownedInodes.has(inode));
+      return ipv4Inodes.every((inode) => ownedInodes.has(inode))
+        ? true
+        : rejectOwnership("listener socket inode was outside the managed process group");
     } catch {
-      return false;
+      return rejectOwnership("process inspection failed");
     }
   };
 

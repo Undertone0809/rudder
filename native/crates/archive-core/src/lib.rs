@@ -622,6 +622,8 @@ fn open_and_hash_source(
 }
 
 fn validate_bound_source(path: &Path, file: &File) -> Result<(), ArchiveError> {
+    #[cfg(not(unix))]
+    let _ = file;
     let path_metadata =
         fs::symlink_metadata(path).map_err(|_| ArchiveError::new("source_changed"))?;
     if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
