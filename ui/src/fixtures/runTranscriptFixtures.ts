@@ -166,6 +166,34 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   },
   {
     kind: "tool_call",
+    ts: "2026-03-11T15:22:26.250Z",
+    name: "mcp__github__github_search_code",
+    toolUseId: "mcp_fixture_github_search",
+    input: {
+      query: "transcript renderer",
+      path: "ui/src/components/transcript",
+    },
+  },
+  {
+    kind: "tool_result",
+    ts: "2026-03-11T15:22:26.275Z",
+    toolUseId: "mcp_fixture_github_search",
+    toolName: "mcp__github__github_search_code",
+    content: JSON.stringify({
+      content: [{
+        type: "text",
+        text: "2 matches",
+      }],
+      structuredContent: {
+        total: 2,
+        path: "ui/src/components/transcript",
+      },
+      _meta: null,
+    }),
+    isError: false,
+  },
+  {
+    kind: "tool_call",
     ts: "2026-03-11T15:22:26.300Z",
     name: "mcp__rudder-tools__rudder_chat_transcript",
     toolUseId: "mcp_fixture_rudder_chat",

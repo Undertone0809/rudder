@@ -681,6 +681,40 @@ function normalizeMcpToolForSummary(tool: string, server: string | null): string
   return tokens.join("_");
 }
 
+const MCP_SEARCH_QUERY_KEYS = ["query", "q", "search_query", "searchQuery"] as const;
+const MCP_SEARCH_ACTION_TOKENS = new Set(["search", "find", "query"]);
+
+export function extractMcpSearchQuery(details: McpToolDetails): string | null {
+  for (const key of MCP_SEARCH_QUERY_KEYS) {
+    const value = details.args?.[key];
+    if (typeof value === "string" && value.trim()) return compactWhitespace(value);
+  }
+  return null;
+}
+
+export function extractMcpSearchExtraArgs(details: McpToolDetails): Record<string, unknown> | null {
+  if (!isMcpSearchTool(details) || !extractMcpSearchQuery(details) || !details.args) return null;
+  const extraArgs = Object.fromEntries(
+    Object.entries(details.args).filter(([key]) => !MCP_SEARCH_QUERY_KEYS.includes(key as typeof MCP_SEARCH_QUERY_KEYS[number])),
+  );
+  return Object.keys(extraArgs).length > 0 ? extraArgs : null;
+}
+
+export function isMcpSearchTool(details: McpToolDetails): boolean {
+  const tool = details.tool?.trim();
+  if (!tool) return false;
+  const contextualTool = normalizeMcpToolForSummary(tool, details.server);
+  const firstActionToken = splitMcpSummaryTokens(contextualTool)
+    .find((token) => Object.prototype.hasOwnProperty.call(MCP_SUMMARY_ACTION_LABELS, token));
+  return firstActionToken ? MCP_SEARCH_ACTION_TOKENS.has(firstActionToken) : false;
+}
+
+export function formatMcpSearchQuery(details: McpToolDetails): string | null {
+  if (!isMcpSearchTool(details)) return null;
+  const query = extractMcpSearchQuery(details);
+  return query ? quoteSummaryText(query) : null;
+}
+
 function humanizeMcpTokens(tokens: string[]): string {
   return tokens
     .filter(Boolean)
@@ -734,7 +768,9 @@ export function formatMcpSummary(details: McpToolDetails): string {
     ? [contextualTool]
     : [normalizedTool, contextualTool];
   const rule = ruleKeys.map((key) => MCP_SUMMARY_TOOL_RULES[key]).find(Boolean);
-  return rule ?? formatGenericMcpSummary(contextualTool);
+  const summary = rule ?? formatGenericMcpSummary(contextualTool);
+  const query = formatMcpSearchQuery(details);
+  return query ? `${summary} for ${query}` : summary;
 }
 
 export function formatTargetAction(

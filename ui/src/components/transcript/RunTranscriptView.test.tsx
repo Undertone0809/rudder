@@ -137,6 +137,36 @@ describe("RunTranscriptView", () => {
     expect(formatMcpSummary(details!)).toBe("Read Rudder chat transcript");
   });
 
+  it("includes a reliable MCP search query in the display summary", () => {
+    const details = extractMcpToolDetails(
+      "mcp__github__github_search_code",
+      { query: "transcript renderer", path: "ui/src/components/transcript" },
+    );
+    expect(details).not.toBeNull();
+    expect(formatMcpSummary(details!)).toBe('Search code for "transcript renderer"');
+  });
+
+  it.each(["query", "q", "search_query", "searchQuery"])(
+    "supports the %s MCP search query key",
+    (queryKey) => {
+      const details = extractMcpToolDetails(
+        "mcp__github__github_search_code",
+        { [queryKey]: "transcript renderer" },
+      );
+      expect(details).not.toBeNull();
+      expect(formatMcpSummary(details!)).toBe('Search code for "transcript renderer"');
+    },
+  );
+
+  it("does not classify a non-search action with a query-named object as a search", () => {
+    const details = extractMcpToolDetails(
+      "mcp__github__github_get_query_index",
+      { query: "transcript renderer" },
+    );
+    expect(details).not.toBeNull();
+    expect(formatMcpSummary(details!)).toBe("Get query index");
+  });
+
   it("uses a stable humanized fallback for unknown MCP tools", () => {
     const details = extractMcpToolDetails("mcp__example__custom_report_action", {});
     expect(details).not.toBeNull();

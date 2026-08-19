@@ -8,7 +8,9 @@ import { RunTranscriptView } from "./RunTranscriptView";
 import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import {
   formatNiceToolRequest,
+  formatNiceToolRequestParameters,
   formatNiceToolResponse,
+  getNiceToolRequestLabel,
 } from "./RunTranscriptView.presentation";
 
 const mcpInput = {
@@ -42,6 +44,42 @@ const mcpResponse = JSON.stringify({
 });
 
 describe("Nice transcript MCP payloads", () => {
+  it("puts MCP search queries in the summary and renders a readable Query detail", () => {
+    const name = "mcp__github__github_search_code";
+    const input = {
+      query: "transcript renderer",
+      path: "ui/src/components/transcript",
+    };
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow
+          inline
+          density="compact"
+          block={{
+            ts: "2026-07-24T00:00:00.000Z",
+            endTs: "2026-07-24T00:00:01.000Z",
+            name,
+            input,
+            result: "2 matches",
+            status: "completed",
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(formatNiceToolRequest(name, input)).toBe('"transcript renderer"');
+    expect(formatNiceToolRequestParameters(name, input)).toBe(JSON.stringify({
+      path: "ui/src/components/transcript",
+    }, null, 2));
+    expect(getNiceToolRequestLabel(name, input)).toBe("Query");
+    expect(html).toContain('Search code for &quot;transcript renderer&quot;');
+    expect(html).toContain("Query");
+    expect(html).toContain("Parameters");
+    expect(html).not.toContain("Input");
+    expect(html).not.toContain("&quot;query&quot;:");
+    expect(html).toContain("&quot;path&quot;:");
+  });
+
   it("projects only args for MCP input and structuredContent for MCP response", () => {
     expect(formatNiceToolRequest("mcp__rudder-tools__rudder_browser_navigate", mcpInput))
       .toBe(JSON.stringify(mcpInput.args, null, 2));
