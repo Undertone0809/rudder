@@ -1944,13 +1944,17 @@ test.describe("Goal Workspace v2", () => {
     await expect(conversation.getByText(longAttachmentName, { exact: true })).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
-    const [conversationBox, propertiesBox] = await Promise.all([
-      page.getByRole("tabpanel").boundingBox(),
-      page.getByRole("heading", { name: "Properties", exact: true }).boundingBox(),
-    ]);
-    expect(conversationBox).not.toBeNull();
-    expect(propertiesBox).not.toBeNull();
-    expect(conversationBox!.y).toBeLessThan(propertiesBox!.y);
+    await expect(page.getByRole("heading", { name: "Properties", exact: true })).toBeHidden();
+    await page.getByRole("button", { name: "Properties", exact: true }).click();
+    const propertiesSheet = page.getByRole("dialog");
+    await expect(propertiesSheet.getByRole("heading", { name: "Properties", exact: true })).toBeVisible();
+    await expect(propertiesSheet.getByText("Workspace owner", { exact: true })).toBeVisible();
+    await propertiesSheet.getByRole("button", { name: "Change Goal owner" }).click();
+    await expect(propertiesSheet.getByPlaceholder("Search Agents...")).toBeVisible();
+    await propertiesSheet.getByRole("button", { name: "Change Goal owner" }).click();
+    await expect(propertiesSheet.getByPlaceholder("Search Agents...")).toBeHidden();
+    await page.keyboard.press("Escape");
+    await expect(propertiesSheet).toBeHidden();
     const detailOverflow = await page.getByTestId("goal-detail-workspace").evaluate((root) => {
       const rootRect = root.getBoundingClientRect();
       return [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))].flatMap((element) => {

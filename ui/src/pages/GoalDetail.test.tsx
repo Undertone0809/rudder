@@ -449,11 +449,10 @@ describe("GoalDetail", () => {
     expect(properties?.textContent).toContain("Properties");
     expect(properties?.textContent).toContain("Workspace owner");
     expect(properties?.querySelector("img")).not.toBeNull();
+    expect(properties?.classList.contains("issue-detail-properties-panel")).toBe(true);
     const main = container.querySelector("main");
-    const propertiesSection = properties?.querySelector("section");
     expect(main).not.toBeNull();
-    expect(propertiesSection).not.toBeNull();
-    expect(Boolean(main!.compareDocumentPosition(propertiesSection!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(main!.compareDocumentPosition(properties!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     const progressHeader = container.querySelector('[aria-label="Goal progress"]');
     expect(progressHeader?.textContent).toContain("Latest progress");
     expect(progressHeader?.textContent).toContain("Criteria verified");
@@ -487,6 +486,33 @@ describe("GoalDetail", () => {
     ]) {
       expect(resultBlock.innerHTML).not.toContain(privateValue);
     }
+  });
+
+  it("opens the shared Issue-style Properties sheet and expands the Owner picker inline", async () => {
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal properties"]')).not.toBeNull());
+
+    const propertiesTrigger = container.querySelector<HTMLButtonElement>('button[aria-label="Properties"]');
+    expect(propertiesTrigger).not.toBeNull();
+    act(() => propertiesTrigger?.click());
+
+    await waitUntil(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
+    const sheet = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(sheet.textContent).toContain("Properties");
+    expect(sheet.textContent).toContain("Workspace owner");
+
+    const ownerTrigger = sheet.querySelector<HTMLButtonElement>('[aria-label="Change Goal owner"]');
+    act(() => ownerTrigger?.click());
+    await waitUntil(() => expect(sheet.querySelector('input[placeholder="Search Agents..."]')).not.toBeNull());
+    expect(document.body.querySelectorAll('input[placeholder="Search Agents..."]')).toHaveLength(1);
+
+    act(() => ownerTrigger?.click());
+    await waitUntil(() => expect(sheet.querySelector('input[placeholder="Search Agents..."]')).toBeNull());
+    const closeButton = Array.from(sheet.querySelectorAll<HTMLButtonElement>("button"))
+      .find((candidate) => candidate.textContent === "Close");
+    expect(closeButton).not.toBeNull();
+    act(() => closeButton?.click());
+    await waitUntil(() => expect(document.body.querySelector('[role="dialog"]')).toBeNull());
   });
 
   it("reassigns an active Owner through the dedicated contract and keeps target read-only", async () => {
