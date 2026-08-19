@@ -36,10 +36,10 @@ import {
   createWorkspaceBackupV2File,
   createWorkspaceBackupV2Native,
   formatWorkspaceBackupV2NativeFallback,
-  inspectWorkspaceBackupV2File,
-  readWorkspaceBackupV2File,
+  inspectWorkspaceBackupV2ForService,
+  readWorkspaceBackupV2EntryForService,
   workspaceBackupV2NativeDiagnostic,
-  type WorkspaceBackupV2ArchiveIndex
+  type WorkspaceBackupV2ReadPayload
 } from "./workspace-backup-v2.js";
 
 const ARTIFACT_VERSION = 1;
@@ -150,8 +150,7 @@ export type WorkspaceBackupDownload = {
 
 type WorkspaceBackupV2Payload = {
   filePath: string;
-  index: WorkspaceBackupV2ArchiveIndex;
-};
+} & WorkspaceBackupV2ReadPayload;
 
 type WorkspaceBackupPayload = {
   raw: Buffer | null;
@@ -566,7 +565,7 @@ async function writeRestoreReceipt(filePath: string, value: Record<string, unkno
   await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   const handle = await fs.open(temporary, "r+");
   try {
-    await handle.sync();
+    if (process.platform !== "win32") await handle.sync();
   } finally {
     await handle.close();
   }
@@ -581,6 +580,7 @@ async function workspaceTreeSha256(rootPath: string) {
 }
 
 async function syncDirectory(directoryPath: string) {
+  if (process.platform === "win32") return;
   const handle = await fs.open(directoryPath, "r");
   try {
     await handle.sync();
@@ -588,7 +588,6 @@ async function syncDirectory(directoryPath: string) {
     await handle.close();
   }
 }
-
 function restoreRecoveryRequired(message: string, receipt: WorkspaceRestoreReceipt, cause?: unknown) {
   const detail = cause instanceof Error ? cause.message : cause ? String(cause) : undefined;
   return new WorkspaceRestoreRecoveryRequiredError(receipt, "rollback_failed", `${message}${detail ? `: ${detail}` : ""}`);
@@ -1205,11 +1204,8 @@ export function workspaceBackupService(db: Db) {
     }
     if (path.extname(row.artifactRef).toLowerCase() === ".zip") {
       try {
-        const index = await inspectWorkspaceBackupV2File(row.artifactRef);
-        if (row.archiveSha256 && await sha256File(row.artifactRef) !== row.archiveSha256) {
-          throw new Error("Workspace backup artifact checksum does not match the recorded backup metadata");
-        }
-        const manifest = index.manifest;
+        const inspected = await inspectWorkspaceBackupV2ForService(row.artifactRef, row.orgId, row.archiveSha256);
+        const manifest = inspected.manifest;
         const artifact: WorkspaceBackupArtifact = {
           version: ARTIFACT_VERSION,
           orgId: manifest.identity.orgId,
@@ -1222,8 +1218,7 @@ export function workspaceBackupService(db: Db) {
           })),
           warnings: manifest.warnings,
         };
-        if (artifact.orgId !== row.orgId) throw new Error("organization identity mismatch");
-        return { raw: null, artifact, v2: { filePath: row.artifactRef, index } };
+        return { raw: null, artifact, v2: { filePath: row.artifactRef, ...inspected } };
       } catch (error) {
         throw unprocessable(error instanceof Error ? `Workspace backup v2 artifact is invalid: ${error.message}` : "Workspace backup v2 artifact is invalid");
       }
@@ -1247,7 +1242,8 @@ export function workspaceBackupService(db: Db) {
     if (payload.v2) {
       const entries = await Promise.all(payload.artifact.entries.map(async (entry) => {
         if (entry.kind !== "file") return entry;
-        const data = await readWorkspaceBackupV2File(payload.v2!.filePath, payload.v2!.index, entry.path);
+        const data = await readWorkspaceBackupV2EntryForService(payload.v2!.filePath, payload.v2!.rootPath, entry.path);
+        if (entry.sha256 && sha256Buffer(data) !== entry.sha256) throw new Error(`Workspace backup checksum mismatch: ${entry.path}`);
         return { ...entry, dataBase64: data.toString("base64") };
       }));
       return { ...payload.artifact, entries };
@@ -1613,9 +1609,10 @@ export function workspaceBackupService(db: Db) {
       const file = findArtifactFile(artifact, normalizedPath);
       if (!file) throw notFound("File not found inside the workspace backup");
       const buffer = payload.v2
-        ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, normalizedPath)
+        ? await readWorkspaceBackupV2EntryForService(payload.v2.filePath, payload.v2.rootPath, normalizedPath)
         : file.dataBase64 ? Buffer.from(file.dataBase64, "base64") : null;
       if (!buffer) throw notFound("File not found inside the workspace backup");
+      if (file.sha256 && sha256Buffer(buffer) !== file.sha256) throw unprocessable(`Workspace backup checksum mismatch: ${normalizedPath}`);
       if (isBinaryBuffer(buffer)) {
         return {
           source: "org_root",
@@ -1661,7 +1658,7 @@ export function workspaceBackupService(db: Db) {
           artifactRef: row.artifactRef,
           filename: `${path.basename(row.artifactRef, path.extname(row.artifactRef))}.zip`,
           contentType: "application/zip",
-          byteSize: payload.v2.index.archiveSize,
+          byteSize: payload.v2.archiveSize,
           archiveSha256: row.archiveSha256,
           contentStream: createReadStream(row.artifactRef),
         };
@@ -1928,7 +1925,7 @@ export function workspaceBackupService(db: Db) {
           const { resolvedTarget } = resolveWithinRoot(stagingRoot, entry.path);
           await fs.mkdir(path.dirname(resolvedTarget), { recursive: true });
           const data = payload.v2
-            ? await readWorkspaceBackupV2File(payload.v2.filePath, payload.v2.index, entry.path)
+            ? await readWorkspaceBackupV2EntryForService(payload.v2.filePath, payload.v2.rootPath, entry.path)
             : Buffer.from(entry.dataBase64 ?? "", "base64");
           await fs.writeFile(resolvedTarget, data, { mode: entry.mode ?? 0o600 });
         }

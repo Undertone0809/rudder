@@ -5,6 +5,15 @@ import type { IdentityCredentialVault, IdentityDeviceCredential } from "./identi
 export const DESKTOP_IDENTITY_PRODUCTION_ORIGIN = "https://accounts.rudderhq.dev";
 const DESKTOP_PACKAGED_TEST_IDENTITY_MARKER = "rudder-packaged-test-identity-v1\n";
 
+export function isPackagedTestIdentityMarker(path: string | null | undefined): boolean {
+  if (!path) return false;
+  try {
+    return readFileSync(path, "utf8") === DESKTOP_PACKAGED_TEST_IDENTITY_MARKER;
+  } catch {
+    return false;
+  }
+}
+
 export const DESKTOP_IDENTITY_IPC_CHANNELS = {
   getState: "desktop:identity:get-state",
   signIn: "desktop:identity:sign-in",
@@ -99,15 +108,8 @@ export function resolveDesktopIdentityOrigin(options: {
   packagedTestMarkerPath?: string | null;
 }): string {
   const override = options.override?.trim();
-  let packagedTestArtifact = false;
-  if (options.isPackaged && options.packagedTestMarkerPath) {
-    try {
-      packagedTestArtifact = readFileSync(options.packagedTestMarkerPath, "utf8")
-        === DESKTOP_PACKAGED_TEST_IDENTITY_MARKER;
-    } catch {
-      packagedTestArtifact = false;
-    }
-  }
+  const packagedTestArtifact = options.isPackaged
+    && isPackagedTestIdentityMarker(options.packagedTestMarkerPath);
   if ((options.isPackaged && !packagedTestArtifact) || !override) {
     return DESKTOP_IDENTITY_PRODUCTION_ORIGIN;
   }
