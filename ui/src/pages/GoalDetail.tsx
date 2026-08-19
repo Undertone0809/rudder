@@ -20,8 +20,8 @@ import {
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity as ActivityIcon,
   ArrowRight,
-  BriefcaseBusiness,
   CalendarDays,
   Check,
   CircleDot,
@@ -31,7 +31,6 @@ import {
   FileCheck2,
   Focus,
   History,
-  ListTree,
   MessageSquare,
   MessageSquareText,
   MoreHorizontal,
@@ -161,11 +160,12 @@ type ChangeDecisionInput = {
   decision: "approve" | "reject";
 };
 
-const GOAL_DETAIL_TABS = ["conversation", "activity", "work", "evidence"] as const;
+const GOAL_DETAIL_TABS = ["conversation", "activity"] as const;
 type GoalDetailTab = (typeof GOAL_DETAIL_TABS)[number];
 
 function goalDetailTab(search: string): GoalDetailTab {
   const value = new URLSearchParams(search).get("tab");
+  if (value === "activity") return "activity";
   return GOAL_DETAIL_TABS.includes(value as GoalDetailTab) ? value as GoalDetailTab : "conversation";
 }
 
@@ -1172,11 +1172,6 @@ export function GoalDetail() {
     () => timeline.filter((entry) => entry.kind !== "feedback"),
     [timeline],
   );
-  const evidenceTimeline = useMemo(
-    () => timeline.filter((entry) => entry.evidence.length > 0 || entry.evidenceRefs.length > 0),
-    [timeline],
-  );
-
   useLayoutEffect(() => {
     const request = decisionFocusRequestRef.current;
     if (!request || workspaceQuery.isFetching) return;
@@ -1208,10 +1203,10 @@ export function GoalDetail() {
       ? attentionHeading
       : feedbackComposer?.isConnected
           ? feedbackComposer
-          : outcomeHeading?.isConnected
-            ? outcomeHeading
           : goalTitle?.isConnected
             ? goalTitle
+            : outcomeHeading?.isConnected
+              ? outcomeHeading
             : null;
     if (!target) return;
     if (target === feedbackComposer) focusFeedbackComposer();
@@ -1573,10 +1568,16 @@ export function GoalDetail() {
       {historyMutation.isError ? <p role="alert" className="mt-2 text-xs text-destructive">{historyMutation.error.message}</p> : null}
     </div>
   ) : null;
+  const diagnostics = debugMode ? (
+    <Section title="Goal diagnostics" icon={ShieldCheck}>
+      <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-words border border-border bg-muted/20 p-3 text-xs leading-5">{JSON.stringify(workspace, null, 2)}</pre>
+    </Section>
+  ) : null;
 
   return (
-    <div data-testid="goal-detail-workspace" className="mx-auto min-w-0 max-w-6xl pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
-      <header className="min-w-0 space-y-4 pb-5">
+    <div data-testid="goal-detail-workspace" className="issue-detail-container min-h-0 w-full min-w-0 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-8">
+      <div className="issue-detail-layout goal-detail-layout mx-auto max-w-6xl">
+      <header className="issue-detail-heading min-w-0 space-y-3">
         <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             {isDraft && titleEditing ? (
@@ -1691,7 +1692,10 @@ export function GoalDetail() {
           ) : null}
           {!isDraft && targetDate ? <span>due {formatDateOnly(targetDate)}</span> : null}
         </div>
-        {isDraft ? (
+      </header>
+
+      {isDraft ? (
+        <div className="issue-detail-body min-w-0 space-y-5">
           <InlineEditor
             value={goal.description ?? ""}
             onSave={(description) => updateGoal.mutateAsync({ description: markdownDocumentOrNull(description) })}
@@ -1707,84 +1711,70 @@ export function GoalDetail() {
               return asset.contentPath;
             }}
           />
-        ) : null}
-        {!isDraft ? <section aria-label="Goal progress" className="grid min-w-0 gap-4 border-y border-border py-4 sm:grid-cols-[minmax(0,1fr)_9rem_10rem]">
-          <div className="min-w-0 sm:pr-4">
-            <span className="text-xs text-muted-foreground">Latest progress</span>
-            <p className="mt-1 line-clamp-2 min-w-0 break-words text-sm leading-5">{workspace.currentProgress.summary}</p>
-          </div>
-          <div className="min-w-0 border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>Criteria verified</span>
-              {verifiedCriteriaPercent !== null ? <span className="tabular-nums">{verifiedCriteriaPercent}%</span> : null}
+          {diagnostics}
+        </div>
+      ) : (
+      <>
+        <main className="issue-detail-body min-w-0 space-y-5">
+          <MarkdownBody className="min-w-0 break-words text-[15px] leading-7 text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+            {goal.description ?? currentGoalSummary}
+          </MarkdownBody>
+
+          {!isDraft ? <section aria-label="Goal progress" className="grid min-w-0 gap-4 border-y border-border py-4 sm:grid-cols-[minmax(0,1fr)_9rem_10rem]">
+            <div className="min-w-0 sm:pr-4">
+              <span className="text-xs text-muted-foreground">Latest progress</span>
+              <p className="mt-1 line-clamp-2 min-w-0 break-words text-sm leading-5">{workspace.currentProgress.summary}</p>
             </div>
-            <strong className="mt-1 block text-sm font-semibold tabular-nums">{criteriaCount > 0 ? `${verifiedCriteriaCount} / ${criteriaCount}` : "Not defined"}</strong>
-            {verifiedCriteriaPercent !== null ? (
-              <div className="mt-2 h-1.5 overflow-hidden rounded-sm bg-muted" aria-label={`${verifiedCriteriaPercent}% of success criteria verified`}>
-                <div className="h-full bg-[color:var(--accent-base)] transition-[width]" style={{ width: `${verifiedCriteriaPercent}%` }} />
+            <div className="min-w-0 border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>Criteria verified</span>
+                {verifiedCriteriaPercent !== null ? <span className="tabular-nums">{verifiedCriteriaPercent}%</span> : null}
               </div>
-            ) : null}
-          </div>
-          <div className="min-w-0 border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-            <span className="text-xs text-muted-foreground">Next</span>
-            <strong className={cn("mt-1 block line-clamp-2 text-sm font-semibold", hasAttention && "text-amber-700 dark:text-amber-400")}>
-              {nextStatusLabel}
-            </strong>
-          </div>
-        </section> : null}
-        {!isDraft && !isClosed ? (
-          <section aria-label="Next Goal action" className={cn(
-            "flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3",
-            hasAttention ? "border-amber-500/35 bg-amber-500/5" : "border-border bg-muted/20",
-          )}>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">{nextActionHeading}</p>
-              <p className="mt-0.5 min-w-0 break-words text-xs leading-5 text-muted-foreground">
-                {hasAttention
-                  ? "Review the latest Goal update below."
-                  : waitingForAgentStart
-                    ? `${owner?.name ?? "The Owner Agent"} is ready to begin the next action.`
-                    : goal.focus
-                      ? `Rudder will keep this Goal eligible for ${owner?.name ?? "the Owner Agent"} and report new evidence here.`
-                      : "Send direction to the Owner Agent without leaving this Goal."}
-              </p>
+              <strong className="mt-1 block text-sm font-semibold tabular-nums">{criteriaCount > 0 ? `${verifiedCriteriaCount} / ${criteriaCount}` : "Not defined"}</strong>
+              {verifiedCriteriaPercent !== null ? (
+                <div className="mt-2 h-1.5 overflow-hidden rounded-sm bg-muted" aria-label={`${verifiedCriteriaPercent}% of success criteria verified`}>
+                  <div className="h-full bg-[color:var(--accent-base)] transition-[width]" style={{ width: `${verifiedCriteriaPercent}%` }} />
+                </div>
+              ) : null}
             </div>
-            {!goal.focus && !hasAttention ? (
-              <Button ref={focusButtonRef} type="button" size="sm" onClick={() => setFocus.mutate(true)} disabled={setFocus.isPending}>
-                <Sparkles className="h-4 w-4" />{setFocus.isPending && setFocus.variables === true ? "Starting..." : "Start Agent work"}
-              </Button>
-            ) : goal.focus && !hasAttention ? (
-              <Button ref={focusButtonRef} type="button" size="sm" variant="outline" onClick={() => setFocus.mutate(false)} disabled={setFocus.isPending}>
-                <Focus className="h-4 w-4" />{setFocus.isPending && setFocus.variables === false ? "Pausing..." : "Pause Agent work"}
-              </Button>
-            ) : null}
-          </section>
-        ) : null}
-      </header>
+            <div className="min-w-0 border-t border-border pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+              <span className="text-xs text-muted-foreground">Next</span>
+              <strong className={cn("mt-1 block line-clamp-2 text-sm font-semibold", hasAttention && "text-amber-700 dark:text-amber-400")}>
+                {nextStatusLabel}
+              </strong>
+            </div>
+          </section> : null}
 
-      {!isDraft ? <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 gap-0">
-        <TabsList className="grid h-auto w-full grid-cols-4 rounded-lg p-1 sm:flex sm:h-10 sm:w-fit" aria-label="Goal detail views">
-          <TabsTrigger value="conversation" className="min-w-0 rounded-md px-1 text-[11px] sm:min-w-fit sm:flex-none sm:px-3 sm:text-sm">
-            <MessageSquareText className="hidden h-4 w-4 sm:block" />Conversation
-            {conversationTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{conversationTimeline.length}</span> : null}
-          </TabsTrigger>
-          <TabsTrigger value="activity" className="min-w-0 rounded-md px-1 text-[11px] sm:min-w-fit sm:flex-none sm:px-3 sm:text-sm">
-            <ListTree className="hidden h-4 w-4 sm:block" />Activity
-            {activityTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{activityTimeline.length}</span> : null}
-          </TabsTrigger>
-          <TabsTrigger value="work" className="min-w-0 rounded-md px-1 text-[11px] sm:min-w-fit sm:flex-none sm:px-3 sm:text-sm">
-            <BriefcaseBusiness className="hidden h-4 w-4 sm:block" />Work
-            {linkedWorkCount > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{linkedWorkCount}</span> : null}
-          </TabsTrigger>
-          <TabsTrigger value="evidence" className="min-w-0 rounded-md px-1 text-[11px] sm:min-w-fit sm:flex-none sm:px-3 sm:text-sm">
-            <FileCheck2 className="hidden h-4 w-4 sm:block" />Evidence
-            {evidenceTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{evidenceTimeline.length}</span> : null}
-          </TabsTrigger>
-        </TabsList>
+          {!isDraft && !isClosed ? (
+            <section aria-label="Next Goal action" className={cn(
+              "flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3",
+              hasAttention ? "border-amber-500/35 bg-amber-500/5" : "border-border bg-muted/20",
+            )}>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{nextActionHeading}</p>
+                <p className="mt-0.5 min-w-0 break-words text-xs leading-5 text-muted-foreground">
+                  {hasAttention
+                    ? "Review the latest Goal update below."
+                    : waitingForAgentStart
+                      ? `${owner?.name ?? "The Owner Agent"} is ready to begin the next action.`
+                      : goal.focus
+                        ? `Rudder will keep this Goal eligible for ${owner?.name ?? "the Owner Agent"} and report new evidence here.`
+                        : "Send direction to the Owner Agent without leaving this Goal."}
+                </p>
+              </div>
+              {!goal.focus && !hasAttention ? (
+                <Button ref={focusButtonRef} type="button" size="sm" onClick={() => setFocus.mutate(true)} disabled={setFocus.isPending}>
+                  <Sparkles className="h-4 w-4" />{setFocus.isPending && setFocus.variables === true ? "Starting..." : "Start Agent work"}
+                </Button>
+              ) : goal.focus && !hasAttention ? (
+                <Button ref={focusButtonRef} type="button" size="sm" variant="outline" onClick={() => setFocus.mutate(false)} disabled={setFocus.isPending}>
+                  <Focus className="h-4 w-4" />{setFocus.isPending && setFocus.variables === false ? "Pausing..." : "Pause Agent work"}
+                </Button>
+              ) : null}
+            </section>
+          ) : null}
 
-      <div className="grid min-w-0 gap-6 pt-5 md:grid-cols-[minmax(0,1fr)_16rem] md:items-start">
-        <main className="order-1 min-w-0 space-y-5">
-          <TabsContent value="work" className="m-0 min-w-0 space-y-5">
+          <section aria-label="Goal overview" className="min-w-0 space-y-5">
           {isDraft ? (
             <Section title="Before work starts" icon={Target} headingRef={outcomeHeadingRef}>
               <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">
@@ -1825,33 +1815,28 @@ export function GoalDetail() {
                 </Section>
             </>
           )}
-          <Section title="Related work" icon={BriefcaseBusiness}>
-            <WorkLinks projects={linkedProjects} issues={linkedIssues} />
-          </Section>
-          </TabsContent>
+          </section>
 
-      <TabsContent value="conversation" className="m-0 min-w-0 space-y-5">
-      <section className="min-w-0" aria-labelledby="goal-opening-heading">
-        <div className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-2.5">
-          <div className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs font-semibold text-muted-foreground">
-            G
-          </div>
-          <article className="min-w-0 overflow-hidden rounded-md border border-border bg-background">
-            <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/25 px-3 py-2">
-              <span id="goal-opening-heading" className="text-xs font-medium">Description</span>
-              <span className="text-xs text-muted-foreground">Opened {formatDate(goal.createdAt)}</span>
-            </header>
-            <div className="min-w-0 space-y-3 px-3 py-3">
-              <p className="min-w-0 whitespace-pre-wrap break-words text-sm font-medium leading-6">{currentGoalSummary}</p>
-              {goal.description && goal.description.trim() !== currentGoalSummary.trim() ? (
-                <MarkdownBody className="min-w-0 break-words text-sm leading-6 text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                  {goal.description}
-                </MarkdownBody>
-              ) : null}
+      <section aria-label="Activity" className="min-w-0 space-y-3">
+        <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 space-y-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-2">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>Activity</span>
             </div>
-          </article>
-        </div>
-      </section>
+            <TabsList className="h-8 rounded-md p-0.5" aria-label="Goal activity views">
+              <TabsTrigger value="conversation" className="h-7 rounded px-2.5 text-xs">
+                <MessageSquareText className="h-3.5 w-3.5" />Conversation
+                {conversationTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{conversationTimeline.length}</span> : null}
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="h-7 rounded px-2.5 text-xs">
+                <ActivityIcon className="h-3.5 w-3.5" />Activity
+                {activityTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{activityTimeline.length}</span> : null}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="conversation" className="m-0 min-w-0 space-y-5">
 
       {!isClosed && !isDraft && hasAttention ? (
         <Section title="Action needed" icon={ShieldCheck} headingRef={attentionHeadingRef}>
@@ -2050,20 +2035,22 @@ export function GoalDetail() {
               : "This conversation is read-only because the Goal is closed."}
         </p>
       )}
-      </TabsContent>
+          </TabsContent>
 
-      <TabsContent value="activity" className="m-0 min-w-0 space-y-4">
-        <div className="flex min-w-0 items-end justify-between gap-3 border-b border-border pb-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">Activity</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{activityTimeline.length} recorded update{activityTimeline.length === 1 ? "" : "s"}</p>
-          </div>
-        </div>
-        {renderTimelineEntries(activityTimeline, { comments: false, emptyMessage: "No Goal activity yet." })}
-        {historyPagination}
-      </TabsContent>
+          <TabsContent value="activity" className="m-0 min-w-0 space-y-4">
+            <div className="flex min-w-0 items-end justify-between gap-3 border-b border-border pb-3">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold">Goal activity</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{activityTimeline.length} recorded update{activityTimeline.length === 1 ? "" : "s"}</p>
+              </div>
+            </div>
+            {renderTimelineEntries(activityTimeline, { comments: false, emptyMessage: "No Goal activity yet." })}
+            {historyPagination}
+          </TabsContent>
+        </Tabs>
+      </section>
 
-      <TabsContent value="evidence" className="m-0 min-w-0 space-y-5">
+      <section aria-label="Goal evidence" className="min-w-0 space-y-5">
         {isClosed ? (
           <Section title="Result accepted" icon={FileCheck2}>
             {acceptedProposal ? (
@@ -2121,17 +2108,14 @@ export function GoalDetail() {
             </div>
           </Section>
         ) : null}
-        <Section title="Evidence updates" icon={History}>
-          {renderTimelineEntries(evidenceTimeline, { comments: false, emptyMessage: "No evidence updates yet." })}
-          {historyPagination}
-        </Section>
-      </TabsContent>
+      </section>
+      {diagnostics}
 
         </main>
 
-        <aside className="contents md:order-2 md:block md:min-w-0 md:sticky md:top-4" aria-label="Goal properties">
-          <section className="order-2 min-w-0 rounded-lg border border-border bg-background/80 p-4">
-            <h2 className="text-sm font-semibold">Properties</h2>
+        <aside className="issue-detail-rail min-w-0" aria-label="Goal properties">
+          <section className="issue-detail-properties-panel min-w-0 rounded-lg border border-border bg-background/80 p-3">
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Properties</h2>
             <div className="mt-3">
               {isClosed ? (
                 <PropertyRow label="Owner" align="start">
@@ -2304,14 +2288,9 @@ export function GoalDetail() {
             </div>
           </section>
         </aside>
+      </>
+      )}
       </div>
-      </Tabs> : null}
-
-      {debugMode ? (
-        <Section title="Goal diagnostics" icon={ShieldCheck}>
-          <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-words border border-border bg-muted/20 p-3 text-xs leading-5">{JSON.stringify(workspace, null, 2)}</pre>
-        </Section>
-      ) : null}
     </div>
   );
 }

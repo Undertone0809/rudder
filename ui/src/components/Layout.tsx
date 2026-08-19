@@ -1804,6 +1804,13 @@ export function Layout() {
           )}
         </div>
       </div>
+      {isMobile ? (
+        <ChatSidePanel
+          contextReady={sidePanelContextReady}
+          selectedOrganizationId={sidePanelOrganizationId}
+          expanded={false}
+        />
+      ) : null}
       {isMobile && !location.pathname.includes("/hub/plugins/") && !location.pathname.startsWith("/plugins/catalog/") && <MobileBottomNav visible={mobileNavVisible} />}
       <CommandPalette />
       <NewIssueDialog />
