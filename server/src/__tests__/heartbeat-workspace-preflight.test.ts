@@ -22,7 +22,7 @@ import {
   projectResourceAttachments,
   projects,
 } from "@rudderhq/db";
-import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
@@ -1953,7 +1953,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(capture.prompt).toContain("| `RD-421` | `in_review` | assignee |");
     expect(capture.prompt).toContain("Agent startup memory context | Define bounded startup context for agent runs.");
     expect(capture.prompt).toContain("| Chat | Last active | Title | Summary |");
-    expect(capture.prompt).toContain(`| \`${chatId}\` |`);
+    expect(capture.prompt).toContain(`| \`${shortRefFor("chat", chatId)}\` |`);
     expect(capture.prompt).toContain("Agent run startup memory | 默认装载今天和昨天的 memory md");
     expect(capture.prompt).not.toContain("recent runs");
     expect(capture.prompt).not.toContain("# Rudder Heartbeat Instruction");
@@ -1970,7 +1970,7 @@ describe("heartbeat managed workspace preflight", () => {
           expect.objectContaining({ kind: "memory", ref: `memory/${todayKey}.md` }),
           expect.objectContaining({ kind: "memory", ref: `memory/${yesterdayKey}.md` }),
           expect.objectContaining({ kind: "issue", ref: "RD-421" }),
-          expect.objectContaining({ kind: "chat", ref: chatId }),
+          expect.objectContaining({ kind: "chat", ref: shortRefFor("chat", chatId) }),
         ]),
       },
     });

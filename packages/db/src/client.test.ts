@@ -946,6 +946,7 @@ describe("applyPendingMigrations", () => {
           "0153_goal_result_ready_unique.sql",
           "0154_goal_owner_runtime_overrides.sql",
           "0155_project_resource_primary.sql",
+          "0156_goal_checkpoints.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1122,6 +1123,7 @@ describe("applyPendingMigrations", () => {
           "0153_goal_result_ready_unique.sql",
           "0154_goal_owner_runtime_overrides.sql",
           "0155_project_resource_primary.sql",
+          "0156_goal_checkpoints.sql",
         ],
         reason: "pending-migrations",
       });
