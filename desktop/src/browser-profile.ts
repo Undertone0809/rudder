@@ -75,6 +75,20 @@ function normalizeNetworkEndpoint(value: string): BrowserNetworkEndpoint | null 
   }
 }
 
+function isLoopbackIpv4Hostname(hostname: string): boolean {
+  const octets = hostname.split(".");
+  return octets.length === 4
+    && octets[0] === "127"
+    && octets.slice(1).every((octet) => /^(?:0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255);
+}
+
+function isLoopbackIpv4MappedHostname(hostname: string): boolean {
+  const match = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(hostname);
+  if (!match) return false;
+  const high = Number.parseInt(match[1]!, 16);
+  return (high >> 8) === 0x7f;
+}
+
 function isLoopbackOrUnspecifiedHostname(hostname: string): boolean {
   return hostname === "localhost"
     || hostname.endsWith(".localhost")
@@ -82,8 +96,26 @@ function isLoopbackOrUnspecifiedHostname(hostname: string): boolean {
     || hostname === "::"
     || hostname === "::1"
     || hostname === "::ffff:0:0"
-    || /^127\./.test(hostname)
-    || /^::ffff:7f[0-9a-f]{2}:/.test(hostname);
+    || isLoopbackIpv4Hostname(hostname)
+    || isLoopbackIpv4MappedHostname(hostname);
+}
+
+function isUnspecifiedHostname(hostname: string): boolean {
+  return hostname === "0.0.0.0"
+    || hostname === "::"
+    || hostname === "::ffff:0:0";
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost"
+    || hostname.endsWith(".localhost")
+    || hostname === "::1"
+    || isLoopbackIpv4Hostname(hostname)
+    || isLoopbackIpv4MappedHostname(hostname);
+}
+
+function isLoopbackLikeHostname(hostname: string): boolean {
+  return hostname.startsWith("127.") || hostname.startsWith("::ffff:");
 }
 
 export function isBlockedRudderAppUrl(target: string, rudderAppOrigins: string[]): boolean {
@@ -110,6 +142,20 @@ export function isAllowedBrowserNavigationUrl(target: string, rudderAppOrigins: 
   } catch {
     return false;
   }
+}
+
+export function isAllowedAgentBrowserNavigationUrl(target: string, rudderAppOrigins: string[]): boolean {
+  try {
+    const parsed = new URL(target);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  } catch {
+    return false;
+  }
+  const targetEndpoint = normalizeNetworkEndpoint(target);
+  if (!targetEndpoint || isUnspecifiedHostname(targetEndpoint.hostname)) return false;
+  if (isLoopbackLikeHostname(targetEndpoint.hostname) && !isLoopbackHostname(targetEndpoint.hostname)) return false;
+  if (isLoopbackHostname(targetEndpoint.hostname)) return true;
+  return !isBlockedRudderAppUrl(target, rudderAppOrigins);
 }
 
 export function isLocalAbsoluteFileUrl(target: string): boolean {

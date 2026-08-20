@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserAdvancedAction } from "./browser-agent-advanced.js";
-import { isAllowedBrowserNavigationUrl } from "./browser-profile.js";
+import { isAllowedAgentBrowserNavigationUrl } from "./browser-profile.js";
 
 export const BROWSER_AGENT_ACTIONS = [
   "tabs",
@@ -226,7 +226,7 @@ export function createBrowserAgentTabCapacity(options: {
 }
 
 function safeWebUrl(url: string, rudderAppOrigins: string[]): string {
-  if (!isAllowedBrowserNavigationUrl(url, rudderAppOrigins)) {
+  if (!isAllowedAgentBrowserNavigationUrl(url, rudderAppOrigins)) {
     throw new BrowserAgentError("browser_unsafe_url", "Browser navigation requires an approved HTTP or HTTPS URL.");
   }
   return url;

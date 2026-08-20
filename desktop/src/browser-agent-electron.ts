@@ -1,6 +1,6 @@
 import { createBrowserAdvancedDriver } from "./browser-agent-advanced.js";
 import type { BrowserAgentTabFactory } from "./browser-agent-tabs.js";
-import { isAllowedBrowserNavigationUrl } from "./browser-profile.js";
+import { isAllowedAgentBrowserNavigationUrl } from "./browser-profile.js";
 
 type PreventableEvent = {
   preventDefault(): void;
@@ -165,7 +165,7 @@ export function createElectronBrowserAgentTabFactory(options: {
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
 
     const preventUnsafeNavigation = (event: PreventableEvent, targetUrl: string | undefined) => {
-      if (!targetUrl || !isAllowedBrowserNavigationUrl(targetUrl, options.getRudderAppOrigins())) {
+      if (!targetUrl || !isAllowedAgentBrowserNavigationUrl(targetUrl, options.getRudderAppOrigins())) {
         event.preventDefault();
       }
     };

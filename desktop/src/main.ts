@@ -1413,6 +1413,7 @@ function initializeBrowserProfile(instanceRoot: string): void {
   const browserSession = session.fromPartition(partition);
   installBrowserSessionPolicy(browserSession, {
     getRudderAppOrigins: collectRudderAppOrigins,
+    isAgentWebContents: browserGuestRegistry.isAgentWebContents,
   });
   const controller = createBrowserProfileController({
     partition,

@@ -795,10 +795,10 @@ describe("Browser Agent advanced driver", () => {
     await driver.dispose();
   });
 
-  it("blocks unsafe asset URLs and redirected Rudder app targets before bytes are persisted", async () => {
+  it("blocks unsafe asset URLs but permits redirected loopback targets before bytes are persisted", async () => {
     const harness = createHarness();
     const hero = document.querySelector("img.hero") as HTMLImageElement;
-    hero.src = "http://127.0.0.1:3100/api/private";
+    hero.src = "http://0.0.0.0:3100/api/private";
     const driver = await createBrowserAdvancedDriver({
       window: harness.windowStub,
       getRudderAppOrigins: () => ["http://127.0.0.1:3100"],
@@ -829,10 +829,14 @@ describe("Browser Agent advanced driver", () => {
       inventoryId: redirectInventory.id,
       assetIds: [redirectInventory.assets[0].id],
     }) as any;
-    expect(redirectBundle.failures[0]?.reason).toMatch(/redirect target is unsafe/i);
+    expect(redirectBundle.summary).toMatchObject({ downloadedCount: 1, failedCount: 0, totalBytes: 11 });
     expect(cancel).toHaveBeenCalledOnce();
     expect(harness.fetch).toHaveBeenCalledWith(
       "https://example.com/hero.png",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+    expect(harness.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3100/api/private",
       expect.objectContaining({ redirect: "manual" }),
     );
     await driver.dispose();

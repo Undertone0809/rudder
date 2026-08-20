@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createBrowserProfileController,
   deriveBrowserPartition,
+  isAllowedAgentBrowserNavigationUrl,
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
   isAllowedOperatorBrowserNavigationUrl,
@@ -85,6 +86,25 @@ describe("Rudder Browser URL policy", () => {
     expect(isAllowedBrowserNavigationUrl("file:///Users/example/report.html", rudderAppOrigins)).toBe(false);
     expect(isAllowedBrowserNavigationUrl("http://127.0.0.1:3100/api/orgs", rudderAppOrigins)).toBe(false);
     expect(isAllowedBrowserNavigationUrl("https://rudder.internal/settings", rudderAppOrigins)).toBe(false);
+  });
+
+  it("allows Agent Browser loopback HTTP(S) targets for local debugging", () => {
+    expect(isAllowedAgentBrowserNavigationUrl(
+      "http://localhost:3200/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content",
+      rudderAppOrigins,
+    )).toBe(true);
+    expect(isAllowedAgentBrowserNavigationUrl("http://127.0.0.2:43123/debug", rudderAppOrigins)).toBe(true);
+    expect(isAllowedAgentBrowserNavigationUrl("http://127.1:43123/debug", rudderAppOrigins)).toBe(true);
+    expect(isAllowedAgentBrowserNavigationUrl("https://[::1]:9443/debug", rudderAppOrigins)).toBe(true);
+    expect(isAllowedAgentBrowserNavigationUrl("https://[::ffff:127.0.0.1]:9443/debug", rudderAppOrigins)).toBe(true);
+    expect(isAllowedAgentBrowserNavigationUrl("http://127.evil.example:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://0.0.0.0:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://[::]:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://[::ffff:0:0]:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("ws://localhost:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("wss://example.com/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("https://rudder.internal/settings", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("file:///tmp/debug.html", rudderAppOrigins)).toBe(false);
   });
 
   it("allows operator-entered local file URLs without broadening Agent Browser navigation", () => {

@@ -109,6 +109,7 @@ describe("Rudder Browser session policy", () => {
 
     installBrowserSessionPolicy(browserSession, {
       getRudderAppOrigins: () => ["http://127.0.0.1:3100"],
+      isAgentWebContents: (webContentsId) => webContentsId === 42,
     });
 
     expect(permissionCheckHandler?.()).toBe(false);
@@ -126,6 +127,12 @@ describe("Rudder Browser session policy", () => {
     const blockedRequest = vi.fn();
     requestHandler?.({ url: "http://localhost:3100/api/orgs", resourceType: "mainFrame" }, blockedRequest);
     await vi.waitFor(() => expect(blockedRequest).toHaveBeenCalledWith({ cancel: true }));
+    const allowedAgentRequest = vi.fn();
+    requestHandler?.({ url: "http://localhost:3100/api/assets/asset-1/content", resourceType: "mainFrame", webContentsId: 42 }, allowedAgentRequest);
+    await vi.waitFor(() => expect(allowedAgentRequest).toHaveBeenCalledWith({ cancel: false }));
+    const blockedAgentUnspecifiedRequest = vi.fn();
+    requestHandler?.({ url: "http://0.0.0.0:3100/api/assets/asset-1/content", resourceType: "mainFrame", webContentsId: 42 }, blockedAgentUnspecifiedRequest);
+    await vi.waitFor(() => expect(blockedAgentUnspecifiedRequest).toHaveBeenCalledWith({ cancel: true }));
     const blockedWebSocket = vi.fn();
     requestHandler?.({ url: "ws://[::1]:3100/socket", resourceType: "webSocket" }, blockedWebSocket);
     await vi.waitFor(() => expect(blockedWebSocket).toHaveBeenCalledWith({ cancel: true }));

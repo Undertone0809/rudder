@@ -170,12 +170,12 @@ describe("Electron Browser Agent tab adapter", () => {
     const safeEvent = { preventDefault: vi.fn() };
 
     handlers.get("will-navigate")?.(unsafeEvent, "file:///tmp/private.txt");
-    handlers.get("will-redirect")?.(unsafeEvent, "http://127.0.0.1:3100/api/orgs");
+    handlers.get("will-redirect")?.(safeEvent, "http://127.0.0.1:3100/api/orgs");
     handlers.get("will-frame-navigate")?.({ ...unsafeEvent, url: "javascript:alert(1)" });
     handlers.get("will-frame-navigate")?.(safeEvent, "https://example.com/frame");
     handlers.get("will-navigate")?.(safeEvent, "https://example.com/next");
 
-    expect(unsafeEvent.preventDefault).toHaveBeenCalledTimes(3);
+    expect(unsafeEvent.preventDefault).toHaveBeenCalledTimes(2);
     expect(safeEvent.preventDefault).not.toHaveBeenCalled();
   });
 

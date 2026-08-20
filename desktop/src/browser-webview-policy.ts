@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { handleAgentBrowserDownload } from "./browser-agent-downloads.js";
 import {
+  isAllowedAgentBrowserNavigationUrl,
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
   isBlockedRudderAppUrl,
@@ -30,7 +31,7 @@ type BrowserSessionPolicyTarget = {
     onBeforeRequest(
       filter: { urls: string[] },
       handler: (
-        details: { url: string; resourceType?: string },
+        details: { url: string; resourceType?: string; webContentsId?: number },
         callback: (response: { cancel: boolean }) => void,
       ) => void,
     ): void;
@@ -108,6 +109,7 @@ function isAllowedMainFrameRequestUrl(target: string): boolean {
 
 export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicyTarget, options: {
   getRudderAppOrigins(): string[];
+  isAgentWebContents?(webContentsId: number): boolean;
 }): void {
   browserSession.setPermissionCheckHandler(denyBrowserPermissionCheck);
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback: (granted: boolean) => void) => {
@@ -125,8 +127,13 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
       callback({ cancel: true });
       return;
     }
+    const rudderAppOrigins = options.getRudderAppOrigins();
+    const isAgentRequest = typeof details.webContentsId === "number"
+      && options.isAgentWebContents?.(details.webContentsId) === true;
+    const allowAgentRudderRequest = isAgentRequest
+      && isAllowedAgentBrowserNavigationUrl(details.url, rudderAppOrigins);
     callback({
-      cancel: isBlockedRudderAppUrl(details.url, options.getRudderAppOrigins()),
+      cancel: isBlockedRudderAppUrl(details.url, rudderAppOrigins) && !allowAgentRudderRequest,
     });
   });
 }
@@ -162,6 +169,7 @@ export function createBrowserGuestRegistry(): {
   register(guest: BrowserGuest, source?: "agent" | "user"): void;
   listUserTabs(): Array<{ id: string; title?: string; url?: string }>;
   count(source?: "agent" | "user"): number;
+  isAgentWebContents(webContentsId: number): boolean;
   closeAll(source?: "agent" | "user"): Promise<void>;
 } {
   const guests = new Map<BrowserGuest, { id: string; source: "agent" | "user" }>();
@@ -190,6 +198,11 @@ export function createBrowserGuestRegistry(): {
     .filter((record) => source === undefined || record.source === source)
     .length;
 
+  const isAgentWebContents = (webContentsId: number): boolean => Array.from(guests.entries())
+    .some(([guest, record]) => record.source === "agent"
+      && guest.id === webContentsId
+      && !guest.isDestroyed());
+
   const closeAll = async (source?: "agent" | "user"): Promise<void> => {
     let firstError: unknown = null;
     for (const [guest, record] of Array.from(guests.entries())) {
@@ -208,7 +221,7 @@ export function createBrowserGuestRegistry(): {
     if (firstError) throw firstError;
   };
 
-  return { register, listUserTabs, count, closeAll };
+  return { register, listUserTabs, count, isAgentWebContents, closeAll };
 }
 
 export function installBrowserWebviewPolicy(hostContents: BrowserWebviewHost, options: {

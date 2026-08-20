@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { cancelAgentBrowserDownload } from "./browser-agent-downloads.js";
-import { isAllowedBrowserNavigationUrl } from "./browser-profile.js";
+import { isAllowedAgentBrowserNavigationUrl } from "./browser-profile.js";
 
 type DebuggerMessageListener = (
   event: unknown,
@@ -1258,7 +1258,7 @@ export async function createBrowserAdvancedDriver(options: {
   ) => {
     if (disposed) throw new Error("Browser tab was closed.");
     const rudderAppOrigins = options.getRudderAppOrigins?.() ?? [];
-    if (!isAllowedBrowserNavigationUrl(url, rudderAppOrigins)) {
+    if (!isAllowedAgentBrowserNavigationUrl(url, rudderAppOrigins)) {
       throw new Error("Browser asset URL is unsafe.");
     }
     const controller = new AbortController();
@@ -1288,7 +1288,7 @@ export async function createBrowserAdvancedDriver(options: {
           } catch {
             redirectUrl = "";
           }
-          if (!redirectUrl || !isAllowedBrowserNavigationUrl(redirectUrl, rudderAppOrigins)) {
+          if (!redirectUrl || !isAllowedAgentBrowserNavigationUrl(redirectUrl, rudderAppOrigins)) {
             return await rejectResponse(response, "Browser asset redirect target is unsafe.");
           }
           if (redirectCount >= 10) {
@@ -1301,7 +1301,7 @@ export async function createBrowserAdvancedDriver(options: {
         break;
       }
       const finalUrl = response.url || requestUrl;
-      if (!isAllowedBrowserNavigationUrl(finalUrl, rudderAppOrigins)) {
+      if (!isAllowedAgentBrowserNavigationUrl(finalUrl, rudderAppOrigins)) {
         return await rejectResponse(response, "Browser asset redirect target is unsafe.");
       }
       if (!response.ok) {

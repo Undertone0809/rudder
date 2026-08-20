@@ -480,12 +480,24 @@ describe("Browser Agent tab controller", () => {
       action: "open",
       args: { url: "file:///tmp/private.txt" },
     })).rejects.toMatchObject({ code: "browser_unsafe_url" });
+    expect(tabs).toHaveLength(0);
+  });
+
+  it("allows loopback HTTP(S) targets for local debugging", async () => {
+    const { controller, tabs } = createHarness();
+    const debugUrl = "http://localhost:3200/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content";
+
     await expect(controller.execute({
       identity: owner,
       action: "open",
-      args: { url: "http://localhost:3100/api/orgs" },
-    })).rejects.toMatchObject({ code: "browser_unsafe_url" });
-    expect(tabs).toHaveLength(0);
+      args: { url: debugUrl },
+    })).resolves.toMatchObject({ tabId: "tab-1", url: debugUrl });
+    await expect(controller.execute({
+      identity: owner,
+      action: "navigate",
+      args: { tabId: "tab-1", url: "http://127.0.0.1:43123/debug" },
+    })).resolves.toMatchObject({ tabId: "tab-1", url: "http://127.0.0.1:43123/debug" });
+    expect(tabs).toHaveLength(1);
   });
 
   it("uses bounded ref-based scripts for read, click, and type", async () => {

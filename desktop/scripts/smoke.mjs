@@ -1274,6 +1274,31 @@ async function createCompany(baseUrl, issuePrefix = "DES") {
   return await response.json();
 }
 
+async function createSmokeDebugAsset(baseUrl, companyId) {
+  const form = new FormData();
+  form.append("namespace", "desktop-smoke");
+  form.append(
+    "file",
+    new Blob([
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    ], { type: "image/png" }),
+    "agent-browser-debug.png",
+  );
+  const response = await fetch(`${baseUrl}/api/orgs/${companyId}/assets/images`, {
+    method: "POST",
+    body: form,
+  });
+  if (response.status !== 201) {
+    throw new Error(`create Agent Browser debug asset failed (${response.status}): ${await response.text()}`);
+  }
+  const asset = await response.json();
+  assert.match(asset.contentPath, /^\/api\/assets\/[^/]+\/content$/);
+  return asset;
+}
+
 async function verifyBundledSkills(baseUrl, companyId) {
   console.log("[desktop-smoke] verifying bundled organization skills");
   const [response, healthResponse] = await Promise.all([
@@ -1955,6 +1980,7 @@ function findBrowserSnapshotNode(root, predicate) {
 async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, company, agent, packagedRuntime = null) {
   console.log("[desktop-smoke] verifying complete Agent Browser MCP parity workflow");
   const fixture = await startBrowserSmokeFixture();
+  const debugAsset = await createSmokeDebugAsset(baseUrl, company.id);
   const postgres = await loadPostgres();
   const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
   const observeAgentBrowserDialog = (windowPage) => {
@@ -2021,6 +2047,22 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         ["browser_invalid_argument", "browser_unsafe_url"].includes(rejectedFileOpen.result?.structuredContent?.code),
         "Agent Browser must classify local file URLs as invalid or unsafe",
       );
+
+      const localRudderAssetOpen = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_open",
+        arguments: {
+          url: new URL(debugAsset.contentPath, baseUrl).href,
+        },
+      }), "rudder_browser_open local Rudder asset URL");
+      assert.equal(
+        typeof localRudderAssetOpen.tabId,
+        "string",
+        "Agent Browser should allow local Rudder asset URLs for debugging",
+      );
+      await mcp.request("tools/call", {
+        name: "rudder_browser_close",
+        arguments: { tabId: localRudderAssetOpen.tabId },
+      });
 
       const opened = readSmokeMcpToolResult(await mcp.request("tools/call", {
         name: "rudder_browser_open",
