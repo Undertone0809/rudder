@@ -6821,6 +6821,57 @@ describe("Chat streaming controls", () => {
     });
   });
 
+  it("clears Steer loading and shows a safe toast when the API rejects", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    const item = queuedMessage({ id: "queue-steer-api-error" });
+    mockState.queueSnapshot = queueSnapshot({ items: [item] });
+    mockState.steerQueuedMessage.mockRejectedValueOnce(
+      new ApiError("provider stack trace", 503, null),
+    );
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Steer");
+
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Could not send steer",
+      body: "Rudder could not process the request. Try again.",
+      tone: "error",
+    })));
+    expect(mockState.pushToast.mock.calls.flat().join(" ")).not.toContain("provider stack trace");
+    expect(container.textContent).not.toContain("Sending…");
+  });
+
+  it("stops retrying Steer after the transport retry budget is exhausted", async () => {
+    vi.useFakeTimers();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
+    };
+    const item = queuedMessage({ id: "queue-steer-retry-exhausted" });
+    mockState.queueSnapshot = queueSnapshot({ items: [item] });
+    mockState.steerQueuedMessage.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Steer");
+    for (const delay of [250, 500, 1_000, 2_000, 5_000]) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delay);
+      });
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.steerQueuedMessage).toHaveBeenCalledTimes(6);
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Could not send steer",
+      body: "Rudder could not be reached. Check your connection and try again.",
+      tone: "error",
+    }));
+    expect(container.textContent).not.toContain("Failed to fetch");
+  });
+
   it("offers Retry for a confirmed pre-delivery Steer failure without an active generation", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "user-message-1", body: "Please draft a plan." })],
@@ -7957,7 +8008,8 @@ describe("Chat ask_user panel", () => {
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Network failed before ack",
+      title: "Could not send message",
+      body: "Rudder could not be reached. Check your connection and try again.",
       tone: "error",
     }));
     const draft = readChatAskUserDraft("org-1", "ask-user-multi-1");
@@ -8113,7 +8165,8 @@ describe("Atomic new-chat drafts", () => {
     });
     await clickEnabledButtonByAriaLabel(container, "Send");
     await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-      body: "Runtime rejected the first turn",
+      title: "Could not send message",
+      body: "Rudder could not process the request. Try again.",
       tone: "error",
     })));
 
@@ -8177,8 +8230,8 @@ describe("Atomic new-chat drafts", () => {
       expect(editor?.value).toBe("Keep this existing-chat draft.");
       expect(container.textContent).toContain("recovery-context.txt");
       expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-        title: "Failed to send message",
-        body: "Source annotation was rejected",
+        title: "Could not send message",
+        body: "Check the message and try again.",
         tone: "error",
       }));
     });
@@ -8224,13 +8277,14 @@ describe("Atomic new-chat drafts", () => {
     await vi.waitFor(() => {
       expect(editor?.value).toBe("");
       expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
-        title: "The saved message could not be hydrated.",
+        title: "Could not send message",
+        body: "Something went wrong. Try again.",
         tone: "error",
       }));
     });
   });
 
-  it("commits the first-turn UI only after the acknowledgement", async () => {
+  it("shows the first-turn draft immediately and commits the accepted chat after acknowledgement", async () => {
     mockState.conversationId = null;
     mockState.conversations = [];
     mockState.messagesByChatId = {};
@@ -8261,7 +8315,11 @@ describe("Atomic new-chat drafts", () => {
     expect(mockState.createConversation).not.toHaveBeenCalled();
     expect(mockState.sendMessageStream).not.toHaveBeenCalled();
     expect(mockState.navigate).not.toHaveBeenCalled();
-    expect(editor?.value).toBe("Create exactly one accepted chat.");
+    expect(editor?.value).toBe("");
+    expect(container.querySelector("[data-testid='chat-pending-first-turn']")?.textContent)
+      .toContain("Create exactly one accepted chat.");
+    expect(container.querySelector("[data-testid='chat-pending-first-turn-status']")?.textContent)
+      .toContain("Sending message...");
 
     const acceptedConversation = chat({
       id: "atomic-chat-1",
@@ -8302,6 +8360,7 @@ describe("Atomic new-chat drafts", () => {
         state: "streaming",
       }),
     );
+    expect(container.querySelector("[data-testid='chat-pending-first-turn']")).toBeNull();
 
     mockState.setChatSendInFlight.mockClear();
     await act(async () => {

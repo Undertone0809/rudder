@@ -29,6 +29,7 @@ import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
+import { chatErrorMessage } from "@/lib/chat-errors";
 import {
   canSubmitChatResponseAnnotations,
   createChatResponseAnnotationState,
@@ -486,6 +487,7 @@ export function SideChatPanelView({
       chatId: generation.conversationId,
       streamKey,
       userBody: body,
+      userFiles: regularFiles,
       userCreatedAt: createdAt,
       userMessageId: retryUserMessageId,
       chatTurnId: retrySourceDraft?.chatTurnId ?? null,
@@ -657,7 +659,7 @@ export function SideChatPanelView({
         streamScopeKey,
         (current) => current?.streamKey === streamKey ? { ...current, state: "failed" } : current,
       );
-      setSendError(error instanceof Error ? error.message : "Could not send this message.");
+      setSendError(chatErrorMessage(error, "side-chat"));
     } finally {
       if (isChatGenerationCurrent(streamScopeKey, generationEpoch)) {
         setStreamAbortController(streamScopeKey, null);
@@ -829,6 +831,7 @@ export function SideChatPanelView({
                 {showOptimisticUserMessage ? (
                   <OptimisticUserDraftItem
                     body={displayedStream.userBody}
+                    files={displayedStream.userFiles}
                     createdAt={displayedStream.userCreatedAt}
                     onCopyMessageText={(text) => navigator.clipboard?.writeText(text)}
                     onEditDraftOnly={setDraft}

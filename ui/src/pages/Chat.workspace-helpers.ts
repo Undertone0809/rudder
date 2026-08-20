@@ -15,6 +15,7 @@ export type PendingChatSteerRetry = {
   request: ChatSteerQueuedMessageRequest;
   retryCount: number;
   timer: ReturnType<typeof setTimeout> | null;
+  lastError?: unknown;
 };
 type ChatStreamProgressEvent = Extract<
   ChatStreamEvent,

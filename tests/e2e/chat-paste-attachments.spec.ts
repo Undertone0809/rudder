@@ -447,6 +447,81 @@ test("pastes clipboard images and files into chat as pending attachments and exp
   }
 });
 
+test("keeps image attachments in the optimistic bubble while message acknowledgement is delayed", async ({ page }) => {
+  const { tempDir, stubPath } = await createAttachmentAwareCodexStub();
+  let releaseStreamResponse: (() => void) | null = null;
+  const streamResponseGate = new Promise<void>((resolve) => {
+    releaseStreamResponse = resolve;
+  });
+  let streamRouteReached = false;
+  try {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const organization = await createStreamingOrg(page, `Optimistic-Image-${Date.now()}`, {
+      model: "gpt-5.4",
+      command: stubPath,
+    });
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Optimistic image chat",
+        preferredAgentId: organization.chatAgent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: {
+          body: "Existing context for the screenshot review.",
+        },
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json() as { id: string };
+
+    await page.route("**/api/chats/*/messages/stream", async (route) => {
+      streamRouteReached = true;
+      await streamResponseGate;
+      await route.continue();
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Existing context for the screenshot review.", { exact: true })).toBeVisible();
+    await composer.fill("Review this screenshot before the reply arrives.");
+    await page.locator('input[type="file"]').first().setInputFiles({
+      name: "optimistic-screenshot.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+    await expect(page.getByTestId("chat-pending-image-attachment")).toBeVisible();
+
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect.poll(() => streamRouteReached).toBe(true);
+    const optimisticBubble = page.getByTestId("chat-user-message-bubble").last();
+    await expect(optimisticBubble).toContainText("Review this screenshot before the reply arrives.");
+    await expect(
+      optimisticBubble
+        .getByTestId("chat-optimistic-attachments")
+        .getByAltText("optimistic-screenshot.png"),
+    ).toBeVisible({ timeout: 5_000 });
+
+    releaseStreamResponse();
+    releaseStreamResponse = null;
+    await expect(
+      page.getByTestId("chat-user-message-bubble").last().getByTestId("chat-image-attachment"),
+    ).toBeVisible({ timeout: 15_000 });
+  } finally {
+    releaseStreamResponse?.();
+    await page.unroute("**/api/chats/*/messages/stream");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("keeps pending pasted attachments scoped to the active chat conversation", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1100 });
   const organization = await createStreamingOrg(page, `Paste-Scope-${Date.now()}`, {

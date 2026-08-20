@@ -89,6 +89,8 @@ Object.defineProperty(window, "matchMedia", {
 });
 
 let cleanupFn: (() => void) | null = null;
+let previousCreateObjectURL: typeof URL.createObjectURL | undefined;
+let previousRevokeObjectURL: typeof URL.revokeObjectURL | undefined;
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },
 });
@@ -96,6 +98,16 @@ const queryClient = new QueryClient({
 beforeEach(() => {
   issuesApiMock.get.mockRejectedValue(new Error("Issue detail is not configured for this test"));
   runTranscriptViewMock.mockClear();
+  previousCreateObjectURL = URL.createObjectURL;
+  previousRevokeObjectURL = URL.revokeObjectURL;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:chat-message-test"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -108,6 +120,22 @@ afterEach(() => {
   issuesApiMock.get.mockReset();
   queryClient.clear();
   document.body.innerHTML = "";
+  if (previousCreateObjectURL) {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: previousCreateObjectURL,
+    });
+  } else {
+    Reflect.deleteProperty(URL, "createObjectURL");
+  }
+  if (previousRevokeObjectURL) {
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: previousRevokeObjectURL,
+    });
+  } else {
+    Reflect.deleteProperty(URL, "revokeObjectURL");
+  }
 });
 
 function render(element: ReactNode) {
@@ -1196,5 +1224,27 @@ describe("OptimisticUserDraftItem", () => {
     expect(
       container.querySelector('button[aria-label="Edit draft"]'),
     ).not.toBeNull();
+  });
+
+  it("keeps image files visible in the optimistic user bubble before acknowledgement", () => {
+    const container = render(
+      <ThemeProvider>
+        <OptimisticUserDraftItem
+          body="Review this screenshot."
+          files={[new File(["image"], "evidence.png", { type: "image/png" })]}
+          createdAt={new Date("2026-07-28T08:00:00.000Z")}
+          onCopyMessageText={vi.fn()}
+          onEditDraftOnly={vi.fn()}
+          skillReferences={[]}
+        />
+      </ThemeProvider>,
+    );
+
+    const optimisticAttachments = container.querySelector('[data-testid="chat-optimistic-attachments"]');
+    expect(optimisticAttachments).not.toBeNull();
+    expect(optimisticAttachments?.querySelector('img[alt="evidence.png"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-user-message-bubble"]')?.textContent).toContain(
+      "Review this screenshot.",
+    );
   });
 });
