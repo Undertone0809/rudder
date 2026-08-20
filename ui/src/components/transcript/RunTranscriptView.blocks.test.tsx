@@ -2,7 +2,7 @@
 
 import type { ChatMessage } from "@rudderhq/shared";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
@@ -17,6 +17,8 @@ import {
   TranscriptMessageBlock,
   TranscriptRunAnnotationBlock,
 } from "./RunTranscriptView.blocks";
+import { TranscriptChatActionGroup } from "./RunTranscriptView.chat";
+import type { ChatTranscriptAction, TranscriptBlock } from "./RunTranscriptView.common";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 vi.mock("../../pages/Chat.attachments", () => ({
@@ -250,6 +252,307 @@ describe("CommandTerminalDetail", () => {
 });
 
 describe("TranscriptRunAnnotationBlock", () => {
+  it("shows a transition affordance for every stable visible transcript block type", () => {
+    const sourceId = (type: string) => [`source-${type}`];
+    const stableBlocks: TranscriptBlock[] = [
+      {
+        type: "message",
+        role: "assistant",
+        ts: "2026-07-23T12:00:00.000Z",
+        text: "Assistant prose",
+        streaming: false,
+        sourceEntryIds: sourceId("assistant"),
+      },
+      {
+        type: "message",
+        role: "user",
+        ts: "2026-07-23T12:00:01.000Z",
+        text: "User prose",
+        streaming: false,
+        sourceEntryIds: sourceId("user"),
+      },
+      {
+        type: "thinking",
+        ts: "2026-07-23T12:00:02.000Z",
+        text: "Reasoning",
+        streaming: false,
+        sourceEntryIds: sourceId("thinking"),
+      },
+      {
+        type: "tool",
+        ts: "2026-07-23T12:00:03.000Z",
+        name: "search",
+        input: { query: "transcript" },
+        result: "One result",
+        status: "completed",
+        sourceEntryIds: sourceId("tool"),
+      },
+      {
+        type: "command_group",
+        ts: "2026-07-23T12:00:04.000Z",
+        items: [{
+          ts: "2026-07-23T12:00:04.000Z",
+          name: "command_execution",
+          input: { command: "true" },
+          result: "done",
+          status: "completed",
+          sourceEntryIds: sourceId("command-group"),
+        }],
+        sourceEntryIds: sourceId("command-group"),
+      },
+      {
+        type: "activity",
+        ts: "2026-07-23T12:00:05.000Z",
+        name: "File change",
+        status: "completed",
+        sourceEntryIds: sourceId("activity"),
+      },
+      {
+        type: "todo_list",
+        ts: "2026-07-23T12:00:06.000Z",
+        items: [{ text: "Verify affordances", status: "completed" }],
+        sourceEntryIds: sourceId("todo"),
+      },
+      {
+        type: "stdout",
+        ts: "2026-07-23T12:00:07.000Z",
+        text: "Command output",
+        sourceEntryIds: sourceId("stdout"),
+      },
+      {
+        type: "memory_update",
+        ts: "2026-07-23T12:00:08.000Z",
+        status: "error",
+        agentName: "Noah",
+        scope: "daily_note",
+        changes: [],
+        summary: "Memory update",
+        effect: "The update failed",
+        rawText: "memory update failed",
+        sourceEntryIds: sourceId("memory"),
+      },
+      {
+        type: "event",
+        ts: "2026-07-23T12:00:09.000Z",
+        label: "system",
+        tone: "error",
+        text: "System status",
+        sourceEntryIds: sourceId("event"),
+      },
+    ];
+    const onAnnotate = vi.fn();
+    const container = render(
+      <>
+        {stableBlocks.map((block, index) => (
+          <TranscriptRunAnnotationBlock
+            key={`${block.type}-${index}`}
+            block={block}
+            presentation="detail"
+            context={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate }}
+          >
+            <span>{block.type} content</span>
+          </TranscriptRunAnnotationBlock>
+        ))}
+      </>,
+    );
+
+    const blockRoots = Array.from(container.querySelectorAll<HTMLElement>("[data-run-transcript-block='true']"));
+    expect(container.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(stableBlocks.length);
+    expect(blockRoots).toHaveLength(stableBlocks.length);
+    for (const blockRoot of blockRoots) {
+      expect(blockRoot.getAttribute("data-run-transcript-block-stable")).toBe("true");
+    }
+  });
+
+  it("keeps transition annotations bound to adjacent items with identical text", () => {
+    const onAnnotate = vi.fn();
+    const blocks = [
+      {
+        type: "event" as const,
+        ts: "2026-07-23T12:01:00.000Z",
+        label: "status",
+        tone: "info" as const,
+        text: "The same status text",
+        sourceEntryIds: ["status-a"],
+      },
+      {
+        type: "event" as const,
+        ts: "2026-07-23T12:01:01.000Z",
+        label: "status",
+        tone: "info" as const,
+        text: "The same status text",
+        sourceEntryIds: ["status-b"],
+      },
+    ];
+    const container = render(
+      <>
+        {blocks.map((block) => (
+          <TranscriptRunAnnotationBlock
+            key={block.sourceEntryIds[0]}
+            block={block}
+            presentation="detail"
+            context={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate }}
+          >
+            <span>{block.text}</span>
+          </TranscriptRunAnnotationBlock>
+        ))}
+      </>,
+    );
+
+    const triggers = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-run-transcript-annotation-trigger]"));
+    expect(triggers).toHaveLength(2);
+    for (const trigger of triggers) {
+      trigger.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
+      act(() => trigger.click());
+      act(() => {
+        Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+          .find((button) => button.textContent === "Save")
+          ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+
+    expect(onAnnotate.mock.calls.map(([input]) => ({
+      blockId: input.blockId,
+      sourceMemberIds: input.sourceMemberIds,
+      text: input.text,
+    }))).toEqual([
+      { blockId: "status-a", sourceMemberIds: ["status-a"], text: "status\n\nThe same status text" },
+      { blockId: "status-b", sourceMemberIds: ["status-b"], text: "status\n\nThe same status text" },
+    ]);
+  });
+
+  it("closes the previous editor when another transcript item receives focus", () => {
+    const onAnnotate = vi.fn();
+    function CoordinatedBlocks() {
+      const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
+      const context = {
+        sourceRunId: "run-1",
+        sourceAgentId: "agent-1",
+        activeBlockId,
+        onAnnotationFocus: setActiveBlockId,
+        onAnnotate,
+      };
+      return (
+        <>
+          {(["first", "second"] as const).map((id) => (
+            <TranscriptRunAnnotationBlock
+              key={id}
+              block={{
+                type: "event",
+                ts: `2026-07-23T12:01:0${id === "first" ? "0" : "1"}.000Z`,
+                label: "status",
+                tone: "info",
+                text: `${id} status`,
+                sourceEntryIds: [id],
+              }}
+              presentation="detail"
+              context={context}
+            >
+              <span>{id} content</span>
+            </TranscriptRunAnnotationBlock>
+          ))}
+        </>
+      );
+    }
+
+    const container = render(<CoordinatedBlocks />);
+    const triggers = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-run-transcript-annotation-trigger]"));
+    expect(triggers).toHaveLength(2);
+    triggers.forEach((trigger) => {
+      trigger.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
+    });
+
+    act(() => triggers[0]?.click());
+    expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(1);
+
+    act(() => triggers[1]?.focus());
+    expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(0);
+
+    act(() => triggers[1]?.click());
+    expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(1);
+    act(() => triggers[0]?.focus());
+    expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(0);
+  });
+
+  it("adds independent annotation wrappers to expanded action rows", () => {
+    const actions: ChatTranscriptAction[] = [
+      {
+        key: "tool-action-a",
+        type: "tool",
+        entry: {
+          ts: "2026-07-23T12:02:00.000Z",
+          name: "search",
+          input: { query: "same" },
+          result: "same result",
+          status: "completed",
+          sourceEntryIds: ["tool-a"],
+        },
+      },
+      {
+        key: "tool-action-b",
+        type: "tool",
+        entry: {
+          ts: "2026-07-23T12:02:01.000Z",
+          name: "search",
+          input: { query: "same" },
+          result: "same result",
+          status: "completed",
+          sourceEntryIds: ["tool-b"],
+        },
+      },
+    ];
+    const onAnnotate = vi.fn();
+    const container = render(
+      <TranscriptChatActionGroup
+        actions={actions}
+        density="comfortable"
+        detailVariant
+        groupIndex={0}
+        groupCount={1}
+        streaming={false}
+        runAnnotationContext={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate }}
+      />,
+    );
+
+    const summaryRoot = container.querySelector<HTMLElement>("[data-run-transcript-block-type='event']");
+    expect(summaryRoot?.dataset.runTranscriptBlockId).toBe("action-group:tool-action-a|tool-action-b");
+    expect(summaryRoot?.querySelector("[data-run-transcript-annotation-trigger]")).not.toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>("button[aria-expanded]")?.click());
+
+    const blockRoots = Array.from(container.querySelectorAll<HTMLElement>("[data-run-transcript-block-type='tool']"));
+    expect(blockRoots).toHaveLength(2);
+    expect(blockRoots.map((root) => root.dataset.runTranscriptBlockId)).toEqual(["tool-a", "tool-b"]);
+    expect(container.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(3);
+  });
+
+  it("keeps action row annotation affordances hidden while streaming", () => {
+    const actions: ChatTranscriptAction[] = [{
+      key: "tool-action-live",
+      type: "tool",
+      entry: {
+        ts: "2026-07-23T12:03:00.000Z",
+        name: "search",
+        input: { query: "live" },
+        result: "partial",
+        status: "completed",
+        sourceEntryIds: ["tool-live"],
+      },
+    }];
+    const container = render(
+      <TranscriptChatActionGroup
+        actions={actions}
+        density="comfortable"
+        detailVariant
+        groupIndex={0}
+        groupCount={1}
+        streaming
+        runAnnotationContext={{ sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate: vi.fn() }}
+      />,
+    );
+
+    expect(container.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(0);
+  });
+
   it("waits for the selection toolbar action before creating a text annotation", () => {
     const onAnnotate = vi.fn();
     const container = render(

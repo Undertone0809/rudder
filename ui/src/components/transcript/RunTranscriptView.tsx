@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useOptionalToast } from "../../context/ToastContext";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
@@ -127,6 +127,16 @@ export function RunTranscriptView({
     () => collectTranscriptAgentInspections(blocks),
     [blocks],
   );
+  const [activeRunAnnotationBlockId, setActiveRunAnnotationBlockId] = useState<string | null>(null);
+  const effectiveRunAnnotationContext = useMemo(() => (
+    runAnnotationContext
+      ? {
+          ...runAnnotationContext,
+          activeBlockId: activeRunAnnotationBlockId,
+          onAnnotationFocus: (blockId: string) => setActiveRunAnnotationBlockId(blockId),
+        }
+      : undefined
+  ), [activeRunAnnotationBlockId, runAnnotationContext]);
 
   if (renderableEntries.length === 0) {
     if (!emptyMessage) return null;
@@ -164,7 +174,7 @@ export function RunTranscriptView({
           thinkingClassName={thinkingClassName}
           showDeveloperDiagnostics={showDeveloperDiagnostics}
           onMarkdownLinkClick={handleMarkdownLinkClick}
-          runAnnotationContext={runAnnotationContext}
+          runAnnotationContext={effectiveRunAnnotationContext}
           onOpenFile={handleOpenFile}
           onOpenSkill={onOpenSkill}
           canOpenSkill={canOpenSkill}

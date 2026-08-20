@@ -848,6 +848,22 @@ export function TranscriptChatActionRow({
   );
 }
 
+function transcriptBlockForChatAction(action: ChatTranscriptAction): TranscriptBlock {
+  if (action.type === "stdout") return action.entry;
+  return {
+    type: "tool",
+    ts: action.entry.ts,
+    endTs: action.entry.endTs,
+    name: action.entry.name,
+    toolUseId: action.entry.toolUseId,
+    input: action.entry.input,
+    result: action.entry.result,
+    isError: action.entry.isError,
+    status: action.entry.status,
+    sourceEntryIds: action.entry.sourceEntryIds,
+  };
+}
+
 export type ChatTranscriptTurnSegment =
   | {
       type: "block";
@@ -913,6 +929,27 @@ export function formatChatActionSummary(
   return formatSemanticDigest(infos, stdoutCount, { preferDirectSummary: true });
 }
 
+function transcriptActionGroupAnnotationBlock(
+  actions: ChatTranscriptAction[],
+  summary: string,
+  tone: "info" | "error",
+): Extract<TranscriptBlock, { type: "event" }> | null {
+  if (actions.length < 2) return null;
+  const sourceEntryIds = actions
+    .flatMap((action) => action.entry.sourceEntryIds ?? [])
+    .filter((id, index, ids) => ids.indexOf(id) === index);
+  const firstAction = actions[0];
+  if (!firstAction || sourceEntryIds.length === 0) return null;
+  return {
+    type: "event",
+    ts: firstAction.entry.ts,
+    label: "tool activity",
+    tone,
+    text: summary || "Tool details",
+    sourceEntryIds,
+  };
+}
+
 export function getChatActionIconInfo(action: ChatTranscriptAction): {
   category: TranscriptActionIconCategory;
   status: TranscriptActionIconStatus;
@@ -940,6 +977,7 @@ export function TranscriptChatActionGroup({
   onOpenAgent,
   annotationSource,
   runAnnotationContext,
+  streaming = false,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
@@ -953,6 +991,7 @@ export function TranscriptChatActionGroup({
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
   annotationSource?: TranscriptAnnotationSourceContext;
   runAnnotationContext?: TranscriptRunAnnotationContext;
+  streaming?: boolean;
 }) {
   const showFailureIndicators = useToolCallFailureIndicators();
   const localizeText = useTranscriptText();
@@ -973,40 +1012,54 @@ export function TranscriptChatActionGroup({
   const summaryAgentAvatar = actions[0]?.type === "tool"
     ? getTranscriptAgentAvatarInfo(actions[0].entry.name, actions[0].entry.input)
     : null;
-  const annotationBlock = useMemo<TranscriptBlock | null>(() => {
-    if (actions.length === 1) {
-      const action = actions[0];
-      if (action?.type === "stdout") return action.entry;
-      if (action?.type === "tool") {
-        return {
-          type: "tool",
-          ts: action.entry.ts,
-          endTs: action.entry.endTs,
-          name: action.entry.name,
-          toolUseId: action.entry.toolUseId,
-          input: action.entry.input,
-          result: action.entry.result,
-          isError: action.entry.isError,
-          status: action.entry.status,
-          sourceEntryIds: action.entry.sourceEntryIds,
-        };
-      }
-    }
-    const toolActions = actions.filter((action): action is Extract<ChatTranscriptAction, { type: "tool" }> => action.type === "tool");
-    if (toolActions.length === 0) return null;
-    return {
-      type: "command_group",
-      ts: toolActions[0]?.entry.ts ?? new Date(0).toISOString(),
-      endTs: toolActions.at(-1)?.entry.endTs,
-      items: toolActions.map((action) => action.entry),
-      sourceEntryIds: toolActions.flatMap((action) => action.entry.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index),
-    };
-  }, [actions]);
-  const wrapAnnotation = (content: ReactNode) => annotationBlock && detailVariant && runAnnotationContext ? (
-    <TranscriptRunAnnotationBlock block={annotationBlock} presentation="detail" context={runAnnotationContext}>
+  const singleActionBlock = hasSingleAction && singleAction
+    ? transcriptBlockForChatAction(singleAction)
+    : null;
+  const actionGroupBlock = detailVariant && runAnnotationContext
+    ? transcriptActionGroupAnnotationBlock(actions, summary, highlightGroupError ? "error" : "info")
+    : null;
+  const actionGroupInteractionId = actionGroupBlock
+    ? `action-group:${actions.map((action) => action.key).join("|")}`
+    : undefined;
+  const wrapSingleActionAnnotation = (content: ReactNode) => singleActionBlock && detailVariant && runAnnotationContext ? (
+    <TranscriptRunAnnotationBlock
+      block={singleActionBlock}
+      presentation="detail"
+      context={runAnnotationContext}
+      streaming={streaming}
+    >
       {content}
     </TranscriptRunAnnotationBlock>
   ) : content;
+
+  const renderActionRow = (action: ChatTranscriptAction) => {
+    const row = (
+      <TranscriptChatActionRow
+        action={action}
+        density={density}
+        onOpenFile={onOpenFile}
+        onOpenSkill={onOpenSkill}
+        canOpenSkill={canOpenSkill}
+        agentInspections={agentInspections}
+        onOpenAgent={onOpenAgent}
+        quiet={!detailVariant}
+      />
+    );
+    if (!detailVariant || !runAnnotationContext) {
+      return <Fragment key={action.key}>{row}</Fragment>;
+    }
+    return (
+      <TranscriptRunAnnotationBlock
+        key={action.key}
+        block={transcriptBlockForChatAction(action)}
+        presentation="detail"
+        context={runAnnotationContext}
+        streaming={streaming}
+      >
+        {row}
+      </TranscriptRunAnnotationBlock>
+    );
+  };
 
   useEffect(() => {
     if (!detailVariant && showFailureIndicators && allToolsErrored) {
@@ -1031,7 +1084,7 @@ export function TranscriptChatActionGroup({
   };
 
   if (shouldInlineSingleStdoutAction) {
-    return wrapAnnotation(
+    return wrapSingleActionAnnotation(
       <div className="divide-y divide-border/30">
         <TranscriptChatActionRow
           action={singleAction}
@@ -1046,7 +1099,7 @@ export function TranscriptChatActionGroup({
   }
 
   if (shouldRenderSingleToolAction) {
-    return wrapAnnotation(
+    return wrapSingleActionAnnotation(
       <div className="divide-y divide-border/30">
         <TranscriptChatActionRow
           action={singleAction}
@@ -1070,73 +1123,75 @@ export function TranscriptChatActionGroup({
     ? `Collapse tool activity${labelSuffix}`
     : `Expand tool activity${labelSuffix}`);
 
-  return wrapAnnotation(
-    <div>
-      <button
-        type="button"
-        className={cn(
-          "group/activity -mx-2 inline-flex max-w-full items-center rounded-lg px-2 py-1.5 text-left transition-colors",
-          compact ? "gap-1.5" : "gap-2",
-          highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
-        )}
-        onClick={toggleDetails}
-        aria-expanded={detailsOpen}
-        aria-label={expandedLabel}
+  const summaryButton = (
+    <button
+      type="button"
+      className={cn(
+        "group/activity -mx-2 inline-flex max-w-full items-center rounded-lg px-2 py-1.5 text-left transition-colors",
+        compact ? "gap-1.5" : "gap-2",
+        highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
+      )}
+      onClick={toggleDetails}
+      aria-expanded={detailsOpen}
+      aria-label={expandedLabel}
+    >
+      <span
+        className={cn("mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center", highlightGroupError && "rounded-full bg-red-500/[0.08]")}
+        data-transcript-action-summary-icon="true"
       >
-        <span
-          className={cn("mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center", highlightGroupError && "rounded-full bg-red-500/[0.08]")}
-          data-transcript-action-summary-icon="true"
+        {summaryAgentAvatar ? (
+          <TranscriptAgentAvatarIcon
+            info={summaryAgentAvatar}
+            status={highlightGroupError
+              ? "error"
+              : summaryIcon.status === "running"
+                ? "running"
+                : "neutral"}
+          />
+        ) : (
+          <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={cn(
+          "block truncate text-foreground/82",
+          compact ? "text-xs" : "text-sm",
+        )} title={summary || localizeText("Tool details")}>
+          {summary || localizeText("Tool details")}
+        </span>
+      </span>
+      <span
+        className={cn(
+          "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+        )}
+        data-testid="transcript-action-group-disclosure"
+        data-transcript-disclosure-chevron="true"
+      >
+        <DisclosureChevron open={detailsOpen} className="h-4 w-4" />
+      </span>
+    </button>
+  );
+
+  return (
+    <div>
+      {actionGroupBlock ? (
+        <TranscriptRunAnnotationBlock
+          block={actionGroupBlock}
+          presentation="detail"
+          context={runAnnotationContext}
+          streaming={streaming}
+          interactionId={actionGroupInteractionId}
         >
-          {summaryAgentAvatar ? (
-            <TranscriptAgentAvatarIcon
-              info={summaryAgentAvatar}
-              status={highlightGroupError
-                ? "error"
-                : summaryIcon.status === "running"
-                  ? "running"
-                  : "neutral"}
-            />
-          ) : (
-            <TranscriptActionIcon category={summaryIcon.category} status={highlightGroupError ? "error" : "neutral"} />
-          )}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className={cn(
-            "block truncate text-foreground/82",
-            compact ? "text-xs" : "text-sm",
-          )} title={summary || localizeText("Tool details")}>
-            {summary || localizeText("Tool details")}
-          </span>
-        </span>
-        <span
-          className={cn(
-            "inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-          )}
-          data-testid="transcript-action-group-disclosure"
-          data-transcript-disclosure-chevron="true"
-        >
-          <DisclosureChevron open={detailsOpen} className="h-4 w-4" />
-        </span>
-      </button>
+          {summaryButton}
+        </TranscriptRunAnnotationBlock>
+      ) : summaryButton}
 
       {detailsOpen ? (
         <div className="motion-disclosure-enter mt-0.5">
-          {actions.map((action) => (
-            <TranscriptChatActionRow
-              key={action.key}
-              action={action}
-              density={density}
-              onOpenFile={onOpenFile}
-              onOpenSkill={onOpenSkill}
-              canOpenSkill={canOpenSkill}
-              agentInspections={agentInspections}
-              onOpenAgent={onOpenAgent}
-              quiet={!detailVariant}
-            />
-          ))}
+          {actions.map(renderActionRow)}
         </div>
       ) : null}
-    </div>,
+    </div>
   );
 }
 
@@ -1210,6 +1265,7 @@ export function TranscriptChatTurn({
               agentInspections={agentInspections}
               onOpenAgent={onOpenAgent}
               runAnnotationContext={runAnnotationContext}
+              streaming={streaming}
             />
           );
         }
@@ -1262,6 +1318,7 @@ export function TranscriptChatTurn({
                 agentInspections={agentInspections}
                 onOpenAgent={onOpenAgent}
                 runAnnotationContext={runAnnotationContext}
+                streaming={streaming}
               />
             </div>
           );
