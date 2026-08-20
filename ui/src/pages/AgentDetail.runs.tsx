@@ -869,8 +869,11 @@ export function RunDetail({
 
   const cancelRun = useMutation({
     mutationFn: () => agentRunsApi.cancel(run.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(run.orgId, run.agentId) });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.runDetail(run.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(run.orgId, run.agentId) }),
+      ]);
     },
   });
   const canResumeLostRun = run.errorCode === "process_lost" && run.status === "failed";

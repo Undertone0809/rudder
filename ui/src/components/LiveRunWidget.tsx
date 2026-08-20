@@ -5,6 +5,7 @@ import { ExternalLink, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
 import { agentsApi } from "../api/agents";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, formatDateTime, formatRunElapsedDuration } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
@@ -29,6 +30,7 @@ function isRunActive(status: string): boolean {
 
 export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
   const queryClient = useQueryClient();
+  const { pushToast } = useToast();
   const [cancellingRunIds, setCancellingRunIds] = useState(new Set<string>());
 
   const { data: liveRuns } = useQuery({
@@ -83,8 +85,25 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
     setCancellingRunIds((prev) => new Set(prev).add(runId));
     try {
       await agentRunsApi.cancel(runId);
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) });
+      queryClient.setQueryData<LiveRunForIssue[]>(
+        queryKeys.issues.liveRuns(issueId),
+        (current) => current?.filter((run) => run.id !== runId),
+      );
+      queryClient.setQueryData(
+        queryKeys.issues.activeRun(issueId),
+        (current: { id?: string } | null | undefined) => current?.id === runId ? null : current,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) }),
+      ]);
+      pushToast({ title: "Run stopped", tone: "success" });
+    } catch (error) {
+      pushToast({
+        title: "Could not stop Run",
+        body: error instanceof Error ? error.message : "The cancellation request failed.",
+        tone: "error",
+      });
     } finally {
       setCancellingRunIds((prev) => {
         const next = new Set(prev);

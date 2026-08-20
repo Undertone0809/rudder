@@ -69,7 +69,11 @@ describe("desktop quit flow update handoff", () => {
     }));
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:3100/api/heartbeat-runs/run-1/cancel", expect.objectContaining({
       method: "POST",
+      headers: expect.objectContaining({}),
     }));
+    const cancelRequest = fetchMock.mock.calls.find(([url]) =>
+      new URL(String(url)).pathname === "/api/heartbeat-runs/run-1/cancel");
+    expect(new Headers(cancelRequest?.[1]?.headers).get("Origin")).toBe("http://127.0.0.1:3100");
     expect(stopLocalRudder).toHaveBeenCalledOnce();
     expect(appQuitMock).toHaveBeenCalledOnce();
   });
@@ -153,6 +157,9 @@ describe("desktop quit flow update handoff", () => {
         "http://127.0.0.1:3100/api/heartbeat-runs/run-1/cancel",
         expect.objectContaining({ method: "POST" }),
       );
+      const cancelRequest = fetchMock.mock.calls.find(([url]) =>
+        new URL(String(url)).pathname === "/api/heartbeat-runs/run-1/cancel");
+      expect(new Headers(cancelRequest?.[1]?.headers).get("Origin")).toBe("http://127.0.0.1:3100");
       await vi.advanceTimersByTimeAsync(5_000);
       await quitting;
 
@@ -553,6 +560,9 @@ describe("desktop quit flow update handoff", () => {
       expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:3100/api/heartbeat-runs/run-1/cancel", expect.objectContaining({
         method: "POST",
       }));
+      const cancelRequest = fetchMock.mock.calls.find(([url]) =>
+        new URL(String(url)).pathname === "/api/heartbeat-runs/run-1/cancel");
+      expect(new Headers(cancelRequest?.[1]?.headers).get("Origin")).toBe("http://127.0.0.1:3100");
       expect(await readQuitResponse(responsePath)).toMatchObject({
         ok: true,
         status: "quitting",

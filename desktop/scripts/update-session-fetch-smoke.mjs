@@ -43,6 +43,7 @@ async function run() {
   await app.whenReady();
   console.log("[update-session-smoke] Electron ready");
   const authenticatedPaths = [];
+  let runActive = true;
   server = http.createServer((request, response) => {
     if (!hasSessionCookie(request)) {
       json(response, 401, { error: "Rudder Account session required", code: "account_session_required" });
@@ -54,7 +55,9 @@ async function run() {
       return;
     }
     if (request.url === "/api/orgs/org-smoke/live-runs") {
-      json(response, 200, []);
+      json(response, 200, runActive
+        ? [{ id: "run-smoke", status: "running", agentId: "agent-smoke", agentName: "Smoke Agent" }]
+        : []);
       return;
     }
     if (request.url === "/api/instance/settings/browser") {
@@ -73,6 +76,15 @@ async function run() {
         agentId: "agent-smoke",
         status: "running",
       });
+      return;
+    }
+    if (request.url === "/api/heartbeat-runs/run-smoke/cancel" && request.method === "POST") {
+      if (request.headers.origin !== baseUrl) {
+        json(response, 403, { error: "Board mutation requires trusted browser origin" });
+        return;
+      }
+      runActive = false;
+      json(response, 200, { id: "run-smoke", status: "cancelled" });
       return;
     }
     json(response, 404, { error: "Not found" });
@@ -121,6 +133,9 @@ async function run() {
     destroyResidentTray: () => undefined,
   });
 
+  const blockers = await quitFlow.listRunningRunsForUpdate();
+  assert.equal(blockers.totalRuns, 1);
+  await quitFlow.cancelActiveRunsBeforeQuit(blockers);
   assert.deepEqual(await quitFlow.listRunningRunsForUpdate(), {
     totalRuns: 0,
     organizations: [],
@@ -132,7 +147,10 @@ async function run() {
     "/api/instance/browser/broker",
     "/api/instance/browser/broker",
     "/api/heartbeat-runs/run-smoke",
+    "/api/heartbeat-runs/run-smoke/cancel",
     "/api/orgs/org-smoke/live-runs",
+    "/api/orgs/org-smoke/live-runs",
+    "/api/orgs",
   ].sort());
   console.log("Desktop update session fetch smoke passed.");
 }

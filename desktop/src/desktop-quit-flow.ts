@@ -20,6 +20,7 @@ type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlock
 type DesktopApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const QUIT_RUN_CANCEL_TIMEOUT_MS = 5_000;
+const SAFE_API_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function createDesktopQuitFlow(context: {
   appName: string;
@@ -55,6 +56,10 @@ export function createDesktopQuitFlow(context: {
     }
     if (!headers.has("Accept")) {
       headers.set("Accept", "application/json");
+    }
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (!SAFE_API_METHODS.has(method) && !headers.has("Origin")) {
+      headers.set("Origin", new URL(apiBase).origin);
     }
 
     const response = await context.fetchApi(buildDesktopApiRequestUrl(apiBase, apiPath), {
@@ -473,6 +478,7 @@ export function createDesktopQuitFlow(context: {
   return {
     listActiveRunsForQuit,
     listRunningRunsForUpdate,
+    cancelActiveRunsBeforeQuit,
     formatQuitRunDetail,
     formatUpdateRunDetail,
     beginQuitFlow,
