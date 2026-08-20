@@ -352,8 +352,9 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
       expect(systemPrompt.indexOf("# Agent Tools")).toBeLessThan(systemPrompt.indexOf("# Tacit Memory"));
       expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
-      expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("## Current Time"));
-      expect(systemPrompt.indexOf("## Current Time")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
+      expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
+      expect(systemPrompt).not.toContain("## Current Time");
+      expect(systemPrompt).not.toContain("Instruction load time:");
       expect(systemPrompt.indexOf("# Rudder Heartbeat Instruction")).toBeLessThan(systemPrompt.indexOf("# Enabled Rudder Skills"));
       expect(agentInstructionStack).toContain(systemPrompt);
       expect(agentInstructionStack).toContain("Follow the rudder heartbeat as agt_d573266f.");

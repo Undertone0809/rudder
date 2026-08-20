@@ -424,8 +424,8 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
       expect(systemPrompt.indexOf("# Agent Tools")).toBeLessThan(systemPrompt.indexOf("# Tacit Memory"));
       expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
-      expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("## Current Time"));
-      expect(systemPrompt).toContain("## Current Time");
+      expect(systemPrompt).not.toContain("## Current Time");
+      expect(systemPrompt).not.toContain("Instruction load time:");
       expect(agentInstructionStack).toContain(systemPrompt);
       expect(agentInstructionStack).toContain("Follow the rudder heartbeat.");
       expect(agentInstructionStack).toContain("# Agent Instructions");
