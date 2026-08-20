@@ -2210,6 +2210,82 @@ describe("issueService.list participantAgentId", () => {
     expect(checkedOut.executionRunId).toBe(newRunId);
   });
 
+  it("preserves an active execution lock when reassigning an in-progress issue", async () => {
+    const orgId = randomUUID();
+    const oldAgentId = randomUUID();
+    const newAgentId = randomUUID();
+    const activeRunId = randomUUID();
+    const issueId = randomUUID();
+    const executionLockedAt = new Date();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Active Reassignment Org",
+      urlKey: deriveOrganizationUrlKey("Active Reassignment Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values([
+      {
+        id: oldAgentId,
+        orgId,
+        name: "PreviousOwner",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: newAgentId,
+        orgId,
+        name: "NewOwner",
+        role: "engineer",
+        status: "active",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+
+    await db.insert(heartbeatRuns).values({
+      id: activeRunId,
+      orgId,
+      agentId: oldAgentId,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: { issueId, taskKey: `issue:${issueId}` },
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Keep the current request running",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: oldAgentId,
+      checkoutRunId: activeRunId,
+      executionRunId: activeRunId,
+      executionAgentNameKey: "previousowner",
+      executionLockedAt,
+    });
+
+    const reassigned = await svc.update(issueId, { assigneeAgentId: newAgentId, assigneeUserId: null });
+
+    expect(reassigned).toMatchObject({
+      assigneeAgentId: newAgentId,
+      checkoutRunId: activeRunId,
+      executionRunId: activeRunId,
+      executionAgentNameKey: "previousowner",
+      executionLockedAt,
+    });
+    await expect(svc.checkout(issueId, newAgentId, ["in_progress"], randomUUID())).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
   it("adopts a stale checkout lock for the same assignee when the prior run is terminal", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

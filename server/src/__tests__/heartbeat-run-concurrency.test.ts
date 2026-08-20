@@ -98,6 +98,7 @@ vi.mock("../agent-runtimes/index.ts", async () => {
 
 import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { issueService } from "../services/issues.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -1469,6 +1470,72 @@ describe("heartbeat run concurrency", () => {
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
     expect(issueRuns).toHaveLength(1);
+  });
+
+  it("keeps an active issue run attached across reassignment and defers the new assignee wake", async () => {
+    const { orgId, agentId: oldAgentId } = await seedAgentFixture(1);
+    const newAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: newAgentId,
+      orgId,
+      name: "NextOwner",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issueId = await seedIssueFixture({ orgId, agentId: oldAgentId });
+    const activeRunId = await seedLiveIssueExecution({ orgId, agentId: oldAgentId, issueId });
+    const issueSvc = issueService(db);
+    const reassigned = await issueSvc.update(issueId, { assigneeAgentId: newAgentId });
+
+    expect(reassigned).toMatchObject({
+      assigneeAgentId: newAgentId,
+      executionRunId: activeRunId,
+    });
+
+    const heartbeat = heartbeatService(db);
+    const wakeOptions = {
+      source: "assignment" as const,
+      triggerDetail: "system" as const,
+      reason: "issue_assigned",
+      startImmediately: false,
+      payload: { issueId, mutation: "update" },
+      contextSnapshot: {
+        issueId,
+        taskKey: `issue:${issueId}`,
+        wakeSource: "assignment",
+        wakeReason: "issue_assigned",
+      },
+    };
+
+    expect(await heartbeat.wakeup(newAgentId, wakeOptions)).toBeNull();
+    expect(await heartbeat.wakeup(newAgentId, wakeOptions)).toBeNull();
+
+    const persistedIssue = await db
+      .select({ assigneeAgentId: issues.assigneeAgentId, executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(persistedIssue).toEqual({ assigneeAgentId: newAgentId, executionRunId: activeRunId });
+
+    const issueRuns = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`);
+    expect(issueRuns).toEqual([{ id: activeRunId }]);
+
+    const deferredWakeups = (await listWakeupRequestsForAgent(newAgentId))
+      .filter((wakeup) => wakeup.status === "deferred_issue_execution");
+    expect(deferredWakeups).toHaveLength(1);
+    expect(deferredWakeups[0]).toMatchObject({
+      reason: "issue_execution_deferred",
+      runId: null,
+      payload: { issueId, mutation: "update" },
+    });
   });
 
   it("keeps a deferred force-fresh wake fresh when issue execution is promoted", async () => {

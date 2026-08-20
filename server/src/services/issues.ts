@@ -351,6 +351,44 @@ export function issueService(db: Db) {
     return TERMINAL_HEARTBEAT_RUN_STATUSES.has(run.status) && !run.terminalEffectsPending;
   }
 
+  async function hasActiveIssueExecutionRun(
+    dbOrTx: any,
+    runId: string | null,
+    issueId: string,
+    issueStatus: string,
+  ) {
+    // Assignment wakes can own an issue before checkout moves it to in_progress.
+    if (!runId) return false;
+    const run = await dbOrTx
+      .select({
+        status: heartbeatRuns.status,
+        terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows: Array<{
+        status: string;
+        terminalEffectsPending: boolean;
+        contextSnapshot: unknown;
+      }>) => rows[0] ?? null);
+    if (!run || (
+      run.status !== "queued" &&
+      run.status !== "running" &&
+      !run.terminalEffectsPending
+    )) {
+      return false;
+    }
+    if (issueStatus === "in_progress") return true;
+    const contextSnapshot = run.contextSnapshot;
+    return Boolean(
+      contextSnapshot &&
+      typeof contextSnapshot === "object" &&
+      !Array.isArray(contextSnapshot) &&
+      (contextSnapshot as Record<string, unknown>).issueId === issueId,
+    );
+  }
+
   async function adoptStaleCheckoutRun(input: {
     issueId: string;
     actorAgentId: string;
@@ -1275,14 +1313,33 @@ export function issueService(db: Db) {
       }
       const assigneeChanged = (issueData.assigneeAgentId !== undefined && issueData.assigneeAgentId !== existing.assigneeAgentId)
         || (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId);
-      if (assigneeChanged) {
-        patch.checkoutRunId = null; patch.executionRunId = null; patch.executionAgentNameKey = null; patch.executionLockedAt = null;
-        if (issueData.assigneeAgentRuntimeOverrides === undefined) {
-          patch.assigneeAgentRuntimeOverrides = null;
-        }
-      }
 
       return db.transaction(async (tx) => {
+        if (assigneeChanged) {
+          const current = await tx
+            .select({
+              status: issues.status,
+              executionRunId: issues.executionRunId,
+            })
+            .from(issues)
+            .where(eq(issues.id, id))
+            .for("update")
+            .then((rows) => rows[0] ?? null);
+          const preservesActiveExecution = Boolean(
+            current &&
+            (!issueData.status || issueData.status === "in_progress") &&
+            await hasActiveIssueExecutionRun(tx, current.executionRunId, id, current.status),
+          );
+          if (!preservesActiveExecution) {
+            patch.checkoutRunId = null;
+            patch.executionRunId = null;
+            patch.executionAgentNameKey = null;
+            patch.executionLockedAt = null;
+          }
+          if (issueData.assigneeAgentRuntimeOverrides === undefined) {
+            patch.assigneeAgentRuntimeOverrides = null;
+          }
+        }
         patch.goalId = issueData.goalId !== undefined ? issueData.goalId ?? null : existing.goalId;
         const updated = await tx
           .update(issues)
