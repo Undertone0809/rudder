@@ -2,6 +2,7 @@ ui-dist/
 node_modules/
 dist/
 .env
+.codex/
 *.tsbuildinfo
 drizzle/meta/
 .vite/
