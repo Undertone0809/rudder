@@ -197,6 +197,10 @@ describe("heartbeat orphaned process recovery", () => {
     issueStatus?: "todo" | "in_progress" | "in_review" | "done" | "cancelled";
     runErrorCode?: string | null;
     runError?: string | null;
+    runningSubstate?: "executing" | "waiting_for_network" | null;
+    networkWaitStartedAt?: Date | null;
+    networkWaitNextRetryAt?: Date | null;
+    recoveryCheckpoint?: Record<string, unknown> | null;
     contextSnapshot?: Record<string, unknown> | null;
     startedAt?: Date;
     updatedAt?: Date;
@@ -271,12 +275,16 @@ describe("heartbeat orphaned process recovery", () => {
       invocationSource: "assignment",
       triggerDetail: "system",
       status: input?.runStatus ?? "running",
+      runningSubstate: input?.runningSubstate ?? null,
       wakeupRequestId,
       contextSnapshot,
       processPid: input?.processPid ?? null,
       processLossRetryCount: input?.processLossRetryCount ?? 0,
       errorCode: input?.runErrorCode ?? null,
       error: input?.runError ?? null,
+      networkWaitStartedAt: input?.networkWaitStartedAt ?? null,
+      networkWaitNextRetryAt: input?.networkWaitNextRetryAt ?? null,
+      recoveryCheckpoint: input?.recoveryCheckpoint ?? null,
       createdAt: input?.startedAt ?? now,
       startedAt: input?.startedAt ?? now,
       updatedAt: input?.updatedAt ?? new Date("2026-03-19T00:00:00.000Z"),
@@ -482,6 +490,55 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
     expect(run?.status).toBe("running");
+  });
+
+  it("does not time out a run that is waiting for network recovery", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const { runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+      runningSubstate: "waiting_for_network",
+      networkWaitStartedAt: startedAt,
+      networkWaitNextRetryAt: new Date("2026-03-19T00:05:00.000Z"),
+    });
+
+    const result = await heartbeatService(db).reapInactiveRuns({
+      maxInactivityMs: 30 * 60 * 1000,
+      now: new Date("2026-03-19T00:31:00.000Z"),
+    });
+
+    expect(result).toEqual({ timedOut: 0, runIds: [] });
+    const run = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(run).toMatchObject({ status: "running", runningSubstate: "waiting_for_network" });
+    expect(run?.finishedAt).toBeNull();
+  });
+
+  it("fails closed when a network-wait run has no safe continuation checkpoint", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const { runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      runningSubstate: "waiting_for_network",
+      recoveryCheckpoint: {
+        continuation: "resume_same_session",
+        submissionPhase: "accepted",
+      },
+    });
+
+    const result = await heartbeatService(db).recoverNetworkWaitingRuns({
+      now: new Date("2026-03-19T00:31:00.000Z"),
+    });
+
+    expect(result).toEqual({ resumed: 0, runIds: [] });
+    const run = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(run).toMatchObject({
+      status: "failed",
+      errorCode: "network_resume_unsafe",
+      error: "Network recovery cannot safely resume this provider attempt",
+    });
   });
 
   it("rejects an inactivity terminal claim when its activity watermark is stale", async () => {

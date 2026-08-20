@@ -2970,6 +2970,7 @@ export function LazyStreamTranscriptItem({
   localizeText?: (text: string) => string;
 }) {
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
+  const waitingForNetwork = state === "waiting_for_network";
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!streamingActive) return;
@@ -2979,7 +2980,9 @@ export function LazyStreamTranscriptItem({
   const durationMs = transcriptSummaryDurationMs(summary, streamingActive);
   const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =
-    displayedState === "failed"
+    waitingForNetwork
+      ? localizeText("Waiting for network")
+      : displayedState === "failed"
       ? localizeText("Stopped with errors")
       : displayedState === "stopped"
         ? localizeText("Stopped")
@@ -3074,6 +3077,7 @@ export function StreamTranscriptItem({
     [entries, steerMessages],
   );
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
+  const waitingForNetwork = state === "waiting_for_network";
   const hasSteerInterjection = steerMessages.length > 0;
   const [internalProcessOpen, setInternalProcessOpen] = useState(
     () => streamingActive || defaultOpen || hasSteerInterjection,
@@ -3136,7 +3140,7 @@ export function StreamTranscriptItem({
                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
               ) : null}
               <span className="whitespace-nowrap">
-                {localizeText(`${streamingActive ? "Working" : "Worked"} for ${formatChatProcessDuration(durationMs)}`)}
+                {localizeText(`${streamingActive ? "Working" : waitingForNetwork ? "Waiting" : "Worked"} for ${formatChatProcessDuration(durationMs)}`)}
               </span>
               {statusHint ? (
                 <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
@@ -3201,9 +3205,10 @@ export function AssistantDraftItem({
   localizeText?: (text: string) => string;
 }) {
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
+  const waitingForNetwork = state === "waiting_for_network";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
 
-  if (!body.trim() && !streamingActive) {
+  if (!body.trim() && !streamingActive && !waitingForNetwork) {
     return null;
   }
 
@@ -3229,7 +3234,7 @@ export function AssistantDraftItem({
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
             />
-          ) : (
+          ) : waitingForNetwork ? null : (
             <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
           )}
         </div>

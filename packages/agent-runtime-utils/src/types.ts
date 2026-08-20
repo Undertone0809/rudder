@@ -30,6 +30,45 @@ export interface UsageSummary {
   cachedInputTokens?: number;
 }
 
+export type AgentRuntimeNetworkSubmissionPhase =
+  | "pre_submission"
+  | "accepted"
+  | "indeterminate";
+
+export type AgentRuntimeNetworkContinuation =
+  | "resume_same_session"
+  | "fresh_if_pristine"
+  | "fail_closed";
+
+export type AgentRuntimeNetworkTransport =
+  | "dns"
+  | "connection"
+  | "timeout"
+  | "stream_disconnect"
+  | "unknown";
+
+/** A provider/model transport failure that may be durably retried. */
+export interface AgentRuntimeNetworkSuspension {
+  kind: "network_unavailable";
+  /** Stable machine-readable alias used by run-event consumers. */
+  code?: "provider_transport_unavailable";
+  submissionPhase: AgentRuntimeNetworkSubmissionPhase;
+  continuation: AgentRuntimeNetworkContinuation;
+  transport: AgentRuntimeNetworkTransport;
+  provider?: string | null;
+  model?: string | null;
+  sessionId?: string | null;
+  sessionParams?: Record<string, unknown> | null;
+  modelOutputObserved: boolean;
+  toolActivityObserved: boolean;
+  sideEffectRisk: "none" | "possible" | "confirmed";
+  message: string;
+  progress?: {
+    modelOutputObserved: boolean;
+    toolActivityObserved: boolean;
+  };
+}
+
 export type AgentRuntimeBillingType =
   | "api"
   | "subscription"
@@ -68,6 +107,10 @@ export interface AgentRuntimeExecutionResult {
   errorMessage?: string | null;
   errorCode?: string | null;
   errorMeta?: Record<string, unknown>;
+  /** Non-terminal provider transport interruption; the run may wait and resume. */
+  networkSuspension?: AgentRuntimeNetworkSuspension | null;
+  /** Compatibility alias for callers that consume a generic suspension field. */
+  suspension?: AgentRuntimeNetworkSuspension | null;
   usage?: UsageSummary;
   /**
    * Legacy single session id output. Prefer `sessionParams` + `sessionDisplayId`.

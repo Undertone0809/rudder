@@ -42,6 +42,7 @@ const OUTPUT_ADMITTING_GENERATION_STATUSES = [
   "starting",
   "active",
   "running",
+  "waiting_for_network",
   "tool_busy",
   "closing",
 ] as const;
@@ -1080,6 +1081,90 @@ export function chatGenerationProtocolService(db: Db) {
     });
   }
 
+  async function markWaitingForNetwork(input: {
+    orgId: string;
+    conversationId: string;
+    generationId: string;
+    expectedAttemptEpoch: number;
+    expectedOwnerToken?: string | null;
+    suspension: Record<string, unknown>;
+    now?: Date;
+  }) {
+    return db.transaction(async (tx) => {
+      const generation = await lockGeneration(tx, input);
+      assertGenerationFence(generation, input);
+      if (generation.status === "stop_requested" || generation.status === "stopping" || generation.stopRequestedAt) {
+        return { generation, event: null, stopped: true };
+      }
+      if (!(CONTROL_ACTIVE_GENERATION_STATUSES as readonly string[]).includes(generation.status)) {
+        throw conflict("Chat generation is no longer active");
+      }
+      const now = input.now ?? new Date();
+      const [updatedGeneration] = await tx
+        .update(chatGenerations)
+        .set({
+          status: "waiting_for_network",
+          controlState: "unregistered",
+          controlOwnerToken: null,
+          controlLeaseExpiresAt: null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatGenerations.id, generation.id),
+          eq(chatGenerations.attemptEpoch, generation.attemptEpoch),
+          eq(chatGenerations.controlVersion, generation.controlVersion),
+        ))
+        .returning();
+      if (!updatedGeneration) throw conflict("Chat generation changed while entering network wait");
+      const event = await appendEventLocked(tx, {
+        orgId: input.orgId,
+        generationId: input.generationId,
+        attemptEpoch: generation.attemptEpoch,
+        eventKind: "network_waiting",
+        payload: {
+          status: "waiting_for_network",
+          suspension: input.suspension,
+          bodyHash: generation.frozenBodyHash ?? EMPTY_BODY_SHA256,
+        },
+      });
+      return { generation: updatedGeneration, event, stopped: false };
+    });
+  }
+
+  async function markNetworkResumed(input: {
+    orgId: string;
+    conversationId: string;
+    generationId: string;
+    expectedAttemptEpoch: number;
+    expectedOwnerToken?: string | null;
+    now?: Date;
+  }) {
+    return db.transaction(async (tx) => {
+      const generation = await lockGeneration(tx, input);
+      assertGenerationFence(generation, input);
+      if (generation.status !== "waiting_for_network") return generation;
+      const now = input.now ?? new Date();
+      const [updated] = await tx
+        .update(chatGenerations)
+        .set({ status: "running", updatedAt: now })
+        .where(and(
+          eq(chatGenerations.id, generation.id),
+          eq(chatGenerations.attemptEpoch, generation.attemptEpoch),
+          eq(chatGenerations.controlVersion, generation.controlVersion),
+        ))
+        .returning();
+      if (!updated) throw conflict("Chat generation changed while resuming");
+      await appendEventLocked(tx, {
+        orgId: input.orgId,
+        generationId: input.generationId,
+        attemptEpoch: generation.attemptEpoch,
+        eventKind: "network_resumed",
+        payload: { status: "running", bodyHash: generation.frozenBodyHash ?? EMPTY_BODY_SHA256 },
+      });
+      return updated;
+    });
+  }
+
   async function recordRuntimeTerminal(input: {
     orgId: string;
     conversationId: string;
@@ -1939,6 +2024,8 @@ export function chatGenerationProtocolService(db: Db) {
     recordClientCheckpoint,
     beginStopAction,
     beginSteerFallbackCutoff,
+    markWaitingForNetwork,
+    markNetworkResumed,
     recordRuntimeTerminal,
     claimTerminalProjection,
     getNextTerminalProjectionWakeAt,

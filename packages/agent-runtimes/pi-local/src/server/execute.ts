@@ -6,6 +6,7 @@ import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
+  classifyAgentRuntimeNetworkFailure,
   inferOpenAiCompatibleBiller,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
@@ -1216,6 +1217,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const hasSemanticError = parsedError.length > 0;
     const failed = (rawExitCode ?? 0) !== 0 || hasSemanticError;
     const authRequired = failed && isPiAuthRequiredEvidence(parsedError, attempt.proc.stderr);
+    const networkSuspension = classifyAgentRuntimeNetworkFailure({
+      errorCode: authRequired ? "pi_auth_required" : null,
+      message: fallbackErrorMessage,
+      stdout: attempt.proc.stdout,
+      stderr: attempt.rawStderr,
+      provider,
+      model,
+      sessionId: resolvedSessionId,
+      sessionParams: resolvedSessionParams,
+      modelOutputObserved: attempt.parsed.modelOutputObserved,
+      toolActivityObserved: attempt.parsed.toolActivityObserved,
+      terminalEventObserved: attempt.parsed.errors.length > 0,
+    });
 
     return {
       exitCode: rawExitCode,
@@ -1244,6 +1258,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
       summary: attempt.parsed.finalMessage ?? attempt.parsed.messages.join("\n\n").trim(),
       clearSession: Boolean(clearSessionOnMissingSession),
+      ...(networkSuspension ? { networkSuspension } : {}),
     };
   };
 

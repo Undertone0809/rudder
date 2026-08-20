@@ -1453,6 +1453,7 @@ export function assistantStateLabel(state: ChatStreamDraftState | ChatMessage["s
   if (state === "streaming") return "Streaming";
   if (state === "tool_busy") return "Working";
   if (state === "finalizing") return "Finalizing";
+  if (state === "waiting_for_network") return "Waiting for network";
   if (state === "stopped") return "Stopped";
   if (state === "failed") return "Failed";
   if (state === "interrupted") return "Interrupted";
@@ -1482,6 +1483,7 @@ export function shouldHideSteerFallbackAssistantBubble(
 
 export function statusChipClassName(state: ChatStreamDraftState | ChatMessage["status"]) {
   if (state === "failed") return "border-destructive/30 bg-destructive/10 text-destructive";
+  if (state === "waiting_for_network") return "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200";
   if (state === "interrupted") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "chat-chip";
 }

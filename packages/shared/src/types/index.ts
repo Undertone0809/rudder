@@ -73,9 +73,8 @@ export type {
   ChatRichReferenceDisplay,
   ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
-  ChatStreamAssistantStateEvent, ChatStreamErrorEvent,
-  ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
-  ChatStreamTranscriptTodoItemStatus, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType
+  ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
+  ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType
 } from "./chat.js";
 export type { CostByAgent, CostByAgentModel, CostByBiller, CostByProject, CostByProviderModel, CostEvent, CostSummary, CostTrendGranularity, CostTrendPoint, CostWindowSpendRow } from "./cost.js";
 export type {
@@ -121,7 +120,7 @@ export type {
 export type {
   AgentRun, AgentRuntimeState, AgentTaskSession,
   AgentWakeupRequest, HeartbeatRecoveryMode,
-  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceSchedulerHeartbeatAgent
+  HeartbeatRecoveryTrigger, HeartbeatRun, HeartbeatRunAttempt, HeartbeatRunAttemptResumeSource, HeartbeatRunAttemptStatus, HeartbeatRunContextSnapshot, HeartbeatRunEvent, HeartbeatRunRecoveryContext, HeartbeatSessionReuseScope, HeartbeatSessionReuseSuppression, InstanceSchedulerHeartbeatAgent
 } from "./heartbeat.js";
 export type {
   InstanceBrowserSettings, InstanceGeneralSettings, InstanceLocale, InstanceNotificationSettings, InstancePathPickerRequest,

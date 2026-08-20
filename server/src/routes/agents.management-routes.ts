@@ -1253,6 +1253,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const columns = {
       id: heartbeatRuns.id,
       status: heartbeatRuns.status,
+      executionPhase: heartbeatRuns.runningSubstate,
       invocationSource: heartbeatRuns.invocationSource,
       triggerDetail: heartbeatRuns.triggerDetail,
       startedAt: heartbeatRuns.startedAt,
@@ -1555,6 +1556,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .select({
         id: heartbeatRuns.id,
         status: heartbeatRuns.status,
+        executionPhase: heartbeatRuns.runningSubstate,
         invocationSource: heartbeatRuns.invocationSource,
         triggerDetail: heartbeatRuns.triggerDetail,
         startedAt: heartbeatRuns.startedAt,

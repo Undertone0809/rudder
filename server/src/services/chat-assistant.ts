@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { isAgentRuntimeNetworkSuspension, type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import type {
   AgentRuntimeType,
@@ -488,21 +488,31 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runtimeAgentType = runtimeSource.agentRuntimeType;
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;
     const resultSentinel = `${CHAT_RESULT_SENTINEL_PREFIX}${randomUUID()}__`;
-    const chatRun = await chatRunsSvc.createRun({
-      conversation: input.conversation,
-      agentId: runtimeAgentId,
-      triggerDetail: input.stream ? "chat_assistant_reply_stream" : "chat_assistant_reply",
-      userMessageId: input.userMessageId ?? null,
-      chatTurnId: input.chatTurnId ?? null,
-      turnVariant: input.turnVariant ?? 0,
-      linkedIssueIds,
-      linkedProjectId,
-      linkedGoalId,
-      runContext: {
-        ...(input.runContext ?? {}),
-        managedMcpPolicySnapshot: config.managedExternalMcpBindings ?? [],
-      },
-    });
+    const recoveredChatRun = input.resumeRunId
+      ? await chatRunsSvc.adoptRecoveredRun(
+          input.resumeRunId,
+          input.resumeRunOwnerToken ?? "",
+        )
+      : null;
+    const chatRun = recoveredChatRun
+      ?? await chatRunsSvc.createRun({
+          conversation: input.conversation,
+          agentId: runtimeAgentId,
+          triggerDetail: input.stream ? "chat_assistant_reply_stream" : "chat_assistant_reply",
+          userMessageId: input.userMessageId ?? null,
+          chatTurnId: input.chatTurnId ?? null,
+          turnVariant: input.turnVariant ?? 0,
+          linkedIssueIds,
+          linkedProjectId,
+          linkedGoalId,
+          runContext: {
+            ...(input.runContext ?? {}),
+            managedMcpPolicySnapshot: config.managedExternalMcpBindings ?? [],
+          },
+        });
+    if (!chatRun) {
+      throw new Error("The waiting Chat run could not be reattached");
+    }
     const runId = chatRun.id;
     await input.onRunCreated?.(runId);
     let runFinalized = false;
@@ -937,6 +947,18 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         };
       });
 
+      const resumeSession = input.resumeRunId
+        ? {
+            sessionId: chatRun.sessionIdBefore ?? null,
+            sessionParams: recoveredChatRun?.sessionParamsBeforeJson ?? null,
+            sessionDisplayId: chatRun.sessionIdBefore ?? null,
+          }
+        : {
+            sessionId: null,
+            sessionParams: null,
+            sessionDisplayId: null,
+          };
+
       const executeChatAdapter = async (chatPrompt: string) => {
         return executeAdapterWithModelFallbacks(adapter, {
           runId,
@@ -948,9 +970,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             sourceId: runtimeAgentId,
           }),
           runtime: {
-            sessionId: null,
-            sessionParams: null,
-            sessionDisplayId: null,
+            sessionId: resumeSession.sessionId,
+            sessionParams: resumeSession.sessionParams,
+            sessionDisplayId: resumeSession.sessionDisplayId,
             taskKey: null,
           },
           config,
@@ -1081,6 +1103,26 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => flushStdoutChunk("", true));
       if (isStopped()) return finalizeStoppedReply();
+
+      const networkSuspension = isAgentRuntimeNetworkSuspension(result.networkSuspension)
+        ? result.networkSuspension
+        : isAgentRuntimeNetworkSuspension(result.suspension)
+          ? result.suspension
+          : null;
+      if (networkSuspension) {
+        const partialBody = redactRudderInlineVisualSources(
+          partialBodyFromRawAssistantText(assistantTextAccumulator.fullText, resultSentinel)
+          || (safeTrim(sentinelStream.visibleText) ?? ""),
+        );
+        await chatRunsSvc.markWaitingForNetwork(chatRun, networkSuspension);
+        await input.onWaitingForNetwork?.(networkSuspension);
+        return {
+          outcome: "waiting_for_network",
+          partialBody,
+          replyingAgentId: runtimeAgentId,
+          suspension: networkSuspension,
+        };
+      }
       const terminalVisibleDelta = `${inlineVisualStream.push(sentinelStream.finish())}${inlineVisualStream.finish()}`;
       await guardActiveRun(() => maybeEmitAssistantDelta(input.onAssistantDelta, terminalVisibleDelta));
       if (isStopped()) return finalizeStoppedReply();

@@ -45,7 +45,7 @@ export const chatGenerations = pgTable(
     ),
     activeConversationUq: uniqueIndex("chat_generations_active_conversation_uq")
       .on(table.orgId, table.conversationId)
-      .where(sql`${table.status} in ('starting', 'active', 'running', 'tool_busy', 'closing', 'stop_requested', 'stopping')`),
+      .where(sql`${table.status} in ('starting', 'active', 'running', 'waiting_for_network', 'tool_busy', 'closing', 'stop_requested', 'stopping')`),
     controlLeaseIdx: index("chat_generations_control_lease_idx").on(
       table.controlState,
       table.controlLeaseExpiresAt,

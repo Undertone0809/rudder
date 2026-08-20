@@ -6,6 +6,7 @@
  * @see doc/product/domains/execution/transcripts-and-results.md - transcript and result persistence
  * @see doc/product/domains/execution/run-admission-and-recovery.md - retry and process-loss recovery
  */
+import type { HeartbeatRunExecutionPhase } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import { type AnyPgColumn, bigint, boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
@@ -22,6 +23,8 @@ export const heartbeatRuns = pgTable(
     invocationSource: text("invocation_source").notNull().default("on_demand"),
     triggerDetail: text("trigger_detail"),
     status: text("status").notNull().default("queued"),
+    /** A running run may be executing or durably waiting for provider network. */
+    runningSubstate: text("running_substate").$type<HeartbeatRunExecutionPhase | null>(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     error: text("error"),
@@ -54,6 +57,11 @@ export const heartbeatRuns = pgTable(
     processPid: integer("process_pid"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
     processExitedAt: timestamp("process_exited_at", { withTimezone: true }),
+    networkWaitStartedAt: timestamp("network_wait_started_at", { withTimezone: true }),
+    networkWaitNextRetryAt: timestamp("network_wait_next_retry_at", { withTimezone: true }),
+    networkWaitAttemptCount: integer("network_wait_attempt_count").notNull().default(0),
+    networkWaitDurationMs: bigint("network_wait_duration_ms", { mode: "number" }).notNull().default(0),
+    recoveryCheckpoint: jsonb("recovery_checkpoint").$type<Record<string, unknown>>(),
     executionOwnerToken: text("execution_owner_token"),
     executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { withTimezone: true }),
     terminalEffectsPending: boolean("terminal_effects_pending").notNull().default(false),
@@ -101,6 +109,11 @@ export const heartbeatRuns = pgTable(
       table.status,
       table.executionLeaseExpiresAt,
       table.createdAt,
+    ),
+    networkWaitRecoveryIdx: index("heartbeat_runs_network_wait_recovery_idx").on(
+      table.status,
+      table.runningSubstate,
+      table.networkWaitNextRetryAt,
     ),
     companyChatConversationStatusUpdatedIdx: index("heartbeat_runs_company_chat_conversation_status_updated_idx").on(
       table.orgId,

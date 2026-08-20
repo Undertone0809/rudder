@@ -1,6 +1,7 @@
 import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
   applyRudderBrowserCapabilityEnv,
+  classifyAgentRuntimeNetworkFailure,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
   resolveManagedExternalMcpBindings,
@@ -991,6 +992,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       stderrLine ||
       `Codex exited with code ${attempt.proc.exitCode ?? -1}`;
 
+    const networkSuspension = classifyAgentRuntimeNetworkFailure({
+      errorCode: transportRecovery ? "codex_transport_continuation_failed" : null,
+      message: transportRecovery?.initialError || parsedError || null,
+      stdout: attempt.proc.stdout,
+      stderr: attempt.rawStderr,
+      provider: "openai",
+      model,
+      sessionId: resolvedSessionId,
+      sessionParams: resolvedSessionParams,
+      modelOutputObserved: attempt.parsed.modelOutputObserved,
+      toolActivityObserved: attempt.parsed.toolActivityObserved,
+      terminalEventObserved: attempt.parsed.terminalEventObserved,
+    });
+
     const estimatedCostUsd =
       billingType === "subscription" && countSubscriptionUsageAsCost
         ? estimateCodexCostUsd(model, attempt.parsed.usage)
@@ -1029,6 +1044,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         attempt.proc.exitCode === 0 && attempt.proc.signal === null
           ? null
           : fallbackErrorMessage,
+      ...(networkSuspension ? { networkSuspension } : {}),
       ...(transportRecovery && (attempt.proc.exitCode ?? 0) !== 0
         ? { errorCode: "codex_transport_continuation_failed" }
         : {}),

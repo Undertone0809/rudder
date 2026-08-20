@@ -749,6 +749,10 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
         },
       });
 
+      if (streamed.outcome === "waiting_for_network") {
+        return;
+      }
+
       const finalStatus = streamed.outcome === "stopped" ? "stopped" : "completed";
       const finalBody = streamed.outcome === "stopped" ? streamed.partialBody : streamed.reply.body;
       const finalReplyPersistence = streamed.outcome === "completed"

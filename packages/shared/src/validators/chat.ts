@@ -24,6 +24,7 @@ export const chatGenerationStatusSchema = z.enum([
   "starting",
   "active",
   "running",
+  "waiting_for_network",
   "tool_busy",
   "closing",
   "stop_requested",

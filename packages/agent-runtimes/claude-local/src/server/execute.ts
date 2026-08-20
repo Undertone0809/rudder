@@ -3,6 +3,7 @@ import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
+  classifyAgentRuntimeNetworkFailure,
   pickRudderMcpManagedEnv,
   preflightManagedExternalMcpBindings,
   resolveOrganizationStorageKey,
@@ -1046,17 +1047,29 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     if (!parsed) {
+      const fallbackErrorMessage = parseFallbackErrorMessage(proc);
+      const networkSuspension = classifyAgentRuntimeNetworkFailure({
+        errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+        message: fallbackErrorMessage,
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+        provider: "anthropic",
+        model,
+        sessionId: opts.fallbackSessionId,
+        sessionParams: opts.fallbackSessionId ? { sessionId: opts.fallbackSessionId, cwd } : null,
+      });
       return {
         exitCode: proc.exitCode,
         signal: proc.signal,
         timedOut: false,
-        errorMessage: parseFallbackErrorMessage(proc),
+        errorMessage: fallbackErrorMessage,
         errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
         errorMeta,
         resultJson: {
           stdout: proc.stdout,
           stderr: proc.stderr,
         },
+        ...(networkSuspension ? { networkSuspension } : {}),
         clearSession: Boolean(opts.clearSessionOnMissingSession),
       };
     }
@@ -1087,6 +1100,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       } as Record<string, unknown>)
       : null;
     const clearSessionForMaxTurns = isClaudeMaxTurnsResult(parsed);
+    const resolvedModel = parsedStream.model || asString(parsed.model, model);
+    const networkSuspension = classifyAgentRuntimeNetworkFailure({
+      errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+      message: describeClaudeFailure(parsed),
+      stdout: proc.stdout,
+      stderr: proc.stderr,
+      provider: "anthropic",
+      model: resolvedModel,
+      sessionId: resolvedSessionId,
+      sessionParams: resolvedSessionParams,
+      modelOutputObserved: parsedStream.modelOutputObserved,
+      toolActivityObserved: parsedStream.toolActivityObserved,
+      terminalEventObserved: Boolean(parsedStream.resultJson),
+    });
 
     return {
       exitCode: proc.exitCode,
@@ -1104,11 +1131,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       sessionDisplayId: resolvedSessionId,
       provider: "anthropic",
       biller: "anthropic",
-      model: parsedStream.model || asString(parsed.model, model),
+      model: resolvedModel,
       billingType,
       costUsd: parsedStream.costUsd ?? asNumber(parsed.total_cost_usd, 0),
       resultJson: parsed,
       summary: parsedStream.summary || asString(parsed.result, ""),
+      ...(networkSuspension ? { networkSuspension } : {}),
       clearSession: clearSessionForMaxTurns || Boolean(opts.clearSessionOnMissingSession && !resolvedSessionId),
     };
   };

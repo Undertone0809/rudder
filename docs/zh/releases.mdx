@@ -18,6 +18,33 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月20日" description="v0.7.12" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.12
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.12)
+
+这个版本让本地运行时的 Agent 执行更加持久可靠，并改善了 Transcript、Goal、Automation 和 Desktop 工作流。
+
+### 新功能
+
+- 增加用于工作区备份和本地进程处理的原生运行时基础，并补充跨平台的监听与恢复能力。
+- 在 Agent 工作流中增加类型化短引用，让 Issue、Goal、Project、Run 和 Chat 更容易保持一致地引用。
+
+### 改进
+
+- 改进 Chat Work Manifest 和 Transcript 详情，提供更清晰的活动、搜索查询、命令输出和阅读宽度表现。
+- 改进 Goal 和 Automation 工作流，让状态展示、布局行为和创建入口更加一致。
+- 改进中断 Agent Run 的取消和工作区备份恢复，让本地执行更可靠地收敛到最终状态。
+
+### 问题修复
+
+- 修复原生运行时载荷校验问题，在回退前拒绝不受信任或不匹配的归档文件。
+- 恢复旧版 Agent 指令包，并在 GitHub 限流时继续提供插件预览。
+- 移除运行时上下文中的合成智能工作区，并修复多个跨平台 Desktop 和 CI 边界问题。
+
+</Update>
+
 <Update label="2026年8月19日" description="v0.7.11" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.11

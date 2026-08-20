@@ -7,7 +7,11 @@
  * @see doc/product/domains/execution/run-admission-and-recovery.md - retry and recovery behavior
  * @see doc/product/domains/agents/instruction-loading.md - AGENT.INSTRUCTIONS.001 runtime instruction frame
  */
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import {
+  buildModelAttemptSpecs,
+  isAgentRuntimeNetworkSuspension,
+  type TranscriptEntry,
+} from "@rudderhq/agent-runtime-utils";
 import {
   goals,
   heartbeatRuns,
@@ -63,6 +67,12 @@ import {
   resolveProjectWorkingSetCwd,
   type AssignmentRunGuardrailCheckpoint,
 } from "./assignment-run-guardrail.js";
+import {
+  beginHeartbeatRunAttempt,
+  finishHeartbeatRunAttempt,
+  markHeartbeatRunAttemptWaiting,
+  type HeartbeatAttemptRef,
+} from "./heartbeat-attempt-ledger.js";
 import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
@@ -182,6 +192,18 @@ export function createHeartbeatExecuteHandlers(context: any) {
     }
     const executionAbortController = runAbortControllers.get(run.id) ?? new AbortController();
     runAbortControllers.set(run.id, executionAbortController);
+    let activeAttemptRef: HeartbeatAttemptRef | null = null;
+    let networkSuspended = false;
+    const finishActiveAttempt = async (input: Record<string, unknown>) => {
+      const ref = activeAttemptRef;
+      activeAttemptRef = null;
+      if (!ref) return;
+      try {
+        await finishHeartbeatRunAttempt(db, ref, input as any);
+      } catch (error) {
+        logger.warn({ err: error, runId: runId, attemptIndex: ref.attemptIndex }, "failed to persist heartbeat attempt terminal state");
+      }
+    };
 
     try {
     if (run.status === "queued") {
@@ -249,6 +271,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let finalRunOutput: string | null = null;
     let ownsTerminalState = false;
     let shouldCompleteTerminalEffects = false;
+    let activeAttemptSpec: { index: number; fallbackIndex: number | null } | null = null;
     const finalizeExecutionTranscript = () => {
       stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
         buffer: stdoutTranscriptBuffer,
@@ -699,6 +722,27 @@ export function createHeartbeatExecuteHandlers(context: any) {
       sessionDisplayId: previousSessionDisplayId,
       taskKey,
     };
+    const attemptStride = Math.max(1, buildModelAttemptSpecs(runtimeConfig, agent.agentRuntimeType).length);
+    const recoveryAttemptOrdinal = Math.max(0, Math.floor(Number(run.networkWaitAttemptCount) || 0));
+    const attemptResumeSource = recoveryAttemptOrdinal === 0
+      ? "fresh"
+      : run.recoveryCheckpoint?.continuation === "resume_same_session"
+        ? "same_session"
+        : "pristine_replay";
+    const resolveLedgerAttemptIndex = (attempt: { index: number }) =>
+      recoveryAttemptOrdinal * attemptStride + attempt.index;
+    const recoveryStartAttemptIndex = recoveryAttemptOrdinal > 0
+      && typeof run.recoveryCheckpoint?.fallbackIndex === "number"
+      ? Math.max(0, Math.floor(run.recoveryCheckpoint.fallbackIndex))
+      : 0;
+    const persistAttempt = async (label: string, operation: () => Promise<unknown>) => {
+      try {
+        return await operation();
+      } catch (error) {
+        logger.warn({ err: error, runId: run.id, label }, "failed to persist heartbeat attempt ledger state");
+        return null;
+      }
+    };
 
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
@@ -745,6 +789,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         context,
         {
           startedAt,
+          runningSubstate: "executing",
           sessionIdBefore: runtimeForAdapter.sessionDisplayId ?? runtimeForAdapter.sessionId,
           sessionParamsBeforeJson: runtimeForAdapter.sessionParams,
           sessionReuseScope,
@@ -845,6 +890,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         orgId: run.orgId,
         agentId: run.agentId,
         runId,
+        append: Boolean(run.logRef),
       });
 
       await db
@@ -1080,11 +1126,43 @@ export function createHeartbeatExecuteHandlers(context: any) {
         requestApproval,
         waitForApproval,
       }, {
+        startAttemptIndex: recoveryStartAttemptIndex,
         resolveAdapter: findServerAdapter,
         createAuthToken: (agentRuntimeType) =>
           createLocalAgentJwt(agent.id, agent.orgId, agentRuntimeType, run.id) ?? undefined,
-        onAttemptStart: (_attempt, attemptAdapter) => {
+        onAttemptStart: async (attempt, attemptAdapter) => {
+          activeAttemptSpec = {
+            index: attempt.index,
+            fallbackIndex: attempt.fallbackIndex,
+          };
+          activeAttemptRef = await persistAttempt("started", () => beginHeartbeatRunAttempt(db, {
+            orgId: run.orgId,
+            runId: run.id,
+            agentId: run.agentId,
+            attemptIndex: resolveLedgerAttemptIndex(attempt),
+            fallbackIndex: attempt.fallbackIndex,
+            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
+            model: attempt.model,
+            isFallback: attempt.isFallback,
+            resumeSource: attemptResumeSource,
+          }));
           stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
+        },
+        onAttemptFailure: async (_attempt, failure) => {
+          const failureRecord = failure && typeof failure === "object" ? failure as Record<string, unknown> : null;
+          const failureMessage = failure instanceof Error
+            ? failure.message
+            : readNonEmptyString(failureRecord?.errorMessage) ?? "Adapter fallback attempt failed";
+          await finishActiveAttempt({
+            status: "failed",
+            errorCode: readNonEmptyString(failureRecord?.errorCode) ?? "adapter_failed",
+            error: failureMessage,
+            usageDeltaJson: failureRecord?.usage,
+            costUsd: failureRecord?.costUsd,
+            sessionDisplayId: readNonEmptyString(failureRecord?.sessionDisplayId)
+              ?? readNonEmptyString(failureRecord?.sessionId),
+            sessionParamsJson: failureRecord?.sessionParams,
+          });
         },
       });
       if (assignmentGuardrailCheckpoint) {
@@ -1137,6 +1215,127 @@ export function createHeartbeatExecuteHandlers(context: any) {
             );
           }
         }
+      }
+
+      const networkSuspension = isAgentRuntimeNetworkSuspension(adapterResult.networkSuspension)
+        ? adapterResult.networkSuspension
+        : isAgentRuntimeNetworkSuspension(adapterResult.suspension)
+          ? adapterResult.suspension
+          : null;
+      if (networkSuspension) {
+        // A transport suspension is a non-terminal transition. Persist the
+        // provider checkpoint before releasing the local execution lease so a
+        // restart or another scheduler tick can safely claim this same Run.
+        const now = new Date();
+        const currentRunForWait = await getRun(run.id);
+        const waitAttempt = (currentRunForWait?.networkWaitAttemptCount ?? 0) + 1;
+        const backoff = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000][Math.min(waitAttempt - 1, 5)] ?? 60_000;
+        const jitteredBackoff = Math.max(1_000, Math.round(backoff * (0.9 + Math.random() * 0.2)));
+        const nextRetryAt = new Date(now.getTime() + jitteredBackoff);
+        const checkpoint = {
+          kind: networkSuspension.kind,
+          code: networkSuspension.code ?? "provider_transport_unavailable",
+          transport: networkSuspension.transport,
+          provider: networkSuspension.provider ?? adapterResult.provider ?? null,
+          model: networkSuspension.model ?? adapterResult.model ?? null,
+          submissionPhase: networkSuspension.submissionPhase,
+          continuation: networkSuspension.continuation,
+          sessionId: networkSuspension.sessionId ?? adapterResult.sessionDisplayId ?? adapterResult.sessionId ?? null,
+          sessionParams: networkSuspension.sessionParams ?? adapterResult.sessionParams ?? null,
+          progress: networkSuspension.progress ?? {
+            modelOutputObserved: networkSuspension.modelOutputObserved,
+            toolActivityObserved: networkSuspension.toolActivityObserved,
+          },
+          modelOutputObserved: networkSuspension.modelOutputObserved
+            ?? networkSuspension.progress?.modelOutputObserved
+            ?? false,
+          toolActivityObserved: networkSuspension.toolActivityObserved
+            ?? networkSuspension.progress?.toolActivityObserved
+            ?? false,
+          sideEffectRisk: networkSuspension.sideEffectRisk ?? null,
+          attemptIndex: activeAttemptSpec?.index ?? 0,
+          fallbackIndex: activeAttemptSpec?.fallbackIndex ?? null,
+          message: networkSuspension.message,
+          observedAt: now.toISOString(),
+        } satisfies Record<string, unknown>;
+        const resumedSessionId = readNonEmptyString(networkSuspension.sessionId)
+          ?? readNonEmptyString(adapterResult.sessionDisplayId)
+          ?? readNonEmptyString(adapterResult.sessionId)
+          ?? previousSessionDisplayId
+          ?? null;
+        const resumedSessionParams = networkSuspension.sessionParams
+          ?? adapterResult.sessionParams
+          ?? runtimeForAdapter.sessionParams
+          ?? null;
+        const waitingRun = await db
+          .update(heartbeatRuns)
+          .set({
+            runningSubstate: "waiting_for_network",
+            networkWaitStartedAt: currentRunForWait?.networkWaitStartedAt ?? now,
+            networkWaitNextRetryAt: nextRetryAt,
+            networkWaitAttemptCount: waitAttempt,
+            recoveryCheckpoint: checkpoint,
+            sessionIdBefore: resumedSessionId,
+            sessionParamsBeforeJson: resumedSessionParams,
+            sessionReuseScope: resumedSessionParams || resumedSessionId ? "explicit" : "none",
+            processExitedAt: now,
+            processPid: null,
+            processStartedAt: null,
+            executionOwnerToken: null,
+            executionLeaseExpiresAt: null,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(heartbeatRuns.id, run.id),
+            eq(heartbeatRuns.status, "running"),
+            ...(executionOwnerToken ? [eq(heartbeatRuns.executionOwnerToken, executionOwnerToken)] : []),
+          ))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!waitingRun) return;
+        networkSuspended = true;
+        const waitingAttemptRef = activeAttemptRef;
+        activeAttemptRef = null;
+        await persistAttempt("waiting_for_network", () => markHeartbeatRunAttemptWaiting(db, waitingAttemptRef, {
+          submissionPhase: networkSuspension.submissionPhase,
+          providerThreadId: networkSuspension.providerThreadId ?? adapterResult.providerThreadId,
+          providerTurnId: networkSuspension.providerTurnId ?? adapterResult.providerTurnId,
+          sessionDisplayId: resumedSessionId,
+          sessionParamsJson: resumedSessionParams,
+          checkpointJson: checkpoint,
+          errorCode: networkSuspension.code ?? "provider_transport_unavailable",
+          error: networkSuspension.message ?? null,
+          suspendedAt: now,
+        }));
+        await appendRunEvent(waitingRun, {
+          eventType: "network.waiting",
+          stream: "system",
+          level: "info",
+          message: "run waiting for network",
+          payload: {
+            attempt: waitAttempt,
+            nextRetryAt: nextRetryAt.toISOString(),
+            backoffMs: jitteredBackoff,
+            suspension: checkpoint,
+          },
+        });
+        publishLiveEvent({
+          orgId: waitingRun.orgId,
+          type: "heartbeat.run.status",
+          payload: {
+            runId: waitingRun.id,
+            agentId: waitingRun.agentId,
+            status: waitingRun.status,
+            executionPhase: "waiting_for_network",
+            networkWaitAttemptCount: waitAttempt,
+            networkWaitNextRetryAt: nextRetryAt.toISOString(),
+          },
+        });
+        if (handle) {
+          await runLogStore.finalize(handle).catch(() => undefined);
+          handle = null;
+        }
+        return;
       }
       const nextSessionState = resolveNextSessionState({
         codec: sessionCodec,
@@ -1312,6 +1511,19 @@ export function createHeartbeatExecuteHandlers(context: any) {
         expectedExecutionOwnerToken: executionOwnerToken,
       });
       ownsTerminalState = Boolean(claimedTerminalRun);
+      await finishActiveAttempt({
+        status,
+        submissionPhase: adapterResult.submissionPhase,
+        providerThreadId: adapterResult.providerThreadId,
+        providerTurnId: adapterResult.providerTurnId,
+        sessionDisplayId: nextSessionState.displayId ?? nextSessionState.legacySessionId,
+        sessionParamsJson: adapterResult.clearSession ? {} : nextSessionState.params,
+        usageDeltaJson: usageJson ?? adapterResult.usage,
+        costUsd: adapterResult.costUsd,
+        errorCode: terminalEvidence.errorCode,
+        error: terminalEvidence.error,
+        finishedAt: terminalEvidence.finishedAt,
+      });
       if (!claimedTerminalRun) {
         await reconcileRunEvidence(run.id, terminalEvidence);
         await reconcileTerminalEffectsIntent(run.id, {
@@ -1519,6 +1731,14 @@ export function createHeartbeatExecuteHandlers(context: any) {
         expectedExecutionOwnerToken: executionOwnerToken,
       });
       ownsTerminalState = Boolean(claimedFailedRun);
+      await finishActiveAttempt({
+        status: "failed",
+        errorCode: failureEvidence.errorCode,
+        error: failureEvidence.error,
+        sessionDisplayId: previousSessionDisplayId,
+        sessionParamsJson: previousSessionParams,
+        finishedAt: failureEvidence.finishedAt,
+      });
       if (!claimedFailedRun) await reconcileRunEvidence(run.id, failureEvidence);
       const failedRun = claimedFailedRun ?? await getRun(run.id);
       if (ownsTerminalState) {
@@ -1579,6 +1799,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
           // The inner catch did not fire, so we must record the failure here.
           const message = outerErr instanceof Error ? outerErr.message : "Unknown setup failure";
           logger.error({ err: outerErr, runId }, "heartbeat execution setup failed");
+          await finishActiveAttempt({
+            status: "failed",
+            errorCode: "adapter_failed",
+            error: message,
+            finishedAt: new Date(),
+          });
           const latestRun = await getRun(runId).catch(() => null);
           const claimedFailedRun = latestRun?.status === "running"
             ? await transitionRunToTerminal(runId, "failed", {
@@ -1614,7 +1840,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           runAbortControllers.delete(run.id);
           activeRunExecutions.delete(run.id);
-          await startNextQueuedRunForAgent(run.agentId);
+          if (!networkSuspended) await startNextQueuedRunForAgent(run.agentId);
         }
   }
 

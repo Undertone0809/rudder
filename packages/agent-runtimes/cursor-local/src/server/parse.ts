@@ -53,6 +53,8 @@ export function parseCursorJsonl(stdout: string) {
   let sessionId: string | null = null;
   const messages: string[] = [];
   let errorMessage: string | null = null;
+  let modelOutputObserved = false;
+  let toolActivityObserved = false;
   let totalCostUsd = 0;
   const usage = {
     inputTokens: 0,
@@ -73,7 +75,16 @@ export function parseCursorJsonl(stdout: string) {
     const type = asString(event.type, "").trim();
 
     if (type === "assistant") {
-      messages.push(...collectAssistantText(event.message));
+      const assistantText = collectAssistantText(event.message);
+      if (assistantText.length > 0) modelOutputObserved = true;
+      messages.push(...assistantText);
+      const content = parseObject(event.message).content;
+      if (Array.isArray(content) && content.some((partRaw) => {
+        const part = parseObject(partRaw);
+        return /^(?:tool_call|tool_use|tool_result|function_call|mcp_tool_use)$/i.test(asString(part.type, ""));
+      })) {
+        toolActivityObserved = true;
+      }
       continue;
     }
 
@@ -97,11 +108,13 @@ export function parseCursorJsonl(stdout: string) {
       const resultText = asString(event.result, "").trim();
       if (resultText && messages.length === 0) {
         messages.push(resultText);
+        modelOutputObserved = true;
       }
       if (isError) {
         const resultError = asErrorText(event.error ?? event.message ?? event.result).trim();
         if (resultError) errorMessage = resultError;
       }
+      if (event.tool_call || event.tool_use || event.tool_result) toolActivityObserved = true;
       continue;
     }
 
@@ -146,6 +159,8 @@ export function parseCursorJsonl(stdout: string) {
     usage,
     costUsd: totalCostUsd > 0 ? totalCostUsd : null,
     errorMessage,
+    modelOutputObserved,
+    toolActivityObserved,
   };
 }
 

@@ -1100,6 +1100,13 @@
       "when": 1787130000000,
       "tag": "0156_goal_checkpoints",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1787216400000,
+      "tag": "0157_agent_run_network_wait",
+      "breakpoints": true
     }
   ]
 }

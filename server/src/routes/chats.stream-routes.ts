@@ -1,4 +1,7 @@
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type {
+  AgentRuntimeNetworkSuspension,
+  TranscriptEntry,
+} from "@rudderhq/agent-runtime-utils";
 import {
   addChatMessageSchema,
   chatClientCheckpointSchema,
@@ -397,6 +400,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let userMessagePersisted = Boolean(atomicFirstTurn);
     let committedUserMessageId = atomicFirstTurn?.userMessage.id ?? null;
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
+    let generationWaitingForNetwork = false;
     let admittedAssistantBody = "";
     let stopCutoff: { body: string; transcript: TranscriptEntry[] } | null = null;
     let outputAdmissionTail: Promise<void> = Promise.resolve();
@@ -608,9 +612,47 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               userMessageId: userMessage.id,
               chatTurnId: turnContextForPartial.chatTurnId,
               turnVariant: turnContextForPartial.turnVariant,
+              runContext: { chatGenerationId: generation!.id },
               stream: true,
               onRunCreated: (runId: string) => {
                 activeChatRunId = runId;
+              },
+              onWaitingForNetwork: async (suspension: AgentRuntimeNetworkSuspension) => {
+                const markWaiting = (svc.generationProtocol as {
+                  markWaitingForNetwork?: (input: {
+                    orgId: string;
+                    conversationId: string;
+                    generationId: string;
+                    expectedAttemptEpoch: number;
+                    suspension: AgentRuntimeNetworkSuspension;
+                  }) => Promise<{ stopped?: boolean } | unknown>;
+                }).markWaitingForNetwork;
+                const marked = await markWaiting?.({
+                  orgId: conversation.orgId,
+                  conversationId: conversation.id,
+                  generationId: generation!.id,
+                  expectedAttemptEpoch: generation!.attemptEpoch ?? 1,
+                  suspension,
+                });
+                const stopped = Boolean(
+                  marked
+                  && typeof marked === "object"
+                  && "stopped" in marked
+                  && marked.stopped === true,
+                );
+                generationWaitingForNetwork = !stopped;
+                if (stopped) {
+                  generationTerminalStatus = "stopped";
+                  if (!abortController.signal.aborted) abortController.abort();
+                }
+                if (stopped || clientClosed) return;
+                writeStreamEvent(res, {
+                  type: "waiting_for_network",
+                  generationId: generation!.id,
+                  attemptEpoch: generation!.attemptEpoch ?? 1,
+                  generationSeq: admittedAssistantBody ? undefined : 0,
+                  bodyHash: hashChatGenerationBody(admittedAssistantBody),
+                });
               },
               abortSignal: abortController.signal,
               controlCoordinator: createChatRuntimeControlCoordinator(
@@ -764,6 +806,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               }),
             });
 
+            if (streamed.outcome === "waiting_for_network" && generationWaitingForNetwork) {
+              if (!clientClosed) res.end();
+              return;
+            }
             if (abortController.signal.aborted || streamed.outcome === "stopped") {
               await persistStoppedAssistant(
                 assistantInput.conversation,
@@ -972,7 +1018,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       abortController.signal.removeEventListener("abort", freezeStopCutoff);
       req.off("aborted", handleClosed);
       res.off("close", handleClosed);
-      if (generation) {
+      if (generation && !generationWaitingForNetwork) {
         await (async () => {
           const latestGeneration = await svc.getLatestGeneration(conversation.id);
           const expectedAttemptEpoch = latestGeneration?.attemptEpoch
@@ -997,7 +1043,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           logger.warn({ err: error, generationId: generation?.id }, "failed to record chat generation terminal evidence");
         });
       }
-      if (queuedMessageId) {
+      if (queuedMessageId && !generationWaitingForNetwork) {
         await svc.markQueuedMessageDeliveryTerminal({
           conversationId: conversation.id,
           itemId: queuedMessageId,

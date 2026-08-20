@@ -61,7 +61,8 @@ export function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId
   const liveRun = sorted.find((r) => r.status === "running" || r.status === "queued");
   const run = liveRun ?? sorted[0];
   const isLive = run.status === "running" || run.status === "queued";
-  const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
+  const displayStatus = run.executionPhase === "waiting_for_network" ? "waiting_for_network" : run.status;
+  const statusInfo = runStatusIcons[displayStatus] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
   const runReason = describeRunReason(run);
   const durationLabel = formatRunDurationLabel(run, now) ?? relativeTime(run.createdAt);
@@ -101,8 +102,8 @@ export function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId
         )}
       >
         <div className="flex items-center gap-2">
-          <StatusIcon className={cn("h-3.5 w-3.5", statusInfo.color, run.status === "running" && "animate-spin")} />
-          <StatusBadge status={run.status} />
+          <StatusIcon className={cn("h-3.5 w-3.5", statusInfo.color, displayStatus === "running" && "animate-spin")} />
+          <StatusBadge status={displayStatus} />
           <span className="font-mono text-xs text-muted-foreground">{run.shortRef ?? (isUuidLike(run.id) ? shortRefFor("run", run.id) : run.id.slice(0, 8))}</span>
           <span className={cn(
             "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",

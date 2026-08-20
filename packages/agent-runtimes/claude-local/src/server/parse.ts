@@ -9,6 +9,8 @@ export function parseClaudeStreamJson(stdout: string) {
   let model = "";
   let finalResult: Record<string, unknown> | null = null;
   const assistantTexts: string[] = [];
+  let modelOutputObserved = false;
+  let toolActivityObserved = false;
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -30,9 +32,16 @@ export function parseClaudeStreamJson(stdout: string) {
       for (const entry of content) {
         if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
         const block = entry as Record<string, unknown>;
-        if (asString(block.type, "") === "text") {
+        const blockType = asString(block.type, "");
+        if (/^(?:tool_use|tool_result|server_tool_use|mcp_tool_use)$/i.test(blockType)) {
+          toolActivityObserved = true;
+        }
+        if (blockType === "text") {
           const text = asString(block.text, "");
-          if (text) assistantTexts.push(text);
+          if (text) {
+            assistantTexts.push(text);
+            modelOutputObserved = true;
+          }
         }
       }
       continue;
@@ -48,6 +57,8 @@ export function parseClaudeStreamJson(stdout: string) {
     return {
       sessionId,
       model,
+      modelOutputObserved,
+      toolActivityObserved,
       costUsd: null as number | null,
       usage: null as UsageSummary | null,
       summary: "",
@@ -70,6 +81,8 @@ export function parseClaudeStreamJson(stdout: string) {
   return {
     sessionId,
     model,
+    modelOutputObserved,
+    toolActivityObserved,
     costUsd,
     usage,
     summary,

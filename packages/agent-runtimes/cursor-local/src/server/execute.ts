@@ -1,4 +1,9 @@
-import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import {
+  classifyAgentRuntimeNetworkFailure,
+  inferOpenAiCompatibleBiller,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+} from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asNumber,
@@ -671,6 +676,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       `${parsedError}\n${attempt.proc.stdout}\n${attempt.proc.stderr}`,
     );
     const shouldClearSession = clearSessionWhenMissing && !resultSessionId;
+    const networkSuspension = classifyAgentRuntimeNetworkFailure({
+      errorCode: failed && quotaExhausted ? "cursor_quota_exhausted" : null,
+      message: fallbackErrorMessage,
+      stdout: attempt.proc.stdout,
+      stderr: attempt.proc.stderr,
+      provider: providerFromModel,
+      model,
+      sessionId: resolvedSessionId,
+      sessionParams: resolvedSessionParams,
+      modelOutputObserved: attempt.parsed.modelOutputObserved,
+      toolActivityObserved: attempt.parsed.toolActivityObserved,
+      terminalEventObserved: Boolean(attempt.parsed.errorMessage) || Boolean(attempt.proc.exitCode === 0),
+    });
 
     return {
       exitCode: attempt.proc.exitCode,
@@ -694,6 +712,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
       summary: attempt.parsed.summary,
       clearSession: shouldClearSession,
+      ...(networkSuspension ? { networkSuspension } : {}),
     };
   };
 

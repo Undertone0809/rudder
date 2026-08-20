@@ -196,6 +196,9 @@ export function toAgentRun(run: HeartbeatRun): AgentRun {
 
 export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
   const shortRef = runShortRef(run.id);
+  const persisted = run as HeartbeatRun & {
+    runningSubstate?: HeartbeatRun["executionPhase"];
+  };
   return {
     id: run.id,
     ...(shortRef ? { shortRef } : {}),
@@ -204,6 +207,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     invocationSource: run.invocationSource,
     triggerDetail: run.triggerDetail,
     status: run.status,
+    executionPhase: run.executionPhase ?? persisted.runningSubstate ?? null,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     error: run.error,
@@ -227,6 +231,11 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     chatConversationId: run.chatConversationId ?? null,
     processPid: run.processPid,
     processStartedAt: run.processStartedAt,
+    networkWaitStartedAt: run.networkWaitStartedAt,
+    networkWaitNextRetryAt: run.networkWaitNextRetryAt,
+    networkWaitAttemptCount: run.networkWaitAttemptCount,
+    networkWaitDurationMs: run.networkWaitDurationMs,
+    recoveryCheckpoint: run.recoveryCheckpoint,
     retryOfRunId: run.retryOfRunId,
     processLossRetryCount: run.processLossRetryCount,
     contextSnapshot: toPublicHeartbeatRunContextSnapshot(run.contextSnapshot),

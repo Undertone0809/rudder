@@ -71,6 +71,8 @@ export function parseOpenCodeJsonl(stdout: string) {
   let costUsd = 0;
   let terminalStop = false;
   let completionSummary: string | null = null;
+  let modelOutputObserved = false;
+  let toolActivityObserved = false;
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -79,12 +81,16 @@ export function parseOpenCodeJsonl(stdout: string) {
     const parsedLine = parseOpenCodeJsonlLine(line);
     if (!parsedLine) continue;
     const { event } = parsedLine;
+    if (asString(event.type, "") === "tool_use") toolActivityObserved = true;
 
     const currentSessionId = asString(event.sessionID, "").trim();
     if (currentSessionId) sessionId = currentSessionId;
 
     if (parsedLine.type === "assistantText") {
-      if (parsedLine.text) messages.push(parsedLine.text);
+      if (parsedLine.text) {
+        messages.push(parsedLine.text);
+        modelOutputObserved = true;
+      }
       continue;
     }
 
@@ -102,6 +108,7 @@ export function parseOpenCodeJsonl(stdout: string) {
       parsedLine.type === "toolCallsStepFinish" ||
       parsedLine.type === "terminalStop"
     ) {
+      if (parsedLine.type === "toolCallsStepFinish") toolActivityObserved = true;
       const part = parseObject(event.part);
       const tokens = parseObject(part.tokens);
       const cache = parseObject(tokens.cache);
@@ -113,6 +120,7 @@ export function parseOpenCodeJsonl(stdout: string) {
     }
 
     if (parsedLine.type === "toolUseError") {
+      toolActivityObserved = true;
       if (parsedLine.text) errors.push(parsedLine.text);
       continue;
     }
@@ -131,6 +139,8 @@ export function parseOpenCodeJsonl(stdout: string) {
     errorMessage: errors.length > 0 ? errors.join("\n") : null,
     terminalStop,
     completionSummary,
+    modelOutputObserved,
+    toolActivityObserved,
   };
 }
 

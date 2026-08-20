@@ -3,6 +3,7 @@ import {
   RUDDER_MCP_MANAGED_ENV_KEYS,
   RUDDER_MCP_SERVER_NAME,
   applyRudderBrowserCapabilityEnv,
+  classifyAgentRuntimeNetworkFailure,
   inferOpenAiCompatibleBiller,
   pickRudderMcpManagedEnv,
   preflightManagedExternalMcpBindings,
@@ -1048,6 +1049,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       stderrLine ||
       `OpenCode exited with code ${synthesizedExitCode ?? -1}`;
     const modelId = model || null;
+    const networkSuspension = classifyAgentRuntimeNetworkFailure({
+      errorCode: startupIdle ? "opencode_startup_idle" : toolLoopIdle ? "opencode_tool_loop_idle" : null,
+      message: fallbackErrorMessage,
+      stdout: attempt.proc.stdout,
+      stderr: attempt.rawStderr,
+      provider: parseModelProvider(modelId),
+      model: modelId,
+      sessionId: resolvedSessionId,
+      sessionParams: resolvedSessionParams,
+      modelOutputObserved: attempt.parsed.modelOutputObserved,
+      toolActivityObserved: attempt.parsed.toolActivityObserved,
+      terminalEventObserved: attempt.parsed.terminalStop,
+    });
 
     return {
       exitCode: synthesizedExitCode,
@@ -1077,6 +1091,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
       summary: parsedSummary || ((synthesizedExitCode ?? 0) === 0 ? "" : fallbackErrorMessage),
       clearSession: Boolean(clearSessionOnMissingSession && !attempt.parsed.sessionId),
+      ...(networkSuspension ? { networkSuspension } : {}),
     };
   };
 

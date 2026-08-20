@@ -1357,7 +1357,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           body,
           files: regularFilesToUpload,
           inlineAnnotations: chatResponseAnnotationsForDraft(responseAnnotationState),
-          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamScopeKey: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
+          orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let activeStreamScopeKey: string | null = null; let activeStreamKey: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false; let networkWaiting = false;
     try {
       if (!conversation && conversationId) { conversation = await chatsApi.get(conversationId); upsertConversation(conversation);
         upsertMessengerThreadSummary(conversation); }
@@ -1501,7 +1501,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               throw new Error("Chat stream emitted output before accepting the first message");
             }
             const streamScopeKey = activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, conversation);
-            if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
+            if (event.type === "waiting_for_network") networkWaiting = true;
+            if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
               setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
               return;
             }
@@ -1529,7 +1530,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (options?.clearPendingFilesOnSuccess) clearPendingFilesForCurrentScope();
         await refreshChat(createdConversation.id);
         await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, createdConversation.id) });
-        setStreamDraftForChat(activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation), (current) => current?.streamKey === streamKey ? null : current);
+        if (!networkWaiting) {
+          setStreamDraftForChat(activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation), (current) => current?.streamKey === streamKey ? null : current);
+        }
         return;
       }
       const chatId = conversation.id; const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation); const activeDraftForChat = readChatScopedState(streamDrafts, streamScopeKey);
@@ -1657,7 +1660,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             }
             throw new Error(event.error);
           }
-          if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "transcript_entry") {
+          if (event.type === "waiting_for_network") networkWaiting = true;
+          if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
             setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
             return; }
           if (event.type === "final") {
@@ -1678,7 +1682,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
       await refreshChat(chatId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, chatId) });
-      if (!readPendingChatStopRecovery(selectedOrganizationId, chatId)) {
+      if (!networkWaiting && !readPendingChatStopRecovery(selectedOrganizationId, chatId)) {
         setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
       }
     } catch (error) {
@@ -1752,7 +1756,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       }
       return;
     } finally {
-      if (activeChatId) { const ownedStream = streamOwnershipRef.current[activeChatId];
+      if (activeChatId && !networkWaiting) { const ownedStream = streamOwnershipRef.current[activeChatId];
         if (!ownedStream || ownedStream.streamKey === activeStreamKey) {
           delete streamOwnershipRef.current[activeChatId];
           const streamScopeKey = activeStreamScopeKey ?? activeChatId;
@@ -1763,11 +1767,45 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (!pendingStop && stopRecoveryStreamKeysRef.current[activeChatId] === activeStreamKey) {
           delete stopRecoveryStreamKeysRef.current[activeChatId];
         }
-        if (chatSendLockAcquired) {
-          releaseChatSendLock(activeChatId); } }
+      }
+      if (activeChatId && chatSendLockAcquired) {
+        releaseChatSendLock(activeChatId);
+      }
       if (newConversationLockAcquired) { releaseNewConversationSendLock(); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]);
   const rawMessages = messagesQuery.data ?? [];
+  useEffect(() => {
+    if (!conversationId || !selectedConversation || queueQuery.data?.activeGenerationStatus !== "waiting_for_network") return;
+    const scopeKey = chatGenerationScopeKey(selectedOrganizationId!, selectedConversation);
+    if (streamDrafts[scopeKey]) return;
+    const latestUserMessage = [...rawMessages]
+      .reverse()
+      .find((message) => message.role === "user" && !message.supersededAt);
+    if (!latestUserMessage || !queueQuery.data.activeGenerationId) return;
+    const createdAt = new Date(latestUserMessage.createdAt);
+    setStreamDraftForChat(scopeKey, {
+      chatId: selectedConversation.id,
+      streamKey: `recovered:${queueQuery.data.activeGenerationId}`,
+      userBody: latestUserMessage.body,
+      userCreatedAt: createdAt,
+      userMessageId: latestUserMessage.id,
+      chatTurnId: latestUserMessage.chatTurnId ?? null,
+      turnVariant: latestUserMessage.turnVariant ?? 0,
+      editedFromCreatedAt: null,
+      body: "",
+      generationId: queueQuery.data.activeGenerationId,
+      attemptEpoch: queueQuery.data.activeAttemptEpoch ?? null,
+      lastCommittedRenderSeq: 0,
+      renderedBodyHash: EMPTY_CHAT_BODY_SHA256,
+      state: "waiting_for_network",
+      createdAt,
+      transcript: [],
+      replyingAgentId: selectedConversation.chatRuntime.runtimeAgentId
+        ?? selectedConversation.preferredAgentId
+        ?? null,
+    });
+    setChatSendInFlight(scopeKey, true);
+  }, [conversationId, queueQuery.data, rawMessages, selectedConversation, selectedOrganizationId, setChatSendInFlight, setStreamDraftForChat, streamDrafts]);
   const {
     pendingSelection: pendingResponseAnnotationSelection,
     setPendingSelection: setPendingResponseAnnotationSelection,
@@ -2869,6 +2907,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const canSteerQueuedMessages = Boolean(
     (
       serverActiveGenerationId
+      && queueQuery.data?.activeGenerationStatus !== "waiting_for_network"
       && queueQuery.data?.activeAttemptEpoch !== null
       && queueQuery.data?.activeAttemptEpoch !== undefined
       && queueQuery.data?.activeControlVersion !== null

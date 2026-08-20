@@ -18,7 +18,7 @@ export type PendingChatSteerRetry = {
 };
 type ChatStreamProgressEvent = Extract<
   ChatStreamEvent,
-  { type: "assistant_delta" | "assistant_state" | "transcript_entry" }
+  { type: "assistant_delta" | "assistant_state" | "waiting_for_network" | "transcript_entry" }
 >;
 
 export const EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS = 250;
@@ -78,6 +78,7 @@ const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
   "running",
   "tool_busy",
   "closing",
+  "waiting_for_network",
   "stop_requested",
   "stopping",
 ]);
@@ -107,7 +108,7 @@ export function applyChatStreamProgressEvent(
   if (
     !current
     || current.streamKey !== streamKey
-    || !["streaming", "tool_busy", "finalizing"].includes(current.state)
+    || !["streaming", "tool_busy", "finalizing", "waiting_for_network"].includes(current.state)
   ) {
     return current;
   }
@@ -154,6 +155,16 @@ export function applyChatStreamProgressEvent(
       generationId: eventGenerationId ?? current.generationId ?? null,
       attemptEpoch: eventAttemptEpoch ?? current.attemptEpoch ?? null,
       lastCommittedRenderSeq: eventGenerationSeq ?? current.lastCommittedRenderSeq ?? 0,
+    };
+  }
+  if (event.type === "waiting_for_network") {
+    return {
+      ...current,
+      state: "waiting_for_network",
+      generationId: event.generationId ?? current.generationId ?? null,
+      attemptEpoch: event.attemptEpoch ?? current.attemptEpoch ?? null,
+      lastCommittedRenderSeq: event.generationSeq ?? current.lastCommittedRenderSeq ?? 0,
+      renderedBodyHash: event.bodyHash ?? current.renderedBodyHash ?? EMPTY_CHAT_BODY_SHA256,
     };
   }
   const transcript = [...current.transcript];

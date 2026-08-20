@@ -19,7 +19,7 @@ import {
   summarizeTokenUsage,
   toHeartbeatRun
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
@@ -50,6 +50,7 @@ import { recordProductAnalyticsEvent } from "../product-analytics.js";
 import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
+import { finishLatestHeartbeatRunAttempt } from "./heartbeat-attempt-ledger.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -165,6 +166,8 @@ export function heartbeatService(
   testHooks?: {
     afterIssuePromotionCommitted?: (outcome: unknown) => Promise<void> | void;
     beforeRunClaim?: (run: typeof heartbeatRuns.$inferSelect) => Promise<void> | void;
+    /** Server-owned runners (currently Chat) may reattach a claimed wait run. */
+    onNetworkWaitingRun?: (run: typeof heartbeatRuns.$inferSelect) => Promise<boolean> | boolean;
     beforeRunExecutionLeaseRenewal?: (input: {
       runId: string;
       ownerToken: string;
@@ -746,6 +749,19 @@ export function heartbeatService(
     });
     if (updated) {
       publishRunStatus(updated);
+      await finishLatestHeartbeatRunAttempt(db, updated.id, {
+        status,
+        usageDeltaJson: updated.usageJson,
+        costUsd: updated.usageJson?.costUsd,
+        sessionDisplayId: updated.sessionIdAfter,
+        sessionParamsJson: updated.sessionParamsAfterJson,
+        errorCode: updated.errorCode,
+        error: updated.error,
+        finishedAt: updated.finishedAt ?? new Date(),
+      }).catch((error) => {
+        logger.warn({ err: error, runId: updated.id }, "failed to persist heartbeat attempt terminal state");
+        return null;
+      });
       const context = parseObject(updated.contextSnapshot);
       const requestId = agentIssueCreationSettlement?.requestId
         ?? getAgentIssueCreationRequestIdFromRunContext(context);
@@ -1315,6 +1331,7 @@ export function heartbeatService(
         .update(heartbeatRuns)
         .set({
           status: "running",
+          runningSubstate: "executing",
           startedAt: currentRun.startedAt ?? claimedAt,
           sessionIdBefore:
             sessionSelection.sessionDisplayId ?? readNonEmptyString(sessionSelection.sessionParams?.sessionId),
@@ -1458,7 +1475,13 @@ export function heartbeatService(
         })
         .from(heartbeatRuns)
         .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-        .where(or(eq(heartbeatRuns.status, "running"), eq(heartbeatRuns.terminalEffectsPending, true)));
+        .where(or(
+          and(
+            eq(heartbeatRuns.status, "running"),
+            or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
+          ),
+          eq(heartbeatRuns.terminalEffectsPending, true),
+        ));
 
       for (const { run, agentRuntimeType } of activeRuns) {
       if (run.terminalEffectsPending) {
@@ -1607,7 +1630,10 @@ export function heartbeatService(
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
       .leftJoin(heartbeatRunEvents, eq(heartbeatRunEvents.runId, heartbeatRuns.id))
-      .where(eq(heartbeatRuns.status, "running"))
+      .where(and(
+        eq(heartbeatRuns.status, "running"),
+        or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
+      ))
       .groupBy(heartbeatRuns.id, agents.agentRuntimeType);
 
     const timedOut: string[] = [];
@@ -1701,7 +1727,10 @@ export function heartbeatService(
       })
       .from(heartbeatRuns)
       .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-      .where(eq(heartbeatRuns.status, "running"));
+      .where(and(
+        eq(heartbeatRuns.status, "running"),
+        or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
+      ));
 
     const timedOut: string[] = [];
 
@@ -1711,7 +1740,7 @@ export function heartbeatService(
       const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : null;
       if (!startedAt || !Number.isFinite(startedAt)) continue;
 
-      const runtimeMs = now.getTime() - startedAt;
+      const runtimeMs = Math.max(0, now.getTime() - startedAt - (run.networkWaitDurationMs ?? 0));
       if (runtimeMs < maxRuntimeMs) continue;
 
       const message = `Run exceeded maximum duration of ${formatDurationMs(maxRuntimeMs)}`;
@@ -2189,6 +2218,112 @@ export function heartbeatService(
   const { executeRun } = executeHandlers;
   const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
 
+  async function recoverNetworkWaitingRunsLocked(opts?: { now?: Date }) {
+    const now = opts?.now ?? new Date();
+    const candidates = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.status, "running"),
+        eq(heartbeatRuns.runningSubstate, "waiting_for_network"),
+        or(isNull(heartbeatRuns.networkWaitNextRetryAt), lte(heartbeatRuns.networkWaitNextRetryAt, now)),
+      ))
+      .orderBy(asc(heartbeatRuns.networkWaitNextRetryAt), asc(heartbeatRuns.updatedAt))
+      .limit(100);
+    const resumed: string[] = [];
+    for (const candidate of candidates) {
+      if (activeRunExecutions.has(candidate.id)) continue;
+      const agent = await getAgent(candidate.agentId);
+      if (!agent || ["paused", "terminated", "pending_approval"].includes(agent.status)) continue;
+
+      const checkpoint = candidate.recoveryCheckpoint ?? {};
+      const continuation = checkpoint.continuation;
+      const submissionPhase = checkpoint.submissionPhase;
+      const pristineReplayAllowed = continuation === "fresh_if_pristine"
+        && submissionPhase === "pre_submission"
+        && checkpoint.modelOutputObserved !== true
+        && checkpoint.toolActivityObserved !== true
+        && checkpoint.sideEffectRisk === "none";
+      const sameSessionAllowed = continuation === "resume_same_session"
+        && (
+          typeof checkpoint.sessionId === "string"
+          || Boolean(candidate.sessionIdBefore)
+          || Boolean(candidate.sessionParamsBeforeJson)
+        );
+      if (!pristineReplayAllowed && !sameSessionAllowed) {
+        const unsafe = await transitionRunToTerminal(candidate.id, "failed", {
+          finishedAt: now,
+          error: "Network recovery cannot safely resume this provider attempt",
+          errorCode: "network_resume_unsafe",
+        }, {
+          expectedStatuses: ["running"],
+          processExitedAt: now,
+        });
+        if (unsafe) {
+          await setWakeupStatus(candidate.wakeupRequestId, "failed", {
+            finishedAt: now,
+            error: "Network recovery cannot safely resume this provider attempt",
+          });
+          await appendRunEvent(unsafe, {
+            eventType: "network.resume_unsafe",
+            stream: "system",
+            level: "error",
+            message: "network recovery failed closed because continuation was unsafe",
+            payload: {
+              continuation: continuation ?? null,
+              submissionPhase: submissionPhase ?? null,
+            },
+          });
+        }
+        continue;
+      }
+      const claim = await claimExpiredHeartbeatRunExecution(db, candidate.id, { now });
+      if (!claim) continue;
+      const waitStartedAt = candidate.networkWaitStartedAt ? new Date(candidate.networkWaitStartedAt).getTime() : now.getTime();
+      const waitedMs = Math.max(0, now.getTime() - waitStartedAt);
+      const resumedRun = await db
+        .update(heartbeatRuns)
+        .set({
+          runningSubstate: "executing",
+          networkWaitStartedAt: null,
+          networkWaitNextRetryAt: null,
+          networkWaitDurationMs: sql`${heartbeatRuns.networkWaitDurationMs} + ${waitedMs}`,
+          executionOwnerToken: claim.ownerToken,
+          executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
+          updatedAt: now,
+        })
+        .where(and(
+          eq(heartbeatRuns.id, candidate.id),
+          eq(heartbeatRuns.status, "running"),
+          eq(heartbeatRuns.runningSubstate, "waiting_for_network"),
+          eq(heartbeatRuns.executionOwnerToken, claim.ownerToken),
+        ))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+      if (!resumedRun) continue;
+      await appendRunEvent(resumedRun, {
+        eventType: "network.resumed",
+        stream: "system",
+        level: "info",
+        message: "run resumed after network recovery",
+        payload: { waitedMs, attempt: resumedRun.networkWaitAttemptCount },
+      });
+      resumed.push(resumedRun.id);
+      if (resumedRun.chatConversationId && testHooks?.onNetworkWaitingRun) {
+        const handled = await testHooks.onNetworkWaitingRun(resumedRun);
+        if (handled) continue;
+      }
+      void executeRun(resumedRun.id).catch((error) => {
+        logger.error({ err: error, runId: resumedRun.id }, "network-wait heartbeat recovery failed");
+      });
+    }
+    return { resumed: resumed.length, runIds: resumed };
+  }
+
+  async function recoverNetworkWaitingRuns(opts?: { now?: Date }) {
+    return withHeartbeatRecoveryLock(() => recoverNetworkWaitingRunsLocked(opts));
+  }
+
   async function resumePendingWakeupRequests(opts: { orgId?: string; startImmediately?: boolean } = {}) {
     const pendingWakeups = await db.select().from(agentWakeupRequests).where(and(
       opts.orgId ? eq(agentWakeupRequests.orgId, opts.orgId) : undefined,
@@ -2530,6 +2665,8 @@ export function heartbeatService(
     reapInactiveRuns,
 
     reapTimedOutRuns,
+
+    recoverNetworkWaitingRuns,
 
     startNextQueuedRunForAgent,
 

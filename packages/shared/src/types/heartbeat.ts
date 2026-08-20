@@ -4,6 +4,7 @@ import type {
   AgentRunTargetType,
   AgentStatus,
   HeartbeatInvocationSource,
+  HeartbeatRunExecutionPhase,
   HeartbeatRunStatus,
   WakeupRequestStatus,
   WakeupTriggerDetail,
@@ -15,6 +16,37 @@ export type HeartbeatSessionReuseScope = "explicit" | "task" | "none" | "unknown
 export type HeartbeatSessionReuseSuppression =
   | { kind: "force_fresh" }
   | { kind: "source_session_cleared"; sourceRunId: string };
+
+export type HeartbeatRunAttemptStatus = "started" | "waiting_for_network" | "succeeded" | "failed" | "cancelled" | "timed_out";
+export type HeartbeatRunAttemptResumeSource = "fresh" | "same_session" | "pristine_replay";
+
+export interface HeartbeatRunAttempt {
+  id: string;
+  orgId: string;
+  runId: string;
+  agentId: string;
+  attemptIndex: number;
+  fallbackIndex: number | null;
+  runtimeType: string;
+  model: string | null;
+  isFallback: boolean;
+  resumeSource: HeartbeatRunAttemptResumeSource;
+  status: HeartbeatRunAttemptStatus;
+  submissionPhase: "pre_submission" | "accepted" | "indeterminate" | null;
+  providerThreadId: string | null;
+  providerTurnId: string | null;
+  sessionDisplayId: string | null;
+  sessionParamsJson: Record<string, unknown> | null;
+  checkpointJson: Record<string, unknown> | null;
+  usageDeltaJson: Record<string, unknown> | null;
+  costCents: number | null;
+  errorCode: string | null;
+  error: string | null;
+  startedAt: Date;
+  suspendedAt: Date | null;
+  finishedAt: Date | null;
+  createdAt: Date;
+}
 
 export interface HeartbeatRunRecoveryContext {
   originalRunId: string;
@@ -62,6 +94,7 @@ export interface HeartbeatRun {
   invocationSource: HeartbeatInvocationSource;
   triggerDetail: WakeupTriggerDetail | null;
   status: HeartbeatRunStatus;
+  executionPhase?: HeartbeatRunExecutionPhase | null;
   startedAt: Date | null;
   finishedAt: Date | null;
   error: string | null;
@@ -85,6 +118,11 @@ export interface HeartbeatRun {
   chatConversationId?: string | null;
   processPid: number | null;
   processStartedAt: Date | null;
+  networkWaitStartedAt?: Date | null;
+  networkWaitNextRetryAt?: Date | null;
+  networkWaitAttemptCount?: number;
+  networkWaitDurationMs?: number;
+  recoveryCheckpoint?: Record<string, unknown> | null;
   retryOfRunId: string | null;
   processLossRetryCount: number;
   contextSnapshot: HeartbeatRunContextSnapshot | null;

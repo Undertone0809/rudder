@@ -22,6 +22,7 @@ import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
@@ -92,6 +93,7 @@ const mockState = vi.hoisted(() => ({
   projects: [] as Project[],
   routeBase: "/messenger/chat",
   locationState: null as unknown,
+  workspaceDirectoryError: null as string | null,
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
   queueSnapshot: {
@@ -164,6 +166,14 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    if (queryKey[0] === "organizations" && queryKey[2] === "workspace-files" && mockState.workspaceDirectoryError) {
+      return {
+        data: undefined,
+        isPending: false,
+        isLoading: false,
+        error: new Error(mockState.workspaceDirectoryError),
+      };
+    }
     if (!enabled) {
       return {
         data: undefined,
@@ -1601,6 +1611,7 @@ beforeEach(() => {
   ];
   mockState.routeBase = "/messenger/chat";
   mockState.locationState = null;
+  mockState.workspaceDirectoryError = null;
   mockState.workspaceDirectories = {};
   mockState.workspaceFiles = {};
   mockState.updateWorkspaceFile.mockReset();
@@ -3289,6 +3300,54 @@ describe("Chat Side Panel link handling", () => {
     expect(fileToolbar?.textContent).toContain("notes.md");
     expect(fileView?.textContent).not.toContain("text/markdown");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+  });
+
+  it("does not carry a failed Library directory query into a file tab", async () => {
+    mockState.workspaceDirectories = {
+      "": {
+        directoryPath: "",
+        entries: [{ name: "MEMORY.md", path: "MEMORY.md", isDirectory: false }],
+      },
+    };
+    mockState.workspaceFiles = {
+      "MEMORY.md": {
+        filePath: "MEMORY.md",
+        content: "# Operating lessons\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => act(() => root.unmount());
+    const renderPanel = (target: SidePanelTarget) => (
+      <ThemeProvider>
+        <SidePanelProvider>
+          <ChatSidePanel selectedOrganizationId="org-1" target={target} />
+        </SidePanelProvider>
+      </ThemeProvider>
+    );
+
+    await act(async () => {
+      root.render(renderPanel({ kind: "library_directory", directoryPath: "", label: "Library" }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='chat-side-panel-library-directory-view']")?.textContent).toContain("MEMORY.md");
+
+    mockState.workspaceDirectoryError = "Cannot read properties of null (reading 'directoryPath')";
+    await act(async () => {
+      root.render(renderPanel({ kind: "library_file", filePath: "MEMORY.md", label: "MEMORY.md" }));
+      await Promise.resolve();
+    });
+
+    const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    expect(sidePanel?.querySelector("[role='alert']")).toBeNull();
+    expect(sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-view']")).not.toBeNull();
+    expect(sidePanel?.querySelector<HTMLTextAreaElement>("[data-testid='mock-markdown-editor']")?.value).toBe("# Operating lessons\n");
   });
 
   it("closes the active Library preview tab with Command+W", async () => {

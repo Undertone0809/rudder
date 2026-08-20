@@ -2,6 +2,7 @@ export const ACTIVE_CHAT_GENERATION_STATUSES = [
   "starting",
   "active",
   "running",
+  "waiting_for_network",
   "tool_busy",
   "closing",
   "stop_requested",

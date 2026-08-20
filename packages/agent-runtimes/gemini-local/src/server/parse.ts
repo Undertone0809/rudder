@@ -79,6 +79,8 @@ export function parseGeminiJsonl(stdout: string) {
   let costUsd: number | null = null;
   let resultEvent: Record<string, unknown> | null = null;
   let question: { prompt: string; choices: Array<{ key: string; label: string; description?: string }> } | null = null;
+  let modelOutputObserved = false;
+  let toolActivityObserved = false;
   const usage = {
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -98,12 +100,18 @@ export function parseGeminiJsonl(stdout: string) {
     const type = asString(event.type, "").trim();
 
     if (type === "assistant") {
-      messages.push(...collectMessageText(event.message));
+      const assistantText = collectMessageText(event.message);
+      if (assistantText.length > 0) modelOutputObserved = true;
+      messages.push(...assistantText);
       const messageObj = parseObject(event.message);
       const content = Array.isArray(messageObj.content) ? messageObj.content : [];
       for (const partRaw of content) {
         const part = parseObject(partRaw);
-        if (asString(part.type, "").trim() === "question") {
+        const partType = asString(part.type, "").trim();
+        if (/^(?:tool_call|tool_use|tool_result|function_call|mcp_tool_use)$/i.test(partType)) {
+          toolActivityObserved = true;
+        }
+        if (partType === "question") {
           question = {
             prompt: asString(part.prompt, "").trim(),
             choices: (Array.isArray(part.choices) ? part.choices : []).map((choiceRaw) => {
@@ -125,8 +133,13 @@ export function parseGeminiJsonl(stdout: string) {
       const role = asString(event.role, "").trim();
       if (role === "assistant") {
         const contentText = asString(event.content, "").trim();
-        if (contentText) messages.push(contentText);
-        messages.push(...collectMessageText(event.message));
+        if (contentText) {
+          messages.push(contentText);
+          modelOutputObserved = true;
+        }
+        const messageText = collectMessageText(event.message);
+        if (messageText.length > 0) modelOutputObserved = true;
+        messages.push(...messageText);
       }
       continue;
     }
@@ -138,7 +151,10 @@ export function parseGeminiJsonl(stdout: string) {
         asString(event.result, "").trim() ||
         asString(event.text, "").trim() ||
         asString(event.response, "").trim();
-      if (resultText && messages.length === 0) messages.push(resultText);
+      if (resultText && messages.length === 0) {
+        messages.push(resultText);
+        modelOutputObserved = true;
+      }
       costUsd = asNumber(event.total_cost_usd, asNumber(event.cost_usd, asNumber(event.cost, costUsd ?? 0))) || costUsd;
       const isError = event.is_error === true || asString(event.subtype, "").toLowerCase() === "error";
       if (isError) {
@@ -166,7 +182,10 @@ export function parseGeminiJsonl(stdout: string) {
     if (type === "text") {
       const part = parseObject(event.part);
       const text = asString(part.text, "").trim();
-      if (text) messages.push(text);
+      if (text) {
+        messages.push(text);
+        modelOutputObserved = true;
+      }
       continue;
     }
 
@@ -185,6 +204,8 @@ export function parseGeminiJsonl(stdout: string) {
     errorMessage,
     resultEvent,
     question,
+    modelOutputObserved,
+    toolActivityObserved,
   };
 }
 

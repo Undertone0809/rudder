@@ -1079,6 +1079,7 @@ async function startServerRuntime(
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
+  const networkWaitingRunHandlers: Array<(run: any) => Promise<boolean>> = [];
   const appHandle = await createRudderApp(db as any, {
     uiMode,
     serverPort: listenPort,
@@ -1101,6 +1102,9 @@ async function startServerRuntime(
     resolveSession,
     localAccountExchangePolicy,
     localAccountSessionRevocation,
+    registerNetworkWaitingRunHandler: (handler) => {
+      networkWaitingRunHandlers.push(handler);
+    },
   });
   supervisor.own("app", () => appHandle.close());
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
@@ -1172,6 +1176,7 @@ async function startServerRuntime(
     () => managedMcpOAuthSessionGc.stop(),
   );
   const feishuRuntime = feishuIntegrationRuntimeService(db as any, { storage: storageService });
+  networkWaitingRunHandlers.unshift((run) => feishuRuntime.recoverNetworkWaitingRun(run));
   supervisor.own("feishu-runtime", () => feishuRuntime.stop());
   const feishuLongConnectionEnabled = isFeishuLongConnectionEnabled();
   configureFeishuIntegrationRuntime({
@@ -1182,12 +1187,20 @@ async function startServerRuntime(
     configureFeishuIntegrationRuntime({ runtime: null, enabled: false });
   });
 
-  const heartbeat = heartbeatService(db as any);
+  const heartbeat = heartbeatService(db as any, {
+    onNetworkWaitingRun: async (run) => {
+      for (const handler of networkWaitingRunHandlers) {
+        if (await handler(run)) return true;
+      }
+      return false;
+    },
+  });
   // Terminal ownership recovery is a startup invariant, independent of
   // whether interval-based heartbeat scheduling is enabled.
   const startupRecoveryCutoff = new Date();
   void heartbeat
-    .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs, recoveryCutoff: startupRecoveryCutoff })
+    .recoverNetworkWaitingRuns()
+    .then(() => heartbeat.reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs, recoveryCutoff: startupRecoveryCutoff }))
     .then(() => heartbeat.reapInactiveRuns({
       maxInactivityMs: config.heartbeatRunInactivityTimeoutMs,
       recoveryCutoff: startupRecoveryCutoff,
@@ -1200,7 +1213,8 @@ async function startServerRuntime(
     });
   ownInterval("heartbeat-recovery-interval", setInterval(() => {
     void heartbeat
-      .reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs })
+      .recoverNetworkWaitingRuns()
+      .then(() => heartbeat.reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs }))
       .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
       .then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
       .then(() => heartbeat.resumePendingWakeupRequests())

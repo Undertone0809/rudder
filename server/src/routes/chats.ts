@@ -1,4 +1,7 @@
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type {
+  AgentRuntimeNetworkSuspension,
+  TranscriptEntry,
+} from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   addChatMessageSchema,
@@ -25,6 +28,7 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import type { NetworkWaitingRun } from "../bootstrap/types.js";
 import { conflict, forbidden, HttpError, notFound, unauthorized, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
@@ -118,6 +122,7 @@ export function chatRoutes(
   db: Db,
   storage: StorageService,
   backgroundRuntime: ChatBackgroundRuntime = createChatBackgroundRuntime(),
+  registerNetworkWaitingRunHandler?: (handler: (run: NetworkWaitingRun) => Promise<boolean>) => void,
 ) {
   const router = Router();
   const svc = chatService(db);
@@ -132,7 +137,13 @@ export function chatRoutes(
   const chatRunsSvc = chatAgentRunService(db);
   const workManifestSvc = chatWorkManifestService(db);
   const operatorProfiles = operatorProfileService(db);
-  const heartbeat = heartbeatService(db);
+  let recoverNetworkWaitingChatRun: ((run: NetworkWaitingRun) => Promise<boolean>) | null = null;
+  const heartbeat = heartbeatService(db, {
+    onNetworkWaitingRun: async (run) => {
+      if (!recoverNetworkWaitingChatRun) return false;
+      return recoverNetworkWaitingChatRun(run);
+    },
+  });
   const productIntelligence = productIntelligenceService(db);
   const chatTitles = chatTitleGenerationService({ chats: svc, productIntelligence });
   const steerMessages = chatSteerMessageService(db);
@@ -1370,6 +1381,7 @@ export function chatRoutes(
         userMessageId: userMessage.id,
         chatTurnId: turnContext.chatTurnId,
         turnVariant: turnContext.turnVariant,
+        runContext: { chatGenerationId: claim.generationId },
         stream: false,
         abortSignal: abortController.signal,
         controlCoordinator: createChatRuntimeControlCoordinator(
@@ -1473,6 +1485,10 @@ export function chatRoutes(
             agentId: streamed.replyingAgentId,
           });
         }
+      } else if (streamed.outcome === "waiting_for_network") {
+        // The durable generation remains open; the background recovery path
+        // will reattach and project the eventual assistant result.
+        return;
       } else {
         let completionMessageId: string | null = null;
         try {
@@ -1604,6 +1620,335 @@ export function chatRoutes(
       managedAbort.release();
     }
   }
+
+  /** Resume a Chat generation that the heartbeat coordinator woke from a
+   * durable network wait. This path deliberately shares the existing
+   * generation/run rows instead of creating a second active Chat run. */
+  async function runRecoveredNetworkWaitingChatRun(run: NetworkWaitingRun): Promise<boolean> {
+    const context = run.contextSnapshot && typeof run.contextSnapshot === "object"
+      && !Array.isArray(run.contextSnapshot)
+      ? run.contextSnapshot as Record<string, unknown>
+      : {};
+    const conversationId = run.chatConversationId
+      ?? (typeof context.conversationId === "string" ? context.conversationId : null);
+    const generationId = typeof context.chatGenerationId === "string"
+      ? context.chatGenerationId
+      : null;
+    const nonStreamChatRun = context.chatMode === "non_stream";
+    const userMessageId = typeof context.userMessageId === "string"
+      ? context.userMessageId
+      : typeof context.messageId === "string"
+        ? context.messageId
+        : null;
+    const ownerToken = typeof run.executionOwnerToken === "string" ? run.executionOwnerToken : null;
+    if (!conversationId || (!generationId && !nonStreamChatRun) || !userMessageId || !ownerToken) {
+      logger.error({ runId: run.id }, "network-wait Chat run is missing recovery context");
+      return false;
+    }
+
+    const conversation = await svc.getById(conversationId) as ChatConversation | null;
+    const userMessage = conversation
+      ? await svc.getMessage(conversation.id, userMessageId) as ChatMessage | null
+      : null;
+    if (!conversation || !userMessage) {
+      logger.error({ runId: run.id, conversationId, generationId }, "network-wait Chat recovery target is missing");
+      return false;
+    }
+
+    const abortController = new AbortController();
+    const managedAbort = backgroundRuntime.manageAbortController(abortController);
+    const releaseGeneration = claimChatGeneration(conversation.id, abortController, generationId);
+    if (!releaseGeneration) {
+      managedAbort.release();
+      return true;
+    }
+
+    const request = requestForQueuedActor({
+      type: "board",
+      source: "local_implicit",
+      userId: "local-board",
+      isInstanceAdmin: true,
+    }, conversation.orgId);
+    const actor = getActorInfo(request);
+    let assistantConversation = conversation;
+    let activeAttemptEpoch = Math.max(1, Number(context.attemptEpoch) || 1);
+    let activeChatRunId = run.id as string;
+    let partialBody = "";
+    let assistantProjectionMessageId: string | null = null;
+    let transcript: TranscriptEntry[] = [];
+    let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
+    let terminalReason: string | null = null;
+    let waitingAgain = false;
+
+    try {
+      if (generationId) {
+        const frozen = await svc.generationProtocol.getFrozenVisibleProjection({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          generationId,
+        });
+        partialBody = frozen.projection.body;
+        assistantProjectionMessageId = frozen.projection.assistantMessageId;
+        transcript = [...frozen.projection.transcript] as TranscriptEntry[];
+        activeAttemptEpoch = Math.max(1, frozen.generation.attemptEpoch);
+        await svc.generationProtocol.markNetworkResumed({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          generationId,
+          expectedAttemptEpoch: activeAttemptEpoch,
+        });
+      }
+
+      const turnContext = turnContextFromUserMessage(userMessage);
+      const assistantInput = await loadAssistantInput(conversation, actor);
+      assistantConversation = assistantInput.conversation;
+      const controlCoordinator = generationId
+        ? createChatRuntimeControlCoordinator(
+          conversation.id,
+          generationId,
+          {
+            onAttemptStarted: async ({ generationId: currentGenerationId, attemptEpoch, ownerToken: attemptOwnerToken, attempt }) => {
+              activeAttemptEpoch = attemptEpoch;
+              await svc.beginGenerationControlAttempt({
+                orgId: conversation.orgId,
+                conversationId: conversation.id,
+                generationId: currentGenerationId,
+                attemptEpoch,
+                ownerToken: attemptOwnerToken,
+                runtimeType: attempt.runtimeType,
+              });
+            },
+            onHandleRegistered: async ({ generationId: currentGenerationId, attemptEpoch, ownerToken: attemptOwnerToken, handle }) => {
+              await svc.markGenerationControlReady({
+                generationId: currentGenerationId,
+                attemptEpoch,
+                ownerToken: attemptOwnerToken,
+                runtimeType: handle.runtimeType,
+                providerThreadId: handle.providerThreadId ?? null,
+                providerTurnId: handle.providerTurnId ?? null,
+              });
+            },
+            onAttemptLeaseRenewed: async ({ generationId: currentGenerationId, attemptEpoch, ownerToken: attemptOwnerToken }) => {
+              await svc.renewGenerationControlLease({
+                generationId: currentGenerationId,
+                attemptEpoch,
+                ownerToken: attemptOwnerToken,
+              });
+            },
+            onAttemptCompleted: async ({ generationId: currentGenerationId, attemptEpoch, ownerToken: attemptOwnerToken }) => {
+              await svc.markGenerationControlAttemptCompleted({
+                generationId: currentGenerationId,
+                attemptEpoch,
+                ownerToken: attemptOwnerToken,
+              });
+            },
+          },
+        )
+        : undefined;
+      const streamed = await assistantSvc.streamChatAssistantReply({
+        ...assistantInput,
+        userMessageId: userMessage.id,
+        chatTurnId: turnContext.chatTurnId,
+        turnVariant: turnContext.turnVariant,
+        runContext: { chatGenerationId: generationId },
+        resumeRunId: run.id,
+        resumeRunOwnerToken: ownerToken,
+        stream: false,
+        abortSignal: abortController.signal,
+        controlCoordinator,
+        onRunCreated: (recoveredRunId: string) => {
+          activeChatRunId = recoveredRunId;
+        },
+        onWaitingForNetwork: async (suspension: AgentRuntimeNetworkSuspension) => {
+          if (!generationId) {
+            waitingAgain = true;
+            return;
+          }
+          const marked = await svc.generationProtocol.markWaitingForNetwork({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId,
+            expectedAttemptEpoch: activeAttemptEpoch,
+            suspension: suspension as unknown as Record<string, unknown>,
+          });
+          if (marked.stopped) {
+            terminalStatus = "stopped";
+            terminalReason = "operator_stop";
+            if (!abortController.signal.aborted) abortController.abort();
+            return;
+          }
+          waitingAgain = true;
+        },
+        onAssistantDelta: async (delta: string) => {
+          if (abortController.signal.aborted) return;
+          const projectedBody = `${partialBody}${delta}`;
+          if (!generationId) {
+            partialBody = projectedBody;
+            return;
+          }
+          const projection = await svc.generationProtocol.appendVisibleEventAndProject({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId,
+            expectedAttemptEpoch: activeAttemptEpoch,
+            eventKind: "assistant_delta",
+            payload: { delta },
+            bodyOffset: partialBody.length,
+            bodyLength: delta.length,
+            messageId: assistantProjectionMessageId,
+            runId: activeChatRunId,
+            bodyHash: hashChatGenerationBody(projectedBody),
+            body: projectedBody,
+            replyingAgentId: chatReplyingAgentId(assistantConversation),
+            chatTurnId: turnContext.chatTurnId,
+            turnVariant: turnContext.turnVariant,
+          });
+          assistantProjectionMessageId = projection.message.id;
+          partialBody = projectedBody;
+        },
+        onTranscriptEntry: async (entry: TranscriptEntry) => {
+          if (abortController.signal.aborted) return;
+          transcript.push(entry);
+          if (!generationId) return;
+          const projection = await svc.generationProtocol.appendVisibleEventAndProject({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId,
+            expectedAttemptEpoch: activeAttemptEpoch,
+            eventKind: "transcript",
+            payload: { entry },
+            messageId: assistantProjectionMessageId,
+            runId: activeChatRunId,
+            bodyHash: hashChatGenerationBody(partialBody),
+            body: partialBody,
+            replyingAgentId: chatReplyingAgentId(assistantConversation),
+            chatTurnId: turnContext.chatTurnId,
+            turnVariant: turnContext.turnVariant,
+          });
+          assistantProjectionMessageId = projection.message.id;
+        },
+      });
+
+      partialBody = streamed.partialBody || partialBody;
+      if (waitingAgain || streamed.outcome === "waiting_for_network") return true;
+      if (abortController.signal.aborted || streamed.outcome === "stopped") {
+        terminalStatus = "stopped";
+        terminalReason = "operator_stop";
+        const stoppedMessage = await persistPartialAssistantMessage(
+          assistantConversation,
+          partialBody,
+          "stopped",
+          turnContext,
+          transcript,
+          streamed.replyingAgentId,
+          assistantProjectionMessageId,
+          activeChatRunId,
+          undefined,
+          false,
+        );
+        if (stoppedMessage) {
+          await linkChatRunMessages(assistantConversation, activeChatRunId, [stoppedMessage]);
+          await logChatMessagesAdded(assistantConversation, [stoppedMessage], {
+            actorType: "system",
+            actorId: "chat-assistant",
+            agentId: streamed.replyingAgentId,
+          });
+        }
+      } else {
+        const completionMessageId = generationId
+          ? (await svc.generationProtocol.appendVisibleEventAndProject({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId,
+            expectedAttemptEpoch: activeAttemptEpoch,
+            eventKind: "runtime_output",
+            payload: { resultKind: streamed.reply.kind, body: streamed.reply.body },
+            bodyOffset: 0,
+            bodyLength: streamed.reply.body.length,
+            messageId: assistantProjectionMessageId,
+            runId: activeChatRunId,
+            bodyHash: hashChatGenerationBody(streamed.reply.body),
+            body: streamed.reply.body,
+            replyingAgentId: streamed.replyingAgentId,
+            chatTurnId: turnContext.chatTurnId,
+            turnVariant: turnContext.turnVariant,
+          })).message.id
+          : null;
+        const createdMessages = await persistAssistantReply(
+          request,
+          assistantConversation,
+          actor,
+          streamed.reply,
+          turnContext,
+          transcript,
+          streamed.replyingAgentId,
+          completionMessageId,
+          activeChatRunId,
+          false,
+        );
+        await linkChatRunMessages(assistantConversation, activeChatRunId, createdMessages);
+        await logChatMessagesAdded(assistantConversation, createdMessages, {
+          actorType: "system",
+          actorId: "chat-assistant",
+          agentId: streamed.replyingAgentId,
+        });
+        terminalStatus = "completed";
+      }
+    } catch (error) {
+      terminalStatus = abortController.signal.aborted ? "aborted" : "failed";
+      terminalReason = error instanceof Error ? error.message : "network_wait_chat_recovery_failed";
+      const failurePayload = recoverableFailurePayload(error, activeChatRunId);
+      const failureBody = userVisiblePartialBodyFromError(error)
+        || recoverableFailureBody(failurePayload)
+        || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
+      const failedMessage = await persistPartialAssistantMessage(
+        assistantConversation,
+        failureBody,
+        "failed",
+        null,
+        transcript,
+        chatReplyingAgentId(assistantConversation),
+        assistantProjectionMessageId,
+        activeChatRunId,
+        failurePayload,
+        false,
+      ).catch(() => null);
+      if (failedMessage) {
+        await linkChatRunMessages(assistantConversation, activeChatRunId, [failedMessage]).catch(() => undefined);
+        await logChatMessagesAdded(assistantConversation, [failedMessage], {
+          actorType: "system",
+          actorId: "chat-assistant",
+          agentId: chatReplyingAgentId(assistantConversation),
+        }).catch(() => undefined);
+      }
+    } finally {
+      if (!waitingAgain && generationId) {
+        const latestGeneration = await svc.getLatestGeneration(conversation.id).catch(() => null);
+        if (latestGeneration?.id === generationId) {
+          const terminalEvidence = await svc.generationProtocol.recordRuntimeTerminal({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId,
+            expectedAttemptEpoch: latestGeneration.attemptEpoch,
+            expectedOwnerToken: latestGeneration.controlOwnerToken,
+            finalStatus: terminalStatus,
+            terminalReason: terminalReason ?? terminalStatus,
+          }).catch((error: unknown) => {
+            logger.warn({ err: error, generationId }, "failed to record recovered Chat terminal evidence");
+            return null;
+          });
+          if (terminalEvidence) wakeTerminalProjector();
+        }
+      }
+      chatRunsSvc.releaseOwnedRun(run.id, ownerToken);
+      releaseGeneration();
+      managedAbort.release();
+    }
+    return true;
+  }
+
+  recoverNetworkWaitingChatRun = runRecoveredNetworkWaitingChatRun;
+  registerNetworkWaitingRunHandler?.(runRecoveredNetworkWaitingChatRun);
 
   async function drainServerQueue() {
     await svc.recoverExpiredServerQueueClaims();
@@ -2894,6 +3239,7 @@ export function chatRoutes(
       }
       const turnContext = turnContextFromUserMessage(userMessage);
       let activeChatRunId: string | null = null;
+      let networkWaiting = false;
       const persistedAssistantMessages = await (async () => {
           const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
           const transcript: TranscriptEntry[] = [];
@@ -2905,6 +3251,7 @@ export function chatRoutes(
               userMessageId: userMessage.id,
               chatTurnId: turnContext.chatTurnId,
               turnVariant: turnContext.turnVariant,
+              runContext: { chatMode: "non_stream" },
               stream: false,
               onRunCreated: (runId) => {
                 activeChatRunId = runId;
@@ -2914,6 +3261,10 @@ export function chatRoutes(
               },
             });
             fallbackOutput = streamed.partialBody;
+            if (streamed.outcome === "waiting_for_network") {
+              networkWaiting = true;
+              return [];
+            }
             if (streamed.outcome !== "completed") {
               throw new Error("Chat assistant reply was stopped before completion");
             }
@@ -2967,7 +3318,10 @@ export function chatRoutes(
           }
       })();
       const createdMessages: ChatMessage[] = [userMessage, ...persistedAssistantMessages];
-      res.status(201).json({ messages: createdMessages });
+      res.status(networkWaiting ? 202 : 201).json({
+        messages: createdMessages,
+        ...(networkWaiting ? { waitingForNetwork: true, runId: activeChatRunId } : {}),
+      });
     } catch (err) {
       logger.warn({
         err: chatAssistantErrorForLog(err),

@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import { chatMessages, heartbeatRuns } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
@@ -211,6 +211,48 @@ export function chatAgentRunService(db: Db) {
     return serializeRun(run);
   }
 
+  /**
+   * Reattach the in-process lease to a Chat run claimed by the durable
+   * heartbeat recovery coordinator. The coordinator already fenced the row;
+   * this method only restores the renewal timer without creating a duplicate
+   * active Chat run.
+   */
+  async function adoptRecoveredRun(
+    runId: string,
+    ownerToken: string,
+  ) {
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, runId),
+        eq(heartbeatRuns.status, "running"),
+        eq(heartbeatRuns.invocationSource, "chat"),
+        eq(heartbeatRuns.executionOwnerToken, ownerToken),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!run) return null;
+
+    stopOwningChatRun(runId);
+    const renewalTimer = setInterval(() => {
+      void renewHeartbeatRunExecutionLease(db, runId, ownerToken).then((renewed) => {
+        if (!renewed) stopRenewingChatRun(runId, ownerToken);
+      }).catch(() => undefined);
+    }, RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS);
+    renewalTimer.unref?.();
+    ownedChatRuns.set(runId, { ownerToken, renewalTimer });
+    return {
+      ...serializeRun(run),
+      // Kept internal to the server-owned recovery path; public run serializers
+      // intentionally do not expose session parameters.
+      sessionParamsBeforeJson: run.sessionParamsBeforeJson ?? null,
+    };
+  }
+
+  function releaseOwnedRun(runId: string, ownerToken?: string | null) {
+    stopOwningChatRun(runId, ownerToken);
+  }
+
   async function appendAdapterInvoke(
     run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId" | "agentId">,
     meta: AgentRuntimeInvocationMeta,
@@ -243,6 +285,64 @@ export function chatAgentRunService(db: Db) {
       level: entry.kind === "stderr" ? "warn" : "info",
       message: "chat transcript entry",
       payload: transcriptEventPayload(entry),
+    });
+  }
+
+  /**
+   * Record a durable, non-terminal provider transport interruption. The run
+   * remains owned by the recovery coordinator; this event is deliberately
+   * informational so it never enters failed-run or terminal-effect paths.
+   */
+  async function markWaitingForNetwork(
+    run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId" | "agentId">,
+    suspension: AgentRuntimeNetworkSuspension,
+  ) {
+    const now = new Date();
+    const current = await db
+      .select({ networkWaitAttemptCount: heartbeatRuns.networkWaitAttemptCount })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    const attempt = (current?.networkWaitAttemptCount ?? 0) + 1;
+    const backoff = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000][Math.min(attempt - 1, 5)] ?? 60_000;
+    const nextRetryAt = new Date(now.getTime() + backoff);
+    await db
+      .update(heartbeatRuns)
+      .set({
+        runningSubstate: "waiting_for_network",
+        networkWaitStartedAt: now,
+        networkWaitNextRetryAt: nextRetryAt,
+        networkWaitAttemptCount: attempt,
+        recoveryCheckpoint: { ...suspension, observedAt: now.toISOString() },
+        sessionIdBefore: suspension.sessionId ?? null,
+        sessionParamsBeforeJson: suspension.sessionParams ?? null,
+        sessionReuseScope: suspension.sessionId || suspension.sessionParams ? "explicit" : "none",
+        processExitedAt: now,
+        processPid: null,
+        processStartedAt: null,
+        executionOwnerToken: null,
+        executionLeaseExpiresAt: null,
+        updatedAt: now,
+      })
+      .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "running")));
+    await appendEvent(run, {
+      eventType: "network.waiting",
+      stream: "system",
+      level: "info",
+      message: "chat run waiting for network",
+      payload: {
+        kind: suspension.kind,
+        code: suspension.code,
+        transport: suspension.transport,
+        provider: suspension.provider ?? null,
+        model: suspension.model ?? null,
+        submissionPhase: suspension.submissionPhase,
+        continuation: suspension.continuation,
+        progress: suspension.progress,
+        attempt,
+        nextRetryAt: nextRetryAt.toISOString(),
+      },
     });
   }
 
@@ -403,8 +503,11 @@ export function chatAgentRunService(db: Db) {
     appendEvent,
     appendTranscriptEntry,
     createRun,
+    adoptRecoveredRun,
+    releaseOwnedRun,
     finalizeRun,
     finalizeStaleRuns,
     linkAssistantMessage,
+    markWaitingForNetwork,
   };
 }

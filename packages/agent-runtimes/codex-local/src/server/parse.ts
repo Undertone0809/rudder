@@ -5,6 +5,7 @@ export function parseCodexJsonl(stdout: string) {
   let sessionId: string | null = null;
   const messages: string[] = [];
   let modelOutputObserved = false;
+  let toolActivityObserved = false;
   let terminalResult: string | null = null;
   let terminalEventObserved = false;
   let terminalCompleted = false;
@@ -35,9 +36,14 @@ export function parseCodexJsonl(stdout: string) {
       continue;
     }
 
-    if (type === "item.completed") {
+    if (type === "item.started" || type === "item.completed") {
       const item = parseObject(event.item);
-      if (asString(item.type, "") === "agent_message") {
+      const itemType = asString(item.type, "");
+      if (/^(?:command_execution|mcp_tool_call|tool_call|function_call|web_search)/i.test(itemType)) {
+        toolActivityObserved = true;
+      }
+      if (type === "item.started") continue;
+      if (itemType === "agent_message") {
         const text = asString(item.text, "");
         if (text) {
           messages.push(text);
@@ -72,6 +78,7 @@ export function parseCodexJsonl(stdout: string) {
     modelOutputObserved,
     terminalEventObserved,
     terminalCompleted,
+    toolActivityObserved,
     usage,
     errorMessage,
   };

@@ -3,7 +3,7 @@ import { useActivityCoordinator } from "@/context/ActivityCoordinatorContext";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
 import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
-export type ChatStreamDraftState = "streaming" | "tool_busy" | "finalizing" | "stopping" | "stopped" | "failed";
+export type ChatStreamDraftState = "streaming" | "tool_busy" | "finalizing" | "waiting_for_network" | "stopping" | "stopped" | "failed";
 
 export class ChatGenerationCloseSupersededError extends Error {
   constructor() {

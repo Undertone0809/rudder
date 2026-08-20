@@ -661,15 +661,18 @@ export function Dashboard() {
                   {recentIssues.map((issue) => (
                     (() => {
                       const liveRun = liveRunByIssueId.get(issue.id);
-                      const effectiveStatus = liveRun?.status ?? issue.status;
+                      const waitingForNetwork = liveRun?.executionPhase === "waiting_for_network";
+                      const effectiveStatus = waitingForNetwork ? "waiting_for_network" : liveRun?.status ?? issue.status;
                       const transcript = liveRun ? (transcriptByRun.get(liveRun.id) ?? []) : [];
                       const snippet = liveRun ? latestTranscriptSnippet(transcript) : null;
                       const waitingCopy = liveRun
                         ? hasOutputForRun(liveRun.id)
                           ? "Waiting for transcript parsing..."
-                          : liveRun.status === "queued"
-                            ? "Queued. Waiting for output..."
-                            : "Running. Waiting for output..."
+                            : waitingForNetwork
+                              ? "Waiting for network. Will resume automatically..."
+                              : liveRun.status === "queued"
+                              ? "Queued. Waiting for output..."
+                              : "Running. Waiting for output..."
                         : null;
                       const displayAgentId = liveRun?.agentId ?? issue.assigneeAgentId;
                       const displayAgentName = displayAgentId ? agentName(displayAgentId) : null;
@@ -716,7 +719,7 @@ export function Dashboard() {
                             {liveRun ? (
                               <div className="surface-inset ml-6 rounded-[var(--radius-md)] px-2.5 py-2 text-xs text-muted-foreground sm:ml-0">
                                 <span className="font-medium text-[color:var(--accent-strong)]">
-                                  {liveRun.status === "queued" ? "Queued" : "Running"}
+                                  {waitingForNetwork ? "Waiting for network" : liveRun.status === "queued" ? "Queued" : "Running"}
                                 </span>
                                 {" · "}
                                 {snippet ?? waitingCopy}

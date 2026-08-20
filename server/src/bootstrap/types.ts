@@ -1,3 +1,4 @@
+import type { heartbeatRuns } from "@rudderhq/db";
 import type {
   AuthRequirement,
   DeploymentExposure,
@@ -12,6 +13,7 @@ import type { McpDeploymentAllowlists } from "../services/mcp/security-policy.js
 import type { StorageService } from "../storage/types.js";
 
 export type UiMode = "none" | "static" | "vite-dev";
+export type NetworkWaitingRun = typeof heartbeatRuns.$inferSelect;
 
 export interface RudderAppOptions {
   uiMode: UiMode;
@@ -47,4 +49,6 @@ export interface RudderAppOptions {
   resolveSession?: (req: Request) => Promise<BetterAuthSessionResult | null>;
   localAccountExchangePolicy?: LocalAccountExchangePolicy;
   localAccountSessionRevocation?: LocalAccountSessionRevocation;
+  /** Allows the global heartbeat coordinator to dispatch Chat wait recovery. */
+  registerNetworkWaitingRunHandler?: (handler: (run: NetworkWaitingRun) => Promise<boolean>) => void;
 }

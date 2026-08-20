@@ -50,7 +50,7 @@ export interface RunLogEvidenceIndexSummary {
 }
 
 export interface RunLogStore {
-  begin(input: { orgId: string; agentId: string; runId: string }): Promise<RunLogHandle>;
+  begin(input: { orgId: string; agentId: string; runId: string; append?: boolean }): Promise<RunLogHandle>;
   append(
     handle: RunLogHandle,
     event: { stream: "stdout" | "stderr" | "system"; chunk: string; ts: string },
@@ -391,7 +391,11 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
       await ensureDir(relDir);
 
       const absPath = resolveWithin(basePath, relPath);
-      await fs.writeFile(absPath, "", "utf8");
+      if (!input.append) {
+        await fs.writeFile(absPath, "", "utf8");
+      } else {
+        await fs.appendFile(absPath, "", "utf8");
+      }
 
       return { store: "local_file", logRef: relPath };
     },

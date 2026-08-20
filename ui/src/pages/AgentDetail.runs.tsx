@@ -272,7 +272,8 @@ export function RunListItem({
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { pushToast } = useToast();
-  const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
+  const displayStatus = run.executionPhase === "waiting_for_network" ? "waiting_for_network" : run.status;
+  const statusInfo = runStatusIcons[displayStatus] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
   const metrics = runMetrics(run);
   const summary = getRunListSummary(run);
@@ -333,7 +334,7 @@ export function RunListItem({
     >
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         <span className="flex min-w-0 items-center gap-2">
-          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
+          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, displayStatus === "running" && "animate-spin")} />
           <button
             type="button"
             className="min-w-0 truncate font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-copy"
@@ -343,6 +344,7 @@ export function RunListItem({
           >
             {runLabel}
           </button>
+          <StatusBadge status={displayStatus} />
           <span className={cn(
             "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
             runReasonBadgeClassName(runReason.tone)
@@ -395,7 +397,8 @@ export function RunConversationListItem({
   const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const run = entry.representativeRun;
-  const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
+  const displayStatus = run.executionPhase === "waiting_for_network" ? "waiting_for_network" : run.status;
+  const statusInfo = runStatusIcons[displayStatus] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
   const metrics = runMetrics(run);
   const summary = getRunListSummary(run);
@@ -441,7 +444,7 @@ export function RunConversationListItem({
     >
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         <span className="flex min-w-0 items-center gap-2">
-          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
+          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, displayStatus === "running" && "animate-spin")} />
           <span className="truncate text-xs font-medium text-foreground">
             {t("agentRuns.conversation")}{" "}
             <span className="font-mono text-muted-foreground">{shortConversationId}</span>
@@ -854,6 +857,7 @@ export function RunDetail({
     enabled: Boolean(initialRun.id),
   });
   const run = hydratedRun ?? initialRun;
+  const displayStatus = run.executionPhase === "waiting_for_network" ? "waiting_for_network" : run.status;
   const metrics = runMetrics(run);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [issueReportOpen, setIssueReportOpen] = useState(false);
@@ -999,7 +1003,7 @@ export function RunDetail({
           <div className="min-w-0 flex-1 p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
-                <StatusBadge status={run.status} />
+                <StatusBadge status={displayStatus} />
               </div>
               {runActionButton && (
                 <div className="shrink-0">

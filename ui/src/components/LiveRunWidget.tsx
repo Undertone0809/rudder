@@ -24,8 +24,8 @@ function toIsoString(value: string | Date | null | undefined): string | null {
   return typeof value === "string" ? value : value.toISOString();
 }
 
-function isRunActive(status: string): boolean {
-  return status === "queued" || status === "running";
+function isRunActive(run: Pick<LiveRunForIssue, "status" | "executionPhase">): boolean {
+  return run.status === "queued" || run.status === "running";
 }
 
 export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
@@ -64,6 +64,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
         agentId: activeRun.agentId,
         agentName: activeRun.agentName,
         agentRuntimeType: activeRun.agentRuntimeType,
+        executionPhase: activeRun.executionPhase,
         issueId,
       });
     }
@@ -73,7 +74,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
   }, [activeRun, issueId, liveRuns]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs, orgId });
-  const hasActiveRun = runs.some((run) => isRunActive(run.status));
+  const hasActiveRun = runs.some(isRunActive);
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(orgId ?? "__none__"),
     queryFn: () => agentsApi.list(orgId!),
@@ -134,7 +135,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
 
       <div className="divide-y divide-border/60">
         {runs.map((run) => {
-          const isActive = isRunActive(run.status);
+          const isActive = isRunActive(run);
           const transcript = transcriptByRun.get(run.id) ?? [];
           const agent = agentById.get(run.agentId) ?? null;
           const elapsed = formatRunElapsedDuration(
@@ -165,7 +166,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
                         }
                       })()}
                     </Link>
-                    <StatusBadge status={run.status} />
+                    <StatusBadge status={run.executionPhase === "waiting_for_network" ? "waiting_for_network" : run.status} />
                     <span>{formatDateTime(run.startedAt ?? run.createdAt)}</span>
                     {elapsed ? <span>{isActive ? `Live for ${elapsed}` : `Ran for ${elapsed}`}</span> : null}
                   </div>

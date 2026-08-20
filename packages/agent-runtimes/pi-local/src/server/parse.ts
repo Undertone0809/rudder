@@ -12,6 +12,8 @@ interface ParsedPiOutput {
   };
   finalMessage: string | null;
   toolCalls: Array<{ toolCallId: string; toolName: string; args: unknown; result: string | null; isError: boolean }>;
+  modelOutputObserved: boolean;
+  toolActivityObserved: boolean;
 }
 
 export type PiJsonlLine =
@@ -55,6 +57,8 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
     },
     finalMessage: null,
     toolCalls: [],
+    modelOutputObserved: false,
+    toolActivityObserved: false,
   };
 
   let currentToolCall: { toolCallId: string; toolName: string; args: unknown } | null = null;
@@ -85,6 +89,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
         if (lastMessage?.role === "assistant") {
           const content = lastMessage.content as string | Array<{ type: string; text?: string }>;
           result.finalMessage = extractTextContent(content);
+          if (result.finalMessage) result.modelOutputObserved = true;
         }
       }
       continue;
@@ -102,6 +107,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
         if (text) {
           result.finalMessage = text;
           result.messages.push(text);
+          result.modelOutputObserved = true;
         }
 
         const stopReason = asString(message.stopReason, "");
@@ -128,6 +134,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
       // Tool results are in toolResults array
       const toolResults = event.toolResults as Array<Record<string, unknown>> | undefined;
       if (toolResults) {
+        if (toolResults.length > 0) result.toolActivityObserved = true;
         for (const tr of toolResults) {
           const toolCallId = asString(tr.toolCallId, "");
           const content = tr.content;
@@ -153,11 +160,12 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
           const delta = asString(assistantEvent.delta, "");
           if (delta) {
             // Append to last message or create new
-            if (result.messages.length === 0) {
-              result.messages.push(delta);
-            } else {
-              result.messages[result.messages.length - 1] += delta;
-            }
+          if (result.messages.length === 0) {
+            result.messages.push(delta);
+          } else {
+            result.messages[result.messages.length - 1] += delta;
+          }
+          result.modelOutputObserved = true;
           }
         }
       }
@@ -170,6 +178,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
       const toolName = asString(event.toolName, "");
       const args = event.args;
       currentToolCall = { toolCallId, toolName, args };
+      result.toolActivityObserved = true;
       result.toolCalls.push({
         toolCallId,
         toolName,
@@ -193,6 +202,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
         existingCall.isError = isError;
       }
       currentToolCall = null;
+      result.toolActivityObserved = true;
       continue;
     }
 

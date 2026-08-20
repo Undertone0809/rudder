@@ -179,6 +179,7 @@ export type ChatGenerationStatus =
   | "starting"
   | "active"
   | "running"
+  | "waiting_for_network"
   | "tool_busy"
   | "closing"
   | "stop_requested"
@@ -243,6 +244,8 @@ export type ChatControlActionKind = "stop" | "steer";
 
 export type ChatGenerationEventKind =
   | "generation_started"
+  | "network_waiting"
+  | "network_resumed"
   | "runtime_output"
   | "assistant_delta"
   | "transcript"
@@ -748,11 +751,21 @@ export interface ChatStreamAssistantDeltaEvent {
 
 export interface ChatStreamAssistantStateEvent {
   type: "assistant_state";
-  state: "streaming" | "tool_busy" | "finalizing" | "stopped";
+  state: "streaming" | "tool_busy" | "finalizing" | "waiting_for_network" | "stopped";
   generationId?: string;
   attemptEpoch?: number;
   generationSeq?: number;
   bodyHash?: string;
+}
+
+export interface ChatStreamWaitingForNetworkEvent {
+  type: "waiting_for_network";
+  generationId?: string;
+  attemptEpoch?: number;
+  generationSeq?: number;
+  bodyHash?: string;
+  retryCount?: number;
+  nextRetryAt?: string | null;
 }
 
 export interface ChatStreamTranscriptEntryEvent {
@@ -789,6 +802,7 @@ export type ChatStreamEvent =
   | ChatStreamAckEvent
   | ChatStreamAssistantDeltaEvent
   | ChatStreamAssistantStateEvent
+  | ChatStreamWaitingForNetworkEvent
   | ChatStreamTranscriptEntryEvent
   | ChatStreamFinalEvent
   | ChatStreamErrorEvent

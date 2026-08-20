@@ -18,6 +18,33 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="August 20, 2026" description="v0.7.12" tags={["New","Improved","Fixed"]}>
+
+## v0.7.12
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.12)
+
+This release makes agent execution more durable across local runtimes, while improving transcript, Goal, automation, and Desktop workflows.
+
+### New
+
+- Added a native runtime foundation for workspace backups and local process handling, with cross-platform watcher and recovery coverage.
+- Added typed short references across agent workflows so issues, goals, projects, runs, and chats are easier to address consistently.
+
+### Improved
+
+- Improved Chat work manifests and transcript details with clearer activity, search queries, command output, and reading-width behavior.
+- Improved Goal and automation workflows with more consistent status presentation, layout behavior, and creation controls.
+- Improved interrupted agent-run cancellation and workspace backup recovery so local execution can converge more reliably.
+
+### Fixed
+
+- Fixed native runtime payload admission to reject untrusted or mismatched archives before fallback.
+- Restored legacy agent instruction bundles and kept plugin previews available during GitHub throttling.
+- Removed synthetic intelligence workspaces from runtime context and corrected several cross-platform Desktop and CI edge cases.
+
+</Update>
+
 <Update label="August 19, 2026" description="v0.7.11" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.11

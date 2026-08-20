@@ -1779,6 +1779,10 @@ test.describe("Run transcript detail", () => {
     await expect(page).toHaveURL(runUrl);
     await expect(sidePanel.getByRole("tab", { name: "systematic-debugging" })).toBeVisible();
     await expect(sidePanel.getByTestId("chat-side-panel-local-file-view").getByText("SKILL.md", { exact: true })).toBeVisible();
+    await expect(sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="local_file"]')).toHaveCount(2);
+    await expect(sidePanel.getByRole("tab", { name: "RunTranscriptView.tsx" })).toHaveCount(1);
+    await expect(sidePanel.getByRole("tab", { name: "systematic-debugging" })).toHaveCount(1);
+    await expect(sidePanel.getByText(/directoryPath/)).toHaveCount(0);
     await expect(sidePanel.getByText("/workspace/rudder/.agents/skills/systematic-debugging", { exact: true })).toHaveCount(0);
 
     await page.screenshot({

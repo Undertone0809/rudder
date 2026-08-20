@@ -64,8 +64,12 @@ function schedulerStateMeta(input: {
 function latestRunMeta(run: HeartbeatRun | null, liveRun: LiveRunForIssue | null, liveCount: number) {
   if (liveRun) {
     return {
-      label: liveCount > 1 ? `${liveCount} live runs` : "Live now",
-      className: "text-blue-700 dark:text-blue-300",
+      label: liveRun.executionPhase === "waiting_for_network"
+        ? "Waiting for network"
+        : liveCount > 1 ? `${liveCount} live runs` : "Live now",
+      className: liveRun.executionPhase === "waiting_for_network"
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-blue-700 dark:text-blue-300",
     };
   }
   if (!run) {
@@ -431,7 +435,9 @@ export function OrganizationHeartbeats() {
                             ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                             : "bg-blue-500/10 text-blue-700 dark:text-blue-300",
                       )}>
-                        {humanizeUnderscore(run.status)}
+                        {run.executionPhase === "waiting_for_network"
+                          ? "Waiting for network"
+                          : humanizeUnderscore(run.status)}
                       </span>
                       <span className="truncate text-xs text-muted-foreground">
                         {agent?.name ?? "Unknown agent"}

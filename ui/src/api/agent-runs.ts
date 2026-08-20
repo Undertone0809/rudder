@@ -16,6 +16,7 @@ export interface ActiveRunForIssue extends HeartbeatRun {
 export interface LiveRunForIssue {
   id: string;
   status: string;
+  executionPhase?: HeartbeatRun["executionPhase"];
   invocationSource: string;
   triggerDetail: string | null;
   startedAt: string | null;

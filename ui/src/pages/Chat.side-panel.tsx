@@ -2067,6 +2067,7 @@ export function ChatSidePanel({
   }, [activeBrowserTargetKey]);
 
   const libraryFilePreviewPath = libraryFileTarget?.filePath ?? libraryEntryTarget?.path ?? null;
+  const libraryDirectoryPath = libraryDirectoryTarget?.directoryPath ?? null;
   const issueQuery = useQuery({
     queryKey: queryKeys.issues.detail(issueTarget?.issueId ?? "__none__"),
     queryFn: () => issuesApi.get(issueTarget!.issueId),
@@ -2143,9 +2144,14 @@ export function ChatSidePanel({
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!organizationSkillFileTarget,
   });
   const libraryDirectoryQuery = useQuery({
-    queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryTarget?.directoryPath ?? ""),
-    queryFn: () => organizationsApi.listWorkspaceFiles(selectedOrganizationId!, libraryDirectoryTarget!.directoryPath),
-    enabled: targetQueriesEnabled && !!selectedOrganizationId && !!libraryDirectoryTarget,
+    queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryPath ?? ""),
+    queryFn: () => {
+      if (!selectedOrganizationId || libraryDirectoryPath === null) {
+        throw new Error("Library directory target is unavailable");
+      }
+      return organizationsApi.listWorkspaceFiles(selectedOrganizationId, libraryDirectoryPath);
+    },
+    enabled: targetQueriesEnabled && !!selectedOrganizationId && libraryDirectoryPath !== null,
   });
 
   const loading = Boolean(
@@ -2155,7 +2161,17 @@ export function ChatSidePanel({
       || (organizationSkillFileTarget && organizationSkillFileQuery.isPending)
       || (libraryDirectoryTarget && libraryDirectoryQuery.isPending),
   );
-  const error = issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error ?? chatQuery.error ?? chatMessagesQuery.error ?? libraryFileQuery.error ?? organizationSkillFileQuery.error ?? libraryDirectoryQuery.error;
+  const error = issueTarget
+    ? issueQuery.error ?? issueCommentsQuery.error ?? agentsQuery.error ?? sessionQuery.error
+    : chatTarget
+      ? chatQuery.error ?? chatMessagesQuery.error
+      : libraryFilePreviewPath
+        ? libraryFileQuery.error
+        : organizationSkillFileTarget
+          ? organizationSkillFileQuery.error
+          : libraryDirectoryTarget
+            ? libraryDirectoryQuery.error
+            : null;
   const issue = issueTarget ? issueQuery.data : null;
   const issueComments = issueTarget ? (issueCommentsQuery.data ?? []) : [];
   const currentUserId = sessionQuery.data?.user?.id ?? sessionQuery.data?.session?.userId ?? null;

@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeControlCoordinator,
   AgentRuntimeMediaAttachment,
+  AgentRuntimeNetworkSuspension,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
@@ -28,7 +29,10 @@ import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta } from "../agent-runtimes/index.js";
-import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../agent-runtimes/types.js";
+import type {
+  AgentRuntimeExecutionContext,
+  AgentRuntimeExecutionResult,
+} from "../agent-runtimes/types.js";
 import type { StorageService } from "../storage/types.js";
 import { type AgentRunContextAgent } from "./agent-run-context.js";
 import {
@@ -148,10 +152,14 @@ export interface StreamChatAssistantReplyInput extends GenerateChatAssistantRepl
   userMessageId?: string | null;
   chatTurnId?: string | null;
   turnVariant?: number | null;
+  /** Reattach a durable Chat run after the server-owned network waiter wakes. */
+  resumeRunId?: string | null;
+  resumeRunOwnerToken?: string | null;
   stream?: boolean;
   abortSignal?: AbortSignal;
   controlCoordinator?: AgentRuntimeControlCoordinator;
   onRunCreated?: (runId: string) => Promise<void> | void;
+  onWaitingForNetwork?: (suspension: AgentRuntimeNetworkSuspension) => Promise<void> | void;
   onAssistantDelta?: (delta: string) => Promise<void> | void;
   onAssistantState?: (state: "streaming" | "tool_busy" | "finalizing" | "stopped") => Promise<void> | void;
   onInvocationMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void> | void;
@@ -170,6 +178,12 @@ export type StreamChatAssistantReplyResult =
     outcome: "stopped";
     partialBody: string;
     replyingAgentId: string | null;
+  }
+  | {
+    outcome: "waiting_for_network";
+    partialBody: string;
+    replyingAgentId: string | null;
+    suspension: AgentRuntimeNetworkSuspension;
   };
 
 export class ChatAssistantStreamError extends Error {

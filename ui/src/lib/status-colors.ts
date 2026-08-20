@@ -56,6 +56,7 @@ export const statusBadge: Record<string, string> = {
   failed: "border-red-200/80 bg-red-100/85 text-red-800 dark:border-red-700/50 dark:bg-red-900/30 dark:text-red-200",
   timed_out: "border-orange-200/80 bg-orange-100/85 text-orange-800 dark:border-orange-700/50 dark:bg-orange-900/30 dark:text-orange-200",
   succeeded: "border-green-200/80 bg-green-100/85 text-green-800 dark:border-green-700/50 dark:bg-green-900/30 dark:text-green-200",
+  waiting_for_network: "border-amber-200/80 bg-amber-100/85 text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/30 dark:text-amber-200",
   error: "border-red-200/80 bg-red-100/85 text-red-800 dark:border-red-700/50 dark:bg-red-900/30 dark:text-red-200",
   terminated: "border-red-200/80 bg-red-100/85 text-red-800 dark:border-red-700/50 dark:bg-red-900/30 dark:text-red-200",
   pending: "border-yellow-200/80 bg-yellow-100/85 text-yellow-800 dark:border-yellow-700/50 dark:bg-yellow-900/30 dark:text-yellow-200",

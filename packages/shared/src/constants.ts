@@ -980,6 +980,9 @@ export const HEARTBEAT_RUN_STATUSES = [
 ] as const;
 export type HeartbeatRunStatus = (typeof HEARTBEAT_RUN_STATUSES)[number];
 
+export const HEARTBEAT_RUN_EXECUTION_PHASES = ["executing", "waiting_for_network"] as const;
+export type HeartbeatRunExecutionPhase = (typeof HEARTBEAT_RUN_EXECUTION_PHASES)[number];
+
 export const LIVE_EVENT_TYPES = [
   "heartbeat.run.queued",
   "heartbeat.run.status",

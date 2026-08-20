@@ -22,6 +22,11 @@ export {
 } from "./model-fallbacks.js";
 export { resolveNativeCommand, type NativeCommand } from "./native-command.js";
 export {
+  classifyAgentRuntimeNetworkFailure,
+  isAgentRuntimeNetworkSuspension,
+  type AgentRuntimeNetworkFailureEvidence
+} from "./network-suspension.js";
+export {
   assertUniqueOrganizationStorageKeys,
   normalizeOrganizationStoragePathSegment,
   resolveOrganizationLegacyStorageKey,
@@ -97,13 +102,14 @@ export type {
   AgentRuntimeEnvironmentTestResult,
   AgentRuntimeEnvironmentTestStatus,
   AgentRuntimeExecutionContext,
-  AgentRuntimeExecutionResult,
-  AgentRuntimeInvocationMeta,
+  AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta,
   AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeLoadedSkillMeta,
   AgentRuntimeMediaAttachment,
-  AgentRuntimeModel,
-  AgentRuntimeServiceReport,
+  AgentRuntimeModel, AgentRuntimeNetworkContinuation,
+  AgentRuntimeNetworkSubmissionPhase,
+  AgentRuntimeNetworkSuspension,
+  AgentRuntimeNetworkTransport, AgentRuntimeServiceReport,
   AgentRuntimeSessionCodec,
   AgentRuntimeSkillContext,
   AgentRuntimeSkillEntry,

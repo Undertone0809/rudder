@@ -1,4 +1,8 @@
-import { type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import {
+  classifyAgentRuntimeNetworkFailure,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+} from "@rudderhq/agent-runtime-utils";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asBoolean,
@@ -640,6 +644,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       authMeta.message ||
       stderrLine ||
       `Gemini exited with code ${attempt.proc.exitCode ?? -1}`;
+    const networkSuspension = classifyAgentRuntimeNetworkFailure({
+      errorCode: authMeta.requiresAuth ? "gemini_auth_required" : null,
+      message: fallbackErrorMessage,
+      stdout: attempt.proc.stdout,
+      stderr: attempt.proc.stderr,
+      provider: "google",
+      model,
+      sessionId: resolvedSessionId,
+      sessionParams: resolvedSessionParams,
+      modelOutputObserved: attempt.parsed.modelOutputObserved,
+      toolActivityObserved: attempt.parsed.toolActivityObserved,
+      terminalEventObserved: Boolean(attempt.parsed.resultEvent),
+    });
 
     return {
       exitCode: attempt.proc.exitCode,
@@ -665,6 +682,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       summary: attempt.parsed.summary,
       question: attempt.parsed.question,
       clearSession: clearSessionForTurnLimit || Boolean(clearSessionOnMissingSession && !resolvedSessionId),
+      ...(networkSuspension ? { networkSuspension } : {}),
     };
   };
 

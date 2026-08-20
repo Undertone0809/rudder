@@ -7,6 +7,7 @@ import type {
 } from "@rudderhq/agent-runtime-utils";
 import {
   buildModelAttemptSpecs,
+  isAgentRuntimeNetworkSuspension,
   isSuccessfulRuntimeResult,
   type ModelAttemptSpec,
 } from "@rudderhq/agent-runtime-utils";
@@ -19,6 +20,10 @@ interface ModelFallbackExecutionOptions {
   resolveAdapter?: (agentRuntimeType: string) => ServerAgentRuntimeModule | null;
   createAuthToken?: (agentRuntimeType: string) => string | undefined;
   onAttemptStart?: (attempt: ModelAttemptSpec, adapter: ServerAgentRuntimeModule) => Promise<void> | void;
+  /** Called only when this attempt failed and the next fallback will run. */
+  onAttemptFailure?: (attempt: ModelAttemptSpec, failure: AgentRuntimeExecutionResult | Error) => Promise<void> | void;
+  /** Resume a network-suspended fallback at its persisted model cursor. */
+  startAttemptIndex?: number;
 }
 
 const SHARED_ATTEMPT_CONFIG_KEYS = [
@@ -270,8 +275,12 @@ export async function executeAdapterWithModelFallbacks(
   // Resolve once so per-attempt config cannot escalate instance-level Browser eligibility.
   const browserCapabilitySource = resolveBrowserCapabilitySource(ctx.config);
   let previousFailure: AgentRuntimeExecutionResult | Error | null = null;
+  const requestedStartIndex = Number.isFinite(options.startAttemptIndex)
+    ? Math.max(0, Math.floor(options.startAttemptIndex as number))
+    : 0;
 
-  for (const attempt of attempts) {
+  const startIndex = Math.min(requestedStartIndex, Math.max(0, attempts.length - 1));
+  for (const attempt of attempts.slice(startIndex)) {
     const attemptRuntimeType = attempt.agentRuntimeType ?? ctx.agent.agentRuntimeType ?? adapter.type;
     const attemptAdapter = attempt.isFallback && attemptRuntimeType !== adapter.type
       ? options.resolveAdapter?.(attemptRuntimeType) ?? null
@@ -290,6 +299,7 @@ export async function executeAdapterWithModelFallbacks(
     }
 
     let controlAttempt: Awaited<ReturnType<NonNullable<typeof ctx.controlCoordinator>["beginAttempt"]>> | null = null;
+    let networkSuspended = false;
     try {
       const attemptConfig = buildAttemptConfig(
         ctx.config,
@@ -324,19 +334,38 @@ export async function executeAdapterWithModelFallbacks(
           : undefined,
       });
 
-      if (isSuccessfulRuntimeResult(result) || ctx.abortSignal?.aborted || attempt.index === attempts.length - 1) {
+      // A provider transport suspension is non-terminal. Keep the current
+      // attempt/fallback cursor pinned so recovery can resume the same model
+      // instead of silently changing providers while the network is down.
+      if (
+        (isAgentRuntimeNetworkSuspension(result.networkSuspension)
+          || isAgentRuntimeNetworkSuspension(result.suspension))
+        || isSuccessfulRuntimeResult(result)
+        || ctx.abortSignal?.aborted
+          || attempt.index === attempts.length - 1
+      ) {
+        networkSuspended = Boolean(
+          isAgentRuntimeNetworkSuspension(result.networkSuspension)
+          || isAgentRuntimeNetworkSuspension(result.suspension),
+        );
         return result;
       }
 
+      await options.onAttemptFailure?.(attempt, result);
       previousFailure = result;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       if (ctx.abortSignal?.aborted || attempt.index === attempts.length - 1) {
         throw err;
       }
+      await options.onAttemptFailure?.(attempt, err);
       previousFailure = err;
     } finally {
-      await controlAttempt?.complete();
+      // Chat marks the durable generation as waiting after this result is
+      // returned. Keep the in-process owner alive until that CAS transition
+      // clears the lease; completing it here would briefly publish `closing`
+      // and allow stale-owner recovery to terminalize a healthy waiting run.
+      if (!networkSuspended) await controlAttempt?.complete();
     }
   }
 

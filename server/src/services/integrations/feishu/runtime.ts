@@ -1,4 +1,5 @@
 import { createLarkChannel, Domain, LoggerLevel, type NormalizedMessage } from "@larksuiteoapi/node-sdk";
+import type { AgentRuntimeNetworkSuspension } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   agentIntegrationOutboundMessages,
@@ -107,6 +108,14 @@ export interface FeishuIntegrationRuntime {
   stopIntegration(integrationId: string): Promise<boolean>;
   stop(): Promise<void>;
   sendPendingForRuns(runIds: string[]): Promise<number>;
+  recoverNetworkWaitingRun(run: {
+    id: string;
+    orgId: string;
+    agentId: string;
+    chatConversationId: string | null;
+    executionOwnerToken: string | null;
+    contextSnapshot: Record<string, unknown> | null;
+  }): Promise<boolean>;
 }
 
 type FeishuAssistantRunner = Pick<ReturnType<typeof chatAssistantService>, "streamChatAssistantReply">;
@@ -604,8 +613,11 @@ export function feishuIntegrationRuntimeService(
     activeGeneration: {
       abortController: AbortController;
       generationId: string;
+      attemptEpoch?: number;
+      ownerToken?: string | null;
       release: () => void;
     },
+    resume?: { runId: string; ownerToken: string },
   ) {
     const conversation = await chats.getById(result.conversationId) as ChatConversation | null;
     const userMessage = result.chatMessageId
@@ -632,6 +644,7 @@ export function feishuIntegrationRuntimeService(
     }
 
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
+    let waitingForNetwork = false;
     let assistantMessage: ChatMessage | null = null;
     try {
       let activeRunId: string | null = null;
@@ -641,13 +654,40 @@ export function feishuIntegrationRuntimeService(
         messages: [userMessage],
         userMessageId: result.chatMessageId,
         stream: false,
+        runContext: {
+          chatGenerationId: activeGeneration.generationId,
+          feishuIntegrationId: integration.id,
+          feishuChatId: event.chatId,
+          feishuMessageId: event.messageId,
+        },
+        ...(resume
+          ? { resumeRunId: resume.runId, resumeRunOwnerToken: resume.ownerToken }
+          : {}),
         abortSignal: activeGeneration.abortController.signal,
         onRunCreated: (runId) => {
           activeRunId = runId;
         },
+        onWaitingForNetwork: async (suspension: AgentRuntimeNetworkSuspension) => {
+          const marked = await chats.generationProtocol.markWaitingForNetwork({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId: activeGeneration.generationId,
+            expectedAttemptEpoch: activeGeneration.attemptEpoch ?? 1,
+            suspension: suspension as unknown as Record<string, unknown>,
+          });
+          if (marked.stopped) {
+            generationTerminalStatus = "stopped";
+            if (!activeGeneration.abortController.signal.aborted) activeGeneration.abortController.abort();
+            return;
+          }
+          waitingForNetwork = true;
+        },
       });
       if (streamed.outcome === "stopped") {
         generationTerminalStatus = "stopped";
+        return;
+      }
+      if (streamed.outcome === "waiting_for_network" || waitingForNetwork) {
         return;
       }
       if (activeGeneration.abortController.signal.aborted) {
@@ -706,6 +746,10 @@ export function feishuIntegrationRuntimeService(
       generationTerminalStatus = "failed";
       throw error;
     } finally {
+      if (waitingForNetwork) {
+        activeGeneration.release();
+        return;
+      }
       await chats.markGenerationTerminal(activeGeneration.generationId, generationTerminalStatus).catch((error: unknown) => {
         logger.warn({ err: error, generationId: activeGeneration.generationId }, "failed to mark Feishu chat generation terminal");
       });
@@ -782,6 +826,110 @@ export function feishuIntegrationRuntimeService(
     } finally {
       if (leaseTimer) clearInterval(leaseTimer);
     }
+  }
+
+  async function recoverNetworkWaitingRun(run: {
+    id: string;
+    orgId: string;
+    agentId: string;
+    chatConversationId: string | null;
+    executionOwnerToken: string | null;
+    contextSnapshot: Record<string, unknown> | null;
+  }): Promise<boolean> {
+    const context = run.contextSnapshot ?? {};
+    const integrationId = firstString(context.feishuIntegrationId);
+    const conversationId = run.chatConversationId
+      ?? firstString(context.conversationId);
+    const generationId = firstString(context.chatGenerationId);
+    const chatMessageId = firstString(context.userMessageId) ?? firstString(context.messageId);
+    const externalChatId = firstString(context.feishuChatId);
+    const ownerToken = run.executionOwnerToken;
+    if (!integrationId || !conversationId || !generationId || !chatMessageId || !externalChatId || !ownerToken) {
+      return false;
+    }
+
+    const integrationRow = await db
+      .select()
+      .from(agentIntegrations)
+      .where(and(eq(agentIntegrations.id, integrationId), eq(agentIntegrations.orgId, run.orgId)))
+      .then((rows) => rows[0] ?? null);
+    if (!integrationRow || integrationRow.provider !== "feishu") return false;
+    const secretValue = await secrets.resolveSecretValue(
+      integrationRow.orgId,
+      integrationRow.appCredentialSecretId,
+      "latest",
+    );
+    const credential = parseFeishuCredential(secretValue);
+    const integration: FeishuRuntimeIntegration = {
+      id: integrationRow.id,
+      orgId: integrationRow.orgId,
+      agentId: integrationRow.agentId,
+      providerRegion: integrationRow.providerRegion as AgentIntegrationProviderRegion,
+      appCredentialSecretId: integrationRow.appCredentialSecretId,
+      externalAppId: integrationRow.externalAppId,
+      externalBotOpenId: integrationRow.externalBotOpenId,
+    };
+    const generation = await chats.getLatestGeneration(conversationId);
+    if (!generation || generation.id !== generationId || generation.status !== "waiting_for_network") return false;
+
+    const abortController = new AbortController();
+    const release = claimChatGeneration(conversationId, abortController, generationId);
+    if (!release) return true;
+    setActiveChatGenerationId(conversationId, generationId);
+    const resumed = await chats.generationProtocol.markNetworkResumed({
+      orgId: run.orgId,
+      conversationId,
+      generationId,
+      expectedAttemptEpoch: generation.attemptEpoch,
+    });
+    const event = {
+      provider: "feishu" as const,
+      eventId: `network-resume:${run.id}`,
+      appId: integration.externalAppId,
+      botOpenId: integration.externalBotOpenId,
+      chatId: externalChatId,
+      chatType: "p2p" as const,
+      messageId: firstString(context.feishuMessageId) ?? chatMessageId,
+      senderOpenId: "rudder-network-recovery",
+      senderUnionId: null,
+      body: "",
+      commandBody: "",
+      addressedToBot: true,
+      messageType: "text",
+    } satisfies FeishuInboundMessage;
+    const result = {
+      status: "accepted" as const,
+      conversationId,
+      chatMessageId,
+      issueId: firstString(context.issueId),
+      runId: run.id,
+      outbound: {
+        provider: "feishu" as const,
+        externalChatId,
+        externalMessageId: null,
+        text: "",
+      },
+    } satisfies Extract<AgentIntegrationInboundDispatchResult, { status: "accepted" }>;
+    try {
+      await completeAcceptedReply(
+        integration,
+        credential,
+        event,
+        result,
+        {
+          abortController,
+          generationId,
+          attemptEpoch: resumed.attemptEpoch,
+          ownerToken: resumed.controlOwnerToken,
+          release,
+        },
+        { runId: run.id, ownerToken },
+      );
+    } catch (error) {
+      logger.warn({ err: error, runId: run.id }, "Feishu network-wait recovery failed");
+      release();
+    }
+    return true;
   }
 
   async function handleEvent(
@@ -959,5 +1107,6 @@ export function feishuIntegrationRuntimeService(
       }
       return sent;
     },
+    recoverNetworkWaitingRun,
   };
 }

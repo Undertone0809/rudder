@@ -59,6 +59,7 @@ export {
   goalPlans,
   goalResultProposals, goalStartRequests, goals
 } from "./goals.js";
+export { heartbeatRunAttempts } from "./heartbeat_run_attempts.js";
 export { heartbeatRunEvents } from "./heartbeat_run_events.js";
 export { heartbeatRuns } from "./heartbeat_runs.js";
 export { instanceSettings } from "./instance_settings.js";

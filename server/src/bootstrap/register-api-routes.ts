@@ -94,7 +94,12 @@ export function registerApiRoutes(
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
   api.use(messengerRoutes(db));
-  api.use(chatRoutes(db, opts.storageService, chatBackgroundRuntime));
+  api.use(chatRoutes(
+    db,
+    opts.storageService,
+    chatBackgroundRuntime,
+    opts.registerNetworkWaitingRunHandler,
+  ));
   api.use(automationRoutes(db));
   api.use(calendarRoutes(db));
   api.use(runWorkspaceRoutes(db));
