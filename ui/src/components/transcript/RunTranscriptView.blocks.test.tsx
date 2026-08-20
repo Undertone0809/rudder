@@ -131,67 +131,27 @@ describe("ExpandableTranscriptResponsePre", () => {
 });
 
 describe("CommandTerminalDetail", () => {
-  it("replaces decorative controls with semantic view tabs and preserves each view's content", () => {
+  it("keeps the Shell view and removes the Task and Markdown tabs", () => {
     const container = render(
       <CommandTerminalDetail
         command="rg --files ui/src/components/transcript"
         output="RunTranscriptView.tsx"
         status="completed"
-        taskLabel="Explore"
-        taskSummary="Explore transcript files"
-        duration="240ms"
       />,
     );
 
     const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"));
-    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual(["Shell", "Task", "Markdown"]);
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual(["Shell"]);
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
-    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0]);
+    expect(container.querySelector("[role='tab'][aria-label='Task']")).toBeNull();
+    expect(container.querySelector("[role='tab'][aria-label='Markdown']")).toBeNull();
     expect(container.querySelector("[data-command-terminal-panel='shell']")?.textContent).toContain("rg --files");
+    expect(container.querySelector("[data-command-terminal-panel='shell']")?.textContent).toContain("RunTranscriptView.tsx");
     expect(container.querySelector("[data-testid='command-terminal-copy-button']")).not.toBeNull();
-
-    act(() => {
-      tabs[1]?.click();
-    });
-    expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
-    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, 0, -1]);
-    expect(container.querySelector("[data-command-terminal-panel='task']")?.textContent).toContain("Explore transcript files");
-    expect(container.querySelector("[data-command-terminal-panel='task']")?.textContent).toContain("240ms");
-    expect(container.querySelector("[data-command-terminal-panel='task']")?.textContent).not.toContain("RunTranscriptView.tsx");
-
-    act(() => {
-      tabs[2]?.click();
-    });
-    const markdownSource = container.querySelector<HTMLElement>("[data-testid='command-terminal-markdown-source']");
-    expect(tabs[2]?.getAttribute("aria-selected")).toBe("true");
-    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
-    expect(markdownSource?.textContent).toContain("# Explore transcript files");
-    expect(markdownSource?.textContent).toContain("~~~sh");
-    expect(markdownSource?.textContent).toContain("RunTranscriptView.tsx");
   });
 
-  it("supports keyboard navigation between the semantic view tabs", () => {
-    const container = render(
-      <CommandTerminalDetail command="pwd" output={null} status="running" />,
-    );
-    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"));
-
-    act(() => {
-      tabs[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    });
-    expect(tabs[1]?.getAttribute("aria-selected")).toBe("true");
-    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, 0, -1]);
-    expect(document.activeElement).toBe(tabs[1]);
-
-    act(() => {
-      tabs[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
-    });
-    expect(tabs[2]?.getAttribute("aria-selected")).toBe("true");
-    expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
-    expect(document.activeElement).toBe(tabs[2]);
-  });
-
-  it("keeps hidden failure indicators truthful in command task details", () => {
+  it("keeps command output neutral when failure indicators are hidden", () => {
     const container = render(
       <CommandTerminalDetail
         command="false"
@@ -200,52 +160,19 @@ describe("CommandTerminalDetail", () => {
         showFailureIndicators={false}
       />,
     );
-    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
-
-    act(() => {
-      taskTab?.click();
-    });
-
-    const taskPanel = container.querySelector("[data-command-terminal-panel='task']");
-    expect(taskPanel?.textContent).toContain("Result available");
-    expect(taskPanel?.textContent).not.toContain("Completed");
-    expect(taskPanel?.textContent).not.toContain("Failed");
+    const output = Array.from(container.querySelectorAll("pre")).find((pre) => pre.textContent?.includes("exit code 1"));
+    expect(output?.className).not.toContain("text-red-300");
   });
 
-  it.each([
-    ["error", "text-red-300"],
-    ["running", "text-cyan-300"],
-    ["completed", "text-emerald-300"],
-  ] as const)("uses readable %s status color on the dark code surface", (status, className) => {
-    const container = render(
-      <CommandTerminalDetail command="true" output="result" status={status} />,
-    );
-    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
-
-    act(() => {
-      taskTab?.click();
-    });
-
-    expect(container.querySelector(`[data-command-terminal-panel='task'] .${className}`)).not.toBeNull();
-  });
-
-  it("keeps the useful task view active and disables unavailable views without a command", () => {
+  it("keeps the Shell view available when a command has no text", () => {
     const container = render(
       <CommandTerminalDetail command="" output={null} status="running" />,
     );
     const shellTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='shell']");
-    const taskTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='task']");
-    const markdownTab = container.querySelector<HTMLButtonElement>("[role='tab'][data-command-terminal-view='markdown']");
 
-    expect(shellTab?.disabled).toBe(true);
-    expect(markdownTab?.disabled).toBe(true);
-    expect(taskTab?.getAttribute("aria-selected")).toBe("true");
-    expect(container.querySelector("[data-command-terminal-panel='task']")).not.toBeNull();
-
-    act(() => {
-      taskTab?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    });
-    expect(taskTab?.getAttribute("aria-selected")).toBe("true");
+    expect(shellTab?.disabled).toBe(false);
+    expect(shellTab?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-command-terminal-panel='shell']")).not.toBeNull();
   });
 });
 

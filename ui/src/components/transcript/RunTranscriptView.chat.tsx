@@ -767,9 +767,6 @@ export function TranscriptChatToolActionRow({
             command={requestText}
             output={responseText}
             status={visualStatus}
-            taskLabel={semantic.label}
-            taskSummary={displaySummary}
-            duration={taskDuration}
             className="motion-disclosure-enter ml-5 mt-2"
           />
         ) : (
