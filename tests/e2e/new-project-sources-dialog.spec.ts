@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type TestInfo } from "@playwright/test";
 
 test("adds recent local sources through the progressive Sources dialog", async ({ page }) => {
   const dialogAccessibilityMessages: string[] = [];
@@ -215,6 +215,66 @@ test("adds a URL in its own focused source step", async ({ page }) => {
     kind: "url",
     locator: "https://example.com/reference",
   }));
+});
+
+test("removes Goal controls from project configuration and creation", async ({ page }, testInfo: TestInfo) => {
+  await page.setViewportSize({ width: 1_440, height: 960 });
+  const uniqueSuffix = Date.now().toString(36).slice(-6).toUpperCase();
+  const goalsSetting = await page.request.patch("/api/instance/settings/general", {
+    data: { experimentalGoalsEnabled: true },
+  });
+  expect(goalsSetting.ok()).toBe(true);
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: {
+      name: `Project-Goal-Controls-${Date.now()}`,
+      issuePrefix: `PG${uniqueSuffix}`,
+    },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const goalRes = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+    data: { title: "Existing project goal" },
+  });
+  expect(goalRes.status()).toBe(201);
+  const goal = await goalRes.json() as { id: string };
+
+  const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+    data: { name: "Project without Goal controls", goalIds: [goal.id] },
+  });
+  expect(projectRes.status()).toBe(201);
+  const project = await projectRes.json() as { id: string; urlKey?: string | null };
+
+  try {
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/projects/${project.urlKey ?? project.id}/configuration`);
+
+    const mainContent = page.locator("#main-content");
+    await expect(page.getByText("Project without Goal controls", { exact: true }).first()).toBeVisible();
+    await expect(mainContent.getByText("Goals", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("Existing project goal", { exact: true })).toHaveCount(0);
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Create" }).click();
+    await page.getByRole("menuitem", { name: "Create new project" }).click();
+
+    const projectDialog = page.locator('[data-slot="dialog-content"]').filter({
+      has: page.getByText("New project", { exact: true }),
+    });
+    await expect(projectDialog).toBeVisible();
+    await expect(projectDialog.getByRole("button", { name: "Goal", exact: true })).toHaveCount(0);
+    await expect(projectDialog.getByText("Goal", { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("project-goal-controls-removed.png"), fullPage: true });
+  } finally {
+    const resetGoalsSetting = await page.request.patch("/api/instance/settings/general", {
+      data: { experimentalGoalsEnabled: false },
+    });
+    expect(resetGoalsSetting.ok()).toBe(true);
+  }
 });
 
 test("reuses the Sources dialog and persists an optional primary source", async ({ page }) => {

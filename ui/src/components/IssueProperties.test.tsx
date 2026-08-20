@@ -14,7 +14,6 @@ const openNewIssue = vi.hoisted(() => vi.fn());
 const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
 const mockProjects = vi.hoisted(() => ({ current: [] as Project[] }));
 const mockAgents = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }));
-const mockGoalsEnabled = vi.hoisted(() => ({ current: true }));
 const mockCurrentUserAvatar = vi.hoisted(() => ({ current: "https://example.test/current.png" as string | null }));
 const longAgentName = "ZST Runtime Smoke Agent With A Very Long Operational Name";
 
@@ -91,15 +90,6 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
-vi.mock("../hooks/useExperimentalGoalsEnabled", () => ({
-  useExperimentalGoalsEnabled: () => ({
-    enabled: mockGoalsEnabled.current,
-    isLoading: false,
-    error: null,
-    retry: vi.fn(),
-  }),
-}));
-
 vi.mock("../hooks/useCurrentUserAvatar", () => ({
   useCurrentUserAvatar: () => mockCurrentUserAvatar.current,
 }));
@@ -118,7 +108,6 @@ beforeEach(() => {
   mockIssues.current = [];
   mockProjects.current = [];
   mockAgents.current = [];
-  mockGoalsEnabled.current = true;
   mockCurrentUserAvatar.current = "https://example.test/current.png";
 });
 
@@ -267,8 +256,7 @@ describe("IssueProperties", () => {
 
     expect(container.querySelector('[data-avatar-url="https://example.test/current.png"]')).toBeNull();
   });
-  it("hides Goal relationships while the experimental feature is disabled", () => {
-    mockGoalsEnabled.current = false;
+  it("does not render Goal relationships even when the issue has a goal", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -291,6 +279,10 @@ describe("IssueProperties", () => {
 
     expect(container.querySelector('[aria-label^="Change goal:"]')).toBeNull();
     expect(container.querySelector('[aria-label="Open goal"]')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('[data-slot="issue-property-row"]'))
+        .some((row) => row.textContent?.trim().startsWith("Goal")),
+    ).toBe(false);
   });
 
   it("renders selected Agents with bare avatars and single-line names", () => {

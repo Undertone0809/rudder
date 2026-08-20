@@ -31,18 +31,15 @@ import {
   Maximize2,
   Minimize2,
   Plus,
-  Target,
-  X
+  X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { assetsApi } from "../api/assets";
-import { goalsApi } from "../api/goals";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { libraryCopy } from "../lib/library-copy";
 import { markdownDocumentOrUndefined } from "../lib/markdown-document-value";
 import { queryKeys } from "../lib/queryKeys";
@@ -132,26 +129,14 @@ export function NewProjectDialog() {
   const [status, setStatus] = useState("in_progress");
   const [color, setColor] = useState<string>(randomProjectColor);
   const [icon, setIcon] = useState("folder");
-  const [goalIds, setGoalIds] = useState<string[]>([]);
   const [targetDate, setTargetDate] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [resourceDrafts, setResourceDrafts] = useState<DraftProjectResource[]>([]);
   const [documentSessionId, setDocumentSessionId] = useState(0);
 
   const [statusOpen, setStatusOpen] = useState(false);
-  const [goalOpen, setGoalOpen] = useState(false);
   const [addSourcesOpen, setAddSourcesOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
-  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
-
-  const { data: goals } = useQuery({
-    queryKey: queryKeys.goals.list(selectedOrganizationId!),
-    queryFn: () => goalsApi.list(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId && newProjectOpen && goalsEnabled,
-  });
-  useEffect(() => {
-    if (!goalsEnabled) setGoalIds([]);
-  }, [goalsEnabled]);
 
   const { data: organizationResources } = useQuery({
     queryKey: queryKeys.organizations.resources(selectedOrganizationId ?? "__none__"),
@@ -181,7 +166,6 @@ export function NewProjectDialog() {
     setStatus("in_progress");
     setColor(randomProjectColor());
     setIcon("folder");
-    setGoalIds([]);
     setTargetDate("");
     setExpanded(false);
     setResourceDrafts([]);
@@ -358,7 +342,6 @@ export function NewProjectDialog() {
         status,
         color,
         icon,
-        ...(goalIds.length > 0 ? { goalIds } : {}),
         ...(targetDate ? { targetDate } : {}),
         ...(resourceAttachments.length > 0 ? { resourceAttachments } : {}),
         ...(newResources.length > 0 ? { newResources } : {}),
@@ -381,9 +364,6 @@ export function NewProjectDialog() {
       void handleSubmit();
     }
   }
-
-  const selectedGoals = (goals ?? []).filter((g) => goalIds.includes(g.id));
-  const availableGoals = (goals ?? []).filter((g) => !goalIds.includes(g.id));
 
   return (
     <>
@@ -698,63 +678,6 @@ export function NewProjectDialog() {
               ))}
             </PopoverContent>
           </Popover>
-
-          {goalsEnabled && selectedGoals.map((goal) => (
-            <span
-              key={goal.id}
-              className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs"
-            >
-              <Target className="h-3 w-3 text-muted-foreground" />
-              <span className="max-w-[160px] truncate">{goal.title}</span>
-              <button
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => setGoalIds((prev) => prev.filter((id) => id !== goal.id))}
-                aria-label={`Remove goal ${goal.title}`}
-                type="button"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-
-          {goalsEnabled ? <Popover open={goalOpen} onOpenChange={setGoalOpen}>
-            <PopoverTrigger asChild>
-              <button
-                className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs transition-colors hover:bg-accent/50 disabled:opacity-60"
-                disabled={selectedGoals.length > 0 && availableGoals.length === 0}
-              >
-                {selectedGoals.length > 0 ? <Plus className="h-3 w-3 text-muted-foreground" /> : <Target className="h-3 w-3 text-muted-foreground" />}
-                {selectedGoals.length > 0 ? "+ Goal" : "Goal"}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-56 p-1" align="start">
-              {selectedGoals.length === 0 && (
-                <button
-                  className="flex w-full items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/50"
-                  onClick={() => setGoalOpen(false)}
-                >
-                  No goal
-                </button>
-              )}
-              {availableGoals.map((g) => (
-                <button
-                  key={g.id}
-                  className="flex w-full items-center gap-2 truncate rounded-[calc(var(--radius-sm)-1px)] px-2 py-1.5 text-xs hover:bg-accent/50"
-                  onClick={() => {
-                    setGoalIds((prev) => [...prev, g.id]);
-                    setGoalOpen(false);
-                  }}
-                >
-                  {g.title}
-                </button>
-              ))}
-              {selectedGoals.length > 0 && availableGoals.length === 0 && (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  All goals already selected.
-                </div>
-              )}
-            </PopoverContent>
-          </Popover> : null}
 
           <div className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs">
             <Calendar className="h-3 w-3 text-muted-foreground" />

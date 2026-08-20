@@ -72,12 +72,6 @@ vi.mock("../api/projects", () => ({
   },
 }));
 
-vi.mock("../api/goals", () => ({
-  goalsApi: {
-    list: vi.fn(),
-  },
-}));
-
 vi.mock("../api/instanceSettings", () => ({
   instanceSettingsApi: {
     pickPath: (input: Record<string, unknown>) => mockState.pickPath(input),
@@ -280,6 +274,24 @@ describe("NewProjectDialog", () => {
     expect(dialogScroll?.className).toContain("overflow-y-auto");
     expect(dialogScroll?.className).toContain("overscroll-contain");
     expect(createButton?.parentElement?.className).toContain("shrink-0");
+  });
+
+  it("does not expose a Goal control or submit project Goal relationships", async () => {
+    const container = renderDialog();
+    const nameInput = container.querySelector<HTMLInputElement>("input[placeholder='Project name']");
+    const createButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Create project");
+
+    expect([...container.querySelectorAll("button")].some((button) => /\bGoal\b/.test(button.textContent ?? ""))).toBe(false);
+
+    await act(async () => {
+      setInputValue(nameInput!, "No goal project");
+      createButton!.click();
+    });
+
+    const submittedData = mockState.createProject.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(submittedData).toBeDefined();
+    expect(submittedData).not.toHaveProperty("goalIds");
   });
 
   it("keeps Library search inside its own source step", () => {

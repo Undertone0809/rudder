@@ -16,11 +16,6 @@ type Issue = {
   goalId: string | null;
 };
 
-type ActivityEvent = {
-  action: string;
-  details: Record<string, unknown> | null;
-};
-
 async function fetchIssue(page: Page, issueId: string): Promise<Issue> {
   const response = await page.request.get(`/api/issues/${issueId}?_=${Date.now()}`, {
     headers: { "cache-control": "no-cache" },
@@ -29,58 +24,42 @@ async function fetchIssue(page: Page, issueId: string): Promise<Issue> {
   return response.json() as Promise<Issue>;
 }
 
-async function fetchIssueActivity(page: Page, issueId: string): Promise<ActivityEvent[]> {
-  const response = await page.request.get(`/api/issues/${issueId}/activity?_=${Date.now()}`, {
-    headers: { "cache-control": "no-cache" },
-  });
-  expect(response.ok()).toBe(true);
-  return response.json() as Promise<ActivityEvent[]>;
+async function expectGoalControlsHidden(page: Page) {
+  const properties = page.getByRole("region", { name: "Issue properties" });
+  await expect(properties).toBeVisible();
+  await expect(properties.getByText("Goal", { exact: true })).toHaveCount(0);
+  await expect(properties.locator('[aria-label^="Change goal:"]')).toHaveCount(0);
+  await expect(properties.locator('[aria-label="Open goal"]')).toHaveCount(0);
 }
 
-async function goalUpdateActivityCount(page: Page, issueId: string): Promise<number> {
-  return (await fetchIssueActivity(page, issueId))
-    .filter((event) => event.action === "issue.updated" && event.details && "goalId" in event.details)
-    .length;
-}
-
-test.describe("Issue detail goal picker", () => {
-  test("moves, clears, and preserves issue goals from the properties panel", async ({ page }) => {
+test.describe("Issue detail goal properties", () => {
+  test("hides Goal controls while preserving a linked issue goal", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto("/");
 
     const orgResponse = await page.request.post("/api/orgs", {
-      data: { name: `Issue-Detail-Goal-Picker-${Date.now()}` },
+      data: { name: `Issue-Detail-Goal-Properties-${Date.now()}` },
     });
     expect(orgResponse.ok()).toBe(true);
     const organization = await orgResponse.json() as Organization;
 
-    const originalGoalResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+    const goalResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
       data: {
         title: "Goal Center rollout",
         status: "active",
         level: "organization",
       },
     });
-    expect(originalGoalResponse.ok()).toBe(true);
-    const originalGoal = await originalGoalResponse.json() as Goal;
-
-    const alternateGoalResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
-      data: {
-        title: "Lifecycle controls hardening",
-        status: "active",
-        level: "team",
-      },
-    });
-    expect(alternateGoalResponse.ok()).toBe(true);
-    const alternateGoal = await alternateGoalResponse.json() as Goal;
+    expect(goalResponse.ok()).toBe(true);
+    const goal = await goalResponse.json() as Goal;
 
     const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Verify issue goal picker reassignment",
-        description: "QA should be able to move an issue between goals from the issue detail properties panel.",
+        title: "Verify hidden issue goal properties",
+        description: "A linked Goal remains supported even when its Issue Properties entry is removed.",
         status: "todo",
         priority: "medium",
-        goalId: originalGoal.id,
+        goalId: goal.id,
       },
     });
     expect(issueResponse.ok()).toBe(true);
@@ -93,125 +72,69 @@ test.describe("Issue detail goal picker", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/issues/${issueRouteId}`);
-    await expect(page.getByText("Properties", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first()).toBeVisible();
-
-    const switchToAlternateGoal = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().endsWith(`/api/issues/${issueRouteId}`)
-      && response.ok(),
-    );
-    await page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first().click();
-    await page.getByRole("button", { name: alternateGoal.title, exact: true }).click();
-    await switchToAlternateGoal;
-
-    await expect(page.getByRole("button", { name: `Change goal: ${alternateGoal.title}` }).first()).toBeVisible();
-    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(alternateGoal.id);
-
-    const restoreOriginalGoal = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().endsWith(`/api/issues/${issueRouteId}`)
-      && response.ok(),
-    );
-    await page.getByRole("button", { name: `Change goal: ${alternateGoal.title}` }).first().click();
-    await page.getByRole("button", { name: originalGoal.title, exact: true }).click();
-    await restoreOriginalGoal;
-
-    await expect(page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first()).toBeVisible();
-    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(originalGoal.id);
-
-    const clearGoal = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().endsWith(`/api/issues/${issueRouteId}`)
-      && response.ok(),
-    );
-    await page.getByRole("button", { name: `Change goal: ${originalGoal.title}` }).first().click();
-    await page.getByRole("button", { name: "No goal", exact: true }).click();
-    await clearGoal;
-
-    await expect(page.getByRole("button", { name: "Change goal: No goal" }).first()).toBeVisible();
-    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBeNull();
-
-    const goalActivityCountAfterClear = await goalUpdateActivityCount(page, issue.id);
+    await expectGoalControlsHidden(page);
+    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(goal.id);
 
     const descriptionResponse = await page.request.patch(`/api/issues/${issueRouteId}`, {
-      data: { description: "Description edits must not restore a cleared default goal." },
+      data: { description: "Editing other Issue fields must preserve the linked Goal." },
     });
     expect(descriptionResponse.ok()).toBe(true);
-
-    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBeNull();
-    await expect.poll(async () => goalUpdateActivityCount(page, issue.id)).toBe(goalActivityCountAfterClear);
-
-    const noProjectResponse = await page.request.patch(`/api/issues/${issueRouteId}`, {
-      data: { projectId: null },
-    });
-    expect(noProjectResponse.ok()).toBe(true);
-
-    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBeNull();
-    await expect.poll(async () => goalUpdateActivityCount(page, issue.id)).toBe(goalActivityCountAfterClear);
+    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(goal.id);
 
     await page.reload();
-    await expect(page.getByRole("button", { name: "Change goal: No goal" }).first()).toBeVisible();
-    await expect(page.getByText("updated the description, set the goal")).toHaveCount(0);
+    await expectGoalControlsHidden(page);
+    await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(goal.id);
   });
 
   for (const status of ["done", "blocked"] as const) {
-    test(`keeps a cleared goal empty on ${status} issue status edits`, async ({ page }) => {
+    test(`hides Goal controls on ${status} issues without changing the relation`, async ({ page }) => {
       await page.setViewportSize({ width: 1440, height: 960 });
       await page.goto("/");
 
       const orgResponse = await page.request.post("/api/orgs", {
-        data: { name: `Issue-Detail-Terminal-Goal-${status}-${Date.now()}` },
+        data: { name: `Issue-Detail-${status}-Goal-Properties-${Date.now()}` },
       });
       expect(orgResponse.ok()).toBe(true);
       const organization = await orgResponse.json() as Organization;
 
-      const defaultGoalResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
+      const goalResponse = await page.request.post(`/api/orgs/${organization.id}/goals`, {
         data: {
-          title: `Default terminal goal ${status}`,
+          title: `Terminal issue goal ${status}`,
           status: "active",
           level: "organization",
         },
       });
-      expect(defaultGoalResponse.ok()).toBe(true);
-      const defaultGoal = await defaultGoalResponse.json() as Goal;
+      expect(goalResponse.ok()).toBe(true);
+      const goal = await goalResponse.json() as Goal;
 
       const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
         data: {
-          title: `Verify ${status} goal clear persistence`,
-          description: "Terminal issues should keep explicit goal clears across normal edits.",
+          title: `Verify hidden Goal controls on ${status} issues`,
+          description: "Terminal issue properties should not expose Goal controls.",
           status,
           priority: "medium",
-          goalId: defaultGoal.id,
+          goalId: goal.id,
         },
       });
       expect(issueResponse.ok()).toBe(true);
       const issue = await issueResponse.json() as Issue;
       const issueRouteId = issue.identifier ?? issue.id;
 
-      const clearResponse = await page.request.patch(`/api/issues/${issueRouteId}`, {
-        data: { goalId: null },
-      });
-      expect(clearResponse.ok()).toBe(true);
-      await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBeNull();
-
       await page.goto("/");
       await page.evaluate((orgId) => {
         window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
       }, organization.id);
       await page.goto(`/${organization.issuePrefix}/issues/${issueRouteId}`);
-      await expect(page.getByText("Properties", { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Change goal: No goal" }).first()).toBeVisible();
 
-      const goalActivityCountAfterClear = await goalUpdateActivityCount(page, issue.id);
+      await expectGoalControlsHidden(page);
+      await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(goal.id);
+
       const nextStatus = status === "done" ? "blocked" : "done";
       const statusResponse = await page.request.patch(`/api/issues/${issueRouteId}`, {
         data: { status: nextStatus },
       });
       expect(statusResponse.ok()).toBe(true);
-
-      await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBeNull();
-      await expect.poll(async () => goalUpdateActivityCount(page, issue.id)).toBe(goalActivityCountAfterClear);
+      await expect.poll(async () => (await fetchIssue(page, issue.id)).goalId).toBe(goal.id);
     });
   }
 });

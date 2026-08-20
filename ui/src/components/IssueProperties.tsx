@@ -4,18 +4,16 @@ import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor 
 import { Link } from "@/lib/router";
 import type { Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
-import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
-import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnabled";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "../lib/agent-labels";
@@ -156,15 +154,12 @@ export function IssueProperties({
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const orgId = issue.orgId ?? selectedOrganizationId;
-  const { enabled: goalsEnabled } = useExperimentalGoalsEnabled();
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [reviewerOpen, setReviewerOpen] = useState(false);
   const [reviewerSearch, setReviewerSearch] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
-  const [goalOpen, setGoalOpen] = useState(false);
-  const [goalSearch, setGoalSearch] = useState("");
   const [parentOpen, setParentOpen] = useState(false);
   const [parentSearch, setParentSearch] = useState("");
   const [subIssueActionOpen, setSubIssueActionOpen] = useState(false);
@@ -195,17 +190,6 @@ export function IssueProperties({
     queryFn: () => projectsApi.list(orgId!),
     enabled: !!orgId,
   });
-  const { data: goals } = useQuery({
-    queryKey: queryKeys.goals.list(orgId!),
-    queryFn: () => goalsApi.list(orgId!),
-    enabled: !!orgId && goalsEnabled,
-  });
-  useEffect(() => {
-    if (!goalsEnabled) {
-      setGoalOpen(false);
-      setGoalSearch("");
-    }
-  }, [goalsEnabled]);
   const activeProjects = useMemo(
     () => (projects ?? []).filter((p) => !p.archivedAt || p.id === issue.projectId),
     [projects, issue.projectId],
@@ -256,11 +240,6 @@ export function IssueProperties({
     if (!id) return id?.slice(0, 8) ?? "None";
     const project = orderedProjects.find((p) => p.id === id);
     return project?.name ?? id.slice(0, 8);
-  };
-  const goalName = (id: string | null) => {
-    if (!id) return "None";
-    const goal = goals?.find((candidate) => candidate.id === id) ?? issue.goal ?? null;
-    return goal?.title ?? id.slice(0, 8);
   };
   const issueById = useMemo(() => new Map((allIssues ?? []).map((candidate) => [candidate.id, candidate])), [allIssues]);
   const issueProjectName = useCallback(
@@ -350,8 +329,6 @@ export function IssueProperties({
     const project = projects?.find((p) => p.id === id) ?? null;
     return project ? projectUrl(project) : `/projects/${id}`;
   };
-  const goalLink = (id: string | null) => id ? `/goals/${id}` : null;
-
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [assigneeOpen]);
   const sortedAgents = useMemo(
     () => sortAgentsByRecency((agents ?? []).filter((a) => a.status !== "terminated"), recentAssigneeIds),
@@ -368,15 +345,6 @@ export function IssueProperties({
   const assigneeUserLabel = userLabel(issue.assigneeUserId);
   const reviewerUserLabel = userLabel(issue.reviewerUserId);
   const creatorUserLabel = userLabel(issue.createdByUserId);
-  const visibleGoals = useMemo(
-    () => (goals ?? []).filter((goal) => {
-      if (!goalSearch.trim()) return true;
-      const query = goalSearch.toLowerCase();
-      return `${goal.title} ${goal.description ?? ""} ${goal.status}`.toLowerCase().includes(query);
-    }),
-    [goals, goalSearch],
-  );
-
   const labelsTrigger = (issue.labels ?? []).length > 0 ? (
     <div className="flex items-center gap-1 flex-wrap">
       {(issue.labels ?? []).slice(0, 3).map((label) => (
@@ -737,70 +705,6 @@ export function IssueProperties({
     </>
   );
 
-  const goalTrigger = issue.goalId ? (
-    <>
-      <Target className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-sm truncate">{goalName(issue.goalId)}</span>
-      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-    </>
-  ) : (
-    <>
-      <Target className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-sm text-muted-foreground">No goal</span>
-      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-    </>
-  );
-
-  const goalContent = (
-    <>
-      <input
-        className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder="Search goals..."
-        value={goalSearch}
-        onChange={(e) => setGoalSearch(e.target.value)}
-        autoFocus={!inline}
-      />
-      <div className="max-h-48 overflow-y-auto overscroll-contain">
-        <button
-          type="button"
-          className={cn(
-            "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 whitespace-nowrap",
-            !issue.goalId && "bg-accent"
-          )}
-          onClick={() => {
-            onUpdate({ goalId: null });
-            setGoalOpen(false);
-            setGoalSearch("");
-          }}
-        >
-          <Target className="h-3 w-3 text-muted-foreground shrink-0" />
-          No goal
-        </button>
-        {visibleGoals.map((goal) => (
-          <button
-            type="button"
-            key={goal.id}
-            className={cn(
-              "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left",
-              goal.id === issue.goalId && "bg-accent"
-            )}
-            onClick={() => {
-              onUpdate({ goalId: goal.id });
-              setGoalOpen(false);
-              setGoalSearch("");
-            }}
-          >
-            <Target className="h-3 w-3 text-muted-foreground shrink-0" />
-            <span className="truncate">{goal.title}</span>
-          </button>
-        ))}
-        {visibleGoals.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">No matching goals.</p>
-        ) : null}
-      </div>
-    </>
-  );
-
   const parentTrigger = parentIssue ? (
     <>
       <span className="max-w-20 shrink truncate font-mono text-[11px] text-muted-foreground">
@@ -1017,29 +921,6 @@ export function IssueProperties({
         >
           {projectContent}
         </PropertyPicker>
-
-        {goalsEnabled ? <PropertyPicker
-          inline={inline}
-          label="Goal"
-          open={goalOpen}
-          onOpenChange={(open) => { setGoalOpen(open); if (!open) setGoalSearch(""); }}
-          triggerContent={goalTrigger}
-          triggerAriaLabel={`Change goal: ${issue.goalId ? goalName(issue.goalId) : "No goal"}`}
-          triggerClassName="min-w-0 max-w-full"
-          popoverClassName="w-fit min-w-[11rem]"
-          extra={issue.goalId ? (
-            <Link
-              to={goalLink(issue.goalId)!}
-              aria-label="Open goal"
-              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ArrowUpRight className="h-3 w-3" />
-            </Link>
-          ) : undefined}
-        >
-          {goalContent}
-        </PropertyPicker> : null}
 
         <PropertyPicker
           inline={inline}
