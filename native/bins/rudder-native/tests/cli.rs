@@ -248,6 +248,8 @@ fn indexes_run_evidence_without_materializing_the_source() {
     ]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(result["operation"], "indexEvidence");
+    assert!(result["target"].as_str().is_some_and(|target| !target.is_empty()));
+    assert_eq!(result["binaryVersion"], env!("CARGO_PKG_VERSION"));
     assert_eq!(result["recordCount"], 2);
     assert_eq!(result["sourceBytes"], fs::metadata(&input).unwrap().len());
     let lines = fs::read_to_string(output).unwrap();

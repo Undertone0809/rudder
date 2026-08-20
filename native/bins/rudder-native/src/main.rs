@@ -298,6 +298,8 @@ fn run() -> Result<serde_json::Value, NativeFailure> {
                 "ok": true,
                 "operation": "indexEvidence",
                 "protocolVersion": INDEX_PROTOCOL_VERSION,
+                "target": native_target(),
+                "binaryVersion": env!("CARGO_PKG_VERSION"),
                 "sourceBytes": result.source_bytes,
                 "recordCount": result.record_count,
                 "sourceSha256": result.source_sha256,
