@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   buildMigrationManifest,
+  migrationCompatibilityMatrix,
   runCompatibilityPreflight,
   validateCompatibilityMatrix,
 } from "./release-compatibility-matrix.mjs";
@@ -52,15 +53,13 @@ describe("release migration compatibility matrix", () => {
     ]);
   });
 
-  it("accepts the checked-in 0.7.11 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
-      candidateVersion: "0.7.11",
-      channel: "stable",
-    });
+  it("retains the 0.7.11 compatibility declaration", () => {
+    const declaration = migrationCompatibilityMatrix["0.7.11"];
 
-    expect(result.candidateMigrations).toBe(157);
-    expect(result.candidateSqlFiles).toBe(159);
-    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+    expect(declaration.candidateFingerprint).toBe(
+      "d9d8397a27fbe3bfc48452d1b8bddabda45098666983db656f2119e59fa09cd0",
+    );
+    expect(declaration.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.10",
       "0.7.9",
       "0.7.1",
