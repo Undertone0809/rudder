@@ -226,6 +226,21 @@ function resolveFallbackAgentHome(effectiveCodexHome: string, agentId: string): 
   return path.join(orgRoot, "workspaces", "agents", agentId);
 }
 
+export function resolveCodexAgentHome(input: {
+  configuredAgentHome: string;
+  cwd: string;
+  runtimeScene: string;
+  effectiveCodexHome: string;
+  agentId: string;
+}): string {
+  if (input.configuredAgentHome) return input.configuredAgentHome;
+  // Product Intelligence uses a synthetic agent identity for the common
+  // runtime contract, but must not materialize that identity as a Library
+  // workspace. Its temporary cwd is the only appropriate home for this run.
+  if (input.runtimeScene === "product_intelligence") return input.cwd;
+  return resolveFallbackAgentHome(input.effectiveCodexHome, input.agentId);
+}
+
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
@@ -317,7 +332,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const defaultCodexHome = resolveManagedCodexHomeDir(codexTargetEnv, agent.orgId, agent.id);
   const effectiveCodexHome = preparedManagedCodexHome ?? defaultCodexHome;
   await fs.mkdir(effectiveCodexHome, { recursive: true });
-  const effectiveAgentHome = agentHome || resolveFallbackAgentHome(effectiveCodexHome, agent.id);
+  const effectiveAgentHome = resolveCodexAgentHome({
+    configuredAgentHome: agentHome,
+    cwd,
+    runtimeScene,
+    effectiveCodexHome,
+    agentId: agent.id,
+  });
   await fs.mkdir(effectiveAgentHome, { recursive: true });
   const gitSidecarHome = path.join(effectiveCodexHome, "git");
   const preparedGitIdentity = await ensureGitIdentityFileConfig({

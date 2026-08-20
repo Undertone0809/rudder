@@ -97,6 +97,7 @@ describe("product intelligence execution", () => {
             source: "product_intelligence",
             strategy: "none",
             cwd: "/tmp/rudder-product-intelligence-test",
+            agentHome: "/tmp/rudder-product-intelligence-test",
           },
         }),
       }),

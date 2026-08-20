@@ -97,6 +97,10 @@ export async function executeResolvedProductIntelligenceProfile(
         source: "product_intelligence",
         strategy: "none",
         cwd: workspaceCwd,
+        // Product Intelligence is an ephemeral runtime, not a persisted agent.
+        // Reuse its temporary cwd so adapters do not derive a Library agent home
+        // from the synthetic product-intelligence-* identity.
+        agentHome: workspaceCwd,
       },
     },
     onLog: input.onLog ?? (async () => {}),
