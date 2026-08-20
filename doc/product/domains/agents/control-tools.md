@@ -129,8 +129,8 @@ ordinary Chat replies, or non-MCP work.
   revision, required behavior, startup timeout, and tool timeout. The fixed
   Rudder proxy URL and run-owned proxy authorization are derived outside the
   binding array. Provider scope, connection identity, and provider credentials
-  remain server-side. This includes GitHub's account-scoped endpoint and PAT;
-  neither provider-specific value becomes part of the runtime descriptor.
+  remain server-side. This includes GitHub's account-scoped endpoint and OAuth
+  grant; neither provider-specific value becomes part of the runtime descriptor.
 
 ### Entry Points / Inputs
 

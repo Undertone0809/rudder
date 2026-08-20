@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   MCP_CURATED_OAUTH_ORIGINS,
+  MCP_GITHUB_READ_ONLY_OAUTH_SCOPE,
+  MCP_GITHUB_READ_WRITE_OAUTH_SCOPE,
   MCP_PROVIDER_REGISTRY,
   resolveCuratedMcpEndpoint,
+  resolveCuratedMcpOAuthScope,
 } from "./provider-registry.js";
 
 describe("managed MCP provider registry", () => {
@@ -46,9 +49,13 @@ describe("managed MCP provider registry", () => {
       },
       github: {
         endpoint: "https://api.githubcopilot.com/mcp/",
-        oauthOrigins: [],
-        requiresOAuth: false,
-        credentialMode: "pat",
+        oauthOrigins: ["https://api.githubcopilot.com", "https://github.com"],
+        oauthScopes: {
+          read_only: MCP_GITHUB_READ_ONLY_OAUTH_SCOPE,
+          read_write: MCP_GITHUB_READ_WRITE_OAUTH_SCOPE,
+        },
+        requiresOAuth: true,
+        credentialMode: "oauth",
         scopeMode: "account",
         scopeSelection: "none",
         defaultAccessMode: "read_only",
@@ -66,6 +73,8 @@ describe("managed MCP provider registry", () => {
       "https://api.supabase.com",
       "https://mcp.linear.app",
       "https://mcp.notion.com",
+      "https://api.githubcopilot.com",
+      "https://github.com",
     ]);
   });
 
@@ -112,7 +121,7 @@ describe("managed MCP provider registry", () => {
     }).href).toBe("https://mcp.linear.app/mcp/readonly");
   });
 
-  it("resolves GitHub to its fixed account endpoint and never advertises OAuth", () => {
+  it("resolves GitHub to its fixed account endpoint and advertises OAuth origins", () => {
     expect(resolveCuratedMcpEndpoint({
       provider: "github",
       accessMode: "read_only",
@@ -126,7 +135,25 @@ describe("managed MCP provider registry", () => {
       accessMode: "provider_default",
       externalScope: null,
     })).toThrow(/read_only|read_write/i);
-    expect(MCP_CURATED_OAUTH_ORIGINS).not.toContain("https://api.githubcopilot.com");
+    expect(MCP_CURATED_OAUTH_ORIGINS).toContain("https://api.githubcopilot.com");
+    expect(MCP_CURATED_OAUTH_ORIGINS).toContain("https://github.com");
+  });
+
+  it("pins GitHub OAuth scopes to the selected access mode", () => {
+    expect(resolveCuratedMcpOAuthScope({
+      provider: "github",
+      accessMode: "read_only",
+    })).toBe("read:org read:user user:email read:packages read:project");
+    expect(resolveCuratedMcpOAuthScope({
+      provider: "github",
+      accessMode: "read_write",
+    })).toBe(MCP_GITHUB_READ_WRITE_OAUTH_SCOPE);
+
+    const readOnlyScopes = MCP_GITHUB_READ_ONLY_OAUTH_SCOPE.split(" ");
+    expect(readOnlyScopes).not.toContain("repo");
+    expect(readOnlyScopes).not.toContain("delete_repo");
+    expect(readOnlyScopes).not.toContain("workflow");
+    expect(readOnlyScopes).not.toContain("write:packages");
   });
 
   it("rejects custom providers because their URL comes from validated connection config", () => {

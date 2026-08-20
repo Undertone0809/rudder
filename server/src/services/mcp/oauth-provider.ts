@@ -17,6 +17,12 @@ export interface ManagedMcpOAuthMaterial {
   authorizationServerUrl?: string;
 }
 
+export interface ManagedMcpOAuthStaticClient {
+  clientId: string;
+  clientSecret: string;
+  issuer: string;
+}
+
 export function resolveMcpOAuthRedirectUri(input: {
   deploymentMode: DeploymentMode;
   serverPort: number;
@@ -47,6 +53,7 @@ export interface PersistentMcpOAuthClientProviderOptions {
   redirectUri: string;
   state: string;
   material: ManagedMcpOAuthMaterial;
+  staticClient?: ManagedMcpOAuthStaticClient;
   save: (material: ManagedMcpOAuthMaterial) => void | Promise<void>;
 }
 
@@ -56,6 +63,7 @@ export class PersistentMcpOAuthClientProvider implements OAuthClientProvider {
   authorizationUrl: URL | null = null;
   private readonly oauthState: string;
   private readonly saveMaterial: PersistentMcpOAuthClientProviderOptions["save"];
+  private readonly staticClientInformation?: StoredOAuthClientInformation;
   private material: ManagedMcpOAuthMaterial;
 
   constructor(options: PersistentMcpOAuthClientProviderOptions) {
@@ -63,12 +71,25 @@ export class PersistentMcpOAuthClientProvider implements OAuthClientProvider {
     this.oauthState = options.state;
     this.material = structuredClone(options.material);
     this.saveMaterial = options.save;
+    this.staticClientInformation = options.staticClient
+      ? {
+          client_id: options.staticClient.clientId,
+          client_secret: options.staticClient.clientSecret,
+          issuer: options.staticClient.issuer,
+          redirect_uris: [options.redirectUri],
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "client_secret_post",
+        }
+      : undefined;
     this.clientMetadata = {
       client_name: "Rudder",
       redirect_uris: [options.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none",
+      token_endpoint_auth_method: options.staticClient
+        ? "client_secret_post"
+        : "none",
     };
   }
 
@@ -79,13 +100,14 @@ export class PersistentMcpOAuthClientProvider implements OAuthClientProvider {
   clientInformation(
     _context?: OAuthClientInformationContext,
   ): StoredOAuthClientInformation | undefined {
-    return this.material.clientInformation;
+    return this.staticClientInformation ?? this.material.clientInformation;
   }
 
   async saveClientInformation(
     clientInformation: StoredOAuthClientInformation,
     _context?: OAuthClientInformationContext,
   ): Promise<void> {
+    if (this.staticClientInformation) return;
     await this.update({ clientInformation });
   }
 

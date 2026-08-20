@@ -286,7 +286,7 @@ export async function defaultDiscoverProviderScope(input: {
 }
 
 export async function defaultValidateProviderTools(input: {
-  provider: "supabase" | "linear" | "notion";
+  provider: "supabase" | "linear" | "notion" | "github";
   connection: McpConnectionRow;
   material: ManagedMcpOAuthMaterial;
   endpoint: string;

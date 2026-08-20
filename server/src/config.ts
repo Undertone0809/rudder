@@ -106,6 +106,8 @@ export interface Config {
   workspacePreviewOrigin: string | undefined;
   authBaseUrlMode: AuthBaseUrlMode;
   authPublicBaseUrl: string | undefined;
+  githubMcpClientId: string | undefined;
+  githubMcpClientSecret: string | undefined;
   authDisableSignUp: boolean;
   databaseMode: DatabaseMode;
   databaseUrl: string | undefined;
@@ -262,6 +264,8 @@ export function loadConfig(): Config {
     publicUrlFromEnv ??
     fileConfig?.auth?.publicBaseUrl;
   const authPublicBaseUrl = authPublicBaseUrlRaw?.trim() || undefined;
+  const githubMcpClientId = process.env.GITHUB_MCP_CLIENT_ID?.trim() || undefined;
+  const githubMcpClientSecret = process.env.GITHUB_MCP_CLIENT_SECRET?.trim() || undefined;
   const authBaseUrlMode: AuthBaseUrlMode =
     authBaseUrlModeFromEnv ??
     fileConfig?.auth?.baseUrlMode ??
@@ -357,6 +361,8 @@ export function loadConfig(): Config {
     workspacePreviewOrigin: normalizeWorkspacePreviewOrigin(process.env.RUDDER_WORKSPACE_PREVIEW_ORIGIN),
     authBaseUrlMode,
     authPublicBaseUrl,
+    githubMcpClientId,
+    githubMcpClientSecret,
     authDisableSignUp,
     databaseMode: fileDatabaseMode,
     databaseUrl: process.env.DATABASE_URL ?? fileDbUrl,

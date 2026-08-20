@@ -23,6 +23,10 @@ related_code:
   - server/src/services/mcp/managed-client.ts
   - server/src/services/mcp/managed-connections.ts
   - server/src/services/mcp/managed-runtime.ts
+  - server/src/services/mcp/oauth.ts
+  - server/src/services/mcp/oauth-provider.ts
+  - server/src/services/mcp/provider-registry.ts
+  - server/src/routes/managed-mcp-connections.ts
   - desktop/src/main.ts
   - desktop/src/navigation-guard.ts
   - desktop/src/preload.ts
@@ -36,6 +40,9 @@ related_tests:
   - scripts/managed-mcp-product-contract.test.mjs
   - server/src/__tests__/managed-mcp-connections-service.test.ts
   - server/src/__tests__/managed-mcp-runtime-routes.test.ts
+  - server/src/__tests__/managed-mcp-oauth-service.test.ts
+  - server/src/services/mcp/managed-mcp-oauth-provider.test.ts
+  - server/src/services/mcp/provider-registry.test.ts
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/cursor-local-execute.test.ts
@@ -122,14 +129,14 @@ profile belongs to Desktop, not to adapter-managed runtime state.
 
 Managed external MCP adds distinct OAuth token, runtime identity, network,
 STDIO process, and environment variable boundaries. Provider tokens and
-temporary OAuth material remain encrypted on the Rudder server. GitHub PATs
-follow the same server-side secret boundary: they enter only through a
-mutation request, are encrypted before connection activation, and are used
-only to build the upstream Bearer header. A runtime receives only a run-scoped
-proxy identity and provider-neutral tool descriptors; it never receives
-provider access/refresh tokens, PATs, PKCE verifiers, dynamic client secrets,
-or organization secret identifiers. Organization and Agent connections for the
-same provider have independent grants or managed credentials. Runtime source
+temporary OAuth material remain encrypted on the Rudder server. GitHub uses the
+same server-side OAuth grant boundary: the server-configured GitHub OAuth App
+client starts the official PKCE flow, exchanges the callback code, and injects
+the resulting provider credential only at the upstream proxy. A runtime
+receives only a run-scoped proxy identity and provider-neutral tool descriptors;
+it never receives provider access/refresh tokens, client secrets, PKCE
+verifiers, or organization secret identifiers. Organization and Agent
+connections for the same provider have independent grants. Runtime source
 resolution selects the owner Agent's non-revoked connection before the
 Organization connection; explicit `No access` blocks fallback, while
 revocation restores an available Organization source.
@@ -285,18 +292,21 @@ because it represents the same user.
    what permission, path, login, or configuration needs repair.
 
 12. Provider OAuth access tokens, refresh tokens, client secrets, PKCE
-    verifiers, temporary dynamic-client metadata, and GitHub PATs stay in
-    encrypted organization secrets. They are never written into prompts, tool
-    arguments, adapter config, command lines, child environment variables, or
-    audit outcomes. A GitHub PAT is accepted only by the provider-specific
-    setup/reconnect mutation and is used server-side to construct the upstream
-    Bearer header.
+    verifiers, and temporary dynamic-client metadata stay in encrypted
+    organization secrets. They are never written into prompts, tool arguments,
+    adapter config, command lines, child environment variables, or audit
+    outcomes. GitHub authorization requires the configured
+    `GITHUB_MCP_CLIENT_ID` and `GITHUB_MCP_CLIENT_SECRET`, uses the registered
+    `/api/mcp/oauth/callback`, and is exchanged server-side. Read-only GitHub
+    authorization is pinned to the least-privilege `read:org`, `read:user`,
+    `user:email`, `read:packages`, and `read:project` scope set rather than
+    inheriting provider metadata; no GitHub PAT mutation path exists.
 
     Reauthorization is a two-phase replacement. Rudder retains the prior usable
     grant while the new OAuth session is pending and atomically swaps credentials
-    only after successful callback validation. Cancellation, timeout, stale
-    callback, or discovery failure must not revoke the prior grant; explicit
-    Disconnect is the immediate-stop action.
+    only after successful callback and tool validation. Cancellation, provider
+    denial, malformed or stale callback, timeout, or discovery failure must not
+    revoke the prior grant; explicit Disconnect is the immediate-stop action.
 
 13. Runtime adapters receive a provider-neutral, run-scoped external MCP proxy
     binding containing only binding id, proxy server name, server-derived tool
@@ -375,6 +385,7 @@ because it represents the same user.
 | Built-in Browser enabled for supported local adapter | Trusted run context enables Browser | Managed MCP/native config receives only the capability flag and runtime-owned tool identity | Adapter must not receive Browser profile paths, cookies, Broker credentials, or an agent-overridable enable flag | Adapter execute and run-context tests |
 | Browser disabled or runtime unsupported | Live setting is off, runtime is remote, or no secure managed tool path exists | Remove the managed Browser flag/tools or report capability unavailable | Inherited env or user MCP config must not expose stale Browser control | Negative adapter and MCP manifest tests |
 | Managed provider OAuth grant | Connection is active for the organization and agent | Runtime gets a run-scoped proxy identity; Rudder injects provider credentials server-side per call | OAuth tokens or secret ids must not enter adapter config, prompts, arguments, logs, or model-visible errors | Proxy authorization and secret-redaction tests |
+| GitHub OAuth authorization | GitHub connection targets the fixed account-scoped MCP endpoint and server configuration provides the OAuth App client plus registered callback | Rudder creates a one-time PKCE session with an access-mode-specific scope set, redirects to GitHub, consumes the callback once, validates the grant, and persists connected state | UI must not accept a PAT; read-only must not inherit broad provider scopes; cancellation, provider failure, malformed/replayed callback, or duplicate start must not report success or activate a new grant | GitHub OAuth provider, scope-policy, route, validator, UI, and E2E tests |
 | Agent and Organization grants exist for one official provider | Agent connection is non-revoked and belongs to the runtime Agent | Resolve the Agent connection and inject only its connection-bound credential | Organization credentials and another Agent's credentials must not be read or used as fallback | Scope-priority, owner-boundary, and credential-isolation tests |
 | Agent connection binding is `No access` | Agent connection remains non-revoked | Expose no provider tools and retain explicit disabled state | Runtime must not silently fall back to Organization | Binding source-resolution tests |
 | Agent connection is revoked or disconnected | Organization connection and binding remain usable | Resolve the Organization connection on the next runtime projection | Revoked Agent credentials must never be used | Revocation fallback tests |

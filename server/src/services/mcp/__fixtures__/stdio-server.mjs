@@ -65,6 +65,8 @@ lines.on("line", (line) => {
         },
       ],
       resultType: "complete",
+      ttlMs: 300_000,
+      cacheScope: "private",
     });
     return;
   }

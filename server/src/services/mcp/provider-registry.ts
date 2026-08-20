@@ -12,6 +12,7 @@ export interface McpProviderDefinition {
   endpoint: string | null;
   readOnlyEndpoint?: string;
   oauthOrigins: readonly string[];
+  oauthScopes?: Partial<Record<McpConnectionAccessMode, string>>;
   requiresOAuth: boolean;
   credentialMode: McpProviderCredentialMode;
   scopeMode?: McpProviderScopeMode;
@@ -28,6 +29,28 @@ export interface McpProviderDefinition {
     containers: readonly ("workspace" | "organization")[];
   };
 }
+
+export const MCP_GITHUB_MCP_ENDPOINT = "https://api.githubcopilot.com/mcp/";
+export const MCP_GITHUB_OAUTH_ISSUER = "https://github.com/login/oauth";
+export const MCP_GITHUB_OAUTH_AUTHORIZATION_ENDPOINT = "https://github.com/login/oauth/authorize";
+export const MCP_GITHUB_OAUTH_TOKEN_ENDPOINT = "https://github.com/login/oauth/access_token";
+export const MCP_GITHUB_READ_ONLY_OAUTH_SCOPE = [
+  "read:org",
+  "read:user",
+  "user:email",
+  "read:packages",
+  "read:project",
+].join(" ");
+export const MCP_GITHUB_READ_WRITE_OAUTH_SCOPE = [
+  MCP_GITHUB_READ_ONLY_OAUTH_SCOPE,
+  "repo",
+  "write:packages",
+  "project",
+  "gist",
+  "notifications",
+  "workflow",
+  "codespace",
+].join(" ");
 
 /**
  * Provider-specific MCP endpoint and onboarding behavior lives here so runtime
@@ -77,15 +100,19 @@ export const MCP_PROVIDER_REGISTRY = {
     },
   },
   github: {
-    endpoint: "https://api.githubcopilot.com/mcp/",
-    oauthOrigins: [],
-    requiresOAuth: false,
-    credentialMode: "pat",
+    endpoint: MCP_GITHUB_MCP_ENDPOINT,
+    oauthOrigins: ["https://api.githubcopilot.com", "https://github.com"],
+    oauthScopes: {
+      read_only: MCP_GITHUB_READ_ONLY_OAUTH_SCOPE,
+      read_write: MCP_GITHUB_READ_WRITE_OAUTH_SCOPE,
+    },
+    requiresOAuth: true,
+    credentialMode: "oauth",
     scopeMode: "account",
     scopeSelection: "none",
     defaultAccessMode: "read_only",
     safeConfig: {
-      endpoint: "https://api.githubcopilot.com/mcp/",
+      endpoint: MCP_GITHUB_MCP_ENDPOINT,
       scopeMode: "account",
     },
   },
@@ -153,4 +180,12 @@ export function resolveCuratedMcpEndpoint(input: {
     throw new Error("Notion MCP connections use provider_default access");
   }
   return { href: definition.endpoint, transport: "streamable_http" };
+}
+
+export function resolveCuratedMcpOAuthScope(input: {
+  provider: McpConnectionProvider;
+  accessMode: McpConnectionAccessMode;
+}): string | undefined {
+  const definition: McpProviderDefinition = MCP_PROVIDER_REGISTRY[input.provider];
+  return definition.oauthScopes?.[input.accessMode];
 }

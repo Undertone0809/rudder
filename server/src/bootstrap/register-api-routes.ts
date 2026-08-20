@@ -103,6 +103,8 @@ export function registerApiRoutes(
     deploymentMode: opts.deploymentMode,
     serverPort: opts.serverPort,
     authPublicBaseUrl: opts.authPublicBaseUrl,
+    githubMcpClientId: opts.githubMcpClientId,
+    githubMcpClientSecret: opts.githubMcpClientSecret,
     allowlists: opts.mcpDeploymentAllowlists ?? {
       httpOrigins: [],
       stdioCommands: [],

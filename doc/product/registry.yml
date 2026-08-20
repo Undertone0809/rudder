@@ -593,6 +593,10 @@ contracts:
       - packages/agent-runtimes/pi-local/src/server/execute.ts
       - server/src/services/agent-run-context.ts
       - server/src/services/managed-workspace-preflight.ts
+      - server/src/services/mcp/oauth.ts
+      - server/src/services/mcp/oauth-provider.ts
+      - server/src/services/mcp/provider-registry.ts
+      - server/src/routes/managed-mcp-connections.ts
       - desktop/src/main.ts
       - desktop/src/identity-runtime.ts
       - desktop/src/navigation-guard.ts
@@ -608,6 +612,9 @@ contracts:
       - packages/agent-runtime-utils/src/server-utils.test.ts
       - packages/shared/src/validators/mcp.test.ts
       - scripts/managed-mcp-product-contract.test.mjs
+      - server/src/__tests__/managed-mcp-oauth-service.test.ts
+      - server/src/services/mcp/managed-mcp-oauth-provider.test.ts
+      - server/src/services/mcp/provider-registry.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/cursor-local-execute.test.ts
@@ -898,6 +905,8 @@ contracts:
       - server/src/services/mcp/managed-bindings.ts
       - server/src/services/mcp/managed-connections.ts
       - server/src/services/mcp/oauth.ts
+      - server/src/services/mcp/oauth-provider.ts
+      - server/src/services/mcp/provider-registry.ts
       - ui/src/api/managedMcp.ts
       - ui/src/pages/AgentDetail.integrations.tsx
       - ui/src/pages/AgentProviderAccessDialog.tsx
@@ -919,6 +928,8 @@ contracts:
       - server/src/__tests__/managed-mcp-bindings-service.test.ts
       - server/src/__tests__/managed-mcp-connections-routes.test.ts
       - server/src/__tests__/managed-mcp-connections-service.test.ts
+      - server/src/services/mcp/managed-mcp-oauth-provider.test.ts
+      - server/src/services/mcp/provider-registry.test.ts
       - ui/src/pages/AgentDetail.integrations.test.tsx
       - ui/src/pages/OrganizationMcpSettings.test.ts
       - tests/e2e/agent-detail-integrations-tab.spec.ts

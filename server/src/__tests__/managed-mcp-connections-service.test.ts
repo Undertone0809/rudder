@@ -28,7 +28,6 @@ import path from "node:path";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
-import { managedMcpConnectionRoutes } from "../routes/managed-mcp-connections.js";
 import { secretRoutes } from "../routes/secrets.js";
 import type { ManagedMcpClient, ManagedMcpClientOptions } from "../services/mcp/managed-client.js";
 import { managedMcpConnectionService } from "../services/mcp/managed-connections.js";
@@ -261,38 +260,6 @@ describe("managedMcpConnectionService", () => {
     };
   }
 
-  async function apiApp() {
-    const app = express();
-    app.use(express.json());
-    app.use((req, _res, next) => {
-      (req as any).actor = {
-        type: "board",
-        userId: "local-board",
-        source: "local_implicit",
-        isInstanceAdmin: true,
-      };
-      next();
-    });
-    app.use("/api", managedMcpConnectionRoutes(db, {
-      deploymentMode: "local_trusted",
-      serverPort: 3100,
-      allowlists: {
-        httpOrigins: [],
-        stdioCommands: [],
-        stdioWorkingDirectories: [],
-        stdioEnvironmentNames: [],
-      },
-      hostEnv: {},
-      createClient,
-      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 as const }],
-    }));
-    app.use(errorHandler);
-    const server = app.listen(0, "127.0.0.1");
-    activeServers.add(server);
-    await once(server, "listening");
-    return server;
-  }
-
   it("ensures curated providers from registry defaults without accepting client endpoints or credentials", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
@@ -350,141 +317,49 @@ describe("managedMcpConnectionService", () => {
         endpoint: "https://api.githubcopilot.com/mcp/",
         scopeMode: "account",
       },
-      secrets: { bearerToken: "github_pat_12345678901234567890" },
+      secrets: { bearerToken: "github-legacy-credential" },
     } as never, { userId: "owner-1" })).rejects.toThrow(/custom|curated/i);
     expect(await db.select().from(mcpConnections)).toHaveLength(0);
     expect(await db.select().from(organizationSecrets)).toHaveLength(0);
   });
 
-  it("keeps GitHub PAT rotation and activation on reconnect, never generic update", async () => {
+  it("keeps GitHub OAuth lifecycle separate from generic credential updates", async () => {
     const orgId = await seedOrg(db);
     const svc = service();
-    const initialPat = "github_pat_12345678901234567890";
-    const replacementPat = "github_pat_22345678901234567890";
     const connection = await svc.ensureOfficial(
       orgId,
       "github",
-      { scope: "organization", ownerAgentId: null, pat: initialPat },
+      { scope: "organization", ownerAgentId: null },
       { userId: "owner-1" },
-    );
-    await db.update(mcpConnections).set({ status: "error", enabled: false })
-      .where(eq(mcpConnections.id, connection.id));
-    const [before] = await db.select().from(mcpConnections)
-      .where(eq(mcpConnections.id, connection.id));
-    const beforeSecret = await secretService(db).resolveSecretValue(
-      orgId,
-      before!.credentialSecretId!,
-      "latest",
     );
 
     await expect(svc.update(orgId, connection.id, {
-      enabled: true,
-      secrets: { bearerToken: replacementPat },
-    }, { userId: "owner-1" })).rejects.toThrow(/reconnect/i);
+      secrets: { bearerToken: "github-legacy-credential" },
+    }, { userId: "owner-1" })).rejects.toThrow(/OAuth/i);
 
-    const [afterRejectedUpdate] = await db.select().from(mcpConnections)
+    const oauthSecret = await secretService(db).create(orgId, {
+      name: "GitHub OAuth grant",
+      provider: "local_encrypted",
+      value: JSON.stringify({ tokens: { access_token: "oauth-access-token" } }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_oauth",
+    });
+    await db.insert(mcpOAuthGrants).values({
+      orgId,
+      connectionId: connection.id,
+      credentialSecretId: oauthSecret.id,
+      status: "active",
+    });
+    await db.update(mcpConnections).set({ status: "active", enabled: true })
       .where(eq(mcpConnections.id, connection.id));
-    expect(afterRejectedUpdate).toMatchObject({
-      status: "error",
-      enabled: false,
-      credentialSecretId: before!.credentialSecretId,
-    });
-    expect(await secretService(db).resolveSecretValue(
-      orgId,
-      afterRejectedUpdate!.credentialSecretId!,
-      "latest",
-    )).toBe(beforeSecret);
-    expect(await db.select().from(organizationSecrets)).toHaveLength(1);
-    expect(createClient).not.toHaveBeenCalled();
 
-    await expect(svc.reconnect(
-      orgId,
-      connection.id,
-      { userId: "owner-1" },
-      { githubPat: replacementPat },
-    )).resolves.toMatchObject({ status: "active", enabled: true });
-    createClient.mockResolvedValue(clientWithTools([
-      { name: "search_repositories", inputSchema: { type: "object" } },
-    ]));
-    await svc.refreshTools(orgId, connection.id, { userId: "owner-1" });
-    expect(createClient).toHaveBeenCalledOnce();
-    expect(createClient.mock.calls[0]?.[0]).toMatchObject({
-      credentials: { headers: { Authorization: `Bearer ${replacementPat}` } },
-    });
-  });
-
-  it("accepts GitHub PAT through the real API/service/runtime path and reconnects after disable", async () => {
-    const orgId = await seedOrg(db);
-    const app = await apiApp();
-    const initialPat = "github_pat_12345678901234567890";
-    const replacementPat = "github_pat_22345678901234567890";
-    const client = clientWithTools([
-      { name: "search_code", inputSchema: { type: "object" } },
-    ]);
-    createClient.mockResolvedValue(client);
-
-    const connected = await request(app)
-      .post(`/api/orgs/${orgId}/mcp/providers/github/connect`)
-      .send({ scope: "organization", accessMode: "read_only", pat: initialPat });
-    expect(connected.status).toBe(200);
-    expect(connected.body).toMatchObject({
-      provider: "github",
-      status: "active",
-      enabled: true,
-      hasCredentials: true,
-      safeConfig: {
-        endpoint: "https://api.githubcopilot.com/mcp/",
-        scopeMode: "account",
-      },
-    });
-    expect(JSON.stringify(connected.body)).not.toContain(initialPat);
-    expect(createClient).toHaveBeenCalledOnce();
-    expect(createClient.mock.calls[0]?.[0]).toMatchObject({
-      url: "https://api.githubcopilot.com/mcp/",
-      credentials: { headers: { Authorization: `Bearer ${initialPat}` } },
-    });
-    const connectionId = connected.body.id as string;
-
-    const disconnected = await request(app)
-      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/disconnect`)
-      .send({});
-    expect(disconnected.status).toBe(200);
-    expect(disconnected.body).toMatchObject({
-      provider: "github",
-      status: "disabled",
-      enabled: false,
-      hasCredentials: false,
-    });
-
-    const genericPatch = await request(app)
-      .patch(`/api/orgs/${orgId}/mcp/connections/${connectionId}`)
-      .send({ enabled: true, secrets: { bearerToken: replacementPat } });
-    expect(genericPatch.status).toBe(422);
-    expect(createClient).toHaveBeenCalledOnce();
-    expect(await request(app)
-      .get(`/api/orgs/${orgId}/mcp/connections/${connectionId}`))
-      .toMatchObject({ status: 200, body: expect.objectContaining({
-        status: "disabled",
-        enabled: false,
-        hasCredentials: false,
-      }) });
-
-    const reconnected = await request(app)
-      .post(`/api/orgs/${orgId}/mcp/connections/${connectionId}/reconnect`)
-      .send({ pat: replacementPat });
-    expect(reconnected.status).toBe(200);
-    expect(reconnected.body).toMatchObject({
-      provider: "github",
-      status: "active",
-      enabled: true,
-      hasCredentials: true,
-    });
-    expect(JSON.stringify(reconnected.body)).not.toContain(replacementPat);
-    expect(createClient).toHaveBeenCalledTimes(2);
-    expect(createClient.mock.calls[1]?.[0]).toMatchObject({
-      url: "https://api.githubcopilot.com/mcp/",
-      credentials: { headers: { Authorization: `Bearer ${replacementPat}` } },
-    });
+    await expect(svc.reconnect(orgId, connection.id, { userId: "owner-1" }))
+      .resolves.toMatchObject({ status: "authorizing", enabled: true, hasCredentials: false });
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    expect(grant).toMatchObject({ status: "needs_reauth", credentialSecretId: null });
+    expect(await db.select().from(organizationSecrets)).toHaveLength(0);
   });
 
   it("single-flights concurrent official provider ensure calls to one canonical connection", async () => {
@@ -600,20 +475,33 @@ describe("managedMcpConnectionService", () => {
     })).rejects.toThrow();
   });
 
-  it("stores GitHub PATs as managed credentials and forwards only a Bearer header at runtime", async () => {
+  it("uses a legacy stored GitHub credential only as a runtime compatibility fallback", async () => {
     const orgId = await seedOrg(db);
     const client = clientWithTools([]);
     createClient.mockResolvedValue(client);
     const svc = service();
-    const pat = "github_pat_12345678901234567890";
+    const legacyToken = "legacy-github-test-token";
     const connection = await svc.ensureOfficial(
       orgId,
       "github",
-      { scope: "organization", ownerAgentId: null, pat },
+      { scope: "organization", ownerAgentId: null },
       { userId: "owner-1" },
     );
+    const legacySecret = await secretService(db).create(orgId, {
+      name: "Legacy GitHub credential",
+      provider: "local_encrypted",
+      value: JSON.stringify({ bearerToken: legacyToken }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_connection",
+    });
+    await db.update(mcpConnections).set({
+      credentialSecretId: legacySecret.id,
+      status: "active",
+      enabled: true,
+    }).where(eq(mcpConnections.id, connection.id));
 
-    expect(connection).toMatchObject({
+    await expect(svc.get(orgId, connection.id)).resolves.toMatchObject({
       provider: "github",
       status: "active",
       hasCredentials: true,
@@ -622,14 +510,7 @@ describe("managedMcpConnectionService", () => {
         scopeMode: "account",
       },
     });
-    expect(JSON.stringify(connection)).not.toContain(pat);
-    const [storedConnection] = await db.select().from(mcpConnections)
-      .where(eq(mcpConnections.id, connection.id));
-    const [storedSecret] = await db.select().from(organizationSecrets)
-      .where(eq(organizationSecrets.id, storedConnection!.credentialSecretId!));
-    expect(storedSecret?.purpose).toBe("managed_mcp_connection");
-    expect(await secretService(db).resolveSecretValue(orgId, storedSecret!.id, "latest"))
-      .toContain(pat);
+    expect(JSON.stringify(await svc.get(orgId, connection.id))).not.toContain(legacyToken);
 
     await svc.refreshTools(orgId, connection.id, { userId: "owner-1" });
     const options = createClient.mock.calls[0]?.[0];
@@ -637,26 +518,23 @@ describe("managedMcpConnectionService", () => {
       transport: "streamable_http",
       url: "https://api.githubcopilot.com/mcp/",
       credentials: {
-        headers: { Authorization: `Bearer ${pat}` },
+        headers: { Authorization: `Bearer ${legacyToken}` },
+        authProvider: undefined,
       },
     });
     const activity = await db.select().from(activityLog).where(eq(activityLog.orgId, orgId));
-    expect(JSON.stringify(activity)).not.toContain(pat);
+    expect(JSON.stringify(activity)).not.toContain(legacyToken);
   });
 
-  it("keeps GitHub draft, active, error, disabled, and PAT replacement transitions distinct", async () => {
+  it("keeps GitHub draft, active, error, and OAuth reconnect transitions distinct", async () => {
     const orgId = await seedOrg(db);
     const firstClient = clientWithTools([{ name: "search_code", inputSchema: { type: "object" } }]);
     const failingClient = clientWithTools([]);
     failingClient.discoverTools.mockRejectedValue(new Error("GitHub discovery failed"));
-    const replacementClient = clientWithTools([{ name: "search_repositories", inputSchema: { type: "object" } }]);
     createClient
       .mockResolvedValueOnce(firstClient)
-      .mockResolvedValueOnce(failingClient)
-      .mockResolvedValueOnce(replacementClient);
+      .mockResolvedValueOnce(failingClient);
     const svc = service();
-    const pat = "github_pat_12345678901234567890";
-    const replacementPat = "github_pat_22345678901234567890";
     const draft = await svc.ensureOfficial(
       orgId,
       "github",
@@ -666,13 +544,24 @@ describe("managedMcpConnectionService", () => {
     expect(draft).toMatchObject({ status: "draft", hasCredentials: false });
     await expect(svc.refreshTools(orgId, draft.id)).rejects.toThrow(/not ready/i);
 
-    const active = await svc.ensureOfficial(
+    const oauthSecret = await secretService(db).create(orgId, {
+      name: "GitHub OAuth discovery grant",
+      provider: "local_encrypted",
+      value: JSON.stringify({ tokens: { access_token: "oauth-access-token" } }),
+    }, undefined, {
+      allowManaged: true,
+      purpose: "managed_mcp_oauth",
+    });
+    await db.insert(mcpOAuthGrants).values({
       orgId,
-      "github",
-      { scope: "organization", ownerAgentId: null, pat },
-      { userId: "owner-1" },
-    );
-    expect(active).toMatchObject({ status: "active", hasCredentials: true });
+      connectionId: draft.id,
+      credentialSecretId: oauthSecret.id,
+      status: "active",
+    });
+    await db.update(mcpConnections).set({ status: "active", enabled: true })
+      .where(eq(mcpConnections.id, draft.id));
+    const active = await svc.get(orgId, draft.id);
+    expect(active).toMatchObject({ status: "active", hasCredentials: false });
     await svc.refreshTools(orgId, active.id);
     expect(await svc.get(orgId, active.id)).toMatchObject({ status: "active" });
 
@@ -682,140 +571,16 @@ describe("managedMcpConnectionService", () => {
     expect(await svc.get(orgId, active.id)).toMatchObject({
       status: "error",
       enabled: true,
-      hasCredentials: true,
-    });
-
-    const reconnected = await svc.reconnect(
-      orgId,
-      active.id,
-      { userId: "owner-1" },
-      { githubPat: replacementPat },
-    );
-    expect(reconnected).toMatchObject({ status: "active", hasCredentials: true });
-    await svc.refreshTools(orgId, active.id);
-    expect(await svc.get(orgId, active.id)).toMatchObject({ status: "active" });
-
-    const disconnected = await svc.disconnect(orgId, active.id, { userId: "owner-1" });
-    expect(disconnected).toMatchObject({
-      status: "disabled",
-      enabled: false,
       hasCredentials: false,
     });
+
+    const reconnected = await svc.reconnect(orgId, active.id, { userId: "owner-1" });
+    expect(reconnected).toMatchObject({ status: "authorizing", enabled: true, hasCredentials: false });
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, active.id));
+    expect(grant).toMatchObject({ status: "needs_reauth", credentialSecretId: null });
     expect(await db.select().from(organizationSecrets)
       .where(eq(organizationSecrets.orgId, orgId))).toHaveLength(0);
-  });
-
-  it("serializes concurrent GitHub PAT replacements without orphan credentials", async () => {
-    const orgId = await seedOrg(db);
-    const svc = service();
-    const connection = await svc.ensureOfficial(
-      orgId,
-      "github",
-      {
-        scope: "organization",
-        ownerAgentId: null,
-        pat: "github_pat_12345678901234567890",
-      },
-      { userId: "owner-1" },
-    );
-    const lock = await holdConnectionRowLock(db, connection.id);
-    let settled: PromiseSettledResult<unknown>[];
-    try {
-      const replacements = [
-        svc.reconnect(
-          orgId,
-          connection.id,
-          { userId: "owner-a" },
-          { githubPat: "github_pat_22345678901234567890" },
-        ),
-        svc.reconnect(
-          orgId,
-          connection.id,
-          { userId: "owner-b" },
-          { githubPat: "github_pat_32345678901234567890" },
-        ),
-      ];
-      await waitForDatabaseLockWaiters(db, 2);
-      lock.release();
-      settled = await Promise.allSettled(replacements);
-      await lock.transaction;
-    } finally {
-      lock.release();
-      await lock.transaction;
-    }
-
-    expect(settled.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
-    const [after] = await db.select().from(mcpConnections)
-      .where(eq(mcpConnections.id, connection.id));
-    const storedSecrets = await db.select().from(organizationSecrets);
-    const storedVersions = await db.select().from(organizationSecretVersions);
-    expect(storedSecrets).toHaveLength(1);
-    expect(storedVersions).toHaveLength(1);
-    expect(after?.status).toBe("active");
-    expect(after?.credentialSecretId).toBe(storedSecrets[0]?.id);
-    expect(storedVersions[0]?.secretId).toBe(after?.credentialSecretId);
-    expect([
-      JSON.stringify({ bearerToken: "github_pat_22345678901234567890" }),
-      JSON.stringify({ bearerToken: "github_pat_32345678901234567890" }),
-    ]).toContain(await secretService(db).resolveSecretValue(
-      orgId,
-      after!.credentialSecretId!,
-      "latest",
-    ));
-  });
-
-  it("serializes concurrent GitHub reconnect and disconnect without resurrecting orphans", async () => {
-    const orgId = await seedOrg(db);
-    const svc = service();
-    const connection = await svc.ensureOfficial(
-      orgId,
-      "github",
-      {
-        scope: "organization",
-        ownerAgentId: null,
-        pat: "github_pat_12345678901234567890",
-      },
-      { userId: "owner-1" },
-    );
-    const lock = await holdConnectionRowLock(db, connection.id);
-    let settled: PromiseSettledResult<unknown>[];
-    try {
-      const reconnect = svc.reconnect(
-        orgId,
-        connection.id,
-        { userId: "owner-reconnect" },
-        { githubPat: "github_pat_22345678901234567890" },
-      );
-      const disconnect = svc.disconnect(orgId, connection.id, { userId: "owner-disconnect" });
-      await waitForDatabaseLockWaiters(db, 2);
-      lock.release();
-      settled = await Promise.allSettled([reconnect, disconnect]);
-      await lock.transaction;
-    } finally {
-      lock.release();
-      await lock.transaction;
-    }
-
-    expect(settled.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
-    const [after] = await db.select().from(mcpConnections)
-      .where(eq(mcpConnections.id, connection.id));
-    const storedSecrets = await db.select().from(organizationSecrets);
-    const storedVersions = await db.select().from(organizationSecretVersions);
-    if (after?.status === "active") {
-      expect(after.credentialSecretId).toBe(storedSecrets[0]?.id);
-      expect(storedSecrets).toHaveLength(1);
-      expect(storedVersions).toHaveLength(1);
-      expect(await secretService(db).resolveSecretValue(
-        orgId,
-        after.credentialSecretId!,
-        "latest",
-      )).toBe(JSON.stringify({ bearerToken: "github_pat_22345678901234567890" }));
-    } else {
-      expect(after?.status).toBe("disabled");
-      expect(after?.credentialSecretId).toBeNull();
-      expect(storedSecrets).toHaveLength(0);
-      expect(storedVersions).toHaveLength(0);
-    }
   });
 
   it("builds each official runtime client from that connection's isolated OAuth credential", async () => {

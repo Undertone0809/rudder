@@ -145,7 +145,7 @@ const MANAGED_MCP_PROVIDER_INTEGRATIONS: ManagedMcpProviderDefinition[] = [
   {
     id: "github",
     name: "GitHub",
-    description: "Search and inspect GitHub repositories through a securely stored personal access token.",
+    description: "Search and inspect GitHub repositories through the official OAuth flow.",
     category: "developer",
   },
 ];
@@ -264,7 +264,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
     scope: McpConnectionScope;
     ownerAgentId: string | null;
   }>({ scope: "agent", ownerAgentId: agent.id });
-  const [connectionTargetPat, setConnectionTargetPat] = useState("");
   const managedProviderTriggerRef = useRef<HTMLElement | null>(null);
   const integrationsQuery = useQuery({
     queryKey: queryKeys.agents.integrations(agent.id),
@@ -283,6 +282,10 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const managedMcpProviderStatusQuery = useQuery({
     queryKey: queryKeys.agents.mcpProviderStatus(agent.id),
     queryFn: () => agentsApi.listMcpProviderStatus(agent.id, orgId),
+    refetchInterval: (query) => (query.state.data ?? []).some(
+      (status) => status.organization.state === "connecting"
+        || status.agent?.connection?.state === "connecting",
+    ) ? 2_000 : false,
   });
   const integrations = integrationsQuery.data ?? [];
   const customIntegrations = customIntegrationsQuery.data ?? [];
@@ -355,46 +358,33 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
   const connectManagedProvider = useMutation({
     mutationFn: async () => {
       if (!orgId || !connectionTargetProvider) throw new Error("Connection target is unavailable");
-      const isGitHub = connectionTargetProvider.provider === "github";
-      const pat = connectionTargetPat.trim();
-      if (isGitHub && !pat) throw new Error("Enter a GitHub personal access token");
-      const launcher = isGitHub ? null : reserveAuthorizationLauncher();
+      const launcher = reserveAuthorizationLauncher();
       try {
-        const connection = await managedMcpApi.ensureOfficialConnection(
+        const result = await managedMcpApi.ensureOfficialConnection(
           orgId,
           connectionTargetProvider.provider as Exclude<McpConnectionProvider, "custom">,
-          {
-            ...connectionTarget,
-            ...(isGitHub ? { pat } : {}),
-          },
+          connectionTarget,
         );
-        if (!isGitHub && launcher) {
-          const result = await managedMcpApi.startOAuth(orgId, connection.id);
+        if ("authorizationUrl" in result) {
           await launcher.navigate(result.authorizationUrl);
+        } else {
+          const started = await managedMcpApi.startOAuth(orgId, result.id);
+          await launcher.navigate(started.authorizationUrl);
         }
-        return connection;
+        return result;
       } catch (error) {
-        launcher?.close();
+        launcher.close();
         throw error;
       }
     },
     onSuccess: async () => {
       setConnectionTargetProvider(null);
-      setConnectionTargetPat("");
       setManagedProvider(null);
-      if (connectionTargetProvider?.provider === "github") {
-        pushToast({
-          title: "GitHub connected",
-          body: "GitHub tools are ready for this agent.",
-          tone: "success",
-        });
-      } else {
-        pushToast({
-          title: "Authorization opened",
-          body: "Finish provider authorization in the browser.",
-          tone: "info",
-        });
-      }
+      pushToast({
+        title: "Authorization opened",
+        body: "Finish provider authorization in the browser.",
+        tone: "info",
+      });
       await Promise.all([
         managedMcpConnectionsQuery.refetch(),
         managedMcpProviderStatusQuery.refetch(),
@@ -855,7 +845,6 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         onAddConnection={() => {
           if (!managedProvider) return;
           setConnectionTarget({ scope: "agent", ownerAgentId: agent.id });
-          setConnectionTargetPat("");
           setConnectionTargetProvider(managedProvider);
           setManagedProvider(null);
         }}
@@ -874,16 +863,12 @@ export function AgentIntegrationsTab({ agent, orgId }: AgentIntegrationsTabProps
         target={connectionTarget}
         pending={connectManagedProvider.isPending}
         connections={managedMcpConnections.map((row) => row.connection)}
-        pat={connectionTargetPat}
-        onPatChange={setConnectionTargetPat}
         onTargetChange={setConnectionTarget}
         onClose={() => {
           setConnectionTargetProvider(null);
-          setConnectionTargetPat("");
         }}
         onManageExisting={() => {
           setConnectionTargetProvider(null);
-          setConnectionTargetPat("");
           setManagedProvider(connectionTargetProvider);
         }}
         onConfirm={() => connectManagedProvider.mutate()}
@@ -1128,8 +1113,6 @@ function AgentConnectionTargetDialog({
   target,
   pending,
   connections,
-  pat,
-  onPatChange,
   onTargetChange,
   onClose,
   onManageExisting,
@@ -1145,8 +1128,6 @@ function AgentConnectionTargetDialog({
     ownerAgentId: string | null;
     status: string;
   }>;
-  pat: string;
-  onPatChange: (pat: string) => void;
   onTargetChange: (target: { scope: McpConnectionScope; ownerAgentId: string | null }) => void;
   onClose: () => void;
   onManageExisting: () => void;
@@ -1173,7 +1154,7 @@ function AgentConnectionTargetDialog({
           </div>
           <DialogDescription>
             {isGitHub
-              ? "Connect GitHub with a personal access token for this target."
+              ? "Connect GitHub through the official OAuth flow for this target."
               : "Connect a separate credential for this agent or share one with the organization."}
           </DialogDescription>
         </DialogHeader>
@@ -1200,29 +1181,10 @@ function AgentConnectionTargetDialog({
             </span>
           </label>
         </div>
-        {isGitHub && !existing ? (
-          <div className="space-y-2">
-            <label htmlFor="agent-github-pat" className="text-sm font-medium text-foreground">
-              GitHub personal access token
-            </label>
-            <Input
-              id="agent-github-pat"
-              type="password"
-              autoComplete="new-password"
-              placeholder="github_pat_..."
-              value={pat}
-              disabled={pending}
-              onChange={(event) => onPatChange(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Stored encrypted on the server and used only for this managed connection.
-            </p>
-          </div>
-        ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
           <Button
-            disabled={pending || (isGitHub && !existing && pat.trim().length === 0)}
+            disabled={pending}
             onClick={existing ? onManageExisting : onConfirm}
           >
             {pending ? <Loader2 className="size-4 animate-spin" /> : null}

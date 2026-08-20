@@ -5,6 +5,7 @@ import {
   type AuthOptions,
   type AuthResult,
   type OAuthClientProvider,
+  type OAuthDiscoveryState,
 } from "@modelcontextprotocol/client";
 import type { Db } from "@rudderhq/db";
 import {
@@ -66,12 +67,17 @@ import {
   PersistentMcpOAuthClientProvider,
   resolveMcpOAuthRedirectUri,
   type ManagedMcpOAuthMaterial,
+  type ManagedMcpOAuthStaticClient,
 } from "./oauth-provider.js";
 import { createSecureMcpFetch } from "./pinned-fetch.js";
 import {
   MCP_CURATED_OAUTH_ORIGINS,
+  MCP_GITHUB_OAUTH_AUTHORIZATION_ENDPOINT,
+  MCP_GITHUB_OAUTH_ISSUER,
+  MCP_GITHUB_OAUTH_TOKEN_ENDPOINT,
   MCP_PROVIDER_REGISTRY,
   resolveCuratedMcpEndpoint,
+  resolveCuratedMcpOAuthScope,
 } from "./provider-registry.js";
 import { resolveMcpHttpTarget, type McpDeploymentAllowlists, type McpDnsLookup } from "./security-policy.js";
 
@@ -99,6 +105,8 @@ export interface ManagedMcpOAuthServiceOptions {
   deploymentMode: "local_trusted" | "authenticated";
   serverPort: number;
   authPublicBaseUrl?: string | null;
+  githubMcpClientId?: string | null;
+  githubMcpClientSecret?: string | null;
   allowlists: McpDeploymentAllowlists;
   dnsLookup?: McpDnsLookup;
   oauthAuth?: OAuthAuth;
@@ -109,7 +117,7 @@ export interface ManagedMcpOAuthServiceOptions {
     endpoint: string;
   }) => Promise<ManagedMcpProviderScopeResult>;
   validateProviderTools?: (input: {
-    provider: "supabase" | "linear" | "notion";
+    provider: "supabase" | "linear" | "notion" | "github";
     connection: McpConnectionRow;
     material: ManagedMcpOAuthMaterial;
     endpoint: string;
@@ -135,6 +143,21 @@ interface OAuthAuthorizationSnapshot {
   accessMode: McpConnectionSummary["accessMode"];
 }
 
+function githubOAuthDiscoveryState(): OAuthDiscoveryState {
+  return {
+    authorizationServerUrl: MCP_GITHUB_OAUTH_ISSUER,
+    authorizationServerMetadata: {
+      issuer: MCP_GITHUB_OAUTH_ISSUER,
+      authorization_endpoint: MCP_GITHUB_OAUTH_AUTHORIZATION_ENDPOINT,
+      token_endpoint: MCP_GITHUB_OAUTH_TOKEN_ENDPOINT,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      token_endpoint_auth_methods_supported: ["client_secret_post"],
+      code_challenge_methods_supported: ["S256"],
+    },
+  };
+}
+
 function createOAuthAuthorizationSnapshot(
   connection: McpConnectionRow,
 ): OAuthAuthorizationSnapshot {
@@ -142,16 +165,20 @@ function createOAuthAuthorizationSnapshot(
     throw unprocessable("Managed MCP OAuth only supports curated providers");
   }
   const serverUrl = resolveCuratedMcpEndpoint({
-    provider: connection.provider as "supabase" | "linear" | "notion",
+    provider: connection.provider as "supabase" | "linear" | "notion" | "github",
     accessMode: connection.accessMode as
       "provider_default" | "read_only" | "read_write",
     externalScope: connection.externalScope,
   }).href;
+  const scope = connection.provider === "linear" && connection.accessMode === "read_only"
+    ? "read"
+    : resolveCuratedMcpOAuthScope({
+        provider: connection.provider as "supabase" | "linear" | "notion" | "github",
+        accessMode: connection.accessMode as "provider_default" | "read_only" | "read_write",
+      });
   return {
     serverUrl,
-    ...(connection.provider === "linear" && connection.accessMode === "read_only"
-      ? { scope: "read" }
-      : {}),
+    ...(scope ? { scope } : {}),
     accessMode: connection.accessMode as McpConnectionSummary["accessMode"],
   };
 }
@@ -332,6 +359,39 @@ export function managedMcpOAuthService(
     lookup: options.dnsLookup,
   });
 
+  function githubStaticClient(): ManagedMcpOAuthStaticClient {
+    const clientId = options.githubMcpClientId?.trim();
+    const clientSecret = options.githubMcpClientSecret?.trim();
+    if (!clientId || !clientSecret) {
+      throw unprocessable("GitHub managed OAuth is not configured");
+    }
+    return {
+      clientId,
+      clientSecret,
+      issuer: MCP_GITHUB_OAUTH_ISSUER,
+    };
+  }
+
+  function createOAuthProvider(input: {
+    connection: McpConnectionRow;
+    redirectUri: string;
+    state: string;
+    material: ManagedMcpOAuthMaterial;
+    save: (material: ManagedMcpOAuthMaterial) => void | Promise<void>;
+  }): PersistentMcpOAuthClientProvider {
+    return new PersistentMcpOAuthClientProvider({
+      redirectUri: input.redirectUri,
+      state: input.state,
+      material: input.material,
+      ...(input.connection.provider === "github"
+        ? {
+            staticClient: githubStaticClient(),
+          }
+        : {}),
+      save: input.save,
+    });
+  }
+
   async function resolveLockedOAuthSecret(
     tx: McpDbTransaction,
     orgId: string,
@@ -376,14 +436,14 @@ export function managedMcpOAuthService(
   }
 
   function assertCurated(row: McpConnectionRow): asserts row is McpConnectionRow & {
-    provider: "supabase" | "linear" | "notion";
+    provider: "supabase" | "linear" | "notion" | "github";
   } {
-    if (row.provider === "github") {
-      throw unprocessable(
-        "GitHub connections use personal access tokens and do not support managed OAuth",
-      );
-    }
-    if (row.provider !== "supabase" && row.provider !== "linear" && row.provider !== "notion") {
+    if (
+      row.provider !== "supabase"
+      && row.provider !== "linear"
+      && row.provider !== "notion"
+      && row.provider !== "github"
+    ) {
       throw unprocessable("Custom MCP connections do not use managed OAuth");
     }
   }
@@ -565,7 +625,9 @@ export function managedMcpOAuthService(
   }
 
   async function validateProviderTools(input: {
-    connection: McpConnectionRow & { provider: "supabase" | "linear" | "notion" };
+    connection: McpConnectionRow & {
+      provider: "supabase" | "linear" | "notion" | "github";
+    };
     material: ManagedMcpOAuthMaterial;
     endpoint: string;
   }): Promise<void> {
@@ -773,8 +835,11 @@ export function managedMcpOAuthService(
       throw unprocessable("Managed MCP OAuth requires a canonical HTTPS auth public base URL");
     }
     const rawState = randomBytes(32).toString("hex");
-    let material: ManagedMcpOAuthMaterial = {};
-    const provider = new PersistentMcpOAuthClientProvider({
+    let material: ManagedMcpOAuthMaterial = connection.provider === "github"
+      ? { discoveryState: githubOAuthDiscoveryState() }
+      : {};
+    const provider = createOAuthProvider({
+      connection,
       redirectUri,
       state: rawState,
       material,
@@ -849,7 +914,11 @@ export function managedMcpOAuthService(
       const isCredentialReplacement = priorGrant?.status === "active"
         && Boolean(priorGrant.credentialSecretId)
         && locked.status === "active"
-        && locked.enabled;
+        && locked.enabled
+        || locked.provider === "github"
+          && Boolean(locked.credentialSecretId)
+          && locked.status === "active"
+          && locked.enabled;
       const replacedSessions = await tx.select({
         id: mcpOAuthSessions.id,
         credentialSecretId: mcpOAuthSessions.credentialSecretId,
@@ -1148,7 +1217,8 @@ export function managedMcpOAuthService(
     }
     let scope: ManagedMcpProviderScopeResult;
     try {
-      const provider = new PersistentMcpOAuthClientProvider({
+      const provider = createOAuthProvider({
+        connection: consumed.connection,
         redirectUri: consumed.session.redirectUri,
         state: "consumed",
         material: grantMaterial,
@@ -1166,13 +1236,18 @@ export function managedMcpOAuthService(
       if (authResult !== "AUTHORIZED" || !grantMaterial.tokens?.access_token) {
         throw unprocessable("Managed MCP OAuth token exchange failed");
       }
-      scope = consumed.connection.provider === "supabase"
-        ? { options: [] }
-        : await discoverScope({
-            connection: consumed.connection,
-            material: grantMaterial,
-            endpoint: authorization.serverUrl,
-          });
+      const providerKey = consumed.connection.provider;
+      if (providerKey === "supabase" || providerKey === "github") {
+        scope = { options: [] };
+      } else if (providerKey === "linear" || providerKey === "notion") {
+        scope = await discoverScope({
+          connection: { ...consumed.connection, provider: providerKey },
+          material: grantMaterial,
+          endpoint: authorization.serverUrl,
+        });
+      } else {
+        throw new Error("Managed MCP OAuth provider scope is unsupported");
+      }
     } catch (error) {
       await finishUnpersistedGrantFailure({
         status: isInvalidGrantOAuthError(error) ? "needs_reauth" : "error",
@@ -1186,7 +1261,11 @@ export function managedMcpOAuthService(
     }
 
     const selected = scope.selected ? safeScopeOption(scope.selected) : undefined;
-    if (consumed.connection.provider !== "supabase" && !selected) {
+    if (
+      consumed.connection.provider !== "supabase"
+      && consumed.connection.provider !== "github"
+      && !selected
+    ) {
       await finishUnpersistedGrantFailure({
         status: "error",
         action: "mcp_oauth.authorization_failed",
@@ -1342,6 +1421,9 @@ export function managedMcpOAuthService(
             revokedAt: null,
             updatedAt: now,
           } as const;
+          const legacyGitHubCredentialSecretId = connection.provider === "github"
+            ? connection.credentialSecretId
+            : null;
           if (existingGrant) {
             await tx.update(mcpOAuthGrants).set(grantValues)
               .where(eq(mcpOAuthGrants.id, existingGrant.id));
@@ -1417,12 +1499,19 @@ export function managedMcpOAuthService(
             supersededByConnectionId: legacyUpgradeConnection
               ? null
               : connection.supersededByConnectionId,
+            ...(connection.provider === "github"
+              ? { credentialSecretId: null }
+              : {}),
             enabled: true,
             activatedAt: status === "active" ? connection.activatedAt ?? now : null,
             lifecycleRevision: connection.lifecycleRevision + 1,
             revision: connection.revision + 1,
             updatedAt: now,
           }).where(eq(mcpConnections.id, connection.id));
+          if (legacyGitHubCredentialSecretId) {
+            await tx.delete(organizationSecrets)
+              .where(eq(organizationSecrets.id, legacyGitHubCredentialSecretId));
+          }
           await tx.insert(activityLog).values(oauthActivityValues({
             orgId: consumed.session.orgId,
             connectionId: connection.id,
@@ -1677,6 +1766,9 @@ export function managedMcpOAuthService(
         .then((rows) => rows[0] ?? null);
       if (!connection) throw notFound("MCP connection not found");
       assertCurated(connection);
+      const legacyGitHubCredentialSecretId = connection.provider === "github"
+        ? connection.credentialSecretId
+        : null;
       const pendingSessions = await tx.select().from(mcpOAuthSessions)
         .where(and(
           eq(mcpOAuthSessions.orgId, orgId),
@@ -1733,6 +1825,7 @@ export function managedMcpOAuthService(
         }
       }
       const updated = await tx.update(mcpConnections).set({
+        ...(connection.provider === "github" ? { credentialSecretId: null } : {}),
         status: "revoked",
         enabled: false,
         disabledAt: now,
@@ -1743,6 +1836,10 @@ export function managedMcpOAuthService(
         eq(mcpConnections.orgId, orgId),
         eq(mcpConnections.id, connectionId),
       )).returning().then((rows) => rows[0]!);
+      if (legacyGitHubCredentialSecretId) {
+        await tx.delete(organizationSecrets)
+          .where(eq(organizationSecrets.id, legacyGitHubCredentialSecretId));
+      }
       await tx.insert(activityLog).values(oauthActivityValues({
         orgId,
         connectionId,
@@ -1834,7 +1931,9 @@ export function managedMcpOAuthService(
     let claimed: {
       nonce: string;
       timeoutMs: number;
-      connection: McpConnectionRow & { provider: "supabase" | "linear" | "notion" };
+      connection: McpConnectionRow & {
+        provider: "supabase" | "linear" | "notion" | "github";
+      };
       grant: McpOAuthGrantRow & { credentialSecretId: string };
       secret: typeof organizationSecrets.$inferSelect;
       material: ManagedMcpOAuthMaterial;
@@ -1957,7 +2056,8 @@ export function managedMcpOAuthService(
     }
 
     let material = claimed.material;
-    const provider = new PersistentMcpOAuthClientProvider({
+    const provider = createOAuthProvider({
+      connection: claimed.connection,
       redirectUri: resolveMcpOAuthRedirectUri({
         deploymentMode: options.deploymentMode,
         serverPort: options.serverPort,

@@ -148,8 +148,8 @@ async function installManagedMcpApiMock(
           id: "github",
           label: "GitHub",
           curated: true,
-          requiresOAuth: false,
-          credentialMode: "pat",
+          requiresOAuth: true,
+          credentialMode: "oauth",
           requiresScopeSelection: false,
           scopeLabel: "Account",
           transports: ["streamable_http"],
@@ -226,7 +226,6 @@ async function installManagedMcpApiMock(
         scope?: Connection["scope"];
         ownerAgentId?: string | null;
         accessMode?: Connection["accessMode"];
-        pat?: string;
       } | null;
       const scope = target?.scope ?? "organization";
       const ownerAgentId = scope === "agent" ? target?.ownerAgentId ?? null : null;
@@ -258,11 +257,6 @@ async function installManagedMcpApiMock(
           enabled: true,
           required: false,
         });
-        if (officialProvider === "github" && target?.pat) {
-          connection.status = "active";
-          connection.hasCredentials = true;
-          connection.activatedAt = new Date().toISOString();
-        }
         connections.push(connection);
         tools.set(connection.id, [{
           id: randomUUID(),
@@ -291,6 +285,15 @@ async function installManagedMcpApiMock(
           enabled: true,
           removedAt: null,
         }]);
+      }
+      if (officialProvider === "github") {
+        connection.status = "authorizing";
+        await routeJson(route, {
+          connectionId: connection.id,
+          authorizationUrl: "https://github.com/login/oauth/authorize?client_id=e2e",
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        }, 201);
+        return;
       }
       await routeJson(route, connection);
       return;
@@ -609,7 +612,7 @@ test.describe("Managed MCP integrations", () => {
     await expect.poll(() => mock.connections.length).toBe(1);
   });
 
-  test("connects GitHub with a PAT without opening OAuth", async ({ page }, testInfo) => {
+  test("starts GitHub OAuth without exposing a PAT input", async ({ page }, testInfo) => {
     const orgResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: { name: `GitHub MCP ${Date.now()}` },
     });
@@ -625,7 +628,15 @@ test.describe("Managed MCP integrations", () => {
     await page.addInitScript(({ orgId }) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
       window.open = () => {
-        throw new Error("GitHub PAT connections must not open OAuth");
+        return {
+          opener: null,
+          close() {},
+          location: {
+            replace(url: string) {
+              (window as Window & { __githubOAuthNavigation?: string }).__githubOAuthNavigation = url;
+            },
+          },
+        } as unknown as Window;
       };
     }, { orgId: organization.id });
     const mock = await installManagedMcpApiMock(page, organization.id, agent.id);
@@ -639,34 +650,33 @@ test.describe("Managed MCP integrations", () => {
     await githubCard.getByRole("button", { name: "Connect" }).click();
     const targetDialog = page.getByRole("dialog", { name: "GitHub" });
     const connectButton = targetDialog.getByRole("button", { name: "Connect" });
-    await expect(connectButton).toBeDisabled();
-    const pat = "github_pat_12345678901234567890";
-    await targetDialog.getByLabel("GitHub personal access token").fill(pat);
+    await expect(targetDialog.locator('input[type="password"]')).toHaveCount(0);
     await expect(connectButton).toBeEnabled();
     await connectButton.click();
 
     await expect.poll(() => mock.connections.filter((connection) => connection.provider === "github").length)
       .toBe(1);
-    await expect(githubCard).toContainText("Connected");
+    await expect(githubCard).toContainText("Connecting");
+    await expect.poll(async () => page.evaluate(() => (
+      window as Window & { __githubOAuthNavigation?: string }
+    ).__githubOAuthNavigation)).toBe("https://github.com/login/oauth/authorize?client_id=e2e");
     const connectRequest = mock.requests.find((request) =>
       request.path.endsWith("/mcp/providers/github/connect")
       && request.method === "POST");
     expect(connectRequest?.body).toMatchObject({
       scope: "organization",
       ownerAgentId: null,
-      pat,
     });
+    expect(connectRequest?.body).not.toHaveProperty("pat");
     expect(mock.requests.some((request) => request.path.endsWith("/oauth/start"))).toBe(false);
-    expect(JSON.stringify(mock.connections.find((connection) => connection.provider === "github")))
-      .not.toContain(pat);
 
     await page.getByRole("tab", { name: "Manage", exact: true }).click();
     const connectionRow = page.getByTestId(`mcp-connection-${mock.connections.find((connection) =>
       connection.provider === "github")!.id}`);
     await expect(connectionRow).toContainText(/github/i);
-    await expect(connectionRow).toContainText("Connected");
+    await expect(connectionRow).toContainText("Authorizing");
     await page.screenshot({
-      path: testInfo.outputPath("github-mcp-pat-connected.png"),
+      path: testInfo.outputPath("github-mcp-oauth-authorizing.png"),
       fullPage: true,
     });
   });

@@ -3,14 +3,13 @@ import {
   createMcpConnectionSchema,
   mcpConnectionAccessModeSchema,
   mcpConnectionScopeSchema,
-  mcpGitHubPatSchema,
   mcpOAuthCallbackSchema,
   mcpOAuthStartSchema,
   updateMcpConnectionSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { forbidden, unprocessable } from "../errors.js";
+import { HttpError, forbidden, unprocessable } from "../errors.js";
 import { markHttpRequestBodySensitive } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -29,21 +28,70 @@ const updateAccessModeSchema = z.object({
 }).strict();
 const ensureOfficialProviderSchema = z.object({
   accessMode: mcpConnectionAccessModeSchema.optional(),
-  pat: mcpGitHubPatSchema.optional(),
   scope: mcpConnectionScopeSchema,
   ownerAgentId: z.string().uuid().optional().nullable(),
 }).strict();
-const reconnectMcpConnectionSchema = z.object({
-  pat: mcpGitHubPatSchema.optional(),
-}).strict();
+const reconnectMcpConnectionSchema = z.object({}).strict();
 const reauthorizeAccessSchema = z.object({
   accessMode: z.enum(["read_only", "read_write"]),
 }).strict();
+
+function renderMcpOAuthCallbackPage(input: {
+  outcome: "success" | "error";
+  title: string;
+  message: string;
+}): string {
+  const escapeHtml = (value: string) => value.replace(/[&<>"']/gu, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+  const accent = input.outcome === "success" ? "#0f766e" : "#b45309";
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(input.title)} - Rudder</title>
+    <style>
+      :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #172033; }
+      main { width: min(440px, calc(100% - 40px)); padding: 32px; border: 1px solid #dbe2ea; border-radius: 16px; background: #fff; box-shadow: 0 18px 50px rgb(15 23 42 / 12%); }
+      .mark { color: ${accent}; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      h1 { margin: 12px 0 8px; font-size: 24px; line-height: 1.2; }
+      p { margin: 0; color: #526174; font-size: 15px; line-height: 1.55; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #111827; color: #f8fafc; }
+        main { border-color: #334155; background: #1e293b; box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }
+        p { color: #cbd5e1; }
+      }
+    </style>
+  </head>
+  <body>
+    <main aria-live="polite">
+      <div class="mark">Rudder</div>
+      <h1>${escapeHtml(input.title)}</h1>
+      <p>${escapeHtml(input.message)}</p>
+    </main>
+  </body>
+</html>`;
+}
+
+function callbackErrorStatus(error: unknown): number {
+  if (error instanceof HttpError && error.status >= 400 && error.status < 500) {
+    return error.status;
+  }
+  return error instanceof z.ZodError ? 400 : 500;
+}
 
 export interface ManagedMcpConnectionRoutesOptions
   extends ManagedMcpConnectionServiceOptions {
   serverPort: number;
   authPublicBaseUrl?: string | null;
+  githubMcpClientId?: string | null;
+  githubMcpClientSecret?: string | null;
 }
 
 export function managedMcpConnectionRoutes(
@@ -56,6 +104,8 @@ export function managedMcpConnectionRoutes(
     deploymentMode: options.deploymentMode,
     serverPort: options.serverPort,
     authPublicBaseUrl: options.authPublicBaseUrl,
+    githubMcpClientId: options.githubMcpClientId,
+    githubMcpClientSecret: options.githubMcpClientSecret,
     allowlists: options.allowlists,
     dnsLookup: options.dnsLookup,
     refreshConnectionTools: (orgId, connectionId, actor) =>
@@ -134,9 +184,6 @@ export function managedMcpConnectionRoutes(
       const provider = z.enum(["supabase", "linear", "notion", "github"])
         .parse(req.params.provider);
       await assertCanManage(req, orgId);
-      if (provider === "github" && !req.body.pat) {
-        throw unprocessable("GitHub connections require a personal access token");
-      }
       const connection = await svc.ensureOfficial(
         orgId,
         provider,
@@ -144,13 +191,11 @@ export function managedMcpConnectionRoutes(
           scope: req.body.scope,
           ownerAgentId: req.body.ownerAgentId ?? null,
           accessMode: req.body.accessMode,
-          ...(provider === "github" ? { pat: req.body.pat } : {}),
         },
         mutationActor(req),
       );
       if (provider === "github") {
-        await svc.refreshTools(orgId, connection.id, mutationActor(req));
-        res.json(await svc.get(orgId, connection.id));
+        res.status(201).json(await oauth.start(orgId, connection.id, oauthActor(req)));
         return;
       }
       res.json(connection);
@@ -182,14 +227,38 @@ export function managedMcpConnectionRoutes(
         "Cache-Control": "no-store",
         Pragma: "no-cache",
         "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        "X-Content-Type-Options": "nosniff",
       });
-      res.json(await oauth.callback(mcpOAuthCallbackSchema.parse({
-        state: req.query.state,
-        code: req.query.code,
-        error: req.query.error,
-        errorDescription: req.query.error_description,
-        iss: req.query.iss,
-      })));
+      try {
+        await oauth.callback(mcpOAuthCallbackSchema.parse({
+          state: req.query.state,
+          code: req.query.code,
+          error: req.query.error,
+          errorDescription: req.query.error_description,
+          iss: req.query.iss,
+        }));
+        res.status(200).type("html").send(renderMcpOAuthCallbackPage({
+          outcome: "success",
+          title: "Authorization complete",
+          message: "Return to Rudder to continue. You can close this window.",
+        }));
+      } catch (error) {
+        const status = callbackErrorStatus(error);
+        res.status(status).type("html").send(renderMcpOAuthCallbackPage({
+          outcome: "error",
+          title: status === 400
+            ? "Invalid authorization response"
+            : status >= 500
+              ? "Could not finish authorization"
+              : "Authorization was not completed",
+          message: status === 400
+            ? "The authorization response was invalid. Return to Rudder and try again."
+            : status >= 500
+              ? "Rudder could not finish this authorization. Return to Rudder and try again."
+              : "Authorization was cancelled or could not be completed. Return to Rudder and try again.",
+        }));
+      }
     },
   );
 
@@ -264,11 +333,6 @@ export function managedMcpConnectionRoutes(
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
       const connection = await svc.get(orgId, connectionId);
-      if (connection.provider === "github") {
-        throw unprocessable(
-          "GitHub connections use personal access tokens and do not support managed OAuth",
-        );
-      }
       res.status(201).json(await oauth.start(
         orgId,
         connectionId,
@@ -306,7 +370,7 @@ export function managedMcpConnectionRoutes(
       const connection = await svc.get(orgId, connectionId);
       if (connection.provider === "github") {
         throw unprocessable(
-          "GitHub connections use personal access tokens and do not support managed OAuth",
+          "GitHub access-mode changes do not use staged reauthorization",
         );
       }
       res.status(201).json(await oauth.start(
@@ -353,20 +417,6 @@ export function managedMcpConnectionRoutes(
         res.json(await svc.reconnect(orgId, connectionId, mutationActor(req)));
         return;
       }
-      if (connection.provider === "github") {
-        if (!req.body.pat) {
-          throw unprocessable("GitHub reconnection requires a personal access token");
-        }
-        await svc.reconnect(
-          orgId,
-          connectionId,
-          mutationActor(req),
-          { githubPat: req.body.pat },
-        );
-        await svc.refreshTools(orgId, connectionId, mutationActor(req));
-        res.json(await svc.get(orgId, connectionId));
-        return;
-      }
       res.status(201).json(await oauth.start(orgId, connectionId, oauthActor(req)));
     },
   );
@@ -378,7 +428,7 @@ export function managedMcpConnectionRoutes(
       const connectionId = req.params.connectionId as string;
       await assertCanManage(req, orgId);
       const connection = await svc.get(orgId, connectionId);
-      res.json(connection.provider === "custom" || connection.provider === "github"
+      res.json(connection.provider === "custom"
         ? await svc.disconnect(orgId, connectionId, mutationActor(req))
         : await oauth.revoke(orgId, connectionId, oauthActor(req)));
     },

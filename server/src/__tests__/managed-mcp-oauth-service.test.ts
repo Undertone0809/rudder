@@ -39,7 +39,11 @@ import {
   parseProviderWorkspaceScope,
   type ManagedMcpOAuthServiceOptions,
 } from "../services/mcp/oauth.js";
-import { MCP_PROVIDER_REGISTRY } from "../services/mcp/provider-registry.js";
+import {
+  MCP_GITHUB_READ_ONLY_OAUTH_SCOPE,
+  MCP_GITHUB_READ_WRITE_OAUTH_SCOPE,
+  MCP_PROVIDER_REGISTRY,
+} from "../services/mcp/provider-registry.js";
 import { secretService } from "../services/secrets.js";
 
 async function getAvailablePort(): Promise<number> {
@@ -463,7 +467,73 @@ describe("managedMcpOAuthService", () => {
     expect(updated.status).toBe("authorizing");
   });
 
-  it("rejects GitHub connections from the managed OAuth service", async () => {
+  it("uses static GitHub OAuth client configuration without persisting client credentials", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "github", "read_only");
+    const validateProviderTools = vi.fn(async () => undefined);
+    const oauthAuth = oauthAuthStub();
+    const svc = managedMcpOAuthService(db, serviceOptions({
+      githubMcpClientId: "github-test-client",
+      githubMcpClientSecret: "github-test-secret",
+      oauthAuth,
+      validateProviderTools,
+    }));
+
+    const started = await svc.start(orgId, connection.id, { userId });
+    expect(oauthAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: MCP_GITHUB_READ_ONLY_OAUTH_SCOPE }),
+    );
+    const [session] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    const sessionMaterial = await secretService(db).resolveSecretValue(
+      orgId,
+      session!.credentialSecretId!,
+      "latest",
+    );
+    expect(sessionMaterial).not.toContain("github-test-client");
+    expect(sessionMaterial).not.toContain("github-test-secret");
+    expect(sessionMaterial).not.toContain("dcr-client");
+    expect(new URL(started.authorizationUrl).origin).toBe("https://oauth.example.test");
+
+    await expect(svc.callback({
+      state: new URL(started.authorizationUrl).searchParams.get("state")!,
+      code: "github-provider-code",
+    })).resolves.toEqual({ connectionId: connection.id, status: "active" });
+    expect(validateProviderTools).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "github",
+      endpoint: "https://api.githubcopilot.com/mcp/",
+      material: expect.objectContaining({
+        tokens: expect.objectContaining({ access_token: "snake-access-token" }),
+      }),
+    }));
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    expect(grant).toMatchObject({ status: "active", credentialSecretId: expect.any(String) });
+    const [activated] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(activated).toMatchObject({ status: "active", credentialSecretId: null });
+  });
+
+  it("requests the explicit GitHub read-write scope set for read-write connections", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "github", "read_write");
+    const oauthAuth = oauthAuthStub();
+    const svc = managedMcpOAuthService(db, serviceOptions({
+      githubMcpClientId: "github-test-client",
+      githubMcpClientSecret: "github-test-secret",
+      oauthAuth,
+    }));
+
+    await svc.start(orgId, connection.id, { userId });
+
+    expect(oauthAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: MCP_GITHUB_READ_WRITE_OAUTH_SCOPE }),
+    );
+  });
+
+  it("rejects GitHub OAuth when static client configuration is missing", async () => {
     const { orgId, userId } = await seedOwner(db);
     const connection = await seedConnection(db, orgId, "github", "read_only");
     const svc = managedMcpOAuthService(db, serviceOptions());
@@ -471,9 +541,65 @@ describe("managedMcpOAuthService", () => {
     await expect(svc.start(orgId, connection.id, { userId }))
       .rejects.toMatchObject({
         status: 422,
-        message: "GitHub connections use personal access tokens and do not support managed OAuth",
+        message: "GitHub managed OAuth is not configured",
       });
     expect(await db.select().from(mcpOAuthSessions)).toHaveLength(0);
+  });
+
+  it("consumes GitHub OAuth cancellation and permits a successful retry", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "github", "read_only");
+    const svc = managedMcpOAuthService(db, serviceOptions({
+      githubMcpClientId: "github-test-client",
+      githubMcpClientSecret: "github-test-secret",
+    }));
+
+    const cancelled = await svc.start(orgId, connection.id, { userId });
+    await expect(svc.callback({
+      state: new URL(cancelled.authorizationUrl).searchParams.get("state")!,
+      error: "access_denied",
+    })).rejects.toMatchObject({ status: 422 });
+    const [cancelledSession] = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id));
+    expect(cancelledSession).toMatchObject({ status: "error", credentialSecretId: null });
+
+    const retry = await svc.start(orgId, connection.id, { userId });
+    await expect(svc.callback({
+      state: new URL(retry.authorizationUrl).searchParams.get("state")!,
+      code: "github-retry-code",
+    })).resolves.toEqual({ connectionId: connection.id, status: "active" });
+  });
+
+  it("keeps an active GitHub connection usable while replacement OAuth is in flight", async () => {
+    const { orgId, userId } = await seedOwner(db);
+    const connection = await seedConnection(db, orgId, "github", "read_only");
+    const svc = managedMcpOAuthService(db, serviceOptions({
+      githubMcpClientId: "github-test-client",
+      githubMcpClientSecret: "github-test-secret",
+    }));
+
+    const initial = await svc.start(orgId, connection.id, { userId });
+    await svc.callback({
+      state: new URL(initial.authorizationUrl).searchParams.get("state")!,
+      code: "github-initial-code",
+    });
+    const replacement = await svc.start(orgId, connection.id, { userId });
+    const session = await db.select().from(mcpOAuthSessions)
+      .where(eq(mcpOAuthSessions.connectionId, connection.id))
+      .then((rows) => rows.find((row) => row.status === "authorizing"));
+    expect(session?.statusMetadata).toMatchObject({ reauthorization: true });
+    const [duringReplacement] = await db.select().from(mcpConnections)
+      .where(eq(mcpConnections.id, connection.id));
+    expect(duringReplacement).toMatchObject({ status: "active", enabled: true });
+
+    await expect(svc.callback({
+      state: new URL(replacement.authorizationUrl).searchParams.get("state")!,
+      code: "github-replacement-code",
+    })).resolves.toEqual({ connectionId: connection.id, status: "active" });
+    const [grant] = await db.select().from(mcpOAuthGrants)
+      .where(eq(mcpOAuthGrants.connectionId, connection.id));
+    expect(grant).toMatchObject({ status: "active", credentialSecretId: expect.any(String) });
+    expect(await db.select().from(organizationSecrets)).toHaveLength(1);
   });
 
   it("activates account-scoped Supabase without discovering or selecting a project", async () => {

@@ -350,7 +350,10 @@ export function managedMcpRuntimeService(
     if (!row || row.connection.transport === "legacy_manual") {
       throw forbidden("Managed MCP binding is unavailable");
     }
-    if (row.connection.provider !== "custom" && row.connection.provider !== "github") {
+    if (
+      row.connection.provider !== "custom"
+      && !(row.connection.provider === "github" && Boolean(row.connection.credentialSecretId))
+    ) {
       try {
         if (!grantExecutor) {
           await options.requireUsableGrant(identity.orgId, row.connection.id);

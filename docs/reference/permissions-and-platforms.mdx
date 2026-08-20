@@ -51,11 +51,24 @@ Organization connections can give each Agent a simple access level:
 - Notion: no access or the access granted by the provider
 - GitHub: no access, read only, or read and write
 
-GitHub managed MCP connections use a GitHub personal access token, are fixed
-to the GitHub account endpoint, and default to read only. Rudder accepts the
-token only during connection or reconnection, stores it encrypted on the
-server, and never returns it in connection summaries or runtime configuration.
-GitHub connections do not use Rudder's managed OAuth flow.
+GitHub managed MCP connections use GitHub OAuth for account authorization, are
+fixed to the official GitHub MCP account endpoint, and default to read only.
+When a user connects or reconnects GitHub, Rudder opens GitHub's authorization
+page and stores the resulting OAuth material encrypted on the server. Rudder
+does not ask users to paste a personal access token for new or reconnected
+connections. Existing connections created by an older release may continue to
+use their stored credential until they are reconnected.
+
+To enable GitHub managed OAuth, configure a GitHub OAuth App and set
+`GITHUB_MCP_CLIENT_ID` and `GITHUB_MCP_CLIENT_SECRET` on the Rudder server. The
+OAuth App callback must match Rudder's callback exactly:
+
+- Local trusted mode: `http://127.0.0.1:<port>/api/mcp/oauth/callback`
+- Authenticated deployments: `https://<public-host>/api/mcp/oauth/callback`,
+  with `RUDDER_AUTH_PUBLIC_BASE_URL` set to the canonical HTTPS base URL
+
+Reconnecting keeps the previous connection until the new authorization
+succeeds. Explicit disconnect stops access immediately.
 
 Read and write does not include destructive, billing, administrative, or
 unknown tools. An Agent-specific connection is used before an organization

@@ -53,13 +53,14 @@ revocation fallback. Primary implementation evidence lives in
 managed MCP connection/binding service tests, both integration page tests, and
 the managed MCP connection-scope E2E workflow.
 
-The approved `doc/plans/2026-08-07-github-managed-mcp.md` and
-`doc/plans/2026-08-07-github-mcp-pat.md` additions extend the same ownership
-split with curated GitHub PAT setup. `createMcpConnectionSchema` and the
-generic connection route are Custom-only; GitHub uses the provider-specific
+The completed `doc/plans/2026-08-07-github-managed-mcp.md` PAT delivery is
+superseded by the R6Z-93 GitHub OAuth migration. That migration extends the
+same ownership split with curated GitHub OAuth setup and an explicit
+access-mode-specific scope policy. `createMcpConnectionSchema` and the generic
+connection route are Custom-only; GitHub uses the provider-specific
 connect/reconnect lifecycle, account scope, fixed endpoint, encrypted managed
-credential, and provider-neutral runtime forwarding. Regression evidence lives
-in the shared validator, provider registry, connection service/routes, binding,
+OAuth grant, and provider-neutral runtime forwarding. Regression evidence lives
+in the shared validator, provider registry, OAuth service/routes, binding,
 runtime, UI, migration, and managed MCP E2E tests listed in the registry.
 
 Task 1 data-contract evidence lives in

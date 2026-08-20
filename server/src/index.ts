@@ -1083,6 +1083,8 @@ async function startServerRuntime(
     uiMode,
     serverPort: listenPort,
     authPublicBaseUrl: config.authPublicBaseUrl ?? null,
+    githubMcpClientId: config.githubMcpClientId ?? null,
+    githubMcpClientSecret: config.githubMcpClientSecret ?? null,
     storageService,
     deploymentMode: config.deploymentMode,
     authRequirement: options.localAccountAuth ? "required" : undefined,
@@ -1156,6 +1158,8 @@ async function startServerRuntime(
       deploymentMode: config.deploymentMode,
       serverPort: listenPort,
       authPublicBaseUrl: config.authPublicBaseUrl ?? null,
+      githubMcpClientId: config.githubMcpClientId ?? null,
+      githubMcpClientSecret: config.githubMcpClientSecret ?? null,
       allowlists: config.mcpDeploymentAllowlists,
     }),
     {

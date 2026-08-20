@@ -156,16 +156,6 @@ export const mcpGitHubSafeConfigSchema = z.object({
   scopeMode: z.literal("account"),
 }).strict();
 
-export const mcpGitHubPatSchema = z.string()
-  .trim()
-  .min(20)
-  .max(255)
-  .regex(/^(?:github_pat_|ghp_)[A-Za-z0-9_]+$/, "Use a GitHub fine-grained or legacy PAT");
-
-export const mcpGitHubSecretsMutationSchema = z.object({
-  bearerToken: mcpGitHubPatSchema,
-}).strict();
-
 export const mcpConnectionSafeConfigSchema = z.union([
   mcpStdioSafeConfigSchema,
   mcpStreamableHttpSafeConfigSchema,
@@ -371,11 +361,11 @@ function validateConnectionSecretMutation(
   ctx: z.RefinementCtx,
 ) {
   if (value.provider === "github") {
-    if (value.secrets && !mcpGitHubSecretsMutationSchema.safeParse(value.secrets).success) {
+    if (value.secrets) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["secrets"],
-        message: "GitHub connections accept only a fine-grained or legacy PAT",
+        message: "GitHub credentials must come from the managed OAuth grant",
       });
     }
     return;
@@ -433,7 +423,7 @@ function validateConnectionSecretMutation(
   }
 }
 
-// Curated providers have provider-specific setup semantics (OAuth or PAT,
+// Curated providers have provider-specific setup semantics (OAuth,
 // canonical target identity, and lifecycle activation). The generic create
 // contract is intentionally limited to custom connections.
 export const createMcpConnectionSchema = z.object({

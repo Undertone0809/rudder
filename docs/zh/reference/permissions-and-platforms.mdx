@@ -49,10 +49,21 @@ Prompt 不能自己获得更多访问权。
 - Notion：无访问，或使用服务商授权的访问
 - GitHub：无访问、只读或读写
 
-GitHub 管理型 MCP 连接使用 GitHub 个人访问令牌，固定连接到 GitHub 账户级端点，
-默认是只读。Rudder 只在连接或重新连接时接收令牌，并在服务端加密保存；连接摘要和
-运行时配置都不会返回令牌。GitHub 连接不使用 Rudder 的托管
-OAuth 流程。
+GitHub 管理型 MCP 连接使用 GitHub OAuth 完成账户授权，固定连接到官方 GitHub MCP
+账户级端点，默认是只读。用户连接或重新连接 GitHub 时，Rudder 会打开 GitHub
+授权页面，并在服务端加密保存生成的 OAuth 材料。新建或重新连接的连接不要求用户
+粘贴个人访问令牌。较早版本创建的现有连接，在重新连接前可能仍会继续使用原来保存
+的凭据。
+
+要启用 GitHub 托管 OAuth，请配置 GitHub OAuth App，并在 Rudder 服务端设置
+`GITHUB_MCP_CLIENT_ID` 和 `GITHUB_MCP_CLIENT_SECRET`。OAuth App 的回调地址必须与
+Rudder 完全一致：
+
+- 本地可信模式：`http://127.0.0.1:<port>/api/mcp/oauth/callback`
+- 需要认证的部署：`https://<public-host>/api/mcp/oauth/callback`，并将
+  `RUDDER_AUTH_PUBLIC_BASE_URL` 设置为规范的 HTTPS 基础地址
+
+重新连接会在新授权成功前保留旧连接。明确断开后会立即停止访问。
 
 “读写”不包括破坏性、计费、管理或未知工具。同一正式服务商同时有 Agent 连接
 和组织连接时，先使用 Agent 连接。Agent 连接选择**无访问**表示明确阻止；如果

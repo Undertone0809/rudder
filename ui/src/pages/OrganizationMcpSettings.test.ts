@@ -292,13 +292,13 @@ describe("organization MCP interaction", () => {
     document.body.innerHTML = "";
   });
 
-  it("asks for a GitHub PAT before starting a provider connection", () => {
+  it("starts GitHub OAuth without exposing a credential input", () => {
     mockOrganizationMcpData.catalog = [{
       id: "github",
       label: "GitHub",
       curated: true,
-      requiresOAuth: false,
-      credentialMode: "pat",
+      requiresOAuth: true,
+      credentialMode: "oauth",
       requiresScopeSelection: false,
       scopeLabel: "Account",
       transports: ["streamable_http"],
@@ -324,9 +324,8 @@ describe("organization MCP interaction", () => {
       .find((button) => button.textContent === "Connect")
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
-    const pat = document.body.querySelector('input[type="password"]') as HTMLInputElement | null;
-    expect(pat?.getAttribute("placeholder")).toBe("github_pat_...");
-    expect(document.body.textContent).toContain("GitHub personal access token");
+    expect(document.body.querySelector('input[type="password"]')).toBeNull();
+    expect(document.body.textContent).toContain("official GitHub OAuth flow");
 
     cleanup();
     document.body.innerHTML = "";

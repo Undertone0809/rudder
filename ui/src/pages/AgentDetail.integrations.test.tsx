@@ -39,24 +39,40 @@ const mockManagedMcpProviderStatusData = vi.hoisted(() => ({
   rows: [] as McpProviderAvailability[],
   failed: false,
 }));
+const mockManagedMcpProviderStatusRefetchInterval = vi.hoisted(() => ({
+  callback: null as ((query: { state: { data?: McpProviderAvailability[] } }) => number | false) | null,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ initialData, queryKey }: { initialData?: unknown; queryKey?: readonly unknown[] }) => ({
-    data: queryKey?.includes("custom-integrations")
-      ? mockCustomIntegrationsData.rows
-      : queryKey?.includes("mcp-provider-status")
-        ? mockManagedMcpProviderStatusData.rows
-      : queryKey?.includes("mcp-connections")
-        ? mockManagedMcpConnectionsData.rows
-        : initialData,
-    isLoading: false,
-    isError: queryKey?.includes("mcp-provider-status")
-      ? mockManagedMcpProviderStatusData.failed
-      : queryKey?.includes("mcp-connections")
-        ? mockManagedMcpConnectionsData.failed
-        : false,
-    refetch: vi.fn(),
-  }),
+  useQuery: ({
+    initialData,
+    queryKey,
+    refetchInterval,
+  }: {
+    initialData?: unknown;
+    queryKey?: readonly unknown[];
+    refetchInterval?: ((query: { state: { data?: McpProviderAvailability[] } }) => number | false) | number | false;
+  }) => {
+    if (queryKey?.includes("mcp-provider-status") && typeof refetchInterval === "function") {
+      mockManagedMcpProviderStatusRefetchInterval.callback = refetchInterval;
+    }
+    return {
+      data: queryKey?.includes("custom-integrations")
+        ? mockCustomIntegrationsData.rows
+        : queryKey?.includes("mcp-provider-status")
+          ? mockManagedMcpProviderStatusData.rows
+        : queryKey?.includes("mcp-connections")
+          ? mockManagedMcpConnectionsData.rows
+          : initialData,
+      isLoading: false,
+      isError: queryKey?.includes("mcp-provider-status")
+        ? mockManagedMcpProviderStatusData.failed
+        : queryKey?.includes("mcp-connections")
+          ? mockManagedMcpConnectionsData.failed
+          : false,
+      refetch: vi.fn(),
+    };
+  },
   useMutation: (options: { mutationFn?: (arg?: unknown) => Promise<unknown>; onSuccess?: (result: unknown) => void | Promise<void> }) => ({
     mutate: vi.fn(async (arg?: unknown) => {
       const result = await options.mutationFn?.(arg);
@@ -153,6 +169,7 @@ afterEach(() => {
   mockManagedMcpConnectionsData.failed = false;
   mockManagedMcpProviderStatusData.rows = [];
   mockManagedMcpProviderStatusData.failed = false;
+  mockManagedMcpProviderStatusRefetchInterval.callback = null;
   mockManagedMcpApi.ensureOfficialConnection.mockReset();
   mockManagedMcpApi.startOAuth.mockReset();
   vi.clearAllMocks();
@@ -577,6 +594,46 @@ describe("AgentIntegrationsTab", () => {
     expect(linearCard?.textContent).not.toContain("Disabled for this agent");
   });
 
+  it("polls agent MCP status while organization or agent OAuth is connecting", () => {
+    render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
+
+    expect(mockManagedMcpProviderStatusRefetchInterval.callback).not.toBeNull();
+    const refetchInterval = mockManagedMcpProviderStatusRefetchInterval.callback!;
+    expect(refetchInterval({
+      state: {
+        data: [managedMcpProviderStatus("github", {
+          organization: {
+            state: "connecting",
+            connectionId: "github-connection",
+            maxAccess: "read_only",
+            scopeMode: "account",
+            revision: 1,
+          },
+        })],
+      },
+    })).toBe(2_000);
+    expect(refetchInterval({
+      state: {
+        data: [managedMcpProviderStatus("github", {
+          agent: {
+            access: "none",
+            activeRunUsesOlderPolicy: false,
+            connection: {
+              state: "connecting",
+              connectionId: "github-agent-connection",
+              maxAccess: "read_only",
+              revision: 1,
+            },
+            effectiveSource: "none",
+            effectiveConnectionId: null,
+            explicitlyDisabled: false,
+          },
+        })],
+      },
+    })).toBe(2_000);
+    expect(refetchInterval({ state: { data: [managedMcpProviderStatus("github")] } })).toBe(false);
+  });
+
   it("defaults Add connection to the current agent and also offers Organization", () => {
     mockManagedMcpProviderStatusData.rows = [
       managedMcpProviderStatus("supabase", {
@@ -617,7 +674,7 @@ describe("AgentIntegrationsTab", () => {
     ]);
   });
 
-  it("connects an agent-scoped GitHub connection with a PAT without opening OAuth", async () => {
+  it("starts OAuth for an agent-scoped GitHub connection", async () => {
     mockManagedMcpProviderStatusData.rows = [managedMcpProviderStatus("github", {
       organization: {
         state: "not_connected",
@@ -637,6 +694,11 @@ describe("AgentIntegrationsTab", () => {
     })];
     const githubConnection = managedMcpConnection("github").connection;
     mockManagedMcpApi.ensureOfficialConnection.mockResolvedValue(githubConnection);
+    mockManagedMcpApi.startOAuth.mockResolvedValue({
+      connectionId: githubConnection.id,
+      authorizationUrl: "https://oauth.example.test/github",
+      expiresAt: new Date("2026-07-24T12:10:00.000Z").toISOString(),
+    });
 
     const container = render(<AgentIntegrationsTab agent={agent()} orgId="org-1" />);
     const card = container.querySelector('[data-testid="managed-mcp-provider-github"]')!;
@@ -652,29 +714,26 @@ describe("AgentIntegrationsTab", () => {
     });
 
     const targetDialog = document.body.querySelector('[role="dialog"]')!;
-    const patInput = targetDialog.querySelector<HTMLInputElement>("#agent-github-pat")!;
+    mockWindowOpen.mockImplementationOnce(() => ({
+      opener: null,
+      close() {},
+      location: { replace() {} },
+    } as unknown as Window));
     const connect = [...targetDialog.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Connect")) as HTMLButtonElement;
-    expect(connect.disabled).toBe(true);
-    const pat = "github_pat_12345678901234567890";
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(patInput, pat);
-      patInput.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const enabledConnect = [...targetDialog.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("Connect")) as HTMLButtonElement;
-    expect(enabledConnect.disabled).toBe(false);
+    expect(targetDialog.querySelector('input[type="password"]')).toBeNull();
+    expect(connect.disabled).toBe(false);
     await act(async () => {
-      enabledConnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      connect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
     expect(mockManagedMcpApi.ensureOfficialConnection).toHaveBeenCalledWith(
       "org-1",
       "github",
-      { scope: "agent", ownerAgentId: "agent-1", pat },
+      { scope: "agent", ownerAgentId: "agent-1" },
     );
-    expect(mockManagedMcpApi.startOAuth).not.toHaveBeenCalled();
+    expect(mockManagedMcpApi.startOAuth).toHaveBeenCalledWith("org-1", "github-connection");
   });
 
   it("opens a focused access dialog instead of navigating to Manage", () => {
@@ -935,7 +994,7 @@ describe("AgentIntegrationsTab", () => {
     expect(container.textContent).toContain("Browse Drive files and attach workspace context.");
     expect(container.textContent).toContain("Search pages, databases, and operating notes through organization-managed MCP tools.");
     expect(container.textContent).toContain(
-      "Search and inspect GitHub repositories through a securely stored personal access token.",
+      "Search and inspect GitHub repositories through the official OAuth flow.",
     );
     expect(container.textContent).toContain("Work with the organization’s Linear workspace through managed MCP tools.");
     expect(container.textContent).not.toContain("Feishu Workspace");

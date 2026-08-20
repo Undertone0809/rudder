@@ -62,7 +62,8 @@ describe("managed MCP shared contracts", () => {
       }),
       expect.objectContaining({
         id: "github",
-        credentialMode: "pat",
+        requiresOAuth: true,
+        credentialMode: "oauth",
         accessModes: ["read_only", "read_write"],
         defaultAccessMode: "read_only",
       }),
@@ -114,33 +115,18 @@ describe("managed MCP shared contracts", () => {
     }).success).toBe(true);
   });
 
-  it("keeps GitHub PAT validation separate from generic connection create", () => {
-    const schema = exportedSchema("createMcpConnectionSchema");
+  it("keeps GitHub OAuth configuration separate from generic connection create", () => {
     const safeConfigSchema = exportedSchema("mcpGitHubSafeConfigSchema");
-    const patSchema = exportedSchema("mcpGitHubPatSchema");
-    if (!schema || !safeConfigSchema || !patSchema) return;
+    if (!safeConfigSchema) return;
 
-    const base = {
-      name: "github-account",
-      displayName: "GitHub account",
-      provider: "github",
-      scope: "organization",
-      transport: "streamable_http",
-      safeConfig: {
-        endpoint: "https://api.githubcopilot.com/mcp/",
-        scopeMode: "account",
-      },
-      secrets: { bearerToken: `github_pat_${"a".repeat(30)}` },
-    };
-
-    expect(schema.safeParse(base).success).toBe(false);
-    expect(safeConfigSchema.safeParse(base.safeConfig).success).toBe(true);
-    expect(patSchema.safeParse(base.secrets?.bearerToken).success).toBe(true);
+    expect(safeConfigSchema.safeParse({
+      endpoint: "https://api.githubcopilot.com/mcp/",
+      scopeMode: "account",
+    }).success).toBe(true);
     expect(safeConfigSchema.safeParse({
       endpoint: "https://github.com/mcp",
       scopeMode: "account",
     }).success).toBe(false);
-    expect(patSchema.safeParse("not-a-github-pat").success).toBe(false);
   });
 
   it("rejects internal runtime server names when creating external MCP connections", () => {

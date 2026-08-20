@@ -18,6 +18,9 @@ export interface RudderAppOptions {
   serverPort: number;
   /** Canonical external HTTPS origin used for authenticated OAuth callbacks. */
   authPublicBaseUrl?: string | null;
+  /** Static GitHub OAuth App credentials; never persisted as managed MCP material. */
+  githubMcpClientId?: string | null;
+  githubMcpClientSecret?: string | null;
   storageService: StorageService;
   deploymentMode: DeploymentMode;
   /** Independent human-login gate; omitted callers preserve deployment-mode behavior. */

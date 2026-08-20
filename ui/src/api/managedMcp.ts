@@ -39,9 +39,8 @@ export const managedMcpApi = {
       scope: McpConnectionScope;
       ownerAgentId?: string | null;
       accessMode?: McpConnectionAccessMode;
-      pat?: string;
     },
-  ) => api.post<McpConnectionSummary>(
+  ) => api.post<McpConnectionSummary | McpOAuthStartResponse>(
     `/orgs/${encodeURIComponent(orgId)}/mcp/providers/${provider}/connect`,
     target,
   ),
@@ -87,10 +86,10 @@ export const managedMcpApi = {
       `${connectionPath(orgId, connectionId)}/refresh-tools`,
       {},
     ),
-  reconnect: (orgId: string, connectionId: string, input: { pat?: string } = {}) =>
+  reconnect: (orgId: string, connectionId: string) =>
     api.post<McpConnectionSummary | McpOAuthStartResponse>(
       `${connectionPath(orgId, connectionId)}/reconnect`,
-      input,
+      {},
     ),
   disconnect: (orgId: string, connectionId: string) =>
     api.post<McpConnectionSummary>(

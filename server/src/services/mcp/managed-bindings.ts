@@ -424,8 +424,8 @@ export function managedMcpBindingService(db: Db) {
   ): Promise<McpProviderAvailability[]> {
     if (agentId) await assertAgentInOrg(orgId, agentId);
     const providers = ["supabase", "linear", "notion", "github"] as const;
-    const oauthProviders = ["supabase", "linear", "notion"] as const;
-    const [connections, bindings, runningRuns, historicalGrants] = await Promise.all([
+    const oauthProviders = ["supabase", "linear", "notion", "github"] as const;
+    const [connections, bindings, runningRuns, historicalGrants, activeGrants] = await Promise.all([
       db.select().from(mcpConnections)
         .where(and(
           eq(mcpConnections.orgId, orgId),
@@ -460,6 +460,20 @@ export function managedMcpBindingService(db: Db) {
           eq(mcpOAuthGrants.status, "active"),
           isNotNull(mcpOAuthGrants.credentialSecretId),
         )),
+      db.select({
+        connectionId: mcpOAuthGrants.connectionId,
+      }).from(mcpOAuthGrants)
+        .innerJoin(
+          mcpConnections,
+          eq(mcpOAuthGrants.connectionId, mcpConnections.id),
+        )
+        .where(and(
+          eq(mcpOAuthGrants.orgId, orgId),
+          eq(mcpOAuthGrants.status, "active"),
+          isNotNull(mcpOAuthGrants.credentialSecretId),
+          eq(mcpConnections.orgId, orgId),
+          inArray(mcpConnections.provider, [...oauthProviders]),
+        )),
     ]);
     const organizationConnectionByProvider = new Map(
       connections
@@ -479,6 +493,9 @@ export function managedMcpBindingService(db: Db) {
     );
     const affectedAgentsByConnection = new Map<string, Set<string>>();
     const historicalGrantIdsByProvider = new Map<string, string[]>();
+    const activeGrantConnectionIds = new Set(
+      activeGrants.map((grant) => grant.connectionId),
+    );
     for (const grant of historicalGrants) {
       const ids = historicalGrantIdsByProvider.get(grant.provider) ?? [];
       ids.push(grant.connectionId);
@@ -498,7 +515,11 @@ export function managedMcpBindingService(db: Db) {
     const connectionState = (connection: ConnectionRow | undefined) => {
       if (!connection) return "not_connected" as const;
       if (connection.status === "active" && connection.enabled) {
-        if (connection.provider === "github" && !connection.credentialSecretId) {
+        if (
+          connection.provider === "github"
+          && !connection.credentialSecretId
+          && !activeGrantConnectionIds.has(connection.id)
+        ) {
           return "needs_attention" as const;
         }
         return "connected" as const;
@@ -947,7 +968,13 @@ export function managedMcpBindingService(db: Db) {
           connection.provider === "custom"
           || (
             connection.provider === "github"
-            && Boolean(connection.credentialSecretId)
+            && (
+              Boolean(connection.credentialSecretId)
+              || (
+                grant?.status === "active"
+                && Boolean(grant.credentialSecretId)
+              )
+            )
           )
           || (
             grant?.status === "active"
