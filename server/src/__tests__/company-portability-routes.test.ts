@@ -89,6 +89,7 @@ vi.mock("../services/index.js", () => ({
     ensureDefaultsFromRuntime: vi.fn(),
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
+  organizationMemberService: () => ({ list: vi.fn(), countActiveVisible: vi.fn() }),
   logActivity: mockLogActivity,
 }));
 

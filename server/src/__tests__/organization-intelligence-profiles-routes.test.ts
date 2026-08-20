@@ -53,6 +53,7 @@ vi.mock("../services/index.js", () => ({
   }),
   organizationIntelligenceProfileService: () => mockOrganizationIntelligenceProfiles,
   organizationIntelligenceRuntimeChainService: () => mockOrganizationIntelligenceRuntimeChain,
+  organizationMemberService: () => ({ list: vi.fn(), countActiveVisible: vi.fn() }),
   organizationPortabilityService: () => ({
     exportBundle: vi.fn(),
     previewExport: vi.fn(),

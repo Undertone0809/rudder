@@ -14,6 +14,7 @@ import type {
   HeartbeatRecoveryTrigger,
   HeartbeatRunRecoveryContext
 } from "@rudderhq/shared";
+import { shortRefFor } from "@rudderhq/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import path from "node:path";
 import type {
@@ -491,10 +492,10 @@ export function issueCommentAuthorLabel(comment: {
   authorUserName?: string | null;
 }) {
   if (comment.authorAgentId) {
-    return comment.authorAgentName?.trim() || `Agent ${comment.authorAgentId.slice(0, 8)}`;
+    return comment.authorAgentName?.trim() || `Agent ${shortPrincipalRef("agent", comment.authorAgentId)}`;
   }
   if (comment.authorUserId) {
-    return comment.authorUserName?.trim() || `User ${comment.authorUserId.slice(0, 8)}`;
+    return comment.authorUserName?.trim() || `User ${shortPrincipalRef("user", comment.authorUserId)}`;
   }
   return "System";
 }
@@ -511,8 +512,19 @@ function issuePrincipalLabel(input: {
   name: string | null | undefined;
 }) {
   if (!input.id) return null;
-  const fallback = input.kind === "agent" ? `Agent ${input.id.slice(0, 8)}` : `User ${input.id.slice(0, 8)}`;
+  const fallback = input.kind === "agent"
+    ? `Agent ${shortPrincipalRef("agent", input.id)}`
+    : `User ${shortPrincipalRef("user", input.id)}`;
   return `${input.name?.trim() || fallback} (${input.kind})`;
+}
+
+function shortPrincipalRef(kind: "agent" | "user", id: string) {
+  try {
+    return shortRefFor(kind, id);
+  } catch {
+    const compact = id.replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase() || "unknown";
+    return `${kind === "agent" ? "agt" : "usr"}_${compact}`;
+  }
 }
 
 export function buildDeferredWakePayload(

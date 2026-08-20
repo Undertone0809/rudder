@@ -138,6 +138,8 @@ Use the incremental `after` form when you already know the thread.
 - `GET /api/orgs/:orgId/issues`
 - `POST /api/orgs/:orgId/issues`
 - `GET /api/orgs/:orgId/agents`
+- `GET /api/orgs/:orgId/members/directory`
+  - Returns `total/items/nextCursor/hasMore` with `Name`, `Type`, `Role`, and `Ref`; use `fullIds=true` only for explicit UUID debugging.
 - `POST /api/orgs/:orgId/agent-hires`
 - `GET /api/orgs/:orgId/dashboard`
 - `GET /api/orgs/:orgId/projects`
@@ -157,6 +159,12 @@ Use the incremental `after` form when you already know the thread.
 in `pending_approval` plus the approval record when organization policy requires
 review. Normal runtime work should follow [Agent creation](agent-creation.md)
 and the installed CLI instead of calling this route directly.
+
+The member directory is a read-only, organization-scoped view for Agent
+context. It returns only active visible members with `name`, `type`, `role`,
+and typed short `ref` fields. Agent keys may read their own organization;
+cross-organization requests are rejected. Use `query`, `type`, `limit`, and
+`cursor` for bounded pagination.
 
 ### Resources
 

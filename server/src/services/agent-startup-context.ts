@@ -4,6 +4,7 @@ import { shortRefFor, type AgentRunScene, type ShortRefKind } from "@rudderhq/sh
 import { and, desc, eq, or, sql, type SQLWrapper } from "drizzle-orm";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { organizationMemberService, type OrganizationMemberDirectoryItem } from "./organization-members.js";
 
 export const AGENT_STARTUP_CONTEXT_VERSION = "agent-startup-context/v1";
 
@@ -43,11 +44,15 @@ export type AgentStartupChatEntry = {
   snippet: string | null;
 };
 
+export type AgentStartupOrganizationMemberEntry = OrganizationMemberDirectoryItem;
+
 export type AgentStartupContextPromptInput = {
   todayMemory: AgentStartupMemoryEntry;
   yesterdayMemory: AgentStartupMemoryEntry;
   recentIssues: AgentStartupIssueEntry[];
   recentChats: AgentStartupChatEntry[];
+  organizationMembers?: AgentStartupOrganizationMemberEntry[];
+  organizationMemberTotal?: number;
   metrics: {
     version: string;
     totalChars: number;
@@ -177,9 +182,13 @@ export function buildAgentStartupContextPrompt(
   const hasDailyMemory =
     input.todayMemory.content.trim().length > 0
     || input.yesterdayMemory.content.trim().length > 0;
-  if (!hasDailyMemory && input.recentIssues.length === 0 && input.recentChats.length === 0) {
+  const hasOrganizationMemberSection =
+    input.organizationMembers !== undefined || input.organizationMemberTotal !== undefined;
+  const organizationMemberTotal = input.organizationMemberTotal ?? input.organizationMembers?.length ?? 0;
+  if (!hasDailyMemory && input.recentIssues.length === 0 && input.recentChats.length === 0 && !hasOrganizationMemberSection) {
     return "";
   }
+  const organizationMembers = input.organizationMembers ?? [];
   const lines = [
     "## Recent Rudder Context",
     "",
@@ -189,8 +198,27 @@ export function buildAgentStartupContextPrompt(
     formatDailyMemoryHeading("yesterday", input.yesterdayMemory.relativePath),
     clipMarkdown(input.yesterdayMemory.content, resolvedLimits.memoryFileChars),
     "",
-    "#### recent issues",
+    "#### organization members",
   ];
+  if (organizationMemberTotal === 0) {
+    lines.push("(none)");
+  } else if (organizationMemberTotal >= 10) {
+    lines.push(
+      `Organization has ${organizationMemberTotal} active members. Use \`rudder_organization_members_list\` to query the member directory.`,
+      "CLI fallback: `rudder org members --org-id <id>`. ",
+    );
+  } else {
+    appendMarkdownTable(lines, ["Name", "Type", "Role", "Ref"], organizationMembers.map((member) => [
+      markdownTableCell(member.name),
+      markdownTableCell(member.type),
+      markdownTableCell(member.role),
+      markdownCodeCell(member.ref),
+    ]));
+  }
+  lines.push(
+    "",
+    "#### recent issues",
+  );
   if (input.recentIssues.length === 0) lines.push("(none)");
   else {
     appendMarkdownTable(lines, [
@@ -404,21 +432,28 @@ async function listRecentChats(db: Db, input: BuildAgentStartupContextInput) {
 }
 
 export function agentStartupContextService(db: Db) {
+  const organizationMembers = organizationMemberService(db);
+
   async function buildForRun(input: BuildAgentStartupContextInput): Promise<AgentStartupContextBundle> {
     const now = input.now ?? new Date();
     const todayKey = utcDateKey(now);
     const yesterdayKey = utcDateKey(addUtcDays(now, -1));
-    const [todayMemory, yesterdayMemory, recentIssues, recentChats] = await Promise.all([
+    const [todayMemory, yesterdayMemory, recentIssues, recentChats, memberDirectory] = await Promise.all([
       ensureMemoryEntry(input.memoryDir, todayKey),
       ensureMemoryEntry(input.memoryDir, yesterdayKey),
       listRecentIssues(db, input),
       listRecentChats(db, input),
+      hasDbSelect(db)
+        ? organizationMembers.list({ orgId: input.orgId, limit: 10 })
+        : Promise.resolve({ total: 0, items: [], nextCursor: null, hasMore: false }),
     ]);
     const promptInput: AgentStartupContextPromptInput = {
       todayMemory,
       yesterdayMemory,
       recentIssues: recentIssues.items,
       recentChats: recentChats.items,
+      organizationMembers: memberDirectory.items,
+      organizationMemberTotal: memberDirectory.total,
       metrics: {
         version: AGENT_STARTUP_CONTEXT_VERSION,
         totalChars: 0,
@@ -439,7 +474,7 @@ export function agentStartupContextService(db: Db) {
     } as const;
     return {
       version: AGENT_STARTUP_CONTEXT_VERSION,
-      sections: ["daily_memory", "recent_issues", "recent_chats"],
+      sections: ["daily_memory", "organization_members", "recent_issues", "recent_chats"],
       sourceRefs: [
         { kind: "memory", id: todayKey, ref: todayMemory.relativePath },
         { kind: "memory", id: yesterdayKey, ref: yesterdayMemory.relativePath },

@@ -13,7 +13,8 @@ export type AgentCliCapabilityCategory =
   | "skill"
   | "browser"
   | "user"
-  | "library";
+  | "library"
+  | "organization";
 export type AgentCliCapabilityContract = "agent-v1" | "compat";
 
 export interface AgentCliCapability {
@@ -79,6 +80,7 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   browser: "Browser",
   user: "User",
   library: "Library",
+  organization: "Organization",
 };
 
 export function getAgentCliCapabilities(): AgentCliCapability[] {

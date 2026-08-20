@@ -1,12 +1,15 @@
 import {
   agents,
   applyPendingMigrations,
+  authUsers,
   chatContextLinks,
   chatConversations,
   chatMessages,
   createDb,
   ensurePostgresDatabase,
   issues,
+  operatorProfiles,
+  organizationMemberships,
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
@@ -22,6 +25,7 @@ import {
   buildAgentStartupContextPrompt,
   DEFAULT_AGENT_STARTUP_CONTEXT_LIMITS,
 } from "../services/agent-startup-context.js";
+import { organizationMemberService } from "../services/organization-members.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -123,6 +127,42 @@ describe("agent startup context prompt", () => {
     });
 
     expect(prompt).toBe("");
+  });
+
+  it("renders the organization member directory at the small-team threshold", () => {
+    const baseInput = {
+      todayMemory: { dateKey: "2026-06-19", relativePath: "memory/2026-06-19.md", content: "", existed: true, created: false },
+      yesterdayMemory: { dateKey: "2026-06-18", relativePath: "memory/2026-06-18.md", content: "", existed: true, created: false },
+      recentIssues: [],
+      recentChats: [],
+      metrics: { version: "agent-startup-context/v1", totalChars: 0, limitChars: DEFAULT_AGENT_STARTUP_CONTEXT_LIMITS.totalChars, omittedIssues: 0, omittedChats: 0 },
+    } as const;
+    const member = (index: number) => ({
+      name: `Member ${index}`,
+      type: index % 2 === 0 ? "agent" as const : "human" as const,
+      role: index % 2 === 0 ? "engineer" : "operator",
+      ref: index % 2 === 0 ? `agt_${String(index).padStart(8, "0")}` : `usr_${String(index).padStart(8, "0")}`,
+    });
+
+    for (const total of [0, 1, 9, 10, 11]) {
+      const prompt = buildAgentStartupContextPrompt({
+        ...baseInput,
+        organizationMembers: Array.from({ length: Math.min(total, 10) }, (_, index) => member(index)),
+        organizationMemberTotal: total,
+      });
+      expect(prompt.length).toBeLessThanOrEqual(DEFAULT_AGENT_STARTUP_CONTEXT_LIMITS.totalChars);
+      if (total === 0) {
+        expect(prompt).toContain("#### organization members\n(none)");
+      } else if (total < 10) {
+        expect(prompt).toContain("| Name | Type | Role | Ref |");
+        expect(prompt).toContain("| Member 0 | agent | engineer | `agt_00000000` |");
+      } else {
+        expect(prompt).toContain(`Organization has ${total} active members.`);
+        expect(prompt).toContain("rudder_organization_members_list");
+        expect(prompt).toContain("rudder org members --org-id <id>");
+        expect(prompt).not.toContain("| Name | Type | Role | Ref |");
+      }
+    }
   });
 
   it("renders daily memory, recent issues, and recent chats without debug metadata in the compact startup format", () => {
@@ -317,6 +357,9 @@ describe("agent startup context service", () => {
     await db.delete(chatContextLinks);
     await db.delete(chatConversations);
     await db.delete(issues);
+    await db.delete(organizationMemberships);
+    await db.delete(operatorProfiles);
+    await db.delete(authUsers);
     await db.delete(agents);
     await db.delete(organizations);
     if (memoryDir) await fs.rm(memoryDir, { recursive: true, force: true });
@@ -351,6 +394,97 @@ describe("agent startup context service", () => {
     });
     return { orgId, agentId };
   }
+
+  it("lists active visible members with typed refs, role mapping, filters, and cursors", async () => {
+    const primary = await seedOrgAgent("Directory");
+    const other = await seedOrgAgent("Other");
+    const humanId = randomUUID();
+    await db.insert(authUsers).values({
+      id: humanId,
+      name: "Auth Name",
+      email: "directory@example.com",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(operatorProfiles).values({ userId: humanId, nickname: "Ada" });
+
+    const hiddenAgentId = randomUUID();
+    const suspendedAgentId = randomUUID();
+    const terminatedAgentId = randomUUID();
+    const pendingApprovalAgentId = randomUUID();
+    await db.insert(agents).values([
+      {
+        id: hiddenAgentId,
+        orgId: primary.orgId,
+        name: "Hidden Agent",
+        role: "engineer",
+        status: "idle",
+        metadata: { hidden: true },
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: suspendedAgentId,
+        orgId: primary.orgId,
+        name: "Suspended Agent",
+        role: "engineer",
+        status: "suspended",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: terminatedAgentId,
+        orgId: primary.orgId,
+        name: "Terminated Agent",
+        role: "engineer",
+        status: "terminated",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: pendingApprovalAgentId,
+        orgId: primary.orgId,
+        name: "Pending Approval Agent",
+        role: "engineer",
+        status: "pending_approval",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    await db.insert(organizationMemberships).values([
+      { orgId: primary.orgId, principalType: "agent", principalId: primary.agentId, status: "active" },
+      { orgId: primary.orgId, principalType: "user", principalId: "local-board", status: "active", membershipRole: "owner" },
+      { orgId: primary.orgId, principalType: "user", principalId: humanId, status: "active", membershipRole: "operator" },
+      { orgId: primary.orgId, principalType: "user", principalId: randomUUID(), status: "active", membershipRole: "member" },
+      { orgId: primary.orgId, principalType: "user", principalId: randomUUID(), status: "pending", membershipRole: "member" },
+      { orgId: primary.orgId, principalType: "agent", principalId: hiddenAgentId, status: "active" },
+      { orgId: primary.orgId, principalType: "agent", principalId: suspendedAgentId, status: "active" },
+      { orgId: primary.orgId, principalType: "agent", principalId: terminatedAgentId, status: "active" },
+      { orgId: primary.orgId, principalType: "agent", principalId: pendingApprovalAgentId, status: "active" },
+      { orgId: other.orgId, principalType: "agent", principalId: other.agentId, status: "active" },
+    ]);
+
+    const service = organizationMemberService(db);
+    const page = await service.list({ orgId: primary.orgId, limit: 1 });
+    expect(page.total).toBe(2);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({ name: "Ada", type: "human", role: "operator", ref: `usr_${humanId.replaceAll("-", "").slice(0, 8)}` });
+    expect(page.nextCursor).not.toBeNull();
+
+    const next = await service.list({ orgId: primary.orgId, limit: 1, cursor: page.nextCursor });
+    expect(next.items).toEqual([{ name: "Directory Agent", type: "agent", role: "engineer", ref: `agt_${primary.agentId.replaceAll("-", "").slice(0, 8)}` }]);
+    expect((await service.list({ orgId: primary.orgId, type: "human" })).items).toHaveLength(1);
+    expect((await service.list({ orgId: primary.orgId, query: "ada" })).items[0]?.name).toBe("Ada");
+    expect((await service.list({ orgId: other.orgId })).items[0]?.name).toBe("Other Agent");
+  });
 
   it("dedupes multi-linked chats, excludes the current chat scene, and keeps org scope", async () => {
     const primary = await seedOrgAgent("Primary");

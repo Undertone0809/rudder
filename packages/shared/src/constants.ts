@@ -276,6 +276,7 @@ export const RUDDER_BROWSER_MCP_SERVER_NAME = "rudder-browser" as const;
 export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_agent_me",
   "rudder_agent_inbox",
+  "rudder_organization_members_list",
   "rudder_agent_capabilities",
   "rudder_agent_update",
   "rudder_agent_skills_create",

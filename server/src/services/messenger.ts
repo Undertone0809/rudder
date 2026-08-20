@@ -33,6 +33,7 @@ import {
   isUuidLike,
   issueUpdatedChangedKeys,
   messengerSavedViewIdSchema,
+  shortRefFor,
   type AgentRole,
   type Approval,
   type BudgetIncident,
@@ -580,12 +581,21 @@ function issueCommentAuthorLabel(
   currentUserId: string | null,
 ) {
   if (!comment) return null;
-  if (comment.authorAgentId) return comment.authorAgentName?.trim() || `Agent ${comment.authorAgentId.slice(0, 8)}`;
+  if (comment.authorAgentId) return comment.authorAgentName?.trim() || `Agent ${shortPrincipalRef("agent", comment.authorAgentId)}`;
   if (comment.authorUserId) {
     if (currentUserId && comment.authorUserId === currentUserId) return "You";
-    return comment.authorUserName?.trim() || `User ${comment.authorUserId.slice(0, 8)}`;
+    return comment.authorUserName?.trim() || `User ${shortPrincipalRef("user", comment.authorUserId)}`;
   }
   return "System";
+}
+
+function shortPrincipalRef(kind: "agent" | "user", id: string) {
+  try {
+    return shortRefFor(kind, id);
+  } catch {
+    const compact = id.replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase() || "unknown";
+    return `${kind === "agent" ? "agt" : "usr"}_${compact}`;
+  }
 }
 
 function summarizeApprovalPayload(approval: ApprovalRow) {

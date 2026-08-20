@@ -32,6 +32,7 @@ async function repositoryCliVersion(): Promise<string> {
 }
 
 const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
+  rudder_organization_members_list: { query: "Ada", type: "human", limit: 10, cursor: "next-page" },
   rudder_agent_update: { title: "Runtime Agent" },
   rudder_agent_skills_create: { name: "local-helper", description: "Local helper" },
   rudder_agent_skills_enable: { selectionRefs: ["rudder/rudder-docs"] },
@@ -1244,6 +1245,51 @@ describe("agent-v1 MCP server", () => {
         details: { maxBytes: 1_000_000 },
       },
     });
+  });
+
+  it("dispatches the organization member directory directly with bounded filters", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/api/orgs/runtime-org/members/directory");
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        query: "Ada",
+        type: "human",
+        limit: "1",
+        cursor: "next-page",
+      });
+      expect(init?.method).toBe("GET");
+      return new Response(JSON.stringify({
+        total: 1,
+        items: [{ name: "Ada", type: "human", role: "operator", ref: "usr_14ff96a7" }],
+        nextCursor: null,
+        hasMore: false,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "organization-members",
+      method: "tools/call",
+      params: {
+        name: "rudder_organization_members_list",
+        arguments: { query: "Ada", type: "human", limit: 1, cursor: "next-page" },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        total: 1,
+        items: [{ name: "Ada", type: "human", role: "operator", ref: "usr_14ff96a7" }],
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("14ff96a7-2518-456a-8aae-480360f0d9aa");
   });
 
   it("keeps bounded oversized errors in the modern result envelope", async () => {

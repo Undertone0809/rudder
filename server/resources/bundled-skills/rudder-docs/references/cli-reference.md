@@ -47,6 +47,7 @@ operating-practices guide for operating behavior:
 | --- | --- | --- | --- | --- | --- | --- |
 | `rudder_agent_me` | `rudder agent me` | Show the authenticated agent identity and budget. | no | no | no | no |
 | `rudder_agent_inbox` | `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
+| `rudder_organization_members_list` | `rudder org members --org-id <id> [--query <text>] [--type <human|agent|all>] [--limit <n>] [--cursor <cursor>]` | List active visible human and agent members in the authenticated organization. | no | required | no | no |
 | `rudder_agent_capabilities` | `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
 | `rudder_agent_update` | `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
 | `rudder_agent_skills_create` | `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |

@@ -19,6 +19,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": false
   },
   {
+    "capabilityId": "organization.members.list",
+    "name": "rudder_organization_members_list",
+    "description": "List active visible human and agent members in the authenticated organization.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
     "capabilityId": "agent.capabilities",
     "name": "rudder_agent_capabilities",
     "description": "List the stable Rudder agent command contract.",
@@ -910,5 +919,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "be398a9df736442f6771b37d76f73dba0964d77acfbcfcf20ba67afcc307e49a";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "b033a5c52bb9b58ec9ec542ec5c1a400735f4e6768d346ba945aa36cf035c11a";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

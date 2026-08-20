@@ -48,6 +48,7 @@ describe("agent-v1 registry", () => {
     expect(manifest.capabilities.map((entry) => entry.id)).toEqual([
       "agent.me",
       "agent.inbox",
+      "organization.members.list",
       "agent.capabilities",
       "agent.update",
       "agent.skills.create",

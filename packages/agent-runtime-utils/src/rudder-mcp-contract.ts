@@ -274,6 +274,13 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
     case "project.list":
     case "skill.list":
       return schema({});
+    case "organization.members.list":
+      return schema({
+        query: string("Optional member name filter.", { maxLength: 2_000 }),
+        type: string("Member type filter.", { enum: ["human", "agent", "all"], maxLength: 10 }),
+        limit: number("Page size.", 1, 100),
+        cursor,
+      });
     case "agent.update":
       return schema({
         name: string("Agent name.", { maxLength: 200 }),

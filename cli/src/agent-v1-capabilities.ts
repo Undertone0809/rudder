@@ -26,6 +26,18 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     attachesRunIdWhenAvailable: false,
   },
   {
+    id: "organization.members.list",
+    command: "rudder org members --org-id <id> [--query <text>] [--type <human|agent|all>] [--limit <n>] [--cursor <cursor>]",
+    category: "organization",
+    description: "List active visible human and agent members in the authenticated organization.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
     id: "agent.capabilities",
     command: "rudder agent capabilities",
     category: "agent",

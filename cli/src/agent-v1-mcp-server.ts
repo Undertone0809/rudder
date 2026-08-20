@@ -40,6 +40,7 @@ import {
   type AgentV1McpToolManifestEntry
 } from "./agent-v1-registry.js";
 import { ApiRequestError, RudderApiClient } from "./client/http.js";
+import { toCliShortIdOutput } from "./commands/client/common.js";
 import { resolveCliVersion } from "./version.js";
 
 export { RUDDER_BROWSER_MCP_SERVER_NAME, RUDDER_MCP_SERVER_NAME };
@@ -625,7 +626,7 @@ async function callToolDirectlyIfSupported(
   if (hasLocalImageInputs(input.images)) return null;
   const api = mcpApiClient(env, signal);
   const success = (data: unknown) => mcpSuccess(
-    data,
+    toCliShortIdOutput(data),
     capabilityId.startsWith("browser.")
       ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
       : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
@@ -636,6 +637,15 @@ async function callToolDirectlyIfSupported(
       return success(await api.get("/api/agents/me"));
     case "agent.inbox":
       return success(await api.get("/api/agents/me/inbox-lite"));
+    case "organization.members.list": {
+      const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
+      const params = new URLSearchParams();
+      appendOptionalQuery(params, "query", input.query);
+      appendOptionalQuery(params, "type", input.type ?? "all");
+      params.set("limit", String(parsePositiveInteger(input.limit, 50)));
+      appendOptionalQuery(params, "cursor", input.cursor);
+      return success(await api.get(`/api/orgs/${encodeURIComponent(orgId)}/members/directory?${params}`));
+    }
     case "goal.list": {
       const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
       requiredRuntimeString(env, "RUDDER_AGENT_ID");
@@ -1081,6 +1091,15 @@ function cliArgsForCapability(
       return ["agent", "inbox"];
     case "agent.capabilities":
       return ["agent", "capabilities"];
+    case "organization.members.list": {
+      const args = ["org", "members"];
+      pushOptional(args, "--org-id", env.RUDDER_ORG_ID);
+      pushOptional(args, "--query", input.query);
+      pushOptional(args, "--type", input.type ?? "all");
+      pushOptional(args, "--limit", input.limit);
+      pushOptional(args, "--cursor", input.cursor);
+      return args;
+    }
     case "agent.update": {
       const args = ["agent", "update"];
       pushRuntimeAgentArg(args, input, env, false);

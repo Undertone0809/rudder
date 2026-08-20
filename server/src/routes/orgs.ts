@@ -38,6 +38,7 @@ import {
   organizationExportJobService,
   organizationIntelligenceProfileService,
   organizationIntelligenceRuntimeChainService,
+  organizationMemberService,
   organizationPortabilityService,
   organizationService,
   organizationSkillService,
@@ -120,6 +121,7 @@ export function organizationRoutes(
   const portability = organizationPortabilityService(db, storage);
   const organizationSkills = organizationSkillService(db);
   const intelligenceProfiles = organizationIntelligenceProfileService(db);
+  const members = organizationMemberService(db);
   const access = accessService(db);
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
@@ -246,6 +248,27 @@ export function organizationRoutes(
       return;
     }
     res.json(organization);
+  });
+
+  router.get("/:orgId/members/directory", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const rawType = typeof req.query.type === "string" ? req.query.type.trim().toLowerCase() : "all";
+    if (rawType !== "all" && rawType !== "human" && rawType !== "agent") {
+      throw unprocessable("Member directory type must be all, human, or agent.");
+    }
+    const rawLimit = typeof req.query.limit === "string" && req.query.limit.trim()
+      ? Number(req.query.limit)
+      : undefined;
+    const page = await members.list({
+      orgId,
+      query: typeof req.query.query === "string" ? req.query.query : null,
+      type: rawType,
+      limit: rawLimit,
+      cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
+      fullIds: req.query.fullIds === "true" || req.query.fullIds === "1",
+    });
+    res.json(page);
   });
 
   router.get("/:orgId/library/documents", async (req, res) => {
