@@ -10,6 +10,7 @@ export const ASSIGNMENT_RUN_TOTAL_FAILURE_LIMIT = 25;
 export const ASSIGNMENT_DEPENDENCY_PREFLIGHT_FAILURE_CODE = "assignment_dependency_preflight_failed";
 export const ASSIGNMENT_DEPENDENCY_REPAIR_COMMAND = "pnpm install --frozen-lockfile";
 export const ASSIGNMENT_DEPENDENCY_REPAIR_TIMEOUT_MS = 120_000;
+const ASSIGNMENT_DEPENDENCY_GRAPH_ARGS = ["list", "--depth", "-1", "--json"];
 
 type ToolFailure = Extract<TranscriptEntry, { kind: "tool_result" }>;
 type ToolCall = Extract<TranscriptEntry, { kind: "tool_call" }>;
@@ -74,6 +75,7 @@ export type AssignmentDependencyRepairOutcome = {
 type AssignmentWorkspaceInspector = (input: {
   actualCwd: string;
   projectWorkingSetCwd: string;
+  runCommand?: AssignmentRunCommandRunner;
 }) => Promise<AssignmentRunWorkspacePreflight>;
 
 const repairPromises = new Map<string, Promise<AssignmentDependencyRepairOutcome>>();
@@ -295,6 +297,7 @@ async function runPreflightCommand(command: string, args: string[], cwd: string)
 export async function inspectAssignmentRunWorkspace(input: {
   actualCwd: string;
   projectWorkingSetCwd: string;
+  runCommand?: AssignmentRunCommandRunner;
 }): Promise<AssignmentRunWorkspacePreflight> {
   const packageJsonPath = path.join(input.actualCwd, "package.json");
   const pnpmLockPath = path.join(input.actualCwd, "pnpm-lock.yaml");
@@ -316,10 +319,11 @@ export async function inspectAssignmentRunWorkspace(input: {
   const installedPackageManager = yamlScalar(modulesManifest, "packageManager");
   const configuredStoreDir = yamlScalar(modulesManifest, "storeDir");
   const configuredVirtualStoreDir = yamlScalar(modulesManifest, "virtualStoreDir");
-  const nodeCommand = packageJsonPresent ? await runPreflightCommand("node", ["--version"], input.actualCwd) : null;
-  const pnpmCommand = pnpmLockPresent ? await runPreflightCommand("pnpm", ["--version"], input.actualCwd) : null;
+  const runCommand = input.runCommand ?? runPreflightCommand;
+  const nodeCommand = packageJsonPresent ? await runCommand("node", ["--version"], input.actualCwd) : null;
+  const pnpmCommand = pnpmLockPresent ? await runCommand("pnpm", ["--version"], input.actualCwd) : null;
   const dependencyGraph = pnpmLockPresent && nodeModulesPresent && pnpmVirtualStorePresent
-    ? await runPreflightCommand("pnpm", ["list", "--depth", "-1", "--offline", "--json"], input.actualCwd)
+    ? await runCommand("pnpm", ASSIGNMENT_DEPENDENCY_GRAPH_ARGS, input.actualCwd)
     : null;
   const packageManagerMatches = !expectedPackageManager
     || !installedPackageManager

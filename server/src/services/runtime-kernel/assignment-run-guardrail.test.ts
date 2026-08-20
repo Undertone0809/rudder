@@ -123,6 +123,32 @@ describe("assignment run guardrail", () => {
     });
   }, 15_000);
 
+  it("uses the pnpm-supported read-only dependency graph command", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-preflight-command-"));
+    tempDirs.push(cwd);
+    await fs.writeFile(path.join(cwd, "package.json"), JSON.stringify({ packageManager: "pnpm@9.15.4" }), "utf8");
+    await fs.writeFile(path.join(cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'", "utf8");
+    await fs.mkdir(path.join(cwd, "node_modules", ".pnpm"), { recursive: true });
+    const runCommand = vi.fn(async (_command: string, _args: string[], _cwd: string) => ({
+      ok: true,
+      output: "[]",
+    }));
+
+    await expect(inspectAssignmentRunWorkspace({
+      actualCwd: cwd,
+      projectWorkingSetCwd: cwd,
+      runCommand,
+    })).resolves.toMatchObject({
+      dependencyGraphAvailable: true,
+      ready: true,
+    });
+    expect(runCommand).toHaveBeenCalledWith(
+      "pnpm",
+      ["list", "--depth", "-1", "--json"],
+      cwd,
+    );
+  });
+
   it("coalesces one dependency repair and suppresses an unchanged failed readiness state", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-repair-"));
     tempDirs.push(cwd);
