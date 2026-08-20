@@ -12,11 +12,14 @@ import {
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
 } from "@rudderhq/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { __clearWebsiteIconFailureCacheForTests } from "../lib/website-icon-cache";
+import { __clearWebsiteMetadataCacheForTests } from "../lib/website-metadata-cache";
 import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import type { MentionOption } from "./MarkdownEditor";
 import {
   applyMention,
+  createMilkdownWebsiteIconElement,
   fragmentContainsRudderToken,
   getMilkdownProseMirrorView,
   hasRudderMarkdownReference,
@@ -28,6 +31,8 @@ import {
   issueMentionsFromMarkdown,
   mentionMarkdown,
   milkdownMentionDecorationAttrs,
+  milkdownWebsiteLinkRanges,
+  milkdownWebsiteUrlFromHref,
   moveSelectionAfterRudderTokenBoundary,
   readCanonicalFragmentMarkdown,
   refreshMilkdownMentionTokenStyles,
@@ -37,6 +42,115 @@ import {
   shouldParsePastedMarkdown,
   stabilizeRudderTokenBoundary,
 } from "./MilkdownMarkdownEditor";
+
+const websiteMetadataMocks = vi.hoisted(() => ({
+  get: vi.fn(),
+}));
+
+vi.mock("../api/websiteMetadata", () => ({
+  websiteMetadataApi: websiteMetadataMocks,
+}));
+
+beforeEach(() => {
+  websiteMetadataMocks.get.mockReset();
+  __clearWebsiteIconFailureCacheForTests();
+  __clearWebsiteMetadataCacheForTests();
+});
+
+afterEach(() => {
+  __clearWebsiteIconFailureCacheForTests();
+  __clearWebsiteMetadataCacheForTests();
+});
+
+function websiteTextNode(text: string, href: string) {
+  return {
+    isText: true,
+    nodeSize: text.length,
+    text,
+    marks: [{ type: { name: "link" }, attrs: { href } }],
+  };
+}
+
+describe("Milkdown website link icons", () => {
+  it("accepts displayable HTTP(S) URLs and filters unsafe or same-origin targets", () => {
+    expect(milkdownWebsiteUrlFromHref("https://example.com/docs#intro")?.href)
+      .toBe("https://example.com/docs#intro");
+    expect(milkdownWebsiteUrlFromHref("mailto:hello@example.com")).toBeNull();
+    expect(milkdownWebsiteUrlFromHref("http://127.0.0.1:8080/private")?.href)
+      .toBe("http://127.0.0.1:8080/private");
+    expect(milkdownWebsiteUrlFromHref("https://user:password@example.com/private")).toBeNull();
+    expect(milkdownWebsiteUrlFromHref(`${window.location.origin}/issues/R-1`)).toBeNull();
+  });
+
+  it("merges adjacent text nodes for one website link and excludes non-website marks", () => {
+    const doc = {
+      content: { size: 40 },
+      descendants(callback: (node: ReturnType<typeof websiteTextNode>, pos: number) => void) {
+        callback(websiteTextNode("GitHub", "https://github.com/rudder"), 1);
+        callback(websiteTextNode(" docs", "https://github.com/rudder"), 7);
+        callback(websiteTextNode("Example", "https://example.com/docs"), 20);
+        callback(websiteTextNode("private", "http://127.0.0.1/private"), 28);
+        callback(websiteTextNode("R-1", "issue://issue-1?ref=R-1"), 36);
+      },
+    } as Parameters<typeof milkdownWebsiteLinkRanges>[0];
+
+    expect(milkdownWebsiteLinkRanges(doc)).toEqual([
+      { from: 1, to: 12, href: "https://github.com/rudder" },
+      { from: 20, to: 27, href: "https://example.com/docs" },
+      { from: 28, to: 35, href: "http://127.0.0.1/private" },
+    ]);
+  });
+
+  it("keeps private links on the generic placeholder without requesting metadata", () => {
+    const host = createMilkdownWebsiteIconElement("http://127.0.0.1:8080/private");
+
+    expect(websiteMetadataMocks.get).not.toHaveBeenCalled();
+    expect(host.dataset.websiteIcon).toBe("generic");
+    expect(host.querySelector("img[src]")).toBeNull();
+  });
+
+  it("loads known icons without metadata and keeps a stable generic placeholder until load", () => {
+    const host = createMilkdownWebsiteIconElement("https://github.com/rudder");
+    const image = host.querySelector<HTMLImageElement>("img.rudder-website-link-logo");
+
+    expect(websiteMetadataMocks.get).not.toHaveBeenCalled();
+    expect(host.dataset.websiteIcon).toBe("generic");
+    expect(image?.getAttribute("src")).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+    expect(image?.style.visibility).toBe("hidden");
+
+    image?.dispatchEvent(new Event("load"));
+
+    expect(host.dataset.websiteIcon).toBe("metadata");
+    expect(image?.style.visibility).toBe("visible");
+  });
+
+  it("falls back to the generic icon and avoids retrying a failed metadata icon", async () => {
+    const href = "https://metadata.example.test/article";
+    const iconUrl = "/api/website-metadata/icon?url=https%3A%2F%2Fmetadata.example.test%2Ffavicon.ico";
+    websiteMetadataMocks.get.mockResolvedValue({
+      url: href,
+      siteName: "Metadata Example",
+      pageTitle: null,
+      iconUrl,
+    });
+
+    const firstHost = createMilkdownWebsiteIconElement(href);
+    await vi.waitFor(() => {
+      expect(websiteMetadataMocks.get).toHaveBeenCalledWith(href, "preview");
+      expect(firstHost.querySelector("img")?.getAttribute("src")).toBe(iconUrl);
+    });
+    const firstImage = firstHost.querySelector<HTMLImageElement>("img");
+    firstImage?.dispatchEvent(new Event("error"));
+
+    expect(firstHost.dataset.websiteIcon).toBe("generic");
+    expect(firstImage?.getAttribute("src")).toBeNull();
+
+    const secondHost = createMilkdownWebsiteIconElement(href);
+    await Promise.resolve();
+    expect(secondHost.querySelector("img")?.getAttribute("src")).toBeNull();
+    expect(websiteMetadataMocks.get).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("isMilkdownEditableUnexpectedlyBlank", () => {
   it("detects a non-empty markdown document whose editable DOM came back empty", () => {

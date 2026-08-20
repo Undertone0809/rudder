@@ -6,6 +6,25 @@ const modifier: "Meta" | "Control" = process.platform === "darwin" ? "Meta" : "C
 
 test("opens a Library Issue reference in the Side Panel without replacing the document", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  let expectedSaveConflictConsoleErrors = 0;
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    if (
+      expectedSaveConflictConsoleErrors > 0
+      && message.text() === "Failed to load resource: the server responded with a status of 409 (Conflict)"
+    ) {
+      expectedSaveConflictConsoleErrors -= 1;
+      return;
+    }
+    consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
+  });
   const suffix = Date.now();
   const organizationResponse = await page.request.post("/api/orgs", {
     data: { name: `Library-Issue-Side-Panel-${suffix}` },
@@ -13,10 +32,52 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
   expect(organizationResponse.ok(), await organizationResponse.text()).toBe(true);
   const organization = await organizationResponse.json() as { id: string; issuePrefix: string; urlKey: string };
 
+  const knownWebsiteUrl = "https://rudderhq.dev/docs";
+  const metadataWebsiteUrl = "https://example.org/side-panel-metadata";
+  const metadataIconUrl = "/api/website-metadata/icon?url=https%3A%2F%2Fexample.org%2Fside-panel-metadata.ico";
+  const privateWebsiteUrl = "http://127.0.0.1:3100/private";
+  const issueDescription = [
+    "The Library document should remain visible while this Issue opens in the Side Panel.",
+    `Known [Rudder docs](${knownWebsiteUrl}) and fetched [metadata icon](${metadataWebsiteUrl}).`,
+    `Private [internal link](${privateWebsiteUrl}) keeps the generic fallback.`,
+  ].join("\n\n");
+  const metadataRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/website-metadata")) metadataRequests.push(request.url());
+  });
+  await page.route("**/api/website-metadata?**", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    if (requestUrl.searchParams.get("url") !== metadataWebsiteUrl) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        url: metadataWebsiteUrl,
+        siteName: "Example",
+        pageTitle: null,
+        iconUrl: metadataIconUrl,
+      }),
+    });
+  });
+  await page.route("**/api/website-metadata/icon?**", async (route) => {
+    if (!route.request().url().includes(encodeURIComponent(metadataWebsiteUrl))) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "image/svg+xml",
+      body: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" rx=\"3\" fill=\"#2563eb\"/></svg>",
+    });
+  });
+
   const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
       title: "Inspect this Issue beside the Library document",
-      description: "The Library document should remain visible while this Issue opens in the Side Panel.",
+      description: issueDescription,
       status: "todo",
       priority: "medium",
     },
@@ -126,6 +187,22 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
   await expect(sidePanel).toBeVisible({ timeout: 15_000 });
   await expect(sidePanel.getByTestId("chat-side-panel-issue-view")).toBeVisible();
   await expect(sidePanel.getByRole("heading", { name: issue.title })).toBeVisible();
+  const sidePanelDescription = sidePanel.locator(".rudder-milkdown-content").first();
+  await expect(sidePanelDescription).toContainText("Rudder docs");
+  const websiteIcons = sidePanelDescription.locator(".rudder-milkdown-website-icon");
+  await expect(websiteIcons).toHaveCount(3);
+  await expect(websiteIcons.nth(0)).toHaveAttribute("data-website-icon", "metadata");
+  await expect(websiteIcons.nth(0).locator("img")).toHaveAttribute("src", /^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+  await expect(websiteIcons.nth(1)).toHaveAttribute("data-website-icon", "metadata");
+  await expect(websiteIcons.nth(1).locator("img")).toHaveAttribute("src", metadataIconUrl);
+  await expect(websiteIcons.nth(2)).toHaveAttribute("data-website-icon", "generic");
+  await expect(websiteIcons.nth(2).locator("img[src]")).toHaveCount(0);
+  expect(metadataRequests.some((url) => url.includes(encodeURIComponent(metadataWebsiteUrl)))).toBe(true);
+  expect(metadataRequests.some((url) => url.includes(encodeURIComponent(knownWebsiteUrl)))).toBe(false);
+  expect(metadataRequests.some((url) => url.includes(encodeURIComponent(privateWebsiteUrl)))).toBe(false);
+  const persistedIssueResponse = await page.request.get(`/api/issues/${issue.id}`);
+  expect(persistedIssueResponse.ok(), await persistedIssueResponse.text()).toBe(true);
+  expect((await persistedIssueResponse.json() as { description: string | null }).description).toBe(issueDescription);
   await expect.poll(() => new URL(page.url()).pathname + new URL(page.url()).search).toBe(routeBeforeOpen);
   await expect(page.getByTestId("workspace-column-resizer")).toHaveCount(0);
   await expect(page.getByTestId("side-panel-resizer")).toBeVisible();
@@ -207,5 +284,51 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
   await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/issues/${issueRef}$`));
   await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
 
+  const releasedSaveResponse = page.waitForResponse((response) => (
+    response.request().method() === "PATCH"
+    && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
+    && response.status() === 409
+  ));
+  expectedSaveConflictConsoleErrors = 1;
   releaseSave?.();
+  await releasedSaveResponse;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(routeBeforeOpen);
+  const mobileEditor = page.getByTestId("org-workspaces-markdown-editor");
+  await expect(mobileEditor).toContainText(marker, { timeout: 15_000 });
+  await mobileEditor.evaluate((element) => {
+    const scrollables = [element, ...Array.from(element.querySelectorAll<HTMLElement>("*"))]
+      .filter((candidate) => candidate.scrollHeight > candidate.clientHeight);
+    for (const scrollable of scrollables) {
+      scrollable.scrollTop = scrollable.scrollHeight;
+    }
+  });
+  await page.evaluate(() => {
+    window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+  });
+  await expect(mobileEditor).toContainText("Review section 69", { timeout: 15_000 });
+  const mobileIssueLink = page
+    .locator('[data-mention-kind="issue"]')
+    .first();
+  await mobileIssueLink.scrollIntoViewIfNeeded();
+  await expect(mobileIssueLink).toBeVisible({ timeout: 15_000 });
+  await expect(mobileIssueLink).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));
+  await mobileIssueLink.click();
+  await expect(page).toHaveURL(new RegExp(`/issues/${issue.id}$`));
+  const mobileDescription = page.getByTestId("issue-detail-primary-content");
+  const mobileWebsiteIcons = mobileDescription.locator(
+    ".rudder-codemirror-markdown-website .rudder-website-link-icon",
+  );
+  await expect(mobileWebsiteIcons).toHaveCount(3);
+  await expect(mobileWebsiteIcons.nth(2))
+    .toHaveAttribute("data-website-icon", "generic");
+  await page.screenshot({
+    path: testInfo.outputPath("library-issue-side-panel-mobile.png"),
+    fullPage: false,
+  });
+
+  expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
+  expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
+  const unexpectedRequestFailures = requestFailures.filter((failure) => !failure.endsWith("net::ERR_ABORTED"));
+  expect(unexpectedRequestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
 });

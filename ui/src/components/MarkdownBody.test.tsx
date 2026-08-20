@@ -2415,7 +2415,7 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
   });
 
-  it("uses known website icons without fetching metadata", () => {
+  it("uses known website icons without fetching metadata", async () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -2433,6 +2433,15 @@ describe("MarkdownBody", () => {
     );
     for (const link of links) {
       expect(link.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
+      expect(link.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    }
+    await act(async () => {
+      for (const logo of logos) {
+        logo?.dispatchEvent(new Event("load", { bubbles: false }));
+      }
+      await Promise.resolve();
+    });
+    for (const link of links) {
       expect(link.querySelector("[data-website-icon='generic']")).toBeNull();
     }
     expect(links[4]?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-dark-mode")).toBe("invert");
@@ -2634,6 +2643,19 @@ describe("MarkdownBody", () => {
 
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+
+    cleanupFn?.();
+    cleanupFn = null;
+    const remounted = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [post](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    expect(remounted.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(remounted.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledTimes(1);
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {
