@@ -42,6 +42,14 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
     `Private [internal link](${privateWebsiteUrl}) keeps the generic fallback.`,
   ].join("\n\n");
   const metadataRequests: string[] = [];
+  let markMetadataIconRequested: (() => void) | null = null;
+  let releaseMetadataIcon: (() => void) | null = null;
+  const metadataIconRequested = new Promise<void>((resolve) => {
+    markMetadataIconRequested = resolve;
+  });
+  const metadataIconRelease = new Promise<void>((resolve) => {
+    releaseMetadataIcon = resolve;
+  });
   page.on("request", (request) => {
     if (request.url().includes("/api/website-metadata")) metadataRequests.push(request.url());
   });
@@ -67,6 +75,8 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
       await route.continue();
       return;
     }
+    markMetadataIconRequested?.();
+    await metadataIconRelease;
     await route.fulfill({
       status: 200,
       contentType: "image/svg+xml",
@@ -193,8 +203,20 @@ test("opens a Library Issue reference in the Side Panel without replacing the do
   await expect(websiteIcons).toHaveCount(3);
   await expect(websiteIcons.nth(0)).toHaveAttribute("data-website-icon", "metadata");
   await expect(websiteIcons.nth(0).locator("img")).toHaveAttribute("src", /^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
-  await expect(websiteIcons.nth(1)).toHaveAttribute("data-website-icon", "metadata");
   await expect(websiteIcons.nth(1).locator("img")).toHaveAttribute("src", metadataIconUrl);
+  await metadataIconRequested;
+  const loadingBox = await websiteIcons.nth(1).boundingBox();
+  expect(loadingBox).not.toBeNull();
+  const loadingWidth = loadingBox?.width ?? 0;
+  const loadingHeight = loadingBox?.height ?? 0;
+  expect(loadingWidth).toBeGreaterThan(10);
+  expect(loadingHeight).toBeGreaterThan(10);
+  releaseMetadataIcon?.();
+  await expect(websiteIcons.nth(1)).toHaveAttribute("data-website-icon", "metadata");
+  const loadedBox = await websiteIcons.nth(1).boundingBox();
+  expect(loadedBox).not.toBeNull();
+  expect(Math.abs((loadedBox?.width ?? 0) - loadingWidth)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs((loadedBox?.height ?? 0) - loadingHeight)).toBeLessThanOrEqual(0.5);
   await expect(websiteIcons.nth(2)).toHaveAttribute("data-website-icon", "generic");
   await expect(websiteIcons.nth(2).locator("img[src]")).toHaveCount(0);
   expect(metadataRequests.some((url) => url.includes(encodeURIComponent(metadataWebsiteUrl)))).toBe(true);

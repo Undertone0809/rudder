@@ -476,6 +476,11 @@ interface CachedWebsiteMetadataIcon {
   state: WebsiteMetadataIconState;
 }
 
+interface WebsiteMetadataIconStateEntry {
+  href: string;
+  state: WebsiteMetadataIconState;
+}
+
 const WEBSITE_ICON_CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_WEBSITE_ICON_CACHE_ENTRIES = 256;
 const websiteMetadataIconCache = new Map<string, CachedWebsiteMetadataIcon>();
@@ -519,37 +524,44 @@ export function resolvedWebsiteIconUrl(value: string | URL) {
   const knownIcon = resolveKnownWebsiteIcon(url);
   if (knownIcon && !isWebsiteIconUrlKnownFailed(knownIcon.iconDataUrl)) return knownIcon.iconDataUrl;
 
-  const cached = websiteMetadataIconCache.get(url.href);
-  return cached?.state.status === "ready" && !isWebsiteIconUrlKnownFailed(cached.state.iconUrl)
-    ? cached.state.iconUrl
+  const cached = readWebsiteMetadataIconCache(url.href);
+  return cached?.status === "ready" && !isWebsiteIconUrlKnownFailed(cached.iconUrl)
+    ? cached.iconUrl
     : null;
 }
 
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
   const knownIcon = resolveKnownWebsiteIcon(url);
-  const [state, setState] = useState<WebsiteMetadataIconState>(
-    () => knownIcon
+  const [entry, setEntry] = useState<WebsiteMetadataIconStateEntry>(() => ({
+    href,
+    state: knownIcon
       ? { status: "ready", iconUrl: knownIcon.iconDataUrl }
       : readWebsiteMetadataIconCache(href) ?? { status: "idle", iconUrl: null },
-  );
+  }));
+  const state = entry.href === href
+    ? entry.state
+    : knownIcon
+      ? { status: "ready", iconUrl: knownIcon.iconDataUrl }
+      : { status: "loading", iconUrl: null };
 
   useEffect(() => {
     if (knownIcon) {
       const nextState: WebsiteMetadataIconState = { status: "ready", iconUrl: knownIcon.iconDataUrl };
       writeWebsiteMetadataIconCache(href, nextState);
-      setState(nextState);
+      setEntry({ href, state: nextState });
       return;
     }
 
     const cached = readWebsiteMetadataIconCache(href);
     if (cached && cached.status !== "loading") {
-      setState(cached);
+      setEntry({ href, state: cached });
       return;
     }
 
     const loadingState: WebsiteMetadataIconState = { status: "loading", iconUrl: null };
     writeWebsiteMetadataIconCache(href, loadingState);
+    setEntry({ href, state: loadingState });
 
     let cancelled = false;
     const request = Promise.resolve(getWebsiteMetadata(href, "preview"))
@@ -566,7 +578,7 @@ function useWebsiteMetadataIcon(url: URL) {
     request
       .then((nextState) => {
         writeWebsiteMetadataIconCache(href, nextState);
-        if (!cancelled) setState(nextState);
+        if (!cancelled) setEntry({ href, state: nextState });
       });
 
     return () => {
@@ -582,10 +594,11 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
   const knownIcon = resolveKnownWebsiteIcon(url);
   const [failedIconUrls, setFailedIconUrls] = useState<Set<string>>(() => new Set());
   const [loadedIconUrls, setLoadedIconUrls] = useState<Set<string>>(() => new Set());
-  const iconUrl = metadataIcon.status === "ready"
-    && !failedIconUrls.has(metadataIcon.iconUrl)
-    && !isWebsiteIconUrlKnownFailed(metadataIcon.iconUrl)
-    ? metadataIcon.iconUrl
+  const resolvedIconUrl = metadataIcon.status === "ready" ? metadataIcon.iconUrl : null;
+  const iconUrl = resolvedIconUrl
+    && !failedIconUrls.has(resolvedIconUrl)
+    && !isWebsiteIconUrlKnownFailed(resolvedIconUrl)
+    ? resolvedIconUrl
     : null;
 
   if (iconUrl) {
