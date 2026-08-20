@@ -537,7 +537,7 @@ test("Library markdown tables stay wide with an outline and preserve cell saves"
   await expect(table).toBeVisible();
   await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
 
-  const desktopMetrics = await table.evaluate((element) => {
+  const readDesktopMetrics = async () => table.evaluate((element) => {
     const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
     const editor = element.closest<HTMLElement>("[data-editor-engine]");
     const lines = Array.from(editor?.querySelectorAll<HTMLElement>(".cm-line") ?? []);
@@ -558,6 +558,14 @@ test("Library markdown tables stay wide with an outline and preserve cell saves"
       overflowX: tableViewport ? getComputedStyle(tableViewport).overflowX : "",
     };
   });
+  await expect.poll(
+    async () => {
+      const metrics = await readDesktopMetrics();
+      return metrics.tableWidth - metrics.paragraphLineWidth;
+    },
+    { timeout: 5_000 },
+  ).toBeGreaterThan(100);
+  const desktopMetrics = await readDesktopMetrics();
 
   expect(desktopMetrics.tableWidth).toBeGreaterThan(desktopMetrics.paragraphLineWidth + 100);
   expect(desktopMetrics.headingLineWidth).toBeLessThanOrEqual(880);
