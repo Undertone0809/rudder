@@ -61,6 +61,7 @@ import type { MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PropertiesManifest, PropertiesManifestSheet, PropertiesManifestTrigger } from "../components/PropertiesManifest";
 import { StatusBadge } from "../components/StatusBadge";
+import { StatusIcon } from "../components/StatusIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -160,6 +161,17 @@ type ChangeDecisionInput = {
   id: string;
   decision: "approve" | "reject";
 };
+
+const goalStatusIconStatus: Record<string, string> = {
+  planned: "todo",
+  active: "in_progress",
+  achieved: "done",
+  cancelled: "cancelled",
+};
+
+function goalStatusLabel(status: string) {
+  return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
 const GOAL_DETAIL_TABS = ["conversation", "activity"] as const;
 type GoalDetailTab = (typeof GOAL_DETAIL_TABS)[number];
@@ -1692,7 +1704,11 @@ export function GoalDetail() {
       </PropertyRow>
 
       <PropertyRow label="Status">
-        <span className="min-w-0 break-words text-sm capitalize">{lifecycle}</span>
+        <StatusIcon
+          status={goalStatusIconStatus[goal.status] ?? "todo"}
+          label={goalStatusLabel(goal.status)}
+          showLabel
+        />
       </PropertyRow>
 
       <PropertyRow label="Target">

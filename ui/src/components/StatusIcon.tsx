@@ -18,6 +18,7 @@ interface StatusIconProps {
   onChange?: (status: string) => void;
   className?: string;
   showLabel?: boolean;
+  label?: string;
   dataSlot?: string;
 }
 
@@ -165,16 +166,17 @@ function StatusPickerOption({
   );
 }
 
-export function StatusIcon({ status, onChange, className, showLabel, dataSlot }: StatusIconProps) {
+export function StatusIcon({ status, onChange, className, showLabel, label, dataSlot }: StatusIconProps) {
   const [open, setOpen] = useState(false);
   const icon = <IssueStatusGlyph status={status} className={className} dataSlot={dataSlot} />;
+  const displayLabel = label ?? statusLabel(status);
 
-  if (!onChange) return showLabel ? <span className="inline-flex items-center gap-1.5">{icon}<span className="text-sm">{statusLabel(status)}</span></span> : icon;
+  if (!onChange) return showLabel ? <span className="inline-flex items-center gap-1.5">{icon}<span className="text-sm">{displayLabel}</span></span> : icon;
 
   const trigger = showLabel ? (
     <button type="button" className="-mx-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
       {icon}
-      <span className="text-sm">{statusLabel(status)}</span>
+      <span className="text-sm">{displayLabel}</span>
     </button>
   ) : (
     <button type="button" className="inline-flex cursor-pointer items-center justify-center rounded-sm transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">

@@ -504,6 +504,11 @@ test.describe("Goal Workspace v2", () => {
     await expect(activityViews.getByRole("tab", { name: /Activity/ })).toBeVisible();
     await expect(activityViews.getByRole("tab", { name: /Work|Evidence/ })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Comments", exact: true })).toBeVisible();
+    const goalProperties = page.getByRole("region", { name: "Goal properties" });
+    const goalStatus = goalProperties.locator('[data-slot="issue-property-row"]').filter({ hasText: "Status" }).first();
+    await expect(goalStatus.locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "in_progress");
+    await expect(goalStatus).toContainText("Active");
+    await expect(goalStatus.getByRole("button")).toHaveCount(0);
     const goalOverview = page.getByLabel("Goal overview");
     await expect(goalOverview.getByText("Outcome", { exact: true })).toBeVisible();
     await expect(goalOverview.getByText("Current progress", { exact: true })).toBeVisible();

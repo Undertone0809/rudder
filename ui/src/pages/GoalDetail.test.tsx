@@ -407,6 +407,16 @@ describe("GoalDetail", () => {
     expect(button(container, "Rename")).toBeNull();
   });
 
+  it("renders Goal status with the Issue status icon while keeping the Goal label", async () => {
+    const container = renderPage();
+    await waitUntil(() => expect(container.querySelector('[aria-label="Goal properties"]')).not.toBeNull());
+
+    const statusRow = Array.from(container.querySelectorAll('[data-slot="issue-property-row"]'))
+      .find((row) => row.querySelector("span")?.textContent === "Status");
+    expect(statusRow?.querySelector('[data-slot="issue-status-icon"]')?.getAttribute("data-status")).toBe("in_progress");
+    expect(statusRow?.textContent).toContain("Active");
+  });
+
   it("renders the Goal Workspace in operational order without standard low-level fields", async () => {
     search = "";
     const { container, rerender } = renderPageWithClient();
