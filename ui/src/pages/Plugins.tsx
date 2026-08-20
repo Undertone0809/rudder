@@ -799,8 +799,8 @@ export function Plugins() {
   if (!selectedOrganizationId) return <div className="p-6 text-sm text-muted-foreground">Select an Organization.</div>;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[color:color-mix(in_oklab,var(--surface-page)_58%,var(--surface-elevated))]">
-      <div className="shrink-0 border-b border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_72%,var(--surface-page))] px-4 py-2.5 md:px-6">
+    <div data-testid="plugin-hub" className="flex h-full min-h-0 flex-col bg-transparent">
+      <div data-testid="plugin-hub-header" className="shrink-0 border-b border-[color:var(--border-soft)] bg-transparent px-4 py-2.5 md:px-6">
         <div className="relative mb-2.5 md:hidden">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input

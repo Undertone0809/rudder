@@ -236,6 +236,8 @@ test.describe("Plugins V1", () => {
     await expect(page.getByTestId("hub-empty-installed")).toContainText("No plugins yet");
     await expect(page.getByTestId("hub-empty-marketplace")).toContainText("No plugins match this search");
     await expect(page.getByTestId("primary-rail").getByText("Hub", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("plugin-hub")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(page.getByTestId("plugin-hub-header")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 
     const existingSkill = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/skills`, {
       data: {
