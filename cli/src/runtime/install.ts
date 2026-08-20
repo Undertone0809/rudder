@@ -1283,7 +1283,7 @@ async function downloadSharedRuntimePostgresPayload(
     const archivePath = path.join(workDir, "postgresql-18.4.zip");
     const extractDir = path.join(workDir, "extract");
     try {
-      await downloadRuntimePostgresArchive(archiveUrl, archivePath);
+      await downloadRuntimePostgresArchive(archiveUrl, archivePath, archiveSource?.expectedSha256);
 
       const configuredMaxBytes = Number.parseInt(process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES_ENV] ?? "", 10);
       const maxArchiveBytes = Number.isSafeInteger(configuredMaxBytes) && configuredMaxBytes > 0

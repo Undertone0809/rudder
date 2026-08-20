@@ -10,8 +10,13 @@ const RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV = "RUDDER_POSTGRES_RUNTIME_ARCH
 const RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES";
 const DEFAULT_RUNTIME_POSTGRES_ARCHIVE_MAX_BYTES = 1_024 * 1024 * 1024;
 
-export async function downloadRuntimePostgresArchive(url: string, targetPath: string): Promise<void> {
-  const expectedSha256 = process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV]?.trim().toLowerCase() || null;
+export async function downloadRuntimePostgresArchive(
+  url: string,
+  targetPath: string,
+  trustedSha256?: string | null,
+): Promise<void> {
+  const expectedSha256 = (trustedSha256 ?? process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV])
+    ?.trim().toLowerCase() || null;
   if (expectedSha256 && !/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error(`${RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV} must be a 64-character SHA-256 digest`);
   }
