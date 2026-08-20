@@ -175,7 +175,7 @@ export function RunTranscriptView({
 
   if (presentation === "chat") {
     return (
-      <div className={className}>
+      <div className={cn("w-full min-w-0", className)}>
         <TranscriptChatTimeline
           entries={visibleNiceEntries}
           density={density}

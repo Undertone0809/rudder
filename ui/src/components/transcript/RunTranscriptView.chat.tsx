@@ -14,6 +14,8 @@ import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 import { TranscriptUnifiedDiff, parseUnifiedDiff } from "./TranscriptUnifiedDiff";
 
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
+const CHAT_READING_COLUMN_CLASS = "w-full min-w-0 max-w-3xl px-1";
+const CHAT_FULL_COLUMN_CLASS = "w-full min-w-0";
 const TranscriptTextContext = createContext<(text: string) => string>((text) => text);
 
 function useTranscriptText() {
@@ -1176,7 +1178,7 @@ export function TranscriptChatTurn({
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
   const content = segments.length > 0 ? (
-    <div className={cn(density === "compact" ? "space-y-1" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
+    <div className={cn("w-full min-w-0", density === "compact" ? "space-y-1" : "space-y-3")} title={getTranscriptTimestampTitle(turn.ts)}>
       {segments.map((segment, index) => {
         if (detailVariant) {
           return segment.type === "block" ? (
@@ -1225,8 +1227,8 @@ export function TranscriptChatTurn({
               }
               className={cn(
                 segment.block.type === "message" && segment.block.source === "steer"
-                  ? "w-full"
-                  : "max-w-3xl px-1",
+                  ? CHAT_FULL_COLUMN_CLASS
+                  : CHAT_READING_COLUMN_CLASS,
               )}
             >
               {renderTranscriptBlock({
@@ -1248,7 +1250,7 @@ export function TranscriptChatTurn({
             <div
               key={segment.key}
               data-transcript-chat-column="reading"
-              className="max-w-3xl px-1"
+              className={CHAT_READING_COLUMN_CLASS}
             >
               <TranscriptChatActionGroup
                 actions={segment.actions}
@@ -1498,14 +1500,14 @@ export function TranscriptChatTimeline({
 
   return (
     <TranscriptTextContext.Provider value={localizeText}>
-      <div className="space-y-3">
+      <div className="w-full min-w-0 space-y-3">
       {preludeBlocks.map((block, index) => {
         const fullWidth = block.type === "message" && block.source === "steer";
         return (
           <div
             key={`${block.type}-${block.ts}-${index}`}
             data-transcript-chat-column={fullWidth ? "full" : "reading"}
-            className={cn(fullWidth ? "w-full" : "max-w-3xl px-1")}
+            className={fullWidth ? CHAT_FULL_COLUMN_CLASS : CHAT_READING_COLUMN_CLASS}
           >
             {renderTranscriptBlock({
               block,
