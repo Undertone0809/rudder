@@ -139,6 +139,16 @@ describe("unified delivery workflows", () => {
     expect(stableMirror).toContain("github-token: ${{ github.token }}");
   });
 
+  it("supports an explicit stable release scope that skips Tencent COS", () => {
+    const stableMirror = workflowJob(releaseWorkflow, "mirror-stable");
+    expect(releaseWorkflow).toContain("skip_mirror:");
+    expect(releaseWorkflow).toContain('description: "Skip Tencent COS mirroring for this stable release"');
+    expect(stableMirror).toContain("github.event.inputs.skip_mirror != 'true'");
+    expect(stableMirror).toContain("github.event.inputs.skip_mirror == 'true'");
+    expect(stableMirror).toContain("Tencent COS mirroring skipped by explicit release scope.");
+    expect(stableMirror).toContain("--phase checksum");
+  });
+
   it("supports explicit COS-only recovery from frozen stable artifacts", () => {
     const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
     expect(releaseWorkflow).toContain("mirror_recovery:");

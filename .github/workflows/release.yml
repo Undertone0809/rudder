@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip_mirror:
+        description: "Skip Tencent COS mirroring for this stable release"
+        required: true
+        type: boolean
+        default: false
       recovery_tag:
         description: "Existing stable tag to mirror during mirror recovery, for example v0.7.7"
         required: false
@@ -946,6 +951,7 @@ jobs:
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
           shasum -a 256 Rudder-* > SHASUMS256.txt
       - name: Mirror GitHub binaries to Tencent COS
+        if: github.event.inputs.skip_mirror != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
@@ -971,6 +977,9 @@ jobs:
             fi
             sleep $((attempt * 15))
           done
+      - name: Record explicit Tencent COS skip
+        if: github.event.inputs.skip_mirror == 'true'
+        run: echo "Tencent COS mirroring skipped by explicit release scope."
       - name: Publish GitHub checksum completion marker
         env:
           GH_TOKEN: ${{ github.token }}
