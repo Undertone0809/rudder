@@ -13,7 +13,10 @@ import type { McpDeploymentAllowlists } from "../services/mcp/security-policy.js
 import type { StorageService } from "../storage/types.js";
 
 export type UiMode = "none" | "static" | "vite-dev";
-export type NetworkWaitingRun = typeof heartbeatRuns.$inferSelect;
+export type NetworkWaitingRun = typeof heartbeatRuns.$inferSelect & {
+  /** Set by the recovery coordinator when the bounded network retry policy is exhausted. */
+  networkRecoveryExhausted?: boolean;
+};
 
 export interface RudderAppOptions {
   uiMode: UiMode;

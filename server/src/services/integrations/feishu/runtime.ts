@@ -835,7 +835,9 @@ export function feishuIntegrationRuntimeService(
     chatConversationId: string | null;
     executionOwnerToken: string | null;
     contextSnapshot: Record<string, unknown> | null;
+    networkRecoveryExhausted?: boolean;
   }): Promise<boolean> {
+    if (run.networkRecoveryExhausted) return false;
     const context = run.contextSnapshot ?? {};
     const integrationId = firstString(context.feishuIntegrationId);
     const conversationId = run.chatConversationId

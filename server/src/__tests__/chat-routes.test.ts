@@ -2750,14 +2750,14 @@ describe("chat routes", { retry: 2 }, () => {
     }));
   });
 
-  it("does not expose a persisted active generation when no reply is running in memory", async () => {
+  it("falls back to a persisted active generation when no reply is running in memory", async () => {
     const conversation = createConversation();
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getQueueSnapshot.mockResolvedValueOnce({
-      activeGenerationId: null,
-      activeAttemptEpoch: null,
-      activeControlVersion: null,
-      activeGenerationStatus: null,
+      activeGenerationId: "10000000-0000-4000-8000-000000000002",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 1,
+      activeGenerationStatus: "waiting_for_network",
       items: [],
     });
 
@@ -2765,12 +2765,12 @@ describe("chat routes", { retry: 2 }, () => {
       .get("/api/chats/chat-1/queue");
 
     expect(res.status).toBe(200);
-    expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1", null);
+    expect(mockChatService.getQueueSnapshot).toHaveBeenCalledWith("chat-1");
     expect(res.body).toEqual({
-      activeGenerationId: null,
-      activeAttemptEpoch: null,
-      activeControlVersion: null,
-      activeGenerationStatus: null,
+      activeGenerationId: "10000000-0000-4000-8000-000000000002",
+      activeAttemptEpoch: 2,
+      activeControlVersion: 1,
+      activeGenerationStatus: "waiting_for_network",
       items: [],
     });
   });

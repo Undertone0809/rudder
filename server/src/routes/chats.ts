@@ -79,6 +79,10 @@ import {
   sideChatService,
 } from "../services/index.js";
 import {
+  NETWORK_WAIT_EXHAUSTED_ERROR,
+  NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
+} from "../services/runtime-kernel/heartbeat.core.js";
+import {
   runtimeResultText,
   sanitizeGeneratedTitle,
 } from "../services/title-generation.js";
@@ -1691,12 +1695,28 @@ export function chatRoutes(
         assistantProjectionMessageId = frozen.projection.assistantMessageId;
         transcript = [...frozen.projection.transcript] as TranscriptEntry[];
         activeAttemptEpoch = Math.max(1, frozen.generation.attemptEpoch);
-        await svc.generationProtocol.markNetworkResumed({
-          orgId: conversation.orgId,
-          conversationId: conversation.id,
-          generationId,
-          expectedAttemptEpoch: activeAttemptEpoch,
-        });
+        if (!run.networkRecoveryExhausted) {
+          await svc.generationProtocol.markNetworkResumed({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            generationId,
+            expectedAttemptEpoch: activeAttemptEpoch,
+          });
+        }
+      }
+      if (run.networkRecoveryExhausted) {
+        throw new ChatAssistantStreamError(
+          NETWORK_WAIT_EXHAUSTED_ERROR,
+          partialBody,
+          [],
+          {
+            errorCode: NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
+            userMessage: "Network recovery retries were exhausted. Check connectivity, then retry this reply.",
+            retryable: true,
+            failurePhase: "model_generation",
+            action: "retry",
+          },
+        );
       }
 
       const turnContext = turnContextFromUserMessage(userMessage);
@@ -2440,7 +2460,10 @@ export function chatRoutes(
       return;
     }
     const active = getActiveChatGeneration(conversation.id);
-    res.json(await svc.getQueueSnapshot(conversation.id, active?.generationId ?? null));
+    const snapshot = active
+      ? await svc.getQueueSnapshot(conversation.id, active.generationId)
+      : await svc.getQueueSnapshot(conversation.id);
+    res.json(snapshot);
   });
 
   router.post("/chats/:id/queue", async (req, res) => {

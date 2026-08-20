@@ -1297,6 +1297,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       }
     }
     if (!stop) throw new Error("Failed to establish the chat Stop cutoff");
+    const wasWaitingForNetwork = durableCheckpoint.generation.status === "waiting_for_network";
     if (
       stop.idempotent
       && parsed.data.expectedControlVersion !== undefined
@@ -1361,8 +1362,22 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
 
     const localInterruptRequested = startupInterruptRequested || cancelActiveChatGeneration(conversation.id);
+    let stopped = Boolean(localInterruptRequested);
     let disposition = "stopping";
     if (startupStopRequested) {
+      await svc.generationProtocol.recordRuntimeTerminal({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        generationId,
+        expectedAttemptEpoch: stop.generation.attemptEpoch,
+        finalStatus: "stopped",
+        terminalReason: "operator_stop",
+        controlActionId,
+      });
+      wakeTerminalProjector();
+    } else if (wasWaitingForNetwork) {
+      stopped = true;
+      disposition = "stopped";
       await svc.generationProtocol.recordRuntimeTerminal({
         orgId: conversation.orgId,
         conversationId: conversation.id,
@@ -1387,7 +1402,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       wakeTerminalProjector();
     }
     res.json({
-      stopped: Boolean(localInterruptRequested),
+      stopped,
       controlActionId,
       generationId,
       disposition,

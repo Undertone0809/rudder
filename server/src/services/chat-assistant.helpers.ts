@@ -67,7 +67,8 @@ export type ChatRecoverableFailureCode =
   | "chat_adapter_failed"
   | "chat_runtime_preparation_failed"
   | "chat_runtime_boot_failed"
-  | "chat_runtime_exception";
+  | "chat_runtime_exception"
+  | "network_retry_exhausted";
 
 export type ChatFailurePhase =
   | "runtime_boot"
@@ -245,6 +246,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "chat_runtime_boot_failed") {
     return "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.";
+  }
+  if (code === "network_retry_exhausted") {
+    return "Network recovery retries were exhausted. Check connectivity, then retry this reply.";
   }
   return CHAT_ASSISTANT_RECOVERABLE_FAILURE_MESSAGE;
 }

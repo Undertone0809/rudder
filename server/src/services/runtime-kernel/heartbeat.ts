@@ -57,7 +57,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 import type { SessionCompactionDecision, UsageTotals, WakeupOptions } from "./heartbeat.core.js";
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
-const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
+const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, NETWORK_WAIT_MAX_ATTEMPTS, NETWORK_WAIT_EXHAUSTED_ERROR_CODE, NETWORK_WAIT_EXHAUSTED_ERROR, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
@@ -167,7 +167,9 @@ export function heartbeatService(
     afterIssuePromotionCommitted?: (outcome: unknown) => Promise<void> | void;
     beforeRunClaim?: (run: typeof heartbeatRuns.$inferSelect) => Promise<void> | void;
     /** Server-owned runners (currently Chat) may reattach a claimed wait run. */
-    onNetworkWaitingRun?: (run: typeof heartbeatRuns.$inferSelect) => Promise<boolean> | boolean;
+    onNetworkWaitingRun?: (run: typeof heartbeatRuns.$inferSelect & {
+      networkRecoveryExhausted?: boolean;
+    }) => Promise<boolean> | boolean;
     beforeRunExecutionLeaseRenewal?: (input: {
       runId: string;
       ownerToken: string;
@@ -2272,6 +2274,47 @@ export function heartbeatService(
             payload: {
               continuation: continuation ?? null,
               submissionPhase: submissionPhase ?? null,
+            },
+          });
+        }
+        continue;
+      }
+      if ((candidate.networkWaitAttemptCount ?? 0) >= NETWORK_WAIT_MAX_ATTEMPTS) {
+        const claim = await claimExpiredHeartbeatRunExecution(db, candidate.id, { now });
+        if (!claim) continue;
+        if (candidate.chatConversationId && testHooks?.onNetworkWaitingRun) {
+          await Promise.resolve(testHooks.onNetworkWaitingRun({
+            ...claim.run,
+            networkRecoveryExhausted: true,
+          })).catch((error: unknown) => {
+            logger.warn({ err: error, runId: candidate.id }, "network retry exhaustion handler failed");
+          });
+        }
+        const exhausted = await transitionRunToTerminal(candidate.id, "failed", {
+          finishedAt: now,
+          error: NETWORK_WAIT_EXHAUSTED_ERROR,
+          errorCode: NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
+        }, {
+          expectedStatuses: ["running"],
+          processExitedAt: now,
+          expectedExecutionOwnerToken: claim.ownerToken,
+        });
+        if (exhausted) {
+          await setWakeupStatus(candidate.wakeupRequestId, "failed", {
+            finishedAt: now,
+            error: NETWORK_WAIT_EXHAUSTED_ERROR,
+          });
+          await appendRunEvent(exhausted, {
+            eventType: "network.retry_exhausted",
+            stream: "system",
+            level: "error",
+            message: "network recovery retry policy exhausted",
+            payload: {
+              attempt: candidate.networkWaitAttemptCount,
+              maxAttempts: NETWORK_WAIT_MAX_ATTEMPTS,
+              transport: checkpoint.transport ?? null,
+              provider: checkpoint.provider ?? null,
+              model: checkpoint.model ?? null,
             },
           });
         }

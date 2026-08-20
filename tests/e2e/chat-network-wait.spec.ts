@@ -68,7 +68,11 @@ async function createChatFixture(page: Page, commandPath: string, statePath: str
   expect(agentRes.ok()).toBe(true);
   const agent = await agentRes.json() as { id: string };
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-    data: { title: name, preferredAgentId: agent.id },
+    data: {
+      title: name,
+      preferredAgentId: agent.id,
+      initialMessage: { body: "Network wait test setup." },
+    },
   });
   expect(chatRes.ok()).toBe(true);
   return { organization, chat: await chatRes.json() as Chat, agent };

@@ -9,7 +9,7 @@ import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
-import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
+import { buildHeartbeatAdapterInvokePayload, networkWaitBackoffMs } from "./runtime-kernel/heartbeat.core.js";
 import {
   claimExpiredHeartbeatRunExecution,
   reconcileHeartbeatRunEvidence,
@@ -305,7 +305,7 @@ export function chatAgentRunService(db: Db) {
       .limit(1)
       .then((rows) => rows[0] ?? null);
     const attempt = (current?.networkWaitAttemptCount ?? 0) + 1;
-    const backoff = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000][Math.min(attempt - 1, 5)] ?? 60_000;
+    const backoff = networkWaitBackoffMs(attempt);
     const nextRetryAt = new Date(now.getTime() + backoff);
     await db
       .update(heartbeatRuns)

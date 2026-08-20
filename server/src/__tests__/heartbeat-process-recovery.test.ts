@@ -27,6 +27,7 @@ import { runningProcesses } from "../agent-runtimes/index.ts";
 import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { appendHeartbeatRunEvent } from "../services/run-events.ts";
+import { NETWORK_WAIT_MAX_ATTEMPTS } from "../services/runtime-kernel/heartbeat.core.ts";
 import {
   claimHeartbeatRunTerminalEffects,
   failHeartbeatRunTerminalEffect,
@@ -200,6 +201,7 @@ describe("heartbeat orphaned process recovery", () => {
     runningSubstate?: "executing" | "waiting_for_network" | null;
     networkWaitStartedAt?: Date | null;
     networkWaitNextRetryAt?: Date | null;
+    networkWaitAttemptCount?: number;
     recoveryCheckpoint?: Record<string, unknown> | null;
     contextSnapshot?: Record<string, unknown> | null;
     startedAt?: Date;
@@ -284,6 +286,7 @@ describe("heartbeat orphaned process recovery", () => {
       error: input?.runError ?? null,
       networkWaitStartedAt: input?.networkWaitStartedAt ?? null,
       networkWaitNextRetryAt: input?.networkWaitNextRetryAt ?? null,
+      networkWaitAttemptCount: input?.networkWaitAttemptCount ?? 0,
       recoveryCheckpoint: input?.recoveryCheckpoint ?? null,
       createdAt: input?.startedAt ?? now,
       startedAt: input?.startedAt ?? now,
@@ -538,6 +541,39 @@ describe("heartbeat orphaned process recovery", () => {
       status: "failed",
       errorCode: "network_resume_unsafe",
       error: "Network recovery cannot safely resume this provider attempt",
+    });
+  });
+
+  it("fails a network-wait run when the bounded retry policy is exhausted", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const { runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      runningSubstate: "waiting_for_network",
+      networkWaitAttemptCount: NETWORK_WAIT_MAX_ATTEMPTS,
+      networkWaitNextRetryAt: new Date("2026-03-19T00:05:00.000Z"),
+      recoveryCheckpoint: {
+        kind: "network_unavailable",
+        transport: "connection",
+        continuation: "fresh_if_pristine",
+        submissionPhase: "pre_submission",
+        modelOutputObserved: false,
+        toolActivityObserved: false,
+        sideEffectRisk: "none",
+      },
+    });
+
+    const result = await heartbeatService(db).recoverNetworkWaitingRuns({
+      now: new Date("2026-03-19T00:31:00.000Z"),
+    });
+
+    expect(result).toEqual({ resumed: 0, runIds: [] });
+    const run = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(run).toMatchObject({
+      status: "failed",
+      errorCode: "network_retry_exhausted",
+      error: "Network recovery retry limit exhausted",
     });
   });
 
