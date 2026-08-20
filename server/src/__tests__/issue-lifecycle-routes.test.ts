@@ -1055,6 +1055,21 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("returns a validation error when an issue is created in review without a reviewer", async () => {
+    mockIssueService.create.mockRejectedValue(
+      new HttpError(422, "An in_review Issue requires a reviewer agent or user"),
+    );
+
+    const res = await request(await createApp()).post("/api/orgs/organization-1/issues").send({
+      title: "Invalid review state",
+      status: "in_review",
+      priority: "medium",
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("An in_review Issue requires a reviewer agent or user");
+  });
+
   it("queues a review wakeup when an issue enters review", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
@@ -1089,6 +1104,20 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("returns a validation error when an issue enters review without a reviewer", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo" }));
+    mockIssueService.update.mockRejectedValue(
+      new HttpError(422, "An in_review Issue requires a reviewer agent or user"),
+    );
+
+    const res = await request(await createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "in_review" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("An in_review Issue requires a reviewer agent or user");
   });
 
   it("accepts canonical run workspace fields when updating issues", async () => {
@@ -1413,6 +1442,37 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("keeps assignee completion done when no reviewer is assigned", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "done",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(await createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "done" }),
+      expect.objectContaining({
+        agentId: ASSIGNEE_AGENT_ID,
+        relationship: "assignee_or_reviewer",
+        runId: RUN_ID,
+      }),
+    );
+    expect(mockIssueService.update.mock.calls[0]?.[1]).not.toHaveProperty("status", "in_review");
   });
 
   it("allows the reviewer agent to mark an in-review issue done without another review wakeup", async () => {

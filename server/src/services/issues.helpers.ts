@@ -21,7 +21,7 @@ import {
   type IssueSearchMatch
 } from "@rudderhq/shared";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
-import { conflict } from "../errors.js";
+import { conflict, unprocessable } from "../errors.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 
@@ -37,6 +37,37 @@ export function assertTransition(from: string, to: string) {
   if (from === to) return;
   if (!ALL_ISSUE_STATUSES.includes(to)) {
     throw conflict(`Unknown issue status: ${to}`);
+  }
+}
+
+const REVIEWER_RELEASE_STATUSES = new Set(["done", "todo", "in_progress"]);
+
+export function assertIssueReviewStateTransition(input: {
+  currentStatus: string | null | undefined;
+  nextStatus: string | null | undefined;
+  currentReviewerAgentId?: string | null;
+  currentReviewerUserId?: string | null;
+  nextReviewerAgentId?: string | null;
+  nextReviewerUserId?: string | null;
+}) {
+  const currentStatus = input.currentStatus ?? "backlog";
+  const nextStatus = input.nextStatus ?? currentStatus;
+  const currentHasReviewer = Boolean(input.currentReviewerAgentId || input.currentReviewerUserId);
+  const nextHasReviewer = Boolean(input.nextReviewerAgentId || input.nextReviewerUserId);
+
+  if (
+    (currentStatus === "in_review" || currentStatus === "blocked") &&
+    currentHasReviewer &&
+    !nextHasReviewer &&
+    !REVIEWER_RELEASE_STATUSES.has(nextStatus)
+  ) {
+    throw unprocessable(
+      "Cannot clear the last reviewer while an Issue is in_review or blocked; change the status to done, todo, or in_progress first",
+    );
+  }
+
+  if (nextStatus === "in_review" && !nextHasReviewer) {
+    throw unprocessable("An in_review Issue requires a reviewer agent or user");
   }
 }
 

@@ -32,6 +32,7 @@ export type ImportAdjustment =
   | "clear_goal"
   | "clear_author_agent"
   | "coerce_in_progress_to_todo"
+  | "coerce_in_review_to_todo"
   | "clear_document_agent"
   | "clear_document_revision_agent"
   | "clear_attachment_agent";
@@ -382,6 +383,7 @@ export function buildWorktreeMergePlan(input: {
     clear_goal: 0,
     clear_author_agent: 0,
     coerce_in_progress_to_todo: 0,
+    coerce_in_review_to_todo: 0,
     clear_document_agent: 0,
     clear_document_revision_agent: 0,
     clear_attachment_agent: 0,
@@ -495,6 +497,11 @@ export function buildWorktreeMergePlan(input: {
       targetStatus = "todo";
       adjustments.push("coerce_in_progress_to_todo");
       incrementAdjustment(adjustmentCounts, "coerce_in_progress_to_todo");
+    }
+    if (targetStatus === "in_review") {
+      targetStatus = "todo";
+      adjustments.push("coerce_in_review_to_todo");
+      incrementAdjustment(adjustmentCounts, "coerce_in_review_to_todo");
     }
 
     issuePlans.push({

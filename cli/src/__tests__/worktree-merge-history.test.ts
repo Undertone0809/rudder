@@ -247,6 +247,29 @@ describe("worktree merge history planner", () => {
     ]);
   });
 
+  it("coerces imported in_review issues to todo when reviewer ownership is not imported", () => {
+    const plan = buildWorktreeMergePlan({
+      orgId: "company-1",
+      companyName: "Rudder",
+      issuePrefix: "PAP",
+      previewIssueCounterStart: 10,
+      scopes: ["issues"],
+      sourceIssues: [makeIssue({ id: "issue-review", status: "in_review" })],
+      targetIssues: [],
+      sourceComments: [],
+      targetComments: [],
+      targetAgents: [],
+      targetProjects: [],
+      targetProjectWorkspaces: [],
+      targetGoals: [],
+    });
+
+    const insert = plan.issuePlans[0] as any;
+    expect(insert.targetStatus).toBe("todo");
+    expect(insert.adjustments).toContain("coerce_in_review_to_todo");
+    expect(plan.adjustments.coerce_in_review_to_todo).toBe(1);
+  });
+
   it("applies an explicit project mapping override instead of clearing the project", () => {
     const plan = buildWorktreeMergePlan({
       orgId: "company-1",

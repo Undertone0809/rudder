@@ -1221,10 +1221,30 @@ describe("issueService.list participantAgentId", () => {
       priority: "medium",
       reviewerUserId,
     });
+    const agentInReview = await svc.create(orgId, {
+      title: "Agent review in progress",
+      status: "in_review",
+      priority: "medium",
+      reviewerAgentId,
+    });
+    const userInReview = await svc.create(orgId, {
+      title: "User review in progress",
+      status: "in_review",
+      priority: "medium",
+      reviewerUserId,
+    });
 
     expect(agentReviewed.reviewerAgentId).toBe(reviewerAgentId);
     expect(agentReviewed.reviewerUserId).toBeNull();
     expect(userReviewed.reviewerUserId).toBe(reviewerUserId);
+    expect(agentInReview.status).toBe("in_review");
+    expect(userInReview.status).toBe("in_review");
+
+    await expect(svc.create(orgId, {
+      title: "Review without reviewer",
+      status: "in_review",
+      priority: "medium",
+    })).rejects.toThrow("requires a reviewer agent or user");
 
     await expect(svc.create(orgId, {
       title: "Invalid reviewer issue",
@@ -1234,8 +1254,10 @@ describe("issueService.list participantAgentId", () => {
       reviewerUserId,
     })).rejects.toThrow(/one reviewer/i);
 
-    expect((await svc.list(orgId, { reviewerAgentId })).map((issue) => issue.id)).toEqual([agentReviewed.id]);
-    expect((await svc.list(orgId, { reviewerUserId })).map((issue) => issue.id)).toEqual([userReviewed.id]);
+    expect(new Set((await svc.list(orgId, { reviewerAgentId })).map((issue) => issue.id)))
+      .toEqual(new Set([agentReviewed.id, agentInReview.id]));
+    expect(new Set((await svc.list(orgId, { reviewerUserId })).map((issue) => issue.id)))
+      .toEqual(new Set([userReviewed.id, userInReview.id]));
   });
 
   it("can exclude blocked reviewer rows after the reviewer records a blocked decision", async () => {
@@ -1477,9 +1499,85 @@ describe("issueService.list participantAgentId", () => {
     const priorityUpdate = await svc.update(created.id, { priority: "high" });
     expect(priorityUpdate?.reviewerAgentId).toBe(reviewerAgentId);
 
-    const cleared = await svc.update(created.id, { reviewerAgentId: null });
+    const enteredReview = await svc.update(created.id, { status: "in_review" });
+    expect(enteredReview?.status).toBe("in_review");
+    await expect(svc.update(created.id, { reviewerAgentId: null }))
+      .rejects.toThrow("Cannot clear the last reviewer");
+
+    const cleared = await svc.update(created.id, { status: "todo", reviewerAgentId: null });
+    expect(cleared?.status).toBe("todo");
     expect(cleared?.reviewerAgentId).toBeNull();
     expect(cleared?.reviewerUserId).toBeNull();
+
+    const completed = await svc.update(created.id, { status: "done" });
+    expect(completed?.status).toBe("done");
+
+    const blocked = await svc.create(orgId, {
+      title: "Blocked reviewer issue",
+      status: "blocked",
+      priority: "medium",
+      reviewerAgentId,
+    });
+    await expect(svc.update(blocked.id, { reviewerAgentId: null }))
+      .rejects.toThrow("Cannot clear the last reviewer");
+    const blockedCleared = await svc.update(blocked.id, { status: "done", reviewerAgentId: null });
+    expect(blockedCleared?.status).toBe("done");
+    expect(blockedCleared?.reviewerAgentId).toBeNull();
+  });
+
+  it("rejects explicit review transitions without a reviewer, including no-op updates", async () => {
+    const orgId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Review invariant Org",
+      urlKey: deriveOrganizationUrlKey("Review invariant Org"),
+      issuePrefix: `V${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const issue = await svc.create(orgId, {
+      title: "Unreviewed lifecycle issue",
+      status: "todo",
+      priority: "medium",
+    });
+    await expect(svc.update(issue.id, { status: "in_review" }))
+      .rejects.toThrow("requires a reviewer agent or user");
+
+    const legacyInvalidId = randomUUID();
+    await db.insert(issues).values({
+      id: legacyInvalidId,
+      orgId,
+      title: "Legacy invalid review issue",
+      status: "in_review",
+      priority: "medium",
+    });
+    await expect(svc.update(legacyInvalidId, { status: "in_review" }))
+      .rejects.toThrow("requires a reviewer agent or user");
+  });
+
+  it("rejects moving an unreviewed issue into the review lane", async () => {
+    const orgId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Review reorder Org",
+      urlKey: deriveOrganizationUrlKey("Review reorder Org"),
+      issuePrefix: `W${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const issue = await svc.create(orgId, {
+      title: "Unreviewed reorder issue",
+      status: "todo",
+      priority: "medium",
+    });
+    await expect(svc.reorder(orgId, {
+      issueId: issue.id,
+      targetStatus: "in_review",
+      position: "end",
+    })).rejects.toThrow("requires a reviewer agent or user");
+    expect((await svc.getById(issue.id))?.status).toBe("todo");
   });
 
   it("preserves updatedAt when an issue patch contains no persisted field change", async () => {

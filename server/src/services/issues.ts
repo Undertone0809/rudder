@@ -52,6 +52,7 @@ import {
   TERMINAL_HEARTBEAT_RUN_STATUSES,
   activeRunMapForIssues,
   applyStatusSideEffects,
+  assertIssueReviewStateTransition,
   assertTransition,
   automationExecutionVisibleToUserCondition,
   buildSearchSnippet,
@@ -946,6 +947,12 @@ export function issueService(db: Db) {
       if (data.reviewerUserId) {
         await assertReviewerUser(orgId, data.reviewerUserId);
       }
+      assertIssueReviewStateTransition({
+        currentStatus: "backlog",
+        nextStatus: data.status,
+        nextReviewerAgentId: data.reviewerAgentId,
+        nextReviewerUserId: data.reviewerUserId,
+      });
       if (data.goalId) {
         await assertValidGoal(orgId, data.goalId);
       }
@@ -1176,6 +1183,18 @@ export function issueService(db: Db) {
       const hasLabelChanges = nextLabelIds === undefined
         ? false
         : labelSetsDiffer(await readCurrentLabelIds(db));
+      const nextReviewerAgentId =
+        issueData.reviewerAgentId !== undefined ? issueData.reviewerAgentId : existing.reviewerAgentId;
+      const nextReviewerUserId =
+        issueData.reviewerUserId !== undefined ? issueData.reviewerUserId : existing.reviewerUserId;
+      assertIssueReviewStateTransition({
+        currentStatus: existing.status,
+        nextStatus: issueData.status,
+        currentReviewerAgentId: existing.reviewerAgentId,
+        currentReviewerUserId: existing.reviewerUserId,
+        nextReviewerAgentId,
+        nextReviewerUserId,
+      });
       const relationshipCondition = authorization
         ? authorization.relationship === "reviewer"
           ? eq(issues.reviewerAgentId, authorization.agentId)
@@ -1227,6 +1246,18 @@ export function issueService(db: Db) {
               issueId: id,
             });
           }
+          assertIssueReviewStateTransition({
+            currentStatus: current.status,
+            nextStatus: issueData.status,
+            currentReviewerAgentId: current.reviewerAgentId,
+            currentReviewerUserId: current.reviewerUserId,
+            nextReviewerAgentId: issueData.reviewerAgentId !== undefined
+              ? issueData.reviewerAgentId
+              : current.reviewerAgentId,
+            nextReviewerUserId: issueData.reviewerUserId !== undefined
+              ? issueData.reviewerUserId
+              : current.reviewerUserId,
+          });
           const [enriched] = await withIssueLabels(tx, [current]);
           return enriched;
         });
@@ -1245,11 +1276,6 @@ export function issueService(db: Db) {
         issueData.assigneeAgentId !== undefined ? issueData.assigneeAgentId : existing.assigneeAgentId;
       const nextAssigneeUserId =
         issueData.assigneeUserId !== undefined ? issueData.assigneeUserId : existing.assigneeUserId;
-      const nextReviewerAgentId =
-        issueData.reviewerAgentId !== undefined ? issueData.reviewerAgentId : existing.reviewerAgentId;
-      const nextReviewerUserId =
-        issueData.reviewerUserId !== undefined ? issueData.reviewerUserId : existing.reviewerUserId;
-
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
@@ -1315,16 +1341,34 @@ export function issueService(db: Db) {
         || (issueData.assigneeUserId !== undefined && issueData.assigneeUserId !== existing.assigneeUserId);
 
       return db.transaction(async (tx) => {
+        const current = await tx
+          .select()
+          .from(issues)
+          .where(eq(issues.id, id))
+          .for("update")
+          .then((rows) => rows[0] ?? null);
+        if (!current) {
+          if (authorization) {
+            throw conflict("Issue relationship or review state changed before update", {
+              issueId: id,
+              agentId: authorization.agentId,
+            });
+          }
+          return null;
+        }
+        assertIssueReviewStateTransition({
+          currentStatus: current.status,
+          nextStatus: issueData.status,
+          currentReviewerAgentId: current.reviewerAgentId,
+          currentReviewerUserId: current.reviewerUserId,
+          nextReviewerAgentId: issueData.reviewerAgentId !== undefined
+            ? issueData.reviewerAgentId
+            : current.reviewerAgentId,
+          nextReviewerUserId: issueData.reviewerUserId !== undefined
+            ? issueData.reviewerUserId
+            : current.reviewerUserId,
+        });
         if (assigneeChanged) {
-          const current = await tx
-            .select({
-              status: issues.status,
-              executionRunId: issues.executionRunId,
-            })
-            .from(issues)
-            .where(eq(issues.id, id))
-            .for("update")
-            .then((rows) => rows[0] ?? null);
           const preservesActiveExecution = Boolean(
             current &&
             (!issueData.status || issueData.status === "in_progress") &&
@@ -1340,7 +1384,7 @@ export function issueService(db: Db) {
             patch.assigneeAgentRuntimeOverrides = null;
           }
         }
-        patch.goalId = issueData.goalId !== undefined ? issueData.goalId ?? null : existing.goalId;
+        patch.goalId = issueData.goalId !== undefined ? issueData.goalId ?? null : current.goalId;
         const updated = await tx
           .update(issues)
           .set(patch)
@@ -1363,8 +1407,8 @@ export function issueService(db: Db) {
         const humanWorkStarted = !authorization
           && updated.createdByUserId
           && (
-            (existing.status !== "in_progress" && updated.status === "in_progress")
-            || (existing.executionRunId === null && updated.executionRunId !== null)
+            (current.status !== "in_progress" && updated.status === "in_progress")
+            || (current.executionRunId === null && updated.executionRunId !== null)
           );
         if (humanWorkStarted) {
           const workCycleId = `issue:${updated.id}`;
@@ -1408,10 +1452,19 @@ export function issueService(db: Db) {
           .select()
           .from(issues)
           .where(and(eq(issues.id, input.issueId), eq(issues.orgId, orgId)))
+          .for("update")
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
         assertTransition(existing.status, input.targetStatus);
+        assertIssueReviewStateTransition({
+          currentStatus: existing.status,
+          nextStatus: input.targetStatus,
+          currentReviewerAgentId: existing.reviewerAgentId,
+          currentReviewerUserId: existing.reviewerUserId,
+          nextReviewerAgentId: existing.reviewerAgentId,
+          nextReviewerUserId: existing.reviewerUserId,
+        });
 
         const targetRows = await tx
           .select()
