@@ -6,6 +6,7 @@
  * @see doc/product/domains/agents/identity-config.md - durable agent runtime configuration
  * @see doc/engineering/DEVELOPING.md - contributor expectations for local runtime work
  */
+import { resolveOrganizationLegacyStorageKey, resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { notFound, unprocessable } from "../errors.js";
@@ -13,6 +14,9 @@ import {
   ensureAgentWorkspaceLayout,
   resolveAgentInstructionsDir,
   resolveHomeAwarePath,
+  resolveLegacyOrganizationWorkspaceRoot,
+  resolvePreviousDocumentsOrganizationWorkspaceRoot,
+  resolveRudderInstanceRoot,
 } from "../home-paths.js";
 import {
   loadDefaultAgentInstructionsBundle,
@@ -95,6 +99,7 @@ type BundleState = {
   rootPath: string | null;
   entryFile: string;
   resolvedEntryPath: string | null;
+  legacyManagedPath: boolean;
   warnings: string[];
   legacyPromptTemplateActive: boolean;
   legacyBootstrapPromptTemplateActive: boolean;
@@ -156,6 +161,41 @@ function resolvePathWithinRoot(rootPath: string, relativePath: string): string {
 
 function resolveManagedInstructionsRoot(agent: AgentLike): string {
   return resolveAgentInstructionsDir(agent.orgId, agent);
+}
+
+function resolveKnownManagedInstructionsRoots(agent: AgentLike): string[] {
+  const managedRootPath = resolveManagedInstructionsRoot(agent);
+  const workspaceKey = path.basename(path.dirname(managedRootPath));
+  return [
+    managedRootPath,
+    path.resolve(resolveLegacyOrganizationWorkspaceRoot(agent.orgId), "agents", workspaceKey, "instructions"),
+    path.resolve(resolvePreviousDocumentsOrganizationWorkspaceRoot(agent.orgId), "agents", workspaceKey, "instructions"),
+  ];
+}
+
+function isHistoricalManagedInstructionsRoot(agent: AgentLike, rootPath: string): boolean {
+  const managedRootPath = resolveManagedInstructionsRoot(agent);
+  const workspaceKey = path.basename(path.dirname(managedRootPath));
+  const instancesRoot = path.dirname(resolveRudderInstanceRoot());
+  const relativePath = path.relative(instancesRoot, path.resolve(rootPath));
+  const segments = relativePath.split(path.sep);
+  if (segments.length !== 7 || !segments[0] || segments[0] === ".." || path.isAbsolute(relativePath)) return false;
+  const organizationStorageKeys = new Set([
+    resolveOrganizationStorageKey(agent.orgId),
+    resolveOrganizationLegacyStorageKey(agent.orgId),
+  ]);
+  return segments[1] === "organizations"
+    && organizationStorageKeys.has(segments[2] ?? "")
+    && segments[3] === "workspaces"
+    && segments[4] === "agents"
+    && segments[5] === workspaceKey
+    && segments[6] === "instructions";
+}
+
+function isKnownManagedInstructionsRoot(agent: AgentLike, rootPath: string): boolean {
+  const resolvedRootPath = path.resolve(rootPath);
+  return resolveKnownManagedInstructionsRoots(agent).some((candidate) => path.resolve(candidate) === resolvedRootPath)
+    || isHistoricalManagedInstructionsRoot(agent, resolvedRootPath);
 }
 
 function resolveLegacyInstructionsPath(candidatePath: string, config: Record<string, unknown>): string {
@@ -313,6 +353,15 @@ function deriveBundleState(agent: AgentLike): BundleState {
     }
   }
 
+  const legacyManagedPath = Boolean(
+    rootPath
+    && path.resolve(rootPath) !== path.resolve(resolveManagedInstructionsRoot(agent))
+    && isKnownManagedInstructionsRoot(agent, rootPath),
+  );
+  if (legacyManagedPath) {
+    mode = "managed";
+  }
+
   const resolvedEntryPath = rootPath ? path.resolve(rootPath, entryFile) : null;
 
   return {
@@ -321,6 +370,7 @@ function deriveBundleState(agent: AgentLike): BundleState {
     rootPath,
     entryFile,
     resolvedEntryPath,
+    legacyManagedPath,
     warnings,
     legacyPromptTemplateActive: Boolean(asString(config[PROMPT_KEY])),
     legacyBootstrapPromptTemplateActive: Boolean(asString(config[BOOTSTRAP_PROMPT_KEY])),
@@ -337,22 +387,35 @@ async function recoverManagedBundleState(
   const stat = await statIfExists(managedRootPath);
   if (!stat?.isDirectory()) return state;
 
+  if (state.legacyManagedPath && state.rootPath) {
+    await copyManagedBundleFiles(state.rootPath, managedRootPath);
+  }
   let files = await listFilesRecursive(managedRootPath);
   const configuredManagedRoot =
     state.mode === "managed"
     && state.rootPath
     && path.resolve(state.rootPath) === managedRootPath;
+  const shouldMaterializeManagedEntry = Boolean(
+    options?.materializeMissingManagedEntry
+    && (configuredManagedRoot || state.legacyManagedPath),
+  );
+  if (shouldMaterializeManagedEntry && state.legacyManagedPath) {
+    await writeBundleFiles(managedRootPath, {
+      ...(await defaultManagedBundleFiles(agent)),
+      ...(await managedEntryRecoveryFiles(agent, state)),
+    });
+    files = await listFilesRecursive(managedRootPath);
+  }
   if (
     files.length === 0
-    && configuredManagedRoot
-    && options?.materializeMissingManagedEntry
+    && shouldMaterializeManagedEntry
   ) {
     await writeBundleFiles(managedRootPath, await managedEntryRecoveryFiles(agent, state));
     await copyLegacyRootMemoryIntoManagedInstructions(agent);
     files = await listFilesRecursive(managedRootPath);
   }
   if (
-    configuredManagedRoot
+    shouldMaterializeManagedEntry
     && files.length > 0
     && !files.includes(state.entryFile)
     && options?.materializeMissingManagedEntry
@@ -513,6 +576,19 @@ async function writeBundleFiles(
   }
 }
 
+async function copyManagedBundleFiles(sourceRoot: string, targetRoot: string): Promise<boolean> {
+  const sourceStat = await statIfExists(sourceRoot);
+  if (!sourceStat?.isDirectory() || path.resolve(sourceRoot) === path.resolve(targetRoot)) return false;
+  const sourceFiles = await listFilesRecursive(sourceRoot);
+  if (sourceFiles.length === 0) return false;
+  const files = Object.fromEntries(await Promise.all(sourceFiles.map(async (relativePath) => [
+    relativePath,
+    await fs.readFile(resolvePathWithinRoot(sourceRoot, relativePath), "utf8"),
+  ] as const)));
+  await writeBundleFiles(targetRoot, files);
+  return true;
+}
+
 export function syncInstructionsBundleConfigFromFilePath(
   agent: AgentLike,
   agentRuntimeConfig: Record<string, unknown>,
@@ -537,7 +613,10 @@ export function syncInstructionsBundleConfigFromFilePath(
 
 export function agentInstructionsService() {
   async function getBundle(agent: AgentLike): Promise<AgentInstructionsBundle> {
-    const state = await recoverManagedBundleState(agent, deriveBundleState(agent));
+    const derived = deriveBundleState(agent);
+    const state = await recoverManagedBundleState(agent, derived, {
+      materializeMissingManagedEntry: derived.legacyManagedPath,
+    });
     if (!state.rootPath) return toBundle(agent, state, []);
     const stat = await statIfExists(state.rootPath);
     if (!stat?.isDirectory()) {
@@ -576,7 +655,10 @@ export function agentInstructionsService() {
   }
 
   async function readFile(agent: AgentLike, relativePath: string): Promise<AgentInstructionsFileDetail> {
-    const state = await recoverManagedBundleState(agent, deriveBundleState(agent));
+    const derived = deriveBundleState(agent);
+    const state = await recoverManagedBundleState(agent, derived, {
+      materializeMissingManagedEntry: derived.legacyManagedPath,
+    });
     if (relativePath === LEGACY_PROMPT_TEMPLATE_PATH) {
       const content = asString(state.config[PROMPT_KEY]);
       if (content === null) throw notFound("Instructions file not found");

@@ -63,6 +63,7 @@ function legacyManagedInstructionsRoot(paperclipHome: string): string {
 describe("agent instructions service", () => {
   const originalPaperclipHome = process.env.RUDDER_HOME;
   const originalPaperclipInstanceId = process.env.RUDDER_INSTANCE_ID;
+  const originalOrganizationWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
@@ -70,6 +71,8 @@ describe("agent instructions service", () => {
     else process.env.RUDDER_HOME = originalPaperclipHome;
     if (originalPaperclipInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
     else process.env.RUDDER_INSTANCE_ID = originalPaperclipInstanceId;
+    if (originalOrganizationWorkspaceHome === undefined) delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+    else process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalOrganizationWorkspaceHome;
 
     await Promise.all([...cleanupDirs].map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true });
@@ -637,6 +640,99 @@ describe("agent instructions service", () => {
       "Recovered managed instructions entry file from disk as AGENTS.md; previous entry docs/MISSING.md was missing.",
     ]);
     expect(exported.files).toEqual({ "AGENTS.md": "# Managed Agent\n" });
+  });
+
+  it("recovers defaults when an old managed path was persisted as external", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-legacy-external-home-");
+    const workspaceHome = await makeTempDir("rudder-agent-instructions-legacy-external-workspace-");
+    cleanupDirs.add(paperclipHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const legacyRoot = path.join(
+      paperclipHome,
+      "instances",
+      "default",
+      "organizations",
+      orgId,
+      "workspaces",
+      "agents",
+      workspaceKey,
+      "instructions",
+    );
+    const canonicalRoot = path.join(workspaceHome, orgId, "agents", workspaceKey, "instructions");
+    await fs.mkdir(legacyRoot, { recursive: true });
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.writeFile(path.join(legacyRoot, "SOUL.md"), "# Existing Persona\n", "utf8");
+    await fs.writeFile(path.join(canonicalRoot, "SOUL.md"), "# Canonical Persona\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({
+      instructionsBundleMode: "external",
+      instructionsRootPath: legacyRoot,
+      instructionsEntryFile: "SOUL.md",
+      instructionsFilePath: path.join(legacyRoot, "SOUL.md"),
+    });
+
+    const bundle = await svc.getBundle(agent);
+
+    expect(bundle.mode).toBe("managed");
+    expect(bundle.rootPath).toBe(canonicalRoot);
+    expect(bundle.files.map((file) => file.path)).toEqual(["MEMORY.md", "SOUL.md", "TOOLS.md"]);
+    await expect(fs.readFile(path.join(bundle.rootPath!, "SOUL.md"), "utf8"))
+      .resolves.toBe("# Canonical Persona\n");
+    await expect(fs.readFile(path.join(bundle.rootPath!, "TOOLS.md"), "utf8"))
+      .resolves.toContain("# TOOLS.md");
+  });
+
+  it("keeps near-miss managed-looking external roots external", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-boundary-home-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const externalRoots = [
+      path.join(
+        paperclipHome,
+        "instances",
+        "default",
+        "organizations",
+        orgId,
+        "workspaces",
+        "agents",
+        `${workspaceKey}-other`,
+        "instructions",
+      ),
+      path.join(
+        paperclipHome,
+        "instances",
+        "default",
+        "organizations",
+        "another-organization",
+        "workspaces",
+        "agents",
+        workspaceKey,
+        "instructions",
+      ),
+    ];
+
+    for (const externalRoot of externalRoots) {
+      await fs.mkdir(externalRoot, { recursive: true });
+      await fs.writeFile(path.join(externalRoot, "SOUL.md"), "# External Persona\n", "utf8");
+
+      const bundle = await agentInstructionsService().getBundle(makeAgent({
+        instructionsBundleMode: "external",
+        instructionsRootPath: externalRoot,
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: path.join(externalRoot, "SOUL.md"),
+      }));
+
+      expect(bundle.mode).toBe("external");
+      expect(bundle.rootPath).toBe(externalRoot);
+      expect(bundle.files.map((file) => file.path)).toEqual(["SOUL.md"]);
+    }
   });
 
   it("does not read legacy managed instructions into the canonical workspace root", async () => {
