@@ -22,6 +22,7 @@ import {
   readPendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import type { DesktopBrowserShortcutRequest } from "@/lib/desktop-shell";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildChatMentionHref, buildIssueMentionHref, type Agent, type AutomationDetail, type AutomationRunSummary, type ChatConversation, type ChatMessage, type ChatQueuedMessage, type ChatQueueSnapshot, type ChatRuntimeDescriptor, type ChatStreamEvent, type Goal, type Issue, type IssueComment, type IssueLabel, type OrganizationWorkspaceFileEntry, type Project } from "@rudderhq/shared";
 import type { ReactNode } from "react";
 import { act, useLayoutEffect } from "react";
@@ -93,6 +94,7 @@ const mockState = vi.hoisted(() => ({
   routeBase: "/messenger/chat",
   locationState: null as unknown,
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
+  workspaceDirectoryError: null as Error | null,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
   queueSnapshot: {
     activeGenerationId: null,
@@ -164,6 +166,18 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    if (
+      queryKey[0] === "organizations"
+      && queryKey[2] === "workspace-files"
+      && mockState.workspaceDirectoryError
+    ) {
+      return {
+        data: undefined,
+        isPending: false,
+        isLoading: false,
+        error: mockState.workspaceDirectoryError,
+      };
+    }
     if (!enabled) {
       return {
         data: undefined,
@@ -1323,9 +1337,11 @@ function installLocalStorageMock() {
 function renderChat({
   expanded = false,
   stableRuntime = false,
+  target = null,
 }: {
   expanded?: boolean;
   stableRuntime?: boolean;
+  target?: SidePanelTarget | null;
 } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -1351,6 +1367,7 @@ function renderChat({
                 selectedOrganizationId="org-1"
                 expanded={expanded}
                 onToggleExpanded={toggleSidePanelExpanded}
+                target={target}
               />
             </SidePanelProvider>
           </ImagePreviewProvider>
@@ -1602,6 +1619,7 @@ beforeEach(() => {
   mockState.routeBase = "/messenger/chat";
   mockState.locationState = null;
   mockState.workspaceDirectories = {};
+  mockState.workspaceDirectoryError = null;
   mockState.workspaceFiles = {};
   mockState.updateWorkspaceFile.mockReset();
   mockState.updateWorkspaceFile.mockImplementation(async (
@@ -3289,6 +3307,36 @@ describe("Chat Side Panel link handling", () => {
     expect(fileToolbar?.textContent).toContain("notes.md");
     expect(fileView?.textContent).not.toContain("text/markdown");
     expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(2);
+  });
+
+  it("does not leak a stale Library directory error into a file preview", async () => {
+    mockState.workspaceDirectoryError = new Error("Cannot read properties of null (reading 'directoryPath')");
+    mockState.workspaceFiles = {
+      "MEMORY.md": {
+        filePath: "MEMORY.md",
+        content: "# Operating lessons\n",
+        contentType: "text/markdown",
+        previewKind: "text",
+        contentPath: null,
+        truncated: false,
+      },
+    };
+
+    const { container } = renderChat({
+      target: {
+        kind: "library_file",
+        filePath: "MEMORY.md",
+        label: "MEMORY.md",
+      },
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-side-panel-library-file-view']")).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).toContain("MEMORY.md");
   });
 
   it("closes the active Library preview tab with Command+W", async () => {
