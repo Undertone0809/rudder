@@ -1008,7 +1008,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const [existingSubIssuePickerOpen, setExistingSubIssuePickerOpen] = useState(false);
   const [existingSubIssueSearch, setExistingSubIssueSearch] = useState("");
   const [subIssueStatusPickerIssueId, setSubIssueStatusPickerIssueId] = useState<string | null>(null);
-  const [updatingSubIssueId, setUpdatingSubIssueId] = useState<string | null>(null);
+  const [updatingSubIssueIds, setUpdatingSubIssueIds] = useState<Set<string>>(() => new Set());
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
@@ -1022,6 +1022,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   }, [issueDetailScrollRef]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
+  const subIssueStatusQueuesRef = useRef(new Map<string, Promise<void>>());
 
   const { data: issue, isLoading, error } = useQuery({
     queryKey: queryKeys.issues.detail(issueId!),
@@ -1503,9 +1504,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       childIssueId: string;
       status: string;
     }) => issuesApi.update(childIssueId, { status }),
-    onMutate: ({ childIssueId }) => {
-      setUpdatingSubIssueId(childIssueId);
-    },
     onSuccess: (updatedChild) => {
       if (resolvedCompanyId && issue?.id) {
         queryClient.setQueryData<Issue[]>(
@@ -1522,12 +1520,6 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       if (updatedChild.identifier) {
         queryClient.setQueryData(queryKeys.issues.detail(updatedChild.identifier), updatedChild);
       }
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(resolvedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(resolvedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(resolvedCompanyId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(resolvedCompanyId) });
-      }
     },
     onError: (err) => {
       pushToast({
@@ -1536,11 +1528,54 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         tone: "error",
       });
     },
-    onSettled: (_, __, variables) => {
-      setSubIssueStatusPickerIssueId((current) => current === variables.childIssueId ? null : current);
-      setUpdatingSubIssueId((current) => current === variables.childIssueId ? null : current);
-    },
   });
+
+  const enqueueSubIssueStatusUpdate = useCallback((variables: {
+    childIssueId: string;
+    status: string;
+  }) => {
+    const queues = subIssueStatusQueuesRef.current;
+    const previous = queues.get(variables.childIssueId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        setUpdatingSubIssueIds((current) => {
+          if (current.has(variables.childIssueId)) return current;
+          const nextIds = new Set(current);
+          nextIds.add(variables.childIssueId);
+          return nextIds;
+        });
+        await updateSubIssueStatus.mutateAsync(variables);
+      });
+
+    queues.set(variables.childIssueId, next);
+    const finish = () => {
+      if (queues.get(variables.childIssueId) !== next) return;
+      queues.delete(variables.childIssueId);
+      setUpdatingSubIssueIds((current) => {
+        if (!current.has(variables.childIssueId)) return current;
+        const nextIds = new Set(current);
+        nextIds.delete(variables.childIssueId);
+        return nextIds;
+      });
+      setSubIssueStatusPickerIssueId((current) =>
+        current === variables.childIssueId ? null : current,
+      );
+
+      if (resolvedCompanyId && issue?.id) {
+        void Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.issues.children(resolvedCompanyId, issue.id),
+          }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(resolvedCompanyId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(resolvedCompanyId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(resolvedCompanyId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(resolvedCompanyId) }),
+        ]);
+      }
+    };
+    void next.then(finish, finish);
+  }, [issue?.id, queryClient, resolvedCompanyId, updateSubIssueStatus]);
 
   const addComment = useMutation({
     mutationFn: ({ body, reopen, steerExpectedRunId }: { body: string; reopen?: boolean; steerExpectedRunId?: string }) =>
@@ -2228,7 +2263,8 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
             {orderedChildIssues.map((child) => {
               const childPathId = child.identifier ?? child.id;
               const isStatusPickerOpen = subIssueStatusPickerIssueId === child.id;
-              const isUpdatingStatus = updatingSubIssueId === child.id;
+              const isUpdatingStatus = updatingSubIssueIds.has(child.id);
+              const hasSubIssueAssignee = Boolean(child.assigneeAgentId || child.assigneeUserId);
 
               return (
                 <div
@@ -2253,23 +2289,29 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                       </button>
                     </PopoverTrigger>
                     <PopoverContent className="w-40 p-1" align="start">
-                      {issueStatusOptions.map((status) => (
-                        <Button
-                          key={status}
-                          variant="ghost"
-                          size="sm"
-                          className={cn("w-full justify-start gap-2 text-xs", status === child.status && "bg-accent")}
-                          onClick={() => {
-                            updateSubIssueStatus.mutate({
-                              childIssueId: child.id,
-                              status,
-                            });
-                          }}
-                        >
-                          <StatusIcon status={status} />
-                          {issueStatusLabel(status)}
-                        </Button>
-                      ))}
+                      {issueStatusOptions.map((status) => {
+                        const requiresAssignee =
+                          status === "in_progress" && !hasSubIssueAssignee && status !== child.status;
+                        return (
+                          <Button
+                            key={status}
+                            variant="ghost"
+                            size="sm"
+                            className={cn("w-full justify-start gap-2 text-xs", status === child.status && "bg-accent")}
+                            disabled={isUpdatingStatus || requiresAssignee}
+                            title={requiresAssignee ? "Assign an owner before moving to In Progress" : undefined}
+                            onClick={() => {
+                              enqueueSubIssueStatusUpdate({
+                                childIssueId: child.id,
+                                status,
+                              });
+                            }}
+                          >
+                            <StatusIcon status={status} />
+                            {issueStatusLabel(status)}
+                          </Button>
+                        );
+                      })}
                     </PopoverContent>
                   </Popover>
 

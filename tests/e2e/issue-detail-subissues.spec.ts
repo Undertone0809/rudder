@@ -35,7 +35,7 @@ test.describe("Issue detail sub-issues", () => {
     await page.getByRole("button", { name: "Create new sub-issue" }).click();
 
     const newIssueDialog = page.getByRole("dialog").filter({ hasText: "New sub-issue" });
-    await expect(newIssueDialog.getByText("New sub-issue", { exact: true })).toBeVisible();
+    await expect(newIssueDialog.locator("span").filter({ hasText: /^New sub-issue$/ })).toBeVisible();
     await expect(newIssueDialog.getByText("Parent", { exact: true })).toBeVisible();
     await expect(newIssueDialog.getByText(issueRef, { exact: true })).toBeVisible();
     await expect(newIssueDialog.getByText(parentTitle, { exact: true })).toBeVisible();
@@ -109,6 +109,7 @@ test.describe("Issue detail sub-issues", () => {
       },
     });
     expect(existingChildRes.ok()).toBe(true);
+    const existingChild = await existingChildRes.json();
 
     const standaloneExistingRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
@@ -154,7 +155,7 @@ test.describe("Issue detail sub-issues", () => {
     await expect(page.getByRole("button", { name: "New document" })).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Chat" })).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
-    await expect(page.getByRole("region", { name: "Activity" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Activity", exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Add sub-issue" }).click();
     await page.getByRole("menuitem", { name: "Add existing issue" }).click();
@@ -174,16 +175,99 @@ test.describe("Issue detail sub-issues", () => {
     await expect(propertiesPanel.getByText("Existing child issue", { exact: true })).toBeVisible();
 
     const subIssuesBox = await page.getByLabel("Sub-issues").boundingBox();
-    const activityBox = await page.getByRole("region", { name: "Activity" }).boundingBox();
+    const activityBox = await page.getByRole("region", { name: "Activity", exact: true }).boundingBox();
     expect(subIssuesBox).not.toBeNull();
     expect(activityBox).not.toBeNull();
     expect((subIssuesBox?.y ?? 0)).toBeLessThan(activityBox?.y ?? 0);
 
-    await page.getByRole("button", { name: "Change status for Existing child issue" }).click();
+    let releaseFirstStatusUpdate = () => {};
+    const firstStatusUpdate = new Promise<void>((resolve) => {
+      releaseFirstStatusUpdate = resolve;
+    });
+    let statusPatchCount = 0;
+    let failNextStatusPatch = false;
+    await page.route(`**/api/issues/${existingChild.id}`, async (route) => {
+      if (route.request().method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+      statusPatchCount += 1;
+      if (statusPatchCount === 1) await firstStatusUpdate;
+      if (failNextStatusPatch) {
+        failNextStatusPatch = false;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary status update failure" }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    const childStatusButton = page.getByRole("button", { name: "Change status for Existing child issue" });
+    await childStatusButton.click();
     await expect(page).toHaveURL(new RegExp(`${issue.identifier ?? issue.id}$`));
-    await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Done", exact: true }).click();
+    const statusPopover = page.locator('[data-slot="popover-content"]').last();
+    const doneStatusOption = statusPopover.getByRole("button", { name: "Done", exact: true });
+    await expect(doneStatusOption).toBeVisible();
+    const firstStatusRequest = page.waitForRequest((request) =>
+      request.url().endsWith(`/api/issues/${existingChild.id}`) && request.method() === "PATCH",
+    );
+    await doneStatusOption.click();
+    await firstStatusRequest;
+    await expect(statusPopover.getByRole("button", { name: "Todo", exact: true })).toBeDisabled();
+    await expect(doneStatusOption).toBeDisabled();
+    expect(statusPatchCount).toBe(1);
+    releaseFirstStatusUpdate();
     await expect(page).toHaveURL(new RegExp(`${issue.identifier ?? issue.id}$`));
+    await expect(childStatusButton.locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "done");
+
+    await childStatusButton.click();
+    const secondStatusPopover = page.locator('[data-slot="popover-content"]').last();
+    const todoStatusOption = secondStatusPopover.getByRole("button", { name: "Todo", exact: true });
+    await expect(todoStatusOption).toBeVisible();
+    await todoStatusOption.click();
+    await expect(childStatusButton.locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "todo");
+    expect(statusPatchCount).toBe(2);
+
+    failNextStatusPatch = true;
+    await childStatusButton.click();
+    const failedStatusPopover = page.locator('[data-slot="popover-content"]').last();
+    const failedDoneStatusOption = failedStatusPopover.getByRole("button", { name: "Done", exact: true });
+    const failedStatusResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/issues/${existingChild.id}`) &&
+      response.request().method() === "PATCH" &&
+      response.status() === 500,
+    );
+    await failedDoneStatusOption.click();
+    await failedStatusResponse;
+    await expect(page.getByText("Failed to update sub-issue status", { exact: true })).toBeVisible();
+    await expect(childStatusButton.locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "todo");
+    await expect(childStatusButton).toBeEnabled();
+
+    await childStatusButton.click();
+    const retryStatusPopover = page.locator('[data-slot="popover-content"]').last();
+    const retryDoneStatusOption = retryStatusPopover.getByRole("button", { name: "Done", exact: true });
+    const retryStatusResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/issues/${existingChild.id}`) &&
+      response.request().method() === "PATCH" &&
+      response.ok(),
+    );
+    await retryDoneStatusOption.click();
+    await retryStatusResponse;
+    await expect(childStatusButton.locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "done");
+    expect(statusPatchCount).toBe(4);
+
+    await childStatusButton.click();
+    const thirdStatusPopover = page.locator('[data-slot="popover-content"]').last();
+    const inProgressOption = thirdStatusPopover.getByRole("button", { name: "In Progress", exact: true });
+    await expect(inProgressOption).toBeDisabled();
+    await expect(inProgressOption).toHaveAttribute(
+      "title",
+      "Assign an owner before moving to In Progress",
+    );
+    await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Add sub-issue" }).click();
     await page.getByRole("menuitem", { name: "Create new sub-issue" }).click();
