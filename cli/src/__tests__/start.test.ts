@@ -3028,6 +3028,12 @@ describe("runtime install helpers", () => {
       expect(result.output).toContain("added runtime");
       expect(result.output).toContain("extracted platform package");
       expect(spawnSyncImpl).toHaveBeenCalledTimes(3);
+      expect(spawnSyncImpl.mock.calls[1]?.[0]).toBe(npmInstallInvocation.command);
+      expect(spawnSyncImpl.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
+        ...npmInstallInvocation.args,
+        "pack",
+      ]));
+      expect(spawnSyncImpl.mock.calls[1]?.[2]).not.toHaveProperty("shell");
       expect(spawnSyncImpl).toHaveBeenNthCalledWith(
         2,
         expect.any(String),

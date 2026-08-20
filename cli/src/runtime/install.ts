@@ -541,6 +541,7 @@ function runNpmRuntimeInstall(
   cacheDir: string,
   packageSpec: string,
 ): SpawnSyncResultLike {
+  // Keep Windows .cmd execution explicit: shell: true with arguments triggers Node DEP0190.
   const npm = resolveNpmCommandInvocation();
   return spawnSyncImpl(
     npm.command,
@@ -699,6 +700,7 @@ function runNpmPack(
   packageSpec: string,
   destinationDir: string,
 ): SpawnSyncResultLike {
+  // The platform-repair path must use the same shell-free Windows invocation as installs.
   const npm = resolveNpmCommandInvocation();
   return spawnSyncImpl(
     npm.command,
