@@ -608,6 +608,73 @@ describe("MarkdownBody", () => {
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
   });
 
+  it("keeps a markdown image skeleton visible until the image loads", async () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Loading screenshot](/api/assets/loading/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(".rudder-inspectable-image-trigger");
+    const image = container.querySelector<HTMLImageElement>("img");
+
+    expect(trigger?.dataset.imageState).toBe("loading");
+    expect(trigger?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('[data-testid="inspectable-image-skeleton"]')).toMatchObject({
+      role: "status",
+    });
+    expect(container.querySelector('[aria-label="Loading image: Loading screenshot"]')).not.toBeNull();
+
+    await act(async () => {
+      image?.dispatchEvent(new Event("load"));
+      await Promise.resolve();
+    });
+
+    expect((trigger as HTMLElement | null)?.dataset.imageState).toBe("loaded");
+    expect(trigger?.getAttribute("aria-busy")).toBeNull();
+    expect(container.querySelector('[data-testid="inspectable-image-skeleton"]')).toBeNull();
+    expect(container.querySelector('img[alt="Loading screenshot"]')).not.toBeNull();
+  });
+
+  it("shows an explicit fallback when a markdown image fails to load", async () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Missing screenshot](/api/assets/missing/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    await act(async () => {
+      image?.dispatchEvent(new Event("error"));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('[role="img"][aria-label="Missing screenshot unavailable"]')).not.toBeNull();
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Retry loading image: Missing screenshot"]')
+        ?.getAttribute("aria-disabled"),
+    ).toBeNull();
+    expect(container.textContent).toContain("Image unavailable");
+
+    const retryButton = container.querySelector<HTMLButtonElement>(".rudder-inspectable-image-trigger");
+    await act(async () => {
+      retryButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const retriedImage = container.querySelector<HTMLImageElement>("img");
+    expect(retriedImage).not.toBeNull();
+    expect(container.querySelector('[data-testid="inspectable-image-skeleton"]')).not.toBeNull();
+
+    await act(async () => {
+      retriedImage?.dispatchEvent(new Event("load"));
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="inspectable-image-skeleton"]')).toBeNull();
+    expect((container.querySelector(".rudder-inspectable-image-trigger") as HTMLElement | null)?.dataset.imageState).toBe("loaded");
+  });
+
   it("renders library document mentions as live Library links", () => {
     const href = buildLibraryDocMentionHref("doc-123", "Product principles");
     const html = renderToStaticMarkup(

@@ -5211,6 +5211,55 @@ a.rudder-skill-token[href] {
   outline-offset: 2px;
 }
 
+.rudder-inspectable-image-frame {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: top;
+}
+
+.rudder-inspectable-image-frame[data-image-state="loading"] {
+  min-width: min(100%, 12rem);
+  min-height: 6rem;
+  aspect-ratio: var(--rudder-image-aspect-ratio, 16 / 9);
+  overflow: hidden;
+}
+
+.rudder-inspectable-image-frame[data-image-state="loading"] > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rudder-inspectable-image-frame[data-image-state="loaded"] > img {
+  display: block;
+}
+
+.rudder-inspectable-image-skeleton {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in oklab, var(--surface-active) 64%, var(--surface-elevated));
+  animation: rudder-inspectable-image-skeleton-pulse 1.35s ease-in-out infinite;
+}
+
+@keyframes rudder-inspectable-image-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+
+  50% {
+    opacity: 0.94;
+  }
+}
+
 .rudder-inspectable-image-trigger img {
   transition:
     filter 140ms ease,
@@ -5263,6 +5312,18 @@ a.rudder-skill-token[href] {
   border-radius: calc(var(--radius-sm) + 4px);
   background: color-mix(in oklab, var(--surface-active) 42%, transparent);
   transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger .rudder-inspectable-image-frame {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger .rudder-inspectable-image-skeleton {
+  min-height: 0;
 }
 
 .rudder-inspectable-image-trigger.chat-image-attachment-trigger:hover {
@@ -6304,6 +6365,30 @@ a.rudder-mention-chip[data-mention-kind="library_directory"]::before {
     position: fixed;
     right: calc(1rem + env(safe-area-inset-right));
     bottom: calc(5.25rem + env(safe-area-inset-bottom));
+  }
+}
+
+.rudder-inspectable-image-fallback {
+  display: inline-flex;
+  min-width: 9rem;
+  min-height: 3.5rem;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in oklab, var(--surface-active) 48%, transparent);
+  padding: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rudder-inspectable-image-skeleton {
+    animation: none;
   }
 }
 
