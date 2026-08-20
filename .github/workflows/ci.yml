@@ -144,8 +144,8 @@ jobs:
           path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Ensure Playwright Chromium
+        run: pnpm exec playwright install chromium
 
       - name: Docs search E2E
         run: pnpm test:docs-search
