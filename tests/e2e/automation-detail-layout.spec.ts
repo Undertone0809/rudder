@@ -317,6 +317,13 @@ test.describe("Automation detail layout", () => {
     await expect(detailCardHeader.getByRole("button", { name: "Collapse automation detail" })).toBeHidden();
     const expandDetailButton = listCardHeader.getByRole("button", { name: "Expand automation detail" });
     await expect(expandDetailButton).toBeFocused();
+    const collapsedCreateButton = listCardHeader.getByRole("button", { name: "Create automation" });
+    await expect(collapsedCreateButton).toBeVisible();
+    await collapsedCreateButton.click();
+    const composerShell = page.getByTestId("automation-composer-shell");
+    await expect(composerShell.getByPlaceholder("Automation title")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(composerShell).toBeHidden();
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-collapsed.png"),
       fullPage: true,

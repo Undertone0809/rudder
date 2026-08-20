@@ -1159,21 +1159,27 @@ export function Automations() {
         >
           <h2 className="truncate text-[14px] font-semibold text-foreground">Automations</h2>
           {detailCollapsed && automationId ? (
-            <Button
-              ref={expandDetailButtonRef}
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="hidden h-8 w-8 text-muted-foreground hover:text-foreground min-[1100px]:inline-flex"
-              aria-label="Expand automation detail"
-              title="Expand automation detail"
-              onClick={() => {
-                setDetailCollapsed(false);
-                window.requestAnimationFrame(() => collapseDetailButtonRef.current?.focus());
-              }}
-            >
-              <PanelRight className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Create automation
+              </Button>
+              <Button
+                ref={expandDetailButtonRef}
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="hidden h-8 w-8 text-muted-foreground hover:text-foreground min-[1100px]:inline-flex"
+                aria-label="Expand automation detail"
+                title="Expand automation detail"
+                onClick={() => {
+                  setDetailCollapsed(false);
+                  window.requestAnimationFrame(() => collapseDetailButtonRef.current?.focus());
+                }}
+              >
+                <PanelRight className="h-4 w-4" />
+              </Button>
+            </div>
           ) : !automationId && selectedOrganizationId ? (
             <Button type="button" size="sm" className="px-4" onClick={() => openComposer()}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
