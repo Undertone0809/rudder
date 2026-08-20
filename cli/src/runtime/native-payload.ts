@@ -198,13 +198,10 @@ export async function tryInstallNativePayload(input: {
     throw new NativePayloadError("trusted_digest_invalid", false);
   }
   if (!expectedSha256) {
-    const error = new NativePayloadError("trusted_digest_unavailable", false);
-    if (!policy.fallbackAllowed) throw error;
-    return {
-      installed: false,
-      fallbackCode: error.code,
-      diagnostic: error.diagnostic,
-    };
+    // An unpinned archive cannot be published automatically. Explicit node
+    // mode and capability disables return before this point, so auto mode
+    // must fail closed instead of handing unverified bytes to the Node writer.
+    throw new NativePayloadError("trusted_digest_unavailable", false);
   }
   try {
     if (expectedSha256) {

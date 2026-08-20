@@ -115,6 +115,21 @@ describe("native runtime payload bridge", () => {
     })).rejects.toMatchObject({ code: "trusted_digest_unavailable", accepted: false });
   });
 
+  it("fails closed in auto mode when the archive has no trusted digest", async () => {
+    const f = await fixture("success");
+    process.env.RUDDER_NATIVE_MODE = "auto";
+    process.env.RUDDER_NATIVE_PAYLOAD_PATH = f.binary;
+    await expect(tryInstallNativePayload({
+      archivePath: f.archive,
+      extractPath: path.join(f.root, "extract"),
+      publishStagingPath: path.join(f.root, "publish"),
+      destinationPath: path.join(f.root, "destination"),
+      maxArchiveBytes: 1024,
+      preparePublish: async () => "bin/postgres",
+      validatePublished: async () => undefined,
+    })).rejects.toMatchObject({ code: "trusted_digest_unavailable", accepted: false });
+  });
+
   it("fails closed on a trusted digest mismatch before Node publication", async () => {
     const f = await fixture("digest-mismatch");
     process.env.RUDDER_NATIVE_PAYLOAD_PATH = f.binary;
