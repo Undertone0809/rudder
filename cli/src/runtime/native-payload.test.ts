@@ -19,7 +19,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(mode: "success" | "accepted-failure") {
+async function fixture(mode: "success" | "accepted-failure" | "digest-mismatch") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-native-payload-ts-"));
   roots.push(root);
   const archive = path.join(root, "payload.zip");
@@ -29,6 +29,10 @@ async function fixture(mode: "success" | "accepted-failure") {
 import fs from "node:fs";
 const args = process.argv.slice(2);
 const capability = args[0] === "payload" && args[1] === "verify" ? "payload.verify" : "payload.extract";
+if (capability === "payload.verify" && ${JSON.stringify(mode)} === "digest-mismatch") {
+  console.log(JSON.stringify({ ok: false, capability, protocolVersion: 1, accepted: false, fallbackSafe: true, errorCode: "sha256_mismatch" }));
+  process.exit(2);
+}
 if (capability === "payload.extract" && ${JSON.stringify(mode)} === "accepted-failure") {
   fs.mkdirSync(args[4], { recursive: true });
   console.log(JSON.stringify({ ok: false, capability, protocolVersion: 1, accepted: true, fallbackSafe: false, errorCode: "extract_write_failed" }));
@@ -109,5 +113,26 @@ describe("native runtime payload bridge", () => {
       preparePublish: async () => "bin/postgres",
       validatePublished: async () => undefined,
     })).rejects.toMatchObject({ code: "trusted_digest_unavailable", accepted: false });
+  });
+
+  it("fails closed on a trusted digest mismatch before Node publication", async () => {
+    const f = await fixture("digest-mismatch");
+    process.env.RUDDER_NATIVE_PAYLOAD_PATH = f.binary;
+    let prepared = false;
+    await expect(tryInstallNativePayload({
+      archivePath: f.archive,
+      extractPath: path.join(f.root, "extract"),
+      publishStagingPath: path.join(f.root, "publish"),
+      destinationPath: path.join(f.root, "destination"),
+      maxArchiveBytes: 1024,
+      expectedSha256: "0".repeat(64),
+      preparePublish: async () => {
+        prepared = true;
+        return "bin/postgres";
+      },
+      validatePublished: async () => undefined,
+    })).rejects.toMatchObject({ code: "sha256_mismatch", accepted: false, fallbackSafe: false });
+    expect(prepared).toBe(false);
+    await expect(fs.stat(path.join(f.root, "destination"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

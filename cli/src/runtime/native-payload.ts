@@ -38,7 +38,10 @@ export class NativePayloadError extends Error {
     this.name = "NativePayloadError";
     this.code = code.slice(0, 80);
     this.accepted = accepted;
-    this.fallbackSafe = !accepted;
+    // A digest mismatch is an integrity failure, not a capability or spawn
+    // failure. Falling back would let the Node extractor publish unverified
+    // bytes, so it must fail closed even though Rust has not accepted them.
+    this.fallbackSafe = !accepted && this.code !== "sha256_mismatch";
     this.diagnostic = createRudderNativeDiagnostic({
       capability: "runtime-payload",
       target: typeof envelope?.target === "string" ? envelope.target : nativeTarget(),
