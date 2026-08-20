@@ -551,6 +551,7 @@ export function LibraryLiveSurface({
   const entryTarget = target.kind === "library_entry" ? target : null;
   const documentTarget = target.kind === "library_document" ? target : null;
   const directoryTarget = target.kind === "library_directory" ? target : null;
+  const directoryPath = directoryTarget?.directoryPath ?? "";
   const directFilePath = target.kind === "library_file"
     ? target.filePath
     : entryTarget?.path ?? null;
@@ -603,12 +604,9 @@ export function LibraryLiveSurface({
   const directoryQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(
       organizationId,
-      directoryTarget?.directoryPath ?? "",
+      directoryPath,
     ),
-    queryFn: () => organizationsApi.listWorkspaceFiles(
-      organizationId,
-      directoryTarget!.directoryPath,
-    ),
+    queryFn: () => organizationsApi.listWorkspaceFiles(organizationId, directoryPath),
     enabled: Boolean(directoryTarget),
     refetchOnWindowFocus: false,
   });

@@ -68,6 +68,10 @@ function buildLibraryDirectoryMentionHref(directoryPath: string) {
   return `library-directory://directory?p=${encodeURIComponent(directoryPath)}`;
 }
 
+function buildLibraryFileMentionHref(filePath: string) {
+  return `library-file://file?p=${encodeURIComponent(filePath)}`;
+}
+
 async function installDesktopShellFileLauncherStub(page: Page) {
   await page.addInitScript(() => {
     const fileLocationCalls: Array<{ rootPath: string; filePath: string; targetId: string }> = [];
@@ -2767,6 +2771,88 @@ test.describe("Chat Side Panel", () => {
       .toContainText(`${directoryPath}/nested/charlie.md`);
     await expect(sidePanel).toContainText("Nested file preview.");
     await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+  });
+
+  test("opens a Library file after a failed directory request", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Side-Panel-Library-Directory-Failure-${Date.now()}`,
+        issuePrefix: uniqueIssuePrefix(),
+      },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    await createE2EChatAgent(page.request, organization.id, { name: "Side Panel Agent" });
+
+    const directoryPath = `docs/side-panel-browser-failure-${Date.now()}`;
+    const filePath = `${directoryPath}/MEMORY.md`;
+    const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath,
+        content: "# Side Panel file\n\nThe file remains readable after the directory fails.",
+      },
+    });
+    expect(fileRes.ok(), await fileRes.text()).toBe(true);
+    await fileRes.json();
+    const fileName = filePath.split("/").at(-1) ?? filePath;
+
+    const hostChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Side Panel Library directory failure host chat",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+        initialMessage: { body: "Open the Library references beside this chat." },
+      },
+    });
+    expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
+    const hostChat = await hostChatRes.json() as { id: string };
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: hostChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: `Try [${directoryPath}](${buildLibraryDirectoryMentionHref(directoryPath)}) first, then open [${fileName}](${buildLibraryFileMentionHref(filePath)}).`,
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.route(`**/api/orgs/${organization.id}/workspace/files**`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Temporary directory failure" }),
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${hostChat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage).toContainText(fileName, { timeout: 15_000 });
+    await assistantMessage.locator('a[data-mention-kind="library_directory"]').click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    await expect(sidePanel).toBeVisible({ timeout: 15_000 });
+    const liveSurfaceError = page.getByTestId("library-live-surface-error");
+    await expect(liveSurfaceError).toContainText(
+      "Temporary directory failure",
+      { timeout: 15_000 },
+    );
+
+    await assistantMessage.getByRole("link", { name: fileName }).click();
+    const fileView = page.getByTestId("library-live-surface-markdown-editor");
+    await expect(fileView).toBeVisible();
+    await expect(fileView).toContainText("The file remains readable after the directory fails.");
+    await expect(liveSurfaceError).toBeHidden();
   });
 
   test("opens the global empty Side Panel picker from a non-reference page", async ({ page }) => {
