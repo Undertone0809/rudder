@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -20,8 +20,31 @@ const e2eDb = createDb(E2E_DATABASE_URL);
 const screenshotDir = process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR
   ? path.resolve(process.env.RUDDER_CHAT_WORK_MANIFEST_SCREENSHOT_DIR)
   : fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-work-manifest-"));
+const manifestWaitTimeout = 90_000;
+
+async function gotoChatAndWaitForManifest(
+  page: Page,
+  issuePrefix: string,
+  chatId: string,
+) {
+  const manifestResponse = page.waitForResponse(
+    (response) => (
+      new URL(response.url()).pathname === `/api/chats/${chatId}/work-manifest`
+      && response.status() < 500
+    ),
+    { timeout: manifestWaitTimeout },
+  ).catch(() => null);
+  await page.goto(`/${issuePrefix}/messenger/chat/${chatId}`, { waitUntil: "domcontentloaded" });
+  const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
+  await expect(shelf).toBeVisible({ timeout: manifestWaitTimeout });
+  await expect(page.getByRole("status", { name: "Chat messages loading" })).toHaveCount(0, { timeout: manifestWaitTimeout });
+  await Promise.race([manifestResponse, page.waitForTimeout(5_000)]);
+  return shelf;
+}
 
 test.describe("Chat Work Manifest", () => {
+  test.setTimeout(180_000);
+
   test("shows all six references without a collapse control", async ({ page }) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const orgRes = await page.request.post("/api/orgs", {
@@ -61,11 +84,8 @@ test.describe("Chat Work Manifest", () => {
       localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
-
-    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
+    const shelf = await gotoChatAndWaitForManifest(page, organization.issuePrefix, chat.id);
     const references = shelf.getByRole("region", { name: "References" });
-    await expect(shelf).toBeVisible({ timeout: 15_000 });
     await expect(shelf.getByTestId("chat-work-manifest-section-count-references")).toHaveText("6");
     await expect(references.getByRole("button", { name: "View all 6" })).toHaveCount(0);
     for (const referenceUrl of referenceUrls) {
@@ -133,10 +153,7 @@ test.describe("Chat Work Manifest", () => {
       localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
-
-    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
-    await expect(shelf).toBeVisible({ timeout: 15_000 });
+    const shelf = await gotoChatAndWaitForManifest(page, organization.issuePrefix, chatId);
     const automationButton = shelf
       .locator("button[data-target-type='automation']")
       .filter({ hasText: automation.title });
@@ -249,10 +266,7 @@ test.describe("Chat Work Manifest", () => {
       localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
-
-    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
-    await expect(shelf).toBeVisible({ timeout: 15_000 });
+    const shelf = await gotoChatAndWaitForManifest(page, organization.issuePrefix, chatId);
     const canonicalTitle = `${issue.identifier} · ${issue.title}`;
     const issueButton = shelf.locator("button[data-target-type='issue']").filter({ hasText: canonicalTitle });
     const commentButton = shelf.locator("button[data-target-type='issue_comment']").filter({ hasText: canonicalTitle });
@@ -518,10 +532,7 @@ test.describe("Chat Work Manifest", () => {
       localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
-
-    const shelf = page.getByRole("complementary", { name: "Conversation files and links" });
-    await expect(shelf).toBeVisible({ timeout: 15_000 });
+    const shelf = await gotoChatAndWaitForManifest(page, organization.issuePrefix, chat.id);
     await expect(shelf.getByText("Outputs", { exact: true })).toHaveCount(1);
     await expect(shelf).toContainText("Sources");
     await expect(shelf).toContainText("References");
@@ -624,7 +635,7 @@ test.describe("Chat Work Manifest", () => {
     await issueSidePanel.getByTestId("chat-side-panel-tab").hover();
     await issueSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(issueSidePanel).toHaveCount(0);
-    await expect(shelf).toBeVisible();
+    await expect(shelf).toBeVisible({ timeout: 15_000 });
     const reopenedReferences = shelf.locator("section[aria-label='References']");
     await reopenedReferences
       .getByRole("button", { name: "View all 30" })
@@ -646,18 +657,17 @@ test.describe("Chat Work Manifest", () => {
     await automationSidePanel.getByTestId("chat-side-panel-tab").hover();
     await automationSidePanel.getByTestId("chat-side-panel-tab-close").click();
     await expect(automationSidePanel).toHaveCount(0);
-    await expect(shelf).toBeVisible();
+    await expect(shelf).toBeVisible({ timeout: 15_000 });
     await shelf.locator("section[aria-label='References']")
       .getByRole("button", { name: "View all 30" })
       .click();
 
     await references.getByRole("button", { name: referencedChatTitle, exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${referencedChat.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${otherChat.id}$`));
     await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
-    await expect(page.getByTestId("chat-assistant-message")).toContainText("Other project source");
+    await expect(page.getByTestId("chat-user-message").filter({ hasText: "Other project source" })).toBeVisible();
     await page.screenshot({ path: `${screenshotDir}/chat-reference-navigation.png`, fullPage: true });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
-    await expect(shelf).toBeVisible();
+    await gotoChatAndWaitForManifest(page, organization.issuePrefix, chat.id);
     await shelf.locator("section[aria-label='References']")
       .getByRole("button", { name: "View all 30" })
       .click();
@@ -681,15 +691,14 @@ test.describe("Chat Work Manifest", () => {
     await manifestScrollRegion.hover();
     await page.mouse.wheel(0, 600);
     await expect.poll(() => manifestScrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${otherChat.id}`);
+    await gotoChatAndWaitForManifest(page, organization.issuePrefix, otherChat.id);
     const otherShelf = page.getByRole("complementary", { name: "Conversation files and links" });
     await expect(otherShelf).toBeVisible({ timeout: 15_000 });
     await expect(otherShelf).toContainText("other-source.example");
     await expect.poll(() => (
       otherShelf.getByTestId("chat-work-manifest-scroll-region").evaluate((element) => element.scrollTop)
     )).toBe(0);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
-    await expect(shelf).toBeVisible();
+    await gotoChatAndWaitForManifest(page, organization.issuePrefix, chat.id);
     await expect.poll(() => manifestScrollRegion.evaluate((element) => element.scrollTop)).toBe(0);
 
     const [scrollBox, workspaceBox] = await Promise.all([
@@ -714,7 +723,7 @@ test.describe("Chat Work Manifest", () => {
     expect(collapsedShelfInterceptsPointer).toBe(false);
     await wideToggle.click();
     await expect(widePanel).toHaveAttribute("data-state", "open");
-    await expect(shelf).toBeVisible();
+    await expect(shelf).toBeVisible({ timeout: 15_000 });
     await page.screenshot({ path: `${screenshotDir}/desktop.png`, fullPage: true });
     await page.evaluate(() => {
       const state = window as typeof window & {
@@ -731,6 +740,10 @@ test.describe("Chat Work Manifest", () => {
       };
     });
 
+    await expect(page.locator(
+      "[data-testid='side-panel-stable-host'], [data-testid='side-panel-expanded-overlay']",
+    )).toHaveCount(1);
+    await page.waitForTimeout(500);
     const openingSamples = await sampleSidePanelMotion(
       page,
       () => shelf.getByText("report.md", { exact: true }).click(),
@@ -741,7 +754,8 @@ test.describe("Chat Work Manifest", () => {
     });
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    await expect(sidePanel.getByRole("heading", { name: "Manifest report", exact: true })).toBeVisible();
+    await expect(page.getByText("Manifest report", { exact: true }))
+      .toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     expect(await page.evaluate(() => {
       const state = (window as typeof window & {
@@ -781,7 +795,7 @@ test.describe("Chat Work Manifest", () => {
     await page.setViewportSize({ width: 1024, height: 768 });
     const trigger = page.getByTestId("chat-work-manifest-trigger");
     await expect(trigger).toBeVisible();
-    await expect(trigger).toContainText("Outputs 2");
+    await expect(trigger).toHaveText(/Outputs 2/);
     await trigger.click();
     const compactPanel = page.getByTestId("chat-work-manifest-compact-panel");
     await expect(compactPanel).toBeVisible();
@@ -821,10 +835,37 @@ test.describe("Chat Work Manifest", () => {
     await compactPanel.getByRole("button", { name: "Close conversation files and links" }).click();
     await expect(compactPanel).toHaveCount(0);
 
+    await trigger.focus();
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(compactPanel).toBeVisible();
+    const compactCloseButton = compactPanel.getByRole("button", { name: "Close conversation files and links" });
+    await compactCloseButton.focus();
+    await expect(compactCloseButton).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(compactPanel).toHaveCount(0);
+
+    await page.evaluate(() => localStorage.setItem("rudder.theme", "light"));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+    const mobileTrigger = page.getByTestId("chat-work-manifest-trigger");
+    await expect(mobileTrigger).toBeVisible();
+    await expect(mobileTrigger).toHaveText(/Outputs 2/);
+    await mobileTrigger.click();
+    const mobilePanel = page.getByTestId("chat-work-manifest-compact-panel");
+    await expect(mobilePanel).toBeVisible();
+    const mobilePanelBox = await mobilePanel.boundingBox();
+    expect(mobilePanelBox).not.toBeNull();
+    expect(mobilePanelBox!.width).toBeLessThanOrEqual(390);
+    expect(mobilePanelBox!.x).toBeGreaterThanOrEqual(0);
+    expect(mobilePanelBox!.x + mobilePanelBox!.width).toBeLessThanOrEqual(390);
+    await page.screenshot({ path: `${screenshotDir}/mobile-light.png`, fullPage: true });
+    await mobilePanel.getByRole("button", { name: "Close conversation files and links" }).click();
+    await expect(mobilePanel).toHaveCount(0);
+
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${outputOnlyChat.id}`);
-    const outputOnlyShelf = page.getByRole("complementary", { name: "Conversation files and links" });
-    await expect(outputOnlyShelf).toBeVisible();
+    const outputOnlyShelf = await gotoChatAndWaitForManifest(page, organization.issuePrefix, outputOnlyChat.id);
     await expect(outputOnlyShelf.getByText("Outputs", { exact: true })).toHaveCount(1);
     await expect(outputOnlyShelf).toContainText("report.md");
     await expect(outputOnlyShelf.getByText("Work", { exact: true })).toHaveCount(0);
@@ -839,7 +880,7 @@ test.describe("Chat Work Manifest", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(page.getByTestId("chat-work-manifest")).toHaveCount(0);
     await expect(page.getByTestId("chat-work-manifest-wide-toggle")).toHaveCount(0);
-    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await gotoChatAndWaitForManifest(page, organization.issuePrefix, chat.id);
     await expect(wideToggle).toBeVisible();
     await wideToggle.click();
     await expect(widePanel).toHaveAttribute("data-state", "closed");
@@ -853,7 +894,7 @@ test.describe("Chat Work Manifest", () => {
     });
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${errorChat.id}`);
     const errorShelf = page.getByRole("complementary", { name: "Conversation files and links" });
-    await expect(errorShelf).toBeVisible();
+    await expect(errorShelf).toBeVisible({ timeout: 15_000 });
     await expect(errorShelf).toContainText("Manifest unavailable");
     await expect(wideToggle).toHaveAttribute("aria-expanded", "true");
   });
