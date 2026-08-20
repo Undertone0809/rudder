@@ -32,6 +32,14 @@ import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const LEGACY_COPILOT_SYSTEM_KIND = "rudder_copilot";
+const DEFAULT_MANAGED_INSTRUCTION_RUNTIMES = new Set([
+  "claude_local",
+  "codex_local",
+  "cursor",
+  "gemini_local",
+  "opencode_local",
+  "pi_local",
+]);
 
 export type AgentRunScene = "issue" | "chat" | "automation" | "review" | "heartbeat";
 
@@ -571,6 +579,13 @@ export function agentRunContextService(
   async function materializeManagedInstructionsForRun(
     agent: AgentRunContextAgent,
   ): Promise<Record<string, unknown>> {
+    if (!DEFAULT_MANAGED_INSTRUCTION_RUNTIMES.has(agent.agentRuntimeType)) {
+      return typeof agent.agentRuntimeConfig === "object"
+        && agent.agentRuntimeConfig !== null
+        && !Array.isArray(agent.agentRuntimeConfig)
+        ? agent.agentRuntimeConfig as Record<string, unknown>
+        : {};
+    }
     const result = await instructions.reconcileBundle(agent);
     return result.agentRuntimeConfig;
   }

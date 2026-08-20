@@ -117,6 +117,20 @@ test("assembles the complete Goal advancement protocol for every production wake
   const ownerKey = await createAgentKey(request, owner.id);
   const agentHeaders = { Authorization: `Bearer ${ownerKey.token}` };
 
+  // Recreate the persisted shape of an older local Agent: the instruction
+  // directory remains, but the runtime config no longer carries a path.
+  for (const file of ["MEMORY.md", "TOOLS.md"]) {
+    const response = await request.delete(`/api/agents/${owner.id}/instructions-bundle/file?path=${encodeURIComponent(file)}`);
+    expect(response.ok()).toBe(true);
+  }
+  const legacyConfigResponse = await request.patch(`/api/agents/${owner.id}`, {
+    data: {
+      agentRuntimeConfig: { model: "gpt-5.4" },
+      replaceAgentRuntimeConfig: true,
+    },
+  });
+  expect(legacyConfigResponse.ok()).toBe(true);
+
   const previewResponse = await request.post(`/api/orgs/${organization.id}/goals/start-preview`, {
     data: {
       title: "Publish a verified Goal runtime candidate",
@@ -148,6 +162,7 @@ test("assembles the complete Goal advancement protocol for every production wake
   expect(startWakeup?.idempotencyKey).toBeTruthy();
   const startRunId = await waitForWakeRun(goal.id, "goal_started", startWakeup!.idempotencyKey!);
   const startPrompt = await waitForAdapterPrompt(startRunId);
+  expect(startPrompt).toContain("# MEMORY.md");
   expect(startPrompt).toContain("## Wake Entry - Goal Started");
   expect(startPrompt).toContain(preview.packet.activation.initialPlan.summary);
   expect(startPrompt).toContain("Validate and use the persisted initial Plan before replacing it.");

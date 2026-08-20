@@ -544,6 +544,57 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
     expect(prepared.runtimeConfig.instructionsFilePath).toBe(expectedInstructionsFilePath);
   });
 
+  it("materializes the default MEMORY.md for a legacy local agent before a run", async () => {
+    const rudderHome = await makeTempDir("rudder-agent-run-context-legacy-default-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = "organization-1";
+    const workspaceKey = "builder--11111111";
+    const managedRoot = managedInstructionsRoot(rudderHome, orgId, workspaceKey);
+    await fs.mkdir(managedRoot, { recursive: true });
+
+    const svc = agentRunContextService({} as any);
+    const config = await svc.materializeManagedInstructionsForRun({
+      id: "11111111-1111-4111-8111-111111111111",
+      orgId,
+      name: "Builder",
+      workspaceKey,
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    });
+
+    expect(config.instructionsFilePath).toBe(path.join(managedRoot, "SOUL.md"));
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8"))
+      .resolves.toContain("Record stable preferences");
+  });
+
+  it("leaves external runtime instruction configuration untouched", async () => {
+    const externalRoot = await makeTempDir("rudder-agent-run-context-external-");
+    cleanupDirs.add(externalRoot);
+    const externalConfig = {
+      instructionsBundleMode: "external",
+      instructionsRootPath: externalRoot,
+      instructionsEntryFile: "AGENTS.md",
+      instructionsFilePath: path.join(externalRoot, "AGENTS.md"),
+      model: "gpt-5.4",
+    };
+
+    const svc = agentRunContextService({} as any);
+    const config = await svc.materializeManagedInstructionsForRun({
+      id: "11111111-1111-4111-8111-111111111111",
+      orgId: "organization-1",
+      name: "Builder",
+      workspaceKey: "builder--11111111",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: externalConfig,
+    });
+
+    expect(config).toEqual(externalConfig);
+    await expect(fs.readdir(externalRoot)).resolves.toEqual([]);
+  });
+
   it("does not write per-run baseConfig instruction overrides into the managed bundle", async () => {
     const rudderHome = await makeTempDir("rudder-agent-run-context-per-run-override-");
     cleanupDirs.add(rudderHome);

@@ -29,6 +29,7 @@ const MODE_KEY = "instructionsBundleMode";
 const ROOT_KEY = "instructionsRootPath";
 const ENTRY_KEY = "instructionsEntryFile";
 const FILE_KEY = "instructionsFilePath";
+const LEGACY_FILE_KEY = "agentsMdPath";
 const PROMPT_KEY = "promptTemplate";
 const BOOTSTRAP_PROMPT_KEY = "bootstrapPromptTemplate";
 const LEGACY_PROMPT_TEMPLATE_PATH = "promptTemplate.legacy.md";
@@ -576,6 +577,43 @@ async function writeBundleFiles(
   }
 }
 
+async function materializeDefaultManagedBundleForRun(
+  agent: AgentLike,
+  state: BundleState,
+): Promise<{ agentRuntimeConfig: Record<string, unknown>; rootPath: string }> {
+  const managedRootPath = resolveManagedInstructionsRoot(agent);
+  await ensureAgentWorkspaceLayout(agent);
+  await fs.mkdir(managedRootPath, { recursive: true });
+  const hadManagedFiles = (await listFilesRecursive(managedRootPath)).length > 0;
+
+  // A legacy agent may have kept MEMORY.md beside the managed bundle. Preserve
+  // it before filling in the default file, and never overwrite bundle files.
+  await copyLegacyRootMemoryIntoManagedInstructions(agent);
+  if (!hadManagedFiles) {
+    const defaultFiles = await defaultManagedBundleFiles(agent);
+    const legacyInstructions = await readLegacyInstructions(agent, state.config);
+    await writeBundleFiles(
+      managedRootPath,
+      legacyInstructions.trim().length > 0
+        ? { ...defaultFiles, [state.entryFile || ENTRY_FILE_DEFAULT]: legacyInstructions }
+        : await managedEntryRecoveryFiles(agent, state),
+    );
+  } else {
+    const defaultFiles = await defaultManagedBundleFiles(agent);
+    await writeBundleFiles(managedRootPath, {
+      [MEMORY_FILE_NAME]: defaultFiles[MEMORY_FILE_NAME] ?? "",
+    });
+  }
+
+  const agentRuntimeConfig = applyBundleConfig(state.config, {
+    mode: "managed",
+    rootPath: managedRootPath,
+    entryFile: state.entryFile || ENTRY_FILE_DEFAULT,
+    clearLegacyPromptTemplate: state.legacyPromptTemplateActive || state.legacyBootstrapPromptTemplateActive,
+  });
+  return { agentRuntimeConfig, rootPath: managedRootPath };
+}
+
 async function copyManagedBundleFiles(sourceRoot: string, targetRoot: string): Promise<boolean> {
   const sourceStat = await statIfExists(sourceRoot);
   if (!sourceStat?.isDirectory() || path.resolve(sourceRoot) === path.resolve(targetRoot)) return false;
@@ -635,6 +673,25 @@ export function agentInstructionsService() {
     const current = await recoverManagedBundleState(agent, derived, {
       materializeMissingManagedEntry: true,
     });
+    const config = derived.config;
+    const hasExplicitInstructionPath = Boolean(
+      asString(config[ROOT_KEY])
+      || asString(config[FILE_KEY])
+      || asString(config[LEGACY_FILE_KEY]),
+    );
+    const shouldRestoreDefaultManagedBundle =
+      !hasExplicitInstructionPath
+      && current.mode !== "external"
+      && (current.mode === "managed" || !current.rootPath);
+    if (shouldRestoreDefaultManagedBundle) {
+      const materialized = await materializeDefaultManagedBundleForRun(agent, current);
+      const nextAgent = { ...agent, agentRuntimeConfig: materialized.agentRuntimeConfig };
+      return {
+        bundle: await getBundle(nextAgent),
+        agentRuntimeConfig: materialized.agentRuntimeConfig,
+        changed: true,
+      };
+    }
     if (current.mode === "managed" && !current.rootPath && current.legacyPromptTemplateActive) {
       const prepared = await ensureWritableBundle(agent, { clearLegacyPromptTemplate: true });
       const nextAgent = { ...agent, agentRuntimeConfig: prepared.agentRuntimeConfig };

@@ -456,6 +456,123 @@ describe("agent instructions service", () => {
     expect(result.bundle.warnings).toEqual([]);
   });
 
+  it("restores the default bundle for a legacy agent without an instruction path", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-legacy-default-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    await fs.mkdir(managedRoot, { recursive: true });
+
+    const svc = agentInstructionsService();
+    const result = await svc.reconcileBundle(makeAgent({ model: "gpt-5.4" }));
+
+    expect(result.changed).toBe(true);
+    expect(result.agentRuntimeConfig).toMatchObject({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: managedRoot,
+      instructionsEntryFile: "SOUL.md",
+      instructionsFilePath: path.join(managedRoot, "SOUL.md"),
+    });
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["MEMORY.md", "SOUL.md", "TOOLS.md"]);
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8"))
+      .resolves.toContain("Record stable preferences");
+  });
+
+  it("preserves a legacy prompt template while restoring the default memory bundle", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-legacy-prompt-default-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    await fs.mkdir(managedRoot, { recursive: true });
+
+    const svc = agentInstructionsService();
+    const result = await svc.reconcileBundle(makeAgent({
+      model: "gpt-5.4",
+      promptTemplate: "# Legacy persona\n",
+    }));
+
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["MEMORY.md", "SOUL.md", "TOOLS.md"]);
+    await expect(fs.readFile(path.join(managedRoot, "SOUL.md"), "utf8")).resolves.toBe("# Legacy persona");
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8"))
+      .resolves.toContain("Record stable preferences");
+    expect(result.agentRuntimeConfig.promptTemplate).toBeUndefined();
+  });
+
+  it("restores the full default bundle when legacy memory and prompt template coexist", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-legacy-memory-prompt-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    const agentRoot = path.dirname(managedRoot);
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.writeFile(path.join(agentRoot, "MEMORY.md"), "# Legacy Memory\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const result = await svc.reconcileBundle(makeAgent({
+      model: "gpt-5.4",
+      promptTemplate: "# Legacy persona\n",
+    }));
+
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["MEMORY.md", "SOUL.md", "TOOLS.md"]);
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8")).resolves.toBe("# Legacy Memory\n");
+    await expect(fs.readFile(path.join(managedRoot, "SOUL.md"), "utf8")).resolves.toBe("# Legacy persona");
+    await expect(fs.readFile(path.join(managedRoot, "TOOLS.md"), "utf8"))
+      .resolves.toContain("# TOOLS.md");
+    expect(result.agentRuntimeConfig.promptTemplate).toBeUndefined();
+  });
+
+  it("adds default MEMORY.md without overwriting an existing legacy bundle file", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-legacy-memory-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.writeFile(path.join(managedRoot, "SOUL.md"), "# Existing persona\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const result = await svc.reconcileBundle(makeAgent({ model: "gpt-5.4" }));
+
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["MEMORY.md", "SOUL.md"]);
+    await expect(fs.readFile(path.join(managedRoot, "SOUL.md"), "utf8")).resolves.toBe("# Existing persona\n");
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8"))
+      .resolves.toContain("Record stable preferences");
+  });
+
+  it("does not materialize the default bundle for an external instruction root", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-external-default-");
+    const externalRoot = await makeTempDir("rudder-agent-instructions-external-root-");
+    cleanupDirs.add(paperclipHome);
+    cleanupDirs.add(externalRoot);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    await fs.writeFile(path.join(externalRoot, "AGENTS.md"), "# External Agent\n", "utf8");
+    const svc = agentInstructionsService();
+    const agent = makeAgent({
+      instructionsBundleMode: "external",
+      instructionsRootPath: externalRoot,
+      instructionsEntryFile: "AGENTS.md",
+      instructionsFilePath: path.join(externalRoot, "AGENTS.md"),
+      model: "gpt-5.4",
+    });
+
+    const result = await svc.reconcileBundle(agent);
+
+    expect(result.changed).toBe(false);
+    expect(result.agentRuntimeConfig).toEqual(agent.agentRuntimeConfig);
+    expect(result.bundle.mode).toBe("external");
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["AGENTS.md"]);
+    await expect(fs.stat(path.join(result.bundle.managedRootPath, "MEMORY.md"))).rejects.toThrow();
+  });
+
   it("restores the default managed bundle when configured managed metadata points at an empty bundle", async () => {
     const paperclipHome = await makeTempDir("rudder-agent-instructions-empty-managed-");
     cleanupDirs.add(paperclipHome);
@@ -605,7 +722,7 @@ describe("agent instructions service", () => {
       instructionsFilePath: path.join(managedRoot, "SOUL.md"),
     });
     expect(result.agentRuntimeConfig).not.toHaveProperty("promptTemplate");
-    expect(result.bundle.files.map((file) => file.path)).toEqual(["SOUL.md"]);
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["MEMORY.md", "SOUL.md", "TOOLS.md"]);
     expect(result.bundle.legacyPromptTemplateActive).toBe(false);
     await expect(fs.readFile(path.join(managedRoot, "SOUL.md"), "utf8")).resolves.toBe("# SOUL.md -- CMO Persona\n\nYou are the CMO.");
   });
