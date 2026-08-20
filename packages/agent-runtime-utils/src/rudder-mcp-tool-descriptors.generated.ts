@@ -325,6 +325,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   },
   {
+    "capabilityId": "issue.create",
+    "name": "rudder_issue_create",
+    "description": "Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.",
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": true
+  },
+  {
     "capabilityId": "approval.get",
     "name": "rudder_approval_get",
     "description": "Read one approval request.",
@@ -910,5 +919,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "be398a9df736442f6771b37d76f73dba0964d77acfbcfcf20ba67afcc307e49a";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "bce6e177e379d5379c6503cb666334eaf97f6039e55428dfbc07e7350dbb8a70";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

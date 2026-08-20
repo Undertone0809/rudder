@@ -52,6 +52,7 @@ describe("server-utils prompt contracts", () => {
     expect(rendered).toContain("Request ID: request-1");
     expect(rendered).toContain("Track the browser recovery regression.");
     expect(rendered).toContain("exactly one real Rudder Issue");
+    expect(rendered).toContain("rudder_issue_create");
     expect(rendered).toContain("rudder issue create");
   });
 

@@ -450,6 +450,20 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
         riskSummary: string("Known risks, limitations, or remaining gaps."),
         idempotencyKey: string("Stable key for safe retry.", { maxLength: 500 }),
       }, ["goal", "contractRevision", "criteria", "evidenceRefs", "riskSummary", "idempotencyKey"]);
+    case "issue.create":
+      return schema({
+        title: string("Issue title.", { maxLength: 500 }),
+        description: string("Issue description.", { maxLength: 500_000 }),
+        status: string("Issue status.", { maxLength: 100 }),
+        priority: string("Issue priority.", { maxLength: 100 }),
+        assigneeAgentId: string("Assignee agent id or reference.", { maxLength: 200 }),
+        projectId: string("Project id or reference.", { maxLength: 200 }),
+        goalId: string("Goal id or reference.", { maxLength: 200 }),
+        parentId: string("Parent issue id or reference.", { maxLength: 200 }),
+        requestDepth: number("Requested issue depth.", 0, 10_000),
+        billingCode: string("Billing code.", { maxLength: 200 }),
+        labelIds: strings("Issue label ids.", 100),
+      }, ["title"]);
     case "issue.list":
       return schema({
         status: string("Comma-separated issue statuses.", { maxLength: 500 }),

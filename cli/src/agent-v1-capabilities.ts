@@ -536,7 +536,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     category: "issue",
     description: "Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.",
     mutating: true,
-    contract: "compat",
+    contract: "agent-v1",
     requiresOrgId: true,
     requiresAgentId: false,
     requiresRunId: false,
