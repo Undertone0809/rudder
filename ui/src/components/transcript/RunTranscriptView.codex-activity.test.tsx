@@ -177,8 +177,8 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     );
 
     expect(html).toContain('data-transcript-chat-column="reading"');
-    expect(html).toMatch(/data-transcript-chat-column="reading" class="max-w-3xl px-1"/);
-    expect(html).toMatch(/data-transcript-chat-column="full" class="w-full"/);
+    expect(html).toMatch(/data-transcript-chat-column="reading" class="w-full min-w-0 max-w-3xl px-1"/);
+    expect(html).toMatch(/data-transcript-chat-column="full" class="w-full min-w-0"/);
     expect(html).toMatch(
       /data-transcript-chat-column="full"[\s\S]*data-testid="chat-transcript-steer-message"/,
     );

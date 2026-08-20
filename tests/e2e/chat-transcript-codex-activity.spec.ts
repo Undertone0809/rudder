@@ -135,6 +135,137 @@ test("matches Codex activity disclosure in collapsed and expanded Messenger stat
   await page.screenshot({ path: "/tmp/rudder-codex-activity-expanded.png", fullPage: true });
 });
 
+test("keeps continuous Chinese transcript progress in a readable column", async ({ page }) => {
+  test.setTimeout(120_000);
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
+  });
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Chat-Transcript-Width-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Transcript Width Agent",
+    command: E2E_CODEX_STUB,
+  });
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Continuous Chinese transcript",
+      preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: { body: "检查连续中文过程文本的布局。" },
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+  const progressText = "这是一段用于验证聊天进度区域宽度的连续中文文本，应该保持自然的段落布局，不应该被压缩成每行一个字符。";
+
+  await e2eDb.insert(chatMessages).values({
+    id: randomUUID(),
+    orgId: organization.id,
+    conversationId: chat.id,
+    role: "assistant",
+    kind: "message",
+    status: "completed",
+    body: "连续中文过程文本检查完成。",
+    structuredPayload: {
+      __chatTranscript: [
+        { kind: "system", ts: "2026-07-23T00:00:00.000Z", text: "turn started" },
+        { kind: "assistant", ts: "2026-07-23T00:00:01.000Z", text: progressText },
+      ],
+    },
+    replyingAgentId: agent.id,
+    chatTurnId: randomUUID(),
+    turnVariant: 0,
+  });
+
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
+
+  const transcript = page.getByTestId("chat-transcript-item");
+  await expect(transcript.getByRole("button", { name: /Worked for/i })).toBeVisible({ timeout: 15_000 });
+  await transcript.getByRole("button", { name: /Worked for/i }).click();
+  const progress = transcript.getByText(progressText, { exact: true });
+  await expect(progress).toBeVisible();
+  const readingColumn = transcript
+    .locator('[data-transcript-chat-column="reading"]')
+    .filter({ hasText: progressText });
+  await expect(readingColumn).toHaveCount(1);
+  await expect(readingColumn).toHaveClass(/(?:^|\s)w-full(?:\s|$)/);
+  await expect(readingColumn).toHaveClass(/(?:^|\s)min-w-0(?:\s|$)/);
+  await expect(readingColumn).toHaveClass(/(?:^|\s)max-w-3xl(?:\s|$)/);
+  const progressMetrics = await progress.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      width: box.width,
+      height: box.height,
+      lineHeight: Number.parseFloat(style.lineHeight),
+      containerWidth: element.parentElement?.getBoundingClientRect().width ?? 0,
+    };
+  });
+  const readingColumnMetrics = await readingColumn.evaluate((element) => {
+    const htmlElement = element as HTMLElement;
+    return {
+      width: htmlElement.getBoundingClientRect().width,
+      scrollWidth: htmlElement.scrollWidth,
+    };
+  });
+  expect(progressMetrics.width).toBeGreaterThan(240);
+  expect(progressMetrics.height).toBeLessThan(progressMetrics.lineHeight * 4);
+  expect(readingColumnMetrics.width).toBeGreaterThan(240);
+  expect(readingColumnMetrics.scrollWidth).toBeLessThanOrEqual(readingColumnMetrics.width + 1);
+  await page.screenshot({ path: "/tmp/rudder-chat-transcript-continuous-chinese-desktop.png", fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileDisclosure = transcript.getByRole("button", { name: /Worked for/i });
+  if (await mobileDisclosure.getAttribute("aria-expanded") !== "true") {
+    await mobileDisclosure.click();
+  }
+  await expect(progress).toBeVisible();
+  await progress.scrollIntoViewIfNeeded();
+  const mobileProgressMetrics = await progress.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      width: box.width,
+      height: box.height,
+      lineHeight: Number.parseFloat(style.lineHeight),
+    };
+  });
+  const mobileReadingColumnMetrics = await readingColumn.evaluate((element) => {
+    const htmlElement = element as HTMLElement;
+    return {
+      width: htmlElement.getBoundingClientRect().width,
+      scrollWidth: htmlElement.scrollWidth,
+    };
+  });
+  expect(mobileProgressMetrics.width).toBeGreaterThan(240);
+  expect(mobileProgressMetrics.height).toBeLessThan(mobileProgressMetrics.lineHeight * 8);
+  expect(mobileReadingColumnMetrics.scrollWidth).toBeLessThanOrEqual(mobileReadingColumnMetrics.width + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: "/tmp/rudder-chat-transcript-continuous-chinese-mobile.png", fullPage: true });
+
+  expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
+  expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
+  const unexpectedRequestFailures = requestFailures.filter((failure) => !failure.endsWith("net::ERR_ABORTED"));
+  expect(unexpectedRequestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
+});
+
 test("inspects recorded images and independent historical diffs in a real Messenger conversation", async ({ page }) => {
   test.setTimeout(120_000);
   const imagePath = "/workspace/rudder/tmp/transcript-preview.png";

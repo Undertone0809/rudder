@@ -2986,8 +2986,8 @@ export function LazyStreamTranscriptItem({
         : "";
 
   return (
-    <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
-      <div className="w-full max-w-3xl px-1 py-1">
+    <div data-testid="chat-transcript-item" className="flex min-w-0 justify-start transition-all duration-200">
+      <div className="w-full min-w-0 max-w-3xl px-1 py-1">
         <div className="flex items-center gap-3">
           <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
           <button
@@ -3111,9 +3111,9 @@ export function StreamTranscriptItem({
   const showBody = processOpen || streamingActive;
 
   return (
-    <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
-      <div className="w-full py-1">
-        <div className="max-w-3xl px-1">
+    <div data-testid="chat-transcript-item" className="flex min-w-0 justify-start transition-all duration-200">
+      <div className="w-full min-w-0 py-1">
+        <div className="w-full min-w-0 max-w-3xl px-1">
           <div className="flex items-center gap-3">
             <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
             <button
