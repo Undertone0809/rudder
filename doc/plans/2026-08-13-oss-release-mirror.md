@@ -13,7 +13,7 @@ related_plans: []
 supersedes: []
 owners:
   - release-maintainer
-updated_at: 2026-08-14
+updated_at: 2026-08-20
 ---
 
 # Tencent COS Release Mirror
@@ -21,11 +21,11 @@ updated_at: 2026-08-14
 ## Intent
 
 Make Rudder's Desktop-first installation reliable on mainland-China networks
-without changing GitHub Releases as the authoritative release record. Every
-stable and canary Desktop release mirrors each checksum-verified asset to
-Tencent Cloud COS after GitHub publication, and `rudder start`
-should automatically prefer the network path that is usable from the current
-machine.
+without changing GitHub Releases as the authoritative release record. Manual
+stable releases may mirror each checksum-verified asset to Tencent Cloud COS
+only when the operator explicitly enables `mirror_cos`; the default stable path
+and every automatic canary keep COS disabled. `rudder start` should
+automatically prefer the network path that is usable from the current machine.
 
 The mirror is a transport optimization. It must not become a second source of
 version truth, weaken checksum validation, or turn a failed mirror upload into
@@ -51,6 +51,13 @@ a silently incomplete stable release.
    when the existing COS object is byte-identical.
 8. CDN is not part of this delivery. It can be placed in front of the same COS
    paths later without changing the release identity or CLI contract.
+9. The manual `workflow_dispatch` input `mirror_cos` defaults to `false`.
+   Automatic `workflow_run` canaries force it to `false` because they have no
+   user opt-in. A manual stable release with `mirror_cos: true` mirrors the
+   frozen Desktop assets before publishing `SHASUMS256.txt`; all other paths
+   publish that checksum marker directly without Tencent credentials or COS
+   upload steps. The separate `mirror_recovery` input remains an explicit
+   recovery path for an already-published stable Release.
 
 ## Release Flow
 
@@ -59,15 +66,11 @@ immutable source SHA
   -> unified Release matrix builds and freezes four Desktop artifacts
   -> publish job downloads those artifacts and generates SHASUMS256.txt
   -> GitHub Release receives only the immutable binary assets
-  -> separate stable/canary COS mirror job uses environment desktop-release-mirror
-  -> mirror job downloads the same frozen artifacts
-  -> mirror job authenticates with GitHub OIDC and Tencent STS
-  -> mirror script verifies local checksums
-  -> mirror script compares GitHub asset SHA-256 metadata when available
-  -> upload versioned objects without overwrite
-  -> fetch COS objects and verify size/hash/readability
-  -> GitHub Release receives SHASUMS256.txt as the completion marker
-  -> public install and stable closeout require the mirror job to succeed
+  -> if manual stable mirror_cos=true: mirror frozen artifacts with OIDC/STS,
+     verify checksums, upload immutable COS objects, and verify reads
+  -> otherwise: publish SHASUMS256.txt directly without COS credentials
+  -> public install and stable closeout require the selected checksum path
+     to succeed
 ```
 
 The object layout is:
@@ -123,14 +126,18 @@ variable exists for staging, recovery, and black-box verification.
    checksum URL rewriting, COS failure, corrupt COS content, and GitHub
    fallback.
 2. Workflow contract tests prove OIDC/STS permissions, immutable upload semantics,
-   checksum verification, mirror completion before Desktop publication is
-   reported complete, and downstream release work remains blocked when either
-   stable or canary mirror fails. Stable partial recovery must reuse the original
-   Release `candidate_run_id` rather than rebuilding Desktop artifacts.
+   checksum verification, the default/false/true mirror policy for manual stable
+   releases, automatic canary opt-out, direct checksum publication without
+   Tencent environment variables, mirror completion before Desktop publication
+   is reported complete when opted in, and downstream release work remains
+   blocked when the selected stable mirror or checksum path fails. Stable partial
+   recovery must reuse the original Release `candidate_run_id` rather than
+   rebuilding Desktop artifacts.
 3. A real COS object can be fetched anonymously by exact URL but the bucket
    cannot be listed or written anonymously.
-4. A current public Rudder release is mirrored byte-identically and verified
-   against GitHub `SHASUMS256.txt`.
+4. When explicitly enabled, a current public Rudder release is mirrored
+   byte-identically and verified against GitHub `SHASUMS256.txt`; the default
+   release path produces the same GitHub checksum marker without a COS upload.
 5. An isolated `rudder start --download-source cn --no-open` downloads from COS
    and installs successfully on the available platform.
 6. The same command succeeds through GitHub when the COS URL is deliberately
