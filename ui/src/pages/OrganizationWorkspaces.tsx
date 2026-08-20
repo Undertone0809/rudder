@@ -2687,8 +2687,8 @@ function OrganizationWorkspaceBrowserForOrganization({
                         className={cn(
                           "rudder-library-document-layout mx-auto min-h-full w-full px-8 py-8",
                           renderSelectedMarkdownOutlinePanel
-                            ? "rudder-library-document-layout--with-outline max-w-[1180px] xl:grid xl:grid-cols-[minmax(0,880px)_220px] xl:gap-8"
-                            : "max-w-[880px]",
+                            ? "rudder-library-document-layout--with-outline max-w-[1400px] xl:grid xl:grid-cols-[minmax(0,1fr)_220px] xl:gap-8"
+                            : "max-w-[1180px]",
                         )}
                       >
                         <div className="min-w-0">
@@ -2729,7 +2729,7 @@ function OrganizationWorkspaceBrowserForOrganization({
                             }}
                             bordered={false}
                             placeholder="Write in Markdown..."
-                            contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
+                            contentClassName="rudder-library-document-editor rudder-library-document-editor--wide min-h-[420px] text-[15px] leading-7 text-foreground"
                           />
                         </div>
                         {renderSelectedMarkdownOutlinePanel ? (

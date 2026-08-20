@@ -3192,12 +3192,12 @@ button[draggable="false"] {
   transition: max-width 120ms ease-out;
 }
 
-.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"]) .rudder-library-document-layout--with-outline,
+.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"][aria-hidden="false"]) .rudder-library-document-layout--with-outline,
 .workspace-main-panel-stack:has(> [data-testid="side-panel-expanded-overlay"]) .rudder-library-document-layout--with-outline {
   max-width: 880px;
 }
 
-.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"]) .rudder-library-document-outline,
+.workspace-main-panel-stack:has(> [data-testid="side-panel-resizer"][aria-hidden="false"]) .rudder-library-document-outline,
 .workspace-main-panel-stack:has(> [data-testid="side-panel-expanded-overlay"]) .rudder-library-document-outline {
   display: none;
 }
@@ -4109,6 +4109,18 @@ a.rudder-mention-chip[data-mention-kind="chat"]::before {
 .rudder-codemirror-markdown-content .cm-line {
   max-width: 100%;
   min-width: 0;
+}
+
+/* Library documents use a wide canvas for tables while keeping prose readable. */
+.rudder-library-document-editor--wide .cm-line {
+  width: min(100%, 55rem);
+  max-width: 55rem;
+  margin-inline: auto;
+}
+
+.rudder-library-document-editor--wide .cm-line:has(.rudder-markdown-table-scroll) {
+  width: 100%;
+  max-width: none;
 }
 
 .rudder-codemirror-markdown-content .cm-line[data-markdown-preview-state="source"] {

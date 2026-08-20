@@ -434,6 +434,192 @@ test("Library markdown tables keep readable columns inside the document pane", a
   expect(metrics.supportCellWidth).toBeGreaterThan(120);
 });
 
+test("Library markdown tables use the wider document canvas without widening prose", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Wide-Table");
+  const filePath = "docs/wide-table.md";
+  await writeWorkspaceFile(
+    page,
+    organization.id,
+    filePath,
+    [
+      "This paragraph stays in the comfortable reading column while the table below uses the wider document canvas.",
+      "",
+      "| Week | Stage goal | Learning material | Evidence to capture |",
+      "|---|---|---|---|",
+      "| 1 | Establish a dynamic problem view | System boundaries, behavior over time, feedback and delay relationships across the working system. | A written problem statement, boundary choice, and behavior-over-time sketch that can be reviewed with the people doing the work. |",
+      "| 2 | Build causal structure | Reinforcing and balancing loops, leverage points, and the assumptions that keep the model useful. | A causal-loop draft with polarity checks, delayed effects, and explicit assumptions ready for a focused review. |",
+    ].join("\n"),
+  );
+  await selectOrg(page, organization.id);
+  await page.setViewportSize({ width: 1800, height: 926 });
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const table = editor.locator("table").first();
+  await expect(table).toBeVisible();
+  const desktopMetrics = await table.evaluate((element) => {
+    const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
+    const editor = element.closest<HTMLElement>("[data-editor-engine]");
+    const tableLine = tableViewport?.closest<HTMLElement>(".cm-line");
+    const paragraphLine = Array.from(editor?.querySelectorAll<HTMLElement>(".cm-line") ?? [])
+      .find((line) => line.textContent?.includes("This paragraph stays in the comfortable reading column"));
+    const tableRect = tableViewport?.getBoundingClientRect();
+    const tableLineRect = tableLine?.getBoundingClientRect();
+    const paragraphLineRect = paragraphLine?.getBoundingClientRect();
+    const editorRect = editor?.getBoundingClientRect();
+    return {
+      tableLeft: tableRect?.left ?? 0,
+      tableRight: tableRect?.right ?? 0,
+      tableWidth: tableRect?.width ?? 0,
+      tableLineWidth: tableLineRect?.width ?? 0,
+      tableClientWidth: tableViewport?.clientWidth ?? 0,
+      tableScrollWidth: tableViewport?.scrollWidth ?? 0,
+      paragraphLineWidth: paragraphLineRect?.width ?? 0,
+      editorLeft: editorRect?.left ?? 0,
+      editorRight: editorRect?.right ?? 0,
+      overflowX: tableViewport ? getComputedStyle(tableViewport).overflowX : "",
+    };
+  });
+
+  expect(desktopMetrics.tableLineWidth).toBeGreaterThan(desktopMetrics.paragraphLineWidth + 100);
+  expect(desktopMetrics.tableWidth).toBeGreaterThan(desktopMetrics.paragraphLineWidth + 100);
+  expect(desktopMetrics.tableLeft).toBeGreaterThanOrEqual(desktopMetrics.editorLeft);
+  expect(desktopMetrics.tableRight).toBeLessThanOrEqual(desktopMetrics.editorRight);
+  expect(desktopMetrics.overflowX).toBe("auto");
+  expect(desktopMetrics.tableScrollWidth).toBeGreaterThan(desktopMetrics.tableClientWidth);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(table).toBeVisible();
+  const readMobileMetrics = async () => table.evaluate((element) => {
+    const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
+    return {
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      tableClientWidth: tableViewport?.clientWidth ?? 0,
+      tableScrollWidth: tableViewport?.scrollWidth ?? 0,
+    };
+  });
+  await expect.poll(async () => (await readMobileMetrics()).tableScrollWidth, { timeout: 5_000 }).toBeGreaterThan(0);
+  const mobileMetrics = await readMobileMetrics();
+
+  expect(mobileMetrics.documentScrollWidth).toBeLessThanOrEqual(mobileMetrics.viewportWidth);
+  expect(mobileMetrics.tableScrollWidth).toBeGreaterThan(mobileMetrics.tableClientWidth);
+});
+
+test("Library markdown tables stay wide with an outline and preserve cell saves", async ({ page }) => {
+  const organization = await createOrg(page, "Library-Markdown-Wide-Table-Outline");
+  const filePath = "docs/wide-table-outline.md";
+  await writeWorkspaceFile(
+    page,
+    organization.id,
+    filePath,
+    [
+      "# Dynamic systems learning plan",
+      "",
+      "This paragraph remains in the comfortable reading column while the table uses the wider document canvas.",
+      "",
+      "| Week | Stage goal | Learning material | Evidence to capture |",
+      "|---|---|---|---|",
+      "| 1 | Establish a dynamic problem view | System boundaries, behavior over time, feedback and delay relationships across the working system. | A written problem statement, boundary choice, and behavior-over-time sketch that can be reviewed with the people doing the work. |",
+      "| 2 | Build causal structure | Reinforcing and balancing loops, leverage points, and the assumptions that keep the model useful. | A causal-loop draft with polarity checks, delayed effects, and explicit assumptions ready for a focused review. |",
+    ].join("\n"),
+  );
+  await selectOrg(page, organization.id);
+  await page.setViewportSize({ width: 1800, height: 926 });
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const table = editor.locator("table").first();
+  await expect(table).toBeVisible();
+  await expect(page.getByTestId("org-workspaces-document-outline")).toBeVisible();
+
+  const desktopMetrics = await table.evaluate((element) => {
+    const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
+    const editor = element.closest<HTMLElement>("[data-editor-engine]");
+    const lines = Array.from(editor?.querySelectorAll<HTMLElement>(".cm-line") ?? []);
+    const paragraphLine = lines.find((line) => line.textContent?.includes("This paragraph remains"));
+    const headingLine = lines.find((line) => line.textContent?.includes("Dynamic systems learning plan"));
+    const tableRect = tableViewport?.getBoundingClientRect();
+    const paragraphLineRect = paragraphLine?.getBoundingClientRect();
+    const headingLineRect = headingLine?.getBoundingClientRect();
+    const outlineRect = document.querySelector<HTMLElement>('[data-testid="org-workspaces-document-outline"]')?.getBoundingClientRect();
+    return {
+      tableRight: tableRect?.right ?? 0,
+      tableWidth: tableRect?.width ?? 0,
+      tableClientWidth: tableViewport?.clientWidth ?? 0,
+      tableScrollWidth: tableViewport?.scrollWidth ?? 0,
+      paragraphLineWidth: paragraphLineRect?.width ?? 0,
+      headingLineWidth: headingLineRect?.width ?? 0,
+      outlineLeft: outlineRect?.left ?? Number.POSITIVE_INFINITY,
+      overflowX: tableViewport ? getComputedStyle(tableViewport).overflowX : "",
+    };
+  });
+
+  expect(desktopMetrics.tableWidth).toBeGreaterThan(desktopMetrics.paragraphLineWidth + 100);
+  expect(desktopMetrics.headingLineWidth).toBeLessThanOrEqual(880);
+  expect(desktopMetrics.tableRight).toBeLessThanOrEqual(desktopMetrics.outlineLeft);
+  expect(desktopMetrics.overflowX).toBe("auto");
+  expect(desktopMetrics.tableScrollWidth).toBeGreaterThan(desktopMetrics.tableClientWidth);
+
+  const editedCell = editor.getByRole("cell", { name: "Establish a dynamic problem view" });
+  await editedCell.dispatchEvent("mousedown", { button: 0 });
+  const cellEditor = page.getByRole("textbox", { name: "Edit table cell row 2 column 2" });
+  await expect(cellEditor).toBeVisible();
+  await cellEditor.fill("Establish a dynamic problem view (updated)");
+  await cellEditor.press("Enter");
+
+  await expect.poll(async () => {
+    const fileRes = await page.request.get(
+      `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}&_=${Date.now()}`,
+    );
+    expect(fileRes.ok()).toBe(true);
+    const detail = await fileRes.json() as { content: string | null };
+    return detail.content ?? "";
+  }).toContain("| 1 | Establish a dynamic problem view (updated) |");
+
+  await page.reload();
+  await expect(editor.getByRole("cell", { name: "Establish a dynamic problem view (updated)" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(table).toBeVisible();
+  const readMobileMetrics = async () => table.evaluate((element) => {
+    const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
+    return {
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      tableClientWidth: tableViewport?.clientWidth ?? 0,
+      tableScrollWidth: tableViewport?.scrollWidth ?? 0,
+    };
+  });
+  await expect.poll(async () => (await readMobileMetrics()).tableScrollWidth, { timeout: 5_000 }).toBeGreaterThan(0);
+  const rightmostCellMetrics = await table.evaluate((element) => {
+    const tableViewport = element.closest<HTMLElement>(".rudder-markdown-table-scroll");
+    if (!tableViewport) return null;
+    tableViewport.scrollLeft = tableViewport.scrollWidth;
+    const lastCell = element.querySelector<HTMLElement>("tbody tr:first-child td:last-child");
+    const viewportRect = tableViewport.getBoundingClientRect();
+    const cellRect = lastCell?.getBoundingClientRect();
+    return {
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      viewportLeft: viewportRect.left,
+      viewportRight: viewportRect.right,
+      cellLeft: cellRect?.left ?? Number.POSITIVE_INFINITY,
+      cellRight: cellRect?.right ?? Number.NEGATIVE_INFINITY,
+    };
+  });
+
+  expect(rightmostCellMetrics).not.toBeNull();
+  expect(rightmostCellMetrics!.documentScrollWidth).toBeLessThanOrEqual(rightmostCellMetrics!.viewportWidth);
+  expect(rightmostCellMetrics!.cellRight).toBeGreaterThan(rightmostCellMetrics!.viewportLeft - 1);
+  expect(rightmostCellMetrics!.cellLeft).toBeLessThanOrEqual(rightmostCellMetrics!.viewportRight + 1);
+  expect(rightmostCellMetrics!.cellRight).toBeLessThanOrEqual(rightmostCellMetrics!.viewportRight + 1);
+});
+
 test("Library markdown section jumps align headings to the top of the editor viewport", async ({ page }) => {
   const organization = await createOrg(page, "Library-Markdown-Outline");
   const filePath = "docs/outline.md";
