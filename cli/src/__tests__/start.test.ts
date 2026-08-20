@@ -232,21 +232,6 @@ function createDeferred<T = void>() {
 }
 
 describe("persistent CLI install helpers", () => {
-  it("resolves the Windows npm command without relying on a Windows test runner", () => {
-    expect(resolveNpmCommandInvocation("win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" })).toEqual({
-      command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/s", "/c", "npm.cmd"],
-    });
-    expect(resolveNpmCommandInvocation("win32", {})).toEqual({
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", "npm.cmd"],
-    });
-    expect(resolveNpmCommandInvocation("linux", { ComSpec: "ignored.exe" })).toEqual({
-      command: "npm",
-      args: [],
-    });
-  });
-
   it.runIf(process.platform === "win32")("invokes npm.cmd through cmd.exe without Node shell mode", () => {
     const npm = resolveNpmCommandInvocation();
     const result = spawnSync(npm.command, [...npm.args, "--version"], {

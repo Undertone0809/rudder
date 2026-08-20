@@ -247,7 +247,7 @@ jobs:
 
       - name: CLI start tests
         if: matrix.test == 'cli-start'
-        run: pnpm -s exec vitest run cli/src/__tests__/start.test.ts
+        run: pnpm -s exec vitest run cli/src/__tests__/npm-command.test.ts cli/src/__tests__/start.test.ts
 
       - name: Build
         env:
