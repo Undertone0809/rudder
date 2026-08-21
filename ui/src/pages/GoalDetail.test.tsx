@@ -114,10 +114,6 @@ vi.mock("../components/MarkdownEditor", async () => {
   };
 });
 
-vi.mock("../components/StatusBadge", () => ({
-  StatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
-}));
-
 vi.mock("../components/PageSkeleton", () => ({ PageSkeleton: () => <div>Loading</div> }));
 
 vi.mock("../api/agents", () => ({ agentsApi: { list: vi.fn(), resume: vi.fn(), adapterModels: vi.fn() } }));
@@ -392,7 +388,7 @@ describe("GoalDetail", () => {
 
     const container = renderPage();
     await waitUntil(() => expect(container.textContent).toContain("Result accepted"));
-    expect(container.textContent).toContain("History");
+    expect(container.textContent).toContain("Activity");
     expect(container.textContent).toContain("Goal achieved");
     expect(container.textContent).toContain("The operator workflow passes");
     expect(container.textContent).toContain("No unresolved release risk remains.");
@@ -728,7 +724,7 @@ describe("GoalDetail", () => {
     expect(Array.from(container.querySelectorAll("strong")).some((element) => element.textContent === "verified evidence")).toBe(true);
   });
 
-  it("keeps a Draft focused on its start blocker instead of repeating empty lifecycle sections", async () => {
+  it("keeps a Draft inside the same simple Goal detail structure", async () => {
     search = "";
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue({
       ...workspace,
@@ -759,10 +755,10 @@ describe("GoalDetail", () => {
     const container = renderPage();
     await waitUntil(() => expect(button(container, "Continue Goal")).not.toBeNull());
     expect(container.querySelector('[aria-label="Goal progress"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Goal activity views"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Goal properties"]')).toBeNull();
-    expect(container.textContent).not.toContain("Before work starts");
-    expect(container.textContent).not.toContain("Owner");
+    expect(container.querySelector('[aria-label="Goal detail views"]')?.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(container.querySelector('[aria-label="Goal properties"]')).not.toBeNull();
+    expect(container.textContent).toContain("Before work starts");
+    expect(container.textContent).toContain("Owner");
     expect(container.textContent).not.toContain("Needs your attention");
     expect(container.textContent).not.toContain("Agent is doing");
     expect(container.textContent).not.toContain("No Goal activity yet.");
@@ -1492,20 +1488,26 @@ describe("GoalDetail", () => {
     expect(container.textContent).not.toContain("Evaluate from evidence");
   });
 
-  it("keeps exactly two Activity tabs, defaults to Conversation, and persists Activity in the URL", async () => {
+  it("keeps exactly two detail tabs, defaults to Overview, and persists Activity in the URL", async () => {
     vi.mocked(goalsApi.getWorkspace).mockResolvedValue(conversationWorkspace as never);
     const container = renderPage();
-    await waitUntil(() => expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Conversation"));
-    const activityViews = container.querySelector('[aria-label="Goal activity views"]');
+    await waitUntil(() => expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Overview"));
+    const activityViews = container.querySelector('[aria-label="Goal detail views"]');
     expect(activityViews).not.toBeNull();
     expect(activityViews?.querySelectorAll('[role="tab"]')).toHaveLength(2);
-    expect(activityViews?.textContent).toContain("Conversation");
+    expect(activityViews?.textContent).toContain("Overview");
     expect(activityViews?.textContent).toContain("Activity");
     expect(activityViews?.textContent).not.toContain("Work");
     expect(activityViews?.textContent).not.toContain("Evidence");
     expect(container.querySelector('[aria-label="Goal comment"]')).not.toBeNull();
     expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Comments")).toBe(true);
     expect(Array.from(container.querySelectorAll("h2")).some((heading) => heading.textContent === "Outcome")).toBe(true);
+
+    const tablist = container.querySelector('[aria-label="Goal detail views"]')!;
+    const main = container.querySelector("main")!;
+    const title = container.querySelector("h1")!;
+    expect(Boolean(title.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(main.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
     const activityTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .find((candidate) => candidate.textContent?.includes("Activity"));

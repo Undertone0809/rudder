@@ -498,11 +498,22 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.locator("#main-content").getByRole("heading", { name: "Goals", exact: true }))
       .toHaveCount(0);
     await page.goto(goalDetailUrl);
-    const activityViews = page.getByRole("tablist", { name: "Goal activity views" });
+    const activityViews = page.getByRole("tablist", { name: "Goal detail views" });
     await expect(activityViews.getByRole("tab")).toHaveCount(2);
-    await expect(activityViews.getByRole("tab", { name: /Conversation/ })).toHaveAttribute("aria-selected", "true");
+    await expect(activityViews.getByRole("tab", { name: /Overview/ })).toHaveAttribute("aria-selected", "true");
     await expect(activityViews.getByRole("tab", { name: /Activity/ })).toBeVisible();
     await expect(activityViews.getByRole("tab", { name: /Work|Evidence/ })).toHaveCount(0);
+    const topLevelLayout = await activityViews.evaluate((tablist) => {
+      const isBeforeTabs = (element: Element | null) => Boolean(
+        element && (element.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
+      return {
+        titleBeforeTabs: isBeforeTabs(document.querySelector("h1")),
+        progressBeforeTabs: isBeforeTabs(document.querySelector('[aria-label="Goal progress"]')),
+        overviewBeforeTabs: isBeforeTabs(document.querySelector('[aria-label="Goal overview"]')),
+      };
+    });
+    expect(topLevelLayout).toEqual({ titleBeforeTabs: true, progressBeforeTabs: false, overviewBeforeTabs: false });
     await expect(page.getByRole("heading", { name: "Comments", exact: true })).toBeVisible();
     const goalProperties = page.getByRole("region", { name: "Goal properties" });
     const goalStatus = goalProperties.locator('[data-slot="issue-property-row"]').filter({ hasText: "Status" }).first();
@@ -577,7 +588,7 @@ test.describe("Goal Workspace v2", () => {
       updatedAt: new Date(),
     }).where(eq(heartbeatRuns.id, startWakeups[0]!.runId!));
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     await expect(page.getByRole("heading", { name: "Action needed", exact: true })).toBeVisible();
     await expect(page.getByText("The Owner Agent could not complete its latest action. Decide whether to retry or adjust the Goal.", { exact: true })).toBeVisible();
     await expect(page.getByText("Process adapter missing command", { exact: true })).toHaveCount(0);
@@ -598,7 +609,7 @@ test.describe("Goal Workspace v2", () => {
     await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page.getByText("Current Goal and supporting evidence are being checked.", { exact: true })).toBeVisible();
     await expect(page.getByText(/Goal contract|runtime evidence|change_proposal|result_proposal/i)).toHaveCount(0);
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     const contractBeforeFeedback = (await e2eDb.select().from(goals)).find((row) => row.id === goalId)!;
     const feedbackBody = "Keep the release focused on the operator journey, not internal Contract terminology.";
     let attachmentAttempts = 0;
@@ -786,8 +797,11 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByRole("heading", { name: "Current evidence", exact: true })).toBeVisible();
     await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}\\?tab=activity$`));
-    await expect(page.getByRole("heading", { name: "Goal activity", exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    const activityPanel = page.getByRole("tabpanel");
+    await expect(activityPanel.getByRole("heading", { name: "Goal activity", exact: true })).toBeVisible();
+    await expect(activityPanel.getByText("Outcome", { exact: true })).toHaveCount(0);
+    await expect(activityPanel.getByRole("heading", { name: "Comments", exact: true })).toHaveCount(0);
+    await page.getByRole("tab", { name: /Overview/ }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}$`));
 
     const chatDraft = "Review this Goal against the operator acceptance evidence.";
@@ -810,10 +824,10 @@ test.describe("Goal Workspace v2", () => {
     await page.screenshot({ path: testInfo.outputPath("goal-workspace-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    const mobileTabs = page.getByRole("tablist", { name: "Goal activity views" });
+    const mobileTabs = page.getByRole("tablist", { name: "Goal detail views" });
     await expect(mobileTabs).toBeVisible({ timeout: 30_000 });
     await expect(mobileTabs.getByRole("tab")).toHaveCount(2);
-    await expect(mobileTabs.getByRole("tab", { name: /Conversation/ })).toBeVisible();
+    await expect(mobileTabs.getByRole("tab", { name: /Overview/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Activity/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Work|Evidence/ })).toHaveCount(0);
     const mobileOverview = page.getByLabel("Goal overview");
@@ -874,11 +888,13 @@ test.describe("Goal Workspace v2", () => {
 
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/[a-f0-9-]+$`));
     const goalId = page.url().split("/").at(-1)!;
-    await expect(page.getByRole("tablist", { name: "Goal activity views" })).toHaveCount(0);
+    const draftTabs = page.getByRole("tablist", { name: "Goal detail views" });
+    await expect(draftTabs.getByRole("tab")).toHaveCount(2);
+    await expect(draftTabs.getByRole("tab", { name: /Overview/ })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByLabel("Goal progress")).toHaveCount(0);
-    await expect(page.getByLabel("Goal properties")).toHaveCount(0);
+    await expect(page.getByLabel("Goal properties")).toBeVisible();
     await expect(page.getByText("Comments become available after this Goal starts.", { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toBeVisible();
     await expect(page.getByText("Needs your attention", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Progress and feedback", exact: true })).toHaveCount(0);
@@ -888,7 +904,7 @@ test.describe("Goal Workspace v2", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByRole("button", { name: "Continue Goal", exact: true })).toBeVisible();
-    await expect(page.getByRole("tablist", { name: "Goal activity views" })).toHaveCount(0);
+    await expect(page.getByRole("tablist", { name: "Goal detail views" }).getByRole("tab")).toHaveCount(2);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath("goal-draft-blocked-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 960 });
@@ -1414,7 +1430,7 @@ test.describe("Goal Workspace v2", () => {
     ).toBeFocused();
     await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page.getByText("Result proposal rejected", { exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     await expect(page.getByText(rejectFeedback, { exact: true })).toBeVisible();
     const afterReject = await (await page.request.get(`/api/goals/${goal.id}`)).json() as Goal;
     expect(afterReject.lifecycle).toBe("active");
@@ -1552,7 +1568,7 @@ test.describe("Goal Workspace v2", () => {
     for (const internalTerm of ["Goal Contract", "Contract revision", "change_proposal", "result_proposal"]) {
       await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
     }
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     await page.screenshot({ path: testInfo.outputPath("goal-result-accepted-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
@@ -1687,7 +1703,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(readyForReviewLabels).toBeVisible();
     await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page.getByRole("tabpanel").getByText("Result ready for review", { exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     for (const internalTerm of ["result_proposal", "not_achieved"]) {
       await expect(page.getByText(internalTerm, { exact: false })).toHaveCount(0);
     }
@@ -1943,7 +1959,7 @@ test.describe("Goal Workspace v2", () => {
     }
     await expect(page.getByRole("heading", { name: "Properties", exact: true })).toBeVisible();
     await expect(page.getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: /Conversation/ }).click();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     const conversation = page.getByRole("tabpanel");
     await expect(conversation.getByText(longHistoryToken, { exact: true })).toBeVisible();
     await expect(conversation.getByText(longAttachmentName, { exact: true })).toBeVisible();

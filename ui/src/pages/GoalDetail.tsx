@@ -32,7 +32,6 @@ import {
   Focus,
   History,
   MessageSquare,
-  MessageSquareText,
   MoreHorizontal,
   Paperclip,
   Pencil,
@@ -40,7 +39,7 @@ import {
   Sparkles,
   Target,
   Trash2,
-  X,
+  X
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { agentsApi } from "../api/agents";
@@ -60,7 +59,6 @@ import { MarkdownBody } from "../components/MarkdownBody";
 import type { MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PropertiesManifest, PropertiesManifestSheet, PropertiesManifestTrigger } from "../components/PropertiesManifest";
-import { StatusBadge } from "../components/StatusBadge";
 import { StatusIcon } from "../components/StatusIcon";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
@@ -173,13 +171,13 @@ function goalStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-const GOAL_DETAIL_TABS = ["conversation", "activity"] as const;
+const GOAL_DETAIL_TABS = ["overview", "activity"] as const;
 type GoalDetailTab = (typeof GOAL_DETAIL_TABS)[number];
 
 function goalDetailTab(search: string): GoalDetailTab {
   const value = new URLSearchParams(search).get("tab");
   if (value === "activity") return "activity";
-  return GOAL_DETAIL_TABS.includes(value as GoalDetailTab) ? value as GoalDetailTab : "conversation";
+  return "overview";
 }
 
 function storedGoalChatTarget(
@@ -1317,7 +1315,6 @@ export function GoalDetail() {
   const hasActionableProposal = readyProposals.length > 0 || pendingChanges.length > 0;
   const hasAttention = Boolean(workspace.attention || readyProposals.length > 0 || pendingChanges.length > 0);
   const evaluationOutcome = readString(asRecord(goal.evaluationResult), "outcome");
-  const showHeaderFacet = !["needs_attention", "needs_your_attention"].includes(workspace.facet);
   const progressProposal = acceptedProposal ?? readyProposals[0] ?? resultProposals[0] ?? null;
   const verifiedCriteriaCount = progressProposal?.criteria.filter((criterion) => criterion.status === "met").length ?? 0;
   const criteriaCount = goal.criteria?.length ?? 0;
@@ -1328,7 +1325,6 @@ export function GoalDetail() {
   const activeIssueCount = linkedIssues.filter((issue) => !["done", "cancelled"].includes(issue.status)).length;
   const activeProjectCount = linkedProjects.filter((project) => !["completed", "cancelled", "archived"].includes(project.status)).length;
   const activeWorkCount = activeIssueCount + activeProjectCount;
-  const targetDate = goal.evaluationDeadline ?? goal.actionDeadline ?? null;
   const waitingForAgentStart = isActive && workspace.facet === "waiting_focus";
   const nextStatusLabel = hasAttention
     ? "Review needed"
@@ -1428,7 +1424,7 @@ export function GoalDetail() {
     if (!GOAL_DETAIL_TABS.includes(value as GoalDetailTab)) return;
     const nextTab = value as GoalDetailTab;
     const params = new URLSearchParams(location.search);
-    if (nextTab === "conversation") params.delete("tab");
+    if (nextTab === "overview") params.delete("tab");
     else params.set("tab", nextTab);
     const nextSearch = params.toString();
     navigate({
@@ -1731,21 +1727,6 @@ export function GoalDetail() {
         )}
       </PropertyRow>
 
-      {goal.criteria.length > 0 ? (
-        <div className="min-w-0 border-t border-border py-3">
-          <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
-            <span>Success criteria</span>
-            <Target className="h-3.5 w-3.5" />
-          </div>
-          <div className="divide-y divide-border">
-            {goal.criteria.slice(0, 3).map((criterion) => (
-              <p key={criterion.id} className="min-w-0 whitespace-pre-wrap break-words py-2 text-sm leading-5">{criterion.label}</p>
-            ))}
-          </div>
-          {goal.criteria.length > 3 ? <p className="pt-1 text-xs text-muted-foreground">+{goal.criteria.length - 3} more in Evidence</p> : null}
-        </div>
-      ) : null}
-
       {linkedWorkCount > 0 ? (
         <div className="min-w-0 border-t border-border pt-3">
           <div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground">
@@ -1821,7 +1802,6 @@ export function GoalDetail() {
             )}
           </div>
           <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto">
-            {isDraft ? <Button size="sm" className="h-9 rounded-lg" onClick={continueAlignment}><Target className="mr-1.5 h-4 w-4" />Continue Goal</Button> : null}
             <div className="flex h-9 items-center gap-0.5 rounded-lg border border-border bg-background/80 p-1">
               {!isDraft ? (
               <Button
@@ -1875,49 +1855,106 @@ export function GoalDetail() {
             </div>
           </div>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-          <StatusBadge status={lifecycle} />
-          {!isDraft && showHeaderFacet ? <span>{facetLabel(workspace.facet)}</span> : null}
-          {!isDraft && owner ? (
-            <div className="min-w-0 max-w-full">
-              <AgentIdentity
-                name={owner.name}
-                icon={owner.icon}
-                role={owner.role}
-                size="sm"
-                className="min-w-0 max-w-full [&>span:last-child]:min-w-0 [&>span:last-child]:whitespace-normal [&>span:last-child]:break-all"
-              />
-            </div>
-          ) : null}
-          {!isDraft && targetDate ? <span>due {formatDateOnly(targetDate)}</span> : null}
-        </div>
       </header>
 
       {isDraft ? (
-        <div className="issue-detail-body min-w-0 space-y-5">
-          <InlineEditor
-            value={goal.description ?? ""}
-            onSave={(description) => updateGoal.mutateAsync({ description: markdownDocumentOrNull(description) })}
-            as="p"
-            className="min-h-0 min-w-0 whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground"
-            placeholder="Add a description..."
-            multiline
-            editorEngine="codemirror"
-            documentIdentity={`goal:${goal.id}`}
-            variant="issue-description"
-            imageUploadHandler={async (file) => {
-              const asset = await uploadDescriptionImage.mutateAsync(file);
-              return asset.contentPath;
-            }}
-          />
-          {diagnostics}
-        </div>
+        <>
+          <main className="issue-detail-body min-w-0 space-y-5">
+            <InlineEditor
+              value={goal.description ?? ""}
+              onSave={(description) => updateGoal.mutateAsync({ description: markdownDocumentOrNull(description) })}
+              as="p"
+              className="min-h-0 min-w-0 whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground"
+              placeholder="Add a description..."
+              multiline
+              editorEngine="codemirror"
+              documentIdentity={`goal:${goal.id}`}
+              variant="issue-description"
+              imageUploadHandler={async (file) => {
+                const asset = await uploadDescriptionImage.mutateAsync(file);
+                return asset.contentPath;
+              }}
+            />
+
+            <section aria-label="Activity" className="min-w-0 space-y-3">
+              <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 space-y-3">
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span>Activity</span>
+                  </div>
+                  <TabsList className="h-8 rounded-md p-0.5" aria-label="Goal detail views">
+                    <TabsTrigger value="overview" className="h-7 rounded px-2.5 text-xs">
+                      <Target className="h-3.5 w-3.5" />Overview
+                    </TabsTrigger>
+                    <TabsTrigger value="activity" className="h-7 rounded px-2.5 text-xs">
+                      <ActivityIcon className="h-3.5 w-3.5" />Activity
+                      {activityTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{activityTimeline.length}</span> : null}
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+
+                <TabsContent value="overview" className="m-0 min-w-0 space-y-5">
+                  <section aria-label="Goal overview" className="min-w-0 space-y-5">
+                    <Section title="Before work starts" icon={Target} headingRef={outcomeHeadingRef}>
+                      <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">
+                        {workspace.attention?.reason ?? "Clarify the result and confirm an Owner Agent before starting this Goal."}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Continue this Goal when its result and Owner Agent are ready.</p>
+                    </Section>
+                    <Button type="button" size="sm" onClick={continueAlignment}>
+                      <Target className="mr-1.5 h-4 w-4" />Continue Goal
+                    </Button>
+                  </section>
+                  {diagnostics}
+                </TabsContent>
+
+                <TabsContent value="activity" className="m-0 min-w-0 space-y-4">
+                  <div className="flex min-w-0 items-end justify-between gap-3 border-b border-border pb-3">
+                    <div className="min-w-0">
+                      <h2 className="text-base font-semibold">Goal activity</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">{activityTimeline.length} recorded update{activityTimeline.length === 1 ? "" : "s"}</p>
+                    </div>
+                  </div>
+                  {renderTimelineEntries(activityTimeline, { comments: false, emptyMessage: "No Goal activity yet." })}
+                  {historyPagination}
+                </TabsContent>
+              </Tabs>
+            </section>
+          </main>
+
+          <aside className="issue-detail-rail min-w-0">
+            <PropertiesManifest ariaLabel="Goal properties">
+              {renderGoalProperties()}
+            </PropertiesManifest>
+          </aside>
+        </>
       ) : (
       <>
         <main className="issue-detail-body min-w-0 space-y-5">
           <MarkdownBody className="min-w-0 break-words text-[15px] leading-7 text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-            {goal.description ?? currentGoalSummary}
+            {goal.description ?? ""}
           </MarkdownBody>
+
+      <section aria-label="Activity" className="min-w-0 space-y-3">
+        <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 space-y-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-2">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>Activity</span>
+            </div>
+            <TabsList className="h-8 rounded-md p-0.5" aria-label="Goal detail views">
+              <TabsTrigger value="overview" className="h-7 rounded px-2.5 text-xs">
+                <Target className="h-3.5 w-3.5" />Overview
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="h-7 rounded px-2.5 text-xs">
+                <ActivityIcon className="h-3.5 w-3.5" />Activity
+                {activityTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{activityTimeline.length}</span> : null}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="overview" className="m-0 min-w-0 space-y-5">
 
           {!isDraft ? <section aria-label="Goal progress" className="grid min-w-0 gap-4 border-y border-border py-4 sm:grid-cols-[minmax(0,1fr)_9rem_10rem]">
             <div className="min-w-0 sm:pr-4">
@@ -1974,68 +2011,38 @@ export function GoalDetail() {
           ) : null}
 
           <section aria-label="Goal overview" className="min-w-0 space-y-5">
-          {isDraft ? (
-            <Section title="Before work starts" icon={Target} headingRef={outcomeHeadingRef}>
-              <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">
-                {workspace.attention?.reason ?? "Clarify the result and confirm an Owner Agent before starting this Goal."}
-              </p>
-              <p className="text-xs text-muted-foreground">Next step: continue this Goal, complete the visible requirements, then confirm the start preview.</p>
-            </Section>
-          ) : (
             <>
               <Section title="Outcome" icon={Target} headingRef={outcomeHeadingRef}>
                 <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{currentGoalSummary}</p>
                 {currentGoalRecord.updatedFromEvidence === true ? <p className="text-xs text-muted-foreground">Updated from evidence and feedback</p> : null}
               </Section>
               <Section title="Work" icon={Sparkles}>
-                  <div className="divide-y divide-border border-y border-border">
-                    <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
-                      <div className="text-xs font-medium text-muted-foreground">Current progress</div>
-                      <div className="min-w-0">
-                        <p className="whitespace-pre-wrap break-words text-sm leading-6">{workspace.currentProgress.summary}</p>
-                        {workspace.currentProgress.uncertainty ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.currentProgress.uncertainty}</p> : null}
-                        <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
-                      </div>
+                <div className="divide-y divide-border border-y border-border">
+                  <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                    <div className="text-xs font-medium text-muted-foreground">Current progress</div>
+                    <div className="min-w-0">
+                      <p className="whitespace-pre-wrap break-words text-sm leading-6">{workspace.currentProgress.summary}</p>
+                      {workspace.currentProgress.uncertainty ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{workspace.currentProgress.uncertainty}</p> : null}
+                      <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
                     </div>
-                    {!isClosed && workspace.agentAction ? (
-                      <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
-                        <div className="text-xs font-medium text-muted-foreground">{agentActionHeading}</div>
-                        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
-                      </div>
-                    ) : null}
-                    {!isClosed ? <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
-                      <div className="text-xs font-medium text-muted-foreground">Next step</div>
-                      <div className="min-w-0">
-                        <p className="whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
-                        {wakeCondition ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">Resume when: {wakeCondition}</p> : null}
-                      </div>
-                    </div> : null}
                   </div>
-                </Section>
+                  {!isClosed && workspace.agentAction ? (
+                    <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                      <div className="text-xs font-medium text-muted-foreground">{agentActionHeading}</div>
+                      <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6">{agentAction}</p>
+                    </div>
+                  ) : null}
+                  {!isClosed ? <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                    <div className="text-xs font-medium text-muted-foreground">Next step</div>
+                    <div className="min-w-0">
+                      <p className="whitespace-pre-wrap break-words text-sm leading-6">{nextStep}</p>
+                      {wakeCondition ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">Resume when: {wakeCondition}</p> : null}
+                    </div>
+                  </div> : null}
+                </div>
+              </Section>
             </>
-          )}
           </section>
-
-      <section aria-label="Activity" className="min-w-0 space-y-3">
-        <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 space-y-3">
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-2">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>Activity</span>
-            </div>
-            <TabsList className="h-8 rounded-md p-0.5" aria-label="Goal activity views">
-              <TabsTrigger value="conversation" className="h-7 rounded px-2.5 text-xs">
-                <MessageSquareText className="h-3.5 w-3.5" />Conversation
-                {conversationTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{conversationTimeline.length}</span> : null}
-              </TabsTrigger>
-              <TabsTrigger value="activity" className="h-7 rounded px-2.5 text-xs">
-                <ActivityIcon className="h-3.5 w-3.5" />Activity
-                {activityTimeline.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{activityTimeline.length}</span> : null}
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <TabsContent value="conversation" className="m-0 min-w-0 space-y-5">
 
       {!isClosed && !isDraft && hasAttention ? (
         <Section title="Action needed" icon={ShieldCheck} headingRef={attentionHeadingRef}>
@@ -2234,6 +2241,66 @@ export function GoalDetail() {
               : "This conversation is read-only because the Goal is closed."}
         </p>
       )}
+          <section aria-label="Goal evidence" className="min-w-0 space-y-5">
+            {isClosed ? (
+              <Section title="Result accepted" icon={FileCheck2}>
+                {acceptedProposal ? (
+                  <article aria-label="Accepted Goal result" className={cn(
+                    "min-w-0 border-l-2 pl-3",
+                    acceptedProposal.outcomeKind === "not_achieved" || acceptedProposal.outcomeKind === "breached"
+                      ? "border-destructive/45"
+                      : "border-emerald-500/50",
+                  )}>
+                    <ResultProposalSummary proposal={acceptedProposal} accepted />
+                  </article>
+                ) : (
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{evaluationOutcome ?? goal.status}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Accepted proposal details are not available for this earlier Goal.</p>
+                  </div>
+                )}
+              </Section>
+            ) : null}
+            <Section title="Success criteria" icon={Target}>
+              {goal.criteria && goal.criteria.length > 0 ? (
+                <div className="divide-y divide-border border-y border-border">
+                  {goal.criteria.map((criterion) => {
+                    const resultCriterion = progressProposal?.criteria.find((candidate) => candidate.label === criterion.label);
+                    return (
+                      <div key={criterion.id} className="flex min-w-0 items-start justify-between gap-3 py-2.5 text-sm">
+                        <span className="min-w-0 break-words">{criterion.label}</span>
+                        <span className={cn(
+                          "shrink-0 text-xs font-medium",
+                          resultCriterion?.status === "met" && "text-emerald-700 dark:text-emerald-400",
+                          (resultCriterion?.status === "unmet" || resultCriterion?.status === "breached") && "text-destructive",
+                          (!resultCriterion || resultCriterion.status === "unknown") && "text-muted-foreground",
+                        )}>
+                          {resultCriterion?.statusLabel ?? "Not verified"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <p className="text-sm text-muted-foreground">No success criteria defined.</p>}
+            </Section>
+            <Section title="Current evidence" icon={FileCheck2}>
+              <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
+              {(workspace.currentProgress.evidence ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No current progress evidence attached.</p> : null}
+            </Section>
+            {resultProposals.length > 0 ? (
+              <Section title="Result evidence" icon={ShieldCheck}>
+                <div className="space-y-4">
+                  {resultProposals.map((proposal) => (
+                    <article key={proposal.id} className="min-w-0 border-l-2 border-border pl-3">
+                      <div className="text-xs font-medium text-muted-foreground">{resultProposalHistoryLabel(proposal.status)}</div>
+                      <ResultProposalSummary proposal={proposal} accepted={proposal.status === "accepted"} />
+                    </article>
+                  ))}
+                </div>
+              </Section>
+            ) : null}
+          </section>
+          {diagnostics}
           </TabsContent>
 
           <TabsContent value="activity" className="m-0 min-w-0 space-y-4">
@@ -2248,67 +2315,6 @@ export function GoalDetail() {
           </TabsContent>
         </Tabs>
       </section>
-
-      <section aria-label="Goal evidence" className="min-w-0 space-y-5">
-        {isClosed ? (
-          <Section title="Result accepted" icon={FileCheck2}>
-            {acceptedProposal ? (
-              <article aria-label="Accepted Goal result" className={cn(
-                "min-w-0 border-l-2 pl-3",
-                acceptedProposal.outcomeKind === "not_achieved" || acceptedProposal.outcomeKind === "breached"
-                  ? "border-destructive/45"
-                  : "border-emerald-500/50",
-              )}>
-                <ResultProposalSummary proposal={acceptedProposal} accepted />
-              </article>
-            ) : (
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{evaluationOutcome ?? goal.status}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Accepted proposal details are not available for this earlier Goal.</p>
-              </div>
-            )}
-          </Section>
-        ) : null}
-        <Section title="Success criteria" icon={Target}>
-          {goal.criteria && goal.criteria.length > 0 ? (
-            <div className="divide-y divide-border border-y border-border">
-              {goal.criteria.map((criterion) => {
-                const resultCriterion = progressProposal?.criteria.find((candidate) => candidate.label === criterion.label);
-                return (
-                  <div key={criterion.id} className="flex min-w-0 items-start justify-between gap-3 py-2.5 text-sm">
-                    <span className="min-w-0 break-words">{criterion.label}</span>
-                    <span className={cn(
-                      "shrink-0 text-xs font-medium",
-                      resultCriterion?.status === "met" && "text-emerald-700 dark:text-emerald-400",
-                      (resultCriterion?.status === "unmet" || resultCriterion?.status === "breached") && "text-destructive",
-                      (!resultCriterion || resultCriterion.status === "unknown") && "text-muted-foreground",
-                    )}>
-                      {resultCriterion?.statusLabel ?? "Not verified"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : <p className="text-sm text-muted-foreground">No success criteria defined.</p>}
-        </Section>
-        <Section title="Current evidence" icon={FileCheck2}>
-          <EvidenceList items={workspace.currentProgress.evidence ?? []} refs={[]} context={evidenceContext} />
-          {(workspace.currentProgress.evidence ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No current progress evidence attached.</p> : null}
-        </Section>
-        {resultProposals.length > 0 ? (
-          <Section title="Result evidence" icon={ShieldCheck}>
-            <div className="space-y-4">
-              {resultProposals.map((proposal) => (
-                <article key={proposal.id} className="min-w-0 border-l-2 border-border pl-3">
-                  <div className="text-xs font-medium text-muted-foreground">{resultProposalHistoryLabel(proposal.status)}</div>
-                  <ResultProposalSummary proposal={proposal} accepted={proposal.status === "accepted"} />
-                </article>
-              ))}
-            </div>
-          </Section>
-        ) : null}
-      </section>
-      {diagnostics}
 
         </main>
 
