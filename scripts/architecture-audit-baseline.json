@@ -314,6 +314,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "cli/src/commands/client/company.ts",
+      "lines": 1501,
+      "owner": "runtime-cli",
+      "rationale": "Company CLI commands still combine organization selection, API calls, and formatted output while the client command surface is extracted.",
+      "target": "Extract organization selection and output adapters and reduce the company command module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "ui/src/pages/AgentDetail.integrations.tsx",
       "lines": 1501,
       "owner": "agents-ui",
