@@ -1006,26 +1006,35 @@ function AgentRunsContentSkeleton() {
     <div
       aria-busy="true"
       aria-label="Loading agent runs"
-      className="flex min-w-0 items-start gap-4"
+      className="agent-runs-layout-container agent-runs-layout min-w-0 space-y-3"
       data-testid="agent-runs-skeleton"
     >
-      <div className="min-w-0 flex-1 basis-0 space-y-4 rounded-lg border border-border p-4">
-        <div className="flex items-center justify-between gap-3">
-          <Skeleton className="h-5 w-44" />
-          <Skeleton className="h-7 w-20" />
+      <Skeleton className="h-10 w-full rounded-lg border border-border" data-testid="agent-runs-skeleton-toolbar" />
+      <div className="agent-runs-desktop-split min-w-0 items-start">
+        <div
+          className="min-w-0 space-y-4 rounded-lg border border-border p-4"
+          data-testid="agent-runs-skeleton-detail"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <Skeleton className="h-5 w-44" />
+            <Skeleton className="h-7 w-20" />
+          </div>
+          <Skeleton className="h-28 w-full rounded-lg" />
+          <div className="grid grid-cols-2 gap-3">
+            <Skeleton className="h-20 w-full rounded-lg" />
+            <Skeleton className="h-20 w-full rounded-lg" />
+          </div>
+          <Skeleton className="h-64 w-full rounded-lg" />
         </div>
-        <Skeleton className="h-28 w-full rounded-lg" />
-        <div className="grid grid-cols-2 gap-3">
-          <Skeleton className="h-20 w-full rounded-lg" />
-          <Skeleton className="h-20 w-full rounded-lg" />
-        </div>
-        <Skeleton className="h-64 w-full rounded-lg" />
-      </div>
 
-      <div className="hidden w-[14rem] shrink-0 space-y-1 rounded-lg border border-border p-2 xl:block">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <Skeleton key={index} className="h-16 w-full rounded-md" />
-        ))}
+        <div
+          className="agent-runs-wide-list min-w-0 space-y-1 rounded-lg border border-border p-2"
+          data-testid="agent-runs-skeleton-list"
+        >
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="h-16 w-full rounded-md" />
+          ))}
+        </div>
       </div>
     </div>
   );

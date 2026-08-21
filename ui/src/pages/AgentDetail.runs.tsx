@@ -678,7 +678,8 @@ export function RunsTab({
   };
 
   // The current run is the primary narrow-screen surface; history stays available on demand.
-  const effectiveRunId = selectedRunId ?? filtered[0]?.id ?? sorted[0]?.id ?? null;
+  const defaultRunId = filtered[0]?.id ?? sorted[0]?.id ?? null;
+  const effectiveRunId = selectedRunId ?? defaultRunId;
   const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
   const selectedRunOutsideFilters = Boolean(selectedRun && filtersActive && !filtered.some((run) => run.id === selectedRun.id));
   const railEntries = buildRunRailEntries(
