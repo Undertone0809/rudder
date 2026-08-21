@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { handleAgentBrowserDownload } from "./browser-agent-downloads.js";
 import {
   isAllowedAgentBrowserNavigationUrl,
+  isAllowedAgentBrowserRudderAssetUrl,
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
   isBlockedRudderAppUrl,
@@ -31,7 +32,11 @@ type BrowserSessionPolicyTarget = {
     onBeforeRequest(
       filter: { urls: string[] },
       handler: (
-        details: { url: string; resourceType?: string; webContentsId?: number },
+        details: {
+          url: string;
+          resourceType?: string;
+          webContentsId?: number;
+        },
         callback: (response: { cancel: boolean }) => void,
       ) => void,
     ): void;
@@ -130,8 +135,13 @@ export function installBrowserSessionPolicy(browserSession: BrowserSessionPolicy
     const rudderAppOrigins = options.getRudderAppOrigins();
     const isAgentRequest = typeof details.webContentsId === "number"
       && options.isAgentWebContents?.(details.webContentsId) === true;
+    const isAgentAssetSessionFetch = typeof details.webContentsId !== "number"
+      && details.resourceType !== "mainFrame"
+      && details.resourceType !== "subFrame"
+      && isAllowedAgentBrowserRudderAssetUrl(details.url, rudderAppOrigins);
     const allowAgentRudderRequest = isAgentRequest
-      && isAllowedAgentBrowserNavigationUrl(details.url, rudderAppOrigins);
+      ? isAllowedAgentBrowserNavigationUrl(details.url, rudderAppOrigins)
+      : isAgentAssetSessionFetch;
     callback({
       cancel: isBlockedRudderAppUrl(details.url, rudderAppOrigins) && !allowAgentRudderRequest,
     });

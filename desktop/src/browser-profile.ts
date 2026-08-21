@@ -82,11 +82,44 @@ function isLoopbackIpv4Hostname(hostname: string): boolean {
     && octets.slice(1).every((octet) => /^(?:0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255);
 }
 
+function parseIpv4Hostname(hostname: string): number[] | null {
+  const octets = hostname.split(".");
+  if (octets.length !== 4 || !octets.every((octet) => /^(?:0|[1-9]\d{0,2})$/.test(octet))) return null;
+  const parsed = octets.map(Number);
+  return parsed.every((octet) => octet <= 255) ? parsed : null;
+}
+
 function isLoopbackIpv4MappedHostname(hostname: string): boolean {
   const match = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(hostname);
   if (!match) return false;
   const high = Number.parseInt(match[1]!, 16);
   return (high >> 8) === 0x7f;
+}
+
+function parseIpv4MappedHostname(hostname: string): number[] | null {
+  const match = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(hostname);
+  if (!match) return null;
+  const high = Number.parseInt(match[1]!, 16);
+  const low = Number.parseInt(match[2]!, 16);
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff];
+}
+
+function isPrivateOrLinkLocalIpv4(octets: number[]): boolean {
+  const [first, second] = octets;
+  return first === 10
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 192 && second === 168)
+    || (first === 169 && second === 254);
+}
+
+function isPrivateOrLinkLocalHostname(hostname: string): boolean {
+  const ipv4 = parseIpv4Hostname(hostname) ?? parseIpv4MappedHostname(hostname);
+  if (ipv4) return isPrivateOrLinkLocalIpv4(ipv4);
+  if (!hostname.includes(":")) return false;
+
+  const firstHextet = Number.parseInt(hostname.split(":", 1)[0] || "0", 16);
+  return (firstHextet & 0xfe00) === 0xfc00
+    || (firstHextet & 0xffc0) === 0xfe80;
 }
 
 function isLoopbackOrUnspecifiedHostname(hostname: string): boolean {
@@ -118,6 +151,10 @@ function isLoopbackLikeHostname(hostname: string): boolean {
   return hostname.startsWith("127.") || hostname.startsWith("::ffff:");
 }
 
+function isRudderAssetContentPath(pathname: string): boolean {
+  return /^\/api\/(?:assets|attachments)\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/content$/iu.test(pathname);
+}
+
 export function isBlockedRudderAppUrl(target: string, rudderAppOrigins: string[]): boolean {
   const targetEndpoint = normalizeNetworkEndpoint(target);
   if (!targetEndpoint) return false;
@@ -132,6 +169,20 @@ export function isBlockedRudderAppUrl(target: string, rudderAppOrigins: string[]
     return isLoopbackOrUnspecifiedHostname(controlEndpoint.hostname)
       || targetEndpoint.hostname === controlEndpoint.hostname;
   });
+}
+
+export function isAllowedAgentBrowserRudderAssetUrl(target: string, rudderAppOrigins: string[]): boolean {
+  try {
+    const parsed = new URL(target);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const targetEndpoint = normalizeNetworkEndpoint(target);
+    return targetEndpoint !== null
+      && isLoopbackHostname(targetEndpoint.hostname)
+      && isRudderAssetContentPath(parsed.pathname)
+      && isBlockedRudderAppUrl(target, rudderAppOrigins);
+  } catch {
+    return false;
+  }
 }
 
 export function isAllowedBrowserNavigationUrl(target: string, rudderAppOrigins: string[]): boolean {
@@ -154,7 +205,11 @@ export function isAllowedAgentBrowserNavigationUrl(target: string, rudderAppOrig
   const targetEndpoint = normalizeNetworkEndpoint(target);
   if (!targetEndpoint || isUnspecifiedHostname(targetEndpoint.hostname)) return false;
   if (isLoopbackLikeHostname(targetEndpoint.hostname) && !isLoopbackHostname(targetEndpoint.hostname)) return false;
-  if (isLoopbackHostname(targetEndpoint.hostname)) return true;
+  if (isLoopbackHostname(targetEndpoint.hostname)) {
+    return !isBlockedRudderAppUrl(target, rudderAppOrigins)
+      || isAllowedAgentBrowserRudderAssetUrl(target, rudderAppOrigins);
+  }
+  if (isPrivateOrLinkLocalHostname(targetEndpoint.hostname)) return false;
   return !isBlockedRudderAppUrl(target, rudderAppOrigins);
 }
 

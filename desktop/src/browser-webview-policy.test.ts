@@ -128,8 +128,20 @@ describe("Rudder Browser session policy", () => {
     requestHandler?.({ url: "http://localhost:3100/api/orgs", resourceType: "mainFrame" }, blockedRequest);
     await vi.waitFor(() => expect(blockedRequest).toHaveBeenCalledWith({ cancel: true }));
     const allowedAgentRequest = vi.fn();
-    requestHandler?.({ url: "http://localhost:3100/api/assets/asset-1/content", resourceType: "mainFrame", webContentsId: 42 }, allowedAgentRequest);
+    requestHandler?.({ url: "http://localhost:3100/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content", resourceType: "mainFrame", webContentsId: 42 }, allowedAgentRequest);
     await vi.waitFor(() => expect(allowedAgentRequest).toHaveBeenCalledWith({ cancel: false }));
+    const allowedAgentSessionFetch = vi.fn();
+    requestHandler?.({
+      url: "http://localhost:3100/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content",
+      resourceType: "image",
+    }, allowedAgentSessionFetch);
+    await vi.waitFor(() => expect(allowedAgentSessionFetch).toHaveBeenCalledWith({ cancel: false }));
+    const blockedRudderSessionFetch = vi.fn();
+    requestHandler?.({
+      url: "http://localhost:3100/api/orgs",
+      resourceType: "image",
+    }, blockedRudderSessionFetch);
+    await vi.waitFor(() => expect(blockedRudderSessionFetch).toHaveBeenCalledWith({ cancel: true }));
     const blockedAgentUnspecifiedRequest = vi.fn();
     requestHandler?.({ url: "http://0.0.0.0:3100/api/assets/asset-1/content", resourceType: "mainFrame", webContentsId: 42 }, blockedAgentUnspecifiedRequest);
     await vi.waitFor(() => expect(blockedAgentUnspecifiedRequest).toHaveBeenCalledWith({ cancel: true }));
