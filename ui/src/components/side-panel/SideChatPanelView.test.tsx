@@ -575,7 +575,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
     });
 
     await vi.waitFor(() => expect(sendOptions).toHaveLength(1));
-    await vi.waitFor(() => expect(host.textContent).toContain("first stream failed after ack"));
+    await vi.waitFor(() => expect(host.textContent).toContain("Something went wrong. Try again."));
     expect(chatsApi.sendMessageStream).toHaveBeenCalledOnce();
 
     await act(async () => {
@@ -969,7 +969,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
     });
 
     await vi.waitFor(() => expect(host.textContent).toContain(
-      "Side Chat stream ended before a final response.",
+      "Something went wrong. Try again.",
     ));
     expect(host.querySelector('[aria-label="Sending Side Chat message"]')).toBeNull();
   });
@@ -1443,7 +1443,7 @@ describe("SideChatPanelView response annotations", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(host.textContent).toContain(
-      "Source annotation is no longer valid.",
+      "Something went wrong. Try again.",
     ));
 
     expect(draft.value).toBe("Check this edge case.");
@@ -1491,7 +1491,7 @@ describe("SideChatPanelView response annotations", () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(host.textContent).toContain("Admission failed."));
+    await vi.waitFor(() => expect(host.textContent).toContain("Something went wrong. Try again."));
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[aria-label="Send Side Chat message"]')?.click();
       await Promise.resolve();
@@ -1529,7 +1529,7 @@ describe("SideChatPanelView response annotations", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => expect(host.textContent).toContain(
-      "The saved message could not be hydrated.",
+      "Something went wrong. Try again.",
     ));
 
     expect(draft.value).toBe("");

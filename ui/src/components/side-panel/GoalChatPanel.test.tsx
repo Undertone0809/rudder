@@ -393,7 +393,8 @@ describe("GoalChatPanel", () => {
     await waitUntil(() => expect(rendered.container.textContent).toContain("Goal owner"));
     change(rendered.container.querySelector<HTMLTextAreaElement>('[aria-label="Goal chat message"]')!, "Advance this Goal");
     act(() => rendered.container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
-    await waitUntil(() => expect(rendered.container.textContent).toContain("Runtime unavailable"));
+    await waitUntil(() => expect(rendered.container.textContent).toContain("Something went wrong. Try again."));
+    expect(rendered.container.textContent).not.toContain("Runtime unavailable");
 
     act(() => Array.from(rendered.container.querySelectorAll("button")).find((button) => button.textContent === "Retry message")?.click());
 
