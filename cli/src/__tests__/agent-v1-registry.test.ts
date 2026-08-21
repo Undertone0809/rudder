@@ -83,6 +83,7 @@ describe("agent-v1 registry", () => {
       "library.file.ref",
       "library.file.link",
       "library.file.put",
+      "issue.create",
       "approval.get",
       "approval.issues",
       "approval.comment",
@@ -218,6 +219,29 @@ describe("agent-v1 registry", () => {
 
     expect(chatCreate?.inputSchema.properties).toHaveProperty("body");
     expect(chatCreate?.inputSchema.required).toContain("body");
+  });
+
+  it("exposes Issue creation as an Agent V1 MCP capability with a required title", () => {
+    const issueCreate = buildAgentV1McpToolsManifest("agent-v1").tools
+      .find((tool) => tool.capabilityId === "issue.create");
+
+    expect(issueCreate).toMatchObject({
+      name: "rudder_issue_create",
+      category: "issue",
+      mutating: true,
+      requiresOrgId: true,
+      attachesRunIdWhenAvailable: true,
+      inputSchema: {
+        additionalProperties: false,
+        required: ["title"],
+        properties: {
+          title: expect.any(Object),
+          projectId: expect.any(Object),
+          goalId: expect.any(Object),
+          parentId: expect.any(Object),
+        },
+      },
+    });
   });
 
   it("builds stable core MCP metadata without Browser tools", () => {

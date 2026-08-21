@@ -82,6 +82,7 @@ operating-practices guide for operating behavior:
 | `rudder_library_file_ref` | `rudder library file ref <path>` | Return the stable Markdown reference for one Library file without printing file content. | no | required | no | no |
 | `rudder_library_file_link` | `rudder library file link <path>` | Compatibility alias for `rudder library file ref <path>`. | no | required | no | no |
 | `rudder_library_file_put` | `rudder library file put <path> --body-file <path>` | Fallback create/update when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | yes | required | no | attached when available |
+| `rudder_issue_create` | `rudder issue create --org-id <id> ... [--label-id <id> ...] [--label <name> ...]` | Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied. | yes | required | no | attached when available |
 | `rudder_approval_get` | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
 | `rudder_approval_issues` | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
 | `rudder_approval_comment` | `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
@@ -197,7 +198,6 @@ Reviewer policy lives in [Review and close-out](operating-practices.md#review-an
 - `rudder agent config list --org-id <id>` — List redacted agent configuration snapshots for an organization.
 - `rudder agent config get <agent-id-or-shortname>` — Read one redacted agent configuration snapshot by id or shortname.
 - `rudder agent icons` — List legacy named agent icons for compatibility/debugging; normal create and hire payloads should omit icon.
-- `rudder issue create --org-id <id> ... [--label-id <id> ...] [--label <name> ...]` — Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.
 - `rudder issue labels list --org-id <id>` — List organization issue labels available for issue creation.
 - `rudder approval create --org-id <id> --type <type> --payload <json>` — Create a new approval request.
 - `rudder approval resubmit <approval-id> [--payload <json>]` — Resubmit a revision-requested approval, optionally with updated payload.
