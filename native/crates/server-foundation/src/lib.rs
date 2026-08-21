@@ -1,20 +1,20 @@
 use actix_web::{
-    App, HttpResponse, HttpServer,
+    App, Error, HttpResponse, HttpServer,
+    body::MessageBody,
+    dev::ServiceRequest,
     http::{StatusCode, header::ContentType},
+    middleware::{self, Next},
     web,
 };
 use serde::Serialize;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
     net::{IpAddr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError},
-    time::timeout,
-};
+use tokio::{sync::Notify, time::timeout};
 use tracing::{info, warn};
 
 pub const HEALTH_SCHEMA: &str = "rudder.native.server.health.v1";
@@ -43,6 +43,8 @@ const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUEUE_DEPTH: usize = 1024;
 const MAX_DATABASE_CONNECTIONS: u32 = 64;
 const MAX_WORKERS: usize = 32;
+const FALLBACK_ERROR_BODY: &[u8] =
+    br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -172,11 +174,12 @@ impl ServerConfig {
             || self.readiness_timeout.is_zero()
             || self.readiness_timeout > MAX_READINESS_TIMEOUT
             || self.shutdown_grace.is_zero()
+            || !self.shutdown_grace.as_millis().is_multiple_of(1000)
             || self.shutdown_grace > MAX_SHUTDOWN_GRACE
         {
             return Err(ConfigError::invalid(
                 "RUDDER_NATIVE_LIMITS",
-                "one or more limits are outside the bounded range",
+                "one or more limits are outside the bounded range or shutdown grace is not whole seconds",
             ));
         }
         if self.database_required && self.database_url.is_none() {
@@ -194,6 +197,7 @@ impl ServerConfig {
             max_response_bytes: self.max_response_bytes,
             max_websocket_message_bytes: self.max_websocket_message_bytes,
             max_queue_depth: self.max_queue_depth,
+            max_concurrent_requests: self.workers,
             max_database_connections: self.max_database_connections,
         }
     }
@@ -309,6 +313,7 @@ pub struct LimitsReceipt {
     pub max_response_bytes: usize,
     pub max_websocket_message_bytes: usize,
     pub max_queue_depth: usize,
+    pub max_concurrent_requests: usize,
     pub max_database_connections: u32,
 }
 
@@ -396,8 +401,107 @@ enum DatabaseState {
 struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
-    request_budget: Arc<Semaphore>,
+    admission: Arc<RequestAdmission>,
     started_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdmissionError {
+    QueueFull,
+}
+
+#[derive(Default)]
+struct AdmissionState {
+    active: usize,
+    queued: usize,
+}
+
+// Workers bound active handlers; max_queue_depth bounds additional waiters.
+struct RequestAdmission {
+    max_active: usize,
+    max_queue_depth: usize,
+    state: Mutex<AdmissionState>,
+    notify: Notify,
+}
+
+struct QueueReservation {
+    admission: Arc<RequestAdmission>,
+}
+
+struct RequestPermit {
+    admission: Arc<RequestAdmission>,
+}
+
+impl RequestAdmission {
+    fn new(max_active: usize, max_queue_depth: usize) -> Self {
+        Self {
+            max_active,
+            max_queue_depth,
+            state: Mutex::new(AdmissionState::default()),
+            notify: Notify::new(),
+        }
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, AdmissionState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    async fn acquire(self: &Arc<Self>) -> Result<RequestPermit, AdmissionError> {
+        loop {
+            let notified = self.notify.notified();
+            let should_wait = {
+                let mut state = self.lock_state();
+                if state.active < self.max_active && state.queued == 0 {
+                    state.active += 1;
+                    false
+                } else {
+                    if state.queued >= self.max_queue_depth {
+                        return Err(AdmissionError::QueueFull);
+                    }
+                    state.queued += 1;
+                    true
+                }
+            };
+
+            if !should_wait {
+                return Ok(RequestPermit {
+                    admission: self.clone(),
+                });
+            }
+
+            let reservation = QueueReservation {
+                admission: self.clone(),
+            };
+            notified.await;
+            drop(reservation);
+        }
+    }
+
+    #[cfg(test)]
+    fn counts(&self) -> (usize, usize) {
+        let state = self.lock_state();
+        (state.active, state.queued)
+    }
+}
+
+impl Drop for QueueReservation {
+    fn drop(&mut self) {
+        let mut state = self.admission.lock_state();
+        state.queued = state.queued.saturating_sub(1);
+        drop(state);
+        self.admission.notify.notify_one();
+    }
+}
+
+impl Drop for RequestPermit {
+    fn drop(&mut self) {
+        let mut state = self.admission.lock_state();
+        state.active = state.active.saturating_sub(1);
+        drop(state);
+        self.admission.notify.notify_one();
+    }
 }
 
 impl AppState {
@@ -416,25 +520,14 @@ impl AppState {
             None => DatabaseState::Disabled,
         };
         Ok(Self {
-            request_budget: Arc::new(Semaphore::new(config.max_queue_depth)),
+            admission: Arc::new(RequestAdmission::new(
+                config.workers,
+                config.max_queue_depth,
+            )),
             config: Arc::new(config),
             database,
             started_at: Instant::now(),
         })
-    }
-
-    fn acquire_request_slot(&self) -> Result<OwnedSemaphorePermit, HttpResponse> {
-        self.request_budget
-            .clone()
-            .try_acquire_owned()
-            .map_err(|error| match error {
-                TryAcquireError::NoPermits => {
-                    self.json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full")
-                }
-                TryAcquireError::Closed => {
-                    self.json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_closed")
-                }
-            })
     }
 
     fn json_error(&self, status: StatusCode, reason: &'static str) -> HttpResponse {
@@ -530,33 +623,69 @@ fn bounded_json<T: Serialize>(status: StatusCode, value: &T, max_bytes: usize) -
         Ok(body) if body.len() <= max_bytes => HttpResponse::build(status)
             .insert_header(ContentType::json())
             .body(body),
-        Ok(_) => HttpResponse::InternalServerError()
-            .insert_header(ContentType::json())
-            .body(r#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#),
-        Err(_) => HttpResponse::InternalServerError()
-            .insert_header(ContentType::json())
-            .body(r#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"serialization_failed"}"#),
+        Ok(_) | Err(_) => {
+            let body = if FALLBACK_ERROR_BODY.len() <= max_bytes {
+                FALLBACK_ERROR_BODY.to_vec()
+            } else {
+                Vec::new()
+            };
+            HttpResponse::InternalServerError()
+                .insert_header(ContentType::json())
+                .body(body)
+        }
     }
 }
 
-async fn health(state: web::Data<AppState>) -> HttpResponse {
-    let Ok(_permit) = state.acquire_request_slot() else {
-        return state.json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
+async fn request_guard(
+    state: web::Data<AppState>,
+    payload: web::Payload,
+    mut req: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<actix_web::dev::ServiceResponse<impl MessageBody>, Error> {
+    let permit = match state.admission.acquire().await {
+        Ok(permit) => permit,
+        Err(AdmissionError::QueueFull) => {
+            return Ok(req
+                .into_response(
+                    state.json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full"),
+                )
+                .map_into_right_body());
+        }
     };
+
+    // Buffer once at the admission boundary so routes that ignore their body cannot bypass the cap.
+    let body = match payload
+        .to_bytes_limited(state.config.max_request_bytes)
+        .await
+    {
+        Ok(Ok(body)) => body,
+        Ok(Err(_)) => {
+            return Ok(req
+                .into_response(state.json_error(StatusCode::BAD_REQUEST, "request_body_invalid"))
+                .map_into_right_body());
+        }
+        Err(_) => {
+            return Ok(req
+                .into_response(state.json_error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large"))
+                .map_into_right_body());
+        }
+    };
+    req.set_payload(body.into());
+
+    let response = next.call(req).await?.map_into_left_body();
+    drop(permit);
+    Ok(response)
+}
+
+async fn health(state: web::Data<AppState>) -> HttpResponse {
     state.health()
 }
 
 async fn readiness(state: web::Data<AppState>) -> HttpResponse {
-    let Ok(_permit) = state.acquire_request_slot() else {
-        return state.json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
-    };
     state.readiness().await
 }
 
 async fn capabilities(state: web::Data<AppState>) -> HttpResponse {
-    let Ok(_permit) = state.acquire_request_slot() else {
-        return state.json_error(StatusCode::SERVICE_UNAVAILABLE, "request_queue_full");
-    };
     state.capabilities()
 }
 
@@ -582,11 +711,14 @@ impl ServerRuntime {
                 .app_data(app_state.clone())
                 .app_data(web::PayloadConfig::new(max_request_bytes))
                 .app_data(web::JsonConfig::default().limit(max_request_bytes))
+                .wrap(middleware::from_fn(request_guard))
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
         })
         .workers(config.workers)
+        .disable_signals()
+        .shutdown_timeout(config.shutdown_grace.as_secs())
         .bind(config.listen_addr)?;
         let bound_addr = http_server
             .addrs()
@@ -697,20 +829,56 @@ mod tests {
         assert_eq!(config.listen_addr.port(), 0);
         assert_eq!(config.workers, 1);
         assert_eq!(config.limits().max_queue_depth, DEFAULT_QUEUE_DEPTH);
+        assert_eq!(config.limits().max_concurrent_requests, DEFAULT_WORKERS);
         assert!(!config.database_required);
     }
 
     #[test]
-    fn request_budget_is_hard_bounded() {
+    fn shutdown_grace_uses_actix_compatible_whole_seconds() {
         let config = ServerConfig {
-            max_queue_depth: 1,
+            shutdown_grace: Duration::from_millis(1_500),
             ..ServerConfig::default()
         };
-        let state = AppState::new(config).unwrap();
-        let permit = state.acquire_request_slot().unwrap();
-        assert!(state.acquire_request_slot().is_err());
-        drop(permit);
-        assert!(state.acquire_request_slot().is_ok());
+        assert!(config.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn request_admission_bounds_active_and_waiting_requests() {
+        let admission = Arc::new(RequestAdmission::new(1, 1));
+        let first = admission.acquire().await.unwrap();
+        let waiting_admission = admission.clone();
+        let waiting = tokio::spawn(async move { waiting_admission.acquire().await.unwrap() });
+
+        for _ in 0..10 {
+            if admission.counts() == (1, 1) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(admission.counts(), (1, 1));
+        assert!(matches!(
+            admission.acquire().await,
+            Err(AdmissionError::QueueFull)
+        ));
+
+        drop(first);
+        let second = timeout(Duration::from_millis(100), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(admission.counts(), (1, 0));
+        drop(second);
+        assert_eq!(admission.counts(), (0, 0));
+    }
+
+    #[actix_web::test]
+    async fn response_limit_fallback_never_exceeds_configured_limit() {
+        let response = bounded_json(StatusCode::OK, &serde_json::json!({"large": true}), 1);
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        assert!(body.len() <= 1);
     }
 
     #[test]

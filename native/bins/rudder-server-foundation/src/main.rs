@@ -1,6 +1,5 @@
 use rudder_server_foundation_core::{ServerConfig, ServerRuntime, init_tracing};
 use std::io::Write;
-use tokio::time::timeout;
 
 #[tokio::main]
 async fn main() {
@@ -25,10 +24,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         reason = shutdown_signal() => {
             control.shutdown().await;
-            let result = timeout(config.shutdown_grace, &mut server_task)
-                .await
-                .map_err(|_| "server shutdown exceeded configured grace period")?;
-            result??;
+            server_task.await??;
             println!("{}", serde_json::to_string(&ServerRuntime::shutdown_receipt(reason))?);
             std::io::stdout().flush()?;
         }
