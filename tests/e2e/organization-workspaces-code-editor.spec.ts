@@ -81,3 +81,63 @@ test("Library renders JSON files in the code editor and persists edits", async (
   expect(savedFile.content).toContain("\"status\": \"reviewed\"");
   expect(savedFile.content).toContain("Inspect highlighted JSON");
 });
+
+test("Library code selection keeps syntax text readable across themes", async ({ page, request }) => {
+  const suffix = Date.now();
+  const organization = await createOrganization(request, "Library-Selection-Contrast");
+  const filePath = `projects/selection-contrast-${suffix}/packet.json`;
+  await writeWorkspaceFile(
+    request,
+    organization.id,
+    filePath,
+    JSON.stringify({
+      authorized: true,
+      mode: "isolated_risk",
+      target_ref: "refs/heads/codex/selection-contrast",
+      base_sha: "d29be293f6266a1b6a9b5d9aec441c4d6bc41d84",
+      remote_ref: "refs/remotes/origin/codex/selection-contrast",
+      observed_remote_sha: "d29be293f6266a1b6a9b5d9aec441c4d6bc41d84",
+      branch_refs: ["refs/heads/codex/selection-contrast"],
+    }, null, 2),
+  );
+
+  await selectOrganization(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
+  const editor = page.getByTestId("org-workspaces-editor-textarea");
+  const content = editor.locator(".cm-content");
+  await expect(content).toBeVisible();
+  await page.locator("html").evaluate((element) => element.classList.add("dark"));
+
+  const contentBox = await content.boundingBox();
+  expect(contentBox).not.toBeNull();
+  await page.mouse.move(contentBox!.x + 20, contentBox!.y + 28);
+  await page.mouse.down();
+  await page.mouse.move(contentBox!.x + 520, contentBox!.y + 172, { steps: 8 });
+  await page.mouse.up();
+
+  const readSelectionStyle = () => editor.locator(".cm-selectionBackground").first().evaluate((element) => {
+    const contentElement = element.closest(".cm-editor")?.querySelector(".cm-content");
+    return {
+      backgroundColor: getComputedStyle(element).backgroundColor,
+      selectionColor: contentElement ? getComputedStyle(contentElement, "::selection").color : "",
+      selectedText: window.getSelection()?.toString() ?? "",
+    };
+  });
+  const darkSelectionStyle = await readSelectionStyle();
+  const darkSelectionIsReadable = darkSelectionStyle.backgroundColor.startsWith("oklab(")
+    ? Number(darkSelectionStyle.backgroundColor.match(/^oklab\(([-\d.]+)/)?.[1] ?? Number.POSITIVE_INFINITY) < 0.6
+    : darkSelectionStyle.backgroundColor
+      .match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/)
+      ?.slice(1)
+      .map(Number)
+      .every((channel) => channel < 180) ?? false;
+  expect(darkSelectionStyle.selectedText).toContain('"authorized": true');
+  expect(darkSelectionStyle.selectionColor).toMatch(/^oklch\(0\.955/);
+  expect(darkSelectionIsReadable).toBe(true);
+
+  await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+  const lightSelectionStyle = await readSelectionStyle();
+  expect(lightSelectionStyle.selectedText).toContain('"authorized": true');
+  expect(lightSelectionStyle.selectionColor).toMatch(/^oklch\(0\.205/);
+  expect(lightSelectionStyle.backgroundColor).not.toBe("transparent");
+});

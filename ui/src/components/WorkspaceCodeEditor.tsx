@@ -108,11 +108,12 @@ const workspaceCodeTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--foreground)",
   },
-  ".cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "color-mix(in oklab, var(--accent-base) 22%, transparent)",
+  ".cm-selectionBackground, .cm-content::selection, .cm-content *::selection": {
+    backgroundColor: "color-mix(in oklab, var(--surface-page) 72%, var(--accent-base))",
+    color: "var(--foreground)",
   },
-  "&.cm-focused .cm-selectionBackground": {
-    backgroundColor: "color-mix(in oklab, var(--accent-base) 32%, transparent)",
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+    backgroundColor: "color-mix(in oklab, var(--surface-page) 60%, var(--accent-base))",
   },
   ".cm-matchingBracket": {
     backgroundColor: "color-mix(in oklab, var(--accent) 52%, transparent)",
