@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   classifyDevDesktopExit,
@@ -5,6 +7,13 @@ import {
 } from "./dev-shell-lifecycle.mjs";
 
 describe("dev shell lifecycle", () => {
+  it("keeps migration application inside the recovery-aware server startup", () => {
+    const runnerSource = readFileSync(path.join(process.cwd(), "scripts", "dev-runner.mjs"), "utf8");
+
+    expect(runnerSource).not.toContain('pnpmBin, ["db:migrate"]');
+    expect(runnerSource).toContain("the server will apply them with a recovery point");
+  });
+
   it("accepts a server exit only after Desktop ownership is verified", () => {
     expect(classifyDevServerExit({ runtimeOwnerKind: "desktop", shuttingDown: false }))
       .toBe("desktop-managed");

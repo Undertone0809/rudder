@@ -2,8 +2,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { stdin, stdout } from "node:process";
-import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
   gracefullyStopRuntime,
@@ -12,7 +10,10 @@ import {
   withRuntimeStartLock,
 } from "../server/src/local-runtime.ts";
 import { serverVersion } from "../server/src/version.ts";
-import { resolveDevScriptEnvironment } from "./dev-local-env.mjs";
+import {
+  DEV_RUNTIME_STARTUP_TIMEOUT_MS,
+  resolveDevScriptEnvironment,
+} from "./dev-local-env.mjs";
 import { shouldTrackDevServerPath } from "./dev-runner-paths.mjs";
 import { assertDevRuntimeTakeoverAllowed } from "./dev-runner-safety.mjs";
 
@@ -20,7 +21,7 @@ const mode = process.argv[2] === "watch" ? "watch" : "dev";
 const cliArgs = process.argv.slice(3);
 const scanIntervalMs = 1500;
 const gracefulShutdownTimeoutMs = 10_000;
-const startupReadyTimeoutMs = 30_000;
+const startupReadyTimeoutMs = DEV_RUNTIME_STARTUP_TIMEOUT_MS;
 const changedPathSampleLimit = 5;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const devServerStatusFilePath = path.join(repoRoot, ".rudder", "dev-server-status.json");
@@ -97,8 +98,6 @@ if (mode === "dev") {
 
 if (mode === "watch") {
   env.RUDDER_UI_DEV_MIDDLEWARE ??= "true";
-  env.RUDDER_MIGRATION_PROMPT ??= "never";
-  env.RUDDER_MIGRATION_AUTO_APPLY ??= "true";
 }
 
 if (tailscaleAuth) {
@@ -335,66 +334,18 @@ async function refreshPendingMigrations() {
   return payload;
 }
 
-async function maybePreflightMigrations(options = {}) {
-  const interactive = options.interactive ?? mode === "watch";
-  const autoApply = options.autoApply ?? env.RUDDER_MIGRATION_AUTO_APPLY === "true";
-  const exitOnDecline = options.exitOnDecline ?? mode === "watch";
-
+async function maybePreflightMigrations() {
   const payload = await refreshPendingMigrations();
   if (payload.status !== "needsMigrations" || pendingMigrations.length === 0) {
     return;
   }
 
-  let shouldApply = autoApply;
-
-  if (!autoApply && interactive) {
-    if (!stdin.isTTY || !stdout.isTTY) {
-      shouldApply = true;
-    } else {
-      const prompt = createInterface({ input: stdin, output: stdout });
-      try {
-        const answer = (
-          await prompt.question(
-            `Apply pending migrations (${formatPendingMigrationSummary(pendingMigrations)}) now? (y/N): `,
-          )
-        )
-          .trim()
-          .toLowerCase();
-        shouldApply = answer === "y" || answer === "yes";
-      } finally {
-        prompt.close();
-      }
-    }
-  }
-
-  if (!shouldApply) {
-    if (exitOnDecline) {
-      process.stderr.write(
-        `[rudder] Pending migrations detected (${formatPendingMigrationSummary(pendingMigrations)}). ` +
-          "Refusing to start watch mode against a stale schema.\n",
-      );
-      process.exit(1);
-    }
-    return;
-  }
-
-  const migrate = spawn(pnpmBin, ["db:migrate"], {
-    stdio: "inherit",
-    env,
-    shell: process.platform === "win32",
-  });
-  const exit = await new Promise((resolve) => {
-    migrate.on("exit", (code, signal) => resolve({ code: code ?? 0, signal }));
-  });
-  if (exit.signal) {
-    exitForSignal(exit.signal);
-    return;
-  }
-  if (exit.code !== 0) {
-    process.exit(exit.code);
-  }
-
-  await refreshPendingMigrations();
+  // Both dev modes must let the server own migration application so its
+  // recovery-point and history checks run before any schema mutation.
+  console.log(
+    `[rudder] pending migrations detected (${formatPendingMigrationSummary(pendingMigrations)}); `
+      + "the server will apply them with a recovery point",
+  );
 }
 
 async function markChildAsCurrent() {
@@ -462,6 +413,8 @@ async function getDevHealthPayload() {
 
 async function waitForChildHealthReady() {
   const deadline = Date.now() + startupReadyTimeoutMs;
+  const progressIntervalMs = 15_000;
+  let nextProgressAt = Date.now() + progressIntervalMs;
   let lastError = null;
 
   while (Date.now() < deadline) {
@@ -481,6 +434,13 @@ async function waitForChildHealthReady() {
       lastError = new Error("Health payload did not match the expected dev runtime metadata yet.");
     } catch (error) {
       lastError = error;
+    }
+    if (pendingMigrations.length > 0 && Date.now() >= nextProgressAt) {
+      console.log(
+        `[rudder] still preparing ${env.RUDDER_LOCAL_ENV} runtime; `
+        + `migration recovery point for ${formatPendingMigrationSummary(pendingMigrations)} may take several minutes`,
+      );
+      nextProgressAt = Date.now() + progressIntervalMs;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }

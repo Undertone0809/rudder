@@ -43,6 +43,11 @@ export const localEnvProfiles = {
   },
 };
 
+// A development database recovery point can take several minutes on a large
+// local instance. Keep the runner and its outer shell on the same readiness
+// budget so a healthy server is not killed while migrations are being backed up.
+export const DEV_RUNTIME_STARTUP_TIMEOUT_MS = 10 * 60 * 1000;
+
 export function normalizeLocalEnvName(value) {
   if (!value) return null;
   const normalized = value.trim().toLowerCase().replace(/-/g, "_");
@@ -237,6 +242,8 @@ export function resolveDevScriptEnvironment({ repoRoot, baseEnv, defaultLocalEnv
     RUDDER_EMBEDDED_POSTGRES_PORT:
       mergedEnv.RUDDER_EMBEDDED_POSTGRES_PORT?.trim()
       || String(repoLocalConfig?.database?.embeddedPostgresPort ?? localEnvProfile.embeddedPostgresPort),
+    RUDDER_MIGRATION_AUTO_APPLY: nonEmpty(mergedEnv.RUDDER_MIGRATION_AUTO_APPLY) ?? "true",
+    RUDDER_MIGRATION_PROMPT: nonEmpty(mergedEnv.RUDDER_MIGRATION_PROMPT) ?? "never",
   };
 
   return {

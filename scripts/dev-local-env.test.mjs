@@ -21,6 +21,25 @@ test("defaults the development Desktop to local workspace access", () => {
   );
 });
 
+test("defaults development startup to non-interactive automatic migrations", () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-dev-migrations-"));
+  const resolved = resolveDevScriptEnvironment({ repoRoot, baseEnv: {} });
+
+  assert.equal(resolved.env.RUDDER_MIGRATION_AUTO_APPLY, "true");
+  assert.equal(resolved.env.RUDDER_MIGRATION_PROMPT, "never");
+
+  const overridden = resolveDevScriptEnvironment({
+    repoRoot,
+    baseEnv: {
+      RUDDER_MIGRATION_AUTO_APPLY: "false",
+      RUDDER_MIGRATION_PROMPT: "ask",
+    },
+  });
+
+  assert.equal(overridden.env.RUDDER_MIGRATION_AUTO_APPLY, "false");
+  assert.equal(overridden.env.RUDDER_MIGRATION_PROMPT, "ask");
+});
+
 test("drops inherited production runtime identity before resolving pnpm dev", () => {
   const isolated = isolateDevShellFromParentRuntime({
     PATH: "/usr/bin",

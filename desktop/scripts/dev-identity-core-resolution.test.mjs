@@ -42,13 +42,22 @@ describe("Desktop development identity-core resolution", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("test@example.com");
-  });
+  }, 30_000);
 
   it("builds identity-core before launching the Desktop main process", () => {
     const manifest = JSON.parse(readFileSync(path.join(desktopDir, "package.json"), "utf8"));
 
     expect(manifest.scripts.dev).toMatch(
-      /^pnpm --filter @rudderhq\/identity-core build && .*stage:app-builder-toolchain && electron dist\/main\.js$/,
+      /^pnpm --filter @rudderhq\/identity-core build && .*stage:app-builder-toolchain && node scripts\/dev\.mjs$/,
     );
+  });
+
+  it("keeps the Electron dev launcher on the workspace TypeScript loader", () => {
+    const launcher = readFileSync(path.join(desktopDir, "scripts", "dev.mjs"), "utf8");
+
+    expect(launcher).toContain('require.resolve("electron/cli.js")');
+    expect(launcher).toContain('require.resolve("tsx")');
+    expect(launcher).toContain('path.join(desktopDir, "dist", "main.js")');
+    expect(launcher).toContain("--import=${tsxLoader}");
   });
 });

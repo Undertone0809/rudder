@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDevIdentityEnvironment } from "./dev-identity-env.mjs";
 import {
+  DEV_RUNTIME_STARTUP_TIMEOUT_MS,
   isolateDevShellFromParentRuntime,
   resolveDevDesktopEnvironment,
   resolveDevScriptEnvironment,
@@ -21,7 +22,7 @@ const cliArgs = process.argv.slice(2);
 const runtimeMode = cliArgs[0] === "watch" ? "watch" : "dev";
 const forwardedArgs = cliArgs[0] === "watch" || cliArgs[0] === "dev" ? cliArgs.slice(1) : cliArgs;
 const runtimeLabel = runtimeMode === "watch" ? "watched dev runtime" : "dev runtime";
-const startupTimeoutMs = 120_000;
+const startupTimeoutMs = DEV_RUNTIME_STARTUP_TIMEOUT_MS;
 const pollIntervalMs = 250;
 const desktopTakeoverVerificationTimeoutMs = 10_000;
 

@@ -423,8 +423,8 @@ async function startServerRuntime(
   }
   
   async function promptApplyMigrations(migrations: string[]): Promise<boolean> {
-    if (process.env.RUDDER_MIGRATION_PROMPT === "never") return false;
     if (process.env.RUDDER_MIGRATION_AUTO_APPLY === "true") return true;
+    if (process.env.RUDDER_MIGRATION_PROMPT === "never") return false;
     if (!stdin.isTTY || !stdout.isTTY) return true;
   
     const prompt = createInterface({ input: stdin, output: stdout });
