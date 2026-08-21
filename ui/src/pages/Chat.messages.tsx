@@ -2853,6 +2853,7 @@ export function ChatMessageItem({
 
 export function OptimisticUserDraftItem({
   body,
+  files = [],
   createdAt,
   onCopyMessageText,
   onEditDraftOnly,
@@ -2863,6 +2864,7 @@ export function OptimisticUserDraftItem({
   turnBranchControls,
 }: {
   body: string;
+  files?: File[];
   createdAt: Date;
   onCopyMessageText: (text: string) => void | Promise<void>;
   onEditDraftOnly: (text: string) => void;
@@ -2872,7 +2874,22 @@ export function OptimisticUserDraftItem({
   animateAskUserAnswer?: boolean;
   turnBranchControls?: ChatTurnBranchControls | null;
 }) {
-  const hasVisibleUserMessageContent = body.trim().length > 0;
+  const hasVisibleUserMessageContent = body.trim().length > 0 || files.length > 0;
+  const pendingAttachmentPreview = files.length > 0 ? (
+    <div
+      data-testid="chat-optimistic-attachments"
+      className="mt-2 flex max-w-full flex-wrap gap-2"
+    >
+      {files.map((file) => {
+        const fileKey = pendingAttachmentKey(file);
+        return (
+          <div key={fileKey} data-testid="chat-optimistic-attachment" className="max-w-full">
+            <PendingAttachmentPreview file={file} />
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
 
   return (
     <div className="flex justify-end transition-all duration-200">
@@ -2884,14 +2901,18 @@ export function OptimisticUserDraftItem({
             data-testid="chat-user-message-bubble"
             className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
           >
-            <ChatLongMessageBody
-              body={body}
-              skillReferences={skillReferences}
-              onMarkdownLinkClick={onMarkdownLinkClick}
-              className="text-[15px] leading-7"
-            />
+            {body.trim().length > 0 ? (
+              <ChatLongMessageBody
+                body={body}
+                skillReferences={skillReferences}
+                onMarkdownLinkClick={onMarkdownLinkClick}
+                className="text-[15px] leading-7"
+              />
+            ) : null}
+            {pendingAttachmentPreview}
           </div>
         ) : null}
+        {askUserAnswer ? pendingAttachmentPreview : null}
         <div
           className={cn(
             "mt-1 flex h-7 items-center justify-end gap-1 text-muted-foreground",

@@ -23,6 +23,7 @@ import {
   buildLibraryEntryMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
+  resolveKnownWebsiteIcon,
 } from "@rudderhq/shared";
 import { Boxes, FileText, Folder, MessageSquare, Repeat } from "lucide-react";
 import {
@@ -61,6 +62,14 @@ import {
   skillTokenIconInlineStyle,
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
+import {
+  canRequestWebsiteMetadata,
+  getWebsiteMetadata,
+} from "../lib/website-metadata-cache";
+import {
+  isWebsiteIconUrlKnownFailed,
+  markWebsiteIconUrlFailed,
+} from "../lib/website-icon-cache";
 import { AgentIcon } from "./AgentIconPicker";
 import {
   getImageContextMenuTarget,
@@ -146,6 +155,96 @@ function linkHrefFromTextNode(node: {
   marks?: ReadonlyArray<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
 }) {
   return node.marks?.find((mark) => mark.type?.name === "link" && mark.attrs?.href)?.attrs?.href?.trim() ?? "";
+}
+
+export function milkdownWebsiteUrlFromHref(value: string | null | undefined) {
+  const href = value?.trim() ?? "";
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (typeof window !== "undefined" && url.origin === window.location.origin) return null;
+    if (url.username || url.password) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+type MilkdownWebsiteLinkRange = {
+  from: number;
+  to: number;
+  href: string;
+};
+
+export function milkdownWebsiteLinkRanges(doc: ProseMirrorDoc): MilkdownWebsiteLinkRange[] {
+  const ranges: MilkdownWebsiteLinkRange[] = [];
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    const href = linkHrefFromTextNode(node);
+    const url = milkdownWebsiteUrlFromHref(href);
+    if (!url || isRudderTokenHref(href, node.text)) return;
+    const from = pos;
+    const to = pos + node.nodeSize;
+    const previous = ranges.at(-1);
+    if (previous?.href === url.href && previous.to === from) {
+      previous.to = to;
+      return;
+    }
+    ranges.push({ from, to, href: url.href });
+  });
+  return ranges;
+}
+
+export function createMilkdownWebsiteIconElement(href: string) {
+  const host = document.createElement("span");
+  host.className = "rudder-milkdown-website-icon rudder-website-link-icon";
+  host.dataset.websiteIcon = "generic";
+  host.setAttribute("aria-hidden", "true");
+  host.setAttribute("contenteditable", "false");
+
+  const image = document.createElement("img");
+  image.alt = "";
+  image.className = "rudder-website-link-logo";
+  image.setAttribute("aria-hidden", "true");
+  image.referrerPolicy = "no-referrer";
+  image.style.visibility = "hidden";
+  host.append(image);
+
+  const showIcon = (iconUrl: string | null | undefined, darkMode?: string) => {
+    if (!iconUrl || isWebsiteIconUrlKnownFailed(iconUrl)) return;
+    image.onload = () => {
+      image.style.visibility = "visible";
+      host.dataset.websiteIcon = "metadata";
+      image.dataset.websiteIcon = "metadata";
+      if (darkMode) image.dataset.darkMode = darkMode;
+      else delete image.dataset.darkMode;
+    };
+    image.onerror = () => {
+      markWebsiteIconUrlFailed(iconUrl);
+      image.removeAttribute("src");
+      image.style.visibility = "hidden";
+      host.dataset.websiteIcon = "generic";
+      delete image.dataset.websiteIcon;
+    };
+    image.src = iconUrl;
+  };
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return host;
+  }
+  const knownIcon = resolveKnownWebsiteIcon(url);
+  if (knownIcon) {
+    showIcon(knownIcon.iconDataUrl, knownIcon.darkMode);
+  } else if (canRequestWebsiteMetadata(url.href)) {
+    void getWebsiteMetadata(url.href, "preview")
+      .then((metadata) => showIcon(metadata?.iconUrl))
+      .catch(() => undefined);
+  }
+  return host;
 }
 
 export function getMilkdownProseMirrorView(ctx: MilkdownActionContext) {
@@ -444,6 +543,20 @@ function mentionOptionMap(mentions: MentionOption[]) {
 function buildMilkdownTokenDecorations(doc: ProseMirrorDoc, mentions: MentionOption[]) {
   const optionByKey = mentionOptionMap(mentions);
   const decorations: Decoration[] = [];
+  for (const link of milkdownWebsiteLinkRanges(doc)) {
+    decorations.push(
+      Decoration.widget(
+        link.from,
+        () => createMilkdownWebsiteIconElement(link.href),
+        {
+          ignoreSelection: true,
+          key: `website:${link.from}:${link.to}:${link.href}`,
+          side: 1,
+          stopEvent: () => true,
+        },
+      ),
+    );
+  }
   doc.descendants((node, pos) => {
     if (!node.isText || !node.text) return;
     const href = linkHrefFromTextNode(node);

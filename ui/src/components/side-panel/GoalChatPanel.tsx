@@ -10,6 +10,7 @@ import {
   ChatComposerToolbar,
 } from "@/components/chat/ChatComposer";
 import { Button } from "@/components/ui/button";
+import { chatErrorMessage } from "@/lib/chat-errors";
 import {
   clearPendingChatStopRecovery,
   createChatStopRecoveryRetrier,
@@ -223,7 +224,7 @@ export function GoalChatPanel({
     } catch (sendError) {
       if (!abortController.signal.aborted) {
         setFailedBody(body);
-        setError(sendError instanceof Error ? sendError.message : "Could not send this message.");
+        setError(chatErrorMessage(sendError, "side-chat"));
       }
     } finally {
       if (abortControllerRef.current === abortController) abortControllerRef.current = null;

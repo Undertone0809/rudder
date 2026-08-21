@@ -91,6 +91,7 @@ import {
   ListFilter,
   ListTodo,
   Paperclip,
+  RefreshCw,
   Search,
   Send,
   Shapes,
@@ -1194,6 +1195,10 @@ function CommonComponentsSection() {
   const [checkedFiles, setCheckedFiles] = useState(() => new Set(["ui/src/components/StatusBadge.tsx", "ui/src/pages/UiLab.tsx"]));
   const [selectedEntity, setSelectedEntity] = useState("issue-ui-lab");
   const [chatDecisionNote, setChatDecisionNote] = useState("");
+  const [websiteLinkVariant, setWebsiteLinkVariant] = useState<"first" | "second">("first");
+  const websiteLinkFixture = websiteLinkVariant === "first"
+    ? { label: "Rerender first", href: "https://website-icon-rerender-first.example.test/article" }
+    : { label: "Rerender second", href: "https://website-icon-rerender-second.example.test/article" };
   const pendingChatFile = useMemo(() => {
     if (typeof File === "undefined") return null;
     return new File(["UI Lab chat fixture"], "lab-answer.txt", {
@@ -1864,7 +1869,23 @@ function CommonComponentsSection() {
 
         <LabExample title="Markdown, skill token, and goal tree">
           <div className="space-y-4">
-            <MarkdownBody agentMentions={[{ name: "Holden", agentId: "ui-lab-agent-holden", agentIcon: "code" }]}>
+            <div data-testid="ui-lab-website-link-rerender" className="space-y-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setWebsiteLinkVariant((current) => current === "first" ? "second" : "first")}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Swap website link
+              </Button>
+              <MarkdownBody>
+                {`Dynamic [${websiteLinkFixture.label}](${websiteLinkFixture.href}) link fixture.`}
+              </MarkdownBody>
+            </div>
+            <MarkdownBody
+              agentMentions={[{ name: "Holden", agentId: "ui-lab-agent-holden", agentIcon: "code" }]}
+            >
               {[
                 "A component lab entry should include **real rendered state**, compact fixture data, and a clear coverage row.",
                 "",

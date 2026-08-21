@@ -18,7 +18,15 @@ import type {
   ChatWorkManifestResponse,
   ForkChatConversation,
 } from "@rudderhq/shared";
-import { ApiError, api } from "./client";
+import {
+  ApiError,
+  ApiTimeoutError,
+  api,
+  createRequestSignal,
+} from "./client";
+
+export const CHAT_REQUEST_TIMEOUT_MS = 15_000;
+export const CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
 
 export type ChatStopMessageStreamRequest = {
   controlActionId: string;
@@ -89,8 +97,30 @@ async function consumeChatStreamResponse(
     await onEvent(JSON.parse(line) as ChatStreamEvent);
   };
 
+  const readChunk = async () => {
+    let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let timedOut = false;
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          timer = globalThis.setTimeout(() => {
+            timedOut = true;
+            reject(new ApiTimeoutError(CHAT_STREAM_IDLE_TIMEOUT_MS));
+            void reader.cancel();
+          }, CHAT_STREAM_IDLE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (error) {
+      if (timedOut) throw new ApiTimeoutError(CHAT_STREAM_IDLE_TIMEOUT_MS);
+      throw error;
+    } finally {
+      if (timer !== null) globalThis.clearTimeout(timer);
+    }
+  };
+
   while (true) {
-    const { value, done } = await reader.read();
+    const { value, done } = await readChunk();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
     const lines = buffer.split("\n");
@@ -232,15 +262,29 @@ export const chatsApi = {
         ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
         ...(inlineAnnotations.length > 0 ? { inlineAnnotations } : {}),
       });
-    const res = await fetch(`/api/orgs/${orgId}/chats/messages/stream`, {
-      method: "POST",
-      credentials: "include",
-      headers: files.length > 0 ? undefined : { "Content-Type": "application/json" },
-      body: requestBody,
+    const requestSignal = createRequestSignal({
       signal: options.signal,
+      timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
     });
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/chats/messages/stream`, {
+        method: "POST",
+        credentials: "include",
+        headers: files.length > 0 ? undefined : { "Content-Type": "application/json" },
+        body: requestBody,
+        signal: requestSignal.signal,
+      });
 
-    await consumeChatStreamResponse(res, options.onEvent);
+      // The connection deadline ends once headers arrive, but the caller's
+      // abort signal must remain connected for the lifetime of the stream.
+      requestSignal.clearTimeout();
+      await consumeChatStreamResponse(res, options.onEvent);
+    } catch (error) {
+      if (requestSignal.didTimeout()) throw new ApiTimeoutError(CHAT_REQUEST_TIMEOUT_MS);
+      throw error;
+    } finally {
+      requestSignal.dispose();
+    }
   },
   listQueue: (chatId: string) =>
     api.get<ChatQueueSnapshot>(`/chats/${chatId}/queue`),
@@ -286,7 +330,9 @@ export const chatsApi = {
     chatId: string,
     itemId: string,
     data: ChatSteerQueuedMessageRequest,
-  ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, data),
+  ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, data, {
+    timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
+  }),
   sendMessageStream: async (
     chatId: string,
     body: string,
@@ -327,52 +373,28 @@ export const chatsApi = {
         effortOverride: options.effortOverride ?? null,
         ...(inlineAnnotations.length > 0 ? { inlineAnnotations } : {}),
       });
-    const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
-      method: "POST",
-      credentials: "include",
-      headers: files.length > 0 ? undefined : { "Content-Type": "application/json" },
-      body: requestBody,
+    const requestSignal = createRequestSignal({
       signal: options.signal,
+      timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
     });
+    try {
+      const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
+        method: "POST",
+        credentials: "include",
+        headers: files.length > 0 ? undefined : { "Content-Type": "application/json" },
+        body: requestBody,
+        signal: requestSignal.signal,
+      });
 
-    if (!res.ok) {
-      const errorBody = await res.json().catch(() => null);
-      throw new ApiError(
-        (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
-        res.status,
-        errorBody,
-      );
-    }
-
-    if (!res.body) {
-      throw new Error("Streaming response body was unavailable");
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    const emitLine = async (line: string) => {
-      if (!line.trim()) return;
-      const event = JSON.parse(line) as ChatStreamEvent;
-      await options.onEvent(event);
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        await emitLine(line);
-      }
-
-      if (done) break;
-    }
-
-    if (buffer.trim()) {
-      await emitLine(buffer);
+      // The connection deadline ends once headers arrive, but the caller's
+      // abort signal must remain connected for the lifetime of the stream.
+      requestSignal.clearTimeout();
+      await consumeChatStreamResponse(res, options.onEvent);
+    } catch (error) {
+      if (requestSignal.didTimeout()) throw new ApiTimeoutError(CHAT_REQUEST_TIMEOUT_MS);
+      throw error;
+    } finally {
+      requestSignal.dispose();
     }
 
   },

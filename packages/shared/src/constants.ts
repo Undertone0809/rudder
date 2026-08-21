@@ -311,6 +311,7 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_library_file_ref",
   "rudder_library_file_link",
   "rudder_library_file_put",
+  "rudder_issue_create",
   "rudder_approval_get",
   "rudder_approval_issues",
   "rudder_approval_comment",

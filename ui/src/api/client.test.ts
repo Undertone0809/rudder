@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api } from "./client";
+import { ApiError, ApiTimeoutError, api } from "./client";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -34,5 +35,19 @@ describe("api client errors", () => {
       status: 400,
       message: "Validation error: outputMode: Chat output automations are no longer supported",
     } satisfies Partial<ApiError>);
+  });
+
+  it("aborts a request that never receives a response", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })
+    )));
+
+    const pending = api.post("/chats/chat-1/queue/item-1/steer", {}, { timeoutMs: 25 }).catch((error) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(pending).resolves.toBeInstanceOf(ApiTimeoutError);
   });
 });

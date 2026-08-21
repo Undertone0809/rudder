@@ -28,7 +28,7 @@ export type PendingChatStopRecovery = {
 
 type SerializedChatStreamDraft = Omit<
   ChatStreamDraft,
-  "userCreatedAt" | "editedFromCreatedAt" | "createdAt"
+  "userFiles" | "userCreatedAt" | "editedFromCreatedAt" | "createdAt"
 > & {
   userCreatedAt: string;
   editedFromCreatedAt: string | null;
@@ -165,8 +165,9 @@ function normalizeFrozenDraft(value: unknown, chatId: string): ChatStreamDraft |
 
 function serializeFrozenDraft(draft: ChatStreamDraft | null): SerializedChatStreamDraft | null {
   if (!draft) return null;
+  const { userFiles: _userFiles, ...serializableDraft } = draft;
   return {
-    ...draft,
+    ...serializableDraft,
     userCreatedAt: draft.userCreatedAt.toISOString(),
     editedFromCreatedAt: draft.editedFromCreatedAt?.toISOString() ?? null,
     createdAt: draft.createdAt.toISOString(),

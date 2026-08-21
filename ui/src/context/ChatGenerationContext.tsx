@@ -17,6 +17,8 @@ export type ChatStreamDraft = {
   chatId: string | null;
   streamKey: string;
   userBody: string;
+  // Keep pending blobs visible during the optimistic handoff; they are memory-only.
+  userFiles?: File[];
   userCreatedAt: Date;
   userMessageId: string | null;
   chatTurnId: string | null;

@@ -86,6 +86,7 @@ import {
   readChatComposerDraft,
   saveChatComposerDraft,
 } from "@/lib/chat-draft-storage";
+import { chatErrorToast } from "@/lib/chat-errors";
 import {
   CHAT_FILE_ANNOTATION_REQUEST_EVENT,
   requestChatFileAnnotationLocation,
@@ -305,6 +306,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const [, refreshPendingFiles] = useState(0);
   const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, boolean>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
+  const [pendingFirstTurn, setPendingFirstTurn] = useState<{
+    body: string;
+    files: File[];
+    createdAt: Date;
+  } | null>(null);
   const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [sideChatSlashMenuPosition, setSideChatSlashMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [stoppingChatIds, setStoppingChatIds] = useState<Set<string>>(() => new Set()); const [steeringQueuedItemIds, setSteeringQueuedItemIds] = useState<Set<string>>(() => new Set()); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const stoppingChatIdsRef = useRef(new Set<string>()); const steeringQueuedItemIdsRef = useRef(new Set<string>()); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const chatMainWorkspaceRef = useRef<HTMLElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile, sidebarOpen, setSidebarOpen } = useSidebar(); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
       pushToast({
@@ -642,7 +648,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   } = useQuery({
     queryKey: queryKeys.agents.skills(activeSkillAgentId ?? "__none__"),
     queryFn: () => agentsApi.skills(activeSkillAgentId!, selectedOrganizationId!), enabled: Boolean(selectedOrganizationId) && Boolean(activeSkillAgentId), });
-  useEffect(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null); setRecentAskUserAnswerMessageId(null); setIssueProposalOverridesByMessageId({}); }, [conversationId]);
+  useEffect(() => { setInlineEditUserMessageId(null); setInlineEditDraft(""); setBranchPreview(null); setRecentAskUserAnswerMessageId(null); setIssueProposalOverridesByMessageId({}); setPendingFirstTurn(null); }, [conversationId]);
   useEffect(() => { setSkillMenuOpen(false); setSkillSearchQuery(""); }, [activeSkillAgentId]);
   useEffect(() => {
     if (isMobile) {
@@ -1394,6 +1400,20 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         const streamKey = `new:${startedAt.getTime()}:${Math.random().toString(36).slice(2)}`;
         const acceptedConversation = { current: null as ChatConversation | null };
         activeStreamKey = streamKey;
+        setPendingFirstTurn({
+          body,
+          files: regularFilesToUpload,
+          createdAt: startedAt,
+        });
+        if (usesComposerState) {
+          setBranchPreview(null);
+          setDraft("");
+          setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
+          clearPendingFilesForCurrentScope();
+          dispatchResponseAnnotation({ type: "clear" });
+          setResponseAnnotationsExpanded(false);
+          responseAnnotationEditor.close();
+        }
         await chatsApi.sendFirstMessageStream(selectedOrganizationId, body, {
           preferredAgentId: selectedDraftAgentId,
           groupId: pendingGroupId || undefined,
@@ -1414,6 +1434,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 throw new Error("First chat acknowledgement did not include the accepted conversation");
               }
               userMessageAcknowledged = true;
+              setPendingFirstTurn(null);
               conversation = event.conversation;
               acceptedConversation.current = event.conversation;
               activeChatId = conversation.id;
@@ -1477,6 +1498,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 chatId: conversation.id,
                 streamKey,
                 userBody: body,
+                userFiles: regularFilesToUpload,
                 userCreatedAt: new Date(event.userMessage.createdAt),
                 userMessageId: event.userMessage.id,
                 chatTurnId: event.userMessage.chatTurnId ?? null,
@@ -1533,6 +1555,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (!networkWaiting) {
           setStreamDraftForChat(activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, createdConversation), (current) => current?.streamKey === streamKey ? null : current);
         }
+        setPendingFirstTurn(null);
         return;
       }
       const chatId = conversation.id; const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation); const activeDraftForChat = readChatScopedState(streamDrafts, streamScopeKey);
@@ -1566,6 +1589,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         chatId,
         streamKey,
         userBody: body,
+        userFiles: regularFilesToUpload,
         userCreatedAt: startedAt,
         userMessageId: null,
         chatTurnId: null,
@@ -1686,6 +1710,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
       }
     } catch (error) {
+      if (activeStreamKey?.startsWith("new:")) setPendingFirstTurn(null);
       const pendingStop = conversation
         ? readPendingChatStopRecovery(selectedOrganizationId, conversation.id)
         : null;
@@ -1743,14 +1768,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         setInlineEditDraft(body);
         requestAnimationFrame(() => { inlineEditEditorRef.current?.focus(); });
       }
-      if (error instanceof ApiError) {
-        pushToast({
-          title: "Failed to send message",
-          body: error.message, tone: "error", });
-      } else {
-        pushToast({
-          title: error instanceof Error ? error.message : "Failed to send message", tone: "error", });
-      }
+      pushToast({ ...chatErrorToast(error, "send"), tone: "error" });
       if (conversation) {
         void refreshChat(conversation.id).catch(() => null);
       }
@@ -3054,6 +3072,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   };
   const scheduleSteerRetry = (pending: PendingChatSteerRetry) => {
     if (steerRetryStatesRef.current.get(pending.key) !== pending || pending.timer) return;
+    if (pending.retryCount >= CHAT_STEER_RETRY_DELAYS_MS.length) {
+      clearSteerRetry(pending);
+      pushToast({ ...chatErrorToast(pending.lastError, "steer"), tone: "error" });
+      refreshQueue(pending.chatId);
+      return;
+    }
     const delayMs = CHAT_STEER_RETRY_DELAYS_MS[
       Math.min(pending.retryCount, CHAT_STEER_RETRY_DELAYS_MS.length - 1)
     ];
@@ -3061,6 +3085,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     pending.timer = setTimeout(() => {
       pending.timer = null;
       if (steerRetryStatesRef.current.get(pending.key) === pending) {
+        steeringQueuedItemIdsRef.current.delete(pending.itemId);
+        setSteeringQueuedItemIds((current) => {
+          if (!current.has(pending.itemId)) return current;
+          const next = new Set(current);
+          next.delete(pending.itemId);
+          return next;
+        });
         submitSteerRetryRef.current(pending);
       }
     }, delayMs);
@@ -3077,7 +3108,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         activeAttemptEpoch: current?.activeAttemptEpoch ?? request.expectedAttemptEpoch ?? null,
         activeControlVersion: current?.activeControlVersion ?? request.expectedControlVersion ?? null,
         activeGenerationStatus: current?.activeGenerationStatus ?? null,
-        items: (current?.items ?? []).map((item) => item.id === itemId && item.status === "queued"
+        items: (current?.items ?? []).map((item) => item.id === itemId && (item.status === "queued" || item.status === "failed_actionable")
           ? {
               ...item,
               status: "steer_pending" as const,
@@ -3089,7 +3120,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           : item),
       }),
     );
-    let retryScheduled = false;
     void chatsApi.steerQueuedMessage(chatId, itemId, request)
       .then((result) => {
         clearSteerRetry(pending);
@@ -3106,17 +3136,20 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         refreshQueue(chatId);
       })
       .catch((error) => {
-        refreshQueue(chatId);
         if (!(error instanceof ApiError)) {
-          retryScheduled = true;
+          pending.lastError = error;
           scheduleSteerRetry(pending);
+          refreshQueue(chatId);
           return;
         }
         clearSteerRetry(pending);
+        pushToast({ ...chatErrorToast(error, "steer"), tone: "error" });
+        refreshQueue(chatId);
       })
       .finally(() => {
+        const activeRetry = steerRetryStatesRef.current.get(pending.key);
+        if (activeRetry === pending && pending.timer) return;
         steeringQueuedItemIdsRef.current.delete(itemId);
-        if (retryScheduled) return;
         setSteeringQueuedItemIds((current) => {
           if (!current.has(itemId)) return current;
           const next = new Set(current);
@@ -3577,6 +3610,35 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       </div>
     );
   };
+  const renderPendingFirstTurn = () => {
+    if (!pendingFirstTurn) return null;
+    return (
+      <div
+        data-testid="chat-pending-first-turn"
+        className="flex w-full max-w-3xl flex-col items-end gap-1 px-1"
+      >
+        <OptimisticUserDraftItem
+          body={pendingFirstTurn.body}
+          files={pendingFirstTurn.files}
+          createdAt={pendingFirstTurn.createdAt}
+          onCopyMessageText={copyChatMessageText}
+          onEditDraftOnly={editDraftOnly}
+          skillReferences={chatSkillReferences}
+          onMarkdownLinkClick={handleChatMarkdownLinkClick}
+        />
+        <div
+          data-testid="chat-pending-first-turn-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          <span>Sending message...</span>
+        </div>
+      </div>
+    );
+  };
   return (
     <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:h-full md:min-h-0">
       <input ref={fileInputRef} type="file" className="hidden"
@@ -3913,6 +3975,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   {showOptimisticUserMessage ? (
                                     <OptimisticUserDraftItem
                                       body={activeStream.userBody}
+                                      files={activeStream.userFiles}
                                       createdAt={activeStream.userCreatedAt} onCopyMessageText={copyChatMessageText} onEditDraftOnly={editDraftOnly}
                                       skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick}
                                       askUserAnswer={
@@ -4132,40 +4195,44 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 )} </div> </> ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-8">
               <div className="mx-auto flex w-full max-w-4xl flex-col items-center justify-center">
-                <div className="mb-5 w-full max-w-3xl px-1 text-center">
-                  <h1 key={emptyStateHeadingKey} className="motion-chat-empty-heading max-w-full text-[2rem] leading-[1.1] tracking-normal text-foreground [overflow-wrap:anywhere] md:text-[2.3rem]" >
-                    {emptyStateHeading} </h1> </div>
-                {showEmptyStateSupplementalContent ? (
-                  hasRecentProjectConversations ? (
-                    <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mb-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
-                      <div className="mb-2 flex min-h-8 items-center px-1">
-                        <TabsList variant="line" aria-label="New chat empty state" className="h-8 gap-1 border-transparent bg-transparent p-0">
-                          <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
-                            <span>Use cases</span>
-                          </TabsTrigger>
-                          <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
-                            <span>Chats</span>
-                          </TabsTrigger>
-                        </TabsList>
-                      </div>
-                      <TabsContent value="use-cases" id="chat-empty-state-use-cases-panel" aria-labelledby="chat-empty-state-tab-use-cases" className="mt-0 flex flex-col items-center">
-                        {renderEmptyStatePromptFlow()}
-                      </TabsContent>
-                      <TabsContent value="recent" id="chat-empty-state-recent-panel" aria-labelledby="chat-empty-state-tab-recent" className="mt-0">
-                        <ChatEmptyStateRecentConversations
-                          key={activeProject ? `project:${activeProject.id}` : "no-project"}
-                          className="!mt-0"
-                          conversations={recentProjectConversations}
-                          visible={emptyStateActiveTab === "recent"}
-                          conversationPath={chatConversationPath}
-                          onPrefetchConversation={(conversationId) => void prefetchChatConversation(queryClient, selectedOrganizationId, conversationId)}
-                          hasMoreConversations={hasMoreRecentProjectConversations}
-                          onLoadMoreConversations={loadMoreRecentProjectConversations}
-                        />
-                      </TabsContent>
-                    </Tabs>
-                  ) : renderEmptyStatePromptFlow()
-                ) : renderEmptyStatePromptFlow()}
+                {pendingFirstTurn ? renderPendingFirstTurn() : (
+                  <>
+                    <div className="mb-5 w-full max-w-3xl px-1 text-center">
+                      <h1 key={emptyStateHeadingKey} className="motion-chat-empty-heading max-w-full text-[2rem] leading-[1.1] tracking-normal text-foreground [overflow-wrap:anywhere] md:text-[2.3rem]" >
+                        {emptyStateHeading} </h1> </div>
+                    {showEmptyStateSupplementalContent ? (
+                      hasRecentProjectConversations ? (
+                        <Tabs value={emptyStateActiveTab} onValueChange={(value) => setEmptyStateActiveTab(value as "recent" | "use-cases")} className="mb-4 w-full max-w-3xl gap-2" data-testid="chat-empty-state-tabs">
+                          <div className="mb-2 flex min-h-8 items-center px-1">
+                            <TabsList variant="line" aria-label="New chat empty state" className="h-8 gap-1 border-transparent bg-transparent p-0">
+                              <TabsTrigger value="use-cases" id="chat-empty-state-tab-use-cases" data-testid="chat-empty-state-tab-use-cases" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
+                                <span>Use cases</span>
+                              </TabsTrigger>
+                              <TabsTrigger value="recent" id="chat-empty-state-tab-recent" data-testid="chat-empty-state-tab-recent" className="h-8 flex-none rounded-[var(--radius-md)] border border-transparent px-3 text-sm data-[state=active]:!border-[color:var(--border-soft)] data-[state=active]:!bg-[color:var(--surface-active)] data-[state=active]:shadow-none after:hidden">
+                                <span>Chats</span>
+                              </TabsTrigger>
+                            </TabsList>
+                          </div>
+                          <TabsContent value="use-cases" id="chat-empty-state-use-cases-panel" aria-labelledby="chat-empty-state-tab-use-cases" className="mt-0 flex flex-col items-center">
+                            {renderEmptyStatePromptFlow()}
+                          </TabsContent>
+                          <TabsContent value="recent" id="chat-empty-state-recent-panel" aria-labelledby="chat-empty-state-tab-recent" className="mt-0">
+                            <ChatEmptyStateRecentConversations
+                              key={activeProject ? `project:${activeProject.id}` : "no-project"}
+                              className="!mt-0"
+                              conversations={recentProjectConversations}
+                              visible={emptyStateActiveTab === "recent"}
+                              conversationPath={chatConversationPath}
+                              onPrefetchConversation={(conversationId) => void prefetchChatConversation(queryClient, selectedOrganizationId, conversationId)}
+                              hasMoreConversations={hasMoreRecentProjectConversations}
+                              onLoadMoreConversations={loadMoreRecentProjectConversations}
+                            />
+                          </TabsContent>
+                        </Tabs>
+                      ) : renderEmptyStatePromptFlow()
+                    ) : renderEmptyStatePromptFlow()}
+                  </>
+                )}
                 <div className="w-full max-w-3xl">
                   {renderComposer(true)} </div> </div> </div> )} </main>
               </div> </div> ); }

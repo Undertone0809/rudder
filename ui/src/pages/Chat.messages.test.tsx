@@ -89,6 +89,8 @@ Object.defineProperty(window, "matchMedia", {
 });
 
 let cleanupFn: (() => void) | null = null;
+let previousCreateObjectURL: typeof URL.createObjectURL | undefined;
+let previousRevokeObjectURL: typeof URL.revokeObjectURL | undefined;
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },
 });
@@ -96,6 +98,16 @@ const queryClient = new QueryClient({
 beforeEach(() => {
   issuesApiMock.get.mockRejectedValue(new Error("Issue detail is not configured for this test"));
   runTranscriptViewMock.mockClear();
+  previousCreateObjectURL = URL.createObjectURL;
+  previousRevokeObjectURL = URL.revokeObjectURL;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:chat-message-test"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -108,6 +120,22 @@ afterEach(() => {
   issuesApiMock.get.mockReset();
   queryClient.clear();
   document.body.innerHTML = "";
+  if (previousCreateObjectURL) {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: previousCreateObjectURL,
+    });
+  } else {
+    Reflect.deleteProperty(URL, "createObjectURL");
+  }
+  if (previousRevokeObjectURL) {
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: previousRevokeObjectURL,
+    });
+  } else {
+    Reflect.deleteProperty(URL, "revokeObjectURL");
+  }
 });
 
 function render(element: ReactNode) {
@@ -546,7 +574,7 @@ describe("user chat message rendering", () => {
     expect(bubble?.querySelector('[data-mention-kind="agent"]')?.getAttribute("href")).toBe("/MARAAA/agents/agent-1");
   });
 
-  it("renders known website icons before following CJK text in user messages", () => {
+  it("renders known website icons before following CJK text in user messages", async () => {
     const url = "https://app.rudder.zeeland.studio/issues/RUD-1";
     const container = renderChatMessageItem(message({
       role: "user",
@@ -556,12 +584,18 @@ describe("user chat message rendering", () => {
     }));
     const bubble = container.querySelector('[data-testid="chat-user-message-bubble"]');
     const link = bubble?.querySelector("a");
+    const logo = link?.querySelector<HTMLImageElement>("img.rudder-website-link-logo");
 
     expect(link?.getAttribute("href")).toBe(url);
     expect(link?.textContent).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-website-link")).toBe(true);
-    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+    expect(logo?.getAttribute("src")).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    await act(async () => {
+      logo?.dispatchEvent(new Event("load", { bubbles: false }));
+      await Promise.resolve();
+    });
     expect(link?.querySelector("[data-website-icon='generic']")).toBeNull();
     expect(websiteMetadataApiMock.get).not.toHaveBeenCalled();
     expect(bubble?.textContent).toContain("你觉得这个我怎么回复比较好?");
@@ -1196,5 +1230,27 @@ describe("OptimisticUserDraftItem", () => {
     expect(
       container.querySelector('button[aria-label="Edit draft"]'),
     ).not.toBeNull();
+  });
+
+  it("keeps image files visible in the optimistic user bubble before acknowledgement", () => {
+    const container = render(
+      <ThemeProvider>
+        <OptimisticUserDraftItem
+          body="Review this screenshot."
+          files={[new File(["image"], "evidence.png", { type: "image/png" })]}
+          createdAt={new Date("2026-07-28T08:00:00.000Z")}
+          onCopyMessageText={vi.fn()}
+          onEditDraftOnly={vi.fn()}
+          skillReferences={[]}
+        />
+      </ThemeProvider>,
+    );
+
+    const optimisticAttachments = container.querySelector('[data-testid="chat-optimistic-attachments"]');
+    expect(optimisticAttachments).not.toBeNull();
+    expect(optimisticAttachments?.querySelector('img[alt="evidence.png"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-user-message-bubble"]')?.textContent).toContain(
+      "Review this screenshot.",
+    );
   });
 });

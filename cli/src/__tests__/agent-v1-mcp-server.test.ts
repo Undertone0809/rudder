@@ -72,6 +72,7 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_issue_get: { issue: "ZST-123" },
   rudder_issue_list: { status: "todo,in_progress" },
   rudder_issue_search: { query: "checkout" },
+  rudder_issue_create: { title: "MCP-created issue" },
   rudder_issue_context: { issue: "ZST-123", wakeCommentId: "cmt_abc123" },
   rudder_issue_checkout: { issue: "ZST-123" },
   rudder_issue_comment: { issue: "ZST-123", body: "Progress" },
@@ -260,6 +261,66 @@ describe("agent-v1 MCP server", () => {
       .not.toContain("c2NyZWVuc2hvdA==");
     expect(((response?.result as { content: Array<{ type: string; text?: string }> }).content[0]?.text))
       .not.toContain("c2NyZWVuc2hvdA==");
+  });
+
+  it("uses the typed MCP Issue creation tool as the default direct API path", async () => {
+    const issue = {
+      id: "33333333-3333-4333-8333-333333333333",
+      identifier: "ZST-124",
+      title: "MCP-created issue",
+      status: "backlog",
+    };
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("http://127.0.0.1:3100/api/orgs/runtime-org/issues");
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toMatchObject({
+        authorization: "Bearer runtime-key",
+        "x-rudder-agent-id": "runtime-agent",
+        "x-rudder-run-id": "runtime-run",
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        title: "MCP-created issue",
+        description: "Created through MCP",
+        status: "todo",
+        priority: "high",
+        projectId: "33333333-3333-4333-8333-333333333333",
+        requestDepth: 1,
+      });
+      return new Response(JSON.stringify(issue), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "issue-create",
+      method: "tools/call",
+      params: {
+        name: "rudder_issue_create",
+        arguments: {
+          title: "MCP-created issue",
+          description: "Created through MCP",
+          status: "todo",
+          priority: "high",
+          projectId: "33333333-3333-4333-8333-333333333333",
+          requestDepth: 1,
+        },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { ...issue, id: issue.identifier },
+    });
   });
 
   it("rejects model-provided runtime identity fields", async () => {

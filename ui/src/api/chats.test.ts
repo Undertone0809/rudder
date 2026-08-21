@@ -6,10 +6,109 @@ import type {
   ChatStreamEvent,
 } from "@rudderhq/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chatsApi } from "./chats";
+import {
+  CHAT_REQUEST_TIMEOUT_MS,
+  CHAT_STREAM_IDLE_TIMEOUT_MS,
+  chatsApi,
+} from "./chats";
+import { ApiTimeoutError } from "./client";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("chat stream timeouts", () => {
+  it("clears a send when the stream connection never responds", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })
+    )));
+
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", { onEvent: vi.fn() }).catch((error) => error);
+    await vi.advanceTimersByTimeAsync(CHAT_REQUEST_TIMEOUT_MS);
+
+    await expect(pending).resolves.toBeInstanceOf(ApiTimeoutError);
+  });
+
+  it("does not abort an established stream after the connection timeout", async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | null | undefined;
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    const onEvent = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal;
+      return new Response(stream);
+    }));
+
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", { onEvent });
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(CHAT_REQUEST_TIMEOUT_MS);
+
+    expect(requestSignal?.aborted).toBe(false);
+    streamController?.enqueue(new TextEncoder().encode('{"type":"final","messages":[]}\n'));
+    streamController?.close();
+    await expect(pending).resolves.toBeUndefined();
+    expect(onEvent).toHaveBeenCalledWith({ type: "final", messages: [] });
+  });
+
+  it("fails an established stream that goes silent", async () => {
+    vi.useFakeTimers();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(stream)));
+
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", { onEvent: vi.fn() }).catch((error) => error);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(CHAT_STREAM_IDLE_TIMEOUT_MS);
+
+    await expect(pending).resolves.toMatchObject({
+      name: "ApiTimeoutError",
+      timeoutMs: CHAT_STREAM_IDLE_TIMEOUT_MS,
+    });
+    expect(streamController).toBeDefined();
+  });
+
+  it("keeps the caller abort signal connected after response headers", async () => {
+    vi.useFakeTimers();
+    const callerController = new AbortController();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let requestSignal: AbortSignal | null | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal;
+      return new Response(stream);
+    }));
+
+    const pending = chatsApi.sendMessageStream("chat-1", "hello", {
+      signal: callerController.signal,
+      onEvent: vi.fn(),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    callerController.abort();
+
+    expect(requestSignal?.aborted).toBe(true);
+    streamController?.error(new DOMException("The operation was aborted.", "AbortError"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
 });
 
 describe("chat message history API", () => {

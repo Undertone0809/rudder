@@ -2482,7 +2482,7 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
   });
 
-  it("uses known website icons without fetching metadata", () => {
+  it("uses known website icons without fetching metadata", async () => {
     const container = render(
       <ThemeProvider>
         <MarkdownBody>
@@ -2500,6 +2500,15 @@ describe("MarkdownBody", () => {
     );
     for (const link of links) {
       expect(link.querySelector("img.rudder-website-link-logo")?.getAttribute("data-website-icon")).toBe("metadata");
+      expect(link.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    }
+    await act(async () => {
+      for (const logo of logos) {
+        logo?.dispatchEvent(new Event("load", { bubbles: false }));
+      }
+      await Promise.resolve();
+    });
+    for (const link of links) {
       expect(link.querySelector("[data-website-icon='generic']")).toBeNull();
     }
     expect(links[4]?.querySelector("img.rudder-website-link-logo")?.getAttribute("data-dark-mode")).toBe("invert");
@@ -2558,6 +2567,84 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(link?.textContent).toBe("post");
     expect(resolvedWebsiteIconUrl(url)).toBe("https://static.example.com/favicon.ico");
+  });
+
+  it("resets the icon when a rendered link URL changes in place", async () => {
+    const firstUrl = "https://first.example.test/article";
+    const secondUrl = "https://second.example.test/article";
+    const firstIconUrl = "/api/website-metadata/icon?url=first";
+    const secondIconUrl = "/api/website-metadata/icon?url=second";
+    let resolveSecond!: (metadata: {
+      url: string;
+      siteName: string | null;
+      pageTitle: string | null;
+      iconUrl: string | null;
+    }) => void;
+    entityPreviewApiMocks.getWebsiteMetadata.mockImplementation((url: string) => {
+      if (url === firstUrl) {
+        return Promise.resolve({
+          url,
+          siteName: "First",
+          pageTitle: null,
+          iconUrl: firstIconUrl,
+        });
+      }
+      return new Promise((resolve) => {
+        resolveSecond = resolve;
+      });
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    const renderIcon = (url: string) => {
+      act(() => {
+        root.render(
+          <ThemeProvider>
+            <WebsiteLinkIcon url={new URL(url)} />
+          </ThemeProvider>,
+        );
+      });
+    };
+
+    renderIcon(firstUrl);
+    await act(async () => {
+      await vi.waitFor(() => expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(firstUrl, "preview"));
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe(firstIconUrl));
+    });
+    const firstImage = container.querySelector<HTMLImageElement>("img");
+    await act(async () => {
+      firstImage?.dispatchEvent(new Event("load", { bubbles: false }));
+    });
+    expect(container.querySelector("[data-website-icon='generic']")).toBeNull();
+
+    renderIcon(secondUrl);
+    await act(async () => {
+      await vi.waitFor(() => expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledWith(secondUrl, "preview"));
+    });
+    expect(container.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(container.querySelector("img[src]"))
+      .toBeNull();
+
+    await act(async () => {
+      resolveSecond({
+        url: secondUrl,
+        siteName: "Second",
+        pageTitle: null,
+        iconUrl: secondIconUrl,
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe(secondIconUrl));
+    });
+    expect(container.querySelector("img")?.getAttribute("src")).not.toBe(firstIconUrl);
   });
 
   it("reuses one metadata request when the same website icon appears multiple times", async () => {
@@ -2701,6 +2788,19 @@ describe("MarkdownBody", () => {
 
     expect(link?.querySelector("img.rudder-website-link-logo")).toBeNull();
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+
+    cleanupFn?.();
+    cleanupFn = null;
+    const remounted = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`Read [post](${url})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+    expect(remounted.querySelector("img.rudder-website-link-logo")).toBeNull();
+    expect(remounted.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledTimes(1);
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {

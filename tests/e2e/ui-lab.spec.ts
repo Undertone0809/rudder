@@ -263,6 +263,98 @@ test.describe("UI Lab", () => {
     expect(render.iconWidth).toBeLessThan(18);
   });
 
+  test("keeps website icon state and keyboard activation aligned when a Markdown link rerenders", async ({ page, context }, testInfo) => {
+    const organization = await createUiLabOrganization(page);
+    const firstUrl = "https://website-icon-rerender-first.example.test/article";
+    const secondUrl = "https://website-icon-rerender-second.example.test/article";
+    const firstIconUrl = `/api/website-metadata/icon?url=${encodeURIComponent(`${firstUrl}.ico`)}`;
+    const secondIconUrl = `/api/website-metadata/icon?url=${encodeURIComponent(`${secondUrl}.ico`)}`;
+    let releaseSecondMetadata: (() => void) | null = null;
+    const secondMetadata = new Promise<void>((resolve) => {
+      releaseSecondMetadata = resolve;
+    });
+
+    await page.route("**/api/website-metadata?**", async (route) => {
+      const targetUrl = new URL(route.request().url()).searchParams.get("url");
+      if (targetUrl === secondUrl) await secondMetadata;
+      const iconUrl = targetUrl === firstUrl
+        ? firstIconUrl
+        : targetUrl === secondUrl
+          ? secondIconUrl
+          : null;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          url: targetUrl,
+          siteName: null,
+          pageTitle: null,
+          iconUrl,
+        }),
+      });
+    });
+    await page.route("**/api/website-metadata/icon?**", async (route) => {
+      const targetUrl = new URL(route.request().url()).searchParams.get("url");
+      const fill = targetUrl?.startsWith(firstUrl) ? "#16a34a" : targetUrl?.startsWith(secondUrl) ? "#2563eb" : null;
+      if (!fill) {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="${fill}"/></svg>`,
+      });
+    });
+
+    await page.goto(`/${organization.issuePrefix}/ui-lab`);
+    await page.getByRole("button", { name: /Common Components/ }).click();
+
+    const fixture = page.getByTestId("ui-lab-website-link-rerender");
+    const dynamicLink = fixture.locator("a.rudder-website-link");
+    await expect(dynamicLink).toHaveAttribute("href", firstUrl);
+    await expect(dynamicLink.locator("img.rudder-website-link-logo")).toHaveAttribute("src", firstIconUrl);
+    await expect(dynamicLink.locator("img.rudder-website-link-logo")).toHaveAttribute("data-website-icon", "metadata");
+    const firstIconBox = await dynamicLink.locator(".rudder-website-link-icon").boundingBox();
+    expect(firstIconBox).not.toBeNull();
+
+    const swapButton = fixture.getByRole("button", { name: "Swap website link" });
+    await swapButton.click();
+    await expect(dynamicLink).toHaveAttribute("href", secondUrl);
+    await expect(dynamicLink.locator('[data-website-icon="generic"]')).toBeVisible();
+    await expect(dynamicLink.locator("img[src]")).toHaveCount(0);
+    const loadingIconBox = await dynamicLink.locator(".rudder-website-link-icon").boundingBox();
+    expect(loadingIconBox).not.toBeNull();
+    expect(Math.abs((loadingIconBox?.width ?? 0) - (firstIconBox?.width ?? 0))).toBeLessThanOrEqual(0.5);
+    expect(Math.abs((loadingIconBox?.height ?? 0) - (firstIconBox?.height ?? 0))).toBeLessThanOrEqual(0.5);
+
+    releaseSecondMetadata?.();
+    await expect(dynamicLink.locator("img.rudder-website-link-logo")).toHaveAttribute("src", secondIconUrl);
+    await expect(dynamicLink.locator("img.rudder-website-link-logo")).toHaveAttribute("data-website-icon", "metadata");
+    await expect(dynamicLink.locator('[data-website-icon="generic"]')).toHaveCount(0);
+
+    await context.route(`${secondUrl}**`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<!doctype html><title>Keyboard target</title>",
+      });
+    });
+    await swapButton.focus();
+    await page.keyboard.press("Tab");
+    await expect(dynamicLink).toBeFocused();
+    const popupPromise = page.waitForEvent("popup");
+    await page.keyboard.press("Enter");
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url()).toBe(secondUrl);
+    await popup.close();
+
+    await page.screenshot({ path: testInfo.outputPath("website-link-rerender-keyboard.png"), fullPage: false });
+    await expect(dynamicLink).toHaveAttribute("target", "_blank");
+    await expect(dynamicLink.locator(".rudder-website-link-icon")).toHaveAttribute("aria-hidden", "true");
+    expect(context.pages().length).toBe(1);
+  });
+
   test("shows a hover copy action on command terminal transcript details", async ({ page, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     const organization = await createUiLabOrganization(page);

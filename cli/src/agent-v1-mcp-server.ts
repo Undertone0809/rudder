@@ -27,6 +27,7 @@ import {
   createGoalChangeProposalSchema,
   createGoalCheckpointSchema,
   createGoalResultProposalSchema,
+  createIssueSchema,
 } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -719,6 +720,26 @@ async function callToolDirectlyIfSupported(
         payload,
       ));
     }
+    case "issue.create": {
+      const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
+      const payload = createIssueSchema.parse({
+        title: requiredString(input, "title"),
+        description: input.description,
+        status: input.status,
+        priority: input.priority,
+        assigneeAgentId: input.assigneeAgentId,
+        projectId: input.projectId,
+        goalId: input.goalId,
+        parentId: input.parentId,
+        requestDepth: input.requestDepth,
+        billingCode: input.billingCode,
+        labelIds: input.labelIds,
+      });
+      return success(await api.post(
+        `/api/orgs/${encodeURIComponent(orgId)}/issues`,
+        payload,
+      ));
+    }
     case "issue.get":
       return success(await api.get(`/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}`));
     case "issue.context": {
@@ -1217,6 +1238,22 @@ function cliArgsForCapability(
       if (input.resultValue !== undefined) args.push("--result-value", JSON.stringify(input.resultValue));
       pushOptional(args, "--decision", input.decision);
       if (input.resultPayload !== undefined) args.push("--result-payload", JSON.stringify(input.resultPayload));
+      return args;
+    }
+    case "issue.create": {
+      const args = ["issue", "create", "--title", requiredString(input, "title")];
+      pushOptional(args, "--description", input.description);
+      pushOptional(args, "--status", input.status);
+      pushOptional(args, "--priority", input.priority);
+      pushOptional(args, "--assignee-agent-id", input.assigneeAgentId);
+      pushOptional(args, "--project-id", input.projectId);
+      pushOptional(args, "--goal-id", input.goalId);
+      pushOptional(args, "--parent-id", input.parentId);
+      pushOptional(args, "--request-depth", input.requestDepth);
+      pushOptional(args, "--billing-code", input.billingCode);
+      if (Array.isArray(input.labelIds)) {
+        for (const labelId of input.labelIds) args.push("--label-id", String(labelId));
+      }
       return args;
     }
     case "issue.get":

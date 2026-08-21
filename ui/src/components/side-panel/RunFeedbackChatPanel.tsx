@@ -22,6 +22,7 @@ import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
+import { chatErrorMessage } from "@/lib/chat-errors";
 import {
   canSubmitChatResponseAnnotations,
   chatResponseAnnotationsForDraft,
@@ -631,7 +632,7 @@ export function RunFeedbackChatPanel({
         ? sendError.name === "AbortError"
         : sendError instanceof Error && sendError.name === "AbortError";
       if (!isAbort || !stopRequestedRef.current) {
-        setError(sendError instanceof Error ? sendError.message : "Could not send feedback.");
+        setError(chatErrorMessage(sendError, "feedback"));
       }
     } finally {
       const stopCutoffPending = stopCutoffAcceptedRef.current;
