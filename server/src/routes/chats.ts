@@ -81,6 +81,7 @@ import {
 import {
   NETWORK_WAIT_EXHAUSTED_ERROR,
   NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
+  NETWORK_WAIT_UNSAFE_ERROR_CODE,
 } from "../services/runtime-kernel/heartbeat.core.js";
 import {
   runtimeResultText,
@@ -1683,6 +1684,32 @@ export function chatRoutes(
     let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let terminalReason: string | null = null;
     let waitingAgain = false;
+    const isTerminalGenerationStatus = (status: string) => [
+      "stop_requested",
+      "stopping",
+      "completed",
+      "failed",
+      "stopped",
+      "aborted",
+      "interrupted_unverified",
+      "control_lost",
+    ].includes(status);
+    const finishRecoveryWithoutProvider = async (status: string, reason: string | null | undefined) => {
+      terminalStatus = ["stop_requested", "stopping", "stopped"].includes(status)
+        ? "stopped"
+        : "failed";
+      terminalReason = reason ?? (
+        terminalStatus === "stopped" ? "operator_stop" : "generation_terminal_before_recovery"
+      );
+      await chatRunsSvc.finalizeRun(run.id, {
+        status: "cancelled",
+        error: terminalReason,
+        errorCode: terminalStatus === "stopped" ? "chat_run_cancelled" : "chat_generation_already_terminal",
+      }).catch((error: unknown) => {
+        logger.warn({ err: error, runId: run.id }, "failed to finalize Chat run after recovery race");
+      });
+      return true;
+    };
 
     try {
       if (generationId) {
@@ -1695,28 +1722,47 @@ export function chatRoutes(
         assistantProjectionMessageId = frozen.projection.assistantMessageId;
         transcript = [...frozen.projection.transcript] as TranscriptEntry[];
         activeAttemptEpoch = Math.max(1, frozen.generation.attemptEpoch);
-        if (!run.networkRecoveryExhausted) {
-          await svc.generationProtocol.markNetworkResumed({
+        const recoveryFailure = run.networkRecoveryFailure
+          ?? (run.networkRecoveryExhausted
+            ? {
+              errorCode: NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
+              error: NETWORK_WAIT_EXHAUSTED_ERROR,
+            }
+            : null);
+        if (isTerminalGenerationStatus(frozen.generation.status)) {
+          return finishRecoveryWithoutProvider(frozen.generation.status, frozen.generation.terminalReason);
+        }
+        if (!recoveryFailure) {
+          const resumedGeneration = await svc.generationProtocol.markNetworkResumed({
             orgId: conversation.orgId,
             conversationId: conversation.id,
             generationId,
             expectedAttemptEpoch: activeAttemptEpoch,
           });
+          if (isTerminalGenerationStatus(resumedGeneration.status)) {
+            return finishRecoveryWithoutProvider(resumedGeneration.status, resumedGeneration.terminalReason);
+          }
+          const latestGeneration = await svc.getLatestGeneration(conversation.id).catch(() => null);
+          if (latestGeneration?.id === generationId && isTerminalGenerationStatus(latestGeneration.status)) {
+            return finishRecoveryWithoutProvider(latestGeneration.status, latestGeneration.terminalReason);
+          }
         }
-      }
-      if (run.networkRecoveryExhausted) {
-        throw new ChatAssistantStreamError(
-          NETWORK_WAIT_EXHAUSTED_ERROR,
-          partialBody,
-          [],
-          {
-            errorCode: NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
-            userMessage: "Network recovery retries were exhausted. Check connectivity, then retry this reply.",
-            retryable: true,
-            failurePhase: "model_generation",
-            action: "retry",
-          },
-        );
+        if (recoveryFailure) {
+          throw new ChatAssistantStreamError(
+            recoveryFailure.error,
+            partialBody,
+            [],
+            {
+              errorCode: recoveryFailure.errorCode,
+              userMessage: recoveryFailure.errorCode === NETWORK_WAIT_UNSAFE_ERROR_CODE
+                ? "Network recovery could not safely resume this reply. Check connectivity, then retry this reply."
+                : "Network recovery retries were exhausted. Check connectivity, then retry this reply.",
+              retryable: true,
+              failurePhase: "model_generation",
+              action: "retry",
+            },
+          );
+        }
       }
 
       const turnContext = turnContextFromUserMessage(userMessage);

@@ -20,6 +20,7 @@ const mockChatService = vi.hoisted(() => ({
     recordClientCheckpoint: vi.fn(),
     beginStopAction: vi.fn(),
     beginSteerFallbackCutoff: vi.fn(),
+    markNetworkResumed: vi.fn(),
     recordRuntimeTerminal: vi.fn(),
     claimTerminalProjection: vi.fn(),
     getNextTerminalProjectionWakeAt: vi.fn(),
@@ -163,6 +164,8 @@ const mockChatAssistantService = vi.hoisted(() => ({
 
 const mockChatAgentRuns = vi.hoisted(() => ({
   linkAssistantMessage: vi.fn(),
+  finalizeRun: vi.fn(),
+  releaseOwnedRun: vi.fn(),
 }));
 
 const mockChatWorkManifest = vi.hoisted(() => ({
@@ -397,6 +400,7 @@ function createApp(
     runId: null,
   },
   backgroundRuntime?: ChatBackgroundRuntime,
+  registerNetworkWaitingRunHandler?: (handler: (run: any) => Promise<boolean>) => void,
 ) {
   const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
   testBackgroundRuntimes.add(runtime);
@@ -408,7 +412,7 @@ function createApp(
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any, runtime),
+    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
   );
   app.use(errorHandler);
   return app;
@@ -452,6 +456,7 @@ describe("chat routes", { retry: 2 }, () => {
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
     mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
+    mockChatAgentRuns.finalizeRun.mockResolvedValue(null);
     mockChatSteerMessages.beginControlAction.mockImplementation((input) => (
       mockChatService.beginSteerControlAction(input)
     ));
@@ -2803,6 +2808,108 @@ describe("chat routes", { retry: 2 }, () => {
     } finally {
       release?.();
     }
+  });
+
+  it("fails an unsafe network recovery without invoking the provider", async () => {
+    let recover: ((run: any) => Promise<boolean>) | undefined;
+    createApp(undefined, undefined, (handler) => {
+      recover = handler;
+    });
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Continue this reply");
+    const generation = {
+      id: "10000000-0000-4000-8000-000000000004",
+      status: "waiting_for_network",
+      attemptEpoch: 1,
+      terminalReason: null,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.getLatestGeneration.mockResolvedValue(generation);
+    mockChatService.generationProtocol.getFrozenVisibleProjection.mockResolvedValue({
+      generation,
+      projection: {
+        body: "Partial reply",
+        assistantMessageId: null,
+        transcript: [],
+      },
+    });
+    mockChatService.generationProtocol.recordRuntimeTerminal.mockResolvedValue({});
+
+    const handled = await recover?.({
+      id: "10000000-0000-4000-8000-000000000005",
+      orgId: conversation.orgId,
+      agentId: "agent-1",
+      chatConversationId: conversation.id,
+      executionOwnerToken: "owner-1",
+      contextSnapshot: {
+        conversationId: conversation.id,
+        chatGenerationId: generation.id,
+        userMessageId: userMessage.id,
+        attemptEpoch: 1,
+      },
+      networkRecoveryFailure: {
+        errorCode: "network_resume_unsafe",
+        error: "Network recovery cannot safely resume this provider attempt",
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.markNetworkResumed).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.recordRuntimeTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      generationId: generation.id,
+      finalStatus: "failed",
+      terminalReason: "Network recovery cannot safely resume this provider attempt",
+    }));
+  });
+
+  it("does not restart a recovered Chat generation after Stop", async () => {
+    let recover: ((run: any) => Promise<boolean>) | undefined;
+    createApp(undefined, undefined, (handler) => {
+      recover = handler;
+    });
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Continue this reply");
+    const generation = {
+      id: "10000000-0000-4000-8000-000000000006",
+      status: "stopping",
+      attemptEpoch: 1,
+      terminalReason: "operator_stop",
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.getLatestGeneration.mockResolvedValue(null);
+    mockChatService.generationProtocol.getFrozenVisibleProjection.mockResolvedValue({
+      generation,
+      projection: {
+        body: "Partial reply",
+        assistantMessageId: null,
+        transcript: [],
+      },
+    });
+
+    const handled = await recover?.({
+      id: "10000000-0000-4000-8000-000000000007",
+      orgId: conversation.orgId,
+      agentId: "agent-1",
+      chatConversationId: conversation.id,
+      executionOwnerToken: "owner-1",
+      contextSnapshot: {
+        conversationId: conversation.id,
+        chatGenerationId: generation.id,
+        userMessageId: userMessage.id,
+        attemptEpoch: 1,
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockChatService.generationProtocol.markNetworkResumed).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      status: "cancelled",
+      errorCode: "chat_run_cancelled",
+    }));
   });
 
   it("requires a board actor to create or replace Queue annotations", async () => {

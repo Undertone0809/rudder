@@ -68,7 +68,8 @@ export type ChatRecoverableFailureCode =
   | "chat_runtime_preparation_failed"
   | "chat_runtime_boot_failed"
   | "chat_runtime_exception"
-  | "network_retry_exhausted";
+  | "network_retry_exhausted"
+  | "network_resume_unsafe";
 
 export type ChatFailurePhase =
   | "runtime_boot"
@@ -249,6 +250,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "network_retry_exhausted") {
     return "Network recovery retries were exhausted. Check connectivity, then retry this reply.";
+  }
+  if (code === "network_resume_unsafe") {
+    return "Network recovery could not safely resume this reply. Check connectivity, then retry this reply.";
   }
   return CHAT_ASSISTANT_RECOVERABLE_FAILURE_MESSAGE;
 }

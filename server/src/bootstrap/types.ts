@@ -16,6 +16,11 @@ export type UiMode = "none" | "static" | "vite-dev";
 export type NetworkWaitingRun = typeof heartbeatRuns.$inferSelect & {
   /** Set by the recovery coordinator when the bounded network retry policy is exhausted. */
   networkRecoveryExhausted?: boolean;
+  /** Set when recovery has failed closed and the Chat handler must terminalize its generation. */
+  networkRecoveryFailure?: {
+    errorCode: "network_resume_unsafe" | "network_retry_exhausted";
+    error: string;
+  };
 };
 
 export interface RudderAppOptions {
