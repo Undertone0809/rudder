@@ -910,20 +910,23 @@ function CollapsedWorkspaceSidebarReveal({
   return (
     <div
       data-testid="workspace-sidebar-reopen-zone"
-      className="group absolute left-0 top-0 z-30 flex w-8 items-start"
+      className={cn(
+        "group absolute z-30 flex items-start",
+        alwaysVisible ? "left-8 top-3 w-8" : "left-0 top-0 w-8",
+      )}
     >
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             type="button"
-            variant="outline"
+            variant={alwaysVisible ? "ghost" : "outline"}
             size="icon"
             data-testid="workspace-sidebar-reopen-button"
             className={cn(
-              "desktop-window-no-drag h-10 w-7 shrink-0 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] transition-[background-color,color,opacity,transform] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
+              "desktop-window-no-drag shrink-0 text-muted-foreground transition-[background-color,color,opacity,transform] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-standard)] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
               alwaysVisible
-                ? "pointer-events-auto translate-x-0 opacity-100"
-                : "pointer-events-none -translate-x-1/2 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
+                ? "pointer-events-auto h-8 w-8 translate-x-0 rounded-[var(--radius-sm)] border-transparent bg-transparent opacity-100 shadow-none"
+                : "pointer-events-none h-10 w-7 -translate-x-1/2 rounded-l-none rounded-r-[calc(var(--radius-sm)-1px)] border-l-0 bg-[color:var(--surface-elevated)] opacity-0 shadow-[var(--shadow-sm)] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
             )}
             onClick={onOpen}
             aria-label="Open workspace sidebar"

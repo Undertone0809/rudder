@@ -4,6 +4,53 @@ import { createE2EChatAgent } from "./support/chat-agent";
 const LIGHT_WORKSPACE_PAPER = "rgb(248, 244, 238)";
 
 test.describe("Chat sidebar layout", () => {
+  test("keeps the collapsed Messenger sidebar opener visible in the main content corner", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Messenger-Collapsed-Opener-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; urlKey: string };
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/${organization.urlKey}/messenger`);
+
+    await page.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "true");
+
+    const opener = page.getByTestId("workspace-sidebar-reopen-button");
+    const workspaceShell = page.getByTestId("workspace-shell");
+    await expect(opener).toBeVisible();
+    await expect(opener).toHaveCSS("opacity", "1");
+    await expect(opener).toHaveCSS("pointer-events", "auto");
+    await expect(opener).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+    const beforeHover = await opener.boundingBox();
+    const workspaceShellBox = await workspaceShell.boundingBox();
+    expect(beforeHover).not.toBeNull();
+    expect(workspaceShellBox).not.toBeNull();
+    expect(beforeHover!.x - workspaceShellBox!.x).toBeGreaterThanOrEqual(24);
+    expect(beforeHover!.x - workspaceShellBox!.x).toBeLessThanOrEqual(40);
+    expect(beforeHover!.y - workspaceShellBox!.y).toBeGreaterThanOrEqual(8);
+    expect(beforeHover!.y - workspaceShellBox!.y).toBeLessThanOrEqual(20);
+
+    await opener.hover();
+    await expect(opener).toBeVisible();
+    await expect.poll(async () => opener.boundingBox()).toEqual(beforeHover);
+
+    await page.screenshot({
+      path: testInfo.outputPath("messenger-collapsed-sidebar-opener.png"),
+      fullPage: true,
+    });
+
+    await opener.click();
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "false");
+    await expect(opener).toHaveCount(0);
+  });
+
   test("shows the full conversation title while it fits within one third of the main workspace", async ({ page }, testInfo) => {
     await page.addInitScript(() => {
       Object.defineProperty(window.navigator, "userAgent", {
