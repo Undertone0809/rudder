@@ -319,7 +319,7 @@ describe("agent-v1 MCP server", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(response?.result).toMatchObject({
       isError: false,
-      structuredContent: issue,
+      structuredContent: { ...issue, id: issue.identifier },
     });
   });
 
