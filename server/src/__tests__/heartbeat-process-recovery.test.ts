@@ -6,6 +6,7 @@ import {
   agentTaskSessions,
   agentWakeupRequests,
   applyPendingMigrations,
+  chatConversations,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
@@ -163,6 +164,7 @@ describe("heartbeat orphaned process recovery", () => {
         await db.delete(heartbeatRunEvents);
         await db.delete(agentTaskSessions);
         await db.delete(heartbeatRuns);
+        await db.delete(chatConversations);
         await db.delete(agentRuntimeState);
         await db.delete(agentWakeupRequests);
         await db.delete(organizationSkills);
@@ -204,6 +206,7 @@ describe("heartbeat orphaned process recovery", () => {
     networkWaitAttemptCount?: number;
     recoveryCheckpoint?: Record<string, unknown> | null;
     contextSnapshot?: Record<string, unknown> | null;
+    chatConversationId?: string | null;
     startedAt?: Date;
     updatedAt?: Date;
   }) {
@@ -270,6 +273,15 @@ describe("heartbeat orphaned process recovery", () => {
       claimedAt: now,
     });
 
+    if (input?.chatConversationId) {
+      await db.insert(chatConversations).values({
+        id: input.chatConversationId,
+        orgId,
+        preferredAgentId: agentId,
+        title: "Network recovery test chat",
+      });
+    }
+
     await db.insert(heartbeatRuns).values({
       id: runId,
       orgId,
@@ -279,6 +291,7 @@ describe("heartbeat orphaned process recovery", () => {
       status: input?.runStatus ?? "running",
       runningSubstate: input?.runningSubstate ?? null,
       wakeupRequestId,
+      chatConversationId: input?.chatConversationId ?? null,
       contextSnapshot,
       processPid: input?.processPid ?? null,
       processLossRetryCount: input?.processLossRetryCount ?? 0,
@@ -542,6 +555,44 @@ describe("heartbeat orphaned process recovery", () => {
       errorCode: "network_resume_unsafe",
       error: "Network recovery cannot safely resume this provider attempt",
     });
+  });
+
+  it("notifies the Chat recovery handler before failing an unsafe network wait", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const chatConversationId = randomUUID();
+    const observedRuns: Array<Record<string, unknown>> = [];
+    const { runId } = await seedRunFixture({
+      includeIssue: false,
+      chatConversationId,
+      startedAt,
+      runningSubstate: "waiting_for_network",
+      recoveryCheckpoint: {
+        continuation: "resume_same_session",
+        submissionPhase: "accepted",
+      },
+    });
+
+    const result = await heartbeatService(db, {
+      onNetworkWaitingRun: async (run) => {
+        observedRuns.push(run);
+        return true;
+      },
+    }).recoverNetworkWaitingRuns({
+      now: new Date("2026-03-19T00:31:00.000Z"),
+    });
+
+    expect(result).toEqual({ resumed: 0, runIds: [] });
+    expect(observedRuns).toHaveLength(1);
+    expect(observedRuns[0]).toMatchObject({
+      id: runId,
+      networkRecoveryFailure: {
+        errorCode: "network_resume_unsafe",
+        error: "Network recovery cannot safely resume this provider attempt",
+      },
+      executionOwnerToken: expect.any(String),
+    });
+    const run = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
+    expect(run).toMatchObject({ status: "failed", errorCode: "network_resume_unsafe" });
   });
 
   it("fails a network-wait run when the bounded retry policy is exhausted", async () => {

@@ -169,6 +169,10 @@ export function heartbeatService(
     /** Server-owned runners (currently Chat) may reattach a claimed wait run. */
     onNetworkWaitingRun?: (run: typeof heartbeatRuns.$inferSelect & {
       networkRecoveryExhausted?: boolean;
+      networkRecoveryFailure?: {
+        errorCode: "network_resume_unsafe" | "network_retry_exhausted";
+        error: string;
+      };
     }) => Promise<boolean> | boolean;
     beforeRunExecutionLeaseRenewal?: (input: {
       runId: string;
@@ -2253,6 +2257,20 @@ export function heartbeatService(
           || Boolean(candidate.sessionParamsBeforeJson)
         );
       if (!pristineReplayAllowed && !sameSessionAllowed) {
+        const unsafeClaim = candidate.chatConversationId && testHooks?.onNetworkWaitingRun
+          ? await claimExpiredHeartbeatRunExecution(db, candidate.id, { now })
+          : null;
+        if (unsafeClaim && candidate.chatConversationId && testHooks?.onNetworkWaitingRun) {
+          await Promise.resolve(testHooks.onNetworkWaitingRun({
+            ...unsafeClaim.run,
+            networkRecoveryFailure: {
+              errorCode: "network_resume_unsafe",
+              error: "Network recovery cannot safely resume this provider attempt",
+            },
+          })).catch((error: unknown) => {
+            logger.warn({ err: error, runId: candidate.id }, "network recovery failure handler failed");
+          });
+        }
         const unsafe = await transitionRunToTerminal(candidate.id, "failed", {
           finishedAt: now,
           error: "Network recovery cannot safely resume this provider attempt",
@@ -2260,6 +2278,7 @@ export function heartbeatService(
         }, {
           expectedStatuses: ["running"],
           processExitedAt: now,
+          expectedExecutionOwnerToken: unsafeClaim?.ownerToken,
         });
         if (unsafe) {
           await setWakeupStatus(candidate.wakeupRequestId, "failed", {

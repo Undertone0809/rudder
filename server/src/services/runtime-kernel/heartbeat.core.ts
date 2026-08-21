@@ -63,6 +63,7 @@ export const NETWORK_WAIT_BACKOFF_MS = [2_000, 5_000, 10_000, 20_000, 30_000, 60
 export const NETWORK_WAIT_MAX_ATTEMPTS = NETWORK_WAIT_BACKOFF_MS.length;
 export const NETWORK_WAIT_EXHAUSTED_ERROR_CODE = "network_retry_exhausted" as const;
 export const NETWORK_WAIT_EXHAUSTED_ERROR = "Network recovery retry limit exhausted";
+export const NETWORK_WAIT_UNSAFE_ERROR_CODE = "network_resume_unsafe" as const;
 
 export function networkWaitBackoffMs(attempt: number) {
   return NETWORK_WAIT_BACKOFF_MS[Math.min(Math.max(0, attempt - 1), NETWORK_WAIT_BACKOFF_MS.length - 1)] ?? 60_000;
