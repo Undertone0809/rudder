@@ -24,6 +24,11 @@ import {
   __clearWebsiteMetadataCacheForTests,
   getWebsiteMetadata,
 } from "../lib/website-metadata-cache";
+import {
+  __clearWebsiteIconFailureCacheForTests,
+  isWebsiteIconUrlKnownFailed,
+  markWebsiteIconUrlFailed,
+} from "../lib/website-icon-cache";
 import { InspectableImage } from "./InspectableImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";
@@ -471,6 +476,11 @@ interface CachedWebsiteMetadataIcon {
   state: WebsiteMetadataIconState;
 }
 
+interface WebsiteMetadataIconStateEntry {
+  href: string;
+  state: WebsiteMetadataIconState;
+}
+
 const WEBSITE_ICON_CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_WEBSITE_ICON_CACHE_ENTRIES = 256;
 const websiteMetadataIconCache = new Map<string, CachedWebsiteMetadataIcon>();
@@ -512,37 +522,46 @@ export function resolvedWebsiteIconUrl(value: string | URL) {
   }
 
   const knownIcon = resolveKnownWebsiteIcon(url);
-  if (knownIcon) return knownIcon.iconDataUrl;
+  if (knownIcon && !isWebsiteIconUrlKnownFailed(knownIcon.iconDataUrl)) return knownIcon.iconDataUrl;
 
-  const cached = websiteMetadataIconCache.get(url.href);
-  return cached?.state.status === "ready" ? cached.state.iconUrl : null;
+  const cached = readWebsiteMetadataIconCache(url.href);
+  return cached?.status === "ready" && !isWebsiteIconUrlKnownFailed(cached.iconUrl)
+    ? cached.iconUrl
+    : null;
 }
 
 function useWebsiteMetadataIcon(url: URL) {
   const href = url.href;
   const knownIcon = resolveKnownWebsiteIcon(url);
-  const [state, setState] = useState<WebsiteMetadataIconState>(
-    () => knownIcon
+  const [entry, setEntry] = useState<WebsiteMetadataIconStateEntry>(() => ({
+    href,
+    state: knownIcon
       ? { status: "ready", iconUrl: knownIcon.iconDataUrl }
       : readWebsiteMetadataIconCache(href) ?? { status: "idle", iconUrl: null },
-  );
+  }));
+  const state = entry.href === href
+    ? entry.state
+    : knownIcon
+      ? { status: "ready", iconUrl: knownIcon.iconDataUrl }
+      : { status: "loading", iconUrl: null };
 
   useEffect(() => {
     if (knownIcon) {
       const nextState: WebsiteMetadataIconState = { status: "ready", iconUrl: knownIcon.iconDataUrl };
       writeWebsiteMetadataIconCache(href, nextState);
-      setState(nextState);
+      setEntry({ href, state: nextState });
       return;
     }
 
     const cached = readWebsiteMetadataIconCache(href);
     if (cached && cached.status !== "loading") {
-      setState(cached);
+      setEntry({ href, state: cached });
       return;
     }
 
     const loadingState: WebsiteMetadataIconState = { status: "loading", iconUrl: null };
     writeWebsiteMetadataIconCache(href, loadingState);
+    setEntry({ href, state: loadingState });
 
     let cancelled = false;
     const request = Promise.resolve(getWebsiteMetadata(href, "preview"))
@@ -559,7 +578,7 @@ function useWebsiteMetadataIcon(url: URL) {
     request
       .then((nextState) => {
         writeWebsiteMetadataIconCache(href, nextState);
-        if (!cancelled) setState(nextState);
+        if (!cancelled) setEntry({ href, state: nextState });
       });
 
     return () => {
@@ -574,17 +593,23 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
   const metadataIcon = useWebsiteMetadataIcon(url);
   const knownIcon = resolveKnownWebsiteIcon(url);
   const [failedIconUrls, setFailedIconUrls] = useState<Set<string>>(() => new Set());
-  const iconUrl = metadataIcon.status === "ready" && !failedIconUrls.has(metadataIcon.iconUrl)
-    ? metadataIcon.iconUrl
+  const [loadedIconUrls, setLoadedIconUrls] = useState<Set<string>>(() => new Set());
+  const resolvedIconUrl = metadataIcon.status === "ready" ? metadataIcon.iconUrl : null;
+  const iconUrl = resolvedIconUrl
+    && !failedIconUrls.has(resolvedIconUrl)
+    && !isWebsiteIconUrlKnownFailed(resolvedIconUrl)
+    ? resolvedIconUrl
     : null;
 
   if (iconUrl) {
+    const iconLoaded = loadedIconUrls.has(iconUrl);
     return (
       <span
         className="rudder-website-link-icon"
         aria-hidden="true"
-        data-website-icon="metadata"
+        data-website-icon={iconLoaded ? "metadata" : "generic"}
       >
+        {!iconLoaded ? <Globe2 className="rudder-website-link-generic" aria-hidden="true" /> : null}
         <img
           src={iconUrl}
           alt=""
@@ -593,7 +618,12 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
           data-website-icon="metadata"
           data-dark-mode={knownIcon?.darkMode}
           referrerPolicy="no-referrer"
-          onError={() => setFailedIconUrls((current) => new Set(current).add(iconUrl))}
+          style={iconLoaded ? undefined : { visibility: "hidden" }}
+          onLoad={() => setLoadedIconUrls((current) => new Set(current).add(iconUrl))}
+          onError={() => {
+            markWebsiteIconUrlFailed(iconUrl);
+            setFailedIconUrls((current) => new Set(current).add(iconUrl));
+          }}
         />
       </span>
     );
@@ -608,6 +638,7 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
 
 export function __clearWebsiteMetadataIconCacheForTests() {
   websiteMetadataIconCache.clear();
+  __clearWebsiteIconFailureCacheForTests();
   __clearWebsiteMetadataCacheForTests();
 }
 

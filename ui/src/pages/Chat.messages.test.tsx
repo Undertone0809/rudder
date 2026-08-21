@@ -546,7 +546,7 @@ describe("user chat message rendering", () => {
     expect(bubble?.querySelector('[data-mention-kind="agent"]')?.getAttribute("href")).toBe("/MARAAA/agents/agent-1");
   });
 
-  it("renders known website icons before following CJK text in user messages", () => {
+  it("renders known website icons before following CJK text in user messages", async () => {
     const url = "https://app.rudder.zeeland.studio/issues/RUD-1";
     const container = renderChatMessageItem(message({
       role: "user",
@@ -556,12 +556,18 @@ describe("user chat message rendering", () => {
     }));
     const bubble = container.querySelector('[data-testid="chat-user-message-bubble"]');
     const link = bubble?.querySelector("a");
+    const logo = link?.querySelector<HTMLImageElement>("img.rudder-website-link-logo");
 
     expect(link?.getAttribute("href")).toBe(url);
     expect(link?.textContent).toBe(url);
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.classList.contains("rudder-website-link")).toBe(true);
-    expect(link?.querySelector("img.rudder-website-link-logo")?.getAttribute("src")).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+    expect(logo?.getAttribute("src")).toMatch(/^data:image\/(?:x-icon|png|svg\+xml);base64,/u);
+    expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
+    await act(async () => {
+      logo?.dispatchEvent(new Event("load", { bubbles: false }));
+      await Promise.resolve();
+    });
     expect(link?.querySelector("[data-website-icon='generic']")).toBeNull();
     expect(websiteMetadataApiMock.get).not.toHaveBeenCalled();
     expect(bubble?.textContent).toContain("你觉得这个我怎么回复比较好?");

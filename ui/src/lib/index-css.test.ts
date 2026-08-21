@@ -669,6 +669,9 @@ describe("index.css motion rules", () => {
     const websiteLogo = cssBlock(".rudder-website-link-logo");
     const darkWebsiteLogo = cssBlock('.dark .rudder-website-link-logo[data-dark-mode="invert"]');
     const websiteGeneric = cssBlock(".rudder-website-link-generic");
+    const milkdownWebsitePlaceholder = cssBlock(
+      ".rudder-milkdown-content .rudder-milkdown-website-icon::before",
+    );
     const websiteLinkHover = cssBlock("a.rudder-website-link:hover");
     const localFileLink = cssBlock("a.rudder-local-file-link");
 
@@ -698,11 +701,17 @@ describe("index.css motion rules", () => {
     expect(websiteIcon).toContain("top: 0.06em");
     expect(websiteIcon).not.toContain("vertical-align");
     expect(websiteLogo).toContain("display: block");
+    expect(websiteLogo).toContain("position: absolute");
+    expect(websiteLogo).toContain("inset: 0");
     expect(websiteLogo).toContain("width: 100%");
     expect(websiteLogo).toContain("height: 100%");
     expect(darkWebsiteLogo).toContain("filter: invert(1)");
+    expect(websiteGeneric).toContain("position: absolute");
+    expect(websiteGeneric).toContain("inset: 0");
     expect(websiteGeneric).toContain("width: 100%");
     expect(websiteGeneric).toContain("height: 100%");
+    expect(milkdownWebsitePlaceholder).toContain("position: absolute");
+    expect(milkdownWebsitePlaceholder).toContain("inset: 0");
     expect(websiteLinkHover).toContain("color: var(--rudder-doc-link-hover)");
     expect(indexCss).not.toContain(".rudder-markdown a.rudder-website-link {");
     expect(indexCss).not.toContain(".rudder-markdown a.rudder-website-link:hover {");
