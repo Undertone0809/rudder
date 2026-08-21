@@ -1,0 +1,295 @@
+schema: 'rudder.performance-baseline/v1'
+issue: 'R6Z-127'
+title: 'A3: Freeze performance and runtime baseline'
+status: 'in_progress'
+scope: 'Read-only baseline manifest for the current Node service/workflow harness and the future Rust comparison boundary.'
+
+authority_policy:
+  current_authority: 'Node/Express, Drizzle, embedded PostgreSQL, the existing CLI/MCP adapters, and Electron/Chromium remain authoritative for this candidate.'
+  candidate_rust_authority: 'none; this artifact authorizes no Rust runtime implementation, cutover, or performance claim.'
+  product_logic: 'read-only; no doc/product/** file is edited by A3.'
+  workload_behavior: 'read-only; no benchmark harness or product workload code is edited by A3.'
+  release_configuration: 'read-only; no packaging, release, signing, or deployment configuration is edited by A3.'
+
+contract_ids:
+  - 'RUN.PREFLIGHT.001'
+  - 'RUN.WORKSPACE.PREFLIGHT.001'
+  - 'RUN.EXECUTION.001'
+  - 'RUN.RESULT.001'
+  - 'WORKSPACE.RUN.001'
+  - 'CLIENT.AUTH.RELEASE.ISOLATION.001'
+  - 'DESKTOP.STARTUP.RECOVERY.001'
+  - 'ACTIVITY.AUDIT.001'
+
+generated_from:
+  repository: 'Undertone0809/rudder'
+  source_root: '/Users/zeeland/projects/rudder-oss'
+  generated_at: '2026-08-21T17:31:02Z'
+  candidate:
+    ref: 'detached benchmark snapshot of main at capture'
+    sha: '96d0ed8d5ee6d510846ad4fd41c8ad408438cdaa'
+    tree: '2cf21ba0d5df63cae6322a39e3d6226785c5c69f'
+    tracking: 'main...origin/main [ahead 2] at capture'
+    worktree_state: 'benchmark code clean; manifest-only dirty artifact in verifier snapshot'
+    dirty_fingerprint:
+      algorithm: 'sha256 over git status, git diff --no-ext-diff --binary HEAD, and sorted untracked-file content hashes, excluding this target artifact'
+      state: 'manifest-only dirty artifact; benchmark code tree clean'
+      sha256: 'recorded externally in the verifier packet and identity receipt'
+      modified_tracked_files: 0
+      untracked_files_excluding_target: 0
+      excluded_path: 'doc/plans/2026-08-20-rust-performance-baseline.yml is excluded from benchmark code-tree hashing but present in the verifier snapshot as the only scoped non-toolchain dirty artifact'
+      boundary: 'The benchmark source code tree remains clean and is recorded separately from the manifest artifact; the shared main checkout is recorded separately below and is not used as the performance source.'
+    verifier_artifact_binding:
+      path: 'doc/plans/2026-08-20-rust-performance-baseline.yml'
+      scope: 'manifest-only untracked artifact in the verifier snapshot; included in the scoped candidate fingerprint and excluded from workload code identity'
+      hash: 'recomputed after this manifest update and recorded in the final identity receipt and delivery packet'
+  main_checkout_observation:
+    captured_at: '2026-08-21T16:09:26Z'
+    ref: 'main'
+    tracking: 'main...origin/main [ahead 2]'
+    worktree_state: 'dirty'
+    dirty_fingerprint_sha256: '0a5a683c9eb142e29f97875d2f117382457dfafa0020451bbf505556d90f05b2'
+    modified_tracked_files: 105
+    untracked_files_excluding_target: 10
+    use: 'contamination observation only; do not use this changing checkout for a performance gate'
+  benchmark_source_fingerprints:
+    scripts/perf/workflow-baseline.ts: '13d11417c331b69402b503fbbd9b1726c75c12c6b57b1540e06ee6ab71519497'
+    scripts/perf/workflow-baseline.helpers.ts: '67efdd85f5f8ea9c918a5ed3dd0501265f91fc48869450e4c071005fbfd40ccc'
+    scripts/perf/run-isolated-workflow.ts: 'c5d6c6c94c3dbb37f94f657a4e198e37931eccf13ea002e40305767c18af4e91'
+
+environment:
+  platform:
+    os: 'macOS 26.3.1 (25D771280a)'
+    kernel: 'Darwin 25.3.0'
+    architecture: 'arm64'
+    cpu: 'Apple M4 Pro'
+    physical_memory_bytes: 51539607552
+    cpu_count: 14
+  runtime:
+    node: 'v22.23.1'
+    pnpm: '9.15.4'
+    package_manager_lock: 'pnpm-lock.yaml from candidate source'
+  database:
+    mode: 'isolated embedded PostgreSQL created by scripts/perf/run-isolated-workflow.ts'
+    data_scope: 'ephemeral synthetic organizations; the harness deletes seeded rows and the temporary database root on exit'
+    url: 'generated loopback URL; never persisted'
+    pool_limits: 'not exposed by the harness receipt; record effective pool settings if a future comparator changes them'
+  deployment:
+    node_backend: 'direct service/database workflow harness, not an HTTP server listener'
+    cli_mcp: 'not exercised by the current workflow harness'
+    desktop: 'not exercised; packaged/authenticated fixture is absent'
+
+workload:
+  harness: 'scripts/perf/workflow-baseline.ts via scripts/perf/run-isolated-workflow.ts'
+  manifest_version: 2
+  fixed_anchor: '2026-07-20T00:00:00.000Z'
+  scale_runs:
+    smoke:
+      manifest_hash: 'c85ff4c28fcadc44'
+      purpose: 'broad shallow Node service baseline'
+      measurement:
+        iterations: 7
+        warmups: 2
+        operation_concurrency: 1
+        command: 'node cli/node_modules/tsx/dist/cli.mjs scripts/perf/run-isolated-workflow.ts --scale smoke --iterations 7 --warmups 2 --anchor 2026-07-20T00:00:00.000Z --explain'
+        protocol_hash: 'a86fd79247794e44'
+      shape:
+        agents: 12
+        issues: 120
+        issue_comments_per_issue: 2
+        chats: 40
+        chat_messages_per_chat: 2
+        approvals: 40
+        approval_comments_per_approval: 1
+        failed_runs: 30
+        join_requests: 10
+        cost_events: 80
+        neighbor_org_sentinels: 0
+    thread-heavy:
+      manifest_hash: 'f29167a6fef53dea'
+      purpose: 'production-shaped single-entity edge case and organization-isolation sentinel'
+      measurement:
+        iterations: 20
+        warmups: 3
+        operation_concurrency: 1
+        command: 'pnpm perf:thread-pressure'
+        protocol_hash: '07202796e833b05a'
+      shape:
+        agents: 16
+        issues: 40
+        issue_comments_per_issue: 2
+        chats: 20
+        chat_messages_per_chat: 2
+        approvals: 20
+        approval_comments_per_approval: 1
+        failed_runs: 20
+        join_requests: 5
+        cost_events: 100
+        hot_chat_messages: 5000
+        hot_issue_comments: 2000
+        hot_issue_runs: 1000
+        neighbor_org_sentinels: 3
+  measured_paths:
+    - name: 'messenger.listThreadSummaries'
+      projection: 'service summary projection for the primary organization'
+    - name: 'chat.listMessages.hot'
+      projection: 'includeTranscript=false; ordered message rows and transcript summary projection when present'
+    - name: 'issue.listComments.hot'
+      projection: 'ordered non-deleted comment rows'
+    - name: 'activity.runsForIssue.hot'
+      projection: 'issue-linked run summaries from context_snapshot/activity linkage'
+    - name: 'sidebar and cost service paths'
+      projection: 'bounded service/database summaries emitted by the harness'
+  arrival_and_concurrency:
+    model: 'closed-loop sequential iteration'
+    measurement_protocol: 'scale-specific; see scale_runs.<scale>.measurement'
+    operation_concurrency: 1
+    fixed_arrival_rate: 'not applicable; the harness does not generate an open-loop arrival rate'
+    pool_concurrency: 'not exposed; preserve the effective default and record it in any future server comparator'
+  payload_and_data_rules:
+    timestamp_anchor: 'fixed anchor above; tied timestamps use deterministic id ordering'
+    payload_variants: 'short, medium repeated context, Markdown/JSON, and transcript-like bodies in thread-heavy rows'
+    neighboring_org: 'thread-heavy only; colliding content and parent sentinels must never appear in primary-org responses'
+    cleanup: 'keepData=false; exact seeded organizations and rows are deleted in the harness finally block'
+
+paired_comparison_protocol:
+  purpose: 'future Node baseline versus Rust candidate only; current A3 receipts are Node-only and cannot be promoted to a Rust performance gate'
+  pair_count: 7
+  block_count: 7
+  warmups_per_arm: 2
+  order_seed: 127
+  arm_order:
+    - block: 1
+      order: ['node_baseline', 'rust_candidate']
+    - block: 2
+      order: ['rust_candidate', 'node_baseline']
+    - block: 3
+      order: ['node_baseline', 'rust_candidate']
+    - block: 4
+      order: ['rust_candidate', 'node_baseline']
+    - block: 5
+      order: ['node_baseline', 'rust_candidate']
+    - block: 6
+      order: ['rust_candidate', 'node_baseline']
+    - block: 7
+      order: ['node_baseline', 'rust_candidate']
+  balance: '4 node-first blocks and 3 rust-first blocks; both arms must be present in every complete pair'
+  cache_and_host_rules:
+    - 'Use the same source data manifest, fixed anchor, scale, projection, warmups, iteration count, platform, power mode, and filesystem for both arms.'
+    - 'Run one campaign without unrelated benchmark producers; record host load and thermal/power state as observed.'
+    - 'Restart or cold-start both arms according to the case definition; do not mix cold and warm observations.'
+    - 'Discard a block when source, runtime, fixture, process set, correctness, timeout, cancellation, or cleanup identity differs.'
+
+measurement_rules:
+  latency:
+    source: 'performance.now() timings emitted by the Node harness'
+    summaries: ['p50', 'p95', 'max']
+    p99: 'not emitted by the current harness; do not infer p99 from max or from seven aggregate runs'
+  payload:
+    source: 'serializedBytes for response projections'
+    response_rows: 'recorded per named response in the harness JSON'
+    serialization_time: 'not separated from service timing by the current harness'
+  memory:
+    source: 'process.memoryUsage() before and after measured iterations'
+    metrics: ['heapUsedBytes delta', 'rssBytes delta']
+    peak_process_tree_rss: 'not sampled by the current harness; do not rename RSS delta as peak RSS'
+    memory_time: 'not emitted; future comparator must integrate sampled process RSS over monotonic time'
+  cpu:
+    process_cpu_time: 'not emitted by the current harness'
+    event_loop_delay: 'not emitted by the current harness'
+  lifecycle:
+    cold_start: 'not emitted; migrations and seeding occur outside measured path timing'
+    throughput: 'not emitted as an open-loop rate; derive only from a future receipt that exposes total elapsed time and completed operations'
+    errors: 'read-only success path only; correctness gates and process exit are recorded'
+    cancellation: 'not exercised by this harness'
+    timeout: 'not exercised by this harness'
+  correctness:
+    hard_gates:
+      - 'exact response counts'
+      - 'expected id set and uniqueness'
+      - 'timestamp/id ordering'
+      - 'parent linkage'
+      - 'organization scope'
+      - 'neighbor organization isolation for thread-heavy'
+    promotion_rule: 'any failed correctness gate, leaked organization token, process failure, cleanup failure, cancellation failure, or timeout failure makes the trial non-comparable and blocks promotion'
+
+noise_and_regression_policy:
+  noise_budget:
+    latency_and_cpu: '10 percent relative to the Node baseline'
+    rss_and_memory_time: '10 percent relative to the Node baseline'
+    cold_start: '15 percent relative to the Node baseline'
+    throughput: '10 percent relative to the Node baseline'
+    interpretation: 'A difference inside the budget is descriptive and not a win; a gate requires the confidence interval to clear the threshold.'
+  confidence_interval:
+    method: 'paired bootstrap over seven complete counterbalanced blocks'
+    resamples: 10000
+    level: '95 percent'
+    seed: 127
+    statistic: 'per-block p95 and p50 difference; report absolute and baseline-relative values'
+  regression_rule:
+    latency: 'regression when the 95 percent CI lower bound for candidate minus baseline exceeds +10 percent relative'
+    rss_or_memory_time: 'regression when the 95 percent CI lower bound exceeds +10 percent relative'
+    cold_start: 'regression when the 95 percent CI lower bound exceeds +15 percent relative'
+    throughput: 'regression when the 95 percent CI upper bound for candidate minus baseline is below -10 percent relative'
+    correctness_and_reliability: 'any new error, cancellation, timeout, cleanup failure, or correctness violation is a hard failure regardless of latency'
+    no_claim: 'No regression or improvement claim is valid without seven complete paired blocks, current candidate identity, and a comparable process set.'
+
+process_attribution:
+  rust_core:
+    included: false
+    process_set: 'No Rust server or CLI/MCP candidate exists in the current A3 run; native crates/binaries are inventory-only.'
+    uncertainty: '100 percent unavailable for this candidate; no Rust comparison is possible.'
+  node_core:
+    included: true
+    process_set: 'Node process executing scripts/perf/workflow-baseline.ts and its tsx/module loader.'
+    measured_boundary: 'service/database calls and in-process response timing; process RSS delta only'
+    uncertainty: 'The harness does not export a process-tree sample or split loader versus service CPU/RSS.'
+  postgres:
+    included: 'lifecycle only'
+    process_set: 'Embedded PostgreSQL child started by scripts/perf/run-isolated-workflow.ts.'
+    measured_boundary: 'isolated database lifecycle and query work are included in service timings; PostgreSQL RSS/CPU is not separately sampled.'
+    uncertainty: 'Per-process and combined tree resource attribution unavailable.'
+  cli_mcp:
+    included: false
+    process_set: 'pnpm/tsx launchers are harness support, not a measured public CLI/MCP workflow.'
+    uncertainty: 'No current comparable CLI/MCP fixture or raw timing receipt.'
+  electron_chromium:
+    included: false
+    process_set: 'No Electron or Chromium process is started by the A3 workflow harness.'
+    uncertainty: 'Packaged and authenticated Desktop fixtures are unavailable in this candidate.'
+  helpers_and_external:
+    included: 'support only'
+    process_set: 'pnpm, Node module loader, filesystem, and OS process helpers used to start/stop the isolated run.'
+    uncertainty: 'No process-tree sampler or selected external-process allowlist was active.'
+
+required_commands:
+  - 'git rev-parse HEAD'
+  - 'git status --short --branch'
+  - 'pnpm exec vitest run scripts/perf/workflow-baseline.test.ts'
+  - 'pnpm perf:workflows -- --scale smoke --iterations 7 --warmups 2 --explain'
+  - 'pnpm perf:thread-pressure'
+  - 'pnpm product-logic:check'
+supplementary_commands:
+  - 'pnpm --filter @rudderhq/cli typecheck'
+  - 'pnpm mcp-contract:check'
+
+no_go_list:
+  - 'The shared main checkout is dirty and changing; only the clean detached snapshot at the recorded SHA is a performance source, and the main checkout is not a release gate.'
+  - 'Do not compare any Rust arm until a Rust server/CLI/MCP binary, version, protocol, build profile, and SHA-256 are present.'
+  - 'Do not compare packaged Electron/Chromium until a packaged artifact and authenticated or explicitly isolated Desktop fixture are available.'
+  - 'Do not promote CLI/MCP or complete user-workflow claims from the direct service/database harness.'
+  - 'Do not claim p99, peak process-tree RSS, memory-time, CPU, event-loop delay, cold start, open-loop throughput, cancellation, or timeout results from fields the harness does not emit.'
+  - 'Do not use directional historical measurements from another SHA, installed build, or non-comparable fixture as a gate.'
+  - 'Do not publish a performance regression or improvement claim without seven complete counterbalanced paired blocks and the confidence-interval rule above.'
+
+receipt_contract:
+  raw: 'Persist exact command stdout/stderr, exit code, start/end timestamps, candidate identity, environment, generated organization ids where emitted, cleanup result, and process attribution observations under the R6Z-120 Project Library folder.'
+  supplementary: 'CLI/MCP, cleanup, host-state, and Desktop receipts use the same candidate SHA/tree, manifest fingerprint, runtime identity, start/end UTC timestamps, exact command, exit code, stdout, stderr, and classification fields; multi-command probes record each command separately.'
+  summary: 'Persist a machine-readable summary with p50/p95/max, response rows/bytes, heap/RSS deltas, correctness gates, unsupported metrics, and no-go items.'
+  reproducibility: 'Run the required commands from /Users/zeeland/projects/rudder-oss at the recorded candidate and platform; use the fixed anchor and the exact flags above.'
+  retention: 'Raw and summary receipts are durable evidence; temporary database roots and seeded rows are disposable and must be confirmed cleaned.'
+
+gate_state:
+  current: 'baseline evidence collection in progress'
+  rust_performance_gate: 'not accepted'
+  g0_unlock: 'blocked until independent review and verifier confirm this exact manifest/receipt packet'
