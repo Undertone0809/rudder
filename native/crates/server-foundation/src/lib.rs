@@ -426,6 +426,7 @@ struct RequestAdmission {
 
 struct QueueReservation {
     admission: Arc<RequestAdmission>,
+    registered: bool,
 }
 
 struct RequestPermit {
@@ -473,9 +474,12 @@ impl RequestAdmission {
 
             let reservation = QueueReservation {
                 admission: self.clone(),
+                registered: true,
             };
             notified.await;
-            drop(reservation);
+            if let Some(permit) = reservation.promote() {
+                return Ok(permit);
+            }
         }
     }
 
@@ -486,8 +490,28 @@ impl RequestAdmission {
     }
 }
 
+impl QueueReservation {
+    fn promote(mut self) -> Option<RequestPermit> {
+        let admission = self.admission.clone();
+        let mut state = admission.lock_state();
+        state.queued = state.queued.saturating_sub(1);
+        self.registered = false;
+        let promoted = if state.active < admission.max_active {
+            state.active += 1;
+            true
+        } else {
+            false
+        };
+        drop(state);
+        promoted.then_some(RequestPermit { admission })
+    }
+}
+
 impl Drop for QueueReservation {
     fn drop(&mut self) {
+        if !self.registered {
+            return;
+        }
         let mut state = self.admission.lock_state();
         state.queued = state.queued.saturating_sub(1);
         drop(state);
@@ -868,6 +892,80 @@ mod tests {
             .unwrap();
         assert_eq!(admission.counts(), (1, 0));
         drop(second);
+        assert_eq!(admission.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn multiple_queued_requests_are_promoted_after_release() {
+        let admission = Arc::new(RequestAdmission::new(1, 2));
+        let first = admission.acquire().await.unwrap();
+
+        let (acquired_one_tx, mut acquired_one_rx) = tokio::sync::oneshot::channel();
+        let (release_one_tx, release_one_rx) = tokio::sync::oneshot::channel();
+        let first_waiter_admission = admission.clone();
+        let first_waiter = tokio::spawn(async move {
+            let permit = first_waiter_admission.acquire().await.unwrap();
+            acquired_one_tx.send(()).unwrap();
+            release_one_rx.await.unwrap();
+            drop(permit);
+        });
+
+        for _ in 0..10 {
+            if admission.counts() == (1, 1) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        let (acquired_two_tx, mut acquired_two_rx) = tokio::sync::oneshot::channel();
+        let (release_two_tx, release_two_rx) = tokio::sync::oneshot::channel();
+        let second_waiter_admission = admission.clone();
+        let second_waiter = tokio::spawn(async move {
+            let permit = second_waiter_admission.acquire().await.unwrap();
+            acquired_two_tx.send(()).unwrap();
+            release_two_rx.await.unwrap();
+            drop(permit);
+        });
+
+        for _ in 0..10 {
+            if admission.counts() == (1, 2) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(admission.counts(), (1, 2));
+
+        drop(first);
+        let winner = tokio::select! {
+            result = &mut acquired_one_rx => {
+                result.unwrap();
+                1
+            }
+            result = &mut acquired_two_rx => {
+                result.unwrap();
+                2
+            }
+        };
+        assert_eq!(admission.counts(), (1, 1));
+
+        if winner == 1 {
+            release_one_tx.send(()).unwrap();
+            tokio::time::timeout(Duration::from_millis(100), &mut acquired_two_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            release_two_tx.send(()).unwrap();
+        } else {
+            release_two_tx.send(()).unwrap();
+            tokio::time::timeout(Duration::from_millis(100), &mut acquired_one_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            release_one_tx.send(()).unwrap();
+        }
+
+        first_waiter.await.unwrap();
+        second_waiter.await.unwrap();
         assert_eq!(admission.counts(), (0, 0));
     }
 

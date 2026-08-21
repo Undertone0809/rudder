@@ -87,6 +87,42 @@ fn request_limits_cover_fixed_and_chunked_bodies() {
 
 #[cfg(unix)]
 #[test]
+fn queue_admission_promotes_two_waiters_after_active_request_releases() {
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_WORKERS", "1"),
+        ("RUDDER_NATIVE_MAX_QUEUE_DEPTH", "2"),
+    ]);
+    let mut active = open_partial_get(bound_addr).expect("open active request");
+    let mut queued_one = open_get_with_body(bound_addr, b"waitwait").expect("open first waiter");
+    let mut queued_two = open_get_with_body(bound_addr, b"waitwait").expect("open second waiter");
+
+    std::thread::sleep(Duration::from_millis(100));
+    active
+        .write_all(b"done")
+        .expect("complete active request body");
+    active.flush().expect("flush active request");
+    let active_response = read_response(&mut active).expect("active response");
+    assert!(
+        active_response.starts_with("HTTP/1.1 200"),
+        "{active_response}"
+    );
+
+    let first_response = read_response(&mut queued_one).expect("first queued response");
+    let second_response = read_response(&mut queued_two).expect("second queued response");
+    assert!(
+        first_response.starts_with("HTTP/1.1 200"),
+        "{first_response}"
+    );
+    assert!(
+        second_response.starts_with("HTTP/1.1 200"),
+        "{second_response}"
+    );
+
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[test]
 fn response_limit_fallback_obeys_one_byte_ceiling() {
     let (child, stdout, bound_addr) = spawn_server(&[("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "1")]);
     let response = http_get(bound_addr, "/healthz").expect("health response");
@@ -236,6 +272,37 @@ fn http_get_with_body(addr: SocketAddr, body: &[u8]) -> io::Result<String> {
     )?;
     stream.write_all(body)?;
     stream.flush()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+fn open_partial_get(addr: SocketAddr) -> io::Result<TcpStream> {
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write!(
+        stream,
+        "GET /healthz HTTP/1.1\r\nHost: {addr}\r\nContent-Length: 8\r\nConnection: close\r\n\r\n"
+    )?;
+    stream.write_all(b"hold")?;
+    stream.flush()?;
+    Ok(stream)
+}
+
+fn open_get_with_body(addr: SocketAddr, body: &[u8]) -> io::Result<TcpStream> {
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write!(
+        stream,
+        "GET /healthz HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )?;
+    stream.write_all(body)?;
+    stream.flush()?;
+    Ok(stream)
+}
+
+fn read_response(stream: &mut TcpStream) -> io::Result<String> {
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
     Ok(response)
