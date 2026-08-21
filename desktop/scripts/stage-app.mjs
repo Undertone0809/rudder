@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveComputerUsePackageTarget } from "./computer-use-package-target.mjs";
+import { rewriteInternalPackageManifest } from "./normalize-internal-package-manifest.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -65,6 +66,7 @@ async function stageComputerUseRuntime(desktopPackage) {
   }
 
   const shared = await copyInstalledPackage("@rudderhq/shared");
+  await rewriteInternalPackageManifest(shared.destinationRoot);
   const sharedManifest = JSON.parse(await fs.readFile(path.join(shared.sourceRoot, "package.json"), "utf8"));
   const requireFromShared = createRequire(path.join(shared.sourceRoot, "package.json"));
   await copyInstalledPackage("zod", requireFromShared);
