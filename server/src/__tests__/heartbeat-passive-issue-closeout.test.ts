@@ -1071,10 +1071,23 @@ describe("heartbeat passive issue closeout", () => {
         candidate.id !== run.id &&
         (candidate.contextSnapshot as Record<string, unknown>)?.wakeReason === "issue_passive_followup") ?? null;
     });
+    const [issue] = await db
+      .select({ createdAt: issues.createdAt })
+      .from(issues)
+      .where(eq(issues.id, issueId));
     expect(followup.contextSnapshot).toMatchObject({
       issueId,
       passiveFollowup: { originRunId: run.id, previousRunId: run.id, attempt: 1 },
+      issue: {
+        assigneeAgentId: agentId,
+        assigneeLabel: "Builder (agent)",
+        reviewerLabel: "none",
+        createdAt: issue!.createdAt.toISOString(),
+      },
     });
+    const followupIssue = (followup.contextSnapshot as Record<string, unknown>).issue as Record<string, unknown>;
+    expect(followupIssue.updatedAt).toEqual(expect.any(String));
+    expect(followupIssue.updatedAt).not.toBe("unknown");
   });
 
   it("does not queue passive follow-up when the run moves the issue out of trigger statuses", async () => {

@@ -753,6 +753,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       now,
     });
     const taskKey = deriveTaskKey(contextSnapshot, { issueId: issue.id });
+    await hydrateWakeContextSnapshot(tx, run.orgId, contextSnapshot);
     const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
     const requestPayload = {
       issueId: issue.id,
