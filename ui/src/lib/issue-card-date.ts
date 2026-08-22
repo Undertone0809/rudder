@@ -14,6 +14,14 @@ function isYesterday(date: Date, now: Date): boolean {
   return startOfLocalDay(date).getTime() === yesterday.getTime();
 }
 
+function formatLocalTime(date: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
 export function formatIssueCardDate(date: Date | string, now: Date = new Date()): string {
   const value = new Date(date);
   const locale = getUiLocale();
@@ -21,15 +29,12 @@ export function formatIssueCardDate(date: Date | string, now: Date = new Date())
   if (Number.isNaN(value.getTime())) return "-";
 
   if (isSameLocalDay(value, now)) {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).format(value);
+    return formatLocalTime(value);
   }
 
   if (isYesterday(value, now)) {
-    return locale === "zh-CN" ? "昨天" : "Yesterday";
+    const time = formatLocalTime(value);
+    return locale === "zh-CN" ? `昨天 ${time}` : `Yesterday, ${time}`;
   }
 
   const resolvedLocale = locale === "zh-CN" ? "zh-CN" : "en-US";

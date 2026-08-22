@@ -1,4 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import { createDb, issues } from "../../packages/db/src/index.ts";
+import { E2E_DATABASE_URL } from "./support/e2e-env";
+
+const e2eDb = createDb(E2E_DATABASE_URL);
 
 async function selectOrganization(page: Page, orgId: string) {
   await page.goto("/");
@@ -75,7 +80,7 @@ test.describe("Issue board display properties", () => {
       },
     );
 
-    const issue = await apiPost<{ identifier: string | null }>(
+    const issue = await apiPost<{ id: string; identifier: string | null }>(
       page,
       `/api/orgs/${organization.id}/issues`,
       {
@@ -90,6 +95,13 @@ test.describe("Issue board display properties", () => {
       },
     );
 
+    const now = new Date();
+    const yesterdayAt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 22, 15, 0, 0);
+    await e2eDb.update(issues).set({
+      createdAt: yesterdayAt,
+      updatedAt: yesterdayAt,
+    }).where(eq(issues.id, issue.id));
+
     await selectOrganization(page, organization.id);
     await page.goto(`/${organization.issuePrefix}/issues`);
     await page.getByTitle("Board view").click();
@@ -101,6 +113,7 @@ test.describe("Issue board display properties", () => {
     await expect(card).toContainText(assignee.name);
     await expect(card).toContainText("Reviewer");
     await expect(card).toContainText(reviewer.name);
+    await expect(card).toContainText("Yesterday, 22:15");
     await expect(card.locator('[data-slot="kanban-card-primary-assignee"] [data-slot="kanban-card-assignee"]')).toHaveAttribute("title", new RegExp(`^Assignee: ${escapeRegExp(assignee.name)}`));
     await expect(card.locator('[data-slot="kanban-card-metadata"] [data-slot="kanban-card-reviewer"]')).toHaveAttribute("title", new RegExp(`^Reviewer: ${escapeRegExp(reviewer.name)}`));
     const cardBox = await card.boundingBox();
