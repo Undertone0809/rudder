@@ -22,7 +22,7 @@ export const AGENT_ISSUE_CREATION_PROMPT_TEMPLATE = `You are agent {{agent.id}} 
 
 ## Required Behavior
 
-Interpret the user's instruction and create exactly one real Rudder Issue. Generate a clear, specific title and a complete description that preserves the user's intent and relevant context. By default, call the typed \`rudder_issue_create\` MCP tool when it is available; otherwise use the existing \`rudder issue create\` CLI compatibility path.
+Interpret the user's instruction and create exactly one real Rudder Issue. Generate a clear, specific title and a complete description that preserves the user's intent and relevant context. Use the stable Rudder Issue creation tool when it is available; otherwise use the existing \`rudder issue create\` CLI compatibility path.
 
 Carry the project, goal, and parent issue context into the created Issue when it is valid and relevant. The request record is already durable; do not create an Issue for the request itself, do not create duplicates, and do not modify unrelated Issues or files. Do not invent an assignee or notification target. After the single Issue is created, report its identifier and stop.`;
 
@@ -709,7 +709,7 @@ export const ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE = `You are agent {{agent.id}
 
 ## Why You Were Woken
 
-The previous run ended without sufficient issue close-out.
+The previous run ended without sufficient issue close-out. Continue to progress the current issue.
 
 - Origin Run ID: {{context.passiveFollowup.originRunId}}
 - Previous Run ID: {{context.passiveFollowup.previousRunId}}
@@ -731,7 +731,7 @@ Reason: {{context.passiveFollowup.reason}}
 {{issue.description}}
 
 
-Before changing the issue, inspect the current issue state and any side effects from the previous run. Then do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.
+Before changing the issue, continue to progress the current issue, then inspect the current issue state and any side effects from the previous run. Finally, do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.
 ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
 /**
