@@ -12,6 +12,7 @@ import { type AnyPgColumn, bigint, boolean, check, index, integer, jsonb, pgTabl
 import { agentWakeupRequests } from "./agent_wakeup_requests.js";
 import { agents } from "./agents.js";
 import { chatConversations } from "./chat_conversations.js";
+import { goals } from "./goals.js";
 import { organizations } from "./organizations.js";
 
 export const heartbeatRuns = pgTable(
@@ -54,6 +55,8 @@ export const heartbeatRuns = pgTable(
     chatConversationId: uuid("chat_conversation_id").references((): AnyPgColumn => chatConversations.id, {
       onDelete: "set null",
     }),
+    /** Explicit Goal ownership for Goal Detail timelines; contextSnapshot remains compatibility data. */
+    goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
     processPid: integer("process_pid"),
     processStartedAt: timestamp("process_started_at", { withTimezone: true }),
     processExitedAt: timestamp("process_exited_at", { withTimezone: true }),
@@ -86,6 +89,12 @@ export const heartbeatRuns = pgTable(
   (table) => ({
     orgCreatedIdIdx: index("heartbeat_runs_org_created_id_idx").on(
       table.orgId,
+      table.createdAt,
+      table.id,
+    ),
+    orgGoalCreatedIdIdx: index("heartbeat_runs_org_goal_created_id_idx").on(
+      table.orgId,
+      table.goalId,
       table.createdAt,
       table.id,
     ),

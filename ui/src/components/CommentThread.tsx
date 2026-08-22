@@ -83,9 +83,65 @@ interface CommentThreadProps {
   escapeBackWhenEmpty?: boolean;
   fixedComposer?: boolean;
   fixedComposerTimelineScroll?: boolean;
+  hideComposer?: boolean;
   composerReplacement?: ReactNode;
   timelineScrollElementRef?: RefObject<HTMLElement | null>;
   progressiveDisclosure?: CommentThreadProgressiveDisclosure;
+}
+
+export function CommentThreadActivityRow({
+  actorName,
+  description,
+  title,
+  createdAt,
+  marker,
+  testId = "comment-thread-activity-row",
+  summaryTestId,
+  runId,
+  runAgentId,
+}: {
+  actorName: string;
+  description: ReactNode;
+  title?: string;
+  createdAt: Date | string;
+  marker?: ReactNode;
+  testId?: string;
+  summaryTestId?: string;
+  runId?: string | null;
+  runAgentId?: string | null;
+}) {
+  const location = useLocation();
+  const organizationPrefix = extractOrganizationPrefixFromPath(location.pathname);
+  const runDetailPath = runId && runAgentId
+    ? applyOrganizationPrefix(`/agents/${runAgentId}/runs/${runId}`, organizationPrefix)
+    : null;
+
+  return (
+    <div
+      data-testid={testId}
+      className="grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-sm border border-transparent py-1 pl-3 pr-2 text-xs text-muted-foreground"
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+        {marker ?? <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/45" />}
+      </span>
+      <span data-testid={summaryTestId} className="flex min-w-0 items-center gap-1.5 whitespace-nowrap leading-5">
+        <span title={actorName} className="max-w-[9rem] shrink-0 truncate font-medium text-foreground">{actorName}</span>
+        <span className="min-w-0 truncate" title={title}>{description}</span>
+        {runDetailPath ? (
+          <Link
+            to={runDetailPath}
+            aria-label={`Open run ${runId!.slice(0, 8)} details`}
+            title="Open Agent Run details"
+            data-testid={`activity-run-link-${runId}`}
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+          </Link>
+        ) : null}
+        <span className="shrink-0 tabular-nums text-muted-foreground/90"> · {relativeTime(createdAt)}</span>
+      </span>
+    </div>
+  );
 }
 
 export function shouldOfferReopen(issueStatus?: string) {
@@ -1016,6 +1072,7 @@ export function CommentThread({
   escapeBackWhenEmpty = false,
   fixedComposer = false,
   fixedComposerTimelineScroll = true,
+  hideComposer = false,
   composerReplacement,
   timelineScrollElementRef,
   progressiveDisclosure,
@@ -1441,7 +1498,7 @@ export function CommentThread({
             className="comment-thread-fixed-composer sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 -mx-4 shrink-0 px-4 pb-4 pt-1 md:bottom-0"
             data-testid="comment-thread-fixed-composer"
           >
-            {activeComposerNode}
+            {hideComposer ? null : activeComposerNode}
           </div>
         </div>
       );
@@ -1468,7 +1525,7 @@ export function CommentThread({
           className="comment-thread-fixed-composer sticky bottom-0 z-20 -mx-4 -mb-4 shrink-0 px-4 pb-4 pt-3"
           data-testid="comment-thread-fixed-composer"
         >
-          {activeComposerNode}
+          {hideComposer ? null : activeComposerNode}
         </div>
       </div>
     );
@@ -1484,7 +1541,7 @@ export function CommentThread({
 
       {liveRunSlot}
 
-      {activeComposerNode}
+      {hideComposer ? null : activeComposerNode}
     </div>
   );
 }

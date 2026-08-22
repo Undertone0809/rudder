@@ -268,6 +268,7 @@ export function runIntelligenceRoutes(db: Db) {
       status: asString(req.query.status),
       runtime: asString(req.query.runtime),
       issueId: asString(req.query.issueId),
+      goalId: asString(req.query.goalId),
       usedSkill,
       loadedSkill,
       createdBefore: asDateOrNull(req.query.createdBefore),

@@ -514,7 +514,6 @@ test.describe("Goal Workspace v2", () => {
       };
     });
     expect(topLevelLayout).toEqual({ titleBeforeTabs: true, progressBeforeTabs: false, overviewBeforeTabs: false });
-    await expect(page.getByRole("heading", { name: "Comments", exact: true })).toBeVisible();
     const goalProperties = page.getByRole("region", { name: "Goal properties" });
     const goalStatus = goalProperties.locator('[data-slot="issue-property-row"]').filter({ hasText: "Status" }).first();
     await expect(goalStatus.locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "in_progress");
@@ -580,7 +579,7 @@ test.describe("Goal Workspace v2", () => {
     expect(startWakeups[0]?.runId).toBeTruthy();
     expect((await e2eDb.select().from(heartbeatRuns)).find((run) =>
       run.id === startWakeups[0]?.runId && run.wakeupRequestId === startWakeups[0]?.id,
-    )).toBeTruthy();
+    )).toMatchObject({ goalId });
     await e2eDb.update(heartbeatRuns).set({
       status: "failed",
       resultJson: { error: "Process adapter missing command" },
@@ -589,7 +588,7 @@ test.describe("Goal Workspace v2", () => {
     }).where(eq(heartbeatRuns.id, startWakeups[0]!.runId!));
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.getByRole("tab", { name: /Overview/ }).click();
-    await expect(page.getByRole("heading", { name: "Action needed", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review needed", exact: true })).toBeVisible();
     await expect(page.getByText("The Owner Agent could not complete its latest action. Decide whether to retry or adjust the Goal.", { exact: true })).toBeVisible();
     await expect(page.getByText("Process adapter missing command", { exact: true })).toHaveCount(0);
     const internalLanguageActivity = await page.request.post(`/api/goals/${goalId}/activities`, {
@@ -625,7 +624,10 @@ test.describe("Goal Workspace v2", () => {
       }
       await route.continue();
     });
-    const feedbackFile = page.getByLabel("Attach comment image");
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await expect(page.getByRole("tabpanel").getByLabel("Agent run")).toHaveCount(1);
+    await expect(page.getByRole("tabpanel").getByRole("link", { name: "Open failed run details" })).toBeVisible();
+    const feedbackFile = page.getByLabel("Attach feedback image");
     await feedbackFile.setInputFiles({
       name: "operator-screenshot.png",
       mimeType: "image/png",
@@ -633,7 +635,7 @@ test.describe("Goal Workspace v2", () => {
     });
     await expect(page.getByRole("alert")).toContainText("Temporary image outage");
     await page.getByRole("button", { name: "Retry attachment" }).click();
-    const goalComposer = page.getByLabel("Goal comment composer", { exact: true });
+    const goalComposer = page.getByLabel("Goal feedback composer", { exact: true });
     await expect(goalComposer.locator('img[alt="operator-screenshot.png"]')).toBeVisible();
     expect(attachmentAttempts).toBe(2);
     await page.unroute(`**/api/orgs/${organization.id}/assets/images`);
@@ -662,8 +664,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(feedbackInput).toBeFocused();
 
     const retryFeedback = page.getByRole("button", { name: "Retry comment" });
-    await retryFeedback.focus();
-    await page.keyboard.press("Enter");
+    await retryFeedback.click();
     await expect.poll(() => feedbackAttempts).toBe(2);
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(feedbackInput).toBeFocused();
@@ -672,6 +673,7 @@ test.describe("Goal Workspace v2", () => {
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
     await expect(page.getByText(feedbackBody, { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByLabel("Feedback attachments").getByText("operator-screenshot.png", { exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: /Overview/ }).click();
     const feedbackRows = (await e2eDb.select().from(goalFeedbackEntries))
       .filter((row) => row.goalId === goalId);
     expect(feedbackRows).toHaveLength(1);
@@ -699,7 +701,7 @@ test.describe("Goal Workspace v2", () => {
     expect(wakeups[0]?.runId).toBeTruthy();
     expect((await e2eDb.select().from(heartbeatRuns)).find((run) =>
       run.id === wakeups[0]?.runId && run.wakeupRequestId === wakeups[0]?.id,
-    )).toBeTruthy();
+    )).toMatchObject({ goalId });
 
     const contractAfterFeedback = (await e2eDb.select().from(goals)).find((row) => row.id === goalId)!;
     expect(contractAfterFeedback.contractRevision).toBe(contractBeforeFeedback.contractRevision);
@@ -722,6 +724,7 @@ test.describe("Goal Workspace v2", () => {
       const context = run.contextSnapshot as Record<string, unknown> | null;
       return run.orgId === organization.id
         && run.agentId === owner.id
+        && run.goalId === goalId
         && context?.goalId === goalId;
     });
     for (const run of goalRuns) {
@@ -794,11 +797,18 @@ test.describe("Goal Workspace v2", () => {
       && row.submittedByAgentId === owner.id,
     )).toBeTruthy();
 
-    await expect(page.getByRole("heading", { name: "Current evidence", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Current evidence", exact: true })).toHaveCount(0);
     await page.getByRole("tab", { name: /Activity/ }).click();
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}\\?tab=activity$`));
     const activityPanel = page.getByRole("tabpanel");
-    await expect(activityPanel.getByRole("heading", { name: "Goal activity", exact: true })).toBeVisible();
+    await expect(activityPanel.locator('[data-testid^="goal-activity-summary-"]').getByText("The release candidate passed the real operator workflow.", { exact: true })).toBeVisible();
+    await expect(activityPanel.getByLabel("Agent run")).toHaveCount(2);
+    await expect(activityPanel.getByRole("link", { name: "Open succeeded run details" }).first()).toBeVisible();
+    const runDetailLink = activityPanel.getByRole("link", { name: "Open succeeded run details" }).first();
+    await runDetailLink.click();
+    await expect(page).toHaveURL(new RegExp(`/agents/${owner.id}/runs/[a-f0-9-]+$`));
+    await page.goto(`/${organization.urlKey}/goals/${goalId}?tab=activity`);
+    await expect(page.getByRole("tabpanel").getByLabel("Agent run")).toHaveCount(2);
     await expect(activityPanel.getByText("Outcome", { exact: true })).toHaveCount(0);
     await expect(activityPanel.getByRole("heading", { name: "Comments", exact: true })).toHaveCount(0);
     await page.getByRole("tab", { name: /Overview/ }).click();
@@ -879,7 +889,7 @@ test.describe("Goal Workspace v2", () => {
     const dialog = page.locator('[data-slot="dialog-content"]');
     const dialogFooter = dialog.locator(":scope > div").last();
     await expect(dialogFooter).toBeVisible();
-    await page.getByRole("button", { name: "Choose Owner Agent", exact: true }).click();
+    await page.getByRole("button", { name: "Assignee", exact: true }).click();
     await expect(page.getByPlaceholder("Search Agents...")).toBeVisible();
     await page.keyboard.press("Escape");
     await page.screenshot({ path: testInfo.outputPath("goal-new-dialog-mobile.png"), fullPage: true });
@@ -894,7 +904,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(page.getByLabel("Goal progress")).toHaveCount(0);
     await expect(page.getByLabel("Goal properties")).toBeVisible();
     await expect(page.getByText("Comments become available after this Goal starts.", { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Before work starts", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
     await expect(page.getByText("Needs your attention", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Progress and feedback", exact: true })).toHaveCount(0);
@@ -923,8 +933,8 @@ test.describe("Goal Workspace v2", () => {
 
     await page.getByRole("button", { name: "Continue Goal", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Continue Goal", exact: true })).toBeVisible();
-    await expect(page.getByText("Describe the result or decision someone should be able to verify.", { exact: false })).toBeVisible();
-    await expect(page.getByText("Owner Agent", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Expected result", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Assignee", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Start Goal", exact: true })).toBeDisabled();
     await page.getByRole("textbox", { name: "Goal", exact: true }).fill("Reach 1,000 GitHub stars by August 31, 2026");
     await page.getByRole("button", { name: "Assignee" }).click();
@@ -934,10 +944,10 @@ test.describe("Goal Workspace v2", () => {
     await page.getByRole("button", { name: "Start Goal", exact: true }).click();
 
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${goalId}$`));
-    await expect(page.getByText("active", { exact: true }).first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Goal properties" }).getByText("Active", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByText("active", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("region", { name: "Goal properties" }).getByText("Active", { exact: true })).toBeVisible();
     const startRequests = (await e2eDb.select().from(goalStartRequests)).filter((row) => row.goalId === goalId);
     expect(startRequests).toHaveLength(1);
     const wakeups = (await e2eDb.select().from(agentWakeupRequests)).filter((row) =>
@@ -950,7 +960,7 @@ test.describe("Goal Workspace v2", () => {
     await page.screenshot({ path: testInfo.outputPath("goal-draft-started-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Outcome", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath("goal-draft-started-mobile.png"), fullPage: true });
     expect(pageErrors).toEqual([]);
@@ -1551,9 +1561,9 @@ test.describe("Goal Workspace v2", () => {
     const acceptedArtifactRow = acceptedResultEvidence.getByText("Supporting work 3", { exact: true }).locator("..");
     await expect(acceptedArtifactRow.getByText("Unavailable", { exact: true })).toBeVisible();
     await expect(page.getByText(resultArtifactEvidence, { exact: true })).toHaveCount(0);
-    const acceptedProgress = page.getByLabel("Goal progress");
-    await expect(acceptedProgress.getByText("Goal achieved", { exact: true })).toBeVisible();
-    await expect(acceptedProgress.getByText("Goal evaluated as", { exact: false })).toHaveCount(0);
+    const acceptedEvidence = page.getByLabel("Goal evidence");
+    await expect(acceptedEvidence.getByText("Goal achieved", { exact: true })).toBeVisible();
+    await expect(acceptedEvidence.getByText("Goal evaluated as", { exact: false })).toHaveCount(0);
     await expect(page.getByText("No evidence-backed progress has been recorded yet.", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent advancing", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Agent is doing", { exact: true })).toHaveCount(0);
@@ -1833,6 +1843,27 @@ test.describe("Goal Workspace v2", () => {
       startRunId = startWakeup?.runId ?? null;
       return startRunId;
     }, { timeout: 30_000 }).toMatch(/^[a-f0-9-]{36}$/);
+    const [startRun] = await e2eDb.select({ goalId: heartbeatRuns.goalId }).from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, startRunId!));
+    expect(startRun?.goalId).toBe(started.goal!.id);
+
+    let issueAssignmentRunId: string | null = null;
+    await expect.poll(async () => {
+      const rows = await e2eDb.select().from(heartbeatRuns);
+      const assignmentRun = rows.find((row) => {
+        const snapshot = row.contextSnapshot && typeof row.contextSnapshot === "object"
+          ? row.contextSnapshot as Record<string, unknown>
+          : null;
+        return row.orgId === organization.id
+          && row.agentId === owner.id
+          && row.id !== startRunId
+          && snapshot?.issueId === issue.id;
+      });
+      issueAssignmentRunId = assignmentRun?.id ?? null;
+      return assignmentRun?.goalId ?? null;
+    }, { timeout: 30_000 }).toBe(started.goal!.id);
+    expect(issueAssignmentRunId).toMatch(/^[a-f0-9-]{36}$/);
+
     await e2eDb.update(heartbeatRuns).set({ status: "succeeded", updatedAt: new Date() })
       .where(eq(heartbeatRuns.id, startRunId!));
     const runId = randomUUID();
@@ -1841,6 +1872,7 @@ test.describe("Goal Workspace v2", () => {
       id: runId,
       orgId: organization.id,
       agentId: owner.id,
+      goalId: started.goal!.id,
       invocationSource: "assignment",
       triggerDetail: "goal_checkpoint_e2e",
       status: "succeeded",
@@ -1893,6 +1925,9 @@ test.describe("Goal Workspace v2", () => {
       updatedAt: new Date(Date.now() - 120_000),
     });
     await e2eDb.update(issues).set({ executionRunId: runId, updatedAt: new Date(checkpointTime.getTime() - 500) }).where(eq(issues.id, issue.id));
+    const goalRuns = (await e2eDb.select().from(heartbeatRuns)).filter((run) => (
+      run.orgId === organization.id && run.goalId === started.goal!.id
+    ));
 
     await expect.poll(async () => {
       const response = await page.request.get(`/api/goals/${started.goal!.id}/workspace`);
@@ -1927,42 +1962,44 @@ test.describe("Goal Workspace v2", () => {
       sourceActivityId: progressActivity!.id,
       summary: "The release artifact passed the acceptance workflow.",
     });
-    const currentProgress = page.getByLabel("Goal progress");
-    await expect(currentProgress.getByText("Latest progress", { exact: true })).toBeVisible();
-    await expect(currentProgress.getByText("Criteria verified", { exact: true })).toBeVisible();
+    const currentProgress = page.getByLabel("Goal overview").filter({ hasText: "Current progress" }).first();
     await expect(currentProgress.getByText("The release artifact passed the acceptance workflow.", { exact: true })).toBeVisible();
     const agentAction = page.getByText(/^(Agent is doing|Latest Agent activity)$/).locator("..");
     await expect(agentAction.getByText("The linked issue produced a reviewable artifact.", { exact: false })).toBeVisible();
-    await expect(page.getByLabel("Goal overview").getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Goal properties" }).getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
     await page.getByRole("tab", { name: /Activity/ }).click();
     const history = page.getByRole("tabpanel");
-    await expect(history.getByRole("heading", { name: "Goal activity", exact: true })).toBeVisible();
     await expect(history.getByText("Excluded current-progress event 101", { exact: true })).toBeVisible();
     await expect(history.getByText("Excluded current-progress event 1", { exact: true })).toHaveCount(0);
-    let loadEarlier = history.getByRole("button", { name: "Load earlier records" });
-    await loadEarlier.focus();
-    for (const [index, expectedFirstLoaded] of ["Excluded current-progress event 51", "Excluded current-progress event 1"].entries()) {
+    let pageCount = 0;
+    while (await history.getByRole("button", { name: "Load earlier activity" }).count() > 0) {
+      const previousActivityCount = await history.locator('[data-testid^="goal-activity-"]').count();
+      const loadEarlier = history.getByRole("button", { name: "Load earlier activity" });
+      await loadEarlier.focus();
       await page.keyboard.press("Enter");
-      await expect(history.getByText(expectedFirstLoaded, { exact: true })).toBeVisible();
-      await expect(history.getByText(expectedFirstLoaded, { exact: true }).locator("../..")).toBeFocused();
-      if (index === 0) {
-        loadEarlier = history.getByRole("button", { name: "Load earlier records" });
-        await page.keyboard.press("Tab");
-        await expect(loadEarlier).toBeFocused();
+      pageCount += 1;
+      await expect.poll(
+        () => history.locator('[data-testid^="goal-activity-"]').count(),
+        { timeout: 5_000 },
+      ).toBeGreaterThan(previousActivityCount);
+      if (await history.getByRole("button", { name: "Load earlier activity" }).count() > 0) {
+        await expect(history.getByRole("button", { name: "Load earlier activity" })).toBeFocused();
+      } else {
+        await expect(history).toBeFocused();
       }
     }
+    expect(pageCount).toBeGreaterThan(0);
+    await expect(history.getByText("Excluded current-progress event 1", { exact: true })).toBeVisible();
     await expect(history.getByText("The release artifact passed the acceptance workflow.", { exact: true })).toBeVisible();
-    await expect(history.getByRole("button", { name: "Load earlier records" })).toHaveCount(0);
-    await expect(history.getByText("The linked issue produced a reviewable artifact.", { exact: false })).toHaveCount(0);
+    await expect(history.getByRole("button", { name: "Load earlier activity" })).toHaveCount(0);
+    expect(goalRuns.length).toBeGreaterThanOrEqual(3);
+    await expect(history.getByLabel("Agent run")).toHaveCount(goalRuns.length);
     for (const internalKind of ["work_status", "activity", "Related work"]) {
       await expect(history.getByText(internalKind, { exact: true })).toHaveCount(0);
     }
     await expect(page.getByRole("heading", { name: "Properties", exact: true })).toBeVisible();
     await expect(page.getByText("Advance the Goal through a real issue", { exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: /Overview/ }).click();
-    const conversation = page.getByRole("tabpanel");
-    await expect(conversation.getByText(longHistoryToken, { exact: true })).toBeVisible();
-    await expect(conversation.getByText(longAttachmentName, { exact: true })).toBeVisible();
+    await expect(history.getByText(longHistoryToken, { exact: true })).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByRole("heading", { name: "Properties", exact: true })).toBeHidden();

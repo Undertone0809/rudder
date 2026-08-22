@@ -1,6 +1,6 @@
 import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, heartbeatRuns } from "@rudderhq/db";
+import { chatMessages, goals, heartbeatRuns } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -134,6 +134,17 @@ export function chatAgentRunService(db: Db) {
     runContext?: Record<string, unknown> | null;
     sourceMetadata?: Record<string, unknown> | null;
   }) {
+    const linkedGoalId = input.linkedGoalId ?? null;
+    if (linkedGoalId) {
+      const [goal] = await db
+        .select({ id: goals.id })
+        .from(goals)
+        .where(and(eq(goals.id, linkedGoalId), eq(goals.orgId, input.conversation.orgId)))
+        .limit(1);
+      if (!goal) {
+        throw new Error("Chat conversation Goal must belong to the same organization");
+      }
+    }
     const now = new Date();
     const executionOwnerToken = randomUUID();
     const issueId = input.conversation.primaryIssueId ?? input.linkedIssueIds[0] ?? null;
@@ -150,12 +161,14 @@ export function chatAgentRunService(db: Db) {
       issueId,
       linkedIssueIds,
       projectId: input.linkedProjectId,
-      goalId: input.linkedGoalId ?? null,
       planMode: input.conversation.planMode,
       stream: input.triggerDetail === "chat_assistant_reply_stream",
       controlIntent: "new",
       ...(input.sourceMetadata ?? {}),
       ...(input.runContext ?? {}),
+      // The explicit column is authoritative; keep the compatibility snapshot
+      // aligned even when runtime context contains a stale Goal value.
+      goalId: linkedGoalId,
     };
     const run = await db
       .insert(heartbeatRuns)
@@ -170,6 +183,7 @@ export function chatAgentRunService(db: Db) {
         executionOwnerToken,
         executionLeaseExpiresAt: new Date(now.getTime() + RUN_EXECUTION_LEASE_MS),
         chatConversationId: input.conversation.id,
+        goalId: linkedGoalId,
         contextSnapshot,
       })
       .returning()

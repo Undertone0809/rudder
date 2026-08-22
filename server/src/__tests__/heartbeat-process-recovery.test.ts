@@ -9,6 +9,7 @@ import {
   chatConversations,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -168,6 +169,7 @@ describe("heartbeat orphaned process recovery", () => {
         await db.delete(agentRuntimeState);
         await db.delete(agentWakeupRequests);
         await db.delete(organizationSkills);
+        await db.delete(goals);
         await db.delete(agents);
         await db.delete(organizations);
         return;
@@ -206,6 +208,7 @@ describe("heartbeat orphaned process recovery", () => {
     networkWaitAttemptCount?: number;
     recoveryCheckpoint?: Record<string, unknown> | null;
     contextSnapshot?: Record<string, unknown> | null;
+    goalId?: string | null;
     chatConversationId?: string | null;
     startedAt?: Date;
     updatedAt?: Date;
@@ -215,6 +218,7 @@ describe("heartbeat orphaned process recovery", () => {
     const runId = randomUUID();
     const wakeupRequestId = randomUUID();
     const issueId = randomUUID();
+    const goalId = input?.goalId ?? null;
     const now = new Date("2026-03-19T00:00:00.000Z");
     const issuePrefix = `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
     const orgName = `Rudder ${orgId.slice(0, 6)}`;
@@ -238,6 +242,18 @@ describe("heartbeat orphaned process recovery", () => {
       runtimeConfig: {},
       permissions: {},
     });
+
+    if (goalId) {
+      await db.insert(goals).values({
+        id: goalId,
+        orgId,
+        title: "Recover the Goal-bound local adapter",
+        lifecycle: "active",
+        status: "in_progress",
+        ownerAgentId: agentId,
+        focus: true,
+      });
+    }
 
     const contextSnapshot =
       input?.contextSnapshot ??
@@ -293,6 +309,7 @@ describe("heartbeat orphaned process recovery", () => {
       wakeupRequestId,
       chatConversationId: input?.chatConversationId ?? null,
       contextSnapshot,
+      goalId,
       processPid: input?.processPid ?? null,
       processLossRetryCount: input?.processLossRetryCount ?? 0,
       errorCode: input?.runErrorCode ?? null,
@@ -321,7 +338,7 @@ describe("heartbeat orphaned process recovery", () => {
       });
     }
 
-    return { orgId, agentId, runId, wakeupRequestId, issueId };
+    return { orgId, agentId, runId, wakeupRequestId, issueId, goalId };
   }
 
   it("times out long-running active runs and releases issue execution locks", async () => {
@@ -1667,9 +1684,22 @@ describe("heartbeat orphaned process recovery", () => {
   });
 
   it("queues exactly one retry when the recorded local pid is dead", async () => {
+    const goalId = randomUUID();
     const { agentId, runId, issueId } = await seedRunFixture({
       processPid: 999_999_999,
+      goalId,
     });
+    const sourceRun = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    await db.update(heartbeatRuns).set({
+      contextSnapshot: {
+        ...(sourceRun?.contextSnapshot as Record<string, unknown>),
+        goalId: randomUUID(),
+      },
+    }).where(eq(heartbeatRuns.id, runId));
     const heartbeat = heartbeatService(db);
 
     const result = await heartbeat.reapOrphanedRuns();
@@ -1688,6 +1718,8 @@ describe("heartbeat orphaned process recovery", () => {
     expect(failedRun?.errorCode).toBe("process_lost");
     expect(["queued", "running"]).toContain(retryRun?.status);
     expect(retryRun?.retryOfRunId).toBe(runId);
+    expect(retryRun?.goalId).toBe(goalId);
+    expect(retryRun?.contextSnapshot).toMatchObject({ goalId });
     expect(retryRun?.processLossRetryCount).toBe(1);
     expect(retryRun?.contextSnapshot).toMatchObject({
       issueId,

@@ -44,7 +44,7 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
-import { isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { accessApi } from "../api/access";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -55,7 +55,7 @@ import { projectsApi } from "../api/projects";
 import { requestsApi } from "../api/requests";
 import { AgentIdentity } from "../components/AgentAvatar";
 import { AssistanceRequestPanel } from "../components/AssistanceRequestPanel";
-import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
+import { CommentThread, CommentThreadActivityRow, type CommentThreadActivityItem } from "../components/CommentThread";
 import { isAgentWakeEligible } from "../components/CommentThread.submit";
 import { Identity } from "../components/Identity";
 import { InlineEditor } from "../components/InlineEditor";
@@ -63,6 +63,7 @@ import { InspectableImage } from "../components/InspectableImage";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueRefreshNotice } from "../components/IssueRefreshNotice";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { PriorityIcon } from "../components/PriorityIcon";
@@ -88,6 +89,7 @@ import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { hasBrowserBackStackEntry, shouldHandleIssueDetailEscape } from "../lib/detail-escape";
 import { isImageContentType } from "../lib/image-actions";
+import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { libraryCopy } from "../lib/library-copy";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
@@ -96,7 +98,7 @@ import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { formatPriorityLabel } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
 import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
-import { cn, formatTokens, relativeTime, visibleRunCostUsd } from "../lib/utils";
+import { cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 
 export { linkedIssueRunsRefetchInterval } from "../hooks/useIssueTimelineQueries";
 
@@ -321,14 +323,6 @@ function renderIssueActivityReference(reference: IssueActivityReference): ReactN
       {issueActivityReferenceLabel(reference)}
     </Link>
   );
-}
-
-function textFromActivityNode(node: ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textFromActivityNode).join("");
-  if (isValidElement<{ children?: ReactNode }>(node)) return textFromActivityNode(node.props.children);
-  return "";
 }
 
 function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
@@ -748,6 +742,13 @@ function issueActivityActorName({
   return resolveBoardActorLabel(evt.actorType, id, currentBoardUserId, operatorDisplayName);
 }
 
+function issueActivityDescriptionTitle(evt: ActivityEvent): string | undefined {
+  if (evt.entityType === "chat") return issueActivityChatLabel(evt);
+  const details = asRecord(evt.details);
+  const formatted = formatAction(evt.action, details, new Map(), null);
+  return formatted || undefined;
+}
+
 function issueActivityMarkerStatus(evt: ActivityEvent): string | null {
   const details = asRecord(evt.details);
   if (evt.action === "issue.updated" && typeof details?.status === "string") return details.status;
@@ -782,24 +783,17 @@ function IssueActivityRow({
 }) {
   const actorName = issueActivityActorName({ evt, agentMap, currentBoardUserId, operatorDisplayName });
   const activityDescription = renderActivityDescription(evt, agentMap, currentBoardUserId);
-  const activityDescriptionTitle = textFromActivityNode(activityDescription).trim();
-  const activityTime = relativeTime(evt.createdAt);
 
   return (
-    <div
-      data-testid="issue-activity-row"
-      className="grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-sm border border-transparent py-1 pl-3 pr-2 text-xs text-muted-foreground"
-    >
-      <IssueActivityMarker evt={evt} />
-      <span
-        data-testid="issue-activity-summary"
-        className="flex min-w-0 items-center gap-1.5 whitespace-nowrap leading-5"
-      >
-        <span title={actorName} className="max-w-[9rem] shrink-0 truncate font-medium text-foreground">{actorName}</span>
-        <span title={activityDescriptionTitle || undefined} className="min-w-0 truncate"> {activityDescription}</span>
-        <span className="shrink-0 tabular-nums text-muted-foreground/90"> · {activityTime}</span>
-      </span>
-    </div>
+    <CommentThreadActivityRow
+      actorName={actorName}
+      description={activityDescription}
+      title={issueActivityDescriptionTitle(evt)}
+      createdAt={evt.createdAt}
+      marker={<IssueActivityMarker evt={evt} />}
+      testId="issue-activity-row"
+      summaryTestId="issue-activity-summary"
+    />
   );
 }
 
@@ -1024,10 +1018,17 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const subIssueStatusQueuesRef = useRef(new Map<string, Promise<void>>());
 
-  const { data: issue, isLoading, error } = useQuery({
+  const {
+    data: issue,
+    error,
+    isFetching,
+    isLoading,
+    refetch: refetchIssue,
+  } = useQuery({
     queryKey: queryKeys.issues.detail(issueId!),
     queryFn: () => issuesApi.get(issueId!),
     enabled: !!issueId,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
   const issueFollowsOrgId = issue?.orgId ?? selectedOrganizationId ?? null;
   const { followedIssueIds, isLoading: issueFollowsLoading, toggleFollowIssue } = useIssueFollows(issueFollowsOrgId);
@@ -1788,9 +1789,18 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
     await createSubIssue.mutateAsync(nextTitle);
   };
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading...</p>;
-  if (error) return <p className="text-sm text-destructive">{error.message}</p>;
-  if (!issue) return null;
+  if (isLoading && !issue) return <p className="text-sm text-muted-foreground">Loading...</p>;
+  if (!issue) {
+    return error ? (
+      <IssueRefreshNotice
+        error={error as Error}
+        hasData={false}
+        resourceLabel="issue"
+        onRetry={() => void refetchIssue()}
+        retrying={isFetching}
+      />
+    ) : null;
+  }
 
   const handleFilePicked = async (evt: ChangeEvent<HTMLInputElement>) => {
     const files = evt.target.files;
@@ -1982,6 +1992,18 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
         refreshKey={issueFindRefreshKey}
         onOpenChange={setIssueFindOpen}
       />
+      {error ? (
+        <IssueRefreshNotice
+          error={error as Error}
+          hasData
+          resourceLabel="issue"
+          onRetry={() => void refetchIssue()}
+          retrying={isFetching}
+        />
+      ) : null}
+      {isFetching && !error ? (
+        <span className="sr-only" role="status">Refreshing issue</span>
+      ) : null}
       <div
         className="issue-detail-layout mx-auto min-h-full max-w-6xl"
         data-testid="issue-detail-layout"

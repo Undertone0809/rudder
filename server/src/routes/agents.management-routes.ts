@@ -1228,11 +1228,13 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const limitParam = req.query.limit as string | undefined;
     const startDateParam = req.query.startDate as string | undefined;
     const endDateParam = req.query.endDate as string | undefined;
+    const goalIdParam = req.query.goalId as string | undefined;
     const startDate = startDateParam ? new Date(startDateParam) : undefined;
     const endDate = endDateParam ? new Date(endDateParam) : undefined;
     const filters = {
       startDate: startDate && Number.isFinite(startDate.getTime()) ? startDate : undefined,
       endDate: endDate && Number.isFinite(endDate.getTime()) ? endDate : undefined,
+      goalId: goalIdParam && /^[0-9a-f-]{36}$/i.test(goalIdParam) ? goalIdParam : undefined,
     };
     const hasDateRange = Boolean(filters.startDate || filters.endDate);
     const limit = limitParam
@@ -1246,6 +1248,9 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.get("/orgs/:orgId/live-runs", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
+    const goalId = typeof req.query.goalId === "string" && /^[0-9a-f-]{36}$/i.test(req.query.goalId)
+      ? req.query.goalId
+      : undefined;
 
     const minCountParam = req.query.minCount as string | undefined;
     const minCount = minCountParam ? Math.max(0, Math.min(20, parseInt(minCountParam, 10) || 0)) : 0;
@@ -1264,6 +1269,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       agentId: heartbeatRuns.agentId,
       agentName: agentsTable.name,
       agentRuntimeType: agentsTable.agentRuntimeType,
+      goalId: heartbeatRuns.goalId,
       issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`.as("issueId"),
     };
 
@@ -1274,6 +1280,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       .where(
         and(
           eq(heartbeatRuns.orgId, orgId),
+          ...(goalId ? [eq(heartbeatRuns.goalId, goalId)] : []),
           or(
             inArray(heartbeatRuns.status, ["queued", "running"]),
             eq(heartbeatRuns.terminalEffectsPending, true),
@@ -1291,6 +1298,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
         .where(
           and(
             eq(heartbeatRuns.orgId, orgId),
+            ...(goalId ? [eq(heartbeatRuns.goalId, goalId)] : []),
             not(inArray(heartbeatRuns.status, ["queued", "running"])),
             eq(heartbeatRuns.terminalEffectsPending, false),
             ...(activeIds.length > 0 ? [not(inArray(heartbeatRuns.id, activeIds))] : []),

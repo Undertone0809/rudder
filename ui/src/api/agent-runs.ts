@@ -28,6 +28,7 @@ export interface LiveRunForIssue {
   agentName: string;
   agentRuntimeType: string;
   issueId?: string | null;
+  goalId?: string | null;
 }
 
 export const AGENT_RUN_LIST_DEFAULT_LIMIT = 100;
@@ -39,6 +40,7 @@ export const AGENT_RUN_EVENTS_PAGE_LIMIT = 1000;
 export interface AgentRunListFilters {
   startDate?: string;
   endDate?: string;
+  goalId?: string;
 }
 
 export const agentRunsApi = {
@@ -55,6 +57,7 @@ export const agentRunsApi = {
     if (limit !== null) searchParams.set("limit", String(limit));
     if (filters.startDate) searchParams.set("startDate", filters.startDate);
     if (filters.endDate) searchParams.set("endDate", filters.endDate);
+    if (filters.goalId) searchParams.set("goalId", filters.goalId);
     const qs = searchParams.toString();
     return api.get<AgentRun[]>(`/orgs/${orgId}/agent-runs${qs ? `?${qs}` : ""}`);
   },
@@ -99,4 +102,6 @@ export const agentRunsApi = {
     api.get<ActiveRunForIssue | null>(`/issues/${issueId}/active-run`),
   liveRunsForCompany: (orgId: string, minCount?: number) =>
     api.get<LiveRunForIssue[]>(`/orgs/${orgId}/live-runs${minCount ? `?minCount=${minCount}` : ""}`),
+  liveRunsForGoal: (orgId: string, goalId: string) =>
+    api.get<LiveRunForIssue[]>(`/orgs/${orgId}/live-runs?goalId=${encodeURIComponent(goalId)}`),
 };

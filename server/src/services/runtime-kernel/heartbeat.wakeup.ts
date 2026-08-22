@@ -61,6 +61,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     const agent = await getAgent(agentId);
     if (!agent) throw notFound("Agent not found");
+    if (goalId) {
+      const goal = await db
+        .select({ id: goals.id })
+        .from(goals)
+        .where(and(eq(goals.id, goalId), eq(goals.orgId, agent.orgId)))
+        .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+      if (!goal) throw conflict("Goal does not belong to the Agent organization");
+      // Keep the compatibility snapshot aligned with the explicit ownership
+      // column when a caller supplied the nested Goal context shape.
+      enrichedContextSnapshot.goalId = goal.id;
+    }
     const explicitResumeSession = await resolveExplicitResumeSessionOverride(agent, payload, taskKey);
     if (explicitResumeSession) {
       enrichedContextSnapshot.resumeFromRunId = explicitResumeSession.resumeFromRunId;
@@ -87,6 +98,10 @@ export function createHeartbeatWakeupHandlers(context: any) {
       issueId = readNonEmptyString(enrichedContextSnapshot.issueId) ?? issueId;
     }
     await hydrateWakeContextSnapshot(db, agent.orgId, enrichedContextSnapshot);
+    // Issue-only wakes may learn their Goal only during hydration. Use the
+    // hydrated ownership for every run insert while keeping the snapshot
+    // compatible with older runtime consumers.
+    const effectiveGoalId = readNonEmptyString(enrichedContextSnapshot.goalId) ?? goalId;
     const commentMentionWake = isIssueCommentMentionWake({
       reason,
       contextSnapshot: enrichedContextSnapshot,
@@ -125,10 +140,17 @@ export function createHeartbeatWakeupHandlers(context: any) {
         targetRun.contextSnapshot,
         incomingContextSnapshot,
       );
+      const incomingGoalId = readNonEmptyString(mergedContextSnapshot.goalId);
+      if (targetRun.goalId && incomingGoalId && targetRun.goalId !== incomingGoalId) {
+        throw conflict("An active run cannot be coalesced across Goals");
+      }
+      const mergedGoalId = targetRun.goalId ?? incomingGoalId;
+      if (mergedGoalId) mergedContextSnapshot.goalId = mergedGoalId;
       if (targetRun.status === "running") {
         return database
           .update(heartbeatRuns)
           .set({
+            goalId: mergedGoalId,
             contextSnapshot: mergedContextSnapshot,
             updatedAt: new Date(),
           })
@@ -166,6 +188,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
       return database
         .update(heartbeatRuns)
         .set({
+          goalId: mergedGoalId,
           contextSnapshot: mergedContextSnapshot,
           sessionIdBefore:
             sessionSelection.sessionDisplayId ?? readNonEmptyString(sessionSelection.sessionParams?.sessionId),
@@ -724,6 +747,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           .values({
             orgId: agent.orgId,
             agentId,
+            goalId: effectiveGoalId,
             invocationSource: source,
             triggerDetail,
             status: "queued",
@@ -920,6 +944,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         .values({
           orgId: agent.orgId,
           agentId,
+          goalId: effectiveGoalId,
           invocationSource: source,
           triggerDetail,
           status: "queued",
@@ -1175,6 +1200,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           .values({
             orgId: agent.orgId,
             agentId: agent.id,
+            goalId: readNonEmptyString(recoveredContext.goalId) ?? null,
             invocationSource: source,
             triggerDetail,
             status: "queued",

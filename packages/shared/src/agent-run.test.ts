@@ -30,6 +30,7 @@ function heartbeatRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     errorCode: null,
     externalRunId: null,
     chatConversationId: null,
+    goalId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,

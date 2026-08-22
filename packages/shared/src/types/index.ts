@@ -90,6 +90,8 @@ export type { FinanceByBiller, FinanceByKind, FinanceEvent, FinanceSummary } fro
 export type {
   Goal,
   GoalActivity,
+  GoalActivityTimelineItem,
+  GoalActivityTimelinePage,
   GoalAgentContext,
   GoalAgentListLifecycle,
   GoalAgentListResponse,

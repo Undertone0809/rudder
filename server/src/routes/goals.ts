@@ -273,6 +273,17 @@ export function goalRoutes(db: Db) {
     res.json(await svc.history(id, { cursor, limit }));
   });
 
+  router.get("/goals/:id/timeline", async (req, res) => {
+    const id = req.params.id as string;
+    if (!await loadAuthorizedGoal(req, id)) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    res.json(await svc.timeline(id, { cursor, limit }));
+  });
+
   router.get("/goals/:id/dependencies", async (req, res) => {
     const id = req.params.id as string;
     const goal = await loadAuthorizedGoal(req, id);

@@ -4,6 +4,7 @@ import {
   agentIssueCreationRequests,
   agents,
   agentWakeupRequests,
+  goals,
   heartbeatRuns,
   issues,
   requests
@@ -233,11 +234,28 @@ export function createHeartbeatRecoveryHandlers(context: any) {
         .returning()
         .then((rows) => rows[0]);
 
+      const candidateGoalId =
+        readNonEmptyString(run.goalId) ?? readNonEmptyString(recoveryContextSnapshot.goalId);
+      const recoveryGoal = candidateGoalId
+        ? await tx
+            .select({ id: goals.id })
+            .from(goals)
+            .where(and(
+              eq(goals.id, candidateGoalId),
+              eq(goals.orgId, run.orgId),
+            ))
+            .then((rows) => rows[0] ?? null)
+        : null;
+      const recoveryGoalId = recoveryGoal?.id ?? null;
+      if (recoveryGoalId) recoveryContextSnapshot.goalId = recoveryGoalId;
+      else delete recoveryContextSnapshot.goalId;
+
       const recoveryRun = await tx
         .insert(heartbeatRuns)
         .values({
           orgId: run.orgId,
           agentId: run.agentId,
+          goalId: recoveryGoalId,
           invocationSource: opts.source,
           triggerDetail: opts.triggerDetail,
           status: "queued",
@@ -752,8 +770,8 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       attempt: nextAttempt,
       now,
     });
-    const taskKey = deriveTaskKey(contextSnapshot, { issueId: issue.id });
     await hydrateWakeContextSnapshot(tx, run.orgId, contextSnapshot);
+    const taskKey = deriveTaskKey(contextSnapshot, { issueId: issue.id });
     const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
     const requestPayload = {
       issueId: issue.id,
@@ -787,6 +805,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       .values({
         orgId: run.orgId,
         agentId: run.agentId,
+        goalId: readNonEmptyString(contextSnapshot.goalId) ?? null,
         invocationSource: "automation",
         triggerDetail: "system",
         status: "queued",

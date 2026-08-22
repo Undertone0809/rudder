@@ -14,6 +14,8 @@ export interface CommentThreadActivityItem {
   id: string;
   createdAt: Date | string;
   node: ReactNode;
+  runId?: string | null;
+  runAgentId?: string | null;
 }
 
 export type CommentThreadTimelineItem =

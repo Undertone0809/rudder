@@ -270,6 +270,7 @@ describe("hydrateWakeContextSnapshot", () => {
         description: "Show all routing metadata in the agent prompt.",
         status: "blocked",
         priority: "high",
+        goalId: "goal-1",
         projectId: "project-1",
         assigneeAgentId: "agent-assignee",
         assigneeAgentName: "Wesley",
@@ -299,6 +300,7 @@ describe("hydrateWakeContextSnapshot", () => {
     await hydrateWakeContextSnapshot(db, "org-1", contextSnapshot);
 
     expect(contextSnapshot.projectId).toBe("project-1");
+    expect(contextSnapshot.goalId).toBe("goal-1");
     expect(contextSnapshot.issue).toMatchObject({
       id: "issue-1",
       title: "Clarify prompt metadata",

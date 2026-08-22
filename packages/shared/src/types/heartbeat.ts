@@ -78,6 +78,7 @@ export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
   automationId?: string | null;
   wakeupRequestId?: string | null;
   issueId?: string | null;
+  goalId?: string | null;
   relationship?: "assignee" | "reviewer" | "collaborator";
   resumeFromRunId?: string | null;
   sessionReuseSuppression?: HeartbeatSessionReuseSuppression;
@@ -116,6 +117,8 @@ export interface HeartbeatRun {
   errorCode: string | null;
   externalRunId: string | null;
   chatConversationId?: string | null;
+  /** Explicit Goal ownership. Older rows may remain unbound. */
+  goalId: string | null;
   processPid: number | null;
   processStartedAt: Date | null;
   networkWaitStartedAt?: Date | null;
@@ -131,6 +134,7 @@ export interface HeartbeatRun {
 }
 
 export interface AgentRun extends HeartbeatRun {
+  goalId: string | null;
   scene: AgentRunScene;
   triggerKind: string;
   targetType: AgentRunTargetType;

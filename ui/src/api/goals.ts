@@ -1,4 +1,5 @@
 import type {
+  GoalActivityTimelinePage,
   GoalDependencies,
   GoalFeedbackEntry,
   GoalHistoryPage,
@@ -28,6 +29,11 @@ export const goalsApi = {
   getWorkspace: (id: string) => api.get<GoalWorkspaceSummary>(`/goals/${id}/workspace`),
   getHistory: (id: string, cursor: string, limit = 50) =>
     api.get<GoalHistoryPage>(`/goals/${id}/history?limit=${limit}&cursor=${encodeURIComponent(cursor)}`),
+  getTimeline: (id: string, cursor?: string | null, limit = 50) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<GoalActivityTimelinePage>(`/goals/${id}/timeline?${params.toString()}`);
+  },
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<PublicGoal>(`/orgs/${orgId}/goals`, data),
   previewStart: (orgId: string, data: Record<string, unknown>) =>

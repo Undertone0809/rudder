@@ -1107,6 +1107,13 @@
       "when": 1787216400000,
       "tag": "0157_agent_run_network_wait",
       "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "7",
+      "when": 1787392800000,
+      "tag": "0158_agent_run_goal_binding",
+      "breakpoints": true
     }
   ]
 }

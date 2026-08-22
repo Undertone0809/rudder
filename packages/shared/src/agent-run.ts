@@ -181,6 +181,7 @@ export function toAgentRun(run: HeartbeatRun): AgentRun {
 
   return {
     ...publicRun,
+    goalId: publicRun.goalId ?? null,
     scene: origin.scene,
     triggerKind: origin.triggerKind,
     targetType: origin.targetType,
@@ -229,6 +230,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     errorCode: run.errorCode,
     externalRunId: run.externalRunId,
     chatConversationId: run.chatConversationId ?? null,
+    goalId: run.goalId ?? null,
     processPid: run.processPid,
     processStartedAt: run.processStartedAt,
     networkWaitStartedAt: run.networkWaitStartedAt,

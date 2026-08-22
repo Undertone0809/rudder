@@ -4,6 +4,7 @@ import type { AssistanceRequest } from "@rudderhq/shared";
 import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ISSUE_REFRESH_INTERVAL_MS } from "../lib/issue-refresh";
 import {
   IssueDetail,
   buildIssueChatHref,
@@ -18,6 +19,7 @@ let capturedInlineEditorProps: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
 const queryErrors = new Set<string>();
 const queryRefetch = vi.fn(async () => undefined);
+const queryOptionsByKey = new Map<string, Record<string, unknown>>();
 
 const parentIssue = {
   id: "issue-parent",
@@ -167,11 +169,14 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: ({
     queryKey,
     enabled,
+    ...options
   }: {
     queryKey: unknown[];
     enabled?: boolean;
+    [key: string]: unknown;
   }) => {
     const serializedKey = JSON.stringify(queryKey);
+    queryOptionsByKey.set(serializedKey, { queryKey, enabled, ...options });
     if (enabled === false) {
       return {
         data: undefined,
@@ -342,6 +347,24 @@ vi.mock("../components/InlineEditor", () => ({
 }));
 
 vi.mock("../components/CommentThread", () => ({
+  CommentThreadActivityRow: ({ actorName, description, createdAt, marker, testId, summaryTestId }: {
+    actorName: string;
+    description: ReactNode;
+    createdAt: Date | string;
+    marker?: ReactNode;
+    testId?: string;
+    summaryTestId?: string;
+  }) => (
+    <div
+      data-testid={testId ?? "comment-thread-activity-row"}
+      className="grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-sm border border-transparent py-1 pl-3 pr-2 text-xs text-muted-foreground whitespace-nowrap"
+    >
+      {marker}
+      <span>{actorName}</span>
+      <span data-testid={summaryTestId} className="min-w-0 truncate">{description}</span>
+      <time className="shrink-0 tabular-nums text-muted-foreground/90">{new Date(createdAt).toISOString()}</time>
+    </div>
+  ),
   CommentThread: (props: {
     mentions?: Array<Record<string, unknown>>;
     activityItems?: Array<{ id: string; createdAt: Date | string; node: ReactNode }>;
@@ -454,6 +477,7 @@ vi.mock("lucide-react", () => {
   const icons = {
     Activity: Icon,
     AlertTriangle: Icon,
+    AlertCircle: Icon,
     Atom: Icon,
     BadgeDollarSign: Icon,
     Bot: Icon,
@@ -665,12 +689,30 @@ describe("IssueDetail", () => {
     expect(linkedIssueRunsRefetchInterval(true)).toBe(5000);
   });
 
+  it("configures the issue surface and timeline for polling and focus/reconnect recovery", () => {
+    renderToStaticMarkup(<IssueDetail />);
+
+    for (const key of [
+      ["issues", "detail", "ORG2-1"],
+      ["issues", "comments", "ORG2-1"],
+      ["issues", "activity", "ORG2-1"],
+    ]) {
+      expect(queryOptionsByKey.get(JSON.stringify(key))).toMatchObject({
+        refetchInterval: ISSUE_REFRESH_INTERVAL_MS,
+        refetchIntervalInBackground: false,
+        refetchOnReconnect: "always",
+        refetchOnWindowFocus: "always",
+      });
+    }
+  });
+
   beforeEach(() => {
     capturedMentions = [];
     capturedCommentThreadProps = null;
     capturedInlineEditorProps = [];
     mockSourceBreadcrumb = null;
     queryErrors.clear();
+    queryOptionsByKey.clear();
     queryRefetch.mockClear();
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
@@ -940,6 +982,18 @@ describe("IssueDetail", () => {
         ready: false,
       },
     });
+  });
+
+  it("keeps stale issue content visible with a retry notice when refresh fails", () => {
+    queryErrors.add(JSON.stringify(["issues", "detail", "ORG2-1"]));
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('data-testid="issue-refresh-notice"');
+    expect(html).toContain("Could not refresh issue.");
+    expect(html).toContain("Showing the last loaded issue.");
+    expect(html).toContain(">Retry</button>");
+    expect(html).toContain("Parent issue");
   });
 
   it("keeps an embedded issue detail in its own scroll flow", () => {

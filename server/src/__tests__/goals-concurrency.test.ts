@@ -412,6 +412,7 @@ describe("Goal closed-state concurrency", () => {
     expect(wakeups.every((wakeup) => Boolean(wakeup.runId))).toBe(true);
     const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, ownerAgentId));
     expect(runs).toHaveLength(2);
+    expect(runs.every((run) => run.goalId === started.goal.id)).toBe(true);
     expect(new Set(runs.map((run) => run.wakeupRequestId))).toEqual(new Set(wakeups.map((wakeup) => wakeup.id)));
 
     const recoveryFeedback = await service.feedback(started.goal.id, {
@@ -425,8 +426,71 @@ describe("Goal closed-state concurrency", () => {
     const recovery = await heartbeat.resumePendingWakeupRequests({ startImmediately: false });
     expect(recovery.resumed).toBeGreaterThanOrEqual(1);
     expect((await db.select().from(heartbeatRuns)
-      .where(eq(heartbeatRuns.wakeupRequestId, recoveryFeedback.dispatch.wakeupRequestId)))).toHaveLength(1);
+      .where(eq(heartbeatRuns.wakeupRequestId, recoveryFeedback.dispatch.wakeupRequestId)))).toMatchObject([
+      expect.objectContaining({ goalId: started.goal.id }),
+    ]);
   }, 30_000);
+
+  it("rejects a Goal wake that crosses the Agent organization boundary", async () => {
+    const orgA = randomUUID();
+    const orgB = randomUUID();
+    const agentA = randomUUID();
+    const agentB = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgA,
+        name: `Goal scope A ${orgA.slice(0, 8)}`,
+        urlKey: deriveOrganizationUrlKey(`Goal scope A ${orgA.slice(0, 8)}`),
+        issuePrefix: `SA${orgA.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: orgB,
+        name: `Goal scope B ${orgB.slice(0, 8)}`,
+        urlKey: deriveOrganizationUrlKey(`Goal scope B ${orgB.slice(0, 8)}`),
+        issuePrefix: `SB${orgB.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values([
+      {
+        id: agentA,
+        orgId: orgA,
+        name: "Scope agent A",
+        role: "engineer",
+        status: "idle",
+        capabilities: "Tests Goal scope.",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: agentB,
+        orgId: orgB,
+        name: "Scope agent B",
+        role: "engineer",
+        status: "idle",
+        capabilities: "Tests Goal scope.",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    const goal = await goalService(db).create(orgB, { title: "Goal owned by organization B", ownerAgentId: agentB });
+    const heartbeat = heartbeatService(db);
+
+    await expect(heartbeat.wakeup(agentA, {
+      source: "on_demand",
+      triggerDetail: "system",
+      reason: "goal_feedback",
+      payload: { goalId: goal.id },
+      contextSnapshot: { goalId: goal.id },
+      startImmediately: false,
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentA))).toEqual([]);
+  });
 
   it("defers non-Focus Goal admission and recovers exactly once after Focus moves", async () => {
     const orgId = randomUUID();
@@ -576,6 +640,7 @@ describe("Goal closed-state concurrency", () => {
       {
         orgId,
         agentId: ownerAgentId,
+        goalId: active.id,
         status: "running",
         contextSnapshot: { goalId: active.id },
         resultSummaryJson: { summary: "Validating the direct Goal artifact." },
@@ -655,6 +720,7 @@ describe("Goal closed-state concurrency", () => {
     const [newerFailedRun] = await db.insert(heartbeatRuns).values({
       orgId,
       agentId: ownerAgentId,
+      goalId: active.id,
       status: "failed",
       contextSnapshot: { goalId: active.id },
       resultJson: { error: "Process adapter missing command" },

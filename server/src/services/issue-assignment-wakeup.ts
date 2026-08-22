@@ -22,6 +22,7 @@ export interface IssueAssignmentWakeupDeps {
 // Issue fields to include in context snapshot
 interface IssueContextSnapshot {
   id: string;
+  goalId?: string | null;
   title: string;
   description?: string | null;
   status: string;
@@ -30,6 +31,7 @@ interface IssueContextSnapshot {
 
 function buildIssueContextSnapshot(issue: {
   id: string;
+  goalId?: string | null;
   title: string;
   description?: string | null;
   status: string;
@@ -37,6 +39,7 @@ function buildIssueContextSnapshot(issue: {
 }): IssueContextSnapshot {
   return {
     id: issue.id,
+    goalId: issue.goalId ?? null,
     title: issue.title,
     description: issue.description,
     status: issue.status,
@@ -53,6 +56,7 @@ export function queueIssueAssignmentWakeup(input: {
   heartbeat: IssueAssignmentWakeupDeps;
   issue: {
     id: string;
+    goalId?: string | null;
     assigneeAgentId: string | null;
     status: string;
     title: string;
@@ -78,6 +82,7 @@ export function queueIssueAssignmentWakeup(input: {
       requestedByActorId: input.requestedByActorId ?? null,
       contextSnapshot: {
         issueId: input.issue.id,
+        goalId: input.issue.goalId ?? null,
         source: input.contextSource,
         wakeSource: "assignment",
         wakeReason: input.reason,

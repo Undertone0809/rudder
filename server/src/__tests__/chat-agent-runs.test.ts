@@ -5,6 +5,7 @@ import {
   chatMessages,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   organizations,
@@ -111,6 +112,7 @@ describe("chatAgentRunService", () => {
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(chatConversations);
+    await db.delete(goals);
     await db.delete(agents);
     await db.delete(organizations);
   });
@@ -127,6 +129,9 @@ describe("chatAgentRunService", () => {
     const agentId = randomUUID();
     const conversationId = randomUUID();
     const messageId = randomUUID();
+    const goalId = randomUUID();
+    const foreignOrgId = randomUUID();
+    const foreignGoalId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -135,6 +140,17 @@ describe("chatAgentRunService", () => {
       issuePrefix: "RDR",
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(organizations).values({
+      id: foreignOrgId,
+      name: "Other Rudder",
+      urlKey: deriveOrganizationUrlKey("Other Rudder"),
+      issuePrefix: "OTH",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(goals).values([
+      { id: goalId, orgId, title: "Conversation Goal" },
+      { id: foreignGoalId, orgId: foreignOrgId, title: "Foreign Goal" },
+    ]);
     await db.insert(agents).values({
       id: agentId,
       orgId,
@@ -166,7 +182,7 @@ describe("chatAgentRunService", () => {
       userMessageId: messageId,
       linkedIssueIds: [],
       linkedProjectId: null,
-      linkedGoalId: "11111111-1111-4111-8111-111111111111",
+      linkedGoalId: goalId,
     });
 
     expect(firstRun.status).toBe("running");
@@ -179,8 +195,17 @@ describe("chatAgentRunService", () => {
       conversationId,
       messageId,
       userMessageId: messageId,
-      goalId: "11111111-1111-4111-8111-111111111111",
+      goalId,
     });
+    expect(firstRun.goalId).toBe(goalId);
+    await expect(svc.createRun({
+      conversation,
+      agentId,
+      triggerDetail: "chat_assistant_reply",
+      linkedIssueIds: [],
+      linkedProjectId: null,
+      linkedGoalId: foreignGoalId,
+    })).rejects.toThrow("same organization");
     const firstRunSummary = await getRunSummary(db, firstRun.id, { orgIds: [orgId] });
     expect(firstRunSummary?.sessionReuseScope).toBe("none");
     await expect(svc.createRun({

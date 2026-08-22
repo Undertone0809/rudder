@@ -111,6 +111,7 @@ export const heartbeatRunListColumns = {
   errorCode: heartbeatRuns.errorCode,
   externalRunId: heartbeatRuns.externalRunId,
   chatConversationId: heartbeatRuns.chatConversationId,
+  goalId: heartbeatRuns.goalId,
   processPid: heartbeatRuns.processPid,
   processStartedAt: heartbeatRuns.processStartedAt,
   networkWaitStartedAt: heartbeatRuns.networkWaitStartedAt,

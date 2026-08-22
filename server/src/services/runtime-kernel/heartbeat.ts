@@ -2490,10 +2490,11 @@ export function heartbeatService(
       orgId: string,
       agentId?: string,
       limit?: number,
-      filters: { startDate?: Date; endDate?: Date } = {},
+      filters: { startDate?: Date; endDate?: Date; goalId?: string } = {},
     ) => {
       const conditions = [eq(heartbeatRuns.orgId, orgId)];
       if (agentId) conditions.push(eq(heartbeatRuns.agentId, agentId));
+      if (filters.goalId) conditions.push(eq(heartbeatRuns.goalId, filters.goalId));
       if (filters.startDate) conditions.push(gte(heartbeatRuns.createdAt, filters.startDate));
       if (filters.endDate) conditions.push(lte(heartbeatRuns.createdAt, filters.endDate));
 

@@ -94,7 +94,9 @@ function createGoalDb(initialGoal = makeGoal()) {
     runs: [{
       id: RUN_ID,
       orgId: ORG_ID,
+      agentId: OWNER_ID,
       status: "running",
+      goalId: GOAL_ID,
       contextSnapshot: { goalId: GOAL_ID },
       resultJson: null,
       resultSummaryJson: null,
@@ -1172,6 +1174,7 @@ describe("Goal contract", () => {
 
   it("rejects Activity attribution to a Run linked to another Goal", async () => {
     const { db, state } = createGoalDb(makeGoal({ lifecycle: "active", status: "active", ownerAgentId: OWNER_ID, planRevision: 1 }));
+    state.runs[0]!.goalId = SECOND_GOAL_ID;
     state.runs[0]!.contextSnapshot = { goalId: SECOND_GOAL_ID };
 
     await expect(goalService(db).createActivity(GOAL_ID, {

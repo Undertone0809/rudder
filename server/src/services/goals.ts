@@ -47,6 +47,7 @@ import type {
   CreateGoalResultProposal,
   DecideGoalChangeProposal,
   EvaluateGoal,
+  GoalActivityTimelinePage,
   GoalCheckpointInput,
   GoalContractPatch,
   GoalContractSnapshot,
@@ -60,6 +61,7 @@ import type {
   GoalResultReducerPreflight,
   GoalStartPacket,
   GoalStartPreview,
+  HeartbeatRun,
   IssueAssigneeAgentRuntimeOverrides,
   PreviewGoalStart,
   PublicGoal,
@@ -72,7 +74,7 @@ import type {
   StartGoal,
   UpdateGoalPlan,
 } from "@rudderhq/shared";
-import { activateGoalSchema, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseShortRef, shortRefFor } from "@rudderhq/shared";
+import { activateGoalSchema, parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parseShortRef, shortRefFor, toAgentRuns } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
@@ -324,11 +326,21 @@ function goalRunAttentionReason(status: string | null | undefined) {
   return null;
 }
 
-const GOAL_HISTORY_KINDS = ["activity", "feedback", "change_proposal", "result_proposal"] as const;
+const GOAL_HISTORY_KINDS = ["activity", "feedback", "change_proposal", "result_proposal", "agent_run"] as const;
 type GoalHistoryKind = (typeof GOAL_HISTORY_KINDS)[number];
 type GoalHistoryCursor = { version: 1; createdAt: string; kind: GoalHistoryKind; id: string };
 
 function encodeGoalHistoryCursor(item: GoalHistoryItem) {
+  const createdAt = item.createdAt instanceof Date ? item.createdAt.toISOString() : new Date(item.createdAt).toISOString();
+  return Buffer.from(JSON.stringify({ version: 1, createdAt, kind: item.kind, id: item.id } satisfies GoalHistoryCursor))
+    .toString("base64url");
+}
+
+function encodeGoalActivityTimelineCursor(item: {
+  createdAt: Date | string;
+  kind: GoalHistoryKind;
+  id: string;
+}) {
   const createdAt = item.createdAt instanceof Date ? item.createdAt.toISOString() : new Date(item.createdAt).toISOString();
   return Buffer.from(JSON.stringify({ version: 1, createdAt, kind: item.kind, id: item.id } satisfies GoalHistoryCursor))
     .toString("base64url");
@@ -543,6 +555,7 @@ export function publicGoalActivity(
     }),
     occurredAt: activity.occurredAt,
     createdAt: activity.createdAt,
+    runId: activity.runRef,
   };
 }
 
@@ -1470,27 +1483,13 @@ export function goalService(db: Db) {
           resultJson: heartbeatRuns.resultJson,
           resultSummaryJson: heartbeatRuns.resultSummaryJson,
           error: heartbeatRuns.error,
-        }).from(heartbeatRuns).where(and(
-          eq(heartbeatRuns.orgId, goal.orgId),
-          eq(heartbeatRuns.agentId, goal.ownerAgentId),
-          sql`${heartbeatRuns.contextSnapshot} ->> 'goalId' = ${goal.id}`,
-        ))
+          }).from(heartbeatRuns).where(and(
+            eq(heartbeatRuns.orgId, goal.orgId),
+            eq(heartbeatRuns.agentId, goal.ownerAgentId),
+            eq(heartbeatRuns.goalId, goal.id),
+          ))
         : Promise.resolve([]),
     ]);
-    const runIds = [...new Set(issueFacts.flatMap((issue) => [issue.checkoutRunId, issue.executionRunId]).filter((id): id is string => Boolean(id)))];
-    const runFacts = runIds.length > 0
-      ? await db.select({
-        id: heartbeatRuns.id,
-        status: heartbeatRuns.status,
-        updatedAt: heartbeatRuns.updatedAt,
-        resultJson: heartbeatRuns.resultJson,
-        resultSummaryJson: heartbeatRuns.resultSummaryJson,
-        error: heartbeatRuns.error,
-      }).from(heartbeatRuns).where(and(
-        eq(heartbeatRuns.orgId, goal.orgId),
-        inArray(heartbeatRuns.id, runIds),
-      ))
-      : [];
     const relatedFacts: ExternalGoalWorkFact[] = [
       ...issueFacts.map((issue) => ({
         id: `work-status:issue:${issue.id}`,
@@ -1512,19 +1511,8 @@ export function goalService(db: Db) {
         runStatus: null,
         evidenceRefs: [],
       })),
-      ...runFacts.map((run) => ({
-        id: `work-status:run:${run.id}`,
-        kind: "work_status" as const,
-        summary: publicRunSummary(run),
-        occurredAt: run.updatedAt,
-        sourceId: run.id,
-        sourceRunId: run.id,
-        runStatus: run.status,
-        evidenceRefs: [],
-      })),
     ];
     const directFacts: ExternalGoalWorkFact[] = directRunFacts
-      .filter((run) => !runFacts.some((linkedRun) => linkedRun.id === run.id))
       .map((run) => ({
         id: `work-status:run:${run.id}`,
         kind: "work_status" as const,
@@ -1594,6 +1582,7 @@ export function goalService(db: Db) {
       orgId: heartbeatRuns.orgId,
       agentId: heartbeatRuns.agentId,
       status: heartbeatRuns.status,
+      goalId: heartbeatRuns.goalId,
       contextSnapshot: heartbeatRuns.contextSnapshot,
     }).from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
     if (!run || run.orgId !== goal.orgId) {
@@ -1602,16 +1591,7 @@ export function goalService(db: Db) {
     if (actorAgentId && run.agentId !== actorAgentId) {
       throw unprocessable("Goal Activity run must belong to the acting Agent");
     }
-    const context = run.contextSnapshot ?? {};
-    if (context.goalId === goal.id) return run;
-    const issueId = typeof context.issueId === "string" ? context.issueId : null;
-    const linkedIssue = issueId
-      ? await database.select({ goalId: issues.goalId }).from(issues).where(and(
-        eq(issues.id, issueId),
-        eq(issues.orgId, goal.orgId),
-      )).then((rows) => rows[0] ?? null)
-      : null;
-    if (linkedIssue?.goalId === goal.id) return run;
+    if (run.goalId === goal.id) return run;
     throw unprocessable("Goal Activity run must be linked to this Goal");
   }
 
@@ -1836,6 +1816,7 @@ export function goalService(db: Db) {
           actorId: activity.submittedByAgentId,
           actorName: actorName(actorType, activity.submittedByAgentId),
           attachments: [],
+          runId: activity.runRef,
         };
       }),
       ...feedbackRows.map((entry) => ({
@@ -1902,6 +1883,58 @@ export function goalService(db: Db) {
       nextCursor: items.length > limit && pageItems.length > 0
         ? encodeGoalHistoryCursor(pageItems[pageItems.length - 1]!)
         : null,
+    };
+  }
+
+  async function activityTimelineFor(
+    id: string,
+    options: { cursor?: string | null; limit?: number } = {},
+  ): Promise<GoalActivityTimelinePage> {
+    const goal = await requireGoal(db, id);
+    const limit = options.limit ?? GOAL_HISTORY_DEFAULT_LIMIT;
+    if (!Number.isInteger(limit) || limit < 1 || limit > GOAL_HISTORY_MAX_LIMIT) {
+      throw badRequest(`Goal activity timeline limit must be between 1 and ${GOAL_HISTORY_MAX_LIMIT}`);
+    }
+    const cursor = decodeGoalHistoryCursor(options.cursor);
+    const [historyPage, runRows, liveRunRows] = await Promise.all([
+      historyFor(id, { cursor: options.cursor, limit }),
+      db.select().from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.orgId, goal.orgId),
+        eq(heartbeatRuns.goalId, id),
+        historyCursorCondition(heartbeatRuns.createdAt, heartbeatRuns.id, "agent_run", cursor),
+      )).orderBy(desc(heartbeatRuns.createdAt), asc(heartbeatRuns.id)).limit(limit + 1),
+      db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.orgId, goal.orgId),
+        eq(heartbeatRuns.goalId, id),
+        inArray(heartbeatRuns.status, ["queued", "running"]),
+      )).limit(1),
+    ]);
+    const runs = toAgentRuns(runRows as unknown as HeartbeatRun[]);
+    const items: GoalActivityTimelinePage["items"] = [
+      ...historyPage.items.map((item) => ({ source: "goal-history" as const, item })),
+      ...runs.map((item) => ({ source: "agent-run" as const, item })),
+    ].sort((left, right) => {
+      const timeDifference = new Date(right.item.createdAt).getTime() - new Date(left.item.createdAt).getTime();
+      if (timeDifference !== 0) return timeDifference;
+      const leftKind = left.source === "agent-run" ? "agent_run" : left.item.kind;
+      const rightKind = right.source === "agent-run" ? "agent_run" : right.item.kind;
+      const kindDifference = leftKind.localeCompare(rightKind);
+      return kindDifference !== 0 ? kindDifference : left.item.id.localeCompare(right.item.id);
+    });
+    const pageItems = items.slice(0, limit);
+    const hasMore = historyPage.nextCursor !== null || items.length > limit;
+    const last = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && last
+      ? encodeGoalActivityTimelineCursor({
+          createdAt: last.item.createdAt,
+          kind: last.source === "agent-run" ? "agent_run" : last.item.kind,
+          id: last.item.id,
+        })
+      : null;
+    return {
+      items: pageItems,
+      nextCursor,
+      hasLiveRuns: liveRunRows.length > 0,
     };
   }
 
@@ -2246,6 +2279,7 @@ export function goalService(db: Db) {
     },
 
     workspace: workspaceFor,
+    timeline: activityTimelineFor,
 
     workspaceCards: async (orgId: string) => {
       const organizationGoals = await db.select().from(goals).where(eq(goals.orgId, orgId))

@@ -9,6 +9,7 @@ import { Link, MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommentThread,
+  CommentThreadActivityRow,
   commentIdFromIssueCommentHash,
   extractIssueRouteRefFromPathname,
   resolveCurrentIssueCommentLink,
@@ -1848,6 +1849,23 @@ describe("CommentThread", () => {
     expect(html).toContain('aria-label="Show details"');
     expect(html).toContain('data-size="sm"');
     expect(html).not.toContain("No run output captured.");
+  });
+
+  it("keeps a full activity description available as the compact row title", () => {
+    const description = "A very long activity description that is truncated in the timeline row";
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CommentThreadActivityRow
+          actorName="You"
+          description={description}
+          title={description}
+          createdAt={new Date("2026-05-07T00:02:00.000Z")}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(html).toContain(`title="${description}"`);
+    expect(html).toContain("min-w-0 truncate");
   });
 
   it("shows recent activity timestamps as relative labels while preserving exact titles", () => {

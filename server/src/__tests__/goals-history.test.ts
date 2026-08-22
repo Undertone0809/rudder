@@ -12,6 +12,8 @@ import {
   goalFeedbackEntries,
   goalResultProposals,
   goals,
+  heartbeatRuns,
+  issues,
   organizations,
   type LocalPostgresInstance,
 } from "@rudderhq/db";
@@ -28,6 +30,7 @@ const ORG_ID = "10000000-0000-4000-8000-000000000001";
 const OTHER_ORG_ID = "10000000-0000-4000-8000-000000000002";
 const GOAL_ID = "10000000-0000-4000-8000-000000000003";
 const AGENT_ID = "10000000-0000-4000-8000-000000000004";
+const OTHER_AGENT_ID = "10000000-0000-4000-8000-00000000000a";
 const FIRST_APPROVAL_ID = "10000000-0000-4000-8000-000000000005";
 const SECOND_APPROVAL_ID = "10000000-0000-4000-8000-000000000006";
 const LOCAL_ASSET_ID = "10000000-0000-4000-8000-000000000007";
@@ -48,6 +51,14 @@ const HISTORY_IDS = {
   changeOlder: "40000000-0000-4000-8000-000000000002",
   resultTie: "50000000-0000-4000-8000-000000000001",
   resultOlder: "50000000-0000-4000-8000-000000000002",
+} as const;
+
+const TIMELINE_IDS = {
+  queuedRun: "60000000-0000-4000-8000-000000000001",
+  completedRun: "60000000-0000-4000-8000-000000000002",
+  linkedIssue: "70000000-0000-4000-8000-000000000001",
+  linkedIssueRun: "60000000-0000-4000-8000-000000000003",
+  crossOrgRun: "60000000-0000-4000-8000-000000000004",
 } as const;
 
 async function getAvailablePort(): Promise<number> {
@@ -105,18 +116,32 @@ async function seedHistory(db: ReturnType<typeof createDb>) {
       requireBoardApprovalForNewAgents: false,
     },
   ]);
-  await db.insert(agents).values({
-    id: AGENT_ID,
-    orgId: ORG_ID,
-    name: "History agent",
-    role: "engineer",
-    status: "idle",
-    capabilities: "Produces inspectable Goal history evidence.",
-    agentRuntimeType: "process",
-    agentRuntimeConfig: {},
-    runtimeConfig: {},
-    permissions: {},
-  });
+  await db.insert(agents).values([
+    {
+      id: AGENT_ID,
+      orgId: ORG_ID,
+      name: "History agent",
+      role: "engineer",
+      status: "idle",
+      capabilities: "Produces inspectable Goal history evidence.",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    },
+    {
+      id: OTHER_AGENT_ID,
+      orgId: OTHER_ORG_ID,
+      name: "Other organization agent",
+      role: "engineer",
+      status: "idle",
+      capabilities: "Produces other organization evidence.",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    },
+  ]);
   await db.insert(authUsers).values({
     id: USER_ID,
     name: "History user",
@@ -131,6 +156,14 @@ async function seedHistory(db: ReturnType<typeof createDb>) {
     outcomeStatement: "Goal history is complete, stable, and organization-scoped",
     lifecycle: "active",
     ownerAgentId: AGENT_ID,
+  });
+  await db.insert(issues).values({
+    id: TIMELINE_IDS.linkedIssue,
+    orgId: ORG_ID,
+    goalId: GOAL_ID,
+    title: "Issue linked to the Goal",
+    status: "in_progress",
+    priority: "medium",
   });
   await db.insert(approvals).values([
     {
@@ -184,6 +217,7 @@ async function seedHistory(db: ReturnType<typeof createDb>) {
       activityKind: "progress",
       summary: "Agent activity at the tied timestamp",
       evidenceRefs: ["artifact://activity-tie"],
+      runRef: TIMELINE_IDS.completedRun,
       idempotencyKey: "history-activity-tie-first",
       occurredAt: TIE_TIME,
     },
@@ -338,6 +372,56 @@ async function seedHistory(db: ReturnType<typeof createDb>) {
       proposedByAgentId: AGENT_ID,
       createdAt: OLDER_TIME,
       updatedAt: OLDER_TIME,
+    },
+  ]);
+  await db.insert(heartbeatRuns).values([
+    {
+      id: TIMELINE_IDS.queuedRun,
+      orgId: ORG_ID,
+      agentId: AGENT_ID,
+      goalId: GOAL_ID,
+      invocationSource: "on_demand",
+      triggerDetail: "system",
+      status: "queued",
+      contextSnapshot: { goalId: GOAL_ID },
+      createdAt: new Date("2026-08-07T13:00:00.000Z"),
+      updatedAt: new Date("2026-08-07T13:00:00.000Z"),
+    },
+    {
+      id: TIMELINE_IDS.completedRun,
+      orgId: ORG_ID,
+      agentId: AGENT_ID,
+      goalId: GOAL_ID,
+      invocationSource: "on_demand",
+      triggerDetail: "system",
+      status: "succeeded",
+      contextSnapshot: { goalId: GOAL_ID, issueId: TIMELINE_IDS.linkedIssue },
+      createdAt: new Date("2026-08-07T12:30:00.000Z"),
+      updatedAt: new Date("2026-08-07T12:30:00.000Z"),
+    },
+    {
+      id: TIMELINE_IDS.linkedIssueRun,
+      orgId: ORG_ID,
+      agentId: AGENT_ID,
+      goalId: null,
+      invocationSource: "on_demand",
+      triggerDetail: "system",
+      status: "succeeded",
+      contextSnapshot: { issueId: TIMELINE_IDS.linkedIssue },
+      createdAt: new Date("2026-08-07T13:30:00.000Z"),
+      updatedAt: new Date("2026-08-07T13:30:00.000Z"),
+    },
+    {
+      id: TIMELINE_IDS.crossOrgRun,
+      orgId: OTHER_ORG_ID,
+      agentId: OTHER_AGENT_ID,
+      goalId: GOAL_ID,
+      invocationSource: "on_demand",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: { goalId: GOAL_ID },
+      createdAt: new Date("2026-08-07T14:00:00.000Z"),
+      updatedAt: new Date("2026-08-07T14:00:00.000Z"),
     },
   ]);
 }
@@ -598,5 +682,21 @@ describe("Goal history service", () => {
     expect(serializedFeedback).not.toContain(`asset://${CROSS_ORG_ASSET_ID}`);
     expect(serializedFeedback).not.toContain(`asset://${UNKNOWN_ASSET_ID}`);
     expect(serializedFeedback).not.toContain('"uri"');
+  });
+
+  it("mixes explicitly bound Agent Runs without inferring ownership from linked Issues", async () => {
+    const page = await goalService(db).timeline(GOAL_ID, { limit: 100 });
+    const runItems = page.items.filter((item) => item.source === "agent-run");
+    expect(runItems.map((item) => item.item.id)).toEqual([
+      TIMELINE_IDS.queuedRun,
+      TIMELINE_IDS.completedRun,
+    ]);
+    expect(runItems.every((item) => item.item.goalId === GOAL_ID)).toBe(true);
+    expect(page.hasLiveRuns).toBe(true);
+
+    const activity = page.items.find((item) => item.source === "goal-history" && item.item.id === HISTORY_IDS.activityFirst);
+    expect(activity?.source === "goal-history" ? activity.item.runId : null).toBe(TIMELINE_IDS.completedRun);
+    expect(JSON.stringify(page.items)).not.toContain(TIMELINE_IDS.linkedIssueRun);
+    expect(JSON.stringify(page.items)).not.toContain(TIMELINE_IDS.crossOrgRun);
   });
 });

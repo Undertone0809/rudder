@@ -379,6 +379,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
           .values({
             orgId: deferredAgent.orgId,
             agentId: deferredAgent.id,
+            goalId: readNonEmptyString(promotedContextSnapshot.goalId) ?? null,
             invocationSource: promotedSource,
             triggerDetail: promotedTriggerDetail,
             status: "queued",

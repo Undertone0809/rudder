@@ -274,7 +274,7 @@ export type {
   CostSummary,
   CostTrendGranularity, CostTrendPoint, CostWindowSpendRow, CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, DashboardSummary, DocumentFormat, EnvBinding, ExecutionWorkspace, ExecutionWorkspaceMode, ExecutionWorkspaceProviderType, ExecutionWorkspaceStatus, ExecutionWorkspaceStrategy, ExecutionWorkspaceStrategyType, FeishuIntegrationSettings, FinanceByBiller,
   FinanceByKind, FinanceEvent, FinanceSummary, Goal,
-  GoalActivity, GoalAgentContext, GoalAgentListLifecycle, GoalAgentListResponse, GoalChangeProposal, GoalCheckpoint, GoalCheckpointContinuation, GoalCheckpointInput, GoalContinuation, GoalContractPatch, GoalContractSnapshot, GoalCriterion, GoalDependencies,
+  GoalActivity, GoalActivityTimelineItem, GoalActivityTimelinePage, GoalAgentContext, GoalAgentListLifecycle, GoalAgentListResponse, GoalChangeProposal, GoalCheckpoint, GoalCheckpointContinuation, GoalCheckpointInput, GoalContinuation, GoalContractPatch, GoalContractSnapshot, GoalCriterion, GoalDependencies,
   GoalDependencyPreview, GoalEvaluationCandidate, GoalEvidenceItem, GoalFeedbackAttachment, GoalFeedbackEntry, GoalHistoryAttachment, GoalHistoryItem, GoalHistoryPage, GoalOwnerAssignment, GoalPlan, GoalPlanPayload, GoalResultProposal, GoalResultReducerPreflight, GoalStartPacket, GoalStartPreview, GoalStartRequest, GoalWorkspaceCard, GoalWorkspaceSummary, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, GoogleCalendarSyncResponse, HeartbeatRecoveryMode, HeartbeatRecoveryTrigger,
   HeartbeatRun, HeartbeatRunAttempt, HeartbeatRunAttemptResumeSource, HeartbeatRunAttemptStatus,
   HeartbeatRunContextSnapshot,

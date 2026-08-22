@@ -3,6 +3,7 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -83,6 +84,8 @@ describe("listRunSummaries", () => {
   const otherOrgId = randomUUID();
   const agentId = randomUUID();
   const otherAgentId = randomUUID();
+  const goalId = randomUUID();
+  const otherGoalId = randomUUID();
   const sharedCreatedAt = new Date("2026-07-14T01:00:00.000Z");
   const largeText = "payload".repeat(100_000);
 
@@ -140,6 +143,18 @@ describe("listRunSummaries", () => {
         permissions: {},
       },
     ]);
+    await db.insert(goals).values([
+      {
+        id: goalId,
+        orgId,
+        title: "Filtered Goal",
+      },
+      {
+        id: otherGoalId,
+        orgId,
+        title: "Other Goal",
+      },
+    ]);
 
     const orderedIds = [
       "ffffffff-ffff-4fff-8fff-ffffffffffff",
@@ -150,6 +165,7 @@ describe("listRunSummaries", () => {
       id,
       orgId,
       agentId,
+      goalId: index === 0 ? goalId : index === 1 ? otherGoalId : null,
       invocationSource: "on_demand",
       triggerDetail: "manual",
       status: "failed",
@@ -321,6 +337,23 @@ describe("listRunSummaries", () => {
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+  it("filters summary and full run queries by explicit Goal ownership", async () => {
+    const summary = await listRunSummaries(db, {
+      orgId,
+      goalId,
+      limit: 10,
+    });
+    const observed = await listObservedRuns(db, {
+      orgId,
+      goalId,
+      limit: 10,
+    });
+
+    expect(summary.items.map((item) => item.id)).toEqual(["ffffffff-ffff-4fff-8fff-ffffffffffff"]);
+    expect(observed.map((item) => item.run.id)).toEqual(["ffffffff-ffff-4fff-8fff-ffffffffffff"]);
+    expect(observed[0]?.run.goalId).toBe(goalId);
   });
 
   it("does not hydrate issue metadata across organization boundaries", async () => {

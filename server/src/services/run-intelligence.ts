@@ -190,6 +190,7 @@ export interface ListObservedRunsInput {
   status?: string | null;
   runtime?: string | null;
   issueId?: string | null;
+  goalId?: string | null;
   usedSkill?: string | null;
   loadedSkill?: string | null;
   createdBefore?: Date | null;
@@ -396,6 +397,7 @@ async function serializeRunRow(
       errorCode: row.errorCode,
       externalRunId: row.externalRunId,
       chatConversationId: row.chatConversationId,
+      goalId: row.goalId,
       processPid: row.processPid,
       processStartedAt: row.processStartedAt,
       retryOfRunId: row.retryOfRunId,
@@ -425,6 +427,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
     conditions.push(sql`replace(${heartbeatRuns.id}::text, '-', '') like ${`${runIdPrefix}%`}`);
   }
   if (input.issueId) conditions.push(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${input.issueId}`);
+  if (input.goalId) conditions.push(eq(heartbeatRuns.goalId, input.goalId));
   if (input.usedSkill) conditions.push(buildSkillExistsCondition("used", input.usedSkill));
   if (input.loadedSkill) conditions.push(buildSkillExistsCondition("loaded", input.loadedSkill));
 
@@ -457,6 +460,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
+      goalId: heartbeatRuns.goalId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
@@ -491,6 +495,7 @@ async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise
     conditions.push(sql`replace(${heartbeatRuns.id}::text, '-', '') like ${`${runIdPrefix}%`}`);
   }
   if (input.issueId) conditions.push(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${input.issueId}`);
+  if (input.goalId) conditions.push(eq(heartbeatRuns.goalId, input.goalId));
   if (input.usedSkill) conditions.push(buildSkillExistsCondition("used", input.usedSkill));
   if (input.loadedSkill) conditions.push(buildSkillExistsCondition("loaded", input.loadedSkill));
   if (input.cursor) {

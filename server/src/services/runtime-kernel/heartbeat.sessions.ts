@@ -568,6 +568,7 @@ export async function hydrateWakeContextSnapshot(
   const commentContext = parseObject(contextSnapshot.comment);
   const needsIssueContext = !!issueId;
   const needsProjectId = !!issueId && !readNonEmptyString(contextSnapshot.projectId);
+  const needsGoalId = !!issueId && !readNonEmptyString(contextSnapshot.goalId);
   const needsCommentContext =
     !!commentId &&
     (
@@ -578,9 +579,9 @@ export async function hydrateWakeContextSnapshot(
       !readNonEmptyString(commentContext.createdAt)
     );
 
-  if (!needsIssueContext && !needsProjectId && !needsCommentContext) return;
+  if (!needsIssueContext && !needsProjectId && !needsGoalId && !needsCommentContext) return;
 
-  if (issueId && (needsIssueContext || needsProjectId)) {
+  if (issueId && (needsIssueContext || needsProjectId || needsGoalId)) {
     const issueRow = await db
       .select({
         id: issues.id,
@@ -588,6 +589,7 @@ export async function hydrateWakeContextSnapshot(
         description: issues.description,
         status: issues.status,
         priority: issues.priority,
+        goalId: issues.goalId,
         projectId: issues.projectId,
         assigneeAgentId: issues.assigneeAgentId,
         assigneeUserId: issues.assigneeUserId,
@@ -667,6 +669,9 @@ export async function hydrateWakeContextSnapshot(
       };
       if (!readNonEmptyString(contextSnapshot.projectId) && issueRow.projectId) {
         contextSnapshot.projectId = issueRow.projectId;
+      }
+      if (!readNonEmptyString(contextSnapshot.goalId) && issueRow.goalId) {
+        contextSnapshot.goalId = issueRow.goalId;
       }
     }
   }
@@ -768,6 +773,9 @@ export async function hydrateRecoveryBaseContextSnapshot(
   getRunById: (runId: string) => Promise<typeof heartbeatRuns.$inferSelect | null>,
 ) {
   const mergedContext = { ...parseObject(run.contextSnapshot) };
+  if (readNonEmptyString(run.goalId)) {
+    mergedContext.goalId = run.goalId;
+  }
   let ancestorRunId = readNonEmptyString(run.retryOfRunId);
   let depth = 0;
 

@@ -14,6 +14,7 @@ import type {
   GoalWorkspaceFacet,
 } from "../constants.js";
 import type { ActivateGoalInput, EvaluateGoal } from "../validators/goal.js";
+import type { AgentRun } from "./heartbeat.js";
 import type { IssueAssigneeAgentRuntimeOverrides } from "./issue.js";
 
 export interface GoalCriterion {
@@ -195,6 +196,7 @@ export interface PublicGoalActivity {
   evidence: GoalEvidenceItem[];
   occurredAt: Date | string;
   createdAt: Date | string;
+  runId?: string | null;
 }
 
 export interface PublicGoalPlan {
@@ -312,6 +314,7 @@ export interface GoalHistoryItem {
   feedbackKind?: GoalFeedbackKind;
   approvalId?: string;
   status?: string;
+  runId?: string | null;
 }
 
 export interface PublicGoalChangeProposal {
@@ -341,6 +344,16 @@ export interface PublicGoalResultProposal {
 export interface GoalHistoryPage {
   items: GoalHistoryItem[];
   nextCursor: string | null;
+}
+
+export type GoalActivityTimelineItem =
+  | { source: "goal-history"; item: GoalHistoryItem }
+  | { source: "agent-run"; item: AgentRun };
+
+export interface GoalActivityTimelinePage {
+  items: GoalActivityTimelineItem[];
+  nextCursor: string | null;
+  hasLiveRuns: boolean;
 }
 
 export interface GoalContractSnapshot {
