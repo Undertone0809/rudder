@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { chmod, readFile, writeFile } from "node:fs/promises";
+import { buildMcpServerEnv, runAgentV1McpJsonRpcMessage } from "../../cli/src/agent-v1-mcp-server.ts";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agents as agentsTable,
@@ -9,7 +10,6 @@ import {
   operatorProfiles,
   organizationMemberships,
 } from "../../packages/db/src/index.ts";
-import { runAgentV1McpJsonRpcMessage, buildMcpServerEnv } from "../../cli/src/agent-v1-mcp-server.ts";
 import { E2E_BASE_URL, E2E_DATABASE_URL, E2E_HOME } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);

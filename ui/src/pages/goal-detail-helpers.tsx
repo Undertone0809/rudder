@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
+import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import {
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
@@ -16,7 +17,6 @@ import {
   Paperclip,
 } from "lucide-react";
 import type { ReactNode, Ref } from "react";
-import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { CommentThreadActivityRow, type CommentThreadActivityItem } from "../components/CommentThread";
 import type { LinkedRunItem } from "../components/CommentThread.runs";
 import { MarkdownBody } from "../components/MarkdownBody";
@@ -881,37 +881,26 @@ function buildGoalTimelineActivityItems({
 }
 
 export {
-  GOAL_DETAIL_TABS,
-  buildGoalTimelineActivityItems,
-  EvidenceList,
-  GoalFeedbackActivity,
-  GoalHistoryAttachmentList,
-  ResultProposalSummary,
-  Section,
-  WorkLinks,
   asRecord,
-  attentionKindLabel,
-  facetLabel,
-  goalDetailTab,
-  goalStatusIconStatus,
+  attentionKindLabel, buildGoalTimelineActivityItems,
+  EvidenceList, facetLabel, GOAL_DETAIL_TABS, goalDetailTab, GoalFeedbackActivity,
+  GoalHistoryAttachmentList, goalStatusIconStatus,
   goalStatusLabel,
   mergeGoalTimelineItems,
   normalizeChangeProposals,
-  normalizeResultProposals,
-  resultProposalHistoryLabel,
-  readString,
-  storedGoalChatTarget,
+  normalizeResultProposals, readString, resultProposalHistoryLabel, ResultProposalSummary,
+  Section, storedGoalChatTarget, WorkLinks
 };
 
-export type {
-  ChangeDecisionInput,
-  ChangeProposalView,
-  DecisionFocusRequest,
-  EvidenceContext,
-  EvidenceItem,
-  GoalDetailTab,
-  GoalTimelineItem,
-  PendingFeedback,
-  ResultDecisionInput,
-  ResultProposalView,
-};
+  export type {
+    ChangeDecisionInput,
+    ChangeProposalView,
+    DecisionFocusRequest,
+    EvidenceContext,
+    EvidenceItem,
+    GoalDetailTab,
+    GoalTimelineItem,
+    PendingFeedback,
+    ResultDecisionInput,
+    ResultProposalView
+  };
