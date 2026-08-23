@@ -17,6 +17,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import { stopNativeWorkspaceManifestWatchersForTests } from "../services/workspace-manifest-native.js";
 
 const ONE_BY_ONE_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
@@ -107,6 +108,7 @@ describe("organization workspace browser", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await stopNativeWorkspaceManifestWatchersForTests();
     await db.delete(agents);
     await db.delete(organizations);
     for (const dir of cleanupDirs) {
@@ -120,6 +122,7 @@ describe("organization workspace browser", () => {
   });
 
   afterAll(async () => {
+    await stopNativeWorkspaceManifestWatchersForTests();
     await instance?.stop();
     if (dataDir) {
       await fs.rm(dataDir, { recursive: true, force: true });
