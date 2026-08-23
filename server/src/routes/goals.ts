@@ -89,6 +89,20 @@ export function goalRoutes(db: Db) {
     return goal;
   }
 
+  router.param("id", (req, _res, next, rawId) => {
+    void (async () => {
+      if (isUuidLike(rawId) || req.actor.type !== "agent" || !req.actor.orgId) {
+        req.params.id = rawId;
+        next();
+        return;
+      }
+      const resolved = await svc.resolveByReference(req.actor.orgId, rawId);
+      if (resolved.ambiguous) throw conflict("Goal short reference is ambiguous. Use a longer typed ref.");
+      req.params.id = resolved.goal?.id ?? rawId;
+      next();
+    })().catch(next);
+  });
+
   function requireRuntimeAgent(req: Parameters<typeof assertCompanyAccess>[0]) {
     if (req.actor.type !== "agent" || !req.actor.agentId) {
       throw forbidden("Agent authentication required for Goal runtime context");
