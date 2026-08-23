@@ -56,6 +56,7 @@ function createRun(overrides: Partial<HeartbeatRun> = {}): HeartbeatRun {
     errorCode: "adapter_failed",
     externalRunId: null,
     chatConversationId: null,
+    goalId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,

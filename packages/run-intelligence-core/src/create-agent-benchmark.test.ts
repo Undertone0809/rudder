@@ -16,6 +16,7 @@ function makeRunDetail(status: ObservedRunDetail["run"]["status"] = "succeeded")
       id: "run-1",
       orgId: "org-1",
       agentId: "agent-bench",
+      goalId: null,
       invocationSource: "assignment",
       triggerDetail: "system",
       status,

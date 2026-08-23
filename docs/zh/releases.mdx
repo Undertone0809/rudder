@@ -18,6 +18,35 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月23日" description="v0.7.13" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.13
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.13)
+
+这个版本让 Goal 工作更容易检查，让 Chat 恢复更容易继续，并让 Agent 可以直接通过 MCP 创建 Issue。
+
+### 新功能
+
+- 将 Goal 详情重做为类似 Issue 详情的“概览”和“活动”视图。活动时间线合并 Goal 历史、反馈和提案事件，并且只展示明确绑定到当前 Goal 的 Agent Run，还可以按需加载更早的活动。
+- 增加类型化的 `rudder_issue_create` MCP 工具，用于创建带有 Project、Goal、父 Issue、标签等上下文的 Issue 或子任务。Agent 发起的 Issue 创建默认使用该工具。
+
+### 改进
+
+- 增加即时的 Chat 发送反馈，细化超时和网络错误，并为消息、Side Chat、反馈和排队中的后续操作提供可执行的重试状态。
+- 外部 Markdown 链接可以显示网站图标，Library Markdown 表格拥有更宽的编辑画布，Chat Transcript 保持更适合阅读的宽度。
+- Agent 详情默认打开最新一次运行；收起的 Messenger 侧栏也会持续显示重新打开入口。
+- 改进代码编辑器的选中对比度和 Issue 卡片的时间显示。
+
+### 问题修复
+
+- 修复网络恢复无法安全继续时的处理，现在会显示可重试的 Chat 错误。
+- 修复被动后续运行丢失原始 Issue 上下文、负责人、评审者和时间信息的问题。
+- 修复网站链接图标在链接变化后保留旧加载或错误状态的问题；图标失败时会可靠回退。
+- 修复 Issue 卡片对昨天的记录不显示具体时间的问题。
+
+</Update>
+
 <Update label="2026年8月20日" description="v0.7.12" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.12

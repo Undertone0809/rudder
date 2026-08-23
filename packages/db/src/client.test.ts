@@ -948,6 +948,7 @@ describe("applyPendingMigrations", () => {
           "0155_project_resource_primary.sql",
           "0156_goal_checkpoints.sql",
           "0157_agent_run_network_wait.sql",
+          "0158_agent_run_goal_binding.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1126,6 +1127,7 @@ describe("applyPendingMigrations", () => {
           "0155_project_resource_primary.sql",
           "0156_goal_checkpoints.sql",
           "0157_agent_run_network_wait.sql",
+          "0158_agent_run_goal_binding.sql",
         ],
         reason: "pending-migrations",
       });

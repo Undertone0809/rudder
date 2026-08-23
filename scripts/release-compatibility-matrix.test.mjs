@@ -35,15 +35,16 @@ function manifest(tags, sqlByTag, label) {
 }
 
 describe("release migration compatibility matrix", () => {
-  it("accepts the checked-in 0.7.12 candidate against immutable release fixtures", () => {
+  it("accepts the checked-in 0.7.13 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
-      candidateVersion: "0.7.12",
+      candidateVersion: "0.7.13",
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(158);
-    expect(result.candidateSqlFiles).toBe(160);
+    expect(result.candidateMigrations).toBe(159);
+    expect(result.candidateSqlFiles).toBe(161);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.12",
       "0.7.11",
       "0.7.10",
       "0.7.9",

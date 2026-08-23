@@ -86,6 +86,7 @@ export function loadFilesystemRunDetail(input: {
     errorCode: null,
     externalRunId: null,
     chatConversationId: null,
+    goalId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,
