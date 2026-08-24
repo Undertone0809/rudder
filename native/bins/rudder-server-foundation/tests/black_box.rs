@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use serde_json::Value;
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
