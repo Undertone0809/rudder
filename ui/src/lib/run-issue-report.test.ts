@@ -43,6 +43,7 @@ function failedRun(overrides: Partial<HeartbeatRun> = {}): HeartbeatRun {
     errorCode: "chat_runtime_exception",
     externalRunId: null,
     chatConversationId: "conversation-private",
+    goalId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,

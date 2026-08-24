@@ -13,9 +13,9 @@ import {
   buildProjectMentionHref,
 } from "@rudderhq/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import { __clearWebsiteIconFailureCacheForTests } from "../lib/website-icon-cache";
 import { __clearWebsiteMetadataCacheForTests } from "../lib/website-metadata-cache";
-import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
 import type { MentionOption } from "./MarkdownEditor";
 import {
   applyMention,

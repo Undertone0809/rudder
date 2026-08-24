@@ -378,11 +378,11 @@
       "expiry": "2027-03-31"
     },
     {
-      "path": "ui/src/pages/GoalDetail.tsx",
+      "path": "ui/src/components/CommentThread.tsx",
       "lines": 1501,
-      "owner": "goals-ui",
-      "rationale": "Goal detail currently coordinates lifecycle actions, collaboration, evidence, and project context while the Goal workspace boundaries stabilize.",
-      "target": "Extract goal lifecycle controllers and focused views and reduce the page below 1500 lines.",
+      "owner": "collaboration-ui",
+      "rationale": "CommentThread still coordinates comments, linked runs, activity projection, and submission behavior while the shared collaboration surface stabilizes.",
+      "target": "Extract comment submission and timeline responsibilities and reduce the component below 1500 lines.",
       "expiry": "2027-03-31"
     },
     {

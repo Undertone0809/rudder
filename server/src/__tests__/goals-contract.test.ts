@@ -725,6 +725,37 @@ describe("Goal contract", () => {
     });
   });
 
+  it("canonicalizes typed Goal references before reading runtime routes", async () => {
+    const { db } = createGoalDb(makeGoal({
+      lifecycle: "active",
+      status: "active",
+      ownerAgentId: OWNER_ID,
+    }));
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = {
+        type: "agent",
+        source: "agent_key",
+        orgId: ORG_ID,
+        agentId: OWNER_ID,
+      };
+      next();
+    });
+    app.use("/api", goalRoutes(db));
+    app.use(errorHandler);
+
+    const [detail, context] = await Promise.all([
+      request(app).get("/api/goals/gol_33333333"),
+      request(app).get("/api/goals/gol_33333333/agent-context"),
+    ]);
+
+    expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+    expect(detail.body.id).toBe(GOAL_ID);
+    expect(context.status, JSON.stringify(context.body)).toBe(200);
+    expect(context.body.goal).toMatchObject({ id: GOAL_ID, ownerAgentId: OWNER_ID });
+  });
+
   it("rejects cross-organization discovery and non-owner Goal context", async () => {
     const { db } = createGoalDb(makeGoal({
       lifecycle: "active",

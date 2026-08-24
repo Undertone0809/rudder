@@ -21,14 +21,14 @@ import {
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import {
-  __clearWebsiteMetadataCacheForTests,
-  getWebsiteMetadata,
-} from "../lib/website-metadata-cache";
-import {
   __clearWebsiteIconFailureCacheForTests,
   isWebsiteIconUrlKnownFailed,
   markWebsiteIconUrlFailed,
 } from "../lib/website-icon-cache";
+import {
+  __clearWebsiteMetadataCacheForTests,
+  getWebsiteMetadata,
+} from "../lib/website-metadata-cache";
 import { InspectableImage } from "./InspectableImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";

@@ -63,13 +63,13 @@ import {
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import {
-  canRequestWebsiteMetadata,
-  getWebsiteMetadata,
-} from "../lib/website-metadata-cache";
-import {
   isWebsiteIconUrlKnownFailed,
   markWebsiteIconUrlFailed,
 } from "../lib/website-icon-cache";
+import {
+  canRequestWebsiteMetadata,
+  getWebsiteMetadata,
+} from "../lib/website-metadata-cache";
 import { AgentIcon } from "./AgentIconPicker";
 import {
   getImageContextMenuTarget,
