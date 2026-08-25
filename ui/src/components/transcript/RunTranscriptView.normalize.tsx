@@ -261,6 +261,7 @@ function appendClaudeSkillContextToTool(
   block: Extract<TranscriptBlock, { type: "tool" }>,
   context: ClaudeSkillContext,
   ts: string,
+  sourceEntryId?: string,
 ) {
   const skillName = readSkillToolName(block.input) ?? context.slug ?? "skill";
   const contextSummary = [
@@ -278,6 +279,7 @@ function appendClaudeSkillContextToTool(
   block.status = "completed";
   block.isError = false;
   block.endTs = ts;
+  appendTranscriptSourceId(block, sourceEntryId);
 }
 
 export function shouldHideNiceModeStderr(text: string): boolean {
@@ -569,6 +571,7 @@ export function normalizeTranscript(
               text: "Runtime-loaded agent instruction",
               detail: entry.text,
               collapseByDefault: true,
+              sourceEntryIds: transcriptEntrySourceIds(entry),
             });
           }
           continue;
@@ -583,7 +586,7 @@ export function normalizeTranscript(
             return !contextSkill || !toolSkill || toolSkill === contextSkill;
           });
           if (matchingTool) {
-            appendClaudeSkillContextToTool(matchingTool, skillContext, entry.ts);
+            appendClaudeSkillContextToTool(matchingTool, skillContext, entry.ts, entry.sourceEntryId);
             continue;
           }
           blocks.push({
@@ -594,6 +597,7 @@ export function normalizeTranscript(
             text: `Loaded ${skillContext.slug ?? "skill"} context`,
             detail: skillContext.rawText,
             collapseByDefault: true,
+            sourceEntryIds: transcriptEntrySourceIds(entry),
           });
           continue;
         }

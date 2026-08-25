@@ -186,6 +186,9 @@ export interface TranscriptRunAnnotationContext {
   sourceRunId: string;
   sourceAgentId: string;
   onAnnotate: (input: TranscriptRunAnnotationInput) => void;
+  /** Coordinates the one transient editor shared by a transcript surface. */
+  activeBlockId?: string | null;
+  onAnnotationFocus?: (blockId: string) => void;
 }
 
 export interface TranscriptAnnotationSourceContext {
