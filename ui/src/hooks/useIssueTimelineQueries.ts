@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activityApi } from "../api/activity";
 import { agentRunsApi } from "../api/agent-runs";
 import { issuesApi } from "../api/issues";
+import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import { queryKeys } from "../lib/queryKeys";
 import {
   resolveIssueTimelineInitialSettlement,
@@ -25,22 +26,26 @@ export function useIssueTimelineQueries(issueId: string | undefined, issueFindOp
     queryKey: queryKeys.issues.comments(issueId!),
     queryFn: () => issuesApi.listComments(issueId!),
     enabled: !!issueId,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
   const activityQuery = useQuery({
     queryKey: queryKeys.issues.activity(issueId!),
     queryFn: () => activityApi.forIssue(issueId!),
     enabled: !!issueId,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
   const liveRunsQuery = useQuery({
     queryKey: queryKeys.issues.liveRuns(issueId!),
     queryFn: () => agentRunsApi.liveRunsForIssue(issueId!),
     enabled: !!issueId,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
     refetchInterval: 3000,
   });
   const activeRunQuery = useQuery({
     queryKey: queryKeys.issues.activeRun(issueId!),
     queryFn: () => agentRunsApi.activeRunForIssue(issueId!),
     enabled: !!issueId,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
     refetchInterval: 3000,
   });
   const hasLiveRuns = (liveRunsQuery.data ?? []).length > 0 || !!activeRunQuery.data;
@@ -48,6 +53,7 @@ export function useIssueTimelineQueries(issueId: string | undefined, issueFindOp
     queryKey: queryKeys.issues.runs(issueId!),
     queryFn: () => activityApi.runsForIssue(issueId!),
     enabled: !!issueId,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
     refetchInterval: linkedIssueRunsRefetchInterval(hasLiveRuns),
   });
   const hadLiveRunsRef = useRef(false);

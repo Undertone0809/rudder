@@ -13,6 +13,7 @@ function makeRun(overrides: Partial<HeartbeatRun> = {}): HeartbeatRun {
     id: "run-chat-1",
     orgId: "org-1",
     agentId: "agent-1",
+    goalId: null,
     invocationSource: "chat",
     triggerDetail: "chat_assistant_reply_stream",
     status: "succeeded",

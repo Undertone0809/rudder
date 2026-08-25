@@ -22,7 +22,7 @@ export const AGENT_ISSUE_CREATION_PROMPT_TEMPLATE = `You are agent {{agent.id}} 
 
 ## Required Behavior
 
-Interpret the user's instruction and create exactly one real Rudder Issue. Generate a clear, specific title and a complete description that preserves the user's intent and relevant context. Use the stable Rudder Issue creation tool when it is available; otherwise use the existing \`rudder issue create\` CLI compatibility path.
+Interpret the user's instruction and create exactly one real Rudder Issue. Generate a clear, specific title and a complete description that preserves the user's intent and relevant context. Use the stable Rudder \`rudder_issue_create\` MCP tool when it is available; otherwise use the existing \`rudder issue create\` CLI compatibility path.
 
 Carry the project, goal, and parent issue context into the created Issue when it is valid and relevant. The request record is already durable; do not create an Issue for the request itself, do not create duplicates, and do not modify unrelated Issues or files. Do not invent an assignee or notification target. After the single Issue is created, report its identifier and stop.`;
 

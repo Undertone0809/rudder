@@ -30,6 +30,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     stderrExcerpt: null,
     errorCode: null,
     externalRunId: null,
+    goalId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,

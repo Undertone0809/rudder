@@ -99,6 +99,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     processLossRetryCount: 0,
     contextSnapshot: null,
     chatConversationId: "abcdefgh-conversation",
+    goalId: null,
     createdAt: new Date("2026-07-21T10:00:00.000Z"),
     updatedAt: new Date("2026-07-21T10:00:00.000Z"),
     ...overrides,

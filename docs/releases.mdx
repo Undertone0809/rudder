@@ -18,6 +18,35 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="August 23, 2026" description="v0.7.13" tags={["New","Improved","Fixed"]}>
+
+## v0.7.13
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.13)
+
+This release makes Goal work easier to inspect, makes Chat recovery more actionable, and lets agents create Issues directly through MCP.
+
+### New
+
+- Redesigned Goal details around an Issue-style `Overview` and `Activity` layout. The Activity timeline combines Goal history, feedback, and proposal events with only Agent Runs explicitly linked to the current Goal, and can load older activity on demand.
+- Added the typed `rudder_issue_create` MCP tool for creating Issues and subtasks with project, Goal, parent, label, and related context. Agent-driven Issue creation uses it by default.
+
+### Improved
+
+- Added immediate Chat send feedback, clearer timeout and network errors, and actionable retry states for messages, Side Chat, feedback, and queued follow-ups.
+- External Markdown links can show website icons, Library Markdown tables use a wider editing canvas, and Chat transcripts preserve their reading width.
+- Agent details open the latest run by default, and collapsed Messenger sidebars keep their reopen control visible.
+- Improved code-editor selection contrast and Issue-card time display.
+
+### Fixed
+
+- Fixed network recovery so replies that cannot be safely resumed are surfaced as retryable Chat errors.
+- Fixed passive follow-up runs losing their original Issue context and owner, reviewer, and timing metadata.
+- Fixed website-link icons retaining stale loading or error state when links change; failed icons now fall back cleanly.
+- Fixed Issue cards omitting the concrete time for items from yesterday.
+
+</Update>
+
 <Update label="August 20, 2026" description="v0.7.12" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.12

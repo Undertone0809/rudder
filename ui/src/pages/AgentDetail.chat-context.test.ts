@@ -120,6 +120,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
     errorCode: null,
     externalRunId: null,
     chatConversationId: "chat-1",
+    goalId: null,
     processPid: null,
     processStartedAt: null,
     retryOfRunId: null,
