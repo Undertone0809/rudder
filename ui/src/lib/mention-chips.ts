@@ -291,7 +291,9 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
 }
 
 export function applyMentionChipDecoration(element: HTMLElement, mention: ParsedMentionChip) {
+  const mentionHref = element.dataset.mentionHref;
   clearMentionChipDecoration(element);
+  if (mentionHref) element.dataset.mentionHref = mentionHref;
   const visibleLabel = element.textContent ?? "";
   const resolvedTitle = mention.kind === "automation"
     ? mention.title?.trim()

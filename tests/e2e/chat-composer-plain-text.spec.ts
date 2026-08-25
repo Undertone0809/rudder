@@ -33,6 +33,7 @@ test("chat composer keeps normal Markdown literal while tokenizing Rudder refere
     data: {
       title: "Plain composer",
       preferredAgentId: agent.id,
+      initialMessage: { body: "Plain composer seed" },
     },
   });
   expect(chatRes.ok()).toBe(true);
@@ -71,7 +72,7 @@ test("chat composer keeps normal Markdown literal while tokenizing Rudder refere
   const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
   expect(messagesRes.ok()).toBe(true);
   const messages = await messagesRes.json() as Array<{ role: string; body: string }>;
-  const userMessage = messages.find((message) => message.role === "user");
+  const userMessage = messages.filter((message) => message.role === "user").at(-1);
   expect(userMessage?.body).toBe(draft);
 });
 
@@ -83,6 +84,7 @@ test("chat composer keeps the caret outside Rudder reference tokens", async ({ p
     data: {
       title: "Reference caret",
       preferredAgentId: agent.id,
+      initialMessage: { body: "Reference caret seed" },
     },
   });
   expect(chatRes.ok()).toBe(true);
@@ -140,6 +142,7 @@ test("chat composer keeps the caret in place while editing markdown-like text af
     data: {
       title: "Reference mid-draft caret",
       preferredAgentId: agent.id,
+      initialMessage: { body: "Reference mid-draft caret seed" },
     },
   });
   expect(chatRes.ok()).toBe(true);
@@ -230,6 +233,7 @@ test("chat composer keeps text after Rudder reference tokens when sending", asyn
     data: {
       title: "Reference tail",
       preferredAgentId: agent.id,
+      initialMessage: { body: "Reference tail seed" },
     },
   });
   expect(chatRes.ok()).toBe(true);
@@ -268,6 +272,6 @@ test("chat composer keeps text after Rudder reference tokens when sending", asyn
   const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
   expect(messagesRes.ok()).toBe(true);
   const messages = await messagesRes.json() as Array<{ role: string; body: string }>;
-  const userMessage = messages.find((message) => message.role === "user");
+  const userMessage = messages.filter((message) => message.role === "user").at(-1);
   expect(userMessage?.body).toBe(draft);
 });

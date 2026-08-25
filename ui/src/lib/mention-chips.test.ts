@@ -121,6 +121,24 @@ describe("mention chips", () => {
     expect(element.classList.contains("rudder-mention-chip--chat")).toBe(true);
   });
 
+  it("preserves the canonical href on decorated Lexical mention tokens", () => {
+    const element = document.createElement("span");
+    const href = "chat://chat-123?t=Launch%20planning";
+    element.dataset.mentionHref = href;
+    element.textContent = "Launch planning";
+
+    applyMentionChipDecoration(element, {
+      kind: "chat",
+      conversationId: "chat-123",
+      title: "Launch planning",
+    });
+
+    expect(element.dataset.mentionHref).toBe(href);
+
+    clearMentionChipDecoration(element);
+    expect(element.dataset.mentionHref).toBeUndefined();
+  });
+
   it("parses, decorates, and navigates automation mention links", () => {
     const mention = parseMentionChipHref("automation://automation-123?t=Morning%20review");
     expect(mention).toEqual({

@@ -1433,6 +1433,60 @@ describe("MarkdownEditor", () => {
     expect(selection?.anchorOffset).toBe(1);
   });
 
+  it("keeps a plain-text composer editable after clicking a decorated token", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+    const href = "chat://chat-123?t=Launch%20planning";
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value={`前置 [Launch planning](${href})`}
+          onChange={onChange}
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    const token = container.querySelector<HTMLElement>("[data-mention-kind='chat']");
+    expect(editable).toBeTruthy();
+    expect(token?.dataset.mentionHref).toBe(href);
+
+    await act(async () => {
+      token!.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 100,
+      }));
+    });
+
+    expect(document.activeElement).toBe(editable);
+    const selection = window.getSelection();
+    expect(selection?.isCollapsed).toBe(true);
+    expect(selection?.anchorNode).toBe(token?.parentNode);
+    expect(selection?.anchorOffset).toBe(2);
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "x",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith(`前置 [Launch planning](${href}) x`);
+  });
+
   it("keeps the caret after a mention selected with Tab in a plain text composer", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");
