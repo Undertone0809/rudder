@@ -23,7 +23,11 @@ type BrowserDebugger = {
 
 type BrowserSessionFetch = (
   input: string,
-  init?: { method?: string; redirect?: "follow" | "manual"; signal?: AbortSignal },
+  init?: {
+    method?: string;
+    redirect?: "follow" | "manual";
+    signal?: AbortSignal;
+  },
 ) => Promise<Response>;
 
 type BrowserAdvancedContents = {

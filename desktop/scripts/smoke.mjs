@@ -50,6 +50,10 @@ const browserImportExpiredCookieName = "rudder_browser_import_expired";
 const browserImportMalformedCookieName = "rudder_browser_import_malformed";
 const browserImportEncryptedCookieName = "rudder_browser_import_encrypted";
 const browserImportSmokeCookieUrl = "http://127.0.0.1/";
+const smokeDebugPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 const browserSmokeScreenshotPath = process.env.RUDDER_DESKTOP_SMOKE_SCREENSHOT?.trim() || null;
 const systemPermissionsScreenshotPath = process.env.RUDDER_DESKTOP_SYSTEM_PERMISSIONS_SCREENSHOT?.trim() || null;
 const localAppSmokeRootOverride = process.env.RUDDER_DESKTOP_LOCAL_APP_SMOKE_ROOT?.trim() || null;
@@ -1280,10 +1284,7 @@ async function createSmokeDebugAsset(baseUrl, companyId) {
   form.append(
     "file",
     new Blob([
-      Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-        "base64",
-      ),
+      smokeDebugPng,
     ], { type: "image/png" }),
     "agent-browser-debug.png",
   );
@@ -2058,6 +2059,35 @@ async function verifyAgentBrowserBroker(electronApp, baseUrl, databaseUrl, compa
         typeof localRudderAssetOpen.tabId,
         "string",
         "Agent Browser should allow local Rudder asset URLs for debugging",
+      );
+      const downloadedDebugAsset = readSmokeMcpToolResult(await mcp.request("tools/call", {
+        name: "rudder_browser_download",
+        arguments: {
+          tabId: localRudderAssetOpen.tabId,
+          mode: "media",
+          locator: { strategy: "css", value: "img" },
+        },
+      }), "rudder_browser_download local Rudder asset");
+      assert.equal(
+        downloadedDebugAsset.contentType,
+        "image/png",
+        "Agent Browser should preserve the local Rudder asset content type",
+      );
+      assert.equal(
+        downloadedDebugAsset.byteSize,
+        smokeDebugPng.length,
+        "Agent Browser should download the complete local Rudder asset",
+      );
+      const downloadedDebugAssetBytes = await readFile(downloadedDebugAsset.path);
+      assert.deepEqual(
+        downloadedDebugAssetBytes.subarray(0, 8),
+        smokeDebugPng.subarray(0, 8),
+        "Agent Browser should receive a PNG signature from the local Rudder asset",
+      );
+      assert.deepEqual(
+        downloadedDebugAssetBytes,
+        smokeDebugPng,
+        "Agent Browser should receive the rendered local Rudder asset bytes",
       );
       await mcp.request("tools/call", {
         name: "rudder_browser_close",

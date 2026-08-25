@@ -6,6 +6,7 @@ import {
   createBrowserProfileController,
   deriveBrowserPartition,
   isAllowedAgentBrowserNavigationUrl,
+  isAllowedAgentBrowserRudderAssetUrl,
   isAllowedBrowserBootstrapUrl,
   isAllowedBrowserNavigationUrl,
   isAllowedOperatorBrowserNavigationUrl,
@@ -101,10 +102,32 @@ describe("Rudder Browser URL policy", () => {
     expect(isAllowedAgentBrowserNavigationUrl("http://0.0.0.0:3200/debug", rudderAppOrigins)).toBe(false);
     expect(isAllowedAgentBrowserNavigationUrl("http://[::]:3200/debug", rudderAppOrigins)).toBe(false);
     expect(isAllowedAgentBrowserNavigationUrl("http://[::ffff:0:0]:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://10.0.0.1:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://172.16.0.1:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://192.168.1.1:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://169.254.1.1:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://[fc00::1]:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://[fe80::1]:3200/debug", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://[::ffff:c0a8:101]:3200/debug", rudderAppOrigins)).toBe(false);
     expect(isAllowedAgentBrowserNavigationUrl("ws://localhost:3200/debug", rudderAppOrigins)).toBe(false);
     expect(isAllowedAgentBrowserNavigationUrl("wss://example.com/debug", rudderAppOrigins)).toBe(false);
     expect(isAllowedAgentBrowserNavigationUrl("https://rudder.internal/settings", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://localhost:3100/api/orgs", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserNavigationUrl("http://127.0.0.1:3100/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content", rudderAppOrigins)).toBe(true);
     expect(isAllowedAgentBrowserNavigationUrl("file:///tmp/debug.html", rudderAppOrigins)).toBe(false);
+  });
+
+  it("allows only canonical local Rudder asset content through the Agent Browser exception", () => {
+    expect(isAllowedAgentBrowserRudderAssetUrl(
+      "http://localhost:3100/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content",
+      rudderAppOrigins,
+    )).toBe(true);
+    expect(isAllowedAgentBrowserRudderAssetUrl("http://localhost:3100/api/orgs", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserRudderAssetUrl("http://localhost:3100/api/assets/not-an-id/content", rudderAppOrigins)).toBe(false);
+    expect(isAllowedAgentBrowserRudderAssetUrl(
+      "https://rudder.internal/api/assets/bb297c93-b65c-4807-895b-3b02d7dbcf78/content",
+      rudderAppOrigins,
+    )).toBe(false);
   });
 
   it("allows operator-entered local file URLs without broadening Agent Browser navigation", () => {
