@@ -156,18 +156,27 @@ function createDb(
 }
 
 const activeServers = new Set<Server>();
+const agentHireActor = {
+  type: "agent",
+  agentId: "11111111-1111-4111-8111-111111111111",
+  orgId: "organization-1",
+  runId: "run-1",
+};
 
-async function createApp(db: Record<string, unknown> = createDb()) {
+async function createApp(
+  db: Record<string, unknown> = createDb(),
+  actor: Record<string, unknown> = {
+    type: "board",
+    userId: "local-board",
+    orgIds: ["organization-1"],
+    source: "local_implicit",
+    isInstanceAdmin: false,
+  },
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "local-board",
-      orgIds: ["organization-1"],
-      source: "local_implicit",
-      isInstanceAdmin: false,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", agentRoutes(db as any));
@@ -303,6 +312,7 @@ describe("agent skill routes", () => {
       ambiguous: false,
       agent: makeAgent("claude_local"),
     });
+    mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
     mockAgentService.getInternalById.mockResolvedValue(makeAgent("claude_local"));
     mockAgentService.list.mockResolvedValue([makeAgent("claude_local")]);
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({ config: { env: {} } });
@@ -842,10 +852,51 @@ describe("agent skill routes", () => {
     expect(defaultBundle).not.toHaveProperty("AGENTS.md");
   });
 
+  it("creates a board-originated hire directly when the organization enables approval policy", async () => {
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Board-Created Agent",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.status).toBe("idle");
+    expect(res.body.approval).toBeNull();
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps approval required for agent-originated hires when the organization enables approval policy", async () => {
+    const res = await request(await createApp(createDb(true), agentHireActor))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Agent-Proposed Hire",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.status).toBe("pending_approval");
+    expect(res.body.approval).toMatchObject({ id: "approval-1", status: "pending" });
+    expect(mockApprovalService.create).toHaveBeenCalledTimes(1);
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        requestedByAgentId: agentHireActor.agentId,
+        requestedByUserId: null,
+      }),
+    );
+  });
+
   it("includes canonical desired skills in hire approvals", async () => {
     const db = createDb(true);
 
-    const res = await request(await createApp(db))
+    const res = await request(await createApp(db, agentHireActor))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -875,7 +926,7 @@ describe("agent skill routes", () => {
   });
 
   it("generates an Oreo avatar during hires when the request omits icon", async () => {
-    const res = await request(await createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true), agentHireActor))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -898,7 +949,7 @@ describe("agent skill routes", () => {
   });
 
   it("generates an Oreo avatar instead of preserving legacy named icons during hires", async () => {
-    const res = await request(await createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true), agentHireActor))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -939,7 +990,7 @@ describe("agent skill routes", () => {
       runtimeConfig: {},
     }));
 
-    const res = await request(await createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true), agentHireActor))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         role: "engineer",
@@ -959,7 +1010,7 @@ describe("agent skill routes", () => {
   });
 
   it("uses managed SOUL config in hire approval payloads", async () => {
-    const res = await request(await createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true), agentHireActor))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "QA Agent",
@@ -990,7 +1041,7 @@ describe("agent skill routes", () => {
   });
 
   it("materializes hire prompt templates even when clients send incomplete managed bundle metadata", async () => {
-    const res = await request(await createApp(createDb(true)))
+    const res = await request(await createApp(createDb(true), agentHireActor))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
         name: "Marketing Agent",
