@@ -21,6 +21,7 @@ import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-tr
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
+import type { StorageService } from "../storage/types.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
@@ -135,10 +136,10 @@ class InvalidQueueDeliveryActionLinkError extends Error {}
 
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
-export function chatService(db: Db) {
+export function chatService(db: Db, storage?: StorageService) {
   const generationProtocol = chatGenerationProtocolService(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
-  const issuesSvc = issueService(db);
+  const issuesSvc = issueService(db, storage);
   const approvalsSvc = approvalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);

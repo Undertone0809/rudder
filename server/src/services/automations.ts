@@ -102,9 +102,9 @@ function nonEmptyString(value: unknown): string | null {
 }
 
 export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
-  const issueSvc = issueService(db);
-  const chatSvc = chatService(db);
   const storageSvc = deps.storage ?? (deps.chatAssistant ? null : getStorageService());
+  const issueSvc = issueService(db, storageSvc ?? undefined);
+  const chatSvc = chatService(db, storageSvc ?? undefined);
   const assistantSvc = deps.chatAssistant ?? chatAssistantService(db, storageSvc ?? undefined);
   const secretsSvc = secretService(db);
   const heartbeat = deps.heartbeat ?? heartbeatService(db);
