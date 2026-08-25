@@ -1939,6 +1939,7 @@ describe("RunTranscriptView", () => {
         kind: "user",
         ts: "2026-06-17T08:00:01.000Z",
         text: "# Rudder Agent Operating Contract\n\nYour home directory is $AGENT_HOME.\n\nUse these paths consistently:",
+        sourceEntryId: "agent-instruction-entry",
       },
     ];
 
@@ -1949,6 +1950,7 @@ describe("RunTranscriptView", () => {
         label: "agent instruction",
         text: "Runtime-loaded agent instruction",
         detail: expect.stringContaining("Rudder Agent Operating Contract"),
+        sourceEntryIds: ["agent-instruction-entry"],
       }),
     ]);
 
@@ -2882,6 +2884,7 @@ describe("RunTranscriptView", () => {
         ts: "2026-05-25T09:56:02.245Z",
         name: "Skill",
         toolUseId: "tool-skill-1",
+        sourceEntryId: "tool-call-entry",
         input: {
           skill: "rudder-create-agent",
           args: "create COO agent",
@@ -2893,6 +2896,7 @@ describe("RunTranscriptView", () => {
         toolUseId: "tool-skill-1",
         content: "Launching skill: rudder-create-agent",
         isError: false,
+        sourceEntryId: "tool-result-entry",
       },
       {
         kind: "user",
@@ -2906,6 +2910,7 @@ describe("RunTranscriptView", () => {
           "",
           "ARGUMENTS: create COO agent",
         ].join("\n"),
+        sourceEntryId: "skill-context-entry",
       },
     ];
 
@@ -2917,6 +2922,7 @@ describe("RunTranscriptView", () => {
       name: "Skill",
       status: "completed",
       result: expect.stringContaining("Loaded skill context: rudder-create-agent"),
+      sourceEntryIds: ["tool-call-entry", "tool-result-entry", "skill-context-entry"],
     });
 
     const html = renderToStaticMarkup(
