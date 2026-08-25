@@ -113,6 +113,7 @@ const mockState = vi.hoisted(() => ({
   mutations: [] as unknown[],
   navigate: vi.fn(),
   pushToast: vi.fn(),
+  allQueryKeys: [] as unknown[][],
   queryKeys: [] as unknown[][],
   getQueryData: vi.fn(),
   refetchChatDetail: vi.fn(),
@@ -166,6 +167,7 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey, enabled = true }: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    mockState.allQueryKeys.push([...queryKey]);
     if (queryKey[0] === "organizations" && queryKey[2] === "workspace-files" && mockState.workspaceDirectoryError) {
       return {
         data: undefined,
@@ -472,6 +474,7 @@ vi.mock("@tanstack/react-query", () => ({
     setQueryData: mockState.setQueryData,
     setQueriesData: mockState.setQueriesData,
   }),
+  skipToken: Symbol("skipToken"),
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -1672,6 +1675,7 @@ beforeEach(() => {
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.queryKeys = [];
+  mockState.allQueryKeys = [];
   mockState.getQueryData.mockReset();
   mockState.refetchChatDetail.mockReset();
   mockState.removeQueries.mockReset();
@@ -3339,11 +3343,14 @@ describe("Chat Side Panel link handling", () => {
     expect(container.querySelector("[data-testid='chat-side-panel-library-directory-view']")?.textContent).toContain("MEMORY.md");
 
     mockState.workspaceDirectoryError = "Cannot read properties of null (reading 'directoryPath')";
+    mockState.allQueryKeys = [];
     await act(async () => {
       root.render(renderPanel({ kind: "library_file", filePath: "MEMORY.md", label: "MEMORY.md" }));
       await Promise.resolve();
     });
 
+    const sidePanelQueryKeys = mockState.allQueryKeys.filter((key) => key[0] === "chat-side-panel");
+    expect(sidePanelQueryKeys).toContainEqual(["chat-side-panel", "library-directory", "inactive"]);
     const sidePanel = container.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
     expect(sidePanel?.querySelector("[role='alert']")).toBeNull();
     expect(sidePanel?.querySelector("[data-testid='chat-side-panel-library-file-view']")).not.toBeNull();

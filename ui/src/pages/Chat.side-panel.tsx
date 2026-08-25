@@ -98,7 +98,7 @@ import {
   type OrganizationWorkspaceFileDetail,
   type OrganizationWorkspaceFileEntry,
 } from "@rudderhq/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindow,
   Bot,
@@ -718,6 +718,12 @@ function isChatSidePanelProjectLibraryFolderPath(path: string) {
   const segments = path.split("/").filter(Boolean);
   return segments.length === 2 && segments[0] === "projects";
 }
+
+const INACTIVE_LIBRARY_DIRECTORY_QUERY_KEY = [
+  "chat-side-panel",
+  "library-directory",
+  "inactive",
+] as const;
 
 function ChatSidePanelLibraryDirectoryIcon({ entry }: { entry: OrganizationWorkspaceFileEntry }) {
   const isAgentWorkspace = entry.entityType === "agent_workspace";
@@ -2144,13 +2150,12 @@ export function ChatSidePanel({
     enabled: targetQueriesEnabled && !!selectedOrganizationId && !!organizationSkillFileTarget,
   });
   const libraryDirectoryQuery = useQuery({
-    queryKey: queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryPath ?? ""),
-    queryFn: () => {
-      if (!selectedOrganizationId || libraryDirectoryPath === null) {
-        throw new Error("Library directory target is unavailable");
-      }
-      return organizationsApi.listWorkspaceFiles(selectedOrganizationId, libraryDirectoryPath);
-    },
+    queryKey: libraryDirectoryPath === null
+      ? INACTIVE_LIBRARY_DIRECTORY_QUERY_KEY
+      : queryKeys.organizations.workspaceFiles(selectedOrganizationId ?? "__none__", libraryDirectoryPath),
+    queryFn: !selectedOrganizationId || libraryDirectoryPath === null
+      ? skipToken
+      : () => organizationsApi.listWorkspaceFiles(selectedOrganizationId, libraryDirectoryPath),
     enabled: targetQueriesEnabled && !!selectedOrganizationId && libraryDirectoryPath !== null,
   });
 
