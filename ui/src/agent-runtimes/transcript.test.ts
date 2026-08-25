@@ -307,7 +307,7 @@ describe("buildTranscript", () => {
   });
 
   it("keeps runtime-loaded instruction user messages out of the shared operator transcript contract", () => {
-    const instructionText = "# Rudder Agent Operating Contract\n\nYour home directory is $AGENT_HOME.\n\nUse these paths consistently:";
+    const instructionText = "<rudder_agent_instruction>\n<rudder_agent_operating_contract>\nYour home directory is $AGENT_HOME.\n\nUse these paths consistently:\n</rudder_agent_operating_contract>\n</rudder_agent_instruction>";
     const cases = [
       {
         name: "claude",

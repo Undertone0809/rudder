@@ -846,7 +846,8 @@ describe("cursor execute", { timeout: 20_000 }, () => {
       await expect(fs.lstat(path.join(root, ".cursor", "skills", "ascii-heart"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      expect(capture.prompt ?? "").toContain("# Enabled Rudder Skills");
+      expect(capture.prompt ?? "").toContain("<rudder_agent_instruction>");
+      expect(capture.prompt ?? "").toContain("<enabled_rudder_skills>");
       expect(capture.prompt ?? "").toContain("## Skill: ascii-heart");
       expect(capture.prompt ?? "").not.toContain("operator-skill");
       expect(loadedSkills).toEqual([

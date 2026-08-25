@@ -1266,7 +1266,7 @@ describe("CommentThread", () => {
           {
             kind: "user",
             ts: "2026-06-17T08:00:01.000Z",
-            text: "# Rudder Agent Operating Contract\n\nYour home directory is $AGENT_HOME.",
+            text: "<rudder_agent_instruction>\n<rudder_agent_operating_contract>\nYour home directory is $AGENT_HOME.\n</rudder_agent_operating_contract>\n</rudder_agent_instruction>",
           },
           {
             kind: "tool_result",

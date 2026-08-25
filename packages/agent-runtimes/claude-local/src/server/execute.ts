@@ -26,6 +26,7 @@ import {
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
+  RUDDER_PROMPT_SECTION_TAGS,
   asBoolean,
   asNumber,
   asString,
@@ -48,6 +49,7 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
+  wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -128,15 +130,13 @@ function renderClaudeRudderSkillBoundaryPrompt(
     ? loadedSkills.map((entry) => `- ${entry.runtimeName ?? entry.key}`)
     : ["- None. No optional Rudder skills are enabled for this run."];
 
-  return [
-    "# Enabled Rudder Skills",
-    "",
+  return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.enabledSkills, [
     "Rudder is the source of truth for runtime skill enablement.",
     "Only skills listed in this section are enabled by Rudder for this run. Claude Code built-in/provider-native skills or slash commands may appear in Claude's own runtime metadata, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
     "When the user asks what skills are enabled, loaded, available, or what skills you have in Rudder, answer with only the runtime skill names listed in this section. Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes. If exactly one skill is listed, answer exactly that runtime skill name and nothing else. Do not list, summarize, or explain provider-native Claude Code skills or slash commands in that answer.",
     "",
     ...skillLines,
-  ].join("\n");
+  ].join("\n"));
 }
 
 async function pathExists(candidate: string): Promise<boolean> {
@@ -825,10 +825,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   // includes both the file content and the path directive, so we only need
   // --append-system-prompt-file (Claude CLI forbids using both flags together).
   let effectiveInstructionsFilePath: string | undefined;
-  const claudeSystemPrompt = joinPromptSections([
-    loadedInstructions.prefix,
-    skillBoundaryPrompt,
-  ]);
+  const claudeSystemPrompt = wrapPromptSection(
+    RUDDER_PROMPT_SECTION_TAGS.agentInstruction,
+    joinPromptSections([
+      loadedInstructions.prefix,
+      skillBoundaryPrompt,
+    ]),
+  );
   if (claudeSystemPrompt) {
     const combinedPath = path.join(skillsDir, "agent-instructions.md");
     await fs.writeFile(combinedPath, claudeSystemPrompt, "utf-8");

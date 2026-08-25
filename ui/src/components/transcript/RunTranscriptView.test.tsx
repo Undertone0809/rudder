@@ -1877,12 +1877,15 @@ describe("RunTranscriptView", () => {
         kind: "user",
         ts: "2026-06-17T08:00:01.000Z",
         text: [
-          "# Rudder Agent Operating Contract",
+          "<rudder_agent_instruction>",
+          "<rudder_agent_operating_contract>",
           "",
           "Your home directory is $AGENT_HOME. Everything personal to you lives there.",
           "",
           "Use these paths consistently:",
           "- Personal instructions live under $AGENT_HOME/instructions.",
+          "</rudder_agent_operating_contract>",
+          "</rudder_agent_instruction>",
         ].join("\n"),
       },
       {
@@ -1926,7 +1929,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).not.toContain("User</span>");
-    expect(html).not.toContain("Rudder Agent Operating Contract");
+    expect(html).not.toContain("rudder_agent_operating_contract");
     expect(html).not.toContain("Following communication protocol");
     expect(html).not.toContain("Use these paths consistently");
     expect(html).toContain("coding, debugging, Rudder operations");
@@ -1938,7 +1941,7 @@ describe("RunTranscriptView", () => {
       {
         kind: "user",
         ts: "2026-06-17T08:00:01.000Z",
-        text: "# Rudder Agent Operating Contract\n\nYour home directory is $AGENT_HOME.\n\nUse these paths consistently:",
+        text: "<rudder_agent_instruction>\n<rudder_agent_operating_contract>\nYour home directory is $AGENT_HOME.\n\nUse these paths consistently:\n</rudder_agent_operating_contract>\n</rudder_agent_instruction>",
         sourceEntryId: "agent-instruction-entry",
       },
     ];
@@ -1949,7 +1952,7 @@ describe("RunTranscriptView", () => {
         type: "event",
         label: "agent instruction",
         text: "Runtime-loaded agent instruction",
-        detail: expect.stringContaining("Rudder Agent Operating Contract"),
+        detail: expect.stringContaining("rudder_agent_operating_contract"),
         sourceEntryIds: ["agent-instruction-entry"],
       }),
     ]);
