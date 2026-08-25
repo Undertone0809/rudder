@@ -49,12 +49,15 @@ Every stable release has six separate surfaces:
 2. **npm** — `@rudderhq/cli` and public workspace packages are published
 3. **GitHub** — the stable release gets a git tag and GitHub Release record
 4. **Desktop** — macOS, Windows, and Linux portable assets are attached to the stable GitHub Release
-5. **China mirror** — the same frozen Desktop assets are immutable and
-   byte-verified in Tencent COS before the GitHub checksum completion marker
+5. **China mirror (optional)** — when `mirror_cos: true` is explicitly selected,
+   the same frozen Desktop assets are immutable and byte-verified in Tencent COS
+   before the GitHub checksum completion marker; the default release path skips
+   this surface
 6. **Website / announcements** — the release is publicly announced, and any
    in-scope website/docs content is published
 
-A stable release is done only when all six surfaces are handled.
+A stable release is done when all required surfaces are handled. The China
+mirror is required only for a release that explicitly enables `mirror_cos`.
 
 For the announcement surface, the public GitHub Release notes may be the
 announcement channel when there is no separate website post or social/customer
@@ -193,10 +196,9 @@ It:
 - builds and verifies the four-platform Desktop candidates before npm or tag mutation
 - creates or updates the canary GitHub Release with display title
   `vX.Y.Z-canary.N` and uploads only those exact verified binaries
-- runs `mirror-canary` in Environment `desktop-release-mirror`, using GitHub
-  OIDC and Tencent STS to mirror and verify all eight COS objects
-- uploads GitHub `SHASUMS256.txt` only after that mirror succeeds, then runs the
-  three-platform public install smoke
+- keeps Tencent COS disabled for the automatic `workflow_run` path and publishes
+  GitHub `SHASUMS256.txt` directly, then runs the three-platform public install
+  smoke; this path never receives a user-supplied `mirror_cos` opt-in
 
 Canary and stable publication use the same non-cancelling concurrency group. A
 stable still takes priority over same-base or older canary publication after
@@ -229,6 +231,14 @@ Inputs:
 - `dry_run`
   - optional read-only preview when true; an authorized stable release normally
     uses `false` after equivalent exact-source gates pass
+- `mirror_cos`
+  - boolean opt-in for mirroring Desktop assets to Tencent COS during a manual
+    stable promotion; defaults to `false`, and an omitted or false value must
+    not contact or upload to COS. Automatic Canary `workflow_run` releases
+    always force this value to `false`.
+- `skip_mirror`
+  - legacy force-off alias retained for compatibility; it never enables COS,
+    and combining it with `mirror_cos: true` fails preflight.
 
 Before running stable:
 
@@ -268,8 +278,9 @@ The workflow:
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md` and uploads
   the exact Desktop binaries already built and verified by this run
-- runs `mirror-stable` against the same frozen Actions artifacts, then publishes
-  GitHub `SHASUMS256.txt` as the completion marker
+- publishes GitHub `SHASUMS256.txt` directly by default; when `mirror_cos: true`
+  is explicitly selected, runs `mirror-stable` against the same frozen Actions
+  artifacts before publishing the checksum marker
 - invokes Docs Release from the same `vX.Y.Z` source in parallel with the real
   Linux, Windows, and macOS public install smoke
 - deletes obsolete `canary/v*` GitHub Releases and git tags whose canary base is
@@ -304,19 +315,20 @@ version; the `npx` form is mainly the first-run and explicit dist-tag form.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
 The Release workflow builds and smokes Desktop artifacts before any public
-mutation. It uploads immutable GitHub binaries, completes the OIDC/STS-backed
-COS mirror, and uploads GitHub `SHASUMS256.txt` last. Only then may the public
-install matrix run. Docs Release may run after stable publication while the
-mirror completes. The install lanes
+mutation. It uploads immutable GitHub binaries, then either publishes
+`SHASUMS256.txt` directly (the default) or completes the explicitly enabled
+OIDC/STS-backed COS mirror first. Only then may the public install matrix run.
+Docs Release may run after stable publication while the optional mirror
+completes. The install lanes
 execute `npx ... start --no-open` on Linux, Windows, and macOS and download the
 real portable Desktop artifact, using isolated temporary HOME, npm cache, npm
 prefix, output, and Desktop install directories. Recovery reruns the original
 Release with `resume_missing: true`; there is no standalone install workflow.
 
 The final next-release handoff is a convergence gate, not a timer: it waits for
-the verified COS mirror, completed GitHub Desktop assets, production docs, the
-three-platform public install smoke, and obsolete-canary cleanup. A failure in
-any downstream surface leaves the release
+the completed GitHub Desktop assets, the direct checksum marker or the
+explicitly enabled verified COS mirror, production docs, the three-platform
+public install smoke, and obsolete-canary cleanup. A failure in any downstream surface leaves the release
 partial and resumable without republishing an immutable npm version.
 
 Each Desktop asset is also gated before collection by a packaged `upgrade` smoke.
@@ -565,17 +577,19 @@ Do this immediately:
 
 Do not republish the same version.
 
-### If GitHub binaries exist but the COS mirror fails
+### If an explicitly enabled COS mirror fails
 
 Do not upload or overwrite `SHASUMS256.txt` manually and do not republish npm.
 Fix the OIDC/STS, CAM policy, COS availability, or immutable-object conflict,
-then re-run the failed `mirror-stable` or `mirror-canary` job. Stable partial
-recovery must use the original Release `candidate_run_id`, which downloads the
-same frozen Desktop artifacts. The recovery workflow must run from a reviewed
-main-history revision, while `source_ref` identifies the original stable tag
-commit. The mirror step verifies the downloaded artifacts against the existing
-GitHub Release before upload. Identical existing GitHub/COS bytes are accepted;
-any same-name content conflict blocks completion.
+then re-run the failed `mirror-stable` job. Stable partial recovery must use
+the original Release `candidate_run_id`, which downloads the same frozen
+Desktop artifacts. The recovery workflow must run from a reviewed main-history
+revision, while `source_ref` identifies the original stable tag commit. The
+mirror step verifies the downloaded artifacts against the existing GitHub
+Release before upload. Identical existing GitHub/COS bytes are accepted; any
+same-name content conflict blocks completion. Automatic Canary releases never
+enter this failure path because their `workflow_run` policy forces COS off; if
+the direct checksum path fails, inspect `checksum-canary` instead.
 
 ### If `latest` is broken after stable publish
 

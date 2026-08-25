@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ const releaseWorkflow = readFileSync(join(workflowDir, "release.yml"), "utf8");
 const docsWorkflow = readFileSync(join(workflowDir, "docs-production.yml"), "utf8");
 const releaseSetup = readFileSync(join(repoRoot, "doc/engineering/RELEASE-AUTOMATION-SETUP.md"), "utf8");
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
+const releaseMirrorPolicy = join(repoRoot, "scripts/release-mirror-policy.mjs");
 
 function workflowJob(source, jobName) {
   const start = source.indexOf(`\n  ${jobName}:\n`);
@@ -17,6 +19,18 @@ function workflowJob(source, jobName) {
   const remaining = source.slice(start + 1);
   const next = remaining.slice(1).search(/^  [a-zA-Z0-9_-]+:\n/m);
   return next === -1 ? source.slice(start) : source.slice(start, start + next + 2);
+}
+
+function runMirrorPolicy(eventName, input, skipMirror) {
+  return execFileSync(process.execPath, [releaseMirrorPolicy], {
+    encoding: "utf8",
+    env: {
+      EVENT_NAME: eventName,
+      MIRROR_COS: input ?? "",
+      SKIP_MIRROR: skipMirror ?? "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 describe("unified delivery workflows", () => {
@@ -108,7 +122,7 @@ describe("unified delivery workflows", () => {
     expect(stable).toContain('test "$(find . -maxdepth 1 -type f -name \'Rudder-*\' | wc -l | xargs)" = "7"');
   });
 
-  it("requires Tencent COS mirror jobs before publishing the GitHub checksum marker", () => {
+  it("defines Tencent COS mirror jobs and their checksum completion steps", () => {
     const canaryPublish = workflowJob(releaseWorkflow, "publish-canary");
     const stablePublish = workflowJob(releaseWorkflow, "publish-stable");
     const canaryMirror = workflowJob(releaseWorkflow, "mirror-canary");
@@ -139,14 +153,52 @@ describe("unified delivery workflows", () => {
     expect(stableMirror).toContain("github-token: ${{ github.token }}");
   });
 
-  it("supports an explicit stable release scope that skips Tencent COS", () => {
+  it("keeps the legacy stable skip_mirror input fail-closed", () => {
     const stableMirror = workflowJob(releaseWorkflow, "mirror-stable");
     expect(releaseWorkflow).toContain("skip_mirror:");
-    expect(releaseWorkflow).toContain('description: "Skip Tencent COS mirroring for this stable release"');
-    expect(stableMirror).toContain("github.event.inputs.skip_mirror != 'true'");
-    expect(stableMirror).toContain("github.event.inputs.skip_mirror == 'true'");
-    expect(stableMirror).toContain("Tencent COS mirroring skipped by explicit release scope.");
-    expect(stableMirror).toContain("--phase checksum");
+    expect(releaseWorkflow).toContain(
+      'description: "Legacy compatibility alias: force Tencent COS mirroring off"',
+    );
+    expect(releaseWorkflow).toContain("SKIP_MIRROR: ${{ inputs.skip_mirror }}");
+    expect(stableMirror).not.toContain("github.event.inputs.skip_mirror");
+    expect(stableMirror).toContain("needs.preflight.outputs.mirror_cos == 'true'");
+  });
+
+  it("defaults COS package sync off and gates it behind explicit opt-in", () => {
+    expect(releaseWorkflow).toContain("mirror_cos:");
+    expect(releaseWorkflow).toContain(
+      'description: "Mirror Desktop packages to Tencent COS (default: disabled)"',
+    );
+    expect(releaseWorkflow).toContain("required: false");
+    expect(releaseWorkflow).toContain("type: boolean");
+    expect(releaseWorkflow).toContain("default: false");
+
+    const preflight = workflowJob(releaseWorkflow, "preflight");
+    expect(preflight).toContain("mirror_cos: ${{ steps.release.outputs.mirror_cos }}");
+    expect(preflight).toContain("node scripts/release-mirror-policy.mjs");
+    expect(preflight).toContain("Report Tencent COS sync policy");
+
+    const canaryMirror = workflowJob(releaseWorkflow, "mirror-canary");
+    const stableMirror = workflowJob(releaseWorkflow, "mirror-stable");
+    expect(canaryMirror).toContain("needs.preflight.outputs.mirror_cos == 'true'");
+    expect(stableMirror).toContain("needs.preflight.outputs.mirror_cos == 'true'");
+
+    const canaryChecksum = workflowJob(releaseWorkflow, "checksum-canary");
+    const stableChecksum = workflowJob(releaseWorkflow, "checksum-stable");
+    for (const checksum of [canaryChecksum, stableChecksum]) {
+      expect(checksum).toContain("needs.preflight.outputs.mirror_cos != 'true'");
+      expect(checksum).toContain("--phase checksum");
+      expect(checksum).toContain("Tencent COS package sync: DISABLED");
+      expect(checksum).not.toContain("desktop-release-mirror");
+      expect(checksum).not.toContain("TENCENT_COS_BUCKET");
+    }
+
+    const canaryInstall = workflowJob(releaseWorkflow, "canary-install");
+    const stableInstall = workflowJob(releaseWorkflow, "stable-install");
+    expect(canaryInstall).toContain("- checksum-canary");
+    expect(canaryInstall).toContain("needs.checksum-canary.result == 'success'");
+    expect(stableInstall).toContain("- checksum-stable");
+    expect(stableInstall).toContain("needs.checksum-stable.result == 'success'");
   });
 
   it("supports explicit COS-only recovery from frozen stable artifacts", () => {
@@ -231,16 +283,22 @@ describe("unified delivery workflows", () => {
     expect(releaseSetup).not.toContain("HEAD` existence check is covered by COS's `GetObject`");
   });
 
-  it("prevents canary and stable install gates from bypassing the COS mirror", () => {
+  it("gates canary and stable install surfaces on the selected checksum path", () => {
     const canaryInstall = workflowJob(releaseWorkflow, "canary-install");
     const stableInstall = workflowJob(releaseWorkflow, "stable-install");
     const stableSurfaces = workflowJob(releaseWorkflow, "stable-surfaces");
     expect(canaryInstall).toContain("- mirror-canary");
     expect(canaryInstall).toContain("needs.mirror-canary.result == 'success'");
+    expect(canaryInstall).toContain("- checksum-canary");
+    expect(canaryInstall).toContain("needs.checksum-canary.result == 'success'");
     expect(stableInstall).toContain("- mirror-stable");
     expect(stableInstall).toContain("needs.mirror-stable.result == 'success'");
+    expect(stableInstall).toContain("- checksum-stable");
+    expect(stableInstall).toContain("needs.checksum-stable.result == 'success'");
     expect(stableSurfaces).toContain("- mirror-stable");
     expect(stableSurfaces).toContain("needs.mirror-stable.result == 'success'");
+    expect(stableSurfaces).toContain("- checksum-stable");
+    expect(stableSurfaces).toContain("needs.checksum-stable.result == 'success'");
   });
 
   it("retries transient COS mirror failures before failing the release gate", () => {
@@ -251,6 +309,27 @@ describe("unified delivery workflows", () => {
       expect(job).toContain('if [ "$status" -ne 75 ] || [ "$attempt" -eq 3 ]');
       expect(job).toContain('exit "$status"');
     }
+  });
+
+  it("executes the default, opt-in, and automatic-canary mirror policy paths", () => {
+    const cases = [
+      ["workflow_run", "true", undefined, "false"],
+      ["workflow_run", "false", "true", "false"],
+      ["workflow_dispatch", undefined, undefined, "false"],
+      ["workflow_dispatch", "false", undefined, "false"],
+      ["workflow_dispatch", "true", undefined, "true"],
+      ["workflow_dispatch", "false", "true", "false"],
+    ];
+
+    for (const [eventName, input, skipMirror, expected] of cases) {
+      expect(runMirrorPolicy(eventName, input, skipMirror)).toBe(expected);
+    }
+
+    expect(() => runMirrorPolicy("workflow_dispatch", "TRUE")).toThrow(/mirror_cos must be a boolean input/);
+    expect(() => runMirrorPolicy("workflow_dispatch", "true", "true")).toThrow(
+      /mirror_cos and skip_mirror cannot both be true/,
+    );
+    expect(() => runMirrorPolicy("push", "true")).toThrow(/Unsupported release event/);
   });
 
   it("runs mirror recovery from trusted main workflow code while preserving the released source", () => {

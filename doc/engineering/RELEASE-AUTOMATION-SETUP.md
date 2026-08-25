@@ -5,7 +5,7 @@ This document covers the GitHub and npm setup required for the current Rudder re
 - automatic canaries from `main`
 - manual stable promotion from a full locked commit SHA
 - npm trusted publishing via GitHub OIDC
-- Tencent COS Desktop mirroring via GitHub OIDC and Tencent STS
+- optional Tencent COS Desktop mirroring via GitHub OIDC and Tencent STS
 - direct-main release execution with exact-source Test
 
 Repo-side files that depend on this setup:
@@ -96,12 +96,14 @@ After the workflows are live:
 2. confirm npm publish succeeds without any `NPM_TOKEN`
 3. run a stable dry-run
 4. run one real stable publish
-5. confirm the Release workflow attaches portable assets to GitHub, mirrors them
-   to Tencent COS, and publishes `SHASUMS256.txt` only after the mirror succeeds
+5. confirm the default Release workflow attaches portable assets to GitHub and
+   publishes `SHASUMS256.txt` without contacting Tencent COS; separately verify
+   an explicitly enabled `mirror_cos: true` release mirrors them to Tencent COS
+   and publishes the checksum marker only after the mirror succeeds
 
 Only after that should you remove old token-based access.
 
-### 2.4. Desktop portable assets and COS completion gate
+### 2.4. Desktop portable assets and optional COS mirror
 
 The unified Release workflow publishes checksum-verified portable assets:
 
@@ -117,11 +119,13 @@ release path without changing npm publishing.
 
 GitHub Releases remain authoritative for tags, version metadata, filenames, and
 `SHASUMS256.txt`. The publish job first uploads only the seven `Rudder-*`
-binaries. A separate job using the `desktop-release-mirror` Environment obtains
+binaries. The Release workflow defaults to publishing `SHASUMS256.txt` directly
+and does not contact Tencent COS. When the manual `mirror_cos: true` input is
+selected, a separate job using the `desktop-release-mirror` Environment obtains
 GitHub OIDC and Tencent STS credentials, copies the same frozen Actions artifacts
-to COS without overwrite, and verifies authenticated and anonymous reads. Only
-then does it upload GitHub `SHASUMS256.txt` as the completion marker. A COS copy
-of the checksum supports network probing but never becomes the CLI trust root.
+to COS without overwrite, and verifies authenticated and anonymous reads before
+it uploads GitHub `SHASUMS256.txt` as the completion marker. A COS copy of the
+checksum supports network probing but never becomes the CLI trust root.
 Before that transfer, the mirror compares each local binary with the GitHub
 Release asset's API-provided SHA-256 digest when available. Older API responses
 fall back to downloading the asset for the same byte-level check, so a slow
@@ -328,11 +332,15 @@ After setup:
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
 7. confirm the Release candidate matrix built and smoked all four platform assets before npm publication
 8. confirm the canary GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets from that matrix
-9. confirm `mirror-canary` used `desktop-release-mirror` and published all eight
-   byte-identical objects under `releases/canary/v0.1.0-canary.N/`
-10. confirm anonymous exact COS reads succeed while listing and writes return `403`
-11. confirm the three-platform public install matrix passed only after `mirror-canary`
-12. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
+9. confirm the default run reports Tencent COS package sync as disabled and
+   `checksum-canary` publishes `SHASUMS256.txt` directly
+10. confirm the three-platform public install matrix passed after the checksum
+    marker; do not expect a COS upload for the default canary path
+11. for an explicit opt-in validation, dispatch a stable release with
+    `mirror_cos: true`, then confirm `mirror-stable` used
+    `desktop-release-mirror` and published all eight byte-identical objects
+12. confirm anonymous exact COS reads succeed while listing and writes return `403`
+13. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
 
 Start-path check:
 
@@ -359,6 +367,8 @@ After at least one good canary exists:
 6. open `Actions` -> `Release` and run one production execution with:
    - `source_ref`: the locked commit SHA
    - `dry_run`: `false`
+   - `mirror_cos`: `false` unless this release explicitly needs the Tencent COS mirror
+   - `skip_mirror`: omit it; this legacy compatibility alias is only for forcing COS off
 7. use `dry_run: true` only for a read-only preview or troubleshooting request,
    not as a mandatory first dispatch for an already-authorized release
 8. confirm the `npm-stable` job starts without an interactive approval
@@ -367,13 +377,16 @@ After at least one good canary exists:
 11. confirm the GitHub Release was created
 12. confirm the GitHub Release contains macOS, Windows, Linux, and
     `SHASUMS256.txt` assets
-13. confirm `mirror-stable` copied the same frozen Desktop candidate artifacts to
-    `releases/v0.1.0/` and completed before the checksum marker appeared
-14. confirm the Docs Release child workflow publishes `docs/release/v0.1.0`
+13. when `mirror_cos` is `false`, confirm `checksum-stable` published the
+    checksum marker directly and no COS mirror job ran
+14. when `mirror_cos` is `true`, confirm `mirror-stable` copied the same frozen
+    Desktop candidate artifacts to `releases/v0.1.0/` and completed before the
+    checksum marker appeared
+15. confirm the Docs Release child workflow publishes `docs/release/v0.1.0`
     from the matching `v0.1.0` source and passes public health checks
-15. confirm Windows, macOS, and Linux public install smoke all pass; do not
+16. confirm Windows, macOS, and Linux public install smoke all pass; do not
     remove a slow Windows smoke because it measures real installation behavior
-16. confirm the workflow commits the next patch version directly to `main` and
+17. confirm the workflow commits the next patch version directly to `main` and
     dispatches Test for that exact commit, or reports that `main` already advanced
 
 Start-path check:
@@ -433,11 +446,12 @@ Check:
 3. the environment allows only `main`
 4. the workflow is running in the canonical repository, not a fork
 
-### COS mirror fails before the checksum marker
+### Explicit COS mirror fails before the checksum marker
 
 Check:
 
-1. `mirror-canary` or `mirror-stable` uses Environment `desktop-release-mirror`
+1. `mirror-stable` uses Environment `desktop-release-mirror` for a manual
+   stable run with `mirror_cos: true`
 2. the job has `id-token: write` and all four Environment variables
 3. Tencent OIDC `aud` and `sub` conditions exactly match the documented values
 4. the CAM role has the seven documented object and multipart actions on this
@@ -447,9 +461,10 @@ Check:
 5. an existing object is byte-identical; conflicting immutable objects require
    investigation and must never be overwritten
 
-The mirror jobs allow 120 minutes for the upload and authenticated/anonymous
-readback of all seven large binaries. A run that reaches the timeout before its
-first `verified` line is usually spending time on a legacy GitHub asset download;
+The explicit mirror and recovery jobs allow 120 minutes for the upload and
+authenticated/anonymous readback of all seven large binaries. A run that reaches
+the timeout before its first `verified` line is usually spending time on a legacy
+GitHub asset download;
 check that the Release API returns `sha256:` asset digests before extending the
 timeout again.
 

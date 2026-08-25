@@ -14,6 +14,11 @@ on:
         required: true
         type: boolean
         default: true
+      mirror_cos:
+        description: "Mirror Desktop packages to Tencent COS (default: disabled)"
+        required: false
+        type: boolean
+        default: false
       resume_missing:
         description: "Resume a partial stable release without republishing existing versions"
         required: true
@@ -29,8 +34,8 @@ on:
         type: boolean
         default: false
       skip_mirror:
-        description: "Skip Tencent COS mirroring for this stable release"
-        required: true
+        description: "Legacy compatibility alias: force Tencent COS mirroring off"
+        required: false
         type: boolean
         default: false
       recovery_tag:
@@ -71,6 +76,7 @@ jobs:
       publish: ${{ steps.release.outputs.publish }}
       resume: ${{ steps.release.outputs.resume }}
       candidate_run_id: ${{ steps.release.outputs.candidate_run_id }}
+      mirror_cos: ${{ steps.release.outputs.mirror_cos }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -120,6 +126,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           DRY_RUN: ${{ inputs.dry_run }}
+          MIRROR_COS: ${{ inputs.mirror_cos }}
+          SKIP_MIRROR: ${{ inputs.skip_mirror }}
           RESUME_MISSING: ${{ inputs.resume_missing }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: |
@@ -147,6 +155,7 @@ jobs:
             tag="v${version}"
             if [ "${DRY_RUN:-true}" = "true" ]; then publish="false"; else publish="true"; fi
           fi
+          mirror_cos="$(node scripts/release-mirror-policy.mjs)"
           {
             echo "channel=$channel"
             echo "version=$version"
@@ -154,7 +163,16 @@ jobs:
             echo "publish=$publish"
             echo "resume=$resume"
             echo "candidate_run_id=${CANDIDATE_RUN_ID:-$GITHUB_RUN_ID}"
+            echo "mirror_cos=$mirror_cos"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Report Tencent COS sync policy
+        run: |
+          if [ "${{ steps.release.outputs.mirror_cos }}" = "true" ]; then
+            echo "Tencent COS package sync: ENABLED (explicit mirror_cos=true)."
+          else
+            echo "Tencent COS package sync: DISABLED (default or not explicitly enabled)."
+          fi
 
       - name: Verify migration compatibility manifest
         if: steps.release.outputs.resume != 'true'
@@ -864,7 +882,9 @@ jobs:
     needs:
       - preflight
       - publish-canary
-    if: needs.publish-canary.result == 'success'
+    if: >-
+      needs.publish-canary.result == 'success' &&
+      needs.preflight.outputs.mirror_cos == 'true'
     permissions:
       actions: read
       contents: write
@@ -921,12 +941,56 @@ jobs:
             --asset-dir dist/desktop-assets \
             --phase checksum
 
+  checksum-canary:
+    name: Publish canary GitHub checksum marker without COS mirror
+    needs:
+      - preflight
+      - publish-canary
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-canary.result == 'success' &&
+      needs.preflight.outputs.mirror_cos != 'true'
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Report Tencent COS sync policy
+        run: |
+          echo "Tencent COS package sync: DISABLED; publishing the GitHub checksum marker directly."
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
+
   mirror-stable:
     name: Mirror stable Desktop release to Tencent COS
     needs:
       - preflight
       - publish-stable
-    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success'
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-stable.result == 'success' &&
+      needs.preflight.outputs.mirror_cos == 'true'
     permissions:
       actions: read
       contents: write
@@ -951,7 +1015,6 @@ jobs:
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
           shasum -a 256 Rudder-* > SHASUMS256.txt
       - name: Mirror GitHub binaries to Tencent COS
-        if: github.event.inputs.skip_mirror != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TENCENT_CLOUD_OIDC_PROVIDER_ID: ${{ vars.TENCENT_CLOUD_OIDC_PROVIDER_ID }}
@@ -977,9 +1040,48 @@ jobs:
             fi
             sleep $((attempt * 15))
           done
-      - name: Record explicit Tencent COS skip
-        if: github.event.inputs.skip_mirror == 'true'
-        run: echo "Tencent COS mirroring skipped by explicit release scope."
+      - name: Publish GitHub checksum completion marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/publish-github-release-assets-immutable.mjs \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --asset-dir dist/desktop-assets \
+            --phase checksum
+
+  checksum-stable:
+    name: Publish stable GitHub checksum marker without COS mirror
+    needs:
+      - preflight
+      - publish-stable
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-stable.result == 'success' &&
+      needs.preflight.outputs.mirror_cos != 'true'
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Generate checksum trust root
+        run: |
+          cd dist/desktop-assets
+          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
+          shasum -a 256 Rudder-* > SHASUMS256.txt
+      - name: Report Tencent COS sync policy
+        run: |
+          echo "Tencent COS package sync: DISABLED; publishing the GitHub checksum marker directly."
       - name: Publish GitHub checksum completion marker
         env:
           GH_TOKEN: ${{ github.token }}
@@ -995,7 +1097,14 @@ jobs:
       - preflight
       - publish-canary
       - mirror-canary
-    if: needs.publish-canary.result == 'success' && needs.mirror-canary.result == 'success'
+      - checksum-canary
+    if: >-
+      always() &&
+      needs.publish-canary.result == 'success' &&
+      ((needs.preflight.outputs.mirror_cos == 'true' &&
+        needs.mirror-canary.result == 'success') ||
+       (needs.preflight.outputs.mirror_cos != 'true' &&
+        needs.checksum-canary.result == 'success'))
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -1048,7 +1157,15 @@ jobs:
       - preflight
       - publish-stable
       - mirror-stable
-    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
+      - checksum-stable
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-stable.result == 'success' &&
+      ((needs.preflight.outputs.mirror_cos == 'true' &&
+        needs.mirror-stable.result == 'success') ||
+       (needs.preflight.outputs.mirror_cos != 'true' &&
+        needs.checksum-stable.result == 'success'))
     permissions:
       actions: read
       contents: write
@@ -1065,7 +1182,15 @@ jobs:
       - preflight
       - publish-stable
       - mirror-stable
-    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success'
+      - checksum-stable
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-stable.result == 'success' &&
+      ((needs.preflight.outputs.mirror_cos == 'true' &&
+        needs.mirror-stable.result == 'success') ||
+       (needs.preflight.outputs.mirror_cos != 'true' &&
+        needs.checksum-stable.result == 'success'))
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -1094,9 +1219,19 @@ jobs:
       - preflight
       - publish-stable
       - mirror-stable
+      - checksum-stable
       - stable-docs
       - stable-install
-    if: always() && needs.preflight.result == 'success' && needs.publish-stable.result == 'success' && needs.mirror-stable.result == 'success' && needs.stable-docs.result == 'success' && needs.stable-install.result == 'success'
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-stable.result == 'success' &&
+      ((needs.preflight.outputs.mirror_cos == 'true' &&
+        needs.mirror-stable.result == 'success') ||
+       (needs.preflight.outputs.mirror_cos != 'true' &&
+        needs.checksum-stable.result == 'success')) &&
+      needs.stable-docs.result == 'success' &&
+      needs.stable-install.result == 'success'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -1173,6 +1308,7 @@ jobs:
       - preflight
       - publish-stable
       - mirror-stable
+      - checksum-stable
       - stable-docs
       - stable-install
       - stable-surfaces
@@ -1190,6 +1326,8 @@ jobs:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           PUBLISH_RESULT: ${{ needs.publish-stable.result }}
           MIRROR_RESULT: ${{ needs.mirror-stable.result }}
+          CHECKSUM_RESULT: ${{ needs.checksum-stable.result }}
+          MIRROR_COS: ${{ needs.preflight.outputs.mirror_cos }}
           DOCS_RESULT: ${{ needs.stable-docs.result }}
           INSTALL_RESULT: ${{ needs.stable-install.result }}
           SURFACES_RESULT: ${{ needs.stable-surfaces.result }}
@@ -1199,7 +1337,6 @@ jobs:
           for result in \
             "$PREFLIGHT_RESULT" \
             "$PUBLISH_RESULT" \
-            "$MIRROR_RESULT" \
             "$DOCS_RESULT" \
             "$INSTALL_RESULT" \
             "$SURFACES_RESULT" \
@@ -1207,3 +1344,10 @@ jobs:
             "$HANDOFF_RESULT"; do
             test "$result" = "success"
           done
+          if [ "$MIRROR_COS" = "true" ]; then
+            test "$MIRROR_RESULT" = "success"
+            test "$CHECKSUM_RESULT" = "skipped"
+          else
+            test "$MIRROR_RESULT" = "skipped"
+            test "$CHECKSUM_RESULT" = "success"
+          fi

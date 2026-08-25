@@ -140,8 +140,10 @@ Stable publishes do not create a release commit. Instead:
 - git tag `vX.Y.Z` points at that original commit
 - portable desktop assets are built, verified, and attached to the matching
   GitHub Release by `.github/workflows/release.yml`
-- the same bytes are mirrored under `releases/<slash-preserving-tag>/<asset>` in
-  Tencent COS before GitHub `SHASUMS256.txt` becomes visible
+- when the manual Release input `mirror_cos` is explicitly `true`, the same
+  bytes are mirrored under `releases/<slash-preserving-tag>/<asset>` in Tencent
+  COS before GitHub `SHASUMS256.txt` becomes visible; the default `false` path
+  publishes the GitHub checksum marker directly without contacting Tencent COS
 
 The primary user install path is:
 
@@ -156,14 +158,15 @@ the trust root. COS timeout, missing objects, interrupted streams, corrupt
 content, or SHA-256 mismatch falls back to GitHub. Desktop binaries are
 intentionally not published to npm.
 
-The COS mirror is a required release surface, not an independent release
-authority. Gitee, GitCode, or AtomGit Releases may be added as community
-mirrors, but they are not suitable for this mandatory gate: the workflow needs
-object-scoped OIDC/IAM, immutable create semantics, exact anonymous reads while
-listing stays denied, bounded billing alerts, and deterministic post-upload byte
-verification. General source-hosting Release endpoints may impose platform
-rate limits or anti-abuse behavior that makes unattended installation
-unpredictable.
+The COS mirror is an optional release surface, enabled only by the explicit
+`mirror_cos: true` workflow input; it is not an independent release authority.
+Gitee, GitCode, or AtomGit Releases may be added as community
+mirrors, but they are not suitable for the optional COS mirror gate: when that
+gate is explicitly selected, the workflow needs object-scoped OIDC/IAM,
+immutable create semantics, exact anonymous reads while listing stays denied,
+bounded billing alerts, and deterministic post-upload byte verification.
+General source-hosting Release endpoints may impose platform rate limits or
+anti-abuse behavior that makes unattended installation unpredictable.
 
 For server or headless installs, the same npm CLI exposes a server-only path:
 
