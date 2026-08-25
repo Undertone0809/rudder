@@ -223,10 +223,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
       res.status(403).json({ error: "Agent is not the current assignee or reviewer" });
       return false;
     }
-    // The current assignee/reviewer relationship is sufficient authority for
-    // explicit work outside active checkout. Lifecycle status is not a
-    // permission gate. Active assignee checkout remains run-owned.
-    if (issue.status !== "in_progress" || !isAssignee) return true;
+    // The current assignee/reviewer relationship is sufficient authority when
+    // no checkout exists. Only an established assignee checkout is run-owned.
+    if (issue.status !== "in_progress" || !isAssignee || !issue.checkoutRunId) return true;
     const runId = requireAgentRunId(req, res);
     if (!runId) {
       await logOwnershipRejected("missing_agent_run_id");
