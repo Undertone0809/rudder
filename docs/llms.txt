@@ -17,7 +17,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [How Rudder Works](https://docs.rudderhq.dev/concepts/overview): Learn the five ideas you need to give Agents work and keep the result useful.
 - [Organize Work with Goals and Projects](https://docs.rudderhq.dev/concepts/goals-projects-issues): Use goals for direction, projects for shared context, and Issues for work that needs explicit coordination.
 - [Agents, Runs, and Runtimes](https://docs.rudderhq.dev/concepts/agents): Understand the worker you configure, the tool that executes, and the record created each time it works.
-- [App Builder](https://docs.rudderhq.dev/concepts/app-builder): Create or improve a local website and use it as a Rudder App on your machine.
+- [App Builder](https://docs.rudderhq.dev/concepts/app-builder): Create or improve a local website and use it as a Rudder App on your machine. App Builder is currently in beta.
 - [Built-in Browser](https://docs.rudderhq.dev/concepts/built-in-browser): Open websites beside your work and, when allowed, let a local Agent use its own controlled tabs.
 - [Issues](https://docs.rudderhq.dev/concepts/issues): Use an Issue when a task needs a clear owner, status, dependencies, or review.
 - [Chat, Issues, and Messenger](https://docs.rudderhq.dev/concepts/chat-messenger): Choose the right place to do a task, then use Messenger to find work waiting for your attention.
@@ -67,7 +67,7 @@ Rudder gives humans and agents a shared place to move work from a goal to a revi
 - [Rudder 如何工作](https://docs.rudderhq.dev/zh/concepts/overview): 了解把任务交给 Agent 并让结果继续发挥作用所需的五个概念。
 - [用目标和项目组织工作](https://docs.rudderhq.dev/zh/concepts/goals-projects-issues): 用目标说明方向，用项目汇总上下文，用 Issue 管理需要明确协作的任务。
 - [Agent、运行记录和运行工具](https://docs.rudderhq.dev/zh/concepts/agents): 分清你配置的长期 Agent、真正执行工作的工具，以及每次工作留下的记录。
-- [App Builder](https://docs.rudderhq.dev/zh/concepts/app-builder): 创建或完善本地网站，并把它作为 Rudder App 在当前设备上使用。
+- [App Builder](https://docs.rudderhq.dev/zh/concepts/app-builder): 创建或完善本地网站，并把它作为 Rudder App 在当前设备上使用。App Builder 目前处于 Beta 测试阶段。
 - [内置浏览器](https://docs.rudderhq.dev/zh/concepts/built-in-browser): 在工作旁边打开网页，并在允许时让本地 Agent 使用自己的受控标签页。
 - [Issue（任务单）](https://docs.rudderhq.dev/zh/concepts/issues): 任务需要明确负责人、状态、依赖或评审时，使用 Issue。
 - [Chat、Issue 和 Messenger](https://docs.rudderhq.dev/zh/concepts/chat-messenger): 为任务选择合适的工作方式，再用 Messenger 找到正在等你处理的事情。
