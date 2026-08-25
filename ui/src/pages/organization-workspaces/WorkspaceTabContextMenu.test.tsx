@@ -52,15 +52,13 @@ describe("WorkspaceTabContextMenu", () => {
     expect(document.querySelector("[data-testid='org-workspaces-tab-context-menu']")).toBeNull();
 
     renderMenu({ canOpenInIde: false, canCloseOtherTabs: false, canCloseTabsToRight: false });
-    expect(button("Open in Cursor").disabled).toBe(true);
-    expect(button("Close others").disabled).toBe(true);
-    expect(button("Close tabs to the right").disabled).toBe(true);
+    expect(menuItem("Open in Cursor").hasAttribute("data-disabled")).toBe(true);
+    expect(menuItem("Close others").hasAttribute("data-disabled")).toBe(true);
+    expect(menuItem("Close tabs to the right").hasAttribute("data-disabled")).toBe(true);
   });
 
   it("delegates every file command and closes the menu", () => {
     const commands = [
-      ["Copy link", handlers.onCopyLink],
-      ["Copy absolute path", handlers.onCopyAbsolutePath],
       ["Open in Cursor", handlers.onOpenInIde],
       ["Close", handlers.onCloseTab],
       ["Close others", handlers.onCloseOtherTabs],
@@ -69,21 +67,56 @@ describe("WorkspaceTabContextMenu", () => {
 
     for (const [label, handler] of commands) {
       renderMenu();
-      act(() => button(label).click());
+      act(() => menuItem(label).click());
       expect(handler).toHaveBeenLastCalledWith("notes.md");
     }
     expect(handlers.onClose).toHaveBeenCalledTimes(commands.length);
 
     renderMenu();
-    act(() => button("Close all").click());
+    act(() => menuItem("Close all").click());
     expect(handlers.onCloseAllTabs).toHaveBeenCalledOnce();
     expect(handlers.onClose).toHaveBeenCalledTimes(commands.length + 1);
   });
+
+  it("reveals the concrete copy commands in a submenu", () => {
+    renderMenu();
+
+    expect(menuItem("Copy")).toBeTruthy();
+    expect(findMenuItem("Copy link")).toBeUndefined();
+    expect(findMenuItem("Copy absolute path")).toBeUndefined();
+
+    openCopySubmenu();
+    expect(menuItem("Copy link")).toBeTruthy();
+    expect(menuItem("Copy absolute path")).toBeTruthy();
+
+    act(() => menuItem("Copy link").click());
+    expect(handlers.onCopyLink).toHaveBeenLastCalledWith("notes.md");
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+
+    renderMenu();
+    openCopySubmenu();
+    act(() => menuItem("Copy absolute path").click());
+    expect(handlers.onCopyAbsolutePath).toHaveBeenLastCalledWith("notes.md");
+    expect(handlers.onClose).toHaveBeenCalledTimes(2);
+  });
 });
 
-function button(label: string) {
-  const match = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+function findMenuItem(label: string) {
+  return Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
     .find((candidate) => candidate.textContent?.trim() === label);
-  if (!match) throw new Error(`Missing button: ${label}`);
+}
+
+function menuItem(label: string) {
+  const match = findMenuItem(label);
+  if (!match) throw new Error(`Missing menu item: ${label}`);
   return match;
+}
+
+function openCopySubmenu() {
+  const trigger = menuItem("Copy");
+  act(() => {
+    trigger.dispatchEvent(new MouseEvent("pointermove", { bubbles: true }));
+    trigger.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
 }

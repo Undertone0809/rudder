@@ -812,7 +812,19 @@ function OrganizationWorkspaceBrowserForOrganization({
   useEffect(() => {
     if (!tabContextMenu) return;
 
-    const closeMenu = () => setTabContextMenu(null);
+    const closeMenu = (event?: Event) => {
+      const target = event?.target;
+      if (
+        target instanceof Element
+        && (
+          target.closest("[data-testid='org-workspaces-tab-context-menu']")
+          || target.closest("[data-testid='org-workspaces-tab-copy-submenu-content']")
+        )
+      ) {
+        return;
+      }
+      setTabContextMenu(null);
+    };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeMenu();
     };
