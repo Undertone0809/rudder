@@ -8,6 +8,7 @@ import {
   executionWorkspaces,
   goals,
   heartbeatRuns,
+  issueAttachments,
   issueComments,
   issueLabels,
   issues,
@@ -28,11 +29,13 @@ import type { Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import request from "supertest";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.ts";
 import { issueRoutes } from "../routes/issues.ts";
 import { issueService } from "../services/issues.ts";
+import type { StorageService } from "../storage/types.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -2216,6 +2219,211 @@ describe("issueService.list participantAgentId", () => {
       usage: "issue",
       originalFilename: "issue-level.pdf",
     });
+  });
+
+  it("preserves referenced assets as durable Issue attachments on creation", async () => {
+    const orgId = randomUUID();
+    const sourceAssetId = randomUUID();
+    const sourceBody = Buffer.from("image bytes");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue description assets",
+      urlKey: deriveOrganizationUrlKey("Issue description assets"),
+      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(assets).values({
+      id: sourceAssetId,
+      orgId,
+      provider: "local_disk",
+      objectKey: `${orgId}/assets/source.png`,
+      contentType: "image/png",
+      byteSize: sourceBody.length,
+      sha256: "source-sha256",
+      originalFilename: "source.png",
+    });
+
+    const storage: StorageService = {
+      provider: "local_disk",
+      putFile: vi.fn(async (input) => ({
+        provider: "local_disk" as const,
+        objectKey: `${input.orgId}/${input.namespace}/copy.png`,
+        contentType: input.contentType,
+        byteSize: input.body.length,
+        sha256: "copied-sha256",
+        originalFilename: input.originalFilename,
+      })),
+      getObject: vi.fn(async () => ({
+        stream: Readable.from(sourceBody),
+        contentType: "image/png",
+        contentLength: sourceBody.length,
+      })),
+      headObject: vi.fn(async () => ({ exists: true })),
+      deleteObject: vi.fn(async () => undefined),
+    };
+
+    const created = await issueService(db, storage).create(orgId, {
+      title: "Keep this screenshot",
+      description: `![Screenshot](/api/assets/${sourceAssetId}/content)`,
+      status: "todo",
+      priority: "medium",
+    });
+
+    expect(created.description).toMatch(/\/api\/attachments\/[0-9a-f-]+\/content/);
+    expect(created.description).not.toContain(`/api/assets/${sourceAssetId}/content`);
+    expect(storage.getObject).toHaveBeenCalledWith(orgId, `${orgId}/assets/source.png`);
+    expect(storage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      orgId,
+      namespace: `issues/${created.id}/description`,
+      originalFilename: "source.png",
+      contentType: "image/png",
+      body: sourceBody,
+    }));
+
+    const [attachment] = await db
+      .select()
+      .from(issueAttachments)
+      .where(eq(issueAttachments.issueId, created.id));
+    expect(attachment).toMatchObject({
+      orgId,
+      issueId: created.id,
+      usage: "description_inline",
+    });
+    const [copiedAsset] = await db
+      .select()
+      .from(assets)
+      .where(eq(assets.id, attachment!.assetId));
+    expect(copiedAsset).toMatchObject({
+      orgId,
+      objectKey: `${orgId}/issues/${created.id}/description/copy.png`,
+      originalFilename: "source.png",
+    });
+  });
+
+  it("rejects missing or cross-organization description assets before creating an Issue", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const crossOrgAssetId = randomUUID();
+    const missingAssetId = randomUUID();
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Issue description asset owner",
+        urlKey: deriveOrganizationUrlKey("Issue description asset owner"),
+        issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other issue description asset owner",
+        urlKey: deriveOrganizationUrlKey("Other issue description asset owner"),
+        issuePrefix: `E${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(assets).values({
+      id: crossOrgAssetId,
+      orgId: otherOrgId,
+      provider: "local_disk",
+      objectKey: `${otherOrgId}/assets/cross-org.png`,
+      contentType: "image/png",
+      byteSize: 4,
+      sha256: "cross-org-sha256",
+      originalFilename: "cross-org.png",
+    });
+
+    const getObject = vi.fn();
+    const storage: StorageService = {
+      provider: "local_disk",
+      putFile: vi.fn(),
+      getObject,
+      headObject: vi.fn(),
+      deleteObject: vi.fn(),
+    };
+
+    await expect(issueService(db, storage).create(orgId, {
+      title: "Missing description screenshot",
+      description: `![Missing](/api/assets/${missingAssetId}/content)`,
+      status: "todo",
+      priority: "medium",
+    })).rejects.toThrow("missing or outside the organization");
+    await expect(issueService(db, storage).create(orgId, {
+      title: "Cross-org description screenshot",
+      description: `![Cross org](/api/assets/${crossOrgAssetId}/content)`,
+      status: "todo",
+      priority: "medium",
+    })).rejects.toThrow("missing or outside the organization");
+
+    expect(getObject).not.toHaveBeenCalled();
+    const createdIssues = await db.select().from(issues).where(eq(issues.orgId, orgId));
+    expect(createdIssues).toHaveLength(0);
+  });
+
+  it("cleans staged description objects when Issue creation rolls back", async () => {
+    const orgId = randomUUID();
+    const sourceAssetId = randomUUID();
+    const issueId = randomUUID();
+    const sourceBody = Buffer.from("image bytes");
+    const copiedObjectKey = `${orgId}/issues/${issueId}/description/copy.png`;
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Issue description asset cleanup",
+      urlKey: deriveOrganizationUrlKey("Issue description asset cleanup"),
+      issuePrefix: `F${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(assets).values({
+      id: sourceAssetId,
+      orgId,
+      provider: "local_disk",
+      objectKey: `${orgId}/assets/source.png`,
+      contentType: "image/png",
+      byteSize: sourceBody.length,
+      sha256: "source-sha256",
+      originalFilename: "source.png",
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Existing Issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    const deleteObject = vi.fn(async () => undefined);
+    const storage: StorageService = {
+      provider: "local_disk",
+      putFile: vi.fn(async (input) => ({
+        provider: "local_disk" as const,
+        objectKey: copiedObjectKey,
+        contentType: input.contentType,
+        byteSize: input.body.length,
+        sha256: "copied-sha256",
+        originalFilename: input.originalFilename,
+      })),
+      getObject: vi.fn(async () => ({
+        stream: Readable.from(sourceBody),
+        contentType: "image/png",
+        contentLength: sourceBody.length,
+      })),
+      headObject: vi.fn(async () => ({ exists: true })),
+      deleteObject,
+    };
+
+    await expect(issueService(db, storage).create(orgId, {
+      id: issueId,
+      title: "Duplicate Issue",
+      description: `![Screenshot](/api/assets/${sourceAssetId}/content)`,
+      status: "todo",
+      priority: "medium",
+    })).rejects.toThrow();
+
+    expect(deleteObject).toHaveBeenCalledWith(orgId, copiedObjectKey);
+    const copiedAssets = await db.select().from(assets).where(eq(assets.objectKey, copiedObjectKey));
+    expect(copiedAssets).toHaveLength(0);
   });
 
   it("clears stale execution lock on assignee change so reassigned agent can checkout", async () => {

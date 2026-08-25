@@ -22,7 +22,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
   const instructions = agentInstructionsService();
   const access = accessService(db);
   const projects = projectService(db);
-  const issues = issueService(db);
+  const issues = issueService(db, storage);
   const organizationSkills = organizationSkillService(db);
 
   const exportHandlers = createOrganizationPortabilityExportHandlers({
