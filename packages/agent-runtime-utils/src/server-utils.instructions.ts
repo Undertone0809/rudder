@@ -1,7 +1,7 @@
 import { promises as fs, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { SENSITIVE_ENV_KEY, SpawnTarget } from "./server-utils.process.js";
-import { isCommentTriggeredIssueWakeReason, joinPromptSections, RUDDER_AGENT_HEARTBEAT_INSTRUCTION, RUDDER_AGENT_OPERATING_CONTRACT } from "./server-utils.prompts.js";
+import { isCommentTriggeredIssueWakeReason, joinPromptSections, RUDDER_AGENT_HEARTBEAT_INSTRUCTION, RUDDER_AGENT_OPERATING_CONTRACT, RUDDER_PROMPT_SECTION_TAGS, wrapPromptSection } from "./server-utils.prompts.js";
 
 export interface LoadedAgentInstructionsPrefix {
   prefix: string;
@@ -104,8 +104,21 @@ export function prepareAgentInstructionRuntimeContext(context: Record<string, un
 
 function instructionFileSection(input: {
   contents: string;
+  filePath: string;
+  instructionsFilePath: string;
 }) {
-  return input.contents.trimEnd();
+  const contents = input.contents.trimEnd();
+  if (!contents) return "";
+  const fileName = path.basename(input.filePath);
+  if (["AGENTS.md", "SOUL.md", "TOOLS.md", "MEMORY.md"].includes(fileName)) {
+    return wrapPromptSection(fileName, contents);
+  }
+  const displayPath = displayInstructionPath(input.filePath, input.instructionsFilePath)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return `<agent_instruction_file path="${displayPath}">\n${contents}\n</agent_instruction_file>`;
 }
 
 function formatInstructionFileNames(displayFilePaths: string[]): string {
@@ -150,12 +163,21 @@ export async function loadAgentInstructionsPrefix(input: {
     ? displayInstructionDir(instructionsFilePath, instructionsFilePath)
     : "";
   const warningStream = input.warningStream ?? "stdout";
-  const operatingContractSection =
-    `${RUDDER_AGENT_OPERATING_CONTRACT}\n\n` +
-    "The above Rudder agent operating contract was injected by Rudder at runtime.";
+  const operatingContractSection = wrapPromptSection(
+    RUDDER_PROMPT_SECTION_TAGS.agentOperatingContract,
+    joinPromptSections([
+      RUDDER_AGENT_OPERATING_CONTRACT,
+      "The above Rudder agent operating contract was injected by Rudder at runtime.",
+    ]),
+  );
   const runtimeHeartbeatSection = includeHeartbeatInstructions
-    ? `${RUDDER_AGENT_HEARTBEAT_INSTRUCTION}\n\n` +
-      "The above Rudder heartbeat instruction was injected by Rudder at runtime."
+    ? wrapPromptSection(
+      RUDDER_PROMPT_SECTION_TAGS.heartbeatInstruction,
+      joinPromptSections([
+        RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
+        "The above Rudder heartbeat instruction was injected by Rudder at runtime.",
+      ]),
+    )
     : "";
   const instructionContextSections = input.instructionContextSections ?? [];
   const baseCommandNotes = ["Loaded Rudder agent operating contract from runtime code"];
@@ -211,6 +233,8 @@ export async function loadAgentInstructionsPrefix(input: {
       loadedPaths.add(path.resolve(instructionsFilePath));
       entrySection = instructionFileSection({
         contents: instructionsContents,
+        filePath: instructionsFilePath,
+        instructionsFilePath,
       });
       await input.onLog(
         "stdout",
@@ -252,6 +276,8 @@ export async function loadAgentInstructionsPrefix(input: {
         path: filePath,
         section: instructionFileSection({
           contents,
+          filePath,
+          instructionsFilePath,
         }),
       };
     } catch (err) {

@@ -7,6 +7,7 @@
  * @see doc/product/domains/execution/transcripts-and-results.md - transcript and result evidence
  */
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { RUDDER_PROMPT_SECTION_TAGS, wrapPromptSection } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import {
   heartbeatRuns,
@@ -260,9 +261,14 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     description: string | null;
   }>;
 }): Record<string, unknown> {
-  const persistentPrompt = sanitizeStartupContextPromptForPersistence(input.meta.prompt);
+  const producerStartupContextSection = readProducerStartupContextSection(input.meta.context);
+  const persistentPrompt = sanitizeStartupContextPromptForPersistence(
+    input.meta.prompt,
+    producerStartupContextSection,
+  );
   const persistentAgentInstructionStack = sanitizeStartupContextPromptForPersistence(
     typeof input.meta.agentInstructionStack === "string" ? input.meta.agentInstructionStack : null,
+    producerStartupContextSection,
   );
   const explicitUsedSkills = Array.isArray(input.meta.usedSkills)
     ? input.meta.usedSkills
@@ -353,11 +359,57 @@ export function buildHeartbeatAdapterInvokePayload(input: {
   } as Record<string, unknown>;
 }
 
-export function sanitizeStartupContextPromptForPersistence(prompt: string | null | undefined) {
+function readProducerStartupContextSection(context: Record<string, unknown> | null | undefined) {
+  if (!context) return null;
+  const startupContext = context.rudderStartupContext;
+  if (!startupContext || typeof startupContext !== "object") return null;
+  const markdown = (startupContext as Record<string, unknown>).markdown;
+  return typeof markdown === "string" && markdown.trim().length > 0 ? markdown : null;
+}
+
+export function sanitizeStartupContextPromptForPersistence(
+  prompt: string | null | undefined,
+  producerStartupContextSection?: string | null,
+) {
   if (!prompt) return prompt;
+  const opening = `<${RUDDER_PROMPT_SECTION_TAGS.recentContext}>`;
+  const closing = `</${RUDDER_PROMPT_SECTION_TAGS.recentContext}>`;
+  let promptWithoutPrivateStartupContext = prompt;
+  if (prompt.includes(opening)) {
+    const producerSection = producerStartupContextSection ?? "";
+    const sectionStart = producerSection ? prompt.indexOf(producerSection) : -1;
+    const producerOpening = producerSection.indexOf(opening);
+    const producerClosing = producerSection.lastIndexOf(closing);
+    const hasProducerBoundaries = producerOpening === 0
+      && producerClosing > opening.length
+      && producerClosing + closing.length === producerSection.length;
+    if (sectionStart < 0 || !hasProducerBoundaries) {
+      return "[startup context omitted from persisted prompt: producer boundary unavailable]";
+    }
+    const recentContext = producerSection.slice(producerOpening + opening.length, producerClosing);
+    const sourceHeadings = recentContext
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^#### (today|yesterday) memory: \d{4}-\d{2}-\d{2}\.md$/.test(line));
+    const replacement = sourceHeadings.length > 0
+      ? wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.recentContext, sourceHeadings.join("\n\n"))
+      : `${opening}\n${closing}`;
+    const promptParts: string[] = [];
+    let cursor = 0;
+    let nextSectionStart = sectionStart;
+    while (nextSectionStart >= 0) {
+      promptParts.push(prompt.slice(cursor, nextSectionStart), replacement);
+      cursor = nextSectionStart + producerSection.length;
+      nextSectionStart = prompt.indexOf(producerSection, cursor);
+    }
+    promptParts.push(prompt.slice(cursor));
+    promptWithoutPrivateStartupContext = promptParts.join("");
+  }
   const redactedPrompt = redactResponseAnnotationPromptSection(
-    redactRudderInlineVisualSources(prompt),
+    redactRudderInlineVisualSources(promptWithoutPrivateStartupContext),
   );
+  if (prompt.includes(opening)) return redactedPrompt;
+  // Preserve sanitization for historical invocation payloads written before paired tags.
   const heading = "\n## Recent Rudder Context";
   let start = redactedPrompt.indexOf(heading);
   let headingLength = heading.length;

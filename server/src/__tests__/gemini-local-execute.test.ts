@@ -236,6 +236,10 @@ describe("gemini execute", { timeout: 20_000 }, () => {
       expect(capture.argv[capture.argv.indexOf("--extensions") + 1]).toBe("");
       const promptFlagIndex = capture.argv.indexOf("--prompt");
       const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
+      expect(promptArg).toContain("<rudder_agent_instruction>");
+      expect(promptArg).toContain("</rudder_agent_instruction>");
+      expect(promptArg).toContain("<AGENTS.md>");
+      expect(promptArg).toContain("<MEMORY.md>");
       expect(promptArg).toContain("# Agent Instructions");
       expect(promptArg).toContain("# Tacit Memory");
       expect(promptArg).not.toContain("## Current Time");

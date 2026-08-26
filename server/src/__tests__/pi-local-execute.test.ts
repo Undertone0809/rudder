@@ -334,14 +334,14 @@ describe("pi execute", { timeout: 20_000 }, () => {
         },
         context: {
           rudderScene: "heartbeat",
-          rudderResourcesPrompt: "## Your Current Automations\n\n- Daily Pi review",
+          rudderResourcesPrompt: "<current_automations>\n- Daily Pi review\n</current_automations>",
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
             projectLibraryRoot: path.join(root, "org-workspace", "projects", "product"),
             projectLibraryRelativePath: "projects/product",
-            resourcesPrompt: "## Your Current Automations\n\n- Daily Pi review",
-            orgResourcesPrompt: "## Your Current Automations\n\n- Daily Pi review",
+            resourcesPrompt: "<current_automations>\n- Daily Pi review\n</current_automations>",
+            orgResourcesPrompt: "<current_automations>\n- Daily Pi review\n</current_automations>",
           },
         },
         authToken: "run-jwt-token",
@@ -411,19 +411,19 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Agent Soul");
       expect(systemPrompt).toContain("# Agent Tools");
       expect(systemPrompt).toContain("# Tacit Memory");
-      expect(systemPrompt).toContain("## Your Current Automations");
-      expect(systemPrompt).not.toContain("# Rudder Heartbeat Instruction");
-      expect(systemPrompt).toContain("# Enabled Rudder Skills");
+      expect(systemPrompt).toContain("<current_automations>");
+      expect(systemPrompt).not.toContain("<rudder_heartbeat_instruction>");
+      expect(systemPrompt).toContain("<enabled_rudder_skills>");
       expect(systemPrompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
       expect(systemPrompt).toContain("Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes.");
       expect(systemPrompt).toContain("If exactly one skill is listed, answer exactly that runtime skill name and nothing else.");
       expect(systemPrompt).toContain("- ascii-heart");
       expect(systemPrompt).not.toContain("- ascii-heart: ascii-heart");
-      expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
+      expect(systemPrompt.match(/<current_automations>/g)).toHaveLength(1);
       expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
       expect(systemPrompt.indexOf("# Agent Tools")).toBeLessThan(systemPrompt.indexOf("# Tacit Memory"));
-      expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
+      expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("<current_automations>"));
       expect(systemPrompt).not.toContain("## Current Time");
       expect(systemPrompt).not.toContain("Instruction load time:");
       expect(agentInstructionStack).toContain(systemPrompt);
@@ -432,9 +432,11 @@ describe("pi execute", { timeout: 20_000 }, () => {
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
-      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
+      expect(agentInstructionStack).toContain("<rudder_agent_instruction>");
+      expect(agentInstructionStack).toContain("</rudder_agent_instruction>");
+      expect(agentInstructionStack).toContain("<enabled_rudder_skills>");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
-      expect(agentInstructionStack).toContain("## Your Current Automations");
+      expect(agentInstructionStack).toContain("<current_automations>");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
       expect(capture.rudderEnvKeys).toEqual(expect.arrayContaining([
         "RUDDER_PROJECT_LIBRARY_PATH",

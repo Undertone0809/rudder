@@ -28,9 +28,11 @@ import {
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
+  RUDDER_PROMPT_SECTION_TAGS,
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
+  wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -516,8 +518,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const rudderEnvNote = renderRudderEnvNote(env);
   const apiAccessNote = renderApiAccessNote(env);
-  const prompt = joinPromptSections([
+  const instructionFrame = wrapPromptSection(
+    RUDDER_PROMPT_SECTION_TAGS.agentInstruction,
     instructionsPrefix,
+  );
+  const prompt = joinPromptSections([
+    instructionFrame,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,

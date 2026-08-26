@@ -610,7 +610,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     try {
       let parser = adapter.parseStdoutLine;
       let stdoutLineBuffer = "";
-      const { rudderWorkspace, rudderWorkspaces, rudderRuntimeServiceIntents, rudderScene } = sceneContext;
+      const {
+        rudderWorkspace,
+        rudderWorkspaces,
+        rudderRuntimeServiceIntents,
+        rudderScene,
+        rudderStartupContext,
+        rudderStartupContextMetrics,
+      } = sceneContext;
       await guardActiveRun(() => preflightManagedAgentWorkspace({
         agentHome: asString(rudderWorkspace.agentHome),
         instructionsDir: asString(rudderWorkspace.instructionsDir),
@@ -984,6 +991,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             rudderScene,
             rudderWorkspace,
             rudderWorkspaces,
+            rudderStartupContext,
+            rudderStartupContextMetrics,
             ...(chatAttachments.length > 0 ? { chatAttachments } : {}),
             ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
             ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
@@ -1068,6 +1077,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             rudderScene,
             rudderWorkspace,
             rudderWorkspaces,
+            rudderStartupContext,
+            rudderStartupContextMetrics,
             ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
             ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
             ...(linkedGoalId ? { goalId: linkedGoalId } : {}),

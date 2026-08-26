@@ -1153,7 +1153,8 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       await expect(fs.lstat(path.join(root, ".claude", "skills", "ascii-heart"))).rejects.toMatchObject({
         code: "ENOENT",
       });
-      expect(capture.prompt).toContain("# Enabled Rudder Skills");
+      expect(capture.prompt).toContain("<rudder_agent_instruction>");
+      expect(capture.prompt).toContain("<enabled_rudder_skills>");
       expect(capture.prompt).toContain("## Skill: ascii-heart");
       expect(capture.prompt).not.toContain("operator-skill");
       expect(loadedSkills).toEqual([
@@ -1372,7 +1373,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
       expect(capture.prompt).toContain("Rudder internal repair request: emit the result envelope.");
-      expect(capture.prompt).not.toContain("# Enabled Rudder Skills");
+      expect(capture.prompt).not.toContain("<enabled_rudder_skills>");
       expect(capture.prompt).not.toContain("## Skill: ascii-heart");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

@@ -5,20 +5,21 @@ export const DEFAULT_AGENT_PROMPT_TEMPLATE =
 {{context.rudderWorkspace.orgResourcesPrompt}}
 `;
 
-export const AGENT_ISSUE_CREATION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A Rudder user explicitly asked you to create one issue in the background.
+export const AGENT_ISSUE_CREATION_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). A Rudder user explicitly asked you to create one issue in the background.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-## Agent Issue Creation Request
 
 - Request ID: {{context.agentIssueCreationRequest.id}}
 - Requested by user: {{context.agentIssueCreationRequest.requestedByUserId}}
 - Project context: {{context.agentIssueCreationRequest.projectId}}
 - Goal context: {{context.agentIssueCreationRequest.goalId}}
 - Parent issue context: {{context.agentIssueCreationRequest.parentId}}
+</wake_context>
 
-**User instruction:**
+<quoted_issue_context>
 {{context.agentIssueCreationRequest.instruction}}
+</quoted_issue_context>
 
 ## Required Behavior
 
@@ -499,11 +500,10 @@ export const ISSUE_ASSIGNEE_EXPLICIT_WORK_RAIL =
 export const ISSUE_REVIEWER_EXPLICIT_WORK_RAIL =
   "You are the issue's current reviewer. This explicit request is authorized by that relationship regardless of the issue's current status. This run already holds the issue execution lease: do not check out the issue, do not take over the assignee's ownership, and preserve its current status unless the user explicitly requests a lifecycle change.";
 
-export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You have been assigned to work on an issue.
+export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). You have been assigned to work on an issue.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-## Task Context
 
 **Issue:** {{issue.title}}
 **ID:** {{issue.id}}
@@ -513,9 +513,12 @@ export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 **Reviewer:** {{issue.reviewerLabel}}
 **Created At:** {{issue.createdAt}}
 **Updated At:** {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 **Description:**
 {{issue.description}}
+</quoted_issue_context>
 
 
 Your task is to review this issue, understand what kind of work it asks for, and take the appropriate next action.
@@ -523,11 +526,10 @@ Your task is to review this issue, understand what kind of work it asks for, and
 Do not assume every issue is a codebase task. If the issue is a question, screenshot check, review, planning request, coordination task, or another non-code request, answer or handle that request directly. Inspect the codebase and implement a change only when the issue actually asks for engineering work or when the relevant project resources make code changes necessary.
 ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
-export const COMMENT_MENTION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You were mentioned in a comment and your attention is needed.
+export const COMMENT_MENTION_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). You were mentioned in a comment and your attention is needed.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-## Context
 
 **Issue:** {{issue.title}}
 **ID:** {{issue.id}}
@@ -536,7 +538,9 @@ export const COMMENT_MENTION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{ag
 **Reviewer:** {{issue.reviewerLabel}}
 **Created At:** {{issue.createdAt}}
 **Updated At:** {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 **Issue Description:**
 {{issue.description}}
 
@@ -545,17 +549,17 @@ export const COMMENT_MENTION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{ag
 From: {{comment.authorLabel}} ({{comment.authorKind}})
 
 {{comment.body}}
+</quoted_issue_context>
 
 Please review the comment above and respond or take action as appropriate.
 A mention-triggered comment wake is a request for attention or collaboration, not an automatic transfer of issue ownership. Plain structured agent links such as \`agent://agent-id\` are reference-only. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.
 If the issue is not assigned to you, including user-owned or unassigned issues, and the comment does not explicitly ask you to implement, modify files, close the issue, or take ownership, strictly respond to the comment's content instead of broadening the wake into issue execution. For example, answer questions, acknowledge corrections, explain status, or handle only the narrow action explicitly requested by the comment.
 If the issue has related attachments, such as images or articles, please ensure you have thoroughly researched and read these resources before proceeding with the next action. It's important to read all the attachments before taking any action.`;
 
-export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
+export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-## Context
 
 **Issue:** {{issue.title}}
 **ID:** {{issue.id}}
@@ -564,7 +568,9 @@ export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{ag
 **Reviewer:** {{issue.reviewerLabel}}
 **Created At:** {{issue.createdAt}}
 **Updated At:** {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 **Issue Description:**
 {{issue.description}}
 
@@ -573,15 +579,15 @@ export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{ag
 From: {{comment.authorLabel}} ({{comment.authorKind}})
 
 {{comment.body}}
+</quoted_issue_context>
 
 Review the new comment and continue the issue from the current state. Respond or take action as needed.
 ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
-export const ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). A reviewer requested changes on an issue you own.
+export const ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). A reviewer requested changes on an issue you own.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-## Context
 
 **Issue:** {{issue.title}}
 **ID:** {{issue.id}}
@@ -590,7 +596,9 @@ export const ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE = `You are agent {{agent.id
 **Reviewer:** {{issue.reviewerLabel}}
 **Created At:** {{issue.createdAt}}
 **Updated At:** {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 **Issue Description:**
 {{issue.description}}
 
@@ -599,15 +607,15 @@ export const ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE = `You are agent {{agent.id
 From: {{comment.authorLabel}} ({{comment.authorKind}})
 
 {{comment.body}}
+</quoted_issue_context>
 
 Review the requested changes and continue the issue from the current state. Address the reviewer feedback before handing it back for review.
 ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
-export const ISSUE_REVIEW_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You have been asked to review an issue.
+export const ISSUE_REVIEW_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). You have been asked to review an issue.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
-
-## Review Context
 
 **Issue:** {{issue.title}}
 **ID:** {{issue.id}}
@@ -617,17 +625,21 @@ export const ISSUE_REVIEW_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 **Reviewer:** {{issue.reviewerLabel}}
 **Created At:** {{issue.createdAt}}
 **Updated At:** {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 **Issue Description:**
 {{issue.description}}
 
 
 **Review Instructions:**
 {{context.reviewInstructions}}
+</quoted_issue_context>
 
 Inspect the issue state, evidence, comments, and outputs before deciding. Record the requested review outcome instead of treating this as a fresh implementation assignment.`;
 
-export const ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a reviewer recovery run, not a fresh implementation assignment.
+export const ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). This is a reviewer recovery run, not a fresh implementation assignment.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
 
@@ -649,17 +661,21 @@ export const ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}}
 - Reviewer: {{issue.reviewerLabel}}
 - Created At: {{issue.createdAt}}
 - Updated At: {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 - Description:
 {{issue.description}}
 
 
 **Review Instructions:**
 {{context.reviewInstructions}}
+</quoted_issue_context>
 
 Inspect what the previous reviewer run already completed, then continue the review from the current state. Record the requested structured reviewer decision; do not take over the assignee's implementation.`;
 
-export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
+export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
 
@@ -681,15 +697,19 @@ export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{age
 - Reviewer: {{issue.reviewerLabel}}
 - Created At: {{issue.createdAt}}
 - Updated At: {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 - Description:
 {{issue.description}}
+</quoted_issue_context>
 
 
 Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.
 ${ISSUE_ASSIGNEE_EXECUTION_RAIL}`;
 
-export const RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
+export const RECOVERY_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). This is a recovery run, not a fresh task.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
 
@@ -700,10 +720,12 @@ export const RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.nam
 - Failure Summary: {{context.recovery.failureSummary}}
 - Recovery Trigger: {{context.recovery.recoveryTrigger}}
 - Recovery Mode: {{context.recovery.recoveryMode}}
+</wake_context>
 
 Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.`;
 
-export const ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a passive issue follow-up, not a fresh assignment and not a failure recovery.
+export const ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE = `<wake_context>
+You are agent {{agent.id}} ({{agent.name}}). This is a passive issue follow-up, not a fresh assignment and not a failure recovery.
 
 {{context.rudderWorkspace.orgResourcesPrompt}}
 
@@ -726,9 +748,12 @@ Reason: {{context.passiveFollowup.reason}}
 - Reviewer: {{issue.reviewerLabel}}
 - Created At: {{issue.createdAt}}
 - Updated At: {{issue.updatedAt}}
+</wake_context>
 
+<quoted_issue_context>
 - Description:
 {{issue.description}}
+</quoted_issue_context>
 
 
 Before changing the issue, continue to progress the current issue, then inspect the current issue state and any side effects from the previous run. Finally, do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.
@@ -890,9 +915,25 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export const RUDDER_PROMPT_SECTION_TAGS = {
+  agentInstruction: "rudder_agent_instruction",
+  agentOperatingContract: "rudder_agent_operating_contract",
+  heartbeatInstruction: "rudder_heartbeat_instruction",
+  recentContext: "recent_rudder_context",
+  projectContextResources: "project_context_resources",
+  connectedCustomIntegrationTools: "connected_custom_integration_tools",
+  currentAutomations: "current_automations",
+  enabledSkills: "enabled_rudder_skills",
+  wakeContext: "wake_context",
+  quotedIssueContext: "quoted_issue_context",
+} as const;
+
+export function wrapPromptSection(tagName: string, content: string): string {
+  if (!content.trim()) return "";
+  return `<${tagName}>\n${content}\n</${tagName}>`;
+}
+
 export const RUDDER_AGENT_OPERATING_CONTRACT = [
-  "# Rudder Agent Operating Contract",
-  "",
   "You are a helpful assistant running inside Rudder. Your home directory is `$AGENT_HOME`. Everything personal to you -- life, memory, knowledge -- lives there. Other agents may have their own folders and you may update them when necessary.",
   "",
   "Read Rudder mcp tools to firstly.",
@@ -954,8 +995,6 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
 ].join("\n");
 
 export const RUDDER_AGENT_HEARTBEAT_INSTRUCTION = [
-  "# Rudder Heartbeat Instruction",
-  "",
   "This section is injected by Rudder only for heartbeat scene runs. It is the platform-owned heartbeat/self-check pipeline.",
   "",
   "## Heartbeat Pipeline",
