@@ -249,6 +249,12 @@ Product model:
   by the operator before acceptance, the Chat remains valid and is placed loose.
 - Messages have role, status, body, attachments, rich references, structured
   payloads, and optional run attribution.
+- A pending `requestUserInput` assistant message is a waiting decision surface.
+  Each question preserves its structured options and always exposes an `Other`
+  path for operator-authored feedback, including legacy payloads that set
+  `allowFreeform: false`. A non-empty freeform answer, with optional
+  attachments, is submitted through the normal Chat message path as Steer
+  feedback rather than being limited to the structured option labels.
 - A user message may carry response annotations under
   `CHAT.RESPONSE.ANNOTATION.001`. An annotation-only message is valid in an
   existing Chat, and Queue, Steer, retry, and edit branching preserve the
@@ -407,7 +413,12 @@ Flow:
 6. If assistant startup or generation fails after acceptance, Rudder retains
    the accepted user message and durable, visible failure evidence.
 7. If a runtime assistant is invoked, Rudder creates a chat Agent Run and
-   streams/persists assistant messages.
+   streams/persists assistant messages. If the runtime pauses on a
+   `requestUserInput` question, the operator can choose a structured option or
+   select `Other` and enter freeform feedback. The answer remains blocked until
+   every question has an answer; submitting it materializes one normal user
+   message through the existing Chat send path, preserving attachments and
+   Steer delivery/state handling.
 8. The operator can open the conversation menu to inspect its newest linked
    Agent Run, then use `Chat Replies` to move between distinct attempts without
    expanding duplicate conversation entries in the Agent Runs navigation.
@@ -513,6 +524,10 @@ Invariants:
   the Agent or conversation.
 - Chat proposals/structured payloads must not be confused with plain user
   instructions or automation run input.
+- A pending `requestUserInput` question must keep its structured options
+  visible and must always expose `Other` for freeform feedback. The legacy
+  `allowFreeform` flag must not hide that path; blank freeform input cannot be
+  submitted unless an attachment supplies the answer evidence.
 - Assistant-created issue proposals must be grounded in an explicit latest
   operator-authored request for issue creation, chat-to-issue conversion, or
   issue-proposal drafting.
@@ -687,6 +702,9 @@ Evidence:
   preservation, adapter effort projection and compatibility, in-flight
   admission, queue/Steer snapshots, refresh persistence, and non-inheritance
   boundaries.
+- Ask User UI regression tests and E2E cover the always-visible `Other` path,
+  non-blank freeform submission, legacy `allowFreeform: false` payloads,
+  draft restoration, disabled submission state, and attachment-backed answers.
 - Chat assistant tests cover stopped runtime turns that keep reasoning out of
   partial assistant bodies.
 - Transcript component tests and Messenger E2E cover hiding internal reasoning

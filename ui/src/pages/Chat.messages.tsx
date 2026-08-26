@@ -1970,7 +1970,6 @@ function askUserRequestDraftShapeKey(request: ChatAskUserRequest) {
   return request.questions.map((question) => [
     question.id,
     question.selectionMode ?? "single",
-    question.allowFreeform === false ? "locked" : "freeform",
     question.options.map((option) => option.id).join(","),
   ].join(":")).join("|");
 }
@@ -2165,6 +2164,7 @@ export function AskUserPanel({
                   key={question.id}
                   type="button"
                   className="flex w-full min-w-0 items-start justify-between gap-3 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-sm hover:bg-[color:var(--surface-active)]"
+                  disabled={disabled}
                   onClick={() => {
                     setDraftState((current) => ({
                       ...current,
@@ -2213,6 +2213,7 @@ export function AskUserPanel({
                       : "border-border bg-background/70 text-foreground hover:bg-[color:var(--surface-active)]",
                   )}
                   aria-pressed={active}
+                  disabled={disabled}
                   onClick={() => selectOption(currentQuestion, boundedQuestionIndex, option.id)}
                 >
                   <span
@@ -2243,7 +2244,8 @@ export function AskUserPanel({
                 </button>
               );
             })}
-            {currentQuestion.allowFreeform !== false ? (
+            {/* Freeform feedback is always available; keep allowFreeform only for legacy payload compatibility. */}
+            <>
               <button
                 type="button"
                 className={cn(
@@ -2253,6 +2255,7 @@ export function AskUserPanel({
                     : "border-border bg-background/70 hover:bg-[color:var(--surface-active)]",
                 )}
                 aria-pressed={(selectedByQuestionId[currentQuestion.id] ?? []).includes("__other")}
+                disabled={disabled}
                 onClick={() => selectOption(currentQuestion, boundedQuestionIndex, "__other")}
               >
                 <span
@@ -2267,12 +2270,13 @@ export function AskUserPanel({
                 </span>
                 <span className="font-medium text-foreground">Other</span>
               </button>
-            ) : null}
+            </>
           </div>
           {(selectedByQuestionId[currentQuestion.id] ?? []).includes("__other") ? (
             <div className="mt-2 space-y-2">
               <Textarea
                 value={freeformByQuestionId[currentQuestion.id] ?? ""}
+                disabled={disabled}
                 onChange={(event) => setDraftState((current) => ({
                   ...current,
                   freeformByQuestionId: {
@@ -2303,7 +2307,7 @@ export function AskUserPanel({
                         <div key={fileKey} data-testid="chat-ask-user-pending-attachment" className="max-w-full">
                           <PendingAttachmentPreview
                             file={file}
-                            onRemove={() => onRemovePendingFile(fileKey)}
+                            onRemove={disabled ? undefined : () => onRemovePendingFile(fileKey)}
                           />
                         </div>
                       );
@@ -2324,7 +2328,7 @@ export function AskUserPanel({
               <div key={fileKey} data-testid="chat-ask-user-pending-attachment" className="max-w-full">
                 <PendingAttachmentPreview
                   file={file}
-                  onRemove={() => onRemovePendingFile(fileKey)}
+                  onRemove={disabled ? undefined : () => onRemovePendingFile(fileKey)}
                 />
               </div>
             );

@@ -7699,6 +7699,192 @@ describe("Chat ask_user panel", () => {
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).not.toBeNull();
   });
 
+  it("always exposes a freeform steer when the payload disables it", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please choose an implementation path." }),
+        pendingAskUser({
+          structuredPayload: {
+            requestUserInput: {
+              questions: [
+                {
+                  id: "scope",
+                  header: "Scope",
+                  question: "Which scope should the agent implement?",
+                  options: [
+                    { id: "narrow", label: "Narrow path" },
+                    { id: "broad", label: "Broad path" },
+                  ],
+                  allowFreeform: false,
+                },
+              ],
+            },
+          },
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain("Narrow path");
+    expect(panel?.textContent).toContain("Other");
+
+    await clickEnabledButton(container, "Other");
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    const submit = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => button.textContent?.includes("Submit answer"));
+    expect(submit?.disabled).toBe(true);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Use the custom compatibility path");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(submit?.disabled).toBe(false);
+    await clickEnabledButton(container, "Submit answer");
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Use the custom compatibility path");
+  });
+
+  it("releases the prior send lock when a response pauses for ask_user", async () => {
+    let emitOriginalEvent!: (event: ChatStreamEvent) => void | Promise<void>;
+    const originalStream = deferred<void>();
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-before-ask", body: "Start the implementation." })],
+    };
+    mockState.sendMessageStream.mockImplementationOnce((
+      _chatId: string,
+      _body: string,
+      options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+    ) => {
+      emitOriginalEvent = options.onEvent;
+      return originalStream.promise;
+    });
+
+    const { container, rerender } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Composer draft']");
+    expect(editor).not.toBeNull();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(editor, "Start a response that needs one decision.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+
+    const askUser = pendingAskUser({
+      id: "ask-user-after-stream",
+      structuredPayload: {
+        requestUserInput: {
+          questions: [{
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should the agent implement?",
+            options: [
+              { id: "narrow", label: "Narrow path" },
+              { id: "broad", label: "Broad path" },
+            ],
+            allowFreeform: false,
+          }],
+        },
+      },
+    });
+    await act(async () => {
+      await emitOriginalEvent({
+        type: "ack",
+        userMessage: message({
+          id: "persisted-user-before-ask",
+          conversationId: "chat-1",
+          body: "Start a response that needs one decision.",
+        }),
+      });
+      await emitOriginalEvent({ type: "final", messages: [askUser] });
+    });
+
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Start the implementation." }),
+        askUser,
+      ],
+    };
+    rerender();
+    await clickEnabledButton(container, "Other");
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Use the compatibility path.");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await clickEnabledButton(container, "Submit answer");
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2);
+    originalStream.resolve();
+    await act(async () => {
+      await originalStream.promise;
+    });
+  });
+
+  it("disables answer edits and attachment removal while submitting", async () => {
+    const attachment = new File(["evidence"], "evidence.txt", { type: "text/plain" });
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", "chat-1"),
+      () => [attachment],
+    );
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingMultiAskUser(),
+      ],
+    };
+    const pendingSend = deferred<void>();
+    mockState.sendMessageStream.mockImplementationOnce(() => pendingSend.promise);
+
+    const { container, rerender } = renderChat();
+    await clickEnabledButton(container, "Narrow path");
+    await clickEnabledButton(container, "Missing tests");
+    await clickEnabledButton(container, "Other");
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Include the attached evidence");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    rerender();
+    let panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel?.querySelector("button[aria-label='Remove evidence.txt']")).toBeNull();
+
+    mockState.sendInFlightByChatId = {};
+    rerender();
+    await clickEnabledButton(container, "Review answers");
+    await clickEnabledButton(container, "Submit answer");
+
+    mockState.sendInFlightByChatId = { "chat-1": true };
+    rerender();
+
+    panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    const editButtons = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .filter((button) => button.textContent?.includes("Edit"));
+    expect(editButtons).not.toHaveLength(0);
+    expect(editButtons.every((button) => button.disabled)).toBe(true);
+    expect(panel?.querySelector("button[aria-label='Remove evidence.txt']")).toBeNull();
+
+    pendingSend.resolve();
+    await act(async () => {
+      await pendingSend.promise;
+    });
+  });
+
   it("lets Other answers include pending attachments", async () => {
     const attachment = new File(["log output"], "failure-log.txt", { type: "text/plain" });
     updateChatPendingAttachmentsForScope(
