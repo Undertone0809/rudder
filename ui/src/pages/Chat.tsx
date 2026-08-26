@@ -1319,7 +1319,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
       inlineAnnotationsOverride?: ChatInlineAnnotationInput[];
       annotationDraftPersistence?: AnnotationDraftPersistence;
-      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; },
+      editUserMessageIdOverride?: string | null; editIntent?: "edit" | "retry"; clearPendingFilesOnSuccess?: boolean; onUserMessageAcknowledged?: () => void; queuedMessageId?: string | null; forceImmediateSend?: boolean; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined && options?.inlineAnnotationsOverride === undefined; const body = (options?.bodyOverride ?? readComposerDraft()).trim();
@@ -1518,6 +1518,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               if (!pendingStop) {
                 setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
                 setChatSendInFlight(streamScopeKey, false);
+                // Ask User renders before the stream promise settles, so let its answer submit
+                // while retaining the lock for ordinary final responses.
+                const hasAskUserResponse = event.messages.some((message) => (
+                  message.role === "assistant" && message.kind === "ask_user"
+                ));
+                if (hasAskUserResponse && chatSendLockAcquired) {
+                  releaseChatSendLock(conversation.id);
+                  chatSendLockAcquired = false;
+                }
               }
             }
           },
@@ -1533,7 +1542,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         return;
       }
       const chatId = conversation.id; const streamScopeKey = chatGenerationScopeKey(selectedOrganizationId, conversation); const activeDraftForChat = readChatScopedState(streamDrafts, streamScopeKey);
-      if (!options?.queuedMessageId && (activeDraftForChat || serverActiveGenerationId)) {
+      if (!options?.queuedMessageId && !options?.forceImmediateSend && (activeDraftForChat || serverActiveGenerationId)) {
         if (editUserMessageId) {
           const isRetry = options?.editIntent === "retry";
           pushToast({
@@ -1673,6 +1682,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             if (!pendingStop) {
               setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? null : current);
               setChatSendInFlight(streamScopeKey, false);
+              // Ask User renders before the stream promise settles, so let its answer submit
+              // while retaining the lock for ordinary final responses.
+              const hasAskUserResponse = event.messages.some((message) => (
+                message.role === "assistant" && message.kind === "ask_user"
+              ));
+              if (hasAskUserResponse && chatSendLockAcquired) {
+                releaseChatSendLock(chatId);
+                chatSendLockAcquired = false;
+              }
             }
           } }, });
       if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
@@ -4086,6 +4104,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             bodyOverride: body,
                             filesOverride: [...pendingFiles], conversationOverride: selectedConversation,
                             clearPendingFilesOnSuccess: true,
+                            forceImmediateSend: true,
                             onUserMessageAcknowledged: () => clearChatAskUserDraft(pendingAskUserMessage.orgId, pendingAskUserMessage.id), });
                         }} /> ) : (
                       renderComposer(false)

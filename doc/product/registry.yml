@@ -1286,6 +1286,7 @@ contracts:
       - tests/e2e/chat-rich-references.spec.ts
       - tests/e2e/chat-runtime-boot-failure.spec.ts
       - tests/e2e/chat-proposal-review.spec.ts
+      - tests/e2e/chat-ask-user.spec.ts
       - tests/e2e/chat-streaming.spec.ts
       - tests/e2e/chat-transcript-internal-events.spec.ts
       - tests/e2e/agent-run-conversation-grouping.spec.ts
