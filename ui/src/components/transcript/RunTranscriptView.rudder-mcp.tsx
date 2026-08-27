@@ -25,7 +25,7 @@ import {
   type ReactNode,
   type UIEvent,
 } from "react";
-import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
+import type { RunTranscriptViewProps, TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import { extractMcpToolDetails } from "./RunTranscriptView.semantic";
 
 export type RudderMcpPresenterKind = "rail" | "summary" | "receipt";
@@ -96,6 +96,7 @@ interface PresenterState {
 
 interface PresenterStateStore {
   agents: TranscriptAgentDirectoryEntry[];
+  triggerAutomationParents: ReadonlyMap<string, string>;
   get: (key: string) => PresenterState;
   update: (key: string, patch: Partial<PresenterState>) => void;
 }
@@ -104,9 +105,13 @@ const RudderMcpPresenterContext = createContext<PresenterStateStore | null>(null
 
 export function RudderMcpPresenterProvider({
   agents = [],
+  entries = [],
+  triggerAutomationParents,
   children,
 }: {
   agents?: TranscriptAgentDirectoryEntry[];
+  entries?: RunTranscriptViewProps["entries"];
+  triggerAutomationParents?: ReadonlyMap<string, string>;
   children: ReactNode;
 }) {
   const statesRef = useRef(new Map<string, PresenterState>());
@@ -115,7 +120,14 @@ export function RudderMcpPresenterProvider({
     const current = statesRef.current.get(key) ?? { mounted: 6, scrollLeft: 0 };
     statesRef.current.set(key, { ...current, ...patch });
   }, []);
-  const value = useMemo(() => ({ agents, get, update }), [agents, get, update]);
+  const collectedTriggerParents = useMemo(
+    () => triggerAutomationParents ?? collectRudderMcpTriggerAutomationParents(entries),
+    [entries, triggerAutomationParents],
+  );
+  const value = useMemo(
+    () => ({ agents, triggerAutomationParents: collectedTriggerParents, get, update }),
+    [agents, collectedTriggerParents, get, update],
+  );
   return <RudderMcpPresenterContext.Provider value={value}>{children}</RudderMcpPresenterContext.Provider>;
 }
 
@@ -226,6 +238,44 @@ function collectionFrom(value: unknown, domain: RudderMcpDomain): JsonRecord[] |
   return null;
 }
 
+function triggerRecordsFrom(value: unknown) {
+  const collection = collectionFrom(value, "automation");
+  if (collection) return collection;
+  const record = valueRecord(value, "automation");
+  return record ? [record] : [];
+}
+
+export function collectRudderMcpTriggerAutomationParents(entries: RunTranscriptViewProps["entries"]) {
+  const calls = new Map<string, { name: string; input: unknown }>();
+  const parents = new Map<string, string>();
+
+  for (const entry of entries) {
+    if (entry.kind === "tool_call" && entry.toolUseId) {
+      calls.set(entry.toolUseId, { name: entry.name, input: entry.input });
+      continue;
+    }
+    if (entry.kind !== "tool_result") continue;
+
+    const call = calls.get(entry.toolUseId);
+    const resolved = call ? getRudderMcpPresenterDefinition(call.name, call.input) : null;
+    if (!resolved?.toolName.includes("automation_triggers")) continue;
+
+    const args = extractMcpToolDetails(call!.name, call!.input)?.args ?? asRecord(call!.input);
+    const inputTriggerId = readString(args, ["trigger", "triggerId", "trigger_id"]);
+    const inputAutomationId = readString(args, ["automation", "automationId", "automation_id"]);
+    if (inputTriggerId && inputAutomationId) parents.set(inputTriggerId, inputAutomationId);
+
+    const parsed = parseRudderMcpResult(entry.content);
+    for (const record of triggerRecordsFrom(parsed)) {
+      const triggerId = readString(record, ["triggerId", "id"]);
+      const automationId = readString(record, ["automationId"]);
+      if (triggerId && automationId) parents.set(triggerId, automationId);
+    }
+  }
+
+  return parents;
+}
+
 function encodePath(value: string) {
   return encodeURIComponent(value);
 }
@@ -245,6 +295,7 @@ function targetFor(
   record: JsonRecord | null,
   args: JsonRecord | null,
   toolName: CoveredRudderMcpToolName,
+  triggerAutomationParents: ReadonlyMap<string, string>,
 ): string | null {
   if (domain === "issue") {
     const ref = issueRef(record, args);
@@ -278,8 +329,12 @@ function targetFor(
   if (chatId && (toolName === "rudder_automation_runs" || toolName === "rudder_automation_run")) {
     return `/messenger/chat/${encodePath(chatId)}`;
   }
+  const triggerId = toolName.includes("triggers")
+    ? readString(record, ["triggerId", "id"]) ?? readString(args, ["trigger", "triggerId", "trigger_id"])
+    : null;
   const id = readString(record, ["automationId"])
     ?? readString(args, ["automation", "automationId", "automation_id"])
+    ?? (triggerId ? triggerAutomationParents.get(triggerId) ?? null : null)
     ?? (toolName.includes("triggers") ? null : readString(record, ["id"]));
   return id ? `/automations/${encodePath(id)}` : null;
 }
@@ -301,6 +356,7 @@ interface SemanticCardModel {
   eyebrow: string;
   title: string | null;
   description: string | null;
+  commentBody: string | null;
   status: string | null;
   target: string | null;
   agentRef: string | null;
@@ -312,6 +368,7 @@ function cardModel(
   definition: RudderMcpPresenterDefinition,
   toolName: CoveredRudderMcpToolName,
   args: JsonRecord | null,
+  triggerAutomationParents: ReadonlyMap<string, string>,
   index: number,
 ): SemanticCardModel {
   const domain = definition.domain;
@@ -324,6 +381,9 @@ function cardModel(
   const description = readString(record, [
     "description", "instructions", "body", "summary", "rationale", "riskSummary", "failureReason", "prompt", "decisionNote",
   ]);
+  const commentBody = toolName.includes("comment")
+    ? readString(record, ["body", "commentBody", "content", "text"])
+    : null;
   const status = statusLabel(readString(record, ["status", "lifecycle", "decision", "state", "kind", "priority"]));
   const agentRef = readString(record, [
     "assigneeAgentId", "ownerAgentId", "authorAgentId", "createdByAgentId", "requestedByAgentId", "agentId", "leadAgentId",
@@ -340,8 +400,9 @@ function cardModel(
           : domain[0]!.toUpperCase() + domain.slice(1),
     title,
     description: description === title ? null : description,
+    commentBody,
     status,
-    target: targetFor(domain, record, args, toolName),
+    target: targetFor(domain, record, args, toolName, triggerAutomationParents),
     agentRef,
     timestamp,
   };
@@ -386,6 +447,9 @@ function SemanticEntityCard({
   const Icon = domainIcon(domain);
   const agent = resolveAgent(model.agentRef, agents);
   const target = organizationAwareTarget(model.target);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const interactive = Boolean(target) && (hovered || focused);
   const content = (
     <>
       <div className="flex items-start justify-between gap-3">
@@ -420,14 +484,28 @@ function SemanticEntityCard({
     </>
   );
   const className = cn(
-    "flex shrink-0 snap-start flex-col overflow-hidden border border-border/65 bg-background/85 p-3 text-left",
+    "flex shrink-0 snap-start flex-col overflow-hidden border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.32)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.72)]",
     compact ? "min-h-36 w-full rounded-md" : "h-52 w-[17.5rem] rounded-md",
-    target && "cursor-pointer transition-colors hover:border-foreground/20 hover:bg-muted/20 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:bg-muted/30",
+    target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-card hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.38)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-18px_rgba(0,0,0,0.78)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
+    interactive && "-translate-y-0.5 border-foreground/30 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.42)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.82)]",
   );
   return target ? (
-    <a href={target} className={className} data-rudder-semantic-card-link="true">{content}</a>
+    <a
+      href={target}
+      className={className}
+      style={interactive ? { transform: "translateY(-2px)" } : undefined}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      data-rudder-semantic-card-link="true"
+      data-rudder-semantic-card-surface="true"
+      data-rudder-semantic-card-interactive={interactive ? "true" : "false"}
+    >
+      {content}
+    </a>
   ) : (
-    <div className={className} data-rudder-semantic-card-link="false">{content}</div>
+    <div className={className} data-rudder-semantic-card-link="false" data-rudder-semantic-card-surface="true">{content}</div>
   );
 }
 
@@ -551,40 +629,86 @@ function Receipt({
   domain,
   action,
   failed,
+  agents,
 }: {
   model: SemanticCardModel;
   domain: RudderMcpDomain;
   action: string;
   failed: boolean;
+  agents: TranscriptAgentDirectoryEntry[];
 }) {
   const Icon = failed ? AlertCircle : Check;
+  const agent = resolveAgent(model.agentRef, agents);
   const target = organizationAwareTarget(model.target);
+  const commentScrollRef = useScrollbarActivityRef();
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const interactive = Boolean(target) && (hovered || focused);
   const content = (
     <>
       <span className={cn(
-        "inline-flex size-9 shrink-0 items-center justify-center rounded-md border",
+        "col-start-1 row-start-1 inline-flex size-9 shrink-0 items-center justify-center rounded-md border",
         failed ? "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
       )}>
         <Icon className="size-4" aria-hidden />
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="col-start-2 row-start-1 min-w-0">
         <span className="block text-[10px] font-semibold text-muted-foreground">{domain[0]!.toUpperCase() + domain.slice(1)}</span>
         <span className="mt-0.5 block text-sm font-semibold text-foreground">{action}</span>
-        {model.title && model.title !== action ? <span className="mt-1 block truncate text-xs text-muted-foreground">{model.title}</span> : null}
+        {!model.commentBody && model.title && model.title !== action ? (
+          <span className="mt-1 block truncate text-xs text-muted-foreground">{model.title}</span>
+        ) : null}
       </span>
-      {model.status || formatDate(model.timestamp) ? (
-        <span className="flex shrink-0 flex-col items-end gap-1">
+      {agent || model.status || formatDate(model.timestamp) ? (
+        <span className="col-start-3 row-start-1 flex shrink-0 flex-col items-end gap-1">
+          {agent ? (
+            <span data-rudder-semantic-agent="true">
+              <AgentIdentity
+                name={agent.name}
+                icon={agent.icon}
+                role={agent.role as AgentRole | null | undefined}
+                size="sm"
+                className="max-w-[11rem] text-muted-foreground"
+              />
+            </span>
+          ) : null}
           {model.status ? <span className="rounded-sm border border-border/60 px-2 py-0.5 text-[10px] capitalize text-muted-foreground">{model.status}</span> : null}
           {formatDate(model.timestamp) ? <span className="text-[10px] text-muted-foreground">{formatDate(model.timestamp)}</span> : null}
+        </span>
+      ) : null}
+      {model.commentBody ? (
+        <span
+          ref={commentScrollRef}
+          className="scrollbar-auto-hide col-start-2 col-end-4 row-start-2 block max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words border-l-2 border-foreground/15 pl-2.5 pr-2 text-xs leading-5 text-foreground/80"
+          data-rudder-semantic-comment-body="true"
+        >
+          {model.commentBody}
         </span>
       ) : null}
     </>
   );
   const className = cn(
-    "flex w-full items-center gap-3 rounded-md border border-border/65 bg-background/85 p-3 text-left shadow-sm",
-    target && "cursor-pointer transition-colors hover:border-foreground/20 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
+    "grid w-full grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.30)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.70)]",
+    target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-card hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.36)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-18px_rgba(0,0,0,0.76)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
+    interactive && "-translate-y-0.5 border-foreground/30 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.40)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.80)]",
   );
-  return target ? <a href={target} className={className}>{content}</a> : <div className={className}>{content}</div>;
+  return target ? (
+    <a
+      href={target}
+      className={className}
+      style={interactive ? { transform: "translateY(-2px)" } : undefined}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      data-rudder-semantic-card-surface="true"
+      data-rudder-semantic-card-interactive={interactive ? "true" : "false"}
+    >
+      {content}
+    </a>
+  ) : (
+    <div className={className} data-rudder-semantic-card-surface="true">{content}</div>
+  );
 }
 
 function Unavailable({ failed }: { failed: boolean }) {
@@ -610,8 +734,27 @@ export function RudderMcpSemanticPresenter({ block }: { block: TranscriptToolCar
   const args = toolArgs(block);
   if (failed) {
     const failureRecord = valueRecord(parsed, resolved.domain) ?? {};
-    const failureModel = cardModel(failureRecord, resolved, resolved.toolName, args, 0);
-    return <Receipt model={failureModel} domain={resolved.domain} action="Action failed" failed />;
+    const failureModel = cardModel(
+      failureRecord,
+      resolved,
+      resolved.toolName,
+      args,
+      store?.triggerAutomationParents ?? new Map(),
+      0,
+    );
+    return (
+      <Receipt
+        model={{
+          ...failureModel,
+          title: resolved.toolName.includes("comment") ? null : failureModel.title,
+          commentBody: null,
+        }}
+        domain={resolved.domain}
+        action="Action failed"
+        failed
+        agents={store?.agents ?? []}
+      />
+    );
   }
   if (parsed === undefined || parsed === null) return <Unavailable failed={false} />;
 
@@ -621,13 +764,27 @@ export function RudderMcpSemanticPresenter({ block }: { block: TranscriptToolCar
     const rows = collectionFrom(parsed, domain);
     if (!rows) return <Unavailable failed={false} />;
     const presentationDefinition = domain === resolved.domain ? resolved : { ...resolved, domain };
-    const models = rows.map((row, index) => cardModel(row, presentationDefinition, resolved.toolName, args, index));
+    const models = rows.map((row, index) => cardModel(
+      row,
+      presentationDefinition,
+      resolved.toolName,
+      args,
+      store?.triggerAutomationParents ?? new Map(),
+      index,
+    ));
     return <Rail stateKey={stateKey} models={models} domain={domain} agents={store?.agents ?? []} />;
   }
 
   const record = valueRecord(parsed, resolved.domain);
   if (!record) return <Unavailable failed={false} />;
-  const model = cardModel(record, resolved, resolved.toolName, args, 0);
+  const model = cardModel(
+    record,
+    resolved,
+    resolved.toolName,
+    args,
+    store?.triggerAutomationParents ?? new Map(),
+    0,
+  );
   if (resolved.kind === "receipt") {
     return (
       <Receipt
@@ -635,6 +792,7 @@ export function RudderMcpSemanticPresenter({ block }: { block: TranscriptToolCar
         domain={resolved.domain}
         action={receiptAction(resolved.toolName, resolved, record)}
         failed={receiptFailed(resolved.toolName, record)}
+        agents={store?.agents ?? []}
       />
     );
   }

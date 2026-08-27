@@ -7,6 +7,7 @@ import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import {
   type CoveredRudderMcpToolName,
+  collectRudderMcpTriggerAutomationParents,
   getRudderMcpPresenterDefinition,
   parseRudderMcpResult,
   RUDDER_MCP_PRESENTER_REGISTRY,
@@ -78,9 +79,13 @@ function block(
   };
 }
 
-function renderPresenter(entry: TranscriptToolCardEntry, agents: TranscriptAgentDirectoryEntry[] = []) {
+function renderPresenter(
+  entry: TranscriptToolCardEntry,
+  agents: TranscriptAgentDirectoryEntry[] = [],
+  triggerAutomationParents: ReadonlyMap<string, string> = new Map(),
+) {
   return renderToStaticMarkup(
-    <RudderMcpPresenterProvider agents={agents}>
+    <RudderMcpPresenterProvider agents={agents} triggerAutomationParents={triggerAutomationParents}>
       <RudderMcpSemanticPresenter block={entry} />
     </RudderMcpPresenterProvider>,
   );
@@ -159,6 +164,71 @@ describe("Rudder MCP semantic cards", () => {
     expect(html).toContain('href="/issues/RUD-42"');
     expect(html).toContain("Ada");
     expect(html).not.toContain("Open");
+    expect(html).toContain('data-rudder-semantic-card-surface="true"');
+    expect(html).toContain("shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.32)]");
+  });
+
+  it("shows the structured comment body in Issue and Approval receipts", () => {
+    const issueComment = renderPresenter(block("rudder_issue_comment", {
+      id: "comment-1",
+      issueId: "RUD-1",
+      body: "Keep the horizontal rail position after reopening.",
+      authorAgentId: "agent-1",
+    }), [{ id: "agent-1", name: "Ada", icon: null, role: "engineer" }]);
+    expect(issueComment).toContain("Comment added");
+    expect(issueComment).toContain("Keep the horizontal rail position after reopening.");
+    expect(issueComment).toContain('data-rudder-semantic-comment-body="true"');
+    expect(issueComment).toContain('data-rudder-semantic-agent="true"');
+    expect(issueComment).toContain("Ada");
+
+    const approvalComment = renderPresenter(block("rudder_approval_comment", {
+      id: "comment-2",
+      approvalId: "approval-1",
+      body: "Approved once the exact-candidate browser receipt passes.",
+      authorAgentId: "agt_unknown",
+    }));
+    expect(approvalComment).toContain("Approval comment added");
+    expect(approvalComment).toContain("Approved once the exact-candidate browser receipt passes.");
+    expect(approvalComment).toContain("agt_unknown");
+  });
+
+  it("renders comment content as escaped plain text", () => {
+    const html = renderPresenter(block("rudder_issue_comment", {
+      id: "comment-1",
+      issueId: "RUD-1",
+      body: "First line\n<script>not markup</script>",
+    }));
+    expect(html).toContain("First line\n&lt;script&gt;not markup&lt;/script&gt;");
+    expect(html).not.toContain("<script>not markup</script>");
+  });
+
+  it("bounds long comment receipts without dropping structured text", () => {
+    const longComment = Array.from({ length: 80 }, (_, index) => (
+      `Evidence paragraph ${index + 1}: retain this exact structured comment text.`
+    )).join("\n\n") + "\n\nEnd of complete comment.";
+    const html = renderPresenter(block("rudder_issue_comment", {
+      id: "comment-long",
+      issueId: "RUD-1",
+      body: longComment,
+    }));
+
+    expect(html).toContain("scrollbar-auto-hide");
+    expect(html).toContain("max-h-40");
+    expect(html).toContain("overflow-y-auto");
+    expect(html).toContain("Evidence paragraph 80: retain this exact structured comment text.");
+    expect(html).toContain("End of complete comment.");
+  });
+
+  it("does not show an unconfirmed comment body on failure", () => {
+    const html = renderPresenter(block(
+      "rudder_issue_comment",
+      { error: "denied", body: "This comment was not created." },
+      { issueId: "RUD-1" },
+      "error",
+    ));
+    expect(html).toContain("Action failed");
+    expect(html).not.toContain("This comment was not created.");
+    expect(html).not.toContain('data-rudder-semantic-comment-body="true"');
   });
 
   it("renders approval issue collections as Issue cards with Issue links", () => {
@@ -216,15 +286,31 @@ describe("Rudder MCP semantic cards", () => {
     expect(cancelledRun).not.toContain("text-emerald-700");
   });
 
-  it("does not mistake a deleted trigger id for its parent Automation", () => {
-    const html = renderPresenter(block(
+  it("links a deleted trigger to a parent Automation only when structured evidence resolves it", () => {
+    const entry = block(
       "rudder_automation_triggers_delete",
       { id: "trigger-1", deleted: true },
       { trigger: "trigger-1" },
-    ));
-    expect(html).toContain("Trigger deleted");
-    expect(html).not.toContain('href="/automations/trigger-1"');
-    expect(html).not.toContain("cursor-pointer");
+    );
+    const unresolved = renderPresenter(entry);
+    expect(unresolved).toContain("Trigger deleted");
+    expect(unresolved).not.toContain('href="/automations/trigger-1"');
+    expect(unresolved).not.toContain("cursor-pointer");
+
+    const resolved = renderPresenter(entry, [], new Map([["trigger-1", "automation-1"]]));
+    expect(resolved).toContain('href="/automations/automation-1"');
+    expect(resolved).toContain("cursor-pointer");
+  });
+
+  it("builds a trustworthy trigger-parent directory from structured transcript evidence", () => {
+    const entries = [
+      { kind: "tool_call" as const, ts: "2026-08-26T08:00:00.000Z", name: "mcp__rudder-tools__rudder_automation_triggers_rotate_secret", toolUseId: "rotate-1", input: { trigger: "trigger-1" } },
+      { kind: "tool_result" as const, ts: "2026-08-26T08:00:01.000Z", toolUseId: "rotate-1", content: JSON.stringify({ trigger: { id: "trigger-1", automationId: "automation-1" } }), isError: false },
+      { kind: "tool_call" as const, ts: "2026-08-26T08:00:02.000Z", name: "mcp__rudder-tools__rudder_automation_triggers_delete", toolUseId: "delete-1", input: { trigger: "trigger-1" } },
+      { kind: "tool_result" as const, ts: "2026-08-26T08:00:03.000Z", toolUseId: "delete-1", content: JSON.stringify({ id: "trigger-1", deleted: true }), isError: false },
+    ];
+
+    expect(collectRudderMcpTriggerAutomationParents(entries)).toEqual(new Map([["trigger-1", "automation-1"]]));
   });
 
   it("redacts secret material from webhook rotation Nice output", () => {

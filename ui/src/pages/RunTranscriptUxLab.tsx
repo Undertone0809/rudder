@@ -2,13 +2,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, FlaskConical, LayoutPanelLeft, MonitorCog, PanelsTopLeft, RadioTower } from "lucide-react";
 import { useState } from "react";
+import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "../components/Identity";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTranscriptView, type TranscriptDensity, type TranscriptMode } from "../components/transcript/RunTranscriptView";
+import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "../components/transcript/RunTranscriptView.common";
+import {
+  RudderMcpPresenterProvider,
+  RudderMcpSemanticPresenter,
+} from "../components/transcript/RunTranscriptView.rudder-mcp";
 import { runTranscriptFixtureEntries, runTranscriptFixtureMeta } from "../fixtures/runTranscriptFixtures";
 import { cn, formatDateTime, formatRunElapsedDuration } from "../lib/utils";
 
-type SurfaceId = "detail" | "live" | "dashboard" | "chat";
+type SurfaceId = "detail" | "live" | "dashboard" | "chat" | "semantic";
 
 const surfaceOptions: Array<{
   id: SurfaceId;
@@ -45,6 +51,13 @@ const surfaceOptions: Array<{
     description: "The messenger middle-state transcript, grouped into readable progress chunks while tool output stays tucked behind secondary disclosure.",
     icon: LayoutPanelLeft,
   },
+  {
+    id: "semantic",
+    label: "MCP Cards",
+    eyebrow: "Semantic results",
+    description: "Built-in Rudder MCP list, summary, comment, and outcome presenters in their production Nice-mode treatment.",
+    icon: PanelsTopLeft,
+  },
 ];
 
 function previewEntries(surface: SurfaceId) {
@@ -55,7 +68,7 @@ function previewEntries(surface: SurfaceId) {
     return runTranscriptFixtureEntries.slice(17, 24);
   }
   if (surface === "live") {
-    return runTranscriptFixtureEntries.slice(9, 28);
+    return runTranscriptFixtureEntries.slice(9, 30);
   }
   return runTranscriptFixtureEntries;
 }
@@ -71,6 +84,182 @@ function fixtureElapsedLabel(streaming: boolean) {
   return streaming ? `Live for ${duration ?? "now"}` : `Ran for ${duration ?? "0s"}`;
 }
 
+const semanticCardAgents: TranscriptAgentDirectoryEntry[] = [
+  {
+    id: "agent-semantic-reviewer",
+    shortRef: "agt_review",
+    name: "Mira Chen",
+    icon: null,
+    role: "engineer",
+  },
+];
+
+function semanticCardBlock(
+  toolName: string,
+  result: unknown,
+  input: Record<string, unknown> = {},
+): TranscriptToolCardEntry {
+  return {
+    ts: "2026-08-27T08:30:00.000Z",
+    name: `mcp__rudder-tools__${toolName}`,
+    toolUseId: `ui-lab-${toolName}`,
+    input,
+    result: JSON.stringify(result),
+    status: "completed",
+  };
+}
+
+const semanticGoalTitles = [
+  "Ship semantic transcript cards",
+  "Review agent-work evidence",
+  "Improve automation reliability",
+  "Close the feedback loop",
+  "Reduce raw protocol noise",
+  "Verify mobile transcript navigation",
+  "Harden approval outcomes",
+  "Document presenter contracts",
+  "Audit project summary cards",
+  "Validate approval queue states",
+  "Preserve rail focus continuity",
+  "Verify automation trigger receipts",
+  "Review malformed result fallback",
+];
+
+const semanticGoalList = semanticCardBlock("rudder_goal_list", semanticGoalTitles.map((title, index) => ({
+  id: `goal-lab-${index + 1}`,
+  title,
+  lifecycle: index === 1 ? "at_risk" : "active",
+  ownerAgentId: "agent-semantic-reviewer",
+  updatedAt: `2026-08-${String(27 - index).padStart(2, "0")}T08:30:00.000Z`,
+})));
+
+const semanticLongCommentBody = Array.from({ length: 48 }, (_, index) => (
+  `Review note ${index + 1}: verify the semantic card against the exact transcript evidence, preserve the horizontal rail position, and keep the Agent identity visible.`
+)).join("\n\n") + "\n\nEnd of complete long comment fixture.";
+
+const semanticReceiptFixtures = [
+  {
+    label: "Issue comment",
+    block: semanticCardBlock("rudder_issue_comment", {
+      id: "comment-lab-1",
+      issueId: "RUD-427",
+      body: "The horizontal rail reads clearly now. Keep the owner avatar visible and preserve the current scroll position after reopening.",
+      authorAgentId: "agent-semantic-reviewer",
+      createdAt: "2026-08-27T08:31:00.000Z",
+    }, { issueId: "RUD-427" }),
+  },
+  {
+    label: "Long issue comment",
+    testId: "ui-lab-long-comment-receipt",
+    block: semanticCardBlock("rudder_issue_comment", {
+      id: "comment-lab-long",
+      issueId: "RUD-428",
+      body: semanticLongCommentBody,
+      authorAgentId: "agent-semantic-reviewer",
+      createdAt: "2026-08-27T08:31:30.000Z",
+    }, { issueId: "RUD-428" }),
+  },
+  {
+    label: "Approval comment",
+    block: semanticCardBlock("rudder_approval_comment", {
+      id: "approval-comment-lab-1",
+      approvalId: "approval-lab-1",
+      body: "Approved for the review branch. The final main merge still depends on the exact-candidate browser receipt.",
+      authorAgentId: "agent-semantic-reviewer",
+      createdAt: "2026-08-27T08:32:00.000Z",
+    }, { approvalId: "approval-lab-1" }),
+  },
+  {
+    label: "Deleted automation trigger",
+    testId: "ui-lab-trigger-delete-receipt",
+    block: semanticCardBlock("rudder_automation_triggers_delete", {
+      id: "trigger-lab-1",
+      deleted: true,
+    }, { trigger: "trigger-lab-1" }),
+  },
+  {
+    label: "Failed automation",
+    block: semanticCardBlock("rudder_automation_run", {
+      id: "automation-run-lab-1",
+      automationId: "automation-lab-1",
+      status: "failed",
+      failureReason: "The target workspace was unavailable.",
+      completedAt: "2026-08-27T08:33:00.000Z",
+    }),
+  },
+];
+
+const semanticTriggerAutomationParents = new Map([["trigger-lab-1", "automation-lab-1"]]);
+
+function semanticTranscriptPair(
+  block: TranscriptToolCardEntry,
+  progressText: string,
+): TranscriptEntry[] {
+  const toolUseId = block.toolUseId ?? `ui-lab-${block.name}`;
+  return [
+    {
+      kind: "assistant",
+      ts: block.ts,
+      text: progressText,
+    },
+    {
+      kind: "tool_call",
+      ts: block.ts,
+      name: block.name,
+      toolUseId,
+      input: block.input,
+    },
+    {
+      kind: "tool_result",
+      ts: block.ts,
+      toolUseId,
+      content: block.result ?? "",
+      isError: block.status === "error",
+    },
+  ];
+}
+
+const semanticTranscriptEntries = [
+  ...semanticTranscriptPair(semanticGoalList, "Listing the current goals for review."),
+  ...semanticTranscriptPair(semanticReceiptFixtures[0].block, "Adding the review comment to RUD-427."),
+  ...semanticTranscriptPair(semanticReceiptFixtures[2].block, "Recording the approval comment."),
+  ...semanticTranscriptPair(semanticReceiptFixtures[4].block, "Checking the latest automation run."),
+];
+
+function SemanticCardsPreview() {
+  return (
+    <RudderMcpPresenterProvider
+      agents={semanticCardAgents}
+      triggerAutomationParents={semanticTriggerAutomationParents}
+    >
+      <div className="space-y-6" data-testid="ui-lab-rudder-mcp-cards">
+        <section aria-labelledby="semantic-card-rail-heading">
+          <div className="mb-3">
+            <h3 id="semantic-card-rail-heading" className="text-sm font-semibold">Horizontal result rail</h3>
+            <p className="mt-1 text-xs text-muted-foreground">One stable row, six cards initially, with local incremental rendering near the end.</p>
+          </div>
+          <RudderMcpSemanticPresenter block={semanticGoalList} />
+        </section>
+
+        <section aria-labelledby="semantic-card-receipts-heading">
+          <div className="mb-3">
+            <h3 id="semantic-card-receipts-heading" className="text-sm font-semibold">Comment and outcome receipts</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Comment receipts include the structured comment body; failure copy stays evidence-bound.</p>
+          </div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {semanticReceiptFixtures.map((fixture) => (
+              <div key={fixture.label} className="min-w-0" data-testid={fixture.testId}>
+                <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">{fixture.label}</div>
+                <RudderMcpSemanticPresenter block={fixture.block} />
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </RudderMcpPresenterProvider>
+  );
+}
+
 function RunDetailPreview({
   mode,
   streaming,
@@ -81,7 +270,10 @@ function RunDetailPreview({
   density: TranscriptDensity;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border/70 bg-background/80 shadow-[0_24px_60px_rgba(15,23,42,0.08)]">
+    <div
+      className="overflow-hidden rounded-xl border border-border/70 bg-background/80 shadow-[0_24px_60px_rgba(15,23,42,0.08)]"
+      data-testid="ui-lab-run-detail-transcript"
+    >
       <div className="border-b border-border/60 bg-background/90 px-5 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="uppercase tracking-[0.18em] text-[10px]">
@@ -94,17 +286,18 @@ function RunDetailPreview({
           <span className="text-xs text-muted-foreground">{fixtureElapsedLabel(streaming)}</span>
         </div>
         <div className="mt-2 text-sm font-medium">
-          Transcript ({runTranscriptFixtureEntries.length})
+          Transcript ({runTranscriptFixtureEntries.length + semanticTranscriptEntries.length})
         </div>
       </div>
       <div className="max-h-[720px] overflow-y-auto bg-[radial-gradient(circle_at_top_left,rgba(8,145,178,0.08),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.10),transparent_28%)] p-5">
         <RunTranscriptView
-          entries={runTranscriptFixtureEntries}
+          entries={[...runTranscriptFixtureEntries, ...semanticTranscriptEntries]}
           mode={mode}
           density={density}
           streaming={streaming}
           collapseStdout
           presentation="detail"
+          agentDirectory={semanticCardAgents}
         />
       </div>
     </div>
@@ -228,7 +421,10 @@ function ChatPreview({
   density: TranscriptDensity;
 }) {
   return (
-    <div className="overflow-hidden rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(8,145,178,0.04),transparent_28%),var(--background)] shadow-[0_24px_60px_rgba(15,23,42,0.10)]">
+    <div
+      className="overflow-hidden rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(8,145,178,0.04),transparent_28%),var(--background)] shadow-[0_24px_60px_rgba(15,23,42,0.10)]"
+      data-testid="ui-lab-chat-transcript"
+    >
       <div className="border-b border-border/60 px-5 py-4">
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="uppercase tracking-[0.18em] text-[10px]">
@@ -245,12 +441,13 @@ function ChatPreview({
           </div>
         </div>
         <RunTranscriptView
-          entries={previewEntries("chat")}
+          entries={[...previewEntries("chat"), ...semanticTranscriptEntries]}
           mode={mode}
           density={density}
           streaming={streaming}
           collapseStdout
           presentation="chat"
+          agentDirectory={semanticCardAgents}
         />
         <div className="rounded-[20px] bg-background/90 px-5 py-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
           <div className="mb-2 text-sm font-medium">Founding Engineer</div>
@@ -344,7 +541,7 @@ export function RunTranscriptUxLab() {
               </div>
             </div>
 
-            <div className="mb-5 flex flex-wrap items-center gap-2">
+            {selectedSurface !== "semantic" ? <div className="mb-5 flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Controls
               </span>
@@ -386,9 +583,11 @@ export function RunTranscriptUxLab() {
               >
                 {streaming ? "Show settled state" : "Show streaming state"}
               </Button>
-            </div>
+            </div> : null}
 
-            {selectedSurface === "detail" ? (
+            {selectedSurface === "semantic" ? (
+              <SemanticCardsPreview />
+            ) : selectedSurface === "detail" ? (
               <div className={cn(density === "compact" && "max-w-5xl")}>
                 <RunDetailPreview mode={detailMode} streaming={streaming} density={density} />
               </div>
