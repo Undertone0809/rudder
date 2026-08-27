@@ -186,8 +186,8 @@ vi.mock("@/components/ui/dialog", () => ({
 vi.mock("@/components/ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PopoverTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PopoverContent: ({ children, disablePortal }: { children: ReactNode; disablePortal?: boolean }) => (
-    <div data-disable-portal={disablePortal ? "true" : undefined}>{children}</div>
+  PopoverContent: ({ children, disablePortal, "data-testid": dataTestId }: { children: ReactNode; disablePortal?: boolean; "data-testid"?: string }) => (
+    <div data-disable-portal={disablePortal ? "true" : undefined} data-testid={dataTestId}>{children}</div>
   ),
 }));
 
@@ -344,6 +344,13 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:ring-1");
     expect(html).toContain("disabled:ring-border/80");
     expect(html).toContain("disabled:shadow-none");
+  });
+
+  it("gives the More issue properties control an accessible name and stable test hook", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('aria-label="More issue properties"');
+    expect(html).toContain('data-testid="new-issue-more-menu"');
   });
 
   it("hides the temporarily disabled goal controls from Create Issue", () => {

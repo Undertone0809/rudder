@@ -2,6 +2,105 @@ import { expect, test } from "@playwright/test";
 import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("New issue project context", () => {
+  test("keeps the issue header Create Issue action visible and clickable at md desktop width", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-Narrow-Header-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+    const organizationRouteKey = organization.urlKey || organization.issuePrefix;
+
+    await page.setViewportSize({ width: 768, height: 900 });
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organizationRouteKey}/issues`);
+
+    const header = page.getByTestId("workspace-main-header");
+    const createIssueButton = header.getByRole("button", { name: "Create Issue" });
+    await expect(createIssueButton).toBeVisible();
+    await createIssueButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "New issue" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Close new issue dialog" }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test("keeps the More issue properties popover anchored after resize and reopen", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-More-Position-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+    const organizationRouteKey = organization.urlKey || organization.issuePrefix;
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organizationRouteKey}/issues`);
+    await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "New issue" });
+    const moreButton = dialog.getByRole("button", { name: "More issue properties" });
+    const menu = page.getByTestId("new-issue-more-menu");
+    await moreButton.click();
+    await expect(menu).toBeVisible();
+
+    const readGeometry = () => page.evaluate(() => {
+      const trigger = document.querySelector('[data-slot="dialog-content"][data-state="open"] button[aria-label="More issue properties"]');
+      const content = document.querySelector('[data-testid="new-issue-more-menu"][data-state="open"]');
+      if (!trigger || !content) return null;
+      const triggerRect = trigger.getBoundingClientRect();
+      const contentRect = content.getBoundingClientRect();
+      const gap = contentRect.bottom <= triggerRect.top
+        ? triggerRect.top - contentRect.bottom
+        : contentRect.top >= triggerRect.bottom
+          ? contentRect.top - triggerRect.bottom
+          : 0;
+      return {
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        trigger: { x: triggerRect.x, y: triggerRect.y, right: triggerRect.right, bottom: triggerRect.bottom },
+        content: { x: contentRect.x, y: contentRect.y, right: contentRect.right, bottom: contentRect.bottom },
+        gap,
+      };
+    });
+
+    await expect.poll(async () => {
+      const geometry = await readGeometry();
+      return geometry && geometry.content.x >= 0 && geometry.content.right <= geometry.viewport.width
+        && geometry.content.y >= 0 && geometry.content.bottom <= geometry.viewport.height
+        && geometry.gap <= 16;
+    }).toBe(true);
+
+    await page.setViewportSize({ width: 768, height: 800 });
+    await expect.poll(readGeometry, { timeout: 5_000 }).toMatchObject({ viewport: { width: 768, height: 800 } });
+    await expect.poll(async () => {
+      const geometry = await readGeometry();
+      return geometry && geometry.content.x >= 0 && geometry.content.right <= geometry.viewport.width
+        && geometry.content.y >= 0 && geometry.content.bottom <= geometry.viewport.height
+        && geometry.gap <= 16;
+    }, { timeout: 5_000 }).toBe(true);
+
+    await moreButton.click();
+    await expect(menu).toBeHidden();
+    await moreButton.click();
+    await expect(menu).toBeVisible();
+    await expect.poll(async () => {
+      const geometry = await readGeometry();
+      return geometry && geometry.content.x >= 0 && geometry.content.right <= geometry.viewport.width
+        && geometry.content.y >= 0 && geometry.content.bottom <= geometry.viewport.height
+        && geometry.gap <= 16;
+    }).toBe(true);
+  });
+
   test("redirects to the created issue detail after submitting the dialog", async ({ page }) => {
     const suffix = Date.now();
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
