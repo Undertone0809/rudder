@@ -79,7 +79,11 @@ vi.mock("@tanstack/react-query", () => ({
           options.onSettled?.(undefined, error, variables, undefined);
           return;
         }
-        options.onSuccess?.({ status: mockState.agentMutationOutcome }, variables);
+        options.onSuccess?.({
+          id: "agent-request-1",
+          runId: null,
+          status: mockState.agentMutationOutcome,
+        }, variables);
         options.onSettled?.(undefined, null, variables, undefined);
       }),
       mutateAsync: vi.fn(),
@@ -432,8 +436,13 @@ describe("NewIssueDialog autosave", () => {
     });
 
     expect(mockState.pushToast).toHaveBeenCalledWith({
+      id: "agent-issue-request-agent-request-1",
+      dedupeKey: "agent-issue-request-agent-request-1",
       title: "Sent to Agent. You'll be notified in Inbox when it's done.",
       tone: "success",
+      ttlMs: 12_000,
+      countdown: true,
+      action: undefined,
     });
     expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
   });

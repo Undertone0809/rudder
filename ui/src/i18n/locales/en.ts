@@ -799,6 +799,14 @@ export const en = {
   "chat.annotations.added": "Annotation added",
   "chat.annotations.removed": "Annotation removed",
   "newIssue.agentRequest.accepted": "Sent to Agent. You'll be notified in Inbox when it's done.",
+  "newIssue.agentRequest.undo": "Undo",
+  "newIssue.agentRequest.undoing": "Cancelling...",
+  "newIssue.agentRequest.cancelling": "Cancelling this Agent Run...",
+  "newIssue.agentRequest.undoUnavailable": "Agent Run can no longer be cancelled",
+  "newIssue.agentRequest.runFinished": "The Agent Run is already {{status}}.",
+  "newIssue.agentRequest.runUnavailable": "The Agent Run is no longer available.",
+  "newIssue.agentRequest.undoFailed": "Couldn't cancel Agent Run",
+  "newIssue.agentRequest.undoFailedBody": "The Agent Run may still be active. Try Undo again.",
 } as const;
 
 export type TranslationKey = keyof typeof en;

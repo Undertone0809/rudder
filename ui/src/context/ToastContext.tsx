@@ -13,6 +13,7 @@ export type ToastTone = "info" | "success" | "warn" | "error";
 
 export interface ToastAction {
   label: string;
+  pendingLabel?: string;
   href?: string;
   onClick?: () => void | Promise<void>;
 }
@@ -27,9 +28,14 @@ export interface ToastInput {
   tone?: ToastTone;
   ttlMs?: number;
   persistent?: boolean;
+  countdown?: boolean;
   icon?: ToastIcon;
   action?: ToastAction;
 }
+
+export type ToastUpdate = Partial<Omit<ToastInput, "id" | "dedupeKey" | "action">> & {
+  action?: ToastAction | null;
+};
 
 export interface ToastItem {
   id: string;
@@ -38,6 +44,7 @@ export interface ToastItem {
   tone: ToastTone;
   ttlMs: number;
   persistent?: boolean;
+  countdown?: boolean;
   icon?: ToastIcon;
   action?: ToastAction;
   createdAt: number;
@@ -46,6 +53,7 @@ export interface ToastItem {
 interface ToastContextValue {
   toasts: ToastItem[];
   pushToast: (input: ToastInput) => string | null;
+  updateToast: (id: string, update: ToastUpdate) => void;
   dismissToast: (id: string) => void;
   clearToasts: () => void;
 }
@@ -103,6 +111,22 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts([]);
   }, []);
 
+  const updateToast = useCallback((id: string, update: ToastUpdate) => {
+    if (update.persistent) clearTimer(id);
+    setToasts((prev) => prev.map((toast) => {
+      if (toast.id !== id) return toast;
+      const tone = update.tone ?? toast.tone;
+      const nextToast: ToastItem = {
+        ...toast,
+        ...update,
+        tone,
+        ttlMs: update.ttlMs === undefined ? toast.ttlMs : normalizeTtl(update.ttlMs, tone),
+        action: update.action === null ? undefined : update.action ?? toast.action,
+      };
+      return nextToast;
+    }));
+  }, [clearTimer]);
+
   const pushToast = useCallback(
     (input: ToastInput) => {
       const now = Date.now();
@@ -134,6 +158,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           tone,
           ttlMs,
           persistent: input.persistent,
+          countdown: input.countdown,
           icon: input.icon,
           action: input.action,
           createdAt: now,
@@ -165,10 +190,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     () => ({
       toasts,
       pushToast,
+      updateToast,
       dismissToast,
       clearToasts,
     }),
-    [toasts, pushToast, dismissToast, clearToasts],
+    [toasts, pushToast, updateToast, dismissToast, clearToasts],
   );
 
   return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>;

@@ -12,6 +12,8 @@ related_code:
   - ui/src/context/ImagePreviewContext.tsx
   - ui/src/components/InlineEditor.tsx
   - ui/src/components/NewIssueDialog.tsx
+  - ui/src/components/ToastViewport.tsx
+  - ui/src/context/ToastContext.tsx
   - ui/src/lib/new-issue-dialog.ts
   - ui/src/index.css
   - ui/src/pages/IssueDetail.tsx
@@ -27,6 +29,7 @@ related_tests:
   - tests/e2e/issue-description-image-preview.spec.ts
   - tests/e2e/issue-board-display-properties.spec.ts
   - tests/e2e/new-issue-project-context.spec.ts
+  - tests/e2e/new-issue-agent-creation.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -82,6 +85,17 @@ Behavior:
 - Submitted Agent options persist on the issue as assignee runtime overrides.
   They change this issue's assigned run configuration without changing the
   durable default runtime configuration on the agent.
+- Agent Mode submission closes New Issue and shows a bounded acceptance
+  notification whose single-loop border progress uses the same lifetime as the
+  notification. When the accepted request exposes an active exact Agent Run,
+  the notification offers Undo for that Run only. While cancellation is
+  pending, duplicate activation is disabled.
+- Successful Undo requires the exact Run to return `cancelled`; it reopens Agent
+  Mode with the pre-submit form values restored, a fresh submission identity,
+  and no stale loading or success state. Cancellation failure keeps the
+  notification visible with explicit feedback. A terminal, missing, or
+  otherwise non-cancellable Run loses the Undo affordance rather than implying
+  it was cancelled.
 - After New Issue succeeds, the destination follows the Primary Rail surface
   where the dialog opened. Creation from the Primary Rail Issues list or one of
   its Issue Detail routes opens the created Issue Detail under Issues. Creation
@@ -112,6 +126,10 @@ Invariant:
   issue surface must not present them as organization defaults or silently
   write them back to the agent. Execution precedence and reassignment handling
   are owned by `RUN.EXECUTION.001`.
+- Agent Mode Undo must never infer a target from the selected Agent or newest
+  Run. It uses only the `runId` returned for that accepted creation request, and
+  ordinary notifications plus Manual creation retain their existing lifetime,
+  actions, and destination behavior.
 - New Issue destination selection must use the route captured when the dialog
   opened. A later render or modal transition must not silently reclassify a
   non-Issues creation as Issues, and project-local issue lists do not count as
@@ -130,6 +148,10 @@ Rationale:
   remounting stateful controls.
 - A local override lets an operator tune one job without cloning or permanently
   reconfiguring the agent that owns the broader class of work.
+- A brief post-submit Undo window makes an accidental autonomous start
+  reversible without turning the creation dialog into a blocking progress
+  screen. Exact Run identity and honest terminal feedback prevent the recovery
+  affordance from becoming a broad or misleading stop control.
 - Newly created work should land in the operator's current work system: Issues
   remains the structured backlog surface, while every other primary surface
   hands the new Issue to Messenger for immediate follow-up.
@@ -150,6 +172,8 @@ Related code:
 - `ui/src/hooks/useIssueTimelineQueries.ts`
 - `ui/src/hooks/issue-timeline-readiness.ts`
 - `ui/src/components/NewIssueDialog.tsx`
+- `ui/src/components/ToastViewport.tsx`
+- `ui/src/context/ToastContext.tsx`
 - `ui/src/lib/new-issue-dialog.ts`
 - `ui/src/index.css`
 - `ui/src/pages/IssueDetail.tsx`
@@ -171,3 +195,4 @@ Related tests:
 - `tests/e2e/issue-description-image-preview.spec.ts`
 - `tests/e2e/issue-board-display-properties.spec.ts`
 - `tests/e2e/new-issue-project-context.spec.ts`
+- `tests/e2e/new-issue-agent-creation.spec.ts`

@@ -61,7 +61,8 @@ async function main() {
   requiredEnv("RUDDER_API_KEY");
   requiredEnv("RUDDER_ORG_ID");
   requiredEnv("RUDDER_RUN_ID");
-  const instruction = prompt.match(/\*\*User instruction:\*\*\s*([\s\S]*?)\s*\n\n## Required Behavior/u)?.[1]?.trim()
+  const instruction = prompt.match(/<quoted_issue_context>\s*([\s\S]*?)\s*<\/quoted_issue_context>/u)?.[1]?.trim()
+    || prompt.match(/\*\*User instruction:\*\*\s*([\s\S]*?)\s*\n\n## Required Behavior/u)?.[1]?.trim()
     || "Create a follow-up issue for the requested regression.";
   const marker = instruction.match(/\[E2E:[^\]]+\]/u)?.[0] ?? "[E2E:agent-issue-creation]";
 
