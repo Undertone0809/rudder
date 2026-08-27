@@ -171,6 +171,15 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
   });
   let accessToken: string | null = null;
   let refreshInFlight: Promise<string> | null = null;
+  const storedCredential = options.vault.read();
+  let latestAccount: IdentityAccount | null = storedCredential?.issuer === identityOrigin
+    ? {
+      id: storedCredential.accountId,
+      email: storedCredential.accountEmail,
+      name: storedCredential.accountName,
+      image: storedCredential.accountImage ?? null,
+    }
+    : null;
   const offlineMaterial = () => options.offlineGrantStore?.prepareDeviceKey() ?? null;
 
   const nativeAuthRequest = (path: string, body: Record<string, unknown>): Promise<Response> =>
@@ -204,13 +213,33 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
       accountId: token.account.id,
       accountEmail: token.account.email,
       accountName: token.account.name,
+      accountImage: token.account.image,
       deviceId: token.device.id,
       refreshToken: token.refresh_token,
       refreshTokenExpiresAt: new Date(now + refreshLifetimeSeconds * 1000).toISOString(),
     };
     options.vault.write(credential);
+    latestAccount = token.account;
     accessToken = token.access_token;
     return token.access_token;
+  };
+
+  const persistAccount = (account: IdentityAccount): IdentityAccount => {
+    latestAccount = account;
+    const credential = options.vault.read();
+    if (
+      credential
+      && credential.issuer === identityOrigin
+      && credential.accountId === account.id
+    ) {
+      options.vault.write({
+        ...credential,
+        accountEmail: account.email,
+        accountName: account.name,
+        accountImage: account.image,
+      });
+    }
+    return account;
   };
 
   const persistOfflineGrant = async (
@@ -729,8 +758,9 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
 
     async getProfile(): Promise<IdentityAccount> {
       const response = await authenticatedRequest("/api/account/profile");
+      if (response.status === 404 && latestAccount) return latestAccount;
       if (!response.ok) throw new Error(`Unable to load Rudder Account profile (${response.status})`);
-      return parseIdentityAccount(await response.json());
+      return persistAccount(parseIdentityAccount(await response.json()));
     },
 
     async updateProfile(input: { image: string | null }): Promise<IdentityAccount> {
@@ -744,7 +774,7 @@ export function createDesktopIdentityClient(options: DesktopIdentityClientOption
         const message = typeof value?.error === "string" ? value.error : `Request failed (${response.status})`;
         throw new Error(message);
       }
-      return parseIdentityAccount(await response.json());
+      return persistAccount(parseIdentityAccount(await response.json()));
     },
 
     async signOut(): Promise<void> {

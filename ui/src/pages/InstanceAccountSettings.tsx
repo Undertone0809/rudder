@@ -105,6 +105,9 @@ function AccountAvatar({
   disabled: boolean;
   pending: boolean;
 }) {
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const visibleImage = image && image !== failedImage ? image : null;
+
   return (
     <button
       type="button"
@@ -114,8 +117,13 @@ function AccountAvatar({
       onClick={onClick}
       disabled={disabled}
     >
-      {image ? (
-        <img src={image} alt="" className="size-full object-cover" />
+      {visibleImage ? (
+        <img
+          src={visibleImage}
+          alt=""
+          className="size-full object-cover"
+          onError={() => setFailedImage(visibleImage)}
+        />
       ) : (
         avatarInitials(name, email)
       )}

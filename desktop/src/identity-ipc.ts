@@ -267,7 +267,7 @@ function stateFromCredential(
       id: credential.accountId,
       email: credential.accountEmail || null,
       name: credential.accountName,
-      image: null,
+      image: credential.accountImage ?? null,
     },
     deviceId: credential.deviceId,
   };
@@ -388,12 +388,26 @@ export function createDesktopIdentityIpcController(options: {
       return options.client.revokeDeviceSession(deviceId);
     },
 
-    getProfile(): Promise<IdentityAccount> {
-      return options.client.getProfile();
+    async getProfile(): Promise<IdentityAccount> {
+      const account = await options.client.getProfile();
+      if (state.status === "signed-in" && state.account.id === account.id) {
+        publish({
+          ...state,
+          account: { id: account.id, email: account.email, name: account.name, image: account.image },
+        });
+      }
+      return account;
     },
 
-    updateProfile(input: { image: string | null }): Promise<IdentityAccount> {
-      return options.client.updateProfile(input);
+    async updateProfile(input: { image: string | null }): Promise<IdentityAccount> {
+      const account = await options.client.updateProfile(input);
+      if (state.status === "signed-in" && state.account.id === account.id) {
+        publish({
+          ...state,
+          account: { id: account.id, email: account.email, name: account.name, image: account.image },
+        });
+      }
+      return account;
     },
   };
 }
