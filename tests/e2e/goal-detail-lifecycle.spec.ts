@@ -156,6 +156,34 @@ async function assertGoalTargetDateTheme(page: Page) {
   await expect(targetDatePopover).toBeHidden();
 }
 
+async function assertGoalDetailTabCorners(page: Page, screenshotPath?: string) {
+  const tablist = page.getByRole("tablist", { name: "Goal detail views" });
+  const previousStyle = await page.locator("html").getAttribute("data-style");
+  await page.locator("html").evaluate((element) => {
+    element.setAttribute("data-style", "luma");
+  });
+
+  const radii = await tablist.evaluate((element) => {
+    const activeTab = element.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!activeTab) throw new Error("Goal detail active tab is missing");
+    return {
+      outer: Number.parseFloat(getComputedStyle(element).borderTopLeftRadius),
+      inner: Number.parseFloat(getComputedStyle(activeTab).borderTopLeftRadius),
+    };
+  });
+
+  expect(radii.outer).toBeGreaterThan(10);
+  expect(radii.inner).toBeGreaterThan(10);
+  expect(radii.outer - radii.inner).toBeCloseTo(3, 1);
+
+  if (screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: true });
+
+  await page.locator("html").evaluate((element, style) => {
+    if (style) element.setAttribute("data-style", style);
+    else element.removeAttribute("data-style");
+  }, previousStyle);
+}
+
 async function gotoAppRoute(page: Page, url: string) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -503,6 +531,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(activityViews.getByRole("tab", { name: /Overview/ })).toHaveAttribute("aria-selected", "true");
     await expect(activityViews.getByRole("tab", { name: /Activity/ })).toBeVisible();
     await expect(activityViews.getByRole("tab", { name: /Work|Evidence/ })).toHaveCount(0);
+    await assertGoalDetailTabCorners(page, testInfo.outputPath("goal-tabs-luma-desktop.png"));
     const topLevelLayout = await activityViews.evaluate((tablist) => {
       const isBeforeTabs = (element: Element | null) => Boolean(
         element && (element.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING),
@@ -840,6 +869,7 @@ test.describe("Goal Workspace v2", () => {
     await expect(mobileTabs.getByRole("tab", { name: /Overview/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Activity/ })).toBeVisible();
     await expect(mobileTabs.getByRole("tab", { name: /Work|Evidence/ })).toHaveCount(0);
+    await assertGoalDetailTabCorners(page, testInfo.outputPath("goal-tabs-luma-mobile.png"));
     const mobileOverview = page.getByLabel("Goal overview");
     await expect(mobileOverview.getByText("Outcome", { exact: true })).toBeVisible();
     await expect(mobileOverview.getByText("Current progress", { exact: true })).toBeVisible();
