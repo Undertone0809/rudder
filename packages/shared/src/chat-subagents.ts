@@ -112,6 +112,48 @@ function responseFromEntries(entries: ChatStreamTranscriptEntry[]) {
   return null;
 }
 
+function mergeTranscriptEntries(
+  left: ChatStreamTranscriptEntry[],
+  right: ChatStreamTranscriptEntry[],
+) {
+  const mergeKey = (entry: ChatStreamTranscriptEntry) => (
+    entry.kind === "assistant" || entry.kind === "thinking"
+      ? JSON.stringify({
+        kind: entry.kind,
+        ts: entry.ts,
+        text: entry.text,
+        delta: entry.delta ?? null,
+        phase: entry.phase ?? null,
+        segmentId: entry.segmentId ?? null,
+      })
+      : JSON.stringify(entry)
+  );
+  const provenanceScore = (entry: ChatStreamTranscriptEntry) => (
+    entry.kind === "assistant" || entry.kind === "thinking"
+      ? Number(entry.generationId !== undefined)
+        + Number(entry.generationSeqStart !== undefined)
+        + Number(entry.generationSeqEnd !== undefined)
+      : 0
+  );
+  const available = new Map<string, number[]>();
+  const merged = [...left];
+  left.forEach((entry, index) => {
+    const key = mergeKey(entry);
+    available.set(key, [...(available.get(key) ?? []), index]);
+  });
+  for (const entry of right) {
+    const key = mergeKey(entry);
+    const matching = available.get(key);
+    const index = matching?.shift();
+    if (index === undefined) {
+      merged.push(entry);
+      continue;
+    }
+    if (provenanceScore(entry) > provenanceScore(merged[index]!)) merged[index] = entry;
+  }
+  return merged.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
 function humanizeAgentPath(agentPath: string | null) {
   const tail = agentPath?.split("/").filter(Boolean).at(-1)?.trim() ?? "";
   if (!tail) return null;
@@ -270,6 +312,7 @@ function mergeChatSubagentInspections(
       ? inspection
       : current;
     const stateSource = incomingIsNewer ? inspection : current;
+    const transcriptEntries = mergeTranscriptEntries(current.entries, inspection.entries);
     merged.set(inspection.threadId, {
       ...stateSource,
       callId: identitySource.callId,
@@ -279,6 +322,12 @@ function mergeChatSubagentInspections(
       model: identitySource.model ?? stateSource.model,
       reasoningEffort: identitySource.reasoningEffort ?? stateSource.reasoningEffort,
       startedAt: identitySource.startedAt,
+      response:
+        stateSource.response
+        ?? responseFromEntries(transcriptEntries)
+        ?? current.response
+        ?? inspection.response,
+      entries: transcriptEntries,
     });
   }
   return [...merged.values()];
