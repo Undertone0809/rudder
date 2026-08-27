@@ -334,7 +334,7 @@ This starts:
 - local `dev` runtime without file watching
 - Desktop dev shell attached to that runtime
 - API server at `http://localhost:3100`
-- UI served by API server in dev middleware mode (same origin)
+- live Vite UI at `http://localhost:5173`, with `/api` and WebSocket traffic proxied to the API server
 
 Default disposable profile used by `pnpm dev`:
 
@@ -408,10 +408,16 @@ git config user.email "72488598+Undertone0809@users.noreply.github.com"
 git config user.useConfigOnly true
 ```
 
-For a standalone Vite UI process, `pnpm dev:ui` reads the same worktree-local Rudder config and proxies
-`/api` to the running runtime descriptor when one exists, otherwise to the configured server port.
-Use `RUDDER_UI_PROXY_TARGET=http://127.0.0.1:<port>` or `RUDDER_UI_PORT=<port>` only when you need
-an explicit override.
+`pnpm dev` and `pnpm dev:watch` run Vite as a separate child process in the default local-trusted
+profile. The Desktop renderer opens that Vite origin while `/api` and WebSocket traffic proxy to the
+local Rudder runtime. Keeping Vite transforms outside the API process prevents a cold UI module graph
+from blocking local API requests. Authenticated private/Tailscale development keeps the integrated
+middleware path so its single exposed origin remains unchanged.
+
+For a manually started standalone Vite UI, `pnpm dev:ui` reads the same worktree-local Rudder config
+and proxies `/api` to the running runtime descriptor when one exists, otherwise to the configured
+server port. Use `RUDDER_UI_PROXY_TARGET=http://127.0.0.1:<port>` or `RUDDER_UI_PORT=<port>` only when
+you need an explicit override.
 
 Playwright E2E runs also isolate themselves under `CODEX_THREAD_ID` when Codex provides it. For manual
 parallel E2E runs, set `RUDDER_E2E_RUN_ID=<unique-name>` to get a distinct home directory and port pair.

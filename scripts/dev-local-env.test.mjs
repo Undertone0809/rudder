@@ -5,9 +5,91 @@ import path from "node:path";
 import test from "node:test";
 import {
   isolateDevShellFromParentRuntime,
+  resolveDevAccessEnvironment,
   resolveDevDesktopEnvironment,
   resolveDevScriptEnvironment,
+  resolveStandaloneDevUiCommandArgs,
+  resolveStandaloneDevUiOrigin,
 } from "./dev-local-env.mjs";
+
+test("resolves the standalone Vite origin alongside the selected API port", () => {
+  assert.equal(resolveStandaloneDevUiOrigin({ PORT: "3100" }), "http://127.0.0.1:5173");
+  assert.equal(resolveStandaloneDevUiOrigin({ PORT: "3412" }), "http://127.0.0.1:5485");
+  assert.equal(
+    resolveStandaloneDevUiOrigin({ PORT: "3412", RUDDER_UI_PORT: "6200" }),
+    "http://127.0.0.1:6200",
+  );
+  assert.throws(
+    () => resolveStandaloneDevUiOrigin({ PORT: "3100", RUDDER_UI_PORT: "70000" }),
+    /Invalid standalone Vite UI port/,
+  );
+});
+
+test("forwards the standalone Vite host without a pnpm separator argument", () => {
+  assert.deepEqual(resolveStandaloneDevUiCommandArgs(), [
+    "--filter",
+    "@rudderhq/ui",
+    "dev",
+    "--host",
+    "127.0.0.1",
+  ]);
+});
+
+test("normalizes authenticated/private CLI flags into an integrated dev environment", () => {
+  const resolved = resolveDevAccessEnvironment({
+    args: ["--authenticatedPrivate", "--inspect-runtime"],
+    baseEnv: {},
+  });
+
+  assert.equal(resolved.authenticated, true);
+  assert.equal(resolved.authenticatedPrivateRequested, true);
+  assert.equal(resolved.standaloneUiEnabled, false);
+  assert.deepEqual(resolved.forwardedArgs, ["--inspect-runtime"]);
+  assert.equal(resolved.env.RUDDER_DEPLOYMENT_MODE, "authenticated");
+  assert.equal(resolved.env.RUDDER_DEPLOYMENT_EXPOSURE, "private");
+  assert.equal(resolved.env.RUDDER_AUTH_BASE_URL_MODE, "auto");
+  assert.equal(resolved.env.RUDDER_UI_DEV_MIDDLEWARE, "true");
+  assert.equal(resolved.env.HOST, "0.0.0.0");
+});
+
+test("keeps npm-config authenticated/private compatibility paths on the integrated UI", () => {
+  for (const npmConfigKey of [
+    "npm_config_tailscale_auth",
+    "npm_config_authenticated_private",
+  ]) {
+    const resolved = resolveDevAccessEnvironment({
+      args: [],
+      baseEnv: { [npmConfigKey]: "true" },
+    });
+
+    assert.equal(resolved.authenticated, true, npmConfigKey);
+    assert.equal(resolved.standaloneUiEnabled, false, npmConfigKey);
+    assert.equal(resolved.env.RUDDER_UI_DEV_MIDDLEWARE, "true", npmConfigKey);
+  }
+});
+
+test("respects canonical environment and repo config authenticated modes", () => {
+  const fromEnvironment = resolveDevAccessEnvironment({
+    args: [],
+    baseEnv: {
+      RUDDER_DEPLOYMENT_MODE: "authenticated",
+      RUDDER_DEPLOYMENT_EXPOSURE: "private",
+      RUDDER_UI_DEV_MIDDLEWARE: "false",
+    },
+  });
+  assert.equal(fromEnvironment.authenticated, true);
+  assert.equal(fromEnvironment.standaloneUiEnabled, false);
+  assert.equal(fromEnvironment.env.RUDDER_UI_DEV_MIDDLEWARE, "true");
+
+  const fromConfig = resolveDevAccessEnvironment({
+    args: [],
+    baseEnv: {},
+    repoLocalConfig: { server: { deploymentMode: "authenticated", exposure: "private" } },
+  });
+  assert.equal(fromConfig.authenticated, true);
+  assert.equal(fromConfig.standaloneUiEnabled, false);
+  assert.equal(fromConfig.env.RUDDER_UI_DEV_MIDDLEWARE, "true");
+});
 
 test("defaults the development Desktop to local workspace access", () => {
   assert.equal(resolveDevDesktopEnvironment({}).RUDDER_DESKTOP_AUTH_BYPASS, "1");

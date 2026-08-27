@@ -297,6 +297,21 @@ afterEach(() => {
 });
 
 describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
+  it("honors focus requested before the EditorView is ready", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          ref={(editor) => editor?.focus()}
+          value=""
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    expect(document.activeElement).toBe(editorView().contentDOM);
+  });
+
   it("blocks text and image paste mutations while read-only", async () => {
     const onChange = vi.fn();
     const imageUploadHandler = vi.fn(async () => "/api/assets/read-only/content");

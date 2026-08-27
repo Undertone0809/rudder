@@ -2,7 +2,12 @@ import { Button } from "@/components/ui/button";
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "@/lib/router";
 import type { Agent } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  type ComponentType,
+} from "react";
 import { accessApi } from "./api/access";
 import { agentsApi } from "./api/agents";
 import { authApi } from "./api/auth";
@@ -45,49 +50,66 @@ import {
 } from "./lib/settings-overlay-state";
 import { legacySkillRouteToLibraryHref } from "./lib/skill-library-routes";
 import { agentUrl } from "./lib/utils";
-import { Activity } from "./pages/Activity";
-import { AgentDetail } from "./pages/AgentDetail";
-import { Apps } from "./pages/Apps";
-import { AuthPage } from "./pages/Auth";
-import { Automations } from "./pages/Automations";
-import { BoardClaimPage } from "./pages/BoardClaim";
-import { Calendar as CalendarPage } from "./pages/Calendar";
-import { Chat } from "./pages/Chat";
-import { CliAuthPage } from "./pages/CliAuth";
-import { Costs } from "./pages/Costs";
-import { Dashboard } from "./pages/Dashboard";
-import { GoalDetail } from "./pages/GoalDetail";
-import { Goals } from "./pages/Goals";
-import { Inbox } from "./pages/Inbox";
-import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
-import { InstanceAppearanceSettings } from "./pages/InstanceAppearanceSettings";
-import { InstanceBrowserSettings } from "./pages/InstanceBrowserSettings";
-import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
-import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
-import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
-import { InstancePrivacyTelemetrySettings } from "./pages/InstancePrivacyTelemetrySettings";
-import { InstanceProfileSettings } from "./pages/InstanceProfileSettings";
-import { InstanceSettings } from "./pages/InstanceSettings";
-import { InstanceShortcutsSettings } from "./pages/InstanceShortcutsSettings";
-import { InviteLandingPage } from "./pages/InviteLanding";
-import { IssueDetail } from "./pages/IssueDetail";
-import { Issues } from "./pages/Issues";
-import { LocalAppSavedViewWorkspace } from "./pages/LocalAppSavedViewWorkspace";
-import { Messenger } from "./pages/Messenger";
-import { NewAgent } from "./pages/NewAgent";
-import { NotFoundPage } from "./pages/NotFound";
-import { OrganizationExport } from "./pages/OrganizationExport";
-import { OrganizationHeartbeats } from "./pages/OrganizationHeartbeats";
-import { OrganizationImport } from "./pages/OrganizationImport";
-import { OrganizationResources } from "./pages/OrganizationResources";
-import { OrganizationSettings } from "./pages/OrganizationSettings";
-import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
-import { PluginDetail } from "./pages/PluginDetail";
-import { Plugins } from "./pages/Plugins";
-import { ProjectDetail } from "./pages/ProjectDetail";
-import { Projects } from "./pages/Projects";
-import { RunWorkspaceDetail } from "./pages/RunWorkspaceDetail";
-import { UiLab } from "./pages/UiLab";
+
+function lazyRoute(
+  // Route modules intentionally expose different prop shapes; React Router supplies them at each call site.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loader: () => Promise<{ default: ComponentType<any> }>,
+) {
+  const Component = lazy(loader);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return function LazyRoute(props: any) {
+    return (
+      <Suspense fallback={<PageSkeleton variant="detail" />}>
+        <Component {...props} />
+      </Suspense>
+    );
+  };
+}
+
+const Activity = lazyRoute(() => import("./pages/Activity").then((module) => ({ default: module.Activity })));
+const AgentDetail = lazyRoute(() => import("./pages/AgentDetail").then((module) => ({ default: module.AgentDetail })));
+const Apps = lazyRoute(() => import("./pages/Apps").then((module) => ({ default: module.Apps })));
+const AuthPage = lazyRoute(() => import("./pages/Auth").then((module) => ({ default: module.AuthPage })));
+const Automations = lazyRoute(() => import("./pages/Automations").then((module) => ({ default: module.Automations })));
+const BoardClaimPage = lazyRoute(() => import("./pages/BoardClaim").then((module) => ({ default: module.BoardClaimPage })));
+const CalendarPage = lazyRoute(() => import("./pages/Calendar").then((module) => ({ default: module.Calendar })));
+const Chat = lazyRoute(() => import("./pages/Chat").then((module) => ({ default: module.Chat })));
+const CliAuthPage = lazyRoute(() => import("./pages/CliAuth").then((module) => ({ default: module.CliAuthPage })));
+const Costs = lazyRoute(() => import("./pages/Costs").then((module) => ({ default: module.Costs })));
+const Dashboard = lazyRoute(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
+const GoalDetail = lazyRoute(() => import("./pages/GoalDetail").then((module) => ({ default: module.GoalDetail })));
+const Goals = lazyRoute(() => import("./pages/Goals").then((module) => ({ default: module.Goals })));
+const Inbox = lazyRoute(() => import("./pages/Inbox").then((module) => ({ default: module.Inbox })));
+const InstanceAboutSettings = lazyRoute(() => import("./pages/InstanceAboutSettings").then((module) => ({ default: module.InstanceAboutSettings })));
+const InstanceAppearanceSettings = lazyRoute(() => import("./pages/InstanceAppearanceSettings").then((module) => ({ default: module.InstanceAppearanceSettings })));
+const InstanceBrowserSettings = lazyRoute(() => import("./pages/InstanceBrowserSettings").then((module) => ({ default: module.InstanceBrowserSettings })));
+const InstanceExperimentalSettings = lazyRoute(() => import("./pages/InstanceExperimentalSettings").then((module) => ({ default: module.InstanceExperimentalSettings })));
+const InstanceGeneralSettings = lazyRoute(() => import("./pages/InstanceGeneralSettings").then((module) => ({ default: module.InstanceGeneralSettings })));
+const InstanceNotificationsSettings = lazyRoute(() => import("./pages/InstanceNotificationsSettings").then((module) => ({ default: module.InstanceNotificationsSettings })));
+const InstancePrivacyTelemetrySettings = lazyRoute(() => import("./pages/InstancePrivacyTelemetrySettings").then((module) => ({ default: module.InstancePrivacyTelemetrySettings })));
+const InstanceProfileSettings = lazyRoute(() => import("./pages/InstanceProfileSettings").then((module) => ({ default: module.InstanceProfileSettings })));
+const InstanceSettings = lazyRoute(() => import("./pages/InstanceSettings").then((module) => ({ default: module.InstanceSettings })));
+const InstanceShortcutsSettings = lazyRoute(() => import("./pages/InstanceShortcutsSettings").then((module) => ({ default: module.InstanceShortcutsSettings })));
+const InviteLandingPage = lazyRoute(() => import("./pages/InviteLanding").then((module) => ({ default: module.InviteLandingPage })));
+const IssueDetail = lazyRoute(() => import("./pages/IssueDetail").then((module) => ({ default: module.IssueDetail })));
+const Issues = lazyRoute(() => import("./pages/Issues").then((module) => ({ default: module.Issues })));
+const LocalAppSavedViewWorkspace = lazyRoute(() => import("./pages/LocalAppSavedViewWorkspace").then((module) => ({ default: module.LocalAppSavedViewWorkspace })));
+const Messenger = lazyRoute(() => import("./pages/Messenger").then((module) => ({ default: module.Messenger })));
+const NewAgent = lazyRoute(() => import("./pages/NewAgent").then((module) => ({ default: module.NewAgent })));
+const NotFoundPage = lazyRoute(() => import("./pages/NotFound").then((module) => ({ default: module.NotFoundPage })));
+const OrganizationExport = lazyRoute(() => import("./pages/OrganizationExport").then((module) => ({ default: module.OrganizationExport })));
+const OrganizationHeartbeats = lazyRoute(() => import("./pages/OrganizationHeartbeats").then((module) => ({ default: module.OrganizationHeartbeats })));
+const OrganizationImport = lazyRoute(() => import("./pages/OrganizationImport").then((module) => ({ default: module.OrganizationImport })));
+const OrganizationResources = lazyRoute(() => import("./pages/OrganizationResources").then((module) => ({ default: module.OrganizationResources })));
+const OrganizationSettings = lazyRoute(() => import("./pages/OrganizationSettings").then((module) => ({ default: module.OrganizationSettings })));
+const OrganizationWorkspaceBackups = lazyRoute(() => import("./pages/OrganizationWorkspaceBackups").then((module) => ({ default: module.OrganizationWorkspaceBackups })));
+const PluginDetail = lazyRoute(() => import("./pages/PluginDetail").then((module) => ({ default: module.PluginDetail })));
+const Plugins = lazyRoute(() => import("./pages/Plugins").then((module) => ({ default: module.Plugins })));
+const ProjectDetail = lazyRoute(() => import("./pages/ProjectDetail").then((module) => ({ default: module.ProjectDetail })));
+const Projects = lazyRoute(() => import("./pages/Projects").then((module) => ({ default: module.Projects })));
+const RunWorkspaceDetail = lazyRoute(() => import("./pages/RunWorkspaceDetail").then((module) => ({ default: module.RunWorkspaceDetail })));
+const UiLab = lazyRoute(() => import("./pages/UiLab").then((module) => ({ default: module.UiLab })));
 
 function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
   const { t } = useI18n();

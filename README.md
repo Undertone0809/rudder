@@ -107,7 +107,9 @@ pnpm install
 pnpm dev
 ```
 
-This starts the API server and UI at [http://localhost:3100](http://localhost:3100).
+This starts the API server at [http://localhost:3100](http://localhost:3100) and the live Vite UI at
+[http://localhost:5173](http://localhost:5173). The Desktop development shell opens the Vite origin,
+which proxies API and WebSocket traffic to the local server.
 
 Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unset, you do not need to provision a separate database.
 

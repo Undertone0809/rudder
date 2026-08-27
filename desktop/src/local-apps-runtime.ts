@@ -1,4 +1,4 @@
-import { resolveRudderNativeCapability } from "@rudderhq/shared";
+import { resolveRudderNativeCapability } from "@rudderhq/shared/native-mode";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";

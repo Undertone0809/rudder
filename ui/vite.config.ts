@@ -130,6 +130,7 @@ export default defineConfig({
   },
   server: {
     port: uiPort,
+    strictPort: true,
     proxy: {
       "/api": {
         target: apiTarget,

@@ -80,6 +80,7 @@ import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopIm
 import { resolveDesktopLocalEnvProfile, resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
 import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { resolveDesktopRendererBaseUrl } from "./desktop-renderer-url.js";
 import { shouldPreferDesktopRuntimeOwnership } from "./desktop-runtime-ownership.js";
 import { stopDesktopRuntime } from "./desktop-runtime-shutdown.js";
 import {
@@ -1879,12 +1880,14 @@ function normalizeDesktopNavigationPath(targetPath: string): string {
 
 function resolveDesktopAppBaseUrl(): string | null {
   const bootUrl = currentBootState.runtime?.apiUrl?.trim();
-  if (bootUrl) return bootUrl.replace(/\/$/, "");
+  const runtimeBaseUrl = bootUrl
+    ? bootUrl.replace(/\/$/u, "")
+    : serverHandle?.apiUrl?.trim().replace(/\/api\/?$/u, "").replace(/\/$/u, "") ?? null;
 
-  const apiUrl = serverHandle?.apiUrl?.trim();
-  if (apiUrl) return apiUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
-
-  return null;
+  return resolveDesktopRendererBaseUrl({
+    runtimeBaseUrl,
+    loadUrlOverride: process.env.RUDDER_DESKTOP_LOAD_URL,
+  });
 }
 
 function resolveDesktopRouteUrl(targetPath: string): string | null {
@@ -2368,7 +2371,8 @@ async function startLocalRudder(): Promise<void> {
       }
       const requestedPath = pendingDesktopNavigationPath;
       pendingDesktopNavigationPath = null;
-      const defaultLoadUrl = requestedPath ? `${baseUrl}${requestedPath}` : baseUrl;
+      const rendererBaseUrl = resolveDesktopAppBaseUrl() ?? baseUrl;
+      const defaultLoadUrl = requestedPath ? `${rendererBaseUrl}${requestedPath}` : rendererBaseUrl;
       const loadUrl = requestedPath ? defaultLoadUrl : resolveDesktopLoadUrl(defaultLoadUrl);
       if (desktopDebugEnabled()) {
         console.info("[rudder-desktop] startLocalRudder:load-url", {

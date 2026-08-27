@@ -65,10 +65,15 @@ import {
   ShieldCheck,
   UserPlus,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Chat } from "./Chat";
-import { IssueDetail } from "./IssueDetail";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MessengerSavedViewWorkspace } from "./MessengerSavedViewWorkspace";
+
+const LazyChat = lazy(() => import("./Chat").then((module) => ({ default: module.Chat })));
+const LazyIssueDetail = lazy(() => import("./IssueDetail").then((module) => ({ default: module.IssueDetail })));
+
+function MessengerDetailFallback() {
+  return <div className="mx-auto max-w-3xl py-10 text-sm text-muted-foreground">Opening conversation…</div>;
+}
 
 const ISSUE_COMMENT_PREVIEW_LINES = 10;
 const ISSUE_COMMENT_PREVIEW_LINE_HEIGHT = 20;
@@ -1247,8 +1252,8 @@ export function Messenger() {
     return <div className="mx-auto max-w-3xl py-10 text-sm text-destructive">{error.message}</div>;
   }
 
-  if (route.kind === "chat") return <Chat />;
-  if (route.kind === "issue") return <IssueDetail />;
+  if (route.kind === "chat") return <Suspense fallback={<MessengerDetailFallback />}><LazyChat /></Suspense>;
+  if (route.kind === "issue") return <Suspense fallback={<MessengerDetailFallback />}><LazyIssueDetail /></Suspense>;
   if (route.kind === "issues") return <MessengerIssuesView />;
   if (route.kind === "approvals") return <MessengerApprovalsView />;
   if (route.kind === "system") return <MessengerSystemView threadKind={route.threadKind} />;

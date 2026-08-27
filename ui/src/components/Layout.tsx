@@ -12,7 +12,7 @@ import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelLeft, PanelRight, Settings, X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { flushSync } from "react-dom";
 import { accessApi } from "../api/access";
 import { chatsApi } from "../api/chats";
@@ -46,8 +46,6 @@ import {
 } from "../lib/settings-overlay-state";
 import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { cn } from "../lib/utils";
-import { ChatSidePanel } from "../pages/Chat.side-panel";
-import { NotFoundPage } from "../pages/NotFound";
 import { OrganizationWorkspaceFilesSidebar } from "../pages/organization-workspaces/OrganizationWorkspaceFilesSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { CommandPalette } from "./CommandPalette";
@@ -64,6 +62,17 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
+
+const LazyNotFoundPage = lazy(() => import("../pages/NotFound").then((module) => ({ default: module.NotFoundPage })));
+const LazyChatSidePanel = lazy(() => import("../pages/Chat.side-panel").then((module) => ({ default: module.ChatSidePanel })));
+
+function NotFoundPage(props: { scope?: "board" | "invalid_organization_prefix" | "global"; requestedPrefix?: string }) {
+  return (
+    <Suspense fallback={<div className="mx-auto h-48 max-w-2xl animate-pulse bg-muted/20" aria-hidden="true" />}>
+      <LazyNotFoundPage {...props} />
+    </Suspense>
+  );
+}
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -858,26 +867,30 @@ function DesktopSidePanelSlot({
           }
         }}
       >
-        <ChatSidePanel
-          contextReady={contextReady}
-          selectedOrganizationId={selectedOrganizationId}
-          expanded={expandedVisible}
-          onClose={() => {
-            if (expanded) {
-              onExpandedChange(false);
-              resetSidePanelWidth();
-            }
-            sidePanel.hidePanel();
-          }}
-          onToggleExpanded={() => {
-            if (expanded) {
-              onExpandedChange(false);
-              resetSidePanelWidth();
-            } else {
-              onExpandedChange(true);
-            }
-          }}
-        />
+        {panelVisible ? (
+          <Suspense fallback={<div className="h-full w-full animate-pulse bg-muted/20" aria-hidden="true" />}>
+            <LazyChatSidePanel
+              contextReady={contextReady}
+              selectedOrganizationId={selectedOrganizationId}
+              expanded={expandedVisible}
+              onClose={() => {
+                if (expanded) {
+                  onExpandedChange(false);
+                  resetSidePanelWidth();
+                }
+                sidePanel.hidePanel();
+              }}
+              onToggleExpanded={() => {
+                if (expanded) {
+                  onExpandedChange(false);
+                  resetSidePanelWidth();
+                } else {
+                  onExpandedChange(true);
+                }
+              }}
+            />
+          </Suspense>
+        ) : null}
       </div>
     </>
   );
@@ -1807,12 +1820,14 @@ export function Layout() {
           )}
         </div>
       </div>
-      {isMobile ? (
-        <ChatSidePanel
-          contextReady={sidePanelContextReady}
-          selectedOrganizationId={sidePanelOrganizationId}
-          expanded={false}
-        />
+      {isMobile && sidePanelOpen ? (
+        <Suspense fallback={null}>
+          <LazyChatSidePanel
+            contextReady={sidePanelContextReady}
+            selectedOrganizationId={sidePanelOrganizationId}
+            expanded={false}
+          />
+        </Suspense>
       ) : null}
       {isMobile && !location.pathname.includes("/hub/plugins/") && !location.pathname.startsWith("/plugins/catalog/") && <MobileBottomNav visible={mobileNavVisible} />}
       <CommandPalette />

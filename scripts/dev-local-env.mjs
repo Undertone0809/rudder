@@ -3,6 +3,13 @@ import os from "node:os";
 import path from "node:path";
 
 const CODEX_WORKTREE_DISABLE_RE = /^(1|true|yes)$/i;
+const DEV_AUTHENTICATED_PRIVATE_FLAGS = new Set([
+  "--tailscale-auth",
+  "--tailscaleAuth",
+  "--authenticated-private",
+  "--authenticatedPrivate",
+]);
+const TRUE_VALUE_RE = /^(1|true|yes)$/i;
 const PARENT_RUNTIME_ENV_KEYS = [
   "DATABASE_URL",
   "HOST",
@@ -47,6 +54,63 @@ export const localEnvProfiles = {
 // local instance. Keep the runner and its outer shell on the same readiness
 // budget so a healthy server is not killed while migrations are being backed up.
 export const DEV_RUNTIME_STARTUP_TIMEOUT_MS = 10 * 60 * 1000;
+
+export function resolveStandaloneDevUiOrigin(env) {
+  const apiPort = Number.parseInt(env.PORT?.trim() || localEnvProfiles.dev.port, 10);
+  const defaultUiPort = 5173 + Math.max(0, apiPort - Number(localEnvProfiles.dev.port));
+  const configuredUiPort = Number.parseInt(env.RUDDER_UI_PORT?.trim() || String(defaultUiPort), 10);
+  if (!Number.isInteger(configuredUiPort) || configuredUiPort < 1 || configuredUiPort > 65_535) {
+    throw new Error(`Invalid standalone Vite UI port: ${env.RUDDER_UI_PORT ?? configuredUiPort}`);
+  }
+  return `http://127.0.0.1:${configuredUiPort}`;
+}
+
+export function resolveStandaloneDevUiCommandArgs(host = "127.0.0.1") {
+  return ["--filter", "@rudderhq/ui", "dev", "--host", host];
+}
+
+export function resolveDevAccessEnvironment({ args = [], baseEnv, repoLocalConfig = null }) {
+  const forwardedArgs = [];
+  let authenticatedPrivateRequested = false;
+
+  for (const arg of args) {
+    if (DEV_AUTHENTICATED_PRIVATE_FLAGS.has(arg)) {
+      authenticatedPrivateRequested = true;
+      continue;
+    }
+    forwardedArgs.push(arg);
+  }
+
+  authenticatedPrivateRequested ||= TRUE_VALUE_RE.test(baseEnv.npm_config_tailscale_auth ?? "");
+  authenticatedPrivateRequested ||= TRUE_VALUE_RE.test(
+    baseEnv.npm_config_authenticated_private ?? "",
+  );
+
+  const configuredDeploymentMode =
+    nonEmpty(baseEnv.RUDDER_DEPLOYMENT_MODE)
+    ?? nonEmpty(repoLocalConfig?.server?.deploymentMode)
+    ?? "local_trusted";
+  const authenticated = authenticatedPrivateRequested || configuredDeploymentMode === "authenticated";
+  const env = { ...baseEnv };
+
+  if (authenticatedPrivateRequested) {
+    env.RUDDER_DEPLOYMENT_MODE = "authenticated";
+    env.RUDDER_DEPLOYMENT_EXPOSURE = "private";
+    env.RUDDER_AUTH_BASE_URL_MODE = "auto";
+    env.HOST = "0.0.0.0";
+  }
+  if (authenticated) {
+    env.RUDDER_UI_DEV_MIDDLEWARE = "true";
+  }
+
+  return {
+    authenticated,
+    authenticatedPrivateRequested,
+    env,
+    forwardedArgs,
+    standaloneUiEnabled: !authenticated,
+  };
+}
 
 export function normalizeLocalEnvName(value) {
   if (!value) return null;

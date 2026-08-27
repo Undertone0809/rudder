@@ -7,13 +7,17 @@ import { resolveDevIdentityEnvironment } from "./dev-identity-env.mjs";
 import {
   DEV_RUNTIME_STARTUP_TIMEOUT_MS,
   isolateDevShellFromParentRuntime,
+  resolveDevAccessEnvironment,
   resolveDevDesktopEnvironment,
   resolveDevScriptEnvironment,
   resolveHomeDir,
+  resolveStandaloneDevUiCommandArgs,
+  resolveStandaloneDevUiOrigin,
 } from "./dev-local-env.mjs";
 import {
   classifyDevDesktopExit,
   classifyDevServerExit,
+  stopManagedDevShellChildren,
 } from "./dev-shell-lifecycle.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,6 +34,7 @@ let shuttingDown = false;
 let desktopStarted = false;
 let desktopOwnsRuntime = false;
 let serverChild = null;
+let uiChild = null;
 let identityChild = null;
 let desktopChild = null;
 
@@ -72,7 +77,7 @@ async function waitForDevRuntimeReady(env) {
             && payload?.runtimeOwnerKind === "dev_runner"
             && payload?.instanceId === (env.RUDDER_INSTANCE_ID?.trim() || "dev")
           ) {
-            return;
+            return String(descriptor.apiUrl).replace(/\/+$/u, "");
           }
           lastError = new Error(`Health check returned a runtime, but not the ${runtimeLabel} yet.`);
         } else {
@@ -158,6 +163,32 @@ async function waitForIdentityReady(identityOrigin) {
   );
 }
 
+async function waitForUiReady(uiOrigin) {
+  const deadline = Date.now() + startupTimeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    if (!uiChild) throw new Error("The standalone Vite UI exited before becoming ready.");
+    try {
+      const response = await fetch(uiOrigin, {
+        headers: { Accept: "text/html" },
+        signal: AbortSignal.timeout(1_500),
+      });
+      if (response.ok) return;
+      lastError = new Error(`Vite UI health failed (${response.status}).`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  throw new Error(
+    `Timed out waiting for the standalone Vite UI. ${
+      lastError instanceof Error ? lastError.message : String(lastError ?? "Unknown error")
+    }`,
+  );
+}
+
 function spawnManagedChild(name, command, args, env, options = {}) {
   const child = spawn(command, args, {
     cwd: repoRoot,
@@ -195,26 +226,12 @@ async function shutdown(exitCode = 0, finalSignal = null) {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  const waits = [];
-  if (desktopChild && !desktopChild.killed) {
-    desktopChild.kill("SIGTERM");
-    waits.push(new Promise((resolve) => desktopChild.once("exit", resolve)));
-  }
-  if (identityChild && !identityChild.killed) {
-    identityChild.kill("SIGTERM");
-    waits.push(new Promise((resolve) => identityChild.once("exit", resolve)));
-  }
-  if (serverChild && !serverChild.killed) {
-    serverChild.kill("SIGTERM");
-    waits.push(new Promise((resolve) => serverChild.once("exit", resolve)));
-  }
-
-  if (waits.length > 0) {
-    await Promise.race([
-      Promise.allSettled(waits),
-      new Promise((resolve) => setTimeout(resolve, 10_000)),
-    ]);
-  }
+  await stopManagedDevShellChildren([
+    desktopChild,
+    identityChild,
+    uiChild,
+    serverChild,
+  ]);
 
   if (finalSignal) {
     process.removeAllListeners(finalSignal);
@@ -230,8 +247,19 @@ async function main() {
     baseEnv: isolateDevShellFromParentRuntime(process.env),
   });
   const resolvedIdentity = resolveDevIdentityEnvironment(resolvedDev.env);
-  const env = resolvedIdentity.env;
-  const desktopEnv = resolveDevDesktopEnvironment(env);
+  const devAccess = resolveDevAccessEnvironment({
+    args: forwardedArgs,
+    baseEnv: resolvedIdentity.env,
+    repoLocalConfig: resolvedDev.repoLocalConfig,
+  });
+  const env = devAccess.env;
+  const standaloneUiEnabled = devAccess.standaloneUiEnabled;
+  const uiOrigin = standaloneUiEnabled ? resolveStandaloneDevUiOrigin(env) : null;
+  if (standaloneUiEnabled) env.RUDDER_UI_DEV_MIDDLEWARE = "false";
+  const desktopEnv = resolveDevDesktopEnvironment({
+    ...env,
+    ...(uiOrigin ? { RUDDER_DESKTOP_LOAD_URL: uiOrigin } : {}),
+  });
 
   serverChild = spawnManagedChild(
     "server",
@@ -240,7 +268,7 @@ async function main() {
       path.join(repoRoot, "cli", "node_modules", "tsx", "dist", "cli.mjs"),
       path.join(repoRoot, "scripts", "dev-runner.mjs"),
       runtimeMode,
-      ...forwardedArgs,
+      ...devAccess.forwardedArgs,
     ],
     env,
     { shell: false },
@@ -261,24 +289,36 @@ async function main() {
         );
         return;
       }
-      if (desktopChild && !desktopChild.killed) {
-        desktopChild.kill("SIGTERM");
-      }
-      if (identityChild && !identityChild.killed) {
-        identityChild.kill("SIGTERM");
-      }
-      if (signal) {
-        process.kill(process.pid, signal);
-        return;
-      }
-      process.exit(code ?? 0);
+      void shutdown(code ?? 0, signal);
     })().catch((error) => {
       console.error(`[rudder:server] failed to classify ${runtimeLabel} exit`, error);
       void shutdown(1);
     });
   });
 
-  await waitForDevRuntimeReady(env);
+  const runtimeApiOrigin = await waitForDevRuntimeReady(env);
+
+  if (uiOrigin) {
+    uiChild = spawnManagedChild(
+      "ui",
+      pnpmBin,
+      resolveStandaloneDevUiCommandArgs(),
+      {
+        ...env,
+        RUDDER_UI_PROXY_TARGET: runtimeApiOrigin,
+      },
+    );
+    uiChild.once("exit", (code, signal) => {
+      uiChild = null;
+      if (shuttingDown) return;
+      console.error(
+        `[rudder:ui] standalone Vite UI exited ${signal ? `via ${signal}` : `with code ${code ?? 1}`}.`,
+      );
+      void shutdown(code ?? 1, signal);
+    });
+    await waitForUiReady(uiOrigin);
+    console.log(`[rudder:ui] standalone Vite UI ready at ${uiOrigin}`);
+  }
 
   await runManagedCommand(
     "identity-core-build",
@@ -308,13 +348,7 @@ async function main() {
   identityChild.once("exit", (code, signal) => {
     identityChild = null;
     if (shuttingDown) return;
-    if (desktopChild && !desktopChild.killed) desktopChild.kill("SIGTERM");
-    if (serverChild && !serverChild.killed) serverChild.kill("SIGTERM");
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exit(code ?? 1);
+    void shutdown(code ?? 1, signal);
   });
   await waitForIdentityReady(resolvedIdentity.identityOrigin);
   console.log(
@@ -367,9 +401,5 @@ process.on("SIGTERM", () => {
 
 void main().catch((error) => {
   console.error("[rudder:dev] failed to launch desktop dev shell", error);
-  if (!desktopStarted) {
-    void shutdown(1);
-    return;
-  }
-  process.exit(1);
+  void shutdown(1);
 });

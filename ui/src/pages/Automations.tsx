@@ -40,7 +40,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { automationsApi } from "../api/automations";
@@ -54,7 +54,7 @@ import { IssueRuntimeSelector } from "../components/IssueRuntimeSelector";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { ProjectIcon } from "../components/ProjectIdentity";
-import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
+import { describeSchedule, ScheduleEditor } from "../components/ScheduleEditor";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
@@ -76,7 +76,8 @@ import { usePluginMentionCatalog } from "../lib/plugin-mentions";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { cn, formatDateTimeSeconds } from "../lib/utils";
-import { AutomationDetail } from "./AutomationDetail";
+
+const LazyAutomationDetail = lazy(() => import("./AutomationDetail").then((module) => ({ default: module.AutomationDetail })));
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -1478,12 +1479,14 @@ export function Automations() {
             </Button>
           </header>
           <div className={cn("h-full min-h-0 md:h-[calc(100%-3rem)]", detailCollapsed && "min-[1100px]:hidden")}>
-            <AutomationDetail
-              key={automationId}
-              automationId={automationId}
-              embedded
-              onClose={() => navigate("/automations")}
-            />
+            <Suspense fallback={<PageSkeleton variant="detail" />}>
+              <LazyAutomationDetail
+                key={automationId}
+                automationId={automationId}
+                embedded
+                onClose={() => navigate("/automations")}
+              />
+            </Suspense>
           </div>
         </aside>
       ) : null}

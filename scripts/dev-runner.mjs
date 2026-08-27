@@ -12,6 +12,7 @@ import {
 import { serverVersion } from "../server/src/version.ts";
 import {
   DEV_RUNTIME_STARTUP_TIMEOUT_MS,
+  resolveDevAccessEnvironment,
   resolveDevScriptEnvironment,
 } from "./dev-local-env.mjs";
 import { shouldTrackDevServerPath } from "./dev-runner-paths.mjs";
@@ -60,36 +61,20 @@ const ignoredRelativePaths = new Set([
   ".rudder/dev-server-status.json",
 ]);
 
-const tailscaleAuthFlagNames = new Set([
-  "--tailscale-auth",
-  "--authenticated-private",
-]);
-
-let tailscaleAuth = false;
-const forwardedArgs = [];
-
-for (const arg of cliArgs) {
-  if (tailscaleAuthFlagNames.has(arg)) {
-    tailscaleAuth = true;
-    continue;
-  }
-  forwardedArgs.push(arg);
-}
-
-if (process.env.npm_config_tailscale_auth === "true") {
-  tailscaleAuth = true;
-}
-if (process.env.npm_config_authenticated_private === "true") {
-  tailscaleAuth = true;
-}
-
-const { env, localEnvName } = resolveDevScriptEnvironment({
+const resolvedDev = resolveDevScriptEnvironment({
   repoRoot,
   baseEnv: process.env,
   extraEnv: {
     RUDDER_RUNTIME_OWNER_KIND: "dev_runner",
   },
 });
+const devAccess = resolveDevAccessEnvironment({
+  args: cliArgs,
+  baseEnv: resolvedDev.env,
+  repoLocalConfig: resolvedDev.repoLocalConfig,
+});
+const { env, forwardedArgs } = devAccess;
+const { localEnvName } = resolvedDev;
 
 if (mode === "dev") {
   env.RUDDER_DEV_SERVER_STATUS_FILE = devServerStatusFilePath;
@@ -100,12 +85,10 @@ if (mode === "watch") {
   env.RUDDER_UI_DEV_MIDDLEWARE ??= "true";
 }
 
-if (tailscaleAuth) {
-  env.RUDDER_DEPLOYMENT_MODE = "authenticated";
-  env.RUDDER_DEPLOYMENT_EXPOSURE = "private";
-  env.RUDDER_AUTH_BASE_URL_MODE = "auto";
-  env.HOST = "0.0.0.0";
+if (devAccess.authenticatedPrivateRequested) {
   console.log("[rudder] dev mode: authenticated/private (tailscale-friendly) on 0.0.0.0");
+} else if (devAccess.authenticated) {
+  console.log("[rudder] dev mode: authenticated (integrated UI)");
 } else {
   console.log("[rudder] dev mode: local_trusted (default)");
 }

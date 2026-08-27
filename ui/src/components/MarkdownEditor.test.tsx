@@ -10,10 +10,10 @@ import {
   formatComposerCursorInsertion,
   getMentionMenuPositionForViewport,
   getMentionPanelPositionForViewport,
-  MarkdownEditor,
+  LegacyMarkdownEditor as MarkdownEditor,
   splitPlainTextMarkdownSourceByAtomicReferences,
-  type MarkdownEditorRef,
-} from "./MarkdownEditor";
+} from "./LegacyMarkdownEditor";
+import type { MarkdownEditorRef } from "./MarkdownEditor";
 
 const mdxEditorMocks = vi.hoisted(() => ({
   imagePlugin: vi.fn(() => ({})),

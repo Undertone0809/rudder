@@ -108,18 +108,20 @@ import {
   AskUserPanel,
   AssistantDraftItem,
   ChatAssistantAttributionRow,
-  ChatAttachmentList,
-  ChatEmptyStatePromptOptions,
-  ChatFileAttachmentChip,
-  ChatImageAttachmentTile,
   ChatLongMessageBody,
   ChatMessageItem,
   ChatMessagesLoadingState,
   ChatSystemMessageBody,
-  EMPTY_STATE_PROMPT_GROUPS,
   OptimisticUserDraftItem,
-  PendingAttachmentPreview,
   StreamTranscriptItem,
+} from "./Chat.messages";
+import {
+  ChatAttachmentList,
+  ChatEmptyStatePromptOptions,
+  ChatFileAttachmentChip,
+  ChatImageAttachmentTile,
+  EMPTY_STATE_PROMPT_GROUPS,
+  PendingAttachmentPreview,
 } from "./Chat.parts";
 import { DesignGuide } from "./DesignGuide";
 import { RunTranscriptUxLab } from "./RunTranscriptUxLab";

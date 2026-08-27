@@ -1055,6 +1055,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const rootRef = useRef<HTMLDivElement | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const pendingFocusRef = useRef(false);
   const propsRef = useRef(props);
   const currentValueRef = useRef(value);
   const pendingTitlesRef = useRef(new Map<number, PendingTitleUpgrade>());
@@ -1494,7 +1495,10 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   useImperativeHandle(forwardedRef, () => ({
     focus: () => {
       const view = viewRef.current;
-      if (!view) return;
+      if (!view) {
+        pendingFocusRef.current = true;
+        return;
+      }
       view.focus();
       setPreviewFocusRef.current?.(view, true);
     },
@@ -2214,6 +2218,11 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       parent,
     });
     viewRef.current = view;
+    if (pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      view.focus();
+      setPreviewFocusRef.current?.(view, true);
+    }
     testEditorViews.set(rootElement, view);
 
     return () => {
@@ -2222,6 +2231,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
       markdownBlockHoverRef.current = null;
       pendingTitlesRef.current.clear();
       pendingImageUploadsRef.current.clear();
+      pendingFocusRef.current = false;
       viewRef.current = null;
       setPreviewFocusRef.current = null;
       lineSeparatorCompartmentRef.current = null;

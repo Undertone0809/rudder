@@ -137,6 +137,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -148,7 +150,6 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
 import { ChatSidePanelTabContextMenu, type SideChatTarget } from "./Chat.side-panel-tab-menu";
 import {
@@ -160,7 +161,9 @@ import {
   storeChatSidePanelMarkdownDraft,
   type RestoredChatSidePanelMarkdownDraft,
 } from "./Chat.side-panel.helpers";
-import { IssueDetail } from "./IssueDetail";
+
+const LazyAutomationDetail = lazy(() => import("./AutomationDetail").then((module) => ({ default: module.AutomationDetail })));
+const LazyIssueDetail = lazy(() => import("./IssueDetail").then((module) => ({ default: module.IssueDetail })));
 
 const CHAT_SIDE_PANEL_IMAGE_FILE_EXTENSIONS = new Set([
   ".avif",
@@ -2758,7 +2761,9 @@ export function ChatSidePanel({
             </div>
           ) : issueTarget && issue ? (
             expanded ? (
-              <IssueDetail embedded embeddedIssueId={issue.id} />
+              <Suspense fallback={<LoadingPanelBody />}>
+                <LazyIssueDetail embedded embeddedIssueId={issue.id} />
+              </Suspense>
             ) : (
               <ChatIssueSidePanelView
                 issue={issue}
@@ -2790,12 +2795,14 @@ export function ChatSidePanel({
             </div>
           ) : automationTarget ? (
             <div className="h-full min-h-0" data-testid="chat-side-panel-automation-view">
-              <AutomationDetail
-                key={automationTarget.automationId}
-                automationId={automationTarget.automationId}
-                embedded
-                onClose={() => closeSidePanelTab(automationTarget)}
-              />
+              <Suspense fallback={<LoadingPanelBody />}>
+                <LazyAutomationDetail
+                  key={automationTarget.automationId}
+                  automationId={automationTarget.automationId}
+                  embedded
+                  onClose={() => closeSidePanelTab(automationTarget)}
+                />
+              </Suspense>
             </div>
           ) : localAppsTarget ? (
             <LocalAppsPanel onOpenTarget={openSidePanelTarget} />
