@@ -70,6 +70,7 @@ export type SidePanelTarget =
       projectId: string | null;
       body: string;
       inlineAnnotations: ChatInlineAnnotationInput[];
+      recoveryNotice?: string | null;
       label: string;
     }
   | {

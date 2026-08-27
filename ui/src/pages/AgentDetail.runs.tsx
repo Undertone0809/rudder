@@ -561,9 +561,10 @@ export function RunsTab({
         projectLocked: parsed.projectLocked === true || typeof parsed.conversationId === "string",
         clientMutationId: typeof parsed.clientMutationId === "string" ? parsed.clientMutationId : crypto.randomUUID(),
         projectId: typeof parsed.projectId === "string" ? parsed.projectId : null,
-        preferredAgentId: typeof parsed.preferredAgentId === "string" ? parsed.preferredAgentId : agentId,
+        preferredAgentId: agentId,
         body: typeof parsed.body === "string" ? parsed.body : "",
         inlineAnnotations: parsed.inlineAnnotations,
+        recoveryNotice: typeof parsed.recoveryNotice === "string" ? parsed.recoveryNotice : null,
         label: "Run feedback",
       };
       feedbackTargetRef.current = restoredTarget;

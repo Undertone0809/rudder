@@ -645,6 +645,8 @@ test.describe("Run transcript detail", () => {
   });
 
   test("adds annotation-only feedback across runs while preserving the side panel and project lock", async ({ page }) => {
+    test.setTimeout(120_000);
+
     await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Annotation-${Date.now()}`);
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -660,19 +662,6 @@ test.describe("Run transcript detail", () => {
     });
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json() as { id: string };
-    const reviewerAgentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
-      data: {
-        name: "Feedback Reviewer",
-        role: "researcher",
-        agentRuntimeType: "codex_local",
-        agentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
-      },
-    });
-    expect(reviewerAgentRes.ok()).toBe(true);
-    const reviewerAgent = await reviewerAgentRes.json() as { id: string };
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
         name: "Annotation Review Project",
@@ -853,10 +842,12 @@ test.describe("Run transcript detail", () => {
     await expect(toolBlock.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
 
     const selectableText = detailPane.getByText("Run one completed the deployment review.", { exact: false }).first();
-    await selectableText.selectText();
-    await page.evaluate(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
     const selectionToolbar = page.getByRole("toolbar", { name: "Response annotation actions" });
-    await expect(selectionToolbar).toBeVisible();
+    await expect(async () => {
+      await selectableText.selectText();
+      await page.evaluate(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+      await expect(selectionToolbar).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
     await selectionToolbar.getByRole("button", { name: "Add to chat" }).click();
     await expect(annotationEditor).toBeVisible();
     await annotationEditor.getByRole("textbox", { name: "Comment" }).fill("Keep this transcript excerpt.");
@@ -869,11 +860,18 @@ test.describe("Run transcript detail", () => {
       .click();
     await expect(projectSelector).toContainText("Annotation Review Project");
 
-    await agentSelector.click();
-    await page.getByTestId(`chat-agent-option-${reviewerAgent.id}`)
-      .getByRole("menuitemradio")
-      .click();
-    await expect(agentSelector).toContainText("Feedback Reviewer");
+    await expect(agentSelector).toContainText("Annotation Run Tester");
+    await expect(agentSelector).toBeDisabled();
+
+    const notificationDismissButtons = page.getByRole("button", { name: "Dismiss notification" });
+    while (await notificationDismissButtons.count()) {
+      await notificationDismissButtons.first().click();
+    }
+
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-feedback-normal-draft.png",
+      fullPage: true,
+    });
 
     const historyTrigger = page.getByTestId("agent-runs-history-trigger");
     if (await historyTrigger.isVisible()) await historyTrigger.click();
@@ -889,8 +887,8 @@ test.describe("Run transcript detail", () => {
     await expect(sidePanel).toBeVisible();
     await expect(projectSelector).toContainText("Annotation Review Project");
     await expect(projectSelector).toBeEnabled();
-    await expect(agentSelector).toContainText("Feedback Reviewer");
-    await expect(agentSelector).toBeEnabled();
+    await expect(agentSelector).toContainText("Annotation Run Tester");
+    await expect(agentSelector).toBeDisabled();
 
     await detailPane.getByTestId("run-transcript-annotation-trigger").first().click();
     await expect(annotationEditor).toBeVisible();
@@ -934,7 +932,7 @@ test.describe("Run transcript detail", () => {
       const response = await page.request.get(`/api/orgs/${organization.id}/chats?status=all&limit=100`);
       if (!response.ok()) return null;
       const candidates = await response.json() as Array<{ id: string; preferredAgentId?: string | null }>;
-      conversationId = candidates.find((chat) => chat.preferredAgentId === reviewerAgent.id)?.id ?? null;
+      conversationId = candidates.find((chat) => chat.preferredAgentId === agent.id)?.id ?? null;
       return conversationId;
     }, { timeout: 30_000 }).toBeTruthy();
     expect(conversationId).toBeTruthy();
@@ -951,7 +949,7 @@ test.describe("Run transcript detail", () => {
       conversationId,
       projectId: project.id,
       projectLocked: true,
-      preferredAgentId: reviewerAgent.id,
+      preferredAgentId: agent.id,
     }));
     const messagesResponse = await page.request.get(`/api/chats/${conversationId}/messages?orgId=${organization.id}`);
     expect(messagesResponse.ok()).toBe(true);
@@ -1024,6 +1022,68 @@ test.describe("Run transcript detail", () => {
     expect(mobilePanelBox!.y + mobilePanelBox!.height).toBeLessThanOrEqual(844);
     await page.screenshot({
       path: "/tmp/rudder-agent-run-feedback-mobile.png",
+      fullPage: true,
+    });
+
+    const deleteFeedbackChat = await page.request.delete(`/api/chats/${conversationId}?cancelActive=true`);
+    expect(deleteFeedbackChat.ok(), await deleteFeedbackChat.text()).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(detailPane.getByText("Run two found a follow-up regression.", { exact: false })).toBeVisible({ timeout: 15_000 });
+    const recoveredSelectableText = detailPane.getByText("Run two found a follow-up regression.", { exact: false }).first();
+    await expect(async () => {
+      await recoveredSelectableText.selectText();
+      await page.evaluate(() => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+      await expect(selectionToolbar).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
+    await selectionToolbar.getByRole("button", { name: "Add to chat" }).click();
+    await expect(annotationEditor).toBeVisible();
+    await annotationEditor.getByRole("button", { name: "Save" }).click();
+    await expect(feedbackPanel).toBeVisible({ timeout: 15_000 });
+    await expect(feedbackPanel.getByRole("alert")).toContainText("Your draft was kept");
+    await expect(projectSelector).toBeEnabled();
+    await expect(agentSelector).toBeDisabled();
+    await expect(feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 2 annotations?/ })).toBeVisible();
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-feedback-recovery.png",
+      fullPage: true,
+    });
+
+    await projectSelector.click();
+    await page.getByTestId("run-feedback-project-menu")
+      .getByRole("menuitemradio", { name: "No project" })
+      .click();
+    await expect(projectSelector).toContainText("No project");
+    await projectSelector.click();
+    await page.getByTestId("run-feedback-project-menu")
+      .getByRole("menuitemradio", { name: "Annotation Review Project" })
+      .click();
+
+    const recoveredSend = feedbackPanel.getByRole("button", { name: "Send feedback" });
+    await expect(recoveredSend).toBeEnabled();
+    await recoveredSend.click();
+    await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(projectSelector).toBeDisabled();
+    await expect(agentSelector).toBeDisabled();
+    const recoveredStop = feedbackPanel.getByRole("button", { name: "Stop feedback" });
+    await expect(recoveredStop).toBeVisible({ timeout: 15_000 });
+    await recoveredStop.click();
+    await expect.poll(async () => (
+      await feedbackPanel.getByRole("button", { name: "Send feedback" }).count()
+      + await feedbackPanel.getByRole("button", { name: "Stop status pending" }).count()
+    ), { timeout: 15_000 }).toBeGreaterThan(0);
+    while (await notificationDismissButtons.count()) {
+      await notificationDismissButtons.first().click();
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sidePanel).toBeVisible();
+    await expect.poll(async () => {
+      const box = await sidePanel.boundingBox();
+      return Boolean(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= 390 && box.y + box.height <= 844);
+    }, { timeout: 3_000 }).toBe(true);
+    await page.screenshot({
+      path: "/tmp/rudder-agent-run-feedback-recovered-mobile.png",
       fullPage: true,
     });
   });
