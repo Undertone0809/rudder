@@ -531,6 +531,19 @@ launchers, and reopens Rudder. Running Agent Runs across every organization in
 the local instance delay replacement; queued or terminal close-out records do
 not require a destructive Stop Runs decision.
 
+Desktop update children prepare the exact target runtime on a best-effort
+90-second budget. The budget covers npm installation and platform repair,
+runtime lock waits, and PostgreSQL payload download and validation. A timeout or
+preparation failure remains an active update state and continues with the full
+portable asset. Ordinary `rudder start` runtime preparation remains strict and
+still reports these failures instead of silently falling back.
+
+Silent automatic updates attempt the shell asset only when the authenticated
+release policy authorizes both the shell and the full fallback for the exact
+version and architecture. The prepared asset kind is persisted with the staged
+candidate and remains bound to its asset name, checksum, and release digest at
+apply time. Legacy staged candidates without an asset kind are treated as full.
+
 The main process performs the initial and final running-work checks through
 Electron's session-backed `defaultSession.fetch`, including credentials. The
 Node global `fetch` has no cookie jar, so using it for `/api/orgs` or live-run

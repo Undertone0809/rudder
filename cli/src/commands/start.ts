@@ -99,6 +99,7 @@ interface StartCommandOptions {
   desktopAssetName?: string;
   desktopAssetKind?: "full" | "shell";
   desktopReleaseDigest?: string;
+  desktopRuntimeBestEffort?: boolean;
   dryRun?: boolean;
   versionCheck?: boolean;
 }
@@ -145,6 +146,7 @@ export type ProgressReporterFactory = (label: string) => ByteProgressReporter;
 
 type DesktopUpdateProgressPhase =
   | "starting"
+  | "preparing_runtime"
   | "resolving_release"
   | "downloading_checksums"
   | "downloading_asset"
@@ -167,6 +169,7 @@ type DesktopUpdateProgressEvent = {
   error?: string;
   assetName?: string;
   assetChecksum?: string;
+  assetKind?: "full" | "shell";
   releaseDigest?: string;
   stagedArtifactPath?: string;
   stagedArtifactDigest?: string;
@@ -189,6 +192,16 @@ const DEFAULT_DESKTOP_ASSET_CACHE_MAX_BYTES = 768 * 1024 * 1024;
 const DEFAULT_DESKTOP_ASSET_CACHE_KEEP_PREVIOUS = 1;
 const DESKTOP_INSTALL_LOCK_TIMEOUT_MS = 60 * 60 * 1000;
 const DESKTOP_INSTALL_LOCK_POLL_MS = 250;
+export const DESKTOP_RUNTIME_PREPARE_TIMEOUT_MS = 90_000;
+
+async function waitForDesktopRuntimeSmokeEvidence(envName: string): Promise<void> {
+  if (process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC !== "1") return;
+  const value = Number(process.env[envName]);
+  if (!Number.isFinite(value) || value <= 0) return;
+  await delay(Math.min(value, 10_000));
+}
+const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
+const DEFAULT_GITHUB_DOWNLOAD_BASE_URL = "https://github.com";
 
 function normalizeProgressTotal(totalBytes: number | null | undefined): number | null {
   return typeof totalBytes === "number" && Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
@@ -587,6 +600,7 @@ export function resolveDesktopAssetCandidates(options: {
   tag: string;
   directReleaseVersion: string | null;
   allowShellAssets?: boolean;
+  downloadBaseUrl?: string;
 }): DesktopAssetCandidate[] {
   const candidates: DesktopAssetCandidate[] = [];
   const deterministicShellName = options.directReleaseVersion
@@ -596,7 +610,12 @@ export function resolveDesktopAssetCandidates(options: {
     const shellAsset = selectDesktopShellAsset(options.releaseAssets, options.target)
       ?? (
         options.releaseAssets.length === 0 && deterministicShellName
-          ? buildGithubReleaseAsset(options.repo, options.tag, deterministicShellName)
+          ? buildGithubReleaseAsset(
+            options.repo,
+            options.tag,
+            deterministicShellName,
+            options.downloadBaseUrl,
+          )
           : null
       );
     if (shellAsset) candidates.push({ asset: shellAsset, kind: "shell" });
@@ -605,7 +624,12 @@ export function resolveDesktopAssetCandidates(options: {
   const fullAsset = selectDesktopAsset(options.releaseAssets, options.target)
     ?? (
       options.directReleaseVersion
-        ? buildGithubReleaseAsset(options.repo, options.tag, resolveDesktopAssetName(options.directReleaseVersion, options.target))
+        ? buildGithubReleaseAsset(
+          options.repo,
+          options.tag,
+          resolveDesktopAssetName(options.directReleaseVersion, options.target),
+          options.downloadBaseUrl,
+        )
         : null
     );
   if (fullAsset) candidates.push({ asset: fullAsset, kind: "full" });
@@ -667,11 +691,46 @@ function githubApiHeaders(): HeadersInit {
 
 const GITHUB_API_TIMEOUT_MS = 15_000;
 
-async function fetchGithubRelease(repo: string, tag: string): Promise<GithubRelease> {
+export function resolveDesktopSmokeReleaseBaseUrls(env: NodeJS.ProcessEnv = process.env): {
+  apiBaseUrl: string;
+  downloadBaseUrl: string;
+} {
+  if (env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC !== "1") {
+    return {
+      apiBaseUrl: DEFAULT_GITHUB_API_BASE_URL,
+      downloadBaseUrl: DEFAULT_GITHUB_DOWNLOAD_BASE_URL,
+    };
+  }
+  const normalizeBaseUrl = (value: string | undefined, fallback: string): string => {
+    const configured = value?.trim();
+    if (!configured) return fallback;
+    const parsed = new URL(configured);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`Desktop smoke release base URL must use HTTP or HTTPS: ${configured}`);
+    }
+    return configured.replace(/\/+$/u, "");
+  };
+  return {
+    apiBaseUrl: normalizeBaseUrl(
+      env.RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL,
+      DEFAULT_GITHUB_API_BASE_URL,
+    ),
+    downloadBaseUrl: normalizeBaseUrl(
+      env.RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL,
+      DEFAULT_GITHUB_DOWNLOAD_BASE_URL,
+    ),
+  };
+}
+
+async function fetchGithubRelease(
+  repo: string,
+  tag: string,
+  apiBaseUrl: string = DEFAULT_GITHUB_API_BASE_URL,
+): Promise<GithubRelease> {
   const endpoint =
     tag === "latest"
-      ? `https://api.github.com/repos/${repo}/releases/latest`
-      : `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
+      ? `${apiBaseUrl}/repos/${repo}/releases/latest`
+      : `${apiBaseUrl}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
   const response = await fetchWithTimeout(endpoint, { headers: githubApiHeaders() }, GITHUB_API_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`GitHub Release ${tag} was not found in ${repo} (${response.status}).`);
@@ -707,15 +766,25 @@ function encodeReleaseTagForDownloadUrl(tag: string): string {
   return tag.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
-export function buildGithubReleaseAssetDownloadUrl(repo: string, tag: string, assetName: string): string {
+export function buildGithubReleaseAssetDownloadUrl(
+  repo: string,
+  tag: string,
+  assetName: string,
+  downloadBaseUrl: string = DEFAULT_GITHUB_DOWNLOAD_BASE_URL,
+): string {
   const encodedTag = encodeReleaseTagForDownloadUrl(tag);
-  return `https://github.com/${repo}/releases/download/${encodedTag}/${encodeURIComponent(assetName)}`;
+  return `${downloadBaseUrl}/${repo}/releases/download/${encodedTag}/${encodeURIComponent(assetName)}`;
 }
 
-function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): GithubReleaseAsset {
+function buildGithubReleaseAsset(
+  repo: string,
+  tag: string,
+  assetName: string,
+  downloadBaseUrl?: string,
+): GithubReleaseAsset {
   return {
     name: assetName,
-    browser_download_url: buildGithubReleaseAssetDownloadUrl(repo, tag, assetName),
+    browser_download_url: buildGithubReleaseAssetDownloadUrl(repo, tag, assetName, downloadBaseUrl),
   };
 }
 
@@ -1675,6 +1744,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
   const desktopProgressJson = opts.desktopProgressJson === true;
+  const desktopRuntimeBestEffort = opts.desktopRuntimeBestEffort === true && installDesktop;
   const exactDesktopAssetPath = opts.desktopAssetPath?.trim() || null;
   const exactDesktopAssetChecksum = opts.desktopAssetChecksum?.trim() || null;
   const exactDesktopAssetName = opts.desktopAssetName?.trim() || null;
@@ -1711,13 +1781,31 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
 
   if (installRuntime) {
     p.log.step("Preparing Rudder runtime");
+    if (desktopProgressJson && desktopRuntimeBestEffort) {
+      writeDesktopProgress({
+        phase: "preparing_runtime",
+        message: "Preparing the lightweight Desktop update runtime; the full package will be used if this takes too long.",
+      });
+      await waitForDesktopRuntimeSmokeEvidence("RUDDER_DESKTOP_SMOKE_RUNTIME_PREPARING_DELAY_MS");
+    }
     if (dryRun) {
       p.log.message(`[dry-run] Would install or reuse ${pc.cyan(`@rudderhq/server@${version}`)} in the Rudder runtime cache.`);
     } else {
       const spinner = p.spinner();
       spinner.start("Installing or reusing Rudder runtime...");
       try {
-        const runtime = await ensureRuntimeInstalled({ version, preparePostgresPayload: true });
+        const runtime = await ensureRuntimeInstalled({
+          version,
+          preparePostgresPayload: true,
+          ...(desktopRuntimeBestEffort
+            ? {
+                timeoutMs: DESKTOP_RUNTIME_PREPARE_TIMEOUT_MS,
+                cleanupIncompleteOnFailure: true,
+                pruneRuntimeCache: false,
+                allowLatestFallback: false,
+              }
+            : {}),
+        });
         runtimeSupportsShellAssets = runtimeSupportsDesktopShellAssets(version, runtime);
         spinner.stop(
           runtime.status === "hit"
@@ -1730,12 +1818,29 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         if (!runtimeSupportsShellAssets && installDesktop) {
           p.log.warn("Rudder runtime did not resolve to the exact Desktop version; the full portable Desktop asset will be used.");
         }
+        if (desktopProgressJson && desktopRuntimeBestEffort) {
+          writeDesktopProgress({
+            phase: "preparing_runtime",
+            message: runtimeSupportsShellAssets
+              ? "Lightweight Desktop update runtime is ready."
+              : "Lightweight runtime is unavailable; continuing with the full Desktop package.",
+          });
+        }
       } catch (error) {
         spinner.stop(pc.red("Rudder runtime installation failed."));
         if (error instanceof RuntimeInstallError && error.output) {
           p.log.message(pc.dim(error.output));
         }
-        throw error;
+        if (!desktopRuntimeBestEffort) throw error;
+        const detail = error instanceof Error ? error.message : String(error);
+        p.log.warn(`Lightweight Desktop update runtime preparation failed; continuing with the full portable asset. ${detail}`);
+        if (desktopProgressJson) {
+          writeDesktopProgress({
+            phase: "preparing_runtime",
+            message: "Lightweight runtime preparation did not finish; continuing with the full Desktop package.",
+          });
+          await waitForDesktopRuntimeSmokeEvidence("RUDDER_DESKTOP_SMOKE_RUNTIME_FALLBACK_DELAY_MS");
+        }
       }
     }
   }
@@ -1772,6 +1877,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   if (installDesktop) {
     const downloadSource = resolveDesktopDownloadSource(opts.downloadSource);
     const mirrorBaseUrl = resolveDesktopReleaseMirrorBaseUrl(repo);
+    const smokeReleaseBaseUrls = resolveDesktopSmokeReleaseBaseUrls();
     const target = resolveDesktopAssetTarget();
     const tag = resolveDesktopReleaseTag(version);
     const installRoot = opts.desktopInstallDir
@@ -1846,7 +1952,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           release = await runStartPhase(
             "Resolving Desktop release...",
             "Desktop release resolved.",
-            () => fetchGithubRelease(repo, tag),
+            () => fetchGithubRelease(repo, tag, smokeReleaseBaseUrls.apiBaseUrl),
             desktopProgressJson ? "resolving_release" : null,
           );
         } catch (error) {
@@ -1865,12 +1971,20 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           tag,
           directReleaseVersion,
           allowShellAssets: runtimeSupportsShellAssets,
+          downloadBaseUrl: smokeReleaseBaseUrls.downloadBaseUrl,
         });
         if (assetCandidates.length === 0) {
           throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
         }
         const checksumAsset = selectChecksumAsset(release?.assets ?? [])
-          ?? (directReleaseVersion ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME) : null);
+          ?? (directReleaseVersion
+            ? buildGithubReleaseAsset(
+              repo,
+              tag,
+              DESKTOP_CHECKSUM_ASSET_NAME,
+              smokeReleaseBaseUrls.downloadBaseUrl,
+            )
+            : null);
         if (!checksumAsset) {
           throw new Error("Desktop release is missing SHASUMS256.txt.");
         }
@@ -1967,6 +2081,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
             percent: 100,
             assetName: selectedAsset.name,
             assetChecksum: checksum,
+            assetKind: selectedAssetKind,
             stagedArtifactPath: path.resolve(verifiedAsset.path),
             stagedArtifactDigest: checksum,
             releaseDigest: createHash("sha256")

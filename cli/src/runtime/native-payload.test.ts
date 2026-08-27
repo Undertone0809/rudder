@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -149,5 +150,68 @@ describe("native runtime payload bridge", () => {
     })).rejects.toMatchObject({ code: "sha256_mismatch", accepted: false, fallbackSafe: false });
     expect(prepared).toBe(false);
     await expect(fs.stat(path.join(f.root, "destination"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("aborts a stalled accepted prepare callback at the shared deadline", async () => {
+    const f = await fixture("success");
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_PAYLOAD_PATH = f.binary;
+    const callback = { signal: null as AbortSignal | null };
+
+    await expect(tryInstallNativePayload({
+      archivePath: f.archive,
+      extractPath: path.join(f.root, "extract"),
+      publishStagingPath: path.join(f.root, "publish"),
+      destinationPath: path.join(f.root, "destination"),
+      maxArchiveBytes: 1024,
+      expectedSha256: createHash("sha256").update("payload").digest("hex"),
+      timeoutMs: 1_000,
+      preparePublish: async (_extractPath, _publishPath, context) => {
+        callback.signal = context.signal;
+        await new Promise<void>((_resolve, reject) => {
+          context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });
+        });
+        return "bin/postgres";
+      },
+      validatePublished: async () => undefined,
+    })).rejects.toMatchObject({ code: "deadline_exceeded", accepted: true, fallbackSafe: false });
+
+    expect(callback.signal).not.toBeNull();
+    expect(callback.signal?.aborted).toBe(true);
+  });
+
+  it("does not extend the shared deadline while native staging cleanup is stalled", async () => {
+    const f = await fixture("success");
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_PAYLOAD_PATH = f.binary;
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const startedAt = Date.now();
+
+    await expect(tryInstallNativePayload({
+      archivePath: f.archive,
+      extractPath: path.join(f.root, "extract"),
+      publishStagingPath: path.join(f.root, "publish"),
+      destinationPath: path.join(f.root, "destination"),
+      maxArchiveBytes: 1024,
+      expectedSha256: createHash("sha256").update("payload").digest("hex"),
+      timeoutMs: 1_000,
+      preparePublish: async (_extractPath, _publishPath, context) => {
+        await new Promise<void>((_resolve, reject) => {
+          context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });
+        });
+        return "bin/postgres";
+      },
+      validatePublished: async () => undefined,
+      cleanupPublishStaging: async () => {
+        markCleanupStarted();
+        await new Promise<void>((resolve) => { releaseCleanup = resolve; });
+      },
+    })).rejects.toMatchObject({ code: "deadline_exceeded" });
+
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    await cleanupStarted;
+    releaseCleanup();
   });
 });

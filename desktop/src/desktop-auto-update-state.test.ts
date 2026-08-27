@@ -43,6 +43,7 @@ function candidate(generation = 1): DesktopAutoUpdateCandidate {
     sourceReleaseDigest: "release-digest",
     updateId: "update-1",
     assetName: "Rudder-0.7.5-macos-arm64-portable.zip",
+    assetKind: "full",
     assetChecksum: "a".repeat(64),
     stagedAt: "2026-08-13T00:00:00.000Z",
     status: "staged",
@@ -58,6 +59,21 @@ describe("desktop automatic update state", () => {
     const state = stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), candidate());
     writeDesktopAutoUpdateState(statePath, state);
     expect(readDesktopAutoUpdateState(statePath)).toEqual(state);
+  });
+
+  it("reads legacy candidates without an asset kind as full", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-auto-update-legacy-kind-"));
+    temporaryRoots.push(root);
+    const statePath = path.join(root, "state.json");
+    const legacyCandidate = { ...candidate() } as Record<string, unknown>;
+    delete legacyCandidate.assetKind;
+    fs.writeFileSync(statePath, `${JSON.stringify({
+      ...createInitialDesktopAutoUpdateState(),
+      generation: 1,
+      candidate: legacyCandidate,
+    })}\n`, "utf8");
+
+    expect(readDesktopAutoUpdateState(statePath).candidate?.assetKind).toBe("full");
   });
 
   it("uses a five-second first slot and one-hour subsequent slots", () => {

@@ -1789,6 +1789,8 @@ describe("agent-v1 MCP server", () => {
   });
 
   it("dispatches Browser tools directly through the runtime-owned API identity", async () => {
+    const tabId = "b5dcfbbe-9753-48aa-bcd9-0138c34c0d6f";
+    const ref = "927e5c31-981e-4d52-a577-9958345918bb:0";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       expect(String(input)).toBe("http://127.0.0.1:3100/api/browser/open");
       const headers = new Headers(init?.headers);
@@ -1797,7 +1799,7 @@ describe("agent-v1 MCP server", () => {
       expect(headers.get("x-rudder-agent-id")).toBe("11111111-1111-4111-8111-111111111111");
       expect(headers.get("x-rudder-run-id")).toBe("22222222-2222-4222-8222-222222222222");
       expect(JSON.parse(String(init?.body))).toEqual({ url: "https://example.com" });
-      return new Response(JSON.stringify({ tabId: "tab-1", url: "https://example.com/" }), {
+      return new Response(JSON.stringify({ tabId, url: "https://example.com/", refs: [{ ref }] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -1821,7 +1823,7 @@ describe("agent-v1 MCP server", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(response?.result).toMatchObject({
       isError: false,
-      structuredContent: { tabId: "tab-1", url: "https://example.com/" },
+      structuredContent: { tabId, url: "https://example.com/", refs: [{ ref }] },
     });
   });
 

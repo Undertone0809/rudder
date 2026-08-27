@@ -1,4 +1,4 @@
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import { runMcpStdioServer, type RudderMcpServerSurface } from "./agent-v1-mcp-server.js";
 import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
@@ -104,6 +104,7 @@ export function createProgram(): Command {
     .option("--desktop-asset-name <name>", "Asset name bound to the exact staged Desktop candidate")
     .option("--desktop-asset-kind <kind>", "Asset kind bound to the exact staged Desktop candidate (full or shell)")
     .option("--desktop-release-digest <sha256>", "Release digest bound to the exact staged Desktop candidate")
+    .addOption(new Option("--desktop-runtime-best-effort").hideHelp())
     .option("--no-version-check", "Skip checking npm for a newer Rudder CLI version")
     .option("--dry-run", "Print the start actions without changing the machine", false)
     .action(startCommand);

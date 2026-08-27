@@ -31,12 +31,20 @@ function envelope(sequence = 7) {
     channel: "stable",
     platform: "darwin",
     arch: "arm64",
-    releases: [{
-      version: "0.7.5",
-      assetName: "Rudder-0.7.5-macos-arm64-portable.zip",
-      assetSha256: "a".repeat(64),
-      releaseDigest: "b".repeat(64),
-    }],
+    releases: [
+      {
+        version: "0.7.5",
+        assetName: "Rudder-0.7.5-macos-arm64-portable.zip",
+        assetSha256: "a".repeat(64),
+        releaseDigest: "b".repeat(64),
+      },
+      {
+        version: "0.7.5",
+        assetName: "Rudder-0.7.5-macos-arm64-shell.zip",
+        assetSha256: "c".repeat(64),
+        releaseDigest: "d".repeat(64),
+      },
+    ],
   };
   return {
     keys,
@@ -65,12 +73,23 @@ describe("desktop signed update policy loader", () => {
     await expect(policyLoader.refresh()).resolves.toMatchObject({ ok: true, source: "network" });
     expect(readDesktopAutoUpdateState(resolveDesktopAutoUpdateStatePath(root)).acceptedPolicySequence).toBe(7);
     expect(policyLoader.hasUsablePolicy()).toBe(true);
+    expect(policyLoader.isAssetKindAuthorized("0.7.5", "full")).toBe(true);
+    expect(policyLoader.isAssetKindAuthorized("0.7.5", "shell")).toBe(true);
+    expect(policyLoader.isAssetKindAuthorized("0.7.6", "full")).toBe(false);
     expect(policyLoader.authorizeRelease({
       version: "0.7.5",
       assetName: "Rudder-0.7.5-macos-arm64-portable.zip",
       assetSha256: "a".repeat(64),
+      assetKind: "full",
       releaseDigest: "b".repeat(64),
     })).not.toBeNull();
+    expect(policyLoader.authorizeRelease({
+      version: "0.7.5",
+      assetName: "Rudder-0.7.5-macos-arm64-shell.zip",
+      assetSha256: "c".repeat(64),
+      assetKind: "full",
+      releaseDigest: "d".repeat(64),
+    })).toBeNull();
     expect(policyLoader.authorizeRelease({
       version: "0.7.5",
       assetName: "Rudder-0.7.5-macos-arm64-portable.zip",
