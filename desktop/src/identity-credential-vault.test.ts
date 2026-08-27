@@ -58,6 +58,37 @@ describe("identity credential vault", () => {
     expect(fs.statSync(credentialPath).mode & 0o777).toBe(0o600);
   });
 
+  it("restores legacy credentials without an account image", () => {
+    const credentialPath = temporaryCredentialPath();
+    const vault = createIdentityCredentialVault({
+      safeStorage: fakeSafeStorage(),
+      platform: "darwin",
+      credentialPath,
+    });
+
+    vault.write(credential);
+
+    expect(vault.read()).toEqual(credential);
+    expect(vault.read()?.accountImage).toBeUndefined();
+  });
+
+  it("persists a maximum-sized account avatar while rejecting an oversized one", () => {
+    const credentialPath = temporaryCredentialPath();
+    const vault = createIdentityCredentialVault({
+      safeStorage: fakeSafeStorage(),
+      platform: "darwin",
+      credentialPath,
+    });
+    const prefix = "data:image/png;base64,";
+    const maximumAvatar = prefix + "a".repeat(480 * 1024 - prefix.length);
+
+    vault.write({ ...credential, accountImage: maximumAvatar });
+
+    expect(vault.read()?.accountImage).toBe(maximumAvatar);
+    expect(() => vault.write({ ...credential, accountImage: `${maximumAvatar}a` }))
+      .toThrow("credential is invalid");
+  });
+
   it("clears the durable credential without exposing its value", () => {
     const credentialPath = temporaryCredentialPath();
     const vault = createIdentityCredentialVault({
