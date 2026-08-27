@@ -10,6 +10,26 @@ export type DesktopReleaseNotes = {
   }>;
 };
 
+export function createReleaseNotesReservation(): {
+  get(version: string): DesktopReleaseNotes | null;
+  reserve(notes: DesktopReleaseNotes): void;
+  clear(): void;
+} {
+  let reservedNotes: DesktopReleaseNotes | null = null;
+
+  return {
+    get(version) {
+      return reservedNotes?.version === normalizeVersion(version) ? reservedNotes : null;
+    },
+    reserve(notes) {
+      reservedNotes = notes;
+    },
+    clear() {
+      reservedNotes = null;
+    },
+  };
+}
+
 type ReleaseNotesState = {
   lastKnownVersion?: string;
   lastShownVersion?: string;

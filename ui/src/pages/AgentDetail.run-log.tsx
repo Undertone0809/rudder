@@ -27,6 +27,7 @@ import {
 } from "react";
 import { buildTranscript, getUIAdapter } from "../agent-runtimes";
 import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
+import { agentsApi } from "../api/agents";
 import { chatsApi } from "../api/chats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { CopyText } from "../components/CopyText";
@@ -100,6 +101,10 @@ export function LogViewer({
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
   const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
+  const { data: agentDirectory = [] } = useQuery({
+    queryKey: queryKeys.agents.list(run.orgId),
+    queryFn: () => agentsApi.list(run.orgId),
+  });
   const { openTarget: openSidePanelTarget } = useSidePanel();
   const [transcriptDialogMotion, setTranscriptDialogMotion] = useState({
     fromX: "0px",
@@ -713,6 +718,7 @@ export function LogViewer({
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
+              agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate ? {
                 sourceRunId: run.id,
                 sourceAgentId: run.agentId,
@@ -857,6 +863,7 @@ export function LogViewer({
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
+              agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate ? {
                 sourceRunId: run.id,
                 sourceAgentId: run.agentId,

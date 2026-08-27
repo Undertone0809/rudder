@@ -242,6 +242,44 @@ describe("Desktop Rudder Account IPC", () => {
     );
   });
 
+  it("restores the persisted account avatar after a Desktop restart", () => {
+    const avatar = "https://lh3.googleusercontent.com/a/avatar";
+    const controller = createDesktopIdentityIpcController({
+      origin: "https://accounts.rudderhq.dev",
+      vault: {
+        status: () => ({ available: true as const, backend: "keychain" }),
+        read: () => ({
+          version: 1,
+          issuer: "https://accounts.rudderhq.dev",
+          accountId: "account-1",
+          accountEmail: "verified@example.com",
+          accountName: "Rudder User",
+          accountImage: avatar,
+          deviceId: "device-1",
+          refreshToken: "refresh-secret",
+          refreshTokenExpiresAt: "2026-08-29T00:00:00.000Z",
+        }),
+      },
+      client: {
+        signIn: vi.fn(),
+        nativeSignIn: vi.fn(),
+        sendEmailOtp: vi.fn(),
+        requestPasswordReset: vi.fn(),
+        signOut: vi.fn(),
+        listDeviceSessions: vi.fn(),
+        revokeDeviceSession: vi.fn(),
+        getProfile: vi.fn(),
+        updateProfile: vi.fn(),
+      },
+      getMainRenderer: () => null,
+    });
+
+    expect(controller.getState()).toMatchObject({
+      status: "signed-in",
+      account: { image: avatar },
+    });
+  });
+
   it("blocks credential-issuing sign-in before any client side effect when secure storage is unavailable", async () => {
     const renderer = {
       mainFrame: {},
@@ -334,6 +372,20 @@ describe("Desktop Rudder Account IPC", () => {
     const { handlers, renderer, clear, listDeviceSessions, revokeDeviceSession, getProfile, updateProfile } = fixture();
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
 
+    await handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.signIn)?.(event);
+    await expect(handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.getProfile)?.(event)).resolves.toMatchObject({
+      id: "account-1",
+      image: null,
+    });
+    const avatar = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    await expect(
+      handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.updateProfile)?.(event, { image: avatar }),
+    ).resolves.toMatchObject({ image: avatar });
+    expect(renderer.send).toHaveBeenCalledWith(
+      DESKTOP_IDENTITY_IPC_CHANNELS.stateChanged,
+      expect.objectContaining({ status: "signed-in", account: expect.objectContaining({ image: avatar }) }),
+    );
+
     await expect(handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.signOut)?.(event)).resolves.toMatchObject({
       status: "signed-out",
     });
@@ -346,14 +398,6 @@ describe("Desktop Rudder Account IPC", () => {
       handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.revokeDeviceSession)?.(event, { deviceId: "device-1" }),
     ).resolves.toBeUndefined();
     expect(revokeDeviceSession).toHaveBeenCalledWith("device-1");
-    await expect(handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.getProfile)?.(event)).resolves.toMatchObject({
-      id: "account-1",
-      image: null,
-    });
-    const avatar = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-    await expect(
-      handlers.get(DESKTOP_IDENTITY_IPC_CHANNELS.updateProfile)?.(event, { image: avatar }),
-    ).resolves.toMatchObject({ image: avatar });
     expect(getProfile).toHaveBeenCalledOnce();
     expect(updateProfile).toHaveBeenCalledWith({ image: avatar });
   });

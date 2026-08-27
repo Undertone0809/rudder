@@ -1,5 +1,6 @@
 import {
   isInternalChatTranscriptLifecycleEntry,
+  type AgentRole,
   type ChatInlineAnnotation,
   type ChatInlineAnnotationInput,
   type ChatMessage,
@@ -164,6 +165,17 @@ export interface RunTranscriptViewProps {
   sentAnnotationContext?: TranscriptSentAnnotationContext;
   /** Stage an annotation for a completed Nice transcript block in Run Detail. */
   runAnnotationContext?: TranscriptRunAnnotationContext;
+  /** Organization Agent directory used only to resolve semantic-card identities. */
+  agentDirectory?: TranscriptAgentDirectoryEntry[];
+}
+
+export interface TranscriptAgentDirectoryEntry {
+  id: string;
+  shortRef?: string;
+  name: string;
+  icon?: string | null;
+  role?: AgentRole | null;
+  urlKey?: string | null;
 }
 
 export interface TranscriptRunAnnotationInput {

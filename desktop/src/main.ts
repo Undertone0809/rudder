@@ -147,6 +147,7 @@ import {
 import { startDesktopProductAnalyticsScheduler } from "./product-analytics-main-scheduler.js";
 import type { DesktopProductAnalyticsScheduler } from "./product-analytics-scheduler.js";
 import {
+  createReleaseNotesReservation,
   markReleaseNotesShown,
   readReleaseNotes,
   resolveReleaseNotesPath,
@@ -680,7 +681,7 @@ let pendingDesktopNavigationPath: string | null = null;
 let lastKnownAppUrl: string | null = null;
 let rendererRecoveryInFlight = false;
 let externalServerRuntimeCacheDir: string | null = null;
-let releaseNotesPresentedVersion: string | null = null;
+const releaseNotesReservation = createReleaseNotesReservation();
 let deferredUpdatePromptRendererReady = false;
 const pendingDeferredUpdatePrompts = new Map<string, {
   resolve: (decision: DeferredUpdatePromptDecision | null) => void;
@@ -2672,8 +2673,9 @@ function registerIpc(): void {
   ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
   ipcMain.handle("desktop:get-release-notes", async (): Promise<DesktopReleaseNotesResult> => {
     const version = resolveRudderAppVersion();
-    if (releaseNotesPresentedVersion === version) {
-      return { status: "already-shown" };
+    const reservedNotes = releaseNotesReservation.get(version);
+    if (reservedNotes) {
+      return { status: "available", notes: reservedNotes };
     }
     const statePath = resolveReleaseNotesStatePath(app.getPath("userData"));
     const updatedAfterInstall = latestPostUpdateReloadMarker?.targetVersion === version;
@@ -2693,10 +2695,11 @@ function registerIpc(): void {
       clearPostUpdateReloadMarker(app.getPath("userData"));
       return { status: "unavailable" };
     }
-    // Reserve the entitlement for this process so repeated renderer mounts do
-    // not duplicate the dialog. Durable consumption happens only after the
-    // renderer acknowledges the notes, allowing a crash to retry on next boot.
-    releaseNotesPresentedVersion = version;
+    // Reserve the entitlement for this process and retain the payload so a
+    // renderer reload can rebuild the dialog. Durable consumption happens only
+    // after the renderer acknowledges the notes, allowing a crash to retry on
+    // next boot.
+    releaseNotesReservation.reserve(notes);
     return { status: "available", notes };
   });
   ipcMain.handle("desktop:mark-release-notes-shown", async (_event, version: string) => {
@@ -2705,7 +2708,7 @@ function registerIpc(): void {
       version,
       statePath: resolveReleaseNotesStatePath(app.getPath("userData")),
     });
-    releaseNotesPresentedVersion = null;
+    releaseNotesReservation.clear();
     clearPostUpdateReloadMarker(app.getPath("userData"));
   });
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {

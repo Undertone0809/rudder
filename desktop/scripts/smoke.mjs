@@ -3670,13 +3670,26 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     );
     try {
       assert.equal(await firstNotesRun.electronApp.evaluate(({ app }) => app.getVersion()), candidateVersion);
-      await firstNotesRun.page.waitForFunction(() => Boolean(window.rudderBoot?.getReleaseNotes));
-      const firstNotes = await firstNotesRun.page.evaluate(() => window.rudderBoot.getReleaseNotes());
-      assert.equal(firstNotes.status, "available", "the first ordinary launch should expose release notes once");
-      assert.equal(firstNotes.notes?.version, candidateVersion);
-      await firstNotesRun.page.evaluate((version) => window.rudderBoot.markReleaseNotesShown(version), candidateVersion);
-      const sameLaunchNotes = await firstNotesRun.page.evaluate(() => window.rudderBoot.getReleaseNotes());
-      assert.equal(sameLaunchNotes.status, "already-shown", "release notes entitlement must be consumed before rendering");
+      const firstNotesPage = await waitForBoardWindow(firstNotesRun.electronApp, firstNotesRun.page);
+      const releaseNotesDialog = firstNotesPage.getByRole("dialog", { name: new RegExp(`What's new in Rudder ${candidateVersion}`) });
+      await releaseNotesDialog.waitFor({ state: "visible", timeout: 30_000 });
+      assert.equal(
+        await releaseNotesDialog.getByText("Installed by the silent update smoke candidate.").isVisible(),
+        true,
+        "the first ordinary launch should expose release notes",
+      );
+
+      await firstNotesPage.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+      await firstNotesPage.waitForLoadState("networkidle");
+      const releaseNotesAfterReload = firstNotesPage.getByRole("dialog", { name: new RegExp(`What's new in Rudder ${candidateVersion}`) });
+      await releaseNotesAfterReload.waitFor({ state: "visible", timeout: 30_000 });
+      assert.equal(
+        await releaseNotesAfterReload.getByText("Installed by the silent update smoke candidate.").isVisible(),
+        true,
+        "renderer reload must keep release notes available until acknowledgement",
+      );
+      await releaseNotesAfterReload.getByRole("button", { name: "Continue" }).click();
+      await releaseNotesAfterReload.waitFor({ state: "detached", timeout: 10_000 });
       const durableNotesState = JSON.parse(await readFile(path.join(paths.electronUserDataDir, "release-notes-state.json"), "utf8"));
       assert.equal(durableNotesState.lastKnownVersion, candidateVersion, "release notes durable state must record the installed Desktop version");
       assert.equal(durableNotesState.lastShownVersion, candidateVersion, "release notes durable state must record the acknowledged candidate version");
