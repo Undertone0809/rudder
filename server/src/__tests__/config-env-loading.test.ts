@@ -209,6 +209,28 @@ describe("server config env loading", () => {
     expect(config.databaseBackupMaxEstimatedBytes).toBe(384 * 1024 * 1024);
   });
 
+  it("disables the absolute Agent Run duration limit by default", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    delete process.env.HEARTBEAT_RUN_TIMEOUT_MS;
+
+    const loadConfig = await importLoadConfig();
+
+    expect(loadConfig().heartbeatRunTimeoutMs).toBe(0);
+  });
+
+  it("allows deployments to opt into an absolute Agent Run duration limit", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.HEARTBEAT_RUN_TIMEOUT_MS = "21600000";
+
+    const loadConfig = await importLoadConfig();
+
+    expect(loadConfig().heartbeatRunTimeoutMs).toBe(6 * 60 * 60 * 1000);
+  });
+
   it("accepts a dedicated HTTPS workspace preview origin", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
     process.chdir(tempDir);

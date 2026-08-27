@@ -396,6 +396,38 @@ describe("heartbeat orphaned process recovery", () => {
     expect(agent?.status).toBe("error");
   });
 
+  it("does not impose an absolute duration limit unless one is configured", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const checkedAt = new Date("2026-03-20T00:00:00.000Z");
+    const { orgId, agentId, runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      agentId,
+      runId,
+      seq: 1,
+      eventType: "adapter.progress",
+      stream: "stdout",
+      level: "info",
+      message: "Run is still producing progress after 24 hours",
+      createdAt: new Date("2026-03-19T23:59:00.000Z"),
+    });
+
+    const result = await heartbeatService(db).reapTimedOutRuns({ now: checkedAt });
+
+    expect(result).toEqual({ timedOut: 0, runIds: [] });
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({ status: "running", finishedAt: null, errorCode: null });
+  });
+
   it("times out active runs that stop producing server-visible activity", async () => {
     const child = spawnAliveProcess();
     childProcesses.add(child);
