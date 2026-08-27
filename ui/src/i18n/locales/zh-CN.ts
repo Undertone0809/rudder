@@ -639,6 +639,7 @@ export const zhCN: Messages = {
   "about.updates.progress.openReleases": "打开发布页",
   "about.updates.progress.dismiss": "关闭更新状态",
   "about.updates.progress.phase.starting": "正在开始更新...",
+  "about.updates.progress.phase.preparing_runtime": "正在准备轻量更新...",
   "about.updates.progress.phase.resolving_release": "正在解析发布版本...",
   "about.updates.progress.phase.downloading_checksums": "正在下载校验文件...",
   "about.updates.progress.phase.downloading_asset": "正在下载桌面安装包...",

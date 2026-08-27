@@ -680,6 +680,7 @@ export const en = {
   "about.updates.progress.openReleases": "Open releases",
   "about.updates.progress.dismiss": "Dismiss update status",
   "about.updates.progress.phase.starting": "Starting update...",
+  "about.updates.progress.phase.preparing_runtime": "Preparing lightweight update...",
   "about.updates.progress.phase.resolving_release": "Resolving release...",
   "about.updates.progress.phase.downloading_checksums": "Downloading checksums...",
   "about.updates.progress.phase.downloading_asset": "Downloading desktop asset...",

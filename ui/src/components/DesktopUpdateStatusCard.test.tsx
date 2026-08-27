@@ -141,6 +141,44 @@ describe("DesktopUpdateStatusCard", () => {
     expect(document.body.querySelectorAll('[role="progressbar"]').length).toBe(1);
   });
 
+  it("keeps runtime preparation active and continues to later update progress", async () => {
+    const harness = renderHarness({
+      updateId: "update-layered",
+      version: "0.7.14",
+      phase: "preparing_runtime",
+      message: "Preparing the target runtime for a lightweight update.",
+      at: new Date().toISOString(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Updating to v0.7.14");
+    expect(document.body.textContent).toContain("Preparing the target runtime for a lightweight update.");
+    expect(document.body.querySelector('[data-testid="desktop-update-status-card"]')?.getAttribute("data-update-phase"))
+      .toBe("preparing_runtime");
+    expect(document.body.querySelector('[role="progressbar"]')?.getAttribute("aria-label"))
+      .toBe("Preparing lightweight update...");
+    expect(document.body.textContent).not.toContain("Update failed");
+    expect(document.body.textContent).not.toContain("Retry");
+
+    harness.emit({
+      updateId: "update-layered",
+      version: "0.7.14",
+      phase: "downloading_asset",
+      message: "Downloading lightweight desktop asset.",
+      percent: 12,
+      at: new Date().toISOString(),
+    });
+
+    expect(document.body.textContent).toContain("Downloading lightweight desktop asset.");
+    expect(document.body.querySelector('[data-testid="desktop-update-status-card"]')?.getAttribute("data-update-phase"))
+      .toBe("downloading_asset");
+    expect(document.body.textContent).toContain("12%");
+    expect(document.body.textContent).not.toContain("Update failed");
+  });
+
   it("shows the final restart action after the update package is ready", async () => {
     const harness = renderHarness({
       updateId: "update-3",

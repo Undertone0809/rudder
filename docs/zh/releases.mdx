@@ -18,6 +18,30 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月26日" description="v0.7.14" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.14)
+
+这个版本让 Agent 工作更容易调整和检查，并进一步明确了 Rudder 的关键工作流和文档。
+
+### 新功能
+
+- 为支持的本地运行时增加语义化 Agent 指令边界，并覆盖执行过程中指令上下文的保留行为。
+- 为概览文档增加中英文架构图，并将 App Builder 标记为 Beta。
+
+### 改进
+
+- Ask User 问题现在始终提供 `Other` 自由文本回答，即使调用方关闭了自由文本选项；该回答也支持相同的附件流程。
+- 统一 Goal 详情页签的几何样式，并改善 Transcript、工作区复制操作和 Chat 工作流的呈现。
+
+### 问题修复
+
+- 让 Agent hire 审批检查识别操作者，在授权场景下允许 Issue 无需 checkout 即可完成，并隔离未激活 Library 侧栏的查询。
+
+</Update>
+
 <Update label="2026年8月23日" description="v0.7.13" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.13

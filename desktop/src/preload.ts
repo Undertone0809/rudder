@@ -84,6 +84,7 @@ type DesktopUpdateInstallResult =
 
 type DesktopUpdateProgressPhase =
   | "starting"
+  | "preparing_runtime"
   | "resolving_release"
   | "downloading_checksums"
   | "downloading_asset"

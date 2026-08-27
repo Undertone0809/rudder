@@ -1137,11 +1137,11 @@ export function GoalDetail() {
           <Tabs value={activeTab} onValueChange={selectTab} className="min-w-0 space-y-3">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-2">
             <span className="sr-only">Goal detail views</span>
-            <TabsList className="h-8 rounded-md p-0.5" aria-label="Goal detail views">
-              <TabsTrigger value="overview" className="h-7 rounded px-2.5 text-xs">
+            <TabsList className="h-8 p-0.5" aria-label="Goal detail views">
+              <TabsTrigger value="overview" className="h-7 px-2.5 text-xs">
                 <Target className="h-3.5 w-3.5" />Overview
               </TabsTrigger>
-              <TabsTrigger value="activity" className="h-7 rounded px-2.5 text-xs">
+              <TabsTrigger value="activity" className="h-7 px-2.5 text-xs">
                 <ActivityIcon className="h-3.5 w-3.5" />Activity
                 {goalTimelineItems.length > 0 ? <span className="rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{goalTimelineItems.length}</span> : null}
               </TabsTrigger>

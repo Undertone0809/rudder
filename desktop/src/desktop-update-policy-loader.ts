@@ -172,13 +172,29 @@ export function createDesktopUpdatePolicyLoader(options: DesktopUpdatePolicyLoad
     version: string;
     assetName: string;
     assetSha256: string;
+    assetKind?: "full" | "shell";
     releaseDigest: string;
     channel?: "stable" | "canary";
   }): DesktopUpdatePolicyAuthorization | null {
     const policy = getPolicy();
     if (!policy || (input.channel && policy.channel !== input.channel)) return null;
+    if (input.assetKind) {
+      const expectedName = `Rudder-${input.version}-macos-${options.arch}-${input.assetKind === "shell" ? "shell" : "portable"}.zip`;
+      if (input.assetName !== expectedName) return null;
+    }
     const release = findAuthorizedDesktopRelease(policy, input);
     return release ? { policy, release } : null;
+  }
+
+  function isAssetKindAuthorized(version: string, kind: "full" | "shell"): boolean {
+    const policy = getPolicy();
+    if (!policy) return false;
+    const expectedName = `Rudder-${version}-macos-${options.arch}-${kind === "shell" ? "shell" : "portable"}.zip`;
+    return policy.releases.some((release) =>
+      release.version === version
+      && release.assetName === expectedName
+      && release.revoked !== true,
+    );
   }
 
   return {
@@ -188,6 +204,7 @@ export function createDesktopUpdatePolicyLoader(options: DesktopUpdatePolicyLoad
     refresh,
     getPolicy,
     authorizeRelease,
+    isAssetKindAuthorized,
     hasUsablePolicy: () => getPolicy() !== null,
   };
 }

@@ -3,8 +3,18 @@
 import { en } from "@/i18n/locales/en";
 import { zhCN } from "@/i18n/locales/zh-CN";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InstanceAboutSettings, resolveAboutCurrentVersion } from "./InstanceAboutSettings";
+
+const updateProgressState = vi.hoisted(() => ({
+  current: null as null | {
+    updateId: string;
+    version: string;
+    phase: "preparing_runtime";
+    message: string;
+    at: string;
+  },
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({
@@ -27,6 +37,13 @@ vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
 
+vi.mock("@/context/DesktopUpdateProgressContext", () => ({
+  useDesktopUpdateProgress: () => ({
+    progress: updateProgressState.current,
+    dismissProgress: vi.fn(),
+  }),
+}));
+
 vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({
     t: (key: string) =>
@@ -47,6 +64,9 @@ vi.mock("@/context/I18nContext", () => ({
         "about.updates.title": "Check for updates",
         "about.updates.description": "Update section",
         "about.updates.check": "Check for updates",
+        "about.updates.progress.detailsTitle": "Update progress details",
+        "about.updates.progress.title": "Updating to v0.7.14",
+        "about.updates.progress.phase.preparing_runtime": "Preparing lightweight update...",
         "about.feedback.title": "Send feedback",
         "about.feedback.description": "Feedback section",
         "about.feedback.send": "Send feedback",
@@ -62,6 +82,10 @@ vi.mock("@/lib/desktop-shell", () => ({
 }));
 
 describe("InstanceAboutSettings", () => {
+  beforeEach(() => {
+    updateProgressState.current = null;
+  });
+
   it("shows environment separately from the instance id", () => {
     const html = renderToStaticMarkup(<InstanceAboutSettings />);
 
@@ -107,5 +131,30 @@ describe("InstanceAboutSettings", () => {
     expect(en["about.feedback.toastBody"]).not.toContain("zeeland4work@gmail.com");
     expect(zhCN["about.feedback.description"]).not.toContain("zeeland4work@gmail.com");
     expect(zhCN["about.feedback.toastBody"]).not.toContain("zeeland4work@gmail.com");
+  });
+
+  it("provides natural runtime preparation labels in both supported locales", () => {
+    expect(en["about.updates.progress.phase.preparing_runtime"])
+      .toBe("Preparing lightweight update...");
+    expect(zhCN["about.updates.progress.phase.preparing_runtime"])
+      .toBe("正在准备轻量更新...");
+  });
+
+  it("renders runtime preparation as the active update step", () => {
+    updateProgressState.current = {
+      updateId: "update-layered",
+      version: "0.7.14",
+      phase: "preparing_runtime",
+      message: "Preparing the target runtime for a lightweight update.",
+      at: new Date().toISOString(),
+    };
+
+    const html = renderToStaticMarkup(<InstanceAboutSettings />);
+
+    expect(html).toContain("Update progress details");
+    expect(html).toContain("Preparing lightweight update...");
+    expect(html).toContain("text-foreground\"><span class=\"h-2 w-2 rounded-full bg-emerald-700\"></span><span>Preparing lightweight update...");
+    expect(html).toContain("disabled=\"\"");
+    expect(html).not.toContain("Update failed");
   });
 });

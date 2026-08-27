@@ -28,6 +28,7 @@ const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const FEEDBACK_MAILTO = "mailto:zeeland4work@gmail.com";
 const UPDATE_PHASES: DesktopUpdateProgressPhase[] = [
   "starting",
+  "preparing_runtime",
   "resolving_release",
   "downloading_checksums",
   "downloading_asset",
@@ -40,6 +41,7 @@ const UPDATE_PHASES: DesktopUpdateProgressPhase[] = [
 ];
 const UPDATE_PHASE_LABEL_KEYS: Record<DesktopUpdateProgressPhase, TranslationKey> = {
   starting: "about.updates.progress.phase.starting",
+  preparing_runtime: "about.updates.progress.phase.preparing_runtime",
   resolving_release: "about.updates.progress.phase.resolving_release",
   downloading_checksums: "about.updates.progress.phase.downloading_checksums",
   downloading_asset: "about.updates.progress.phase.downloading_asset",

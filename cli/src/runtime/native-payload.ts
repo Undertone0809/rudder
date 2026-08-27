@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -25,6 +26,11 @@ type NativePayloadEnvelope = Record<string, unknown> & {
   fallbackSafe?: unknown;
   errorCode?: unknown;
 };
+
+export interface NativePayloadDeadlineContext {
+  signal: AbortSignal;
+  remainingMs(): number | undefined;
+}
 
 export class NativePayloadError extends Error {
   readonly code: string;
@@ -91,6 +97,7 @@ async function runNativePayload(
   capability: string,
   args: string[],
   commandMayAccept: boolean,
+  timeoutMs = TIMEOUT_MS,
 ): Promise<NativePayloadEnvelope> {
   let stdout = "";
   let stderr = "";
@@ -98,14 +105,20 @@ async function runNativePayload(
     const command = resolveNativeCommand(resolveNativePayloadBinary(), args);
     const result = await execFileAsync(command.command, command.args, {
       encoding: "utf8",
-      timeout: TIMEOUT_MS,
+      timeout: Math.max(1, Math.min(TIMEOUT_MS, timeoutMs)),
       maxBuffer: OUTPUT_LIMIT_BYTES,
       windowsHide: true,
     });
     stdout = result.stdout;
     stderr = result.stderr;
   } catch (error) {
-    const detail = error as { stdout?: unknown; stderr?: unknown; code?: unknown };
+    const detail = error as {
+      stdout?: unknown;
+      stderr?: unknown;
+      code?: unknown;
+      killed?: unknown;
+      signal?: unknown;
+    };
     stdout = typeof detail.stdout === "string" ? detail.stdout : "";
     stderr = typeof detail.stderr === "string" ? detail.stderr : "";
     if (stdout.trim()) {
@@ -116,6 +129,9 @@ async function runNativePayload(
         stderr || detail.code,
         envelope,
       );
+    }
+    if (detail.code === "ETIMEDOUT" || detail.killed === true || detail.signal === "SIGTERM") {
+      throw new NativePayloadError("deadline_exceeded", commandMayAccept, detail.code ?? detail.signal);
     }
     const failedBeforeSpawn = detail.code === "ENOENT" || detail.code === "EACCES";
     throw new NativePayloadError("process_failed", commandMayAccept && !failedBeforeSpawn, stderr || detail.code);
@@ -141,18 +157,18 @@ export function nativePayloadPolicy() {
   });
 }
 
-export async function verifyNativePayload(archivePath: string, expectedSha256: string, maxArchiveBytes: number) {
+export async function verifyNativePayload(archivePath: string, expectedSha256: string, maxArchiveBytes: number, timeoutMs?: number) {
   return runNativePayload("payload.verify", [
     "payload", "verify", path.resolve(archivePath), expectedSha256, String(maxArchiveBytes),
-  ], false);
+  ], false, timeoutMs);
 }
 
-export async function extractNativePayload(archivePath: string, stagingPath: string, maxArchiveBytes: number) {
+export async function extractNativePayload(archivePath: string, stagingPath: string, maxArchiveBytes: number, timeoutMs?: number) {
   try {
     return await runNativePayload("payload.extract", [
       "payload", "extract", path.resolve(archivePath), "auto", path.resolve(stagingPath),
       String(maxArchiveBytes), String(maxArchiveBytes), String(maxArchiveBytes * 2), "0",
-    ], true);
+    ], true, timeoutMs);
   } catch (error) {
     if (error instanceof NativePayloadError && error.code === "process_failed" && !existsSync(stagingPath)) {
       throw new NativePayloadError("process_failed", false, error.message);
@@ -161,16 +177,16 @@ export async function extractNativePayload(archivePath: string, stagingPath: str
   }
 }
 
-export async function probeNativePayloadVersion(rootPath: string, executable: string) {
+export async function probeNativePayloadVersion(rootPath: string, executable: string, timeoutMs?: number) {
   return runNativePayload("payload.probeVersion", [
     "payload", "probe-version", path.resolve(rootPath), executable, "PostgreSQL 18.4",
-  ], true);
+  ], true, timeoutMs);
 }
 
-export async function publishNativePayload(stagingPath: string, destinationPath: string) {
+export async function publishNativePayload(stagingPath: string, destinationPath: string, timeoutMs?: number) {
   return runNativePayload("payload.publish", [
     "payload", "publish", path.resolve(stagingPath), path.resolve(destinationPath),
-  ], true);
+  ], true, timeoutMs);
 }
 
 export async function tryInstallNativePayload(input: {
@@ -180,9 +196,52 @@ export async function tryInstallNativePayload(input: {
   destinationPath: string;
   maxArchiveBytes: number;
   expectedSha256?: string | null;
-  preparePublish(extractPath: string, publishStagingPath: string): Promise<string>;
-  validatePublished(destinationPath: string): Promise<void>;
+  timeoutMs?: number;
+  /** Test-only monotonic clock injection. */
+  now?: () => number;
+  /** Test-only staging cleanup injection. */
+  cleanupPublishStaging?: (publishStagingPath: string) => Promise<void>;
+  preparePublish(
+    extractPath: string,
+    publishStagingPath: string,
+    context: NativePayloadDeadlineContext,
+  ): Promise<string>;
+  validatePublished(destinationPath: string, context: NativePayloadDeadlineContext): Promise<void>;
 }): Promise<{ installed: boolean; fallbackCode: string | null; diagnostic: RudderNativeDiagnostic }> {
+  const now = input.now ?? (() => performance.now());
+  const expiresAt = input.timeoutMs === undefined ? null : now() + input.timeoutMs;
+  const remainingTimeout = (accepted: boolean) => {
+    if (expiresAt === null) return undefined;
+    const remaining = Math.ceil(expiresAt - now());
+    if (remaining <= 0) throw new NativePayloadError("deadline_exceeded", accepted);
+    return remaining;
+  };
+  const runCallbackWithinDeadline = async <T>(
+    accepted: boolean,
+    callback: (context: NativePayloadDeadlineContext) => Promise<T>,
+  ): Promise<T> => {
+    const controller = new AbortController();
+    const timeoutMs = remainingTimeout(accepted);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = timeoutMs === undefined
+      ? null
+      : new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new NativePayloadError("deadline_exceeded", accepted));
+          }, timeoutMs);
+        });
+    const context: NativePayloadDeadlineContext = {
+      signal: controller.signal,
+      remainingMs: () => remainingTimeout(accepted),
+    };
+    try {
+      const operation = callback(context);
+      return timeoutPromise ? await Promise.race([operation, timeoutPromise]) : await operation;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
   const policy = nativePayloadPolicy();
   if (!policy.enabled) return {
     installed: false,
@@ -205,9 +264,9 @@ export async function tryInstallNativePayload(input: {
   }
   try {
     if (expectedSha256) {
-      await verifyNativePayload(input.archivePath, expectedSha256, input.maxArchiveBytes);
+      await verifyNativePayload(input.archivePath, expectedSha256, input.maxArchiveBytes, remainingTimeout(false));
     }
-    await extractNativePayload(input.archivePath, input.extractPath, input.maxArchiveBytes);
+    await extractNativePayload(input.archivePath, input.extractPath, input.maxArchiveBytes, remainingTimeout(false));
   } catch (error) {
     const fallbackSafe = error instanceof NativePayloadError && error.fallbackSafe;
     if (!policy.fallbackAllowed || !fallbackSafe) throw error;
@@ -223,10 +282,16 @@ export async function tryInstallNativePayload(input: {
     };
   }
   try {
-    const versionExecutable = await input.preparePublish(input.extractPath, input.publishStagingPath);
-    await probeNativePayloadVersion(input.publishStagingPath, versionExecutable);
-    const published = await publishNativePayload(input.publishStagingPath, input.destinationPath);
-    await input.validatePublished(input.destinationPath);
+    const versionExecutable = await runCallbackWithinDeadline(
+      true,
+      (context) => input.preparePublish(input.extractPath, input.publishStagingPath, context),
+    );
+    await probeNativePayloadVersion(input.publishStagingPath, versionExecutable, remainingTimeout(true));
+    const published = await publishNativePayload(input.publishStagingPath, input.destinationPath, remainingTimeout(true));
+    await runCallbackWithinDeadline(
+      true,
+      (context) => input.validatePublished(input.destinationPath, context),
+    );
     return {
       installed: true,
       fallbackCode: null,
@@ -240,6 +305,9 @@ export async function tryInstallNativePayload(input: {
       },
     };
   } finally {
-    await fs.rm(input.publishStagingPath, { recursive: true, force: true });
+    const cleanup = input.cleanupPublishStaging
+      ?? ((publishStagingPath: string) => fs.rm(publishStagingPath, { recursive: true, force: true }));
+    // A slow staging deletion must not extend the shared runtime deadline.
+    void cleanup(input.publishStagingPath).catch(() => {});
   }
 }
