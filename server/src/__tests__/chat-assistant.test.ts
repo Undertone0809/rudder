@@ -645,6 +645,63 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
   });
 
+  it("keeps draft availability scoped to admission when execution context preparation fails", async () => {
+    mockRunContextService.prepareRuntimeConfig.mockRejectedValue(
+      new Error("Could not install organization skill from the execution workspace"),
+    );
+    mockRunContextService.resolveWorkspaceForRun.mockRejectedValue(
+      new Error("Project workspace is unavailable"),
+    );
+    mockRunContextService.buildSceneContext.mockRejectedValue(
+      new Error("Project resource attachment could not be loaded"),
+    );
+
+    try {
+      const svc = chatAssistantService({} as any);
+      const availability = await svc.getDraftChatAssistantAvailability({
+        orgId: "organization-1",
+        preferredAgentId: "agent-1",
+        contextLinks: [],
+      });
+
+      expect(availability).toEqual(expect.objectContaining({
+        sourceType: "agent",
+        sourceLabel: "Chat Specialist",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5.4",
+        available: true,
+        error: null,
+      }));
+      expect(mockRunContextService.prepareRuntimeConfig).not.toHaveBeenCalled();
+      expect(mockRunContextService.resolveWorkspaceForRun).not.toHaveBeenCalled();
+      expect(mockRunContextService.buildSceneContext).not.toHaveBeenCalled();
+    } finally {
+      mockRunContextService.prepareRuntimeConfig.mockReset();
+      mockRunContextService.resolveWorkspaceForRun.mockReset();
+      mockRunContextService.buildSceneContext.mockReset();
+    }
+  });
+
+  it("applies draft model overrides without resolving execution context", async () => {
+    const svc = chatAssistantService({} as any);
+    const availability = await svc.getDraftChatAssistantAvailability({
+      orgId: "organization-1",
+      preferredAgentId: "agent-1",
+      modelOverride: "gpt-5.6-terra",
+      contextLinks: [],
+    });
+
+    expect(availability).toEqual(expect.objectContaining({
+      model: "gpt-5.6-terra",
+      available: true,
+      error: null,
+    }));
+    expect(mockRunContextService.prepareRuntimeConfig).not.toHaveBeenCalled();
+    expect(mockRunContextService.resolveWorkspaceForRun).not.toHaveBeenCalled();
+    expect(mockRunContextService.buildSceneContext).not.toHaveBeenCalled();
+  });
+
   it("refuses to generate a reply without a preferred agent", async () => {
     const svc = chatAssistantService({} as any);
 
