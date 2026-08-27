@@ -86,7 +86,7 @@ describe("Rudder MCP semantic rail interactions", () => {
     expect(container?.querySelectorAll("[data-rudder-semantic-card-link]")).toHaveLength(6);
 
     const focused = container?.querySelectorAll<HTMLAnchorElement>("[data-rudder-semantic-card-link]")[2];
-    focused?.focus();
+    act(() => focused?.focus());
     expect(document.activeElement).toBe(focused);
 
     act(() => intersections.at(-1)?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
