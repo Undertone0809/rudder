@@ -125,8 +125,13 @@ Behavior:
   batches from the already-returned result without making another API or MCP
   request. Secret material is excluded from Nice presenters, malformed payloads
   fail closed to an unavailable state, and mutation receipts must not imply a
-  stronger state transition than the structured response confirms. Raw mode,
-  persisted evidence, and unsupported-tool presentation remain unchanged.
+  stronger state transition than the structured response confirms. Semantic
+  objects use a quiet elevated card surface when that grouping improves result
+  scanning. A successful Issue or Approval comment receipt shows the escaped,
+  bounded comment body only when that body is present in structured result
+  evidence; it must not reconstruct comment content from display copy or invent
+  a comment when the result omits it. Raw mode, persisted evidence, and
+  unsupported-tool presentation remain unchanged.
 - Under `CHAT.RESPONSE.ANNOTATION.001`, an operator may deliberately quote
   already-loaded, visible assistant/thinking prose from a terminal generation.
   The quote retains its generation id plus inclusive generation-event sequence

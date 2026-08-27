@@ -32,7 +32,7 @@ function trailingEntriesByVisibleLimit(
 
 export function RunTranscriptView(props: RunTranscriptViewProps) {
   return (
-    <RudderMcpPresenterProvider agents={props.agentDirectory}>
+    <RudderMcpPresenterProvider agents={props.agentDirectory} entries={props.entries}>
       <RunTranscriptViewContent {...props} />
     </RudderMcpPresenterProvider>
   );
@@ -157,15 +157,7 @@ function RunTranscriptViewContent({
     );
   }
 
-  if (mode === "raw") {
-    return (
-      <div className={className}>
-        <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
-      </div>
-    );
-  }
-
-  if (blocks.length === 0) {
+  if (blocks.length === 0 && mode !== "raw") {
     if (!emptyMessage) return null;
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
@@ -174,8 +166,10 @@ function RunTranscriptViewContent({
     );
   }
 
-  if (presentation === "detail") {
-    return (
+  const niceContent = blocks.length === 0
+    ? null
+    : presentation === "detail"
+      ? (
       <div className={cn("space-y-4", className)}>
         <TranscriptDetailTimeline
           entries={visibleNiceEntries}
@@ -190,11 +184,9 @@ function RunTranscriptViewContent({
           canOpenSkill={canOpenSkill}
         />
       </div>
-    );
-  }
-
-  if (presentation === "chat") {
-    return (
+        )
+      : presentation === "chat"
+        ? (
       <div className={cn("w-full min-w-0", className)}>
         <TranscriptChatTimeline
           entries={visibleNiceEntries}
@@ -216,10 +208,8 @@ function RunTranscriptViewContent({
           sentAnnotationContext={sentAnnotationContext}
         />
       </div>
-    );
-  }
-
-  return (
+          )
+        : (
     <div className={cn("space-y-3", className)}>
       {visibleBlocks.map((block, index) => (
         <div
@@ -240,5 +230,20 @@ function RunTranscriptViewContent({
         </div>
       ))}
     </div>
+          );
+
+  return (
+    <>
+      <div hidden={mode !== "raw"}>
+        {mode === "raw" ? (
+          <div className={className}>
+            <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
+          </div>
+        ) : null}
+      </div>
+      <div hidden={mode === "raw"} aria-hidden={mode === "raw" || undefined}>
+        {niceContent}
+      </div>
+    </>
   );
 }

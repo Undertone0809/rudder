@@ -73,6 +73,7 @@ describe("UiLab coverage registry", () => {
       "SidebarSectionHeader",
       "CommandPalette",
       "RunTranscriptView",
+      "RudderMcpSemanticPresenter",
     ]) {
       expect(componentIds.has(expected), expected).toBe(true);
     }

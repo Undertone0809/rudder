@@ -229,6 +229,8 @@ async function expandSemanticRows(surface: Locator) {
 async function assertFiveDomainPresenters(surface: Locator) {
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_goal_list"]')).toBeVisible();
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("Comment added");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("Card-ready comment");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"] [data-rudder-semantic-agent="true"]')).toContainText("Semantic Card Agent");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_project_get"]')).toContainText("MCP Cards");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_approval_get"]')).toContainText("pending");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_automation_triggers_rotate_secret"]')).toContainText("Webhook secret rotated");
@@ -266,6 +268,7 @@ async function assertOutcomeStates(surface: Locator, routePrefix: string, entiti
   const deletedTrigger = surface.locator('[data-rudder-semantic-presenter="rudder_automation_triggers_delete"]');
   await expect(deletedTrigger).toContainText("Trigger deleted");
   await expect(deletedTrigger.locator(`a[href$="/automations/${entities.triggerId}"]`)).toHaveCount(0);
+  await expect(deletedTrigger.locator(`a[href="/${routePrefix}/automations/${entities.automationId}"]`)).toBeVisible();
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_get"]')).toContainText("Result unavailable");
 }
 
@@ -337,6 +340,12 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeGreaterThan(scrollBeforeKeyboard);
     const firstGoalLink = rail.locator(`a[href="/${organization.urlKey}/goals/${entities.goalIds[0]}"]`);
     await expect(firstGoalLink).toBeVisible();
+    const cardSurface = await firstGoalLink.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return { boxShadow: style.boxShadow, transitionProperty: style.transitionProperty };
+    });
+    expect(cardSurface.boxShadow).not.toBe("none");
+    expect(cardSurface.transitionProperty).toContain("transform");
     await expect(process.locator(
       `a[href="/${organization.urlKey}/issues/${entities.issueRef}#comment-${entities.commentId}"]`,
     )).toBeVisible();
@@ -356,15 +365,26 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     const mobileProcessToggle = mobileProcess.getByRole("button", { name: /Worked for/i });
     await expect(mobileProcessToggle).toBeVisible();
     await mobileProcessToggle.click();
-    const mobileGoal = mobileProcess.getByRole("button", { name: /Expand tool details: .*List goals/i });
+    const mobileGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
     await expect(mobileGoal).toBeVisible();
+    await expect(mobileGoal).toHaveAttribute("aria-expanded", "false");
     await mobileGoal.click();
+    await expect(mobileGoal).toHaveAttribute("aria-expanded", "true");
     await expect(mobileProcess.getByRole("button", { name: /Collapse tool details: .*List goals/i })).toBeVisible();
-    const mobileRail = mobileProcess.locator('[data-rudder-semantic-rail="goal"]');
-    await expect(mobileRail).toBeVisible();
-    expect(await mobileRail.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-    await mobileRail.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: "/tmp/rudder-mcp-semantic-cards-chat-dark-mobile.png", fullPage: false });
+    await expect(async () => {
+      const currentGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
+      if (await currentGoal.getAttribute("aria-expanded") !== "true") await currentGoal.click();
+      const currentRail = mobileProcess.locator('[data-rudder-semantic-rail="goal"]');
+      await expect(currentRail).toBeVisible();
+      expect(await currentRail.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    }).toPass({ timeout: 10_000 });
+    await expect(async () => {
+      const currentGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
+      if (await currentGoal.getAttribute("aria-expanded") !== "true") await currentGoal.click();
+      await mobileProcess
+        .locator('[data-rudder-semantic-rail="goal"]')
+        .screenshot({ path: "/tmp/rudder-mcp-semantic-cards-chat-dark-mobile.png" });
+    }).toPass({ timeout: 10_000 });
   });
 
   test("renders the same five-domain presenters in real Run Detail and preserves Raw evidence", async ({ page }) => {
@@ -422,7 +442,6 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await expect(detail).toContainText("e2e-secret-must-stay-raw");
     await detail.getByRole("button", { name: "nice" }).click();
     await expect(detail).not.toContainText("e2e-secret-must-stay-raw");
-    await detail.getByRole("button", { name: /Expand tool details: .*List goals/i }).click();
     const reopenedRail = detail.locator('[data-rudder-semantic-rail="goal"]');
     await expect(reopenedRail).toBeVisible();
     expect(await reopenedRail.locator("[data-rudder-semantic-card-link]").count()).toBe(mountedBeforeRaw);
