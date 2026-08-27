@@ -143,9 +143,9 @@ test.describe("Run transcript detail", () => {
     const commandTerminal = page.getByTestId("command-terminal-detail").first();
     await expect(commandTerminal).toBeVisible();
     const shellView = commandTerminal.getByRole("tab", { name: "Shell", exact: true });
-    const taskView = commandTerminal.getByRole("tab", { name: "Task", exact: true });
-    const markdownView = commandTerminal.getByRole("tab", { name: "Markdown", exact: true });
     const commandCopyButton = commandTerminal.getByTestId("command-terminal-copy-button");
+    await expect(commandTerminal.getByRole("tab", { name: "Task", exact: true })).toHaveCount(0);
+    await expect(commandTerminal.getByRole("tab", { name: "Markdown", exact: true })).toHaveCount(0);
     await expect(commandCopyButton).toHaveCSS("opacity", "0");
     await commandTerminal.hover();
     await expect(commandCopyButton).toHaveCSS("opacity", "1");
@@ -154,33 +154,10 @@ test.describe("Run transcript detail", () => {
     await shellView.focus();
     await expect(shellView).toBeFocused();
     await expect(shellView).toHaveAttribute("tabindex", "0");
-    await expect(taskView).toHaveAttribute("tabindex", "-1");
-    await page.keyboard.press("ArrowRight");
-    await expect(taskView).toBeFocused();
-    await expect(taskView).toHaveAttribute("aria-selected", "true");
-    await expect(commandTerminal.locator("[role='tabpanel']")).toHaveAttribute("data-command-terminal-panel", "task");
-    await page.keyboard.press("End");
-    await expect(markdownView).toBeFocused();
-    await expect(markdownView).toHaveAttribute("aria-selected", "true");
-    await page.keyboard.press("Home");
-    await expect(shellView).toBeFocused();
-    await expect(shellView).toHaveAttribute("aria-selected", "true");
-
-    await taskView.click();
-    await expect(taskView).toHaveAttribute("aria-selected", "true");
-    await expect(commandTerminal.locator("[role='tabpanel']")).toHaveAttribute("data-command-terminal-panel", "task");
-    await expect(commandTerminal.locator("[role='tabpanel']")).toContainText("Intent");
-    await expect(commandTerminal.locator("[role='tabpanel']")).toContainText("Status");
-
-    await markdownView.click();
-    await expect(markdownView).toHaveAttribute("aria-selected", "true");
-    const markdownSource = commandTerminal.getByTestId("command-terminal-markdown-source");
-    await expect(markdownSource).toContainText("~~~sh");
-    await expect(markdownSource).toContainText("#");
 
     await shellView.click();
     await commandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-98-terminal-ui-desktop.png",
+      path: "/tmp/rudder-r6z-143-terminal-ui-desktop.png",
     });
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
@@ -192,11 +169,9 @@ test.describe("Run transcript detail", () => {
     expect(terminalOverflow).toBeLessThanOrEqual(1);
     const mobileTerminalBox = await mobileCommandTerminal.boundingBox();
     expect(mobileTerminalBox).not.toBeNull();
-    for (const tab of [
-      mobileCommandTerminal.getByRole("tab", { name: "Shell", exact: true }),
-      mobileCommandTerminal.getByRole("tab", { name: "Task", exact: true }),
-      mobileCommandTerminal.getByRole("tab", { name: "Markdown", exact: true }),
-    ]) {
+    await expect(mobileCommandTerminal.getByRole("tab", { name: "Task", exact: true })).toHaveCount(0);
+    await expect(mobileCommandTerminal.getByRole("tab", { name: "Markdown", exact: true })).toHaveCount(0);
+    for (const tab of [mobileCommandTerminal.getByRole("tab", { name: "Shell", exact: true })]) {
       const tabBox = await tab.boundingBox();
       expect(tabBox).not.toBeNull();
       expect((tabBox?.x ?? 0) + (tabBox?.width ?? 0)).toBeLessThanOrEqual(
@@ -204,7 +179,7 @@ test.describe("Run transcript detail", () => {
       );
     }
     await mobileCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-98-terminal-ui-mobile.png",
+      path: "/tmp/rudder-r6z-143-terminal-ui-mobile.png",
     });
 
     const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 3 tools" });
@@ -337,7 +312,7 @@ test.describe("Run transcript detail", () => {
     const lightCommandTerminal = page.getByTestId("command-terminal-detail").first();
     await expect(lightCommandTerminal).toBeVisible();
     await lightCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-98-terminal-ui-light-desktop.png",
+      path: "/tmp/rudder-r6z-143-terminal-ui-light-desktop.png",
     });
     await page.setViewportSize({ width: 390, height: 844 });
     const lightMobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
@@ -348,7 +323,7 @@ test.describe("Run transcript detail", () => {
     const lightTerminalOverflow = await lightMobileCommandTerminal.evaluate((element) => element.scrollWidth - element.clientWidth);
     expect(lightTerminalOverflow).toBeLessThanOrEqual(1);
     await lightMobileCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-98-terminal-ui-light-mobile.png",
+      path: "/tmp/rudder-r6z-143-terminal-ui-light-mobile.png",
     });
 
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
