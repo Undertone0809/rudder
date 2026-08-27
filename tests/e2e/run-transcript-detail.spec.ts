@@ -1369,6 +1369,312 @@ test.describe("Run transcript detail", () => {
     expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
   });
 
+  test("exposes item-scoped annotation affordances across transcript types and action rows", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    const pageErrors: string[] = [];
+    const requestFailures: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("requestfailed", (request) => {
+      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
+    });
+
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    const organization = await createOrganization(page, `Run-Annotation-Items-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Transcript Annotation Item Tester",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const runId = randomUUID();
+    const startedAt = new Date("2026-07-30T10:00:00.000Z");
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "scheduled",
+      triggerDetail: "Transcript annotation item coverage",
+      status: "succeeded",
+      startedAt,
+      finishedAt: new Date(startedAt.getTime() + 60_000),
+      createdAt: startedAt,
+      updatedAt: new Date(startedAt.getTime() + 60_000),
+    });
+
+    const eventAt = (seconds: number) => new Date(startedAt.getTime() + seconds * 1_000);
+    const repeatedTranscriptText = [
+      "Repeated visible transcript item",
+      "Long multiline context ".repeat(140),
+      "The second item keeps the same content so source identity remains the only binding signal.",
+    ].join("\n");
+    const insertedEvents = await e2eDb.insert(heartbeatRunEvents).values([
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 1,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript assistant entry",
+        payload: {
+          kind: "assistant",
+          text: repeatedTranscriptText,
+          ts: eventAt(1).toISOString(),
+        },
+        createdAt: eventAt(1),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 2,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript user entry",
+        payload: {
+          kind: "user",
+          text: repeatedTranscriptText,
+          ts: eventAt(2).toISOString(),
+        },
+        createdAt: eventAt(2),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 3,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript system entry",
+        payload: {
+          kind: "system",
+          text: "System status is ready",
+          ts: eventAt(3).toISOString(),
+        },
+        createdAt: eventAt(3),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 4,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript result entry",
+        payload: {
+          kind: "result",
+          text: "Result completed successfully",
+          ts: eventAt(4).toISOString(),
+          inputTokens: 120,
+          outputTokens: 24,
+          cachedTokens: 12,
+          costUsd: 0.0042,
+          subtype: "success",
+          isError: false,
+          errors: [],
+        },
+        createdAt: eventAt(4),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 5,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "error",
+        message: "chat transcript stderr entry",
+        payload: {
+          kind: "stderr",
+          text: "Error status remains inspectable",
+          ts: eventAt(5).toISOString(),
+        },
+        createdAt: eventAt(5),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 6,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript first tool call entry",
+        payload: {
+          kind: "tool_call",
+          name: "shell",
+          input: { command: "printf same" },
+          toolUseId: "coverage-tool-a",
+          ts: eventAt(6).toISOString(),
+        },
+        createdAt: eventAt(6),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 7,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript first tool result entry",
+        payload: {
+          kind: "tool_result",
+          toolUseId: "coverage-tool-a",
+          toolName: "shell",
+          content: "same result",
+          isError: false,
+          ts: eventAt(7).toISOString(),
+        },
+        createdAt: eventAt(7),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 8,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript second tool call entry",
+        payload: {
+          kind: "tool_call",
+          name: "shell",
+          input: { command: "printf same" },
+          toolUseId: "coverage-tool-b",
+          ts: eventAt(8).toISOString(),
+        },
+        createdAt: eventAt(8),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 9,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript second tool result entry",
+        payload: {
+          kind: "tool_result",
+          toolUseId: "coverage-tool-b",
+          toolName: "shell",
+          content: "same result",
+          isError: false,
+          ts: eventAt(9).toISOString(),
+        },
+        createdAt: eventAt(9),
+      },
+    ]).returning({ id: heartbeatRunEvents.id, seq: heartbeatRunEvents.seq });
+    const eventSourceIds = new Map(insertedEvents.map((event) => [event.seq, String(event.id)]));
+    const sourceEntryIdForSeq = (seq: number) => {
+      const sourceEntryId = eventSourceIds.get(seq);
+      if (!sourceEntryId) throw new Error(`Missing persisted source entry for event ${seq}`);
+      return sourceEntryId;
+    };
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(detailPane.getByText("System status is ready", { exact: false })).toBeVisible({ timeout: 15_000 });
+    for (const sourceEntryId of [
+      sourceEntryIdForSeq(1),
+      sourceEntryIdForSeq(2),
+      sourceEntryIdForSeq(3),
+      sourceEntryIdForSeq(4),
+      sourceEntryIdForSeq(5),
+    ]) {
+      const block = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryId}"]`);
+      await expect(block).toHaveCount(1);
+      await expect(block.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
+    }
+
+    const userBlock = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(2)}"]`);
+    const userTrigger = userBlock.getByTestId("run-transcript-annotation-trigger");
+    await userTrigger.hover();
+    await expect(userTrigger).toHaveCSS("opacity", "1");
+    await userTrigger.focus();
+    await expect(userTrigger).toBeFocused();
+
+    const groupToggle = detailPane.getByRole("button", { name: /Expand tool activity/ });
+    await expect(groupToggle).toHaveCount(1);
+    const groupSummaryRoot = groupToggle.locator("..");
+    await expect(groupSummaryRoot).toHaveAttribute("data-run-transcript-block-type", "event");
+    await expect(groupSummaryRoot.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
+    await groupToggle.click();
+    const toolA = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(6)}"]`);
+    const toolB = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(8)}"]`);
+    await expect(toolA).toHaveCount(1);
+    await expect(toolB).toHaveCount(1);
+    const toolATrigger = toolA.getByTestId("run-transcript-annotation-trigger");
+    const toolBTrigger = toolB.getByTestId("run-transcript-annotation-trigger");
+    await expect(toolATrigger).toBeVisible();
+    await expect(toolBTrigger).toBeVisible();
+    await toolATrigger.hover();
+    await expect(toolATrigger).toHaveCSS("opacity", "1");
+    await toolATrigger.focus();
+    await expect(toolATrigger).toBeFocused();
+    await toolBTrigger.focus();
+    await expect(toolBTrigger).toBeFocused();
+
+    const annotationEditor = page.locator("[data-testid='chat-response-annotation-editor'][data-state='open']");
+    const saveItemAnnotation = async (trigger: Locator, comment: string) => {
+      await trigger.click();
+      await expect(annotationEditor).toBeVisible();
+      await annotationEditor.getByRole("textbox", { name: "Comment" }).fill(comment);
+      await annotationEditor.getByRole("button", { name: "Save" }).click();
+    };
+    await saveItemAnnotation(toolATrigger, "Review first identical tool item.");
+    await saveItemAnnotation(toolBTrigger, "Review second identical tool item.");
+
+    const draft = await page.evaluate(({ orgId, agentId }) => {
+      const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
+      return raw ? JSON.parse(raw) as {
+        inlineAnnotations?: Array<{
+          sourceEntryId?: string;
+          sourceMemberIds?: string[];
+          selectedText?: string;
+        }>;
+      } : null;
+    }, { orgId: organization.id, agentId: agent.id });
+    expect(draft?.inlineAnnotations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(6),
+        sourceMemberIds: [sourceEntryIdForSeq(6), sourceEntryIdForSeq(7)],
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(8),
+        sourceMemberIds: [sourceEntryIdForSeq(8), sourceEntryIdForSeq(9)],
+      }),
+    ]));
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.screenshot({ path: "/tmp/rudder-r6z-106-transcript-annotation-items-mobile.png", fullPage: true });
+    expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
+    expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
+    expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
+  });
+
   test("loads a complete conversation transcript across multiple event pages", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-Long-Conversation-${Date.now()}`);
 
