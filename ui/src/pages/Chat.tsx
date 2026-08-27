@@ -3997,6 +3997,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     onOpenSkill={openTranscriptSkill}
                                     canOpenSkill={canOpenTranscriptSkill}
                                     onOpenAgent={openSubagentInspection}
+                                    agentDirectory={agents}
                                     sentAnnotationContext={{
                                       onSelect: handleSelectSentResponseAnnotation,
                                       onExpandedChange: handleSentResponseAnnotationsExpanded,
@@ -4055,6 +4056,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     onOpenSkill={openTranscriptSkill}
                                     canOpenSkill={canOpenTranscriptSkill}
                                     onOpenAgent={openSubagentInspection}
+                                    agentDirectory={agents}
                                     annotationSource={
                                       message.role === "assistant"
                                       && (message.status === "completed" || message.status === "stopped" || message.status === "failed")

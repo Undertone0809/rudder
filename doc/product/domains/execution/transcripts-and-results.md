@@ -24,6 +24,7 @@ related_code:
   - ui/src/components/transcript/RunTranscriptView.tsx
   - ui/src/components/transcript/RunTranscriptView.chat.tsx
   - ui/src/components/transcript/RunTranscriptView.semantic.tsx
+  - ui/src/components/transcript/RunTranscriptView.rudder-mcp.tsx
   - ui/src/lib/transcript-skill-targets.ts
   - ui/src/lib/side-panel-targets.ts
   - ui/src/pages/Chat.side-panel.tsx
@@ -40,6 +41,8 @@ related_tests:
   - tests/e2e/chat-concurrent-streaming.spec.ts
   - tests/e2e/chat-streaming.spec.ts
   - ui/src/components/transcript/RunTranscriptView.test.tsx
+  - ui/src/components/transcript/RunTranscriptView.rudder-mcp.test.tsx
+  - ui/src/components/transcript/RunTranscriptView.rudder-mcp.interaction.test.tsx
   - ui/src/lib/transcript-skill-targets.test.ts
   - ui/src/lib/side-panel-targets.test.ts
   - ui/src/pages/Chat.side-panel.skill-file.test.tsx
@@ -114,6 +117,16 @@ Behavior:
   such as `reasoning started` / `reasoning completed` or Rudder's internal
   result-envelope delimiters. Those raw entries remain attached to the run for
   diagnostics and audit.
+- For recognized built-in Rudder MCP tools with a registered presenter, Nice
+  mode replaces the generic input/response disclosure with a typed semantic
+  presenter derived only from structured result evidence. Presenter links must
+  use structured identifiers,
+  never reparsed display text. Collection presenters may reveal bounded local
+  batches from the already-returned result without making another API or MCP
+  request. Secret material is excluded from Nice presenters, malformed payloads
+  fail closed to an unavailable state, and mutation receipts must not imply a
+  stronger state transition than the structured response confirms. Raw mode,
+  persisted evidence, and unsupported-tool presentation remain unchanged.
 - Under `CHAT.RESPONSE.ANNOTATION.001`, an operator may deliberately quote
   already-loaded, visible assistant/thinking prose from a terminal generation.
   The quote retains its generation id plus inclusive generation-event sequence
