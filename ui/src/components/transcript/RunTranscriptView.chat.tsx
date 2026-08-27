@@ -6,6 +6,7 @@ import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponseP
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
+import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
 import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
@@ -368,6 +369,7 @@ export function TranscriptChatToolActionRow({
   const requestText = command ?? formatNiceToolRequest(block.name, block.input);
   const requestLabel = getNiceToolRequestLabel(block.name, block.input);
   const requestParameters = command ? null : formatNiceToolRequestParameters(block.name, block.input);
+  const rudderPresenter = getRudderMcpPresenterDefinition(block.name, block.input);
   const responseText = shouldHideChatToolResult(semantic)
     ? null
     : command
@@ -378,7 +380,8 @@ export function TranscriptChatToolActionRow({
           ? localizeText("Waiting for result...")
           : null;
   const canExpand = semantic.category !== "skill"
-    && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
+    && !(rudderPresenter && block.status === "running")
+    && Boolean(rudderPresenter || command || responseText || (!isCommand && requestText !== "<empty>"));
   const visualStatus = block.status === "error" && !showFailureIndicators
     ? "completed"
     : block.status;
@@ -766,7 +769,11 @@ export function TranscriptChatToolActionRow({
         </div>
       ) : null}
       {canExpand && open ? (
-        command ? (
+        rudderPresenter ? (
+          <div className="motion-disclosure-enter ml-5 mt-2" data-rudder-semantic-presenter={rudderPresenter.toolName}>
+            <RudderMcpSemanticPresenter block={block} />
+          </div>
+        ) : command ? (
           <CommandTerminalDetail
             command={requestText}
             output={responseText}

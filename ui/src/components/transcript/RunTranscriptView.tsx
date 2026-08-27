@@ -7,10 +7,11 @@ import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
+import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
-export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptRunAnnotationContext, TranscriptRunAnnotationInput, TranscriptSkillTarget } from "./RunTranscriptView.common";
+export type { TranscriptAgentDirectoryEntry, TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptRunAnnotationContext, TranscriptRunAnnotationInput, TranscriptSkillTarget } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 function trailingEntriesByVisibleLimit(
@@ -29,7 +30,15 @@ function trailingEntriesByVisibleLimit(
   return entries.slice(startIndex);
 }
 
-export function RunTranscriptView({
+export function RunTranscriptView(props: RunTranscriptViewProps) {
+  return (
+    <RudderMcpPresenterProvider agents={props.agentDirectory}>
+      <RunTranscriptViewContent {...props} />
+    </RudderMcpPresenterProvider>
+  );
+}
+
+function RunTranscriptViewContent({
   entries,
   mode = "nice",
   density = "comfortable",
@@ -51,6 +60,7 @@ export function RunTranscriptView({
   annotationSource,
   sentAnnotationContext,
   runAnnotationContext,
+  agentDirectory: _agentDirectory,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const effectiveShowDeveloperDiagnostics = presentation === "chat"

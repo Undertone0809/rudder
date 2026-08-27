@@ -56,6 +56,7 @@ import {
 } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
+import { getRudderMcpPresenterDefinition, RudderMcpSemanticPresenter } from "./RunTranscriptView.rudder-mcp";
 import { describeToolSemanticInfo, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { formatMemoryScopeLabel, stripWrappedShell } from "./RunTranscriptView.shell";
 import { getTranscriptAgentAvatarInfo, TranscriptAgentAvatarIcon } from "./TranscriptAgentAvatarIcon";
@@ -1046,7 +1047,9 @@ export function TranscriptToolCard({
     : block.result
       ? formatNiceToolResponse(block.name, block.input, block.result)
       : "Waiting for result...";
-  const canExpand = semantic.category !== "skill";
+  const rudderPresenter = getRudderMcpPresenterDefinition(block.name, block.input);
+  const canExpand = semantic.category !== "skill"
+    && !(rudderPresenter && block.status === "running");
   const detailsClass = cn(
     "space-y-3",
     renderFailure && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
@@ -1125,7 +1128,11 @@ export function TranscriptToolCard({
       </div>
       {canExpand && open && (
         <div className="motion-disclosure-enter mt-3">
-          {command ? (
+          {rudderPresenter ? (
+            <div data-rudder-semantic-presenter={rudderPresenter.toolName}>
+              <RudderMcpSemanticPresenter block={block} />
+            </div>
+          ) : command ? (
             <CommandTerminalDetail
               command={requestText}
               output={responseText}
