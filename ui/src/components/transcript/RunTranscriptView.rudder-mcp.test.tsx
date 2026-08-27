@@ -2,9 +2,9 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import { TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import {
   type CoveredRudderMcpToolName,
   getRudderMcpPresenterDefinition,
