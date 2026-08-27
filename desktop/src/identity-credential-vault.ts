@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const MAX_CREDENTIAL_BYTES = 32 * 1024;
+const MAX_ACCOUNT_IMAGE_LENGTH = 480 * 1024;
+const MAX_CREDENTIAL_PLAINTEXT_BYTES = 512 * 1024;
+const MAX_ENCRYPTED_CREDENTIAL_BYTES = 768 * 1024;
 
 export type IdentityDeviceCredential = {
   version: 1;
@@ -9,6 +11,7 @@ export type IdentityDeviceCredential = {
   accountId: string;
   accountEmail: string;
   accountName: string;
+  accountImage?: string | null;
   deviceId: string;
   refreshToken: string;
   refreshTokenExpiresAt: string;
@@ -42,7 +45,7 @@ export function identityCredentialVaultStatus(
 }
 
 function parseCredential(raw: string): IdentityDeviceCredential | null {
-  if (Buffer.byteLength(raw, "utf8") > MAX_CREDENTIAL_BYTES) return null;
+  if (Buffer.byteLength(raw, "utf8") > MAX_CREDENTIAL_PLAINTEXT_BYTES) return null;
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -57,6 +60,9 @@ function parseCredential(raw: string): IdentityDeviceCredential | null {
     || typeof record.accountId !== "string"
     || typeof record.accountEmail !== "string"
     || typeof record.accountName !== "string"
+    || (record.accountImage !== undefined
+      && record.accountImage !== null
+      && typeof record.accountImage !== "string")
     || typeof record.deviceId !== "string"
     || typeof record.refreshToken !== "string"
     || typeof record.refreshTokenExpiresAt !== "string"
@@ -77,6 +83,8 @@ function parseCredential(raw: string): IdentityDeviceCredential | null {
     || record.accountId.length === 0
     || !record.accountEmail.includes("@")
     || record.accountName.length === 0
+    || (typeof record.accountImage === "string"
+      && record.accountImage.length > MAX_ACCOUNT_IMAGE_LENGTH)
     || record.deviceId.length === 0
     || record.refreshToken.length === 0
     || Number.isNaN(Date.parse(record.refreshTokenExpiresAt))
@@ -106,7 +114,7 @@ export function createIdentityCredentialVault(options: {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw error;
       }
-      if (encrypted.byteLength === 0 || encrypted.byteLength > MAX_CREDENTIAL_BYTES) return null;
+      if (encrypted.byteLength === 0 || encrypted.byteLength > MAX_ENCRYPTED_CREDENTIAL_BYTES) return null;
       try {
         return parseCredential(options.safeStorage.decryptString(encrypted));
       } catch {
@@ -124,7 +132,7 @@ export function createIdentityCredentialVault(options: {
         throw new Error("Identity device credential is invalid");
       }
       const encrypted = options.safeStorage.encryptString(serialized);
-      if (encrypted.byteLength === 0 || encrypted.byteLength > MAX_CREDENTIAL_BYTES) {
+      if (encrypted.byteLength === 0 || encrypted.byteLength > MAX_ENCRYPTED_CREDENTIAL_BYTES) {
         throw new Error("Encrypted identity credential is invalid");
       }
       fs.mkdirSync(path.dirname(options.credentialPath), { recursive: true, mode: 0o700 });
