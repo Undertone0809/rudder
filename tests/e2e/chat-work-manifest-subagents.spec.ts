@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
-import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { chatMessages, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL } from "./support/e2e-env";
 
@@ -19,7 +19,8 @@ type SubagentFixture = {
   prompt: string;
   status: string;
   at: string;
-  response: string;
+  response?: string;
+  sparse?: boolean;
 };
 
 function transcriptFor(fixtures: SubagentFixture[]) {
@@ -33,24 +34,48 @@ function transcriptFor(fixtures: SubagentFixture[]) {
       receiver_thread_ids: [fixture.threadId],
       model: "gpt-5.6",
       reasoning_effort: index % 2 === 0 ? "high" : "medium",
-      agent_transcripts: {
-        [fixture.threadId]: {
-          status: fixture.status,
-          entries: [
-            {
-              kind: "thinking",
-              ts: fixture.at,
-              text: `Working on ${fixture.prompt}`,
-            },
-            {
-              kind: "assistant",
-              ts: new Date(Date.parse(fixture.at) + 500).toISOString(),
-              text: fixture.response,
-            },
-          ],
+      ...(fixture.sparse ? {
+        agents_states: {
+          [fixture.threadId]: { status: fixture.status },
         },
-      },
+      } : {
+        agent_transcripts: {
+          [fixture.threadId]: {
+            status: fixture.status,
+            entries: [
+              {
+                kind: "thinking",
+                ts: fixture.at,
+                text: `Working on ${fixture.prompt}`,
+              },
+              {
+                kind: "assistant",
+                ts: new Date(Date.parse(fixture.at) + 500).toISOString(),
+                text: fixture.response ?? "",
+              },
+            ],
+          },
+        },
+      }),
     };
+    let projectedResult: unknown = input;
+    if ("agent_transcripts" in input) {
+      projectedResult = {
+        ...input,
+        agent_transcripts: Object.fromEntries(Object.entries(input.agent_transcripts).map(([threadId, transcript]) => [
+          threadId,
+          {
+            ...transcript,
+            entries: transcript.entries.map((entry, entryIndex) => ({
+              ...entry,
+              generationId: `generation-${index + 1}`,
+              generationSeqStart: entryIndex + 1,
+              generationSeqEnd: entryIndex + 1,
+            })),
+          },
+        ])),
+      };
+    }
     return [
       {
         kind: "tool_call",
@@ -64,7 +89,7 @@ function transcriptFor(fixtures: SubagentFixture[]) {
         ts: new Date(Date.parse(fixture.at) + 750).toISOString(),
         toolUseId: callId,
         toolName: "subagent_activity",
-        content: JSON.stringify(input),
+        content: JSON.stringify(projectedResult),
         isError: false,
       },
     ];
@@ -169,8 +194,35 @@ test("aggregates Chat subagents and navigates from summary to deduplicated read-
       at: "2026-07-29T08:07:00.000Z",
       response: "The latest running snapshot is visible.",
     },
+    {
+      threadId: "thread-done-architecture",
+      path: "/root/architecture_reviewer",
+      prompt: "Check architecture boundaries.",
+      status: "completed",
+      at: "2026-07-29T08:09:00.000Z",
+      sparse: true,
+    },
   ];
   const sourceMessageId = randomUUID();
+  const sourceRunId = randomUUID();
+  await e2eDb.insert(heartbeatRuns).values({
+    id: sourceRunId,
+    orgId: organization.id,
+    agentId: agent.id,
+    invocationSource: "chat",
+    triggerDetail: "chat_assistant_reply",
+    status: "succeeded",
+    startedAt: new Date("2026-07-29T08:00:00.000Z"),
+    finishedAt: new Date("2026-07-29T08:10:00.000Z"),
+    chatConversationId: chat.id,
+    contextSnapshot: {
+      scene: "chat",
+      conversationId: chat.id,
+      assistantMessageId: sourceMessageId,
+    },
+    resultJson: { summary: "Direct subagents completed." },
+    resultSummaryJson: { summary: "Direct subagents completed." },
+  });
   await e2eDb.insert(chatMessages).values([
     {
       id: sourceMessageId,
@@ -180,6 +232,7 @@ test("aggregates Chat subagents and navigates from summary to deduplicated read-
       status: "completed",
       body: "Direct subagents are working across review and verification.",
       structuredPayload: { __chatTranscript: transcriptFor(baseFixtures) },
+      runId: sourceRunId,
       replyingAgentId: agent.id,
       chatTurnId: randomUUID(),
     },
@@ -253,20 +306,73 @@ test("aggregates Chat subagents and navigates from summary to deduplicated read-
   );
   await page.screenshot({ path: `${screenshotDir}/subagents-list-light-1440x900.png`, fullPage: true });
 
+  let failInitialTranscriptLoad = true;
+  await page.route(
+    `**/api/chats/${chat.id}/messages/${sourceMessageId}/transcript`,
+    async (route) => {
+      if (!failInitialTranscriptLoad) {
+        await route.fallback();
+        return;
+      }
+      failInitialTranscriptLoad = false;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Injected initial transcript failure." }),
+      });
+    },
+  );
   await list.getByTestId("chat-side-panel-subagent-row-thread-done-architecture").click();
+  const initialLoadError = list.getByRole("alert");
+  await expect(initialLoadError).toContainText("Could not load sub-agent details.");
+  await expect(initialLoadError.getByRole("button", { name: "Retry" })).toBeVisible();
+  await page.screenshot({
+    path: `${screenshotDir}/subagent-initial-load-error-retry-light-1440x900.png`,
+    fullPage: true,
+  });
+  await initialLoadError.getByRole("button", { name: "Retry" }).click();
   const detail = sidePanel.getByTestId("chat-side-panel-subagent-view");
   await expect(detail).toBeVisible();
   await expect(detail).toContainText("Architecture review passed.");
+  await expect(detail.getByText("Working on Check architecture boundaries.", { exact: true })).toHaveCount(1);
+  await expect(detail.getByText("Architecture review passed.", { exact: true })).toHaveCount(1);
   await expect(detail).toContainText("Subagent Coordinator");
   await expect(detail.getByRole("textbox")).toHaveCount(0);
   await expect(sidePanel.getByRole("tab", { name: "Subagents" })).toBeVisible();
+  const runTranscriptLink = detail.getByRole("link", { name: "View run" });
+  await expect(runTranscriptLink).toHaveAttribute(
+    "href",
+    new RegExp(`/agents/${agent.id}/runs/${sourceRunId}$`),
+  );
+  await page.screenshot({
+    path: `${screenshotDir}/subagent-detail-response-transcript-light-1440x900.png`,
+    fullPage: true,
+  });
+  const transcriptPage = await page.context().newPage();
+  await transcriptPage.goto(new URL(await runTranscriptLink.getAttribute("href")!, page.url()).toString());
+  await expect(transcriptPage.getByText("Transcript", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+  await expect(transcriptPage.getByText("Direct subagents are working across review and verification.", {
+    exact: true,
+  })).toBeVisible();
+  await expect(transcriptPage.getByText("16 entries", { exact: true })).toBeVisible();
+  await expect(transcriptPage.getByText("Used 8 tools", { exact: true })).toBeVisible();
+  await transcriptPage.screenshot({
+    path: `${screenshotDir}/linked-agent-run-transcript-light-1440x900.png`,
+    fullPage: true,
+  });
+  await transcriptPage.close();
 
   await sidePanel.getByRole("tab", { name: "Subagents" }).click();
   await expect(list).toBeVisible();
   await list.getByTestId("chat-side-panel-subagent-row-thread-done-architecture").click();
+  const architectureTab = sidePanel.getByRole("tab", { name: "Architecture Reviewer" });
+  await expect(architectureTab).toHaveAttribute("aria-selected", "true");
   await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
-  await sidePanel.getByRole("tab", { name: "Subagents" }).click();
+  const subagentsTab = sidePanel.getByRole("tab", { name: "Subagents" });
+  await subagentsTab.click();
+  await expect(subagentsTab).toHaveAttribute("aria-selected", "true");
   await list.getByTestId("chat-side-panel-subagent-row-thread-active-reviewer").click();
+  await expect(detail).toHaveAttribute("data-subagent-thread-id", "thread-active-reviewer");
   await expect(detail).toContainText("The latest running snapshot is visible.");
 
   const terminalFixtures = [
