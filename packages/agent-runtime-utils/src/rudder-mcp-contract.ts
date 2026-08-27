@@ -274,6 +274,18 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
     case "project.list":
     case "skill.list":
       return schema({});
+    case "skill.search":
+      return schema({
+        query: string("Skill name, slug, description, source, or selection key to search for.", { maxLength: 2_000 }),
+      }, ["query"]);
+    case "plugin.search":
+      return schema({
+        query: string("Plugin name, description, publisher, source, or component to search for.", { maxLength: 2_000 }),
+      }, ["query"]);
+    case "plugin.get":
+      return schema({
+        plugin: string("Installed plugin UUID from a plugin:// reference or plugin search result.", { maxLength: 200 }),
+      }, ["plugin"]);
     case "organization.members.list":
       return schema({
         query: string("Optional member name filter.", { maxLength: 2_000 }),
