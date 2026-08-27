@@ -1,5 +1,6 @@
 import { chatsApi } from "@/api/chats";
 import { getTranscriptAgentAvatarImageSrc } from "@/components/transcript/TranscriptAgentAvatarIcon";
+import { Button } from "@/components/ui/button";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
@@ -100,12 +101,14 @@ function SubagentGroup({
   items,
   empty,
   loadingThreadId,
+  loadError,
   onOpen,
 }: {
   label: string;
   items: ChatWorkManifestSubagentSummary[];
   empty: string;
   loadingThreadId: string | null;
+  loadError: { threadId: string; message: string } | null;
   onOpen(item: ChatWorkManifestSubagentSummary): void;
 }) {
   return (
@@ -124,6 +127,24 @@ function SubagentGroup({
                 loading={loadingThreadId === item.threadId}
                 onOpen={() => onOpen(item)}
               />
+              {loadError?.threadId === item.threadId ? (
+                <div
+                  role="alert"
+                  className="ml-11 rounded-[var(--radius-sm)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                >
+                  <p>Could not load sub-agent details.</p>
+                  <p className="mt-0.5 text-[11px] opacity-80">{loadError.message}</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="mt-1 h-7 px-0 text-destructive hover:bg-transparent hover:text-destructive"
+                    onClick={() => onOpen(item)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -142,6 +163,7 @@ export function SubagentsPanelView({
   const sidePanel = useSidePanel();
   const { pushToast } = useToast();
   const [loadingThreadId, setLoadingThreadId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ threadId: string; message: string } | null>(null);
   const manifestQuery = useQuery({
     queryKey: queryKeys.chats.workManifest(organizationId, target.conversationId),
     queryFn: () => chatsApi.getWorkManifest(target.conversationId),
@@ -155,6 +177,7 @@ export function SubagentsPanelView({
   const openSubagent = async (item: ChatWorkManifestSubagentSummary) => {
     if (loadingThreadId) return;
     setLoadingThreadId(item.threadId);
+    setLoadError(null);
     try {
       const transcript = await chatsApi.getMessageTranscript(
         target.conversationId,
@@ -181,11 +204,14 @@ export function SubagentsPanelView({
         entries: inspection.entries,
         conversationId: target.conversationId,
         sourceMessageId: item.sourceMessageId,
+        runId: item.runId,
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Try again.";
+      setLoadError({ threadId: item.threadId, message });
       pushToast({
         title: "Failed to load subagent",
-        body: error instanceof Error ? error.message : "Try again.",
+        body: message,
         tone: "error",
       });
     } finally {
@@ -221,6 +247,7 @@ export function SubagentsPanelView({
           items={subagents.active}
           empty="No active subagents"
           loadingThreadId={loadingThreadId}
+          loadError={loadError}
           onOpen={(item) => void openSubagent(item)}
         />
         <SubagentGroup
@@ -228,6 +255,7 @@ export function SubagentsPanelView({
           items={subagents.done}
           empty="No completed subagents"
           loadingThreadId={loadingThreadId}
+          loadError={loadError}
           onOpen={(item) => void openSubagent(item)}
         />
       </div>

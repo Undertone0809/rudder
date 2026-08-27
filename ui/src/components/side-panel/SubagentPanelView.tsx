@@ -1,11 +1,16 @@
+import { agentRunsApi } from "@/api/agent-runs";
 import { chatsApi } from "@/api/chats";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import { getTranscriptAgentAvatarImageSrc } from "@/components/transcript/TranscriptAgentAvatarIcon";
+import { Button } from "@/components/ui/button";
+import { queryKeys } from "@/lib/queryKeys";
+import { Link } from "@/lib/router";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { collectChatSubagentInspections } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
+import { LoaderCircle, ScrollText } from "lucide-react";
 
 type SubagentTarget = Extract<SidePanelTarget, { kind: "subagent" }>;
 
@@ -35,6 +40,72 @@ function statusLabel(status: string) {
     : "Unknown";
 }
 
+export function SubagentTranscriptContent({
+  entries,
+  response,
+  running,
+  loading,
+  error,
+  onRetry,
+}: {
+  entries: SubagentTarget["entries"];
+  response: string | null;
+  running: boolean;
+  loading: boolean;
+  error: boolean;
+  onRetry(): void;
+}) {
+  if (entries.length > 0) {
+    return (
+      <>
+        <RunTranscriptView
+          entries={entries}
+          mode="nice"
+          density="compact"
+          streaming={running}
+          collapseStdout
+          presentation="chat"
+          hiddenAssistantMessageText={response}
+        />
+        {error ? (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            Could not refresh the transcript. Showing the last loaded content.
+          </p>
+        ) : null}
+      </>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="inline-flex items-center gap-2 py-2 text-sm text-muted-foreground" role="status">
+        <LoaderCircle className="size-4 animate-spin" aria-hidden />
+        Loading transcript...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div role="alert" className="rounded-[var(--radius-sm)] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p>Could not load the sub-agent transcript.</p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="mt-1 h-7 px-0 text-destructive hover:bg-transparent hover:text-destructive"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <p className="py-2 text-sm leading-6 text-muted-foreground">
+      No transcript entries were captured for this sub-agent.
+    </p>
+  );
+}
+
 export function SubagentPanelView({ target }: { target: SubagentTarget }) {
   const manifestQuery = useQuery({
     queryKey: ["chat-subagent-live-manifest", target.conversationId, target.threadId],
@@ -52,6 +123,7 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
     ...(manifestQuery.data?.subagents.done ?? []),
   ].find((candidate) => candidate.threadId === target.threadId);
   const liveSourceMessageId = liveSummary?.sourceMessageId ?? target.sourceMessageId;
+  const linkedRunId = liveSummary?.runId ?? target.runId ?? null;
   const transcriptQuery = useQuery({
     queryKey: [
       "chat-subagent-live-transcript",
@@ -64,6 +136,11 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
     queryFn: () => chatsApi.getMessageTranscript(target.conversationId!, liveSourceMessageId!),
     enabled: Boolean(target.conversationId && liveSourceMessageId),
     refetchInterval: liveSummary?.state === "active" ? 2_000 : false,
+  });
+  const linkedRunQuery = useQuery({
+    queryKey: linkedRunId ? queryKeys.runDetail(linkedRunId) : ["agent-run", "none"],
+    queryFn: () => agentRunsApi.get(linkedRunId!),
+    enabled: Boolean(linkedRunId),
   });
   const liveInspection = transcriptQuery.data
     ? collectChatSubagentInspections(transcriptQuery.data.transcript, {
@@ -80,12 +157,19 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
     response: liveInspection?.response ?? target.response,
     entries: liveInspection?.entries ?? target.entries,
     sourceMessageId: liveSummary?.sourceMessageId ?? target.sourceMessageId,
+    runId: linkedRunId,
   };
   const response = displayTarget.response
     ?? [...displayTarget.entries].reverse().find((entry) => entry.kind === "assistant")?.text
     ?? null;
   const running = liveSummary?.state === "active"
     || ["running", "in_progress", "pending", "queued", "started"].includes(statusKey(displayTarget.status));
+  const transcriptLoading = Boolean(target.conversationId && liveSourceMessageId)
+    && transcriptQuery.isPending
+    && displayTarget.entries.length === 0;
+  const linkedRunHref = linkedRunQuery.data
+    ? `/agents/${linkedRunQuery.data.agentId}/runs/${linkedRunQuery.data.id}`
+    : null;
 
   return (
     <div
@@ -131,24 +215,48 @@ export function SubagentPanelView({ target }: { target: SubagentTarget }) {
           </div>
         </section>
 
-        {displayTarget.entries.length > 0 ? (
-          <section aria-label="Sub-agent process">
-            <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="h-px flex-1 bg-border/45" aria-hidden />
-              <span>{running ? "Working" : "Process"}</span>
-              <span className="h-px flex-1 bg-border/45" aria-hidden />
+        <section aria-label="Sub-agent transcript">
+          <div className="mb-2 flex min-h-7 items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="h-px min-w-4 flex-1 bg-border/45" aria-hidden />
+            <span>{running ? "Working" : "Transcript"}</span>
+            <span className="h-px min-w-4 flex-1 bg-border/45" aria-hidden />
+            {linkedRunHref ? (
+              <Button asChild variant="ghost" size="xs" className="h-7 shrink-0 gap-1.5 px-2 text-xs">
+                <Link to={linkedRunHref}>
+                  <ScrollText className="size-3.5" aria-hidden />
+                  View run
+                </Link>
+              </Button>
+            ) : linkedRunId && linkedRunQuery.isPending ? (
+              <span className="inline-flex h-7 shrink-0 items-center gap-1.5 px-2" role="status">
+                <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+                Loading run
+              </span>
+            ) : null}
+          </div>
+          <SubagentTranscriptContent
+            entries={displayTarget.entries}
+            response={response}
+            running={running}
+            loading={transcriptLoading}
+            error={transcriptQuery.isError}
+            onRetry={() => void transcriptQuery.refetch()}
+          />
+          {linkedRunId && linkedRunQuery.isError ? (
+            <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-destructive">
+              <span>Could not load the linked Agent Run.</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="h-7 px-1.5 text-destructive hover:text-destructive"
+                onClick={() => void linkedRunQuery.refetch()}
+              >
+                Retry
+              </Button>
             </div>
-            <RunTranscriptView
-              entries={displayTarget.entries}
-              mode="nice"
-              density="compact"
-              streaming={running}
-              collapseStdout
-              presentation="chat"
-              hiddenAssistantMessageText={response}
-            />
-          </section>
-        ) : null}
+          ) : null}
+        </section>
 
         <section aria-label="Sub-agent response">
           <div className="mb-2 flex items-center gap-2">

@@ -48,6 +48,7 @@ export type SidePanelTarget =
       entries: TranscriptEntry[];
       conversationId?: string;
       sourceMessageId?: string;
+      runId?: string | null;
     }
   | {
       kind: "side_chat";

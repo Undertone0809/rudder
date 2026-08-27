@@ -5,7 +5,7 @@ import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SubagentPanelView } from "./SubagentPanelView";
+import { SubagentPanelView, SubagentTranscriptContent } from "./SubagentPanelView";
 
 describe("SubagentPanelView", () => {
   it("treats App Server inProgress snapshots as active and read only", () => {
@@ -37,5 +37,38 @@ describe("SubagentPanelView", () => {
     expect(html).toContain("The sub-agent is still working.");
     expect(html).not.toContain("No response was captured");
     expect(html).not.toContain("textarea");
+  });
+
+  it.each([
+    {
+      name: "loading",
+      props: { loading: true, error: false },
+      expected: "Loading transcript...",
+    },
+    {
+      name: "failure",
+      props: { loading: false, error: true },
+      expected: "Could not load the sub-agent transcript.",
+    },
+    {
+      name: "empty",
+      props: { loading: false, error: false },
+      expected: "No transcript entries were captured for this sub-agent.",
+    },
+  ])("renders the $name transcript state", ({ props, expected }) => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <SubagentTranscriptContent
+          entries={[]}
+          response={null}
+          running={false}
+          loading={props.loading}
+          error={props.error}
+          onRetry={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(expected);
   });
 });
