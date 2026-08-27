@@ -2546,6 +2546,7 @@ export function ChatMessageItem({
   const isUser = message.role === "user";
   if (shouldHideSteerFallbackAssistantBubble(message)) return null;
   const displayedState = displayedChatMessageState(message);
+  const isFailedAssistantMessage = !isUser && displayedState === "failed";
   const inlineAnnotations = isUser
     ? chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
     : [];
@@ -2569,6 +2570,7 @@ export function ChatMessageItem({
     : "Response failed";
   const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
   const canAnnotateAssistantBody = !isUser
+    && !isFailedAssistantMessage
     && message.kind === "message"
     && !message.supersededAt
     && message.body.trim().length > 0
@@ -2577,7 +2579,9 @@ export function ChatMessageItem({
     annotation.surface === "assistant_body"
     && annotation.sourceMessageId === message.id
   ));
-  const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
+  const canShowAssistantMessageActions = !isUser
+    && !isFailedAssistantMessage
+    && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
@@ -2631,36 +2635,38 @@ export function ChatMessageItem({
               />
             </div>
           ) : null}
-          {isEmptyStreamingAssistant ? (
-            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-              <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
-            </div>
-          ) : (
-            <div
-              ref={assistantAnnotationSourceRef}
-              {...(canAnnotateAssistantBody ? {
-                [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
-                [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
-                "data-annotation-surface": "assistant_body",
-                "data-message-id": message.id,
-              } : {})}
-              className="relative"
-            >
-              <ChatLongMessageBody
-                body={visibleAssistantBody}
-                message={message}
-                skillReferences={skillReferences}
-                onMarkdownLinkClick={onMarkdownLinkClick}
-                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
-              />
-              <AnchoredResponseAnnotationMarkers
-                sourceRootRef={assistantAnnotationSourceRef}
-                source={visibleAssistantBody}
-                annotations={assistantResponseAnnotations}
-                onActivate={onEditResponseAnnotation}
-              />
-            </div>
-          )}
+          {!isFailedAssistantMessage ? (
+            isEmptyStreamingAssistant ? (
+              <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
+                <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
+              </div>
+            ) : (
+              <div
+                ref={assistantAnnotationSourceRef}
+                {...(canAnnotateAssistantBody ? {
+                  [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
+                  [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
+                  "data-annotation-surface": "assistant_body",
+                  "data-message-id": message.id,
+                } : {})}
+                className="relative"
+              >
+                <ChatLongMessageBody
+                  body={visibleAssistantBody}
+                  message={message}
+                  skillReferences={skillReferences}
+                  onMarkdownLinkClick={onMarkdownLinkClick}
+                  className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+                />
+                <AnchoredResponseAnnotationMarkers
+                  sourceRootRef={assistantAnnotationSourceRef}
+                  source={visibleAssistantBody}
+                  annotations={assistantResponseAnnotations}
+                  onActivate={onEditResponseAnnotation}
+                />
+              </div>
+            )
+          ) : null}
           <ChatRichReferences
             message={message}
             currentUserId={currentUserId}
@@ -2670,7 +2676,7 @@ export function ChatMessageItem({
             attachments={visibleMessageAttachments}
             onOpenFile={onOpenFile}
           />
-          {!isEmptyStreamingAssistant ? (
+          {!isEmptyStreamingAssistant && !isFailedAssistantMessage ? (
             <div
               className={cn(
                 "mt-2 flex h-7 items-center gap-1 text-muted-foreground",

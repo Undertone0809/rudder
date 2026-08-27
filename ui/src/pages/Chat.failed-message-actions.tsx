@@ -36,7 +36,7 @@ export function ChatFailedMessageActions({
   if (!runHref && !canRetry) return null;
 
   return (
-    <div className="ml-7 flex shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-0">
+    <div className="flex basis-full shrink-0 flex-wrap items-center justify-end gap-2 pl-7 sm:basis-auto sm:pl-0">
       {runHref ? (
         <Link
           to={runHref}

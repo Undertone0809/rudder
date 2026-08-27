@@ -830,6 +830,7 @@ describe("assistant chat message rendering", () => {
     }));
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
   });
 
@@ -1030,6 +1031,31 @@ describe("failed chat transcript rendering", () => {
     expect(container.textContent).toContain("Open run");
     expect(container.textContent).toContain("Retry");
     expect(container.textContent).toContain("Run run-fail");
+  });
+
+  it("keeps failed messages focused on the error and recovery actions", () => {
+    const container = renderWithOrganizationPath(
+      message({
+        body: "The assistant response failed.",
+        runId: "run-failed-actions",
+        replyingAgentId: "agent-failed-actions",
+        structuredPayload: {
+          recoverableFailure: {
+            code: "chat_adapter_failed",
+            retryable: true,
+            runId: "run-failed-actions",
+          },
+        },
+      }),
+      [agent({ id: "agent-failed-actions", urlKey: "agent-failed-actions" })],
+    );
+
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-long-message-body"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Copy message"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
+    expect(container.textContent).toContain("Open run");
+    expect(container.textContent).toContain("Retry");
   });
 
   it("shows Open run for a non-retryable failure and hides it without agent identity", () => {

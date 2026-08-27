@@ -156,6 +156,7 @@ async function forkFromAssistantMessage(page: Page, conversationId: string, mess
   const sourceAssistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${messageId}"]`);
   await expect(sourceAssistant).toBeVisible({ timeout: 15_000 });
   await sourceAssistant.hover();
+  await expect(sourceAssistant.getByRole("button", { name: "Copy message" })).toBeVisible();
   await expect(sourceAssistant.getByRole("button", { name: "Fork from here" })).toBeVisible();
   const forkResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
