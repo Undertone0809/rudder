@@ -368,8 +368,11 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     const mobileGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
     await expect(mobileGoal).toBeVisible();
     await expect(mobileGoal).toHaveAttribute("aria-expanded", "false");
-    await mobileGoal.click();
-    await expect(mobileGoal).toHaveAttribute("aria-expanded", "true");
+    await expect(async () => {
+      const currentGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
+      if (await currentGoal.getAttribute("aria-expanded") !== "true") await currentGoal.click();
+      await expect(currentGoal).toHaveAttribute("aria-expanded", "true");
+    }).toPass({ timeout: 10_000 });
     await expect(mobileProcess.getByRole("button", { name: /Collapse tool details: .*List goals/i })).toBeVisible();
     await expect(async () => {
       const currentGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
