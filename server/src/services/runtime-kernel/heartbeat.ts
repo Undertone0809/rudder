@@ -87,8 +87,6 @@ import {
 } from "./heartbeat.terminal.js";
 import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 
-// Active runs are bounded by the inactivity watchdog by default. Deployments
-// can still opt into an absolute cap through HEARTBEAT_RUN_TIMEOUT_MS.
 const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 0;
 const DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const TERMINAL_EFFECT_CLAIM_RENEW_INTERVAL_MS = 60_000;
