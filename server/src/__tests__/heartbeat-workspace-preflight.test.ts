@@ -20,6 +20,7 @@ import {
   organizationSkills,
   organizations,
   projectResourceAttachments,
+  projectWorkspaces,
   projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
@@ -36,6 +37,10 @@ import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 const mockBudgetService = vi.hoisted(() => ({
   evaluateCostEvent: vi.fn(),
   getInvocationBlock: vi.fn(),
+}));
+
+const mockChildProcess = vi.hoisted(() => ({
+  execFileCalls: [] as unknown[][],
 }));
 
 const mockRuntimeAdapter = vi.hoisted(() => ({
@@ -82,15 +87,22 @@ const mockPreflight = vi.hoisted(() => ({
   calls: [] as unknown[],
 }));
 
-const mockAssignmentGuardrail = vi.hoisted(() => ({
-  repair: vi.fn(),
-}));
-
 vi.mock("../services/budgets.ts", async () => {
   const actual = await vi.importActual("../services/budgets.ts");
   return {
     ...actual,
     budgetService: () => mockBudgetService,
+  };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: (...args: unknown[]) => {
+      mockChildProcess.execFileCalls.push(args);
+      return (actual.execFile as (...actualArgs: unknown[]) => unknown)(...args);
+    },
   };
 });
 
@@ -152,15 +164,6 @@ vi.mock("../services/managed-workspace-preflight.js", async (importOriginal) => 
       }
       return actual.preflightManagedAgentWorkspace(input);
     }),
-  };
-});
-
-vi.mock("../services/runtime-kernel/assignment-run-guardrail.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../services/runtime-kernel/assignment-run-guardrail.js")>();
-  return {
-    ...actual,
-    repairAssignmentRunWorkspace: (...args: Parameters<typeof actual.repairAssignmentRunWorkspace>) =>
-      mockAssignmentGuardrail.repair(...args),
   };
 });
 
@@ -289,14 +292,8 @@ describe("heartbeat managed workspace preflight", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockChildProcess.execFileCalls = [];
     mockRuntimeAdapter.reset();
-    mockAssignmentGuardrail.repair.mockReset();
-    mockAssignmentGuardrail.repair.mockImplementation(async (input: any) => {
-      const actual = await vi.importActual<typeof import("../services/runtime-kernel/assignment-run-guardrail.js")>(
-        "../services/runtime-kernel/assignment-run-guardrail.js",
-      );
-      return actual.repairAssignmentRunWorkspace(input);
-    });
     mockBudgetService.evaluateCostEvent.mockResolvedValue(undefined);
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockPreflight.fail = false;
@@ -324,6 +321,7 @@ describe("heartbeat managed workspace preflight", () => {
     await db.delete(goals);
     await db.delete(projectResourceAttachments);
     await db.delete(organizationResources);
+    await db.delete(projectWorkspaces);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
@@ -634,78 +632,98 @@ describe("heartbeat managed workspace preflight", () => {
     await expect(fs.stat(path.join(agentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
   });
 
-  it("records assignment workspace preflight before adapter invocation", async () => {
-    const { agentId } = await seedAgentFixture();
-    let preflightObservedByAdapter = false;
-    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      const events = await getRunEvents(ctx.runId);
-      preflightObservedByAdapter = events.some((event) => event.eventType === "runtime.assignment_preflight");
-      return {
-        summary: "preflight observed",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      };
-    });
-    const run = await heartbeatService(db).wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      contextSnapshot: { taskKey: "assignment:preflight", wakeSource: "assignment" },
-    });
-
-    await waitForCondition(async () => {
-      const current = await getRun(run!.id);
-      return current?.status === "succeeded" && current.terminalEffectsPending === false;
-    });
-    const events = await getRunEvents(run!.id);
-    const preflightIndex = events.findIndex((event) => event.eventType === "runtime.assignment_preflight");
-    expect(preflightIndex).toBeGreaterThanOrEqual(0);
-    expect(preflightObservedByAdapter).toBe(true);
-    expect(events[preflightIndex]?.payload).toMatchObject({
-      cwdMatchesProjectWorkingSet: true,
-      actualCwd: expect.any(String),
-      projectWorkingSetCwd: expect.any(String),
-    });
-  });
-
-  it("uses an attached external working set as the assignment execution cwd", async () => {
+  it("uses Workspace Policy cwd while multiple Project Sources remain context only", async () => {
     const { orgId, agentId } = await seedAgentFixture();
     const projectId = randomUUID();
     const issueId = randomUUID();
-    const workingSetCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-working-set-"));
-    const resourceId = randomUUID();
-    await db.insert(projects).values({ id: projectId, orgId, name: "Assignment guardrail" });
-    await db.insert(organizationResources).values({
-      id: resourceId,
+    const projectWorkspaceId = randomUUID();
+    const workspaceCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-policy-workspace-"));
+    const sourceCwdA = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-source-a-"));
+    const sourceCwdB = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-source-b-"));
+    const sourceAId = randomUUID();
+    const sourceBId = randomUUID();
+
+    await fs.writeFile(
+      path.join(workspaceCwd, "package.json"),
+      JSON.stringify({ name: "broken-dependency-state", packageManager: "pnpm@9.15.4" }),
+      "utf8",
+    );
+    await fs.writeFile(path.join(workspaceCwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+    await fs.mkdir(path.join(workspaceCwd, "node_modules"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceCwd, "node_modules", ".modules.yaml"),
+      "storeDir: /private/tmp/deleted-review/.pnpm-store/v3\nvirtualStoreDir: /private/tmp/deleted-review/node_modules/.pnpm\n",
+      "utf8",
+    );
+
+    await db.insert(projects).values({
+      id: projectId,
       orgId,
-      name: "Source repository",
-      kind: "directory",
-      sourceType: "external",
-      locator: workingSetCwd,
+      name: "Workspace Policy owns cwd",
+      executionWorkspacePolicy: { enabled: true, defaultMode: "shared_workspace" },
     });
-    await db.insert(projectResourceAttachments).values({
+    await db.insert(projectWorkspaces).values({
+      id: projectWorkspaceId,
       orgId,
       projectId,
-      resourceId,
-      role: "working_set",
+      name: "Primary workspace",
+      cwd: workspaceCwd,
+      isPrimary: true,
     });
+    await db.insert(organizationResources).values([
+      {
+        id: sourceAId,
+        orgId,
+        name: "Source A",
+        kind: "directory",
+        sourceType: "external",
+        locator: sourceCwdA,
+      },
+      {
+        id: sourceBId,
+        orgId,
+        name: "Source B",
+        kind: "directory",
+        sourceType: "external",
+        locator: sourceCwdB,
+      },
+    ]);
+    await db.insert(projectResourceAttachments).values([
+      {
+        orgId,
+        projectId,
+        resourceId: sourceAId,
+        role: "working_set",
+        sortOrder: 20,
+        isPrimary: false,
+      },
+      {
+        orgId,
+        projectId,
+        resourceId: sourceBId,
+        role: "working_set",
+        sortOrder: 10,
+        isPrimary: true,
+      },
+    ]);
     await db.insert(issues).values({
       id: issueId,
       orgId,
       projectId,
-      title: "Use curated working set",
+      projectWorkspaceId,
+      title: "Use Workspace Policy cwd",
       status: "todo",
       priority: "medium",
       assigneeAgentId: agentId,
       identifier: "RD-WS-1",
     });
     let adapterCwd: string | null = null;
+    let resourcesPrompt = "";
     mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
       adapterCwd = ctx.config.cwd;
+      resourcesPrompt = String(ctx.context.rudderWorkspace?.resourcesPrompt ?? "");
       return {
-        summary: "working set selected",
+        summary: "workspace policy selected",
         resultJson: null,
         timedOut: false,
         exitCode: 0,
@@ -722,233 +740,25 @@ describe("heartbeat managed workspace preflight", () => {
     await waitForCondition(async () => {
       const current = await getRun(run!.id);
       return current?.status === "succeeded" && current.terminalEffectsPending === false;
-    });
-    expect(adapterCwd).toBe(workingSetCwd);
-    const events = await getRunEvents(run!.id);
-    expect(events.find((event) => event.eventType === "runtime.assignment_preflight")?.payload).toMatchObject({
-      actualCwd: workingSetCwd,
-      projectWorkingSetCwd: workingSetCwd,
-      cwdMatchesProjectWorkingSet: true,
-      cwdPresent: true,
-    });
-    await fs.rm(workingSetCwd, { recursive: true, force: true });
-  });
+    }, 20_000);
+    expect(mockRuntimeAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(adapterCwd).toBe(workspaceCwd);
+    expect(adapterCwd).not.toBe(sourceCwdA);
+    expect(adapterCwd).not.toBe(sourceCwdB);
+    expect(resourcesPrompt).toContain(sourceCwdA);
+    expect(resourcesPrompt).toContain(sourceCwdB);
+    const eventTypes = (await getRunEvents(run!.id)).map((event) => event.eventType);
+    expect(eventTypes).not.toContain("runtime.assignment_preflight");
+    expect(eventTypes).not.toContain("runtime.assignment_dependency_repair");
+    expect(eventTypes).not.toContain("runtime.assignment_preflight_failed");
+    expect(mockChildProcess.execFileCalls.filter(([command, args]) => {
+      const executable = path.basename(String(command));
+      const commandArgs = Array.isArray(args) ? args.map(String) : [];
+      return executable === "node" || executable === "pnpm" || commandArgs.includes("install");
+    })).toEqual([]);
 
-  it("repairs missing assignment dependencies before adapter invocation", async () => {
-    const { orgId, agentId } = await seedAgentFixture();
-    const projectId = randomUUID();
-    const issueId = randomUUID();
-    const workingSetCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-dependency-repair-"));
-    const resourceId = randomUUID();
-    await fs.writeFile(
-      path.join(workingSetCwd, "package.json"),
-      JSON.stringify({ name: "assignment-repair-fixture", packageManager: "pnpm@9.15.4" }),
-      "utf8",
-    );
-    await fs.writeFile(path.join(workingSetCwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
-    await db.insert(projects).values({ id: projectId, orgId, name: "Assignment dependency repair" });
-    await db.insert(organizationResources).values({
-      id: resourceId,
-      orgId,
-      name: "Source repository",
-      kind: "directory",
-      sourceType: "external",
-      locator: workingSetCwd,
-    });
-    await db.insert(projectResourceAttachments).values({
-      orgId,
-      projectId,
-      resourceId,
-      role: "working_set",
-    });
-    await db.insert(issues).values({
-      id: issueId,
-      orgId,
-      projectId,
-      title: "Repair dependencies before assignment",
-      status: "todo",
-      priority: "medium",
-      assigneeAgentId: agentId,
-      identifier: "RD-DEP-1",
-    });
-
-    mockAssignmentGuardrail.repair.mockImplementationOnce(async ({ preflight }: any) => ({
-      initial: preflight,
-      final: {
-        ...preflight,
-        nodeModulesPresent: true,
-        pnpmVirtualStorePresent: true,
-        dependencyGraphAvailable: true,
-        ready: true,
-        recoveryCommand: null,
-      },
-      command: "pnpm install --frozen-lockfile",
-      attempted: true,
-      coalesced: false,
-      rechecked: true,
-      succeeded: true,
-      output: "dependencies repaired",
-      skippedReason: null,
-      workspaceFingerprint: preflight.workspaceFingerprint,
-      readinessFingerprint: preflight.readinessFingerprint,
-    }));
-    let adapterCwd: string | null = null;
-    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      adapterCwd = ctx.config.cwd;
-      return {
-        summary: "repaired dependencies observed",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      };
-    });
-
-    const run = await heartbeatService(db).wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      contextSnapshot: { issueId, projectId, taskKey: `issue:${issueId}`, wakeSource: "assignment" },
-    });
-    await waitForCondition(async () => {
-      const current = await getRun(run!.id);
-      return current?.status === "succeeded" && current.terminalEffectsPending === false;
-    });
-
-    expect(adapterCwd).toBe(workingSetCwd);
-    expect(mockAssignmentGuardrail.repair).toHaveBeenCalledTimes(1);
-    const events = await getRunEvents(run!.id);
-    expect(events.find((event) => event.eventType === "runtime.assignment_dependency_repair")?.payload).toMatchObject({
-      command: "pnpm install --frozen-lockfile",
-      attempted: true,
-      rechecked: true,
-      succeeded: true,
-      initialReady: false,
-      finalReady: true,
-    });
-    expect(events.find((event) => event.eventType === "runtime.assignment_preflight")).toMatchObject({
-      level: "info",
-      message: "assignment run workspace preflight passed after dependency repair",
-      payload: expect.objectContaining({
-        ready: true,
-        initialReady: false,
-        dependencyRepair: expect.objectContaining({
-          attempted: true,
-          succeeded: true,
-        }),
-      }),
-    });
-    await fs.rm(workingSetCwd, { recursive: true, force: true });
-  });
-
-  it("records dependency repair diagnostics when assignment dependencies remain unavailable", async () => {
-    const { orgId, agentId } = await seedAgentFixture();
-    const projectId = randomUUID();
-    const issueId = randomUUID();
-    const workingSetCwd = await fs.mkdtemp(path.join(os.tmpdir(), "assignment-dependency-failure-"));
-    const resourceId = randomUUID();
-    await fs.writeFile(
-      path.join(workingSetCwd, "package.json"),
-      JSON.stringify({ name: "assignment-repair-failure-fixture", packageManager: "pnpm@9.15.4" }),
-      "utf8",
-    );
-    await fs.writeFile(path.join(workingSetCwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
-    await db.insert(projects).values({ id: projectId, orgId, name: "Assignment dependency failure" });
-    await db.insert(organizationResources).values({
-      id: resourceId,
-      orgId,
-      name: "Source repository",
-      kind: "directory",
-      sourceType: "external",
-      locator: workingSetCwd,
-    });
-    await db.insert(projectResourceAttachments).values({
-      orgId,
-      projectId,
-      resourceId,
-      role: "working_set",
-    });
-    await db.insert(issues).values({
-      id: issueId,
-      orgId,
-      projectId,
-      title: "Report dependency repair failure",
-      status: "todo",
-      priority: "medium",
-      assigneeAgentId: agentId,
-      identifier: "RD-DEP-2",
-    });
-
-    mockAssignmentGuardrail.repair.mockImplementationOnce(async ({ preflight }: any) => ({
-      initial: preflight,
-      final: {
-        ...preflight,
-        ready: false,
-        recoveryCommand: "pnpm install --frozen-lockfile",
-      },
-      command: "pnpm install --frozen-lockfile",
-      attempted: true,
-      coalesced: false,
-      rechecked: true,
-      succeeded: false,
-      output: "ERR_PNPM_REGISTRY_UNAVAILABLE",
-      skippedReason: null,
-      workspaceFingerprint: preflight.workspaceFingerprint,
-      readinessFingerprint: preflight.readinessFingerprint,
-    }));
-
-    const run = await heartbeatService(db).wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      contextSnapshot: { issueId, projectId, taskKey: `issue:${issueId}`, wakeSource: "assignment" },
-    });
-    await waitForCondition(async () => {
-      const current = await getRun(run!.id);
-      if (current?.status !== "failed" || current.terminalEffectsPending) return false;
-      const events = await getRunEvents(run!.id);
-      return events.some((event) => event.eventType === "runtime.assignment_preflight_failed");
-    });
-
-    const failedRun = await getRun(run!.id);
-    expect(failedRun).toMatchObject({
-      status: "failed",
-      errorCode: "assignment_dependency_preflight_failed",
-      error: expect.stringContaining("ERR_PNPM_REGISTRY_UNAVAILABLE"),
-    });
-    expect(mockRuntimeAdapter.execute).not.toHaveBeenCalled();
-
-    const events = await getRunEvents(run!.id);
-    expect(events.find((event) => event.eventType === "runtime.assignment_dependency_repair")).toMatchObject({
-      level: "warn",
-      payload: expect.objectContaining({
-        attempted: true,
-        rechecked: true,
-        succeeded: false,
-        output: "ERR_PNPM_REGISTRY_UNAVAILABLE",
-      }),
-    });
-    expect(events.find((event) => event.eventType === "runtime.assignment_preflight")).toMatchObject({
-      level: "error",
-      message: "assignment run workspace preflight failed",
-      payload: expect.objectContaining({
-        ready: false,
-        dependencyRepair: expect.objectContaining({
-          attempted: true,
-          succeeded: false,
-        }),
-      }),
-    });
-    expect(events.find((event) => event.eventType === "runtime.assignment_preflight_failed")).toMatchObject({
-      level: "error",
-      payload: expect.objectContaining({
-        errorCode: "assignment_dependency_preflight_failed",
-        dependencyRepair: expect.objectContaining({
-          output: "ERR_PNPM_REGISTRY_UNAVAILABLE",
-        }),
-      }),
-    });
-    await fs.rm(workingSetCwd, { recursive: true, force: true });
+    await Promise.all([workspaceCwd, sourceCwdA, sourceCwdB].map((dir) =>
+      fs.rm(dir, { recursive: true, force: true })));
   });
 
   it("checkpoints repeated assignment failures and queues one continuation", async () => {
