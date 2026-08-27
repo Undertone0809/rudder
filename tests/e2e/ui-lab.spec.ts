@@ -102,15 +102,18 @@ test.describe("UI Lab", () => {
     await expect(page.getByTestId("chat-image-preview-dialog")).toBeVisible();
     await expect(page.getByRole("img", { name: "chat-preview.svg" })).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByText("Goal and project properties")).toBeVisible();
+    await expect(page.getByText("Project properties")).toBeVisible();
     await expect(page.getByText("Budget and finance cards")).toBeVisible();
     await expect(page.getByText("RUD-214").first()).toBeVisible();
     await expect(page.getByText("Reviewer Agent", { exact: true }).first()).toBeVisible();
 
     await page.getByRole("button", { name: /Coverage/ }).click();
     await page.getByPlaceholder("Search components, paths, or statuses").fill("RunTranscriptView");
-    await expect(page.getByRole("cell", { name: "RunTranscriptView", exact: true })).toBeVisible();
-    await expect(page.getByRole("cell", { name: "Fixture-backed" })).toBeVisible();
+    const runTranscriptCoverageRow = page.getByRole("row").filter({
+      has: page.getByRole("cell", { name: "RunTranscriptView", exact: true }),
+    });
+    await expect(runTranscriptCoverageRow).toBeVisible();
+    await expect(runTranscriptCoverageRow.getByRole("cell", { name: "Fixture-backed" })).toBeVisible();
 
     await page.getByPlaceholder("Search components, paths, or statuses").fill("JsonSchemaForm");
     await expect(page.getByRole("cell", { name: "JsonSchemaForm", exact: true })).toBeVisible();
@@ -135,8 +138,69 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("Run transcript UX lab")).toBeVisible();
     await expect(page.getByText("Run Transcript Fixtures")).toBeVisible();
 
-    await page.locator("button").filter({ hasText: /^compact$/i }).click();
+    await page.getByRole("button", { name: /MCP Cards/ }).click();
+    const semanticCardsLab = page.getByTestId("ui-lab-rudder-mcp-cards");
+    await expect(semanticCardsLab.getByText("Horizontal result rail")).toBeVisible();
+    const semanticLabRail = semanticCardsLab.locator('[data-rudder-semantic-rail="goal"]');
+    await expect(semanticLabRail).toBeVisible();
+    await expect(semanticLabRail.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(6);
+    await expect(semanticCardsLab.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(11);
+    await semanticLabRail.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+    await expect(semanticLabRail.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(12);
+    await semanticLabRail.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+    await expect(semanticLabRail.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(13);
+    await expect(semanticCardsLab.getByText("The horizontal rail reads clearly now.", { exact: false })).toBeVisible();
+    await expect(semanticCardsLab.getByText("Approved for the review branch.", { exact: false })).toBeVisible();
+    await expect(semanticCardsLab.locator('[data-rudder-semantic-agent="true"]').first()).toContainText("Mira Chen");
+    await expect(semanticCardsLab.getByTestId("ui-lab-trigger-delete-receipt").locator('a[href$="/automations/automation-lab-1"]')).toBeVisible();
+    const semanticSurfaceStyle = await semanticCardsLab.locator('[data-rudder-semantic-card-surface="true"]').first().evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return { boxShadow: style.boxShadow, transitionProperty: style.transitionProperty };
+    });
+    expect(semanticSurfaceStyle.boxShadow).not.toBe("none");
+    expect(semanticSurfaceStyle.transitionProperty).toContain("transform");
+    const firstSemanticSurface = semanticCardsLab.locator('[data-rudder-semantic-card-link="true"]').first();
+    const restingSurfaceStyle = await firstSemanticSurface.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return { boxShadow: style.boxShadow, transform: style.transform };
+    });
+    await firstSemanticSurface.hover();
+    await expect(firstSemanticSurface).toHaveAttribute("data-rudder-semantic-card-interactive", "true");
+    await expect.poll(() => firstSemanticSurface.evaluate((element, resting) => {
+      const style = window.getComputedStyle(element);
+      return style.boxShadow !== resting.boxShadow && style.transform !== resting.transform;
+    }, restingSurfaceStyle)).toBe(true);
+    const longComment = semanticCardsLab
+      .getByTestId("ui-lab-long-comment-receipt")
+      .locator('[data-rudder-semantic-comment-body="true"]');
+    await expect(longComment).toContainText("Review note 48:");
+    await expect(longComment).toContainText("End of complete long comment fixture.");
+    const longCommentGeometry = await longComment.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      text: element.textContent,
+    }));
+    expect(longCommentGeometry.scrollHeight).toBeGreaterThan(longCommentGeometry.clientHeight);
+    expect(longCommentGeometry.clientHeight).toBeLessThanOrEqual(160);
+    expect(longCommentGeometry.text).toContain("Review note 1:");
+    expect(longCommentGeometry.text).toContain("Review note 48:");
+    expect(longCommentGeometry.text).toContain("End of complete long comment fixture.");
+
+    await page.locator("button").filter({ hasText: "Chat Transcript" }).click();
+    const chatTranscript = page.getByTestId("ui-lab-chat-transcript");
+    for (const name of [/List goals/i, /Add issue comment/i, /Add approval comment/i, /Run automation/i]) {
+      const row = chatTranscript.getByRole("button", {
+        name: new RegExp(`Expand tool details: .*${name.source}`, "i"),
+      });
+      await expect(row).toBeVisible();
+      await row.click();
+    }
+    await expect(chatTranscript.locator('[data-rudder-semantic-presenter]')).toHaveCount(4);
+    await expect(chatTranscript.getByText("The horizontal rail reads clearly now.", { exact: false })).toBeVisible();
+    await expect(chatTranscript.getByText("Approved for the review branch.", { exact: false })).toBeVisible();
+
     await page.locator("button").filter({ hasText: "Issue Widget" }).click();
+    await page.locator("button").filter({ hasText: /^compact$/i }).click();
     await expect(page.getByText("I’m validating the generic tool row", { exact: false })).toBeVisible();
     await expect(page.getByText("Spawned explorer agent: Inspect the transcript renderer for Codex sub-agent rows.", { exact: false })).toBeVisible();
     await expect(page.getByText("gpt-5.3-codex, high reasoning, forked context", { exact: false })).toBeVisible();
@@ -176,6 +240,17 @@ test.describe("UI Lab", () => {
     expect(metrics.rowToNextGap).toBeLessThanOrEqual(6);
 
     await page.locator("button").filter({ hasText: "Run Detail" }).click();
+    const runDetailTranscript = page.getByTestId("ui-lab-run-detail-transcript");
+    for (const name of [/List goals/i, /Add issue comment/i, /Add approval comment/i, /Run automation/i]) {
+      const row = runDetailTranscript.getByRole("button", {
+        name: new RegExp(`Expand tool details: .*${name.source}`, "i"),
+      });
+      await expect(row).toBeVisible();
+      await row.click();
+    }
+    await expect(runDetailTranscript.locator('[data-rudder-semantic-presenter]')).toHaveCount(4);
+    await expect(runDetailTranscript.getByText("The horizontal rail reads clearly now.", { exact: false })).toBeVisible();
+    await expect(runDetailTranscript.getByText("Approved for the review branch.", { exact: false })).toBeVisible();
     const fileChange = page.locator('[data-transcript-file-change="true"]');
     await expect(fileChange).toHaveCount(1);
     await expect(page.getByText(/^File change$/i)).toHaveCount(1);
@@ -364,7 +439,7 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("Run Transcript Fixtures")).toBeVisible();
 
     await page.getByRole("button", { name: "Expand tool activity group 1" }).click();
-    const docGoalCommand = page.getByRole("button", { name: "Expand command details" }).filter({ hasText: "Read doc/product/GOAL.md" });
+    const docGoalCommand = page.getByRole("button", { name: /Expand command details:.*GOAL\.md/ });
     await expect(docGoalCommand).toHaveCount(1);
     await docGoalCommand.click();
 

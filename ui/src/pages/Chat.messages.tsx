@@ -15,7 +15,7 @@ import { RudderEntityPreview } from "@/components/RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
-import { RunTranscriptView, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptAgentDirectoryEntry, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -3065,6 +3065,7 @@ export function StreamTranscriptItem({
   onOpenSkill,
   canOpenSkill,
   onOpenAgent,
+  agentDirectory,
   annotationSource,
   sentAnnotationContext,
   localizeText = (text) => text,
@@ -3084,6 +3085,7 @@ export function StreamTranscriptItem({
   onOpenSkill?: (target: TranscriptSkillTarget) => void;
   canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  agentDirectory?: TranscriptAgentDirectoryEntry[];
   annotationSource?: {
     sourceConversationId: string;
     sourceMessageId: string;
@@ -3187,26 +3189,29 @@ export function StreamTranscriptItem({
             <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
           </div>
         </div>
-        {showBody ? (
-          <div className="mt-3">
-            <RunTranscriptView
-              entries={timelineEntries}
-              mode="nice"
-              streaming={streamingActive}
-              collapseStdout
-              presentation="chat"
-              showDeveloperDiagnostics={showDeveloperDiagnostics}
-              hiddenAssistantMessageText={assistantMessageBody}
-              localizeText={localizeText}
-              onOpenFile={onOpenFile}
-              onOpenSkill={onOpenSkill}
-              canOpenSkill={canOpenSkill}
-              onOpenAgent={onOpenAgent}
-              annotationSource={annotationSource}
-              sentAnnotationContext={sentAnnotationContext}
-            />
-          </div>
-        ) : null}
+        <div
+          className={cn("mt-3", !showBody && "hidden")}
+          aria-hidden={!showBody}
+          data-testid="chat-transcript-content"
+        >
+          <RunTranscriptView
+            entries={timelineEntries}
+            mode="nice"
+            streaming={streamingActive}
+            collapseStdout
+            presentation="chat"
+            showDeveloperDiagnostics={showDeveloperDiagnostics}
+            hiddenAssistantMessageText={assistantMessageBody}
+            localizeText={localizeText}
+            onOpenFile={onOpenFile}
+            onOpenSkill={onOpenSkill}
+            canOpenSkill={canOpenSkill}
+            onOpenAgent={onOpenAgent}
+            agentDirectory={agentDirectory}
+            annotationSource={annotationSource}
+            sentAnnotationContext={sentAnnotationContext}
+          />
+        </div>
       </div>
     </div>
   );

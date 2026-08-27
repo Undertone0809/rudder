@@ -7,10 +7,11 @@ import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
+import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
 export { resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget } from "./RunTranscriptView.common";
-export type { TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptRunAnnotationContext, TranscriptRunAnnotationInput, TranscriptSkillTarget } from "./RunTranscriptView.common";
+export type { TranscriptAgentDirectoryEntry, TranscriptAgentInspection, TranscriptDensity, TranscriptMode, TranscriptPresentation, TranscriptRunAnnotationContext, TranscriptRunAnnotationInput, TranscriptSkillTarget } from "./RunTranscriptView.common";
 export { normalizeTranscript } from "./RunTranscriptView.normalize";
 
 function trailingEntriesByVisibleLimit(
@@ -29,7 +30,15 @@ function trailingEntriesByVisibleLimit(
   return entries.slice(startIndex);
 }
 
-export function RunTranscriptView({
+export function RunTranscriptView(props: RunTranscriptViewProps) {
+  return (
+    <RudderMcpPresenterProvider agents={props.agentDirectory} entries={props.entries}>
+      <RunTranscriptViewContent {...props} />
+    </RudderMcpPresenterProvider>
+  );
+}
+
+function RunTranscriptViewContent({
   entries,
   mode = "nice",
   density = "comfortable",
@@ -51,6 +60,7 @@ export function RunTranscriptView({
   annotationSource,
   sentAnnotationContext,
   runAnnotationContext,
+  agentDirectory: _agentDirectory,
 }: RunTranscriptViewProps) {
   const toastContext = useOptionalToast();
   const effectiveShowDeveloperDiagnostics = presentation === "chat"
@@ -147,15 +157,7 @@ export function RunTranscriptView({
     );
   }
 
-  if (mode === "raw") {
-    return (
-      <div className={className}>
-        <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
-      </div>
-    );
-  }
-
-  if (blocks.length === 0) {
+  if (blocks.length === 0 && mode !== "raw") {
     if (!emptyMessage) return null;
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
@@ -164,8 +166,10 @@ export function RunTranscriptView({
     );
   }
 
-  if (presentation === "detail") {
-    return (
+  const niceContent = blocks.length === 0
+    ? null
+    : presentation === "detail"
+      ? (
       <div className={cn("space-y-4", className)}>
         <TranscriptDetailTimeline
           entries={visibleNiceEntries}
@@ -180,11 +184,9 @@ export function RunTranscriptView({
           canOpenSkill={canOpenSkill}
         />
       </div>
-    );
-  }
-
-  if (presentation === "chat") {
-    return (
+        )
+      : presentation === "chat"
+        ? (
       <div className={cn("w-full min-w-0", className)}>
         <TranscriptChatTimeline
           entries={visibleNiceEntries}
@@ -206,10 +208,8 @@ export function RunTranscriptView({
           sentAnnotationContext={sentAnnotationContext}
         />
       </div>
-    );
-  }
-
-  return (
+          )
+        : (
     <div className={cn("space-y-3", className)}>
       {visibleBlocks.map((block, index) => (
         <div
@@ -230,5 +230,20 @@ export function RunTranscriptView({
         </div>
       ))}
     </div>
+          );
+
+  return (
+    <>
+      <div hidden={mode !== "raw"}>
+        {mode === "raw" ? (
+          <div className={className}>
+            <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
+          </div>
+        ) : null}
+      </div>
+      <div hidden={mode === "raw"} aria-hidden={mode === "raw" || undefined}>
+        {niceContent}
+      </div>
+    </>
   );
 }
