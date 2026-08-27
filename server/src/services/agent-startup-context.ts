@@ -1,3 +1,4 @@
+import { RUDDER_PROMPT_SECTION_TAGS, wrapPromptSection } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import { chatContextLinks, chatConversations, chatMessages, issues } from "@rudderhq/db";
 import { shortRefFor, type AgentRunScene, type ShortRefKind } from "@rudderhq/shared";
@@ -190,8 +191,6 @@ export function buildAgentStartupContextPrompt(
   }
   const organizationMembers = input.organizationMembers ?? [];
   const lines = [
-    "## Recent Rudder Context",
-    "",
     formatDailyMemoryHeading("today", input.todayMemory.relativePath),
     clipMarkdown(input.todayMemory.content, resolvedLimits.memoryFileChars),
     "",
@@ -258,11 +257,13 @@ export function buildAgentStartupContextPrompt(
       markdownTableCell(clip(chat.snippet, resolvedLimits.chatSnippetChars)),
     ]));
   }
-  let prompt = lines.join("\n");
+  const body = lines.join("\n");
+  let prompt = wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.recentContext, body);
   if (prompt.length <= resolvedLimits.totalChars) return prompt;
-  const suffix = "\n\n[Recent Rudder Context truncated by char limit]";
-  const bodyLimit = Math.max(0, resolvedLimits.totalChars - suffix.length - 4);
-  return `${prompt.slice(0, bodyLimit).trimEnd()}...\n${suffix}`;
+  const opening = `<${RUDDER_PROMPT_SECTION_TAGS.recentContext}>\n`;
+  const suffix = `...\n\n[Recent Rudder Context truncated by char limit]\n</${RUDDER_PROMPT_SECTION_TAGS.recentContext}>`;
+  const bodyLimit = Math.max(0, resolvedLimits.totalChars - opening.length - suffix.length);
+  return `${opening}${body.slice(0, bodyLimit).trimEnd()}${suffix}`;
 }
 
 function utcDateKey(date: Date) {

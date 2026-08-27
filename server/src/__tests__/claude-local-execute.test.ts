@@ -288,14 +288,14 @@ describe("claude execute", { timeout: 20_000 }, () => {
         },
         context: {
           rudderScene: "heartbeat",
-          rudderResourcesPrompt: "## Your Current Automations\n\n- Daily Claude review",
+          rudderResourcesPrompt: "<current_automations>\n- Daily Claude review\n</current_automations>",
           rudderWorkspace: {
             orgWorkspaceRoot: path.join(root, "org-workspace"),
             orgSkillsDir: path.join(root, "org-workspace", "skills"),
             projectLibraryRoot: path.join(root, "org-workspace", "projects", "product"),
             projectLibraryRelativePath: "projects/product",
-            resourcesPrompt: "## Your Current Automations\n\n- Daily Claude review",
-            orgResourcesPrompt: "## Your Current Automations\n\n- Daily Claude review",
+            resourcesPrompt: "<current_automations>\n- Daily Claude review\n</current_automations>",
+            orgResourcesPrompt: "<current_automations>\n- Daily Claude review\n</current_automations>",
           },
         },
         authToken: "run-jwt-token",
@@ -339,23 +339,23 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Agent Soul");
       expect(systemPrompt).toContain("# Agent Tools");
       expect(systemPrompt).toContain("# Tacit Memory");
-      expect(systemPrompt).toContain("## Your Current Automations");
-      expect(systemPrompt).toContain("# Rudder Heartbeat Instruction");
-      expect(systemPrompt).toContain("# Enabled Rudder Skills");
+      expect(systemPrompt).toContain("<current_automations>");
+      expect(systemPrompt).toContain("<rudder_heartbeat_instruction>");
+      expect(systemPrompt).toContain("<enabled_rudder_skills>");
       expect(systemPrompt).toContain("No optional Rudder skills are enabled for this run.");
       expect(systemPrompt).toContain("Claude Code built-in/provider-native skills");
       expect(systemPrompt).toContain("Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes.");
       expect(systemPrompt).toContain("If exactly one skill is listed, answer exactly that runtime skill name and nothing else.");
       expect(systemPrompt).toContain("Do not list, summarize, or explain provider-native Claude Code skills or slash commands in that answer.");
-      expect(systemPrompt.match(/## Your Current Automations/g)).toHaveLength(1);
+      expect(systemPrompt.match(/<current_automations>/g)).toHaveLength(1);
       expect(systemPrompt.indexOf("# Agent Instructions")).toBeLessThan(systemPrompt.indexOf("# Agent Soul"));
       expect(systemPrompt.indexOf("# Agent Soul")).toBeLessThan(systemPrompt.indexOf("# Agent Tools"));
       expect(systemPrompt.indexOf("# Agent Tools")).toBeLessThan(systemPrompt.indexOf("# Tacit Memory"));
-      expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("## Your Current Automations"));
-      expect(systemPrompt.indexOf("## Your Current Automations")).toBeLessThan(systemPrompt.indexOf("# Rudder Heartbeat Instruction"));
+      expect(systemPrompt.indexOf("# Tacit Memory")).toBeLessThan(systemPrompt.indexOf("<current_automations>"));
+      expect(systemPrompt.indexOf("<current_automations>")).toBeLessThan(systemPrompt.indexOf("<rudder_heartbeat_instruction>"));
       expect(systemPrompt).not.toContain("## Current Time");
       expect(systemPrompt).not.toContain("Instruction load time:");
-      expect(systemPrompt.indexOf("# Rudder Heartbeat Instruction")).toBeLessThan(systemPrompt.indexOf("# Enabled Rudder Skills"));
+      expect(systemPrompt.indexOf("<rudder_heartbeat_instruction>")).toBeLessThan(systemPrompt.indexOf("<enabled_rudder_skills>"));
       expect(agentInstructionStack).toContain(systemPrompt);
       expect(agentInstructionStack).toContain("Follow the rudder heartbeat as agt_d573266f.");
       expect(agentInstructionStack).not.toContain("Follow the rudder heartbeat as d573266f-af95-44e6-9303-e903a54662b8.");
@@ -363,9 +363,10 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
-      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
+      expect(agentInstructionStack).toContain("<rudder_agent_instruction>");
+      expect(agentInstructionStack).toContain("<enabled_rudder_skills>");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
-      expect(agentInstructionStack).toContain("## Your Current Automations");
+      expect(agentInstructionStack).toContain("<current_automations>");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_ROOT");
       expect(capture.rudderEnvKeys).toContain("RUDDER_PROJECT_LIBRARY_PATH");
@@ -508,7 +509,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         addDirSkillEntries: string[];
       };
       expect(capture.addDirSkillEntries).toContain("build-advisor");
-      expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
+      expect(capture.appendedSystemPrompt).toContain("<enabled_rudder_skills>");
       expect(capture.appendedSystemPrompt).toContain("- build-advisor");
       expect(capture.appendedSystemPrompt).not.toContain("- build-advisor: adapter:claude_local:build-advisor");
       expect(capture.appendedSystemPrompt).not.toContain("No optional Rudder skills are enabled");
@@ -578,7 +579,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
         addDirSkillEntries: string[];
       };
       expect(capture.addDirSkillEntries).toContain("rudder-docs");
-      expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
+      expect(capture.appendedSystemPrompt).toContain("<enabled_rudder_skills>");
       expect(capture.appendedSystemPrompt).toContain("- rudder-docs");
       expect(capture.appendedSystemPrompt).not.toContain("- rudder-docs: bundled:rudder/rudder-docs");
     } finally {
@@ -806,7 +807,7 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(capture.argv).toContain("--add-dir");
       expect(capture.argv).toContain(runtimeTmpDir);
       expect(capture.addDirSkillEntries).not.toContain("user-skill.txt");
-      expect(capture.appendedSystemPrompt).toContain("# Enabled Rudder Skills");
+      expect(capture.appendedSystemPrompt).toContain("<enabled_rudder_skills>");
       expect(capture.appendedSystemPrompt).toContain("No optional Rudder skills are enabled for this run.");
       expect(capture.appendedSystemPrompt).toContain("Claude Code built-in/provider-native skills");
       expect(capture.appendedSystemPrompt).toContain("Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes.");

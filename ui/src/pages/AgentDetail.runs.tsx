@@ -332,8 +332,11 @@ export function RunListItem({
       onClick={openRun}
       onKeyDown={handleRowKeyDown}
     >
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-        <span className="flex min-w-0 items-center gap-2">
+      <div
+        className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2"
+        data-testid="run-list-top-row"
+      >
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
           <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, displayStatus === "running" && "animate-spin")} />
           <button
             type="button"
@@ -348,7 +351,7 @@ export function RunListItem({
           <span className={cn(
             "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
             runReasonBadgeClassName(runReason.tone)
-          )} title={runReason.description}>
+          )} title={runReason.description} data-testid="run-list-reason">
             {runReason.label}
           </span>
         </span>

@@ -426,7 +426,7 @@ describe("openclaw gateway adapter execute", () => {
         "Gateway persona\n\nRudder runtime-neutral Chat prompt",
       );
       expect(String(gateway.getAgentPayload()?.message ?? ""))
-        .not.toContain("# Rudder Heartbeat Instruction");
+        .not.toContain("<rudder_heartbeat_instruction>");
     } finally {
       await gateway.close();
     }
@@ -550,7 +550,7 @@ describe("openclaw gateway adapter execute", () => {
       expect(payload?.idempotencyKey).toBe("run-123");
       expect(payload?.sessionKey).toBe("rudder:issue:issue-123");
       expect(String(payload?.message ?? "")).toContain("wake now");
-      expect(String(payload?.message ?? "")).toContain("# Rudder Heartbeat Instruction");
+      expect(String(payload?.message ?? "")).toContain("<rudder_heartbeat_instruction>");
       expect(String(payload?.message ?? "")).toContain("HTTP compatibility mode: this runtime has not migrated to the CLI contract yet.");
       expect(String(payload?.message ?? "")).toContain("The listed HTTP endpoints override any CLI command guidance.");
       expect(String(payload?.message ?? "")).toContain("RUDDER_RUN_ID=run-123");

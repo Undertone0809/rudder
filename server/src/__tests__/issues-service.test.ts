@@ -1742,6 +1742,53 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("allows the current assignee to complete an in-progress issue without a checkout lock", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Direct Completion Org",
+      urlKey: deriveOrganizationUrlKey("Direct Completion Org"),
+      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Direct Completion Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    const issue = await svc.create(orgId, {
+      title: "Complete without checkout",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+
+    const updated = await svc.update(
+      issue.id,
+      { status: "done" },
+      {
+        agentId,
+        runId: randomUUID(),
+        relationship: "assignee_or_reviewer",
+      },
+    );
+
+    expect(updated).toMatchObject({
+      id: issue.id,
+      status: "done",
+      assigneeAgentId: agentId,
+      checkoutRunId: null,
+    });
+  });
+
   it("requires agent-created issues to select labels once an organization has five labels", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

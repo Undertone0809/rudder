@@ -118,9 +118,12 @@ direct-create versus approval-required policy.
 The canonical response has two governed branches:
 
 - Direct creation: `approval: null`; the returned Agent is created in its
-  ordinary post-hire state.
+  ordinary post-hire state. Board-originated hires stay on this branch even
+  when the organization enables board approval for new Agents, because the
+  board actor already holds that authority.
 - Approval required: the returned Agent is `pending_approval`, and the response
-  includes an approval record.
+  includes one approval record. This branch applies to agent-originated hires
+  when the organization enables board approval for new Agents.
 
 For `pending_approval`:
 

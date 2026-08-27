@@ -28,9 +28,11 @@ import {
   renderTemplate,
   resolveLocalOperatorHome,
   resolveRudderDesiredSkillNames,
+  RUDDER_PROMPT_SECTION_TAGS,
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
+  wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -240,14 +242,12 @@ async function renderSelectedCursorSkillPrompt(
     sections.push(`## Skill: ${entry.key}\n\n${content.trim()}`);
   }
   if (sections.length === 0) return "";
-  return [
-    "# Enabled Rudder Skills",
-    "",
+  return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.enabledSkills, [
     "These skill instructions come only from this agent's Rudder Skills enabled selections.",
     "Do not load Cursor, operator-home, project, bundled, or vendor-default skills unless Rudder enabled them for this agent.",
     "",
     sections.join("\n\n"),
-  ].join("\n");
+  ].join("\n"));
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -526,9 +526,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const rudderEnvNote = renderRudderEnvNote(env);
+  const instructionFrame = wrapPromptSection(
+    RUDDER_PROMPT_SECTION_TAGS.agentInstruction,
+    joinPromptSections([
+      instructionsPrefix,
+      selectedSkillPrompt,
+    ]),
+  );
   const prompt = joinPromptSections([
-    instructionsPrefix,
-    selectedSkillPrompt,
+    instructionFrame,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,

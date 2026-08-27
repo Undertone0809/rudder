@@ -208,12 +208,13 @@ test("shows issue run transcript tool responses without exposing runtime-loaded 
             {
               type: "text",
               text: [
-                "# Rudder Agent Operating Contract",
+                "<rudder_agent_operating_contract>",
                 "",
                 "Your home directory is $AGENT_HOME. Everything personal to you lives there.",
                 "",
                 "Use these paths consistently:",
                 "- Personal instructions live under $AGENT_HOME/instructions.",
+                "</rudder_agent_operating_contract>",
               ].join("\n"),
             },
           ],

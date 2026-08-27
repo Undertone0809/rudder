@@ -101,6 +101,10 @@ Product model:
   both tabs.
 - Pending approval, paused, terminated, or revoked-access states constrain
   whether the agent can be woken or configured.
+- A board-originated hire is direct even when the organization enables
+  `requireBoardApprovalForNewAgents`, because the initiating board actor already
+  holds the approval authority. An agent-originated hire under that policy is
+  created as `pending_approval` with one governed approval request.
 - Config changes are operator-visible product changes when they alter runtime,
   instruction, skill, budget, or permission behavior.
 - External local runtime configuration is a connection identity, not a provider
@@ -123,12 +127,16 @@ Product model:
 
 Flow:
 
-1. Board creates or hires an agent with role and runtime configuration.
+1. The board creates or hires an agent with role and runtime configuration; an
+   agent may submit a governed hire when it has the organization-scoped
+   creation grant.
 2. Server normalizes runtime config, secrets, avatar identity, default
    instructions, and desired skills. A valid explicit generated/uploaded
    avatar is preserved; an omitted or incoming legacy named icon becomes a new
    Oreo default reference.
-3. Approval or permission policy may gate the final active state.
+3. Permission policy gates who may submit the hire, and the organization
+   approval policy gates agent-originated hires; board-originated hires do not
+   create an approval request for the board to approve itself.
 4. For an external local runtime, setup discovers a supported loopback endpoint
    or executable, validates the authenticated connection, and persists only the
    normalized connection identity plus secret reference. It never imports the
@@ -144,6 +152,9 @@ Invariants:
 - New Agent role derivation is organization-scoped and deterministic: an empty
   agent list selects `ceo`, while a non-empty list selects `general`.
 - Terminated or pending-approval agents are not ordinary invokable agents.
+- Board-originated hires are not put into `pending_approval`; agent-originated
+  hires are put into `pending_approval` when `requireBoardApprovalForNewAgents`
+  is enabled and create exactly one approval request for that hire.
 - Runtime config is not only UI preference; it is execution contract.
 - A connection secret is resolved by reference at execution time and remains
   organization-scoped. Provider credentials and Rudder Agent identity tokens

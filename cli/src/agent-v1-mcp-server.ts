@@ -627,7 +627,7 @@ async function callToolDirectlyIfSupported(
   if (hasLocalImageInputs(input.images)) return null;
   const api = mcpApiClient(env, signal);
   const success = (data: unknown) => mcpSuccess(
-    toCliShortIdOutput(data),
+    capabilityId.startsWith("browser.") ? data : toCliShortIdOutput(data),
     capabilityId.startsWith("browser.")
       ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
       : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,

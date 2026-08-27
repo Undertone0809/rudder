@@ -1826,7 +1826,7 @@ describe("heartbeat managed workspace preflight", () => {
       rudderEnvKeys: string[];
     };
     expect(capture.prompt).toContain("# Persona");
-    expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
+    expect(capture.prompt).toContain("<rudder_heartbeat_instruction>");
     expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
     expect(capture.prompt).toContain("Follow the heartbeat prompt.");
     expect(invokeEventPayload).toEqual(expect.objectContaining({
@@ -1944,7 +1944,8 @@ describe("heartbeat managed workspace preflight", () => {
     }, 10_000);
 
     const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
-    expect(capture.prompt).toContain("## Recent Rudder Context");
+    expect(capture.prompt).toContain("<recent_rudder_context>");
+    expect(capture.prompt).toContain("</recent_rudder_context>");
     expect(capture.prompt).toContain(`#### today memory: ${todayKey}.md`);
     expect(capture.prompt).toContain("- Today startup memory signal");
     expect(capture.prompt).toContain(`#### yesterday memory: ${yesterdayKey}.md`);
@@ -1956,7 +1957,7 @@ describe("heartbeat managed workspace preflight", () => {
     expect(capture.prompt).toContain(`| \`${shortRefFor("chat", chatId)}\` |`);
     expect(capture.prompt).toContain("Agent run startup memory | 默认装载今天和昨天的 memory md");
     expect(capture.prompt).not.toContain("recent runs");
-    expect(capture.prompt).not.toContain("# Rudder Heartbeat Instruction");
+    expect(capture.prompt).not.toContain("<rudder_heartbeat_instruction>");
 
     const [updatedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
     expect(updatedRun?.contextSnapshot).toMatchObject({

@@ -727,14 +727,31 @@ export function WorkspaceTreeNode({
           event.stopPropagation();
         }}
       >
-        <DropdownMenuItem onSelect={() => onCopyLink(entry)}>
-          <Link2 className="h-3.5 w-3.5" />
-          Copy link
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => onCopyAbsolutePath(entry)}>
-          <Copy className="h-3.5 w-3.5" />
-          Copy absolute path
-        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger
+            className="h-9 rounded-[6px] px-2 text-sm"
+            data-testid={`org-workspaces-entry-copy-submenu-${entry.path}`}
+          >
+            <Copy className="h-3.5 w-3.5" />
+            Copy
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent sideOffset={6} className="w-60 whitespace-nowrap p-1">
+            <DropdownMenuItem onSelect={() => {
+              setActionMenuOpen(false);
+              onCopyLink(entry);
+            }}>
+              <Link2 className="h-3.5 w-3.5" />
+              Copy link
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => {
+              setActionMenuOpen(false);
+              onCopyAbsolutePath(entry);
+            }}>
+              <Copy className="h-3.5 w-3.5" />
+              Copy absolute path
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         {!isProtectedContainer ? (
           <>
             {onOpenEntry || onOpenEntryTarget || canCreateInsideDirectory ? <DropdownMenuSeparator /> : null}

@@ -130,6 +130,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
   router.post("/orgs/:orgId/agent-hires", validate(createAgentHireSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanCreateAgentsForCompany(req, orgId);
+    const actor = getActorInfo(req);
     const sourceIssueIds = parseSourceIssueIds(req.body);
     const {
       desiredSkills: requestedDesiredSkills,
@@ -178,7 +179,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       return;
     }
 
-    const requiresApproval = organization.requireBoardApprovalForNewAgents;
+    const requiresApproval = organization.requireBoardApprovalForNewAgents && actor.actorType === "agent";
     const status = requiresApproval ? "pending_approval" : "idle";
     const createdAgent = await svc.create(orgId, {
       ...normalizedHireInput,
@@ -194,7 +195,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
-    const actor = getActorInfo(req);
 
     if (requiresApproval) {
       const requestedAdapterType = normalizedHireInput.agentRuntimeType ?? agent.agentRuntimeType;
@@ -212,8 +212,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
         ) ?? {};
       approval = await approvalsSvc.create(orgId, {
         type: "hire_agent",
-        requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
-        requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+        requestedByAgentId: actor.actorId,
+        requestedByUserId: null,
         status: "pending",
         payload: {
           name: agent.name,
@@ -231,7 +231,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
           desiredSkills: desiredSkillAssignment.desiredSkills,
           metadata: requestedMetadata,
           agentId: agent.id,
-          requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
+          requestedByAgentId: actor.actorId,
           requestedConfigurationSnapshot: {
             agentRuntimeType: requestedAdapterType,
             agentRuntimeConfig: requestedAdapterConfig,
@@ -247,8 +247,8 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
 
       if (sourceIssueIds.length > 0) {
         const links = await issueApprovalsSvc.linkManyForApproval(approval.id, sourceIssueIds, {
-          agentId: actor.actorType === "agent" ? actor.actorId : null,
-          userId: actor.actorType === "user" ? actor.actorId : null,
+          agentId: actor.actorId,
+          userId: null,
         });
         for (const link of links) {
           await logActivity(db, {

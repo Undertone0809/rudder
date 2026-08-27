@@ -1364,12 +1364,15 @@ export function issueService(db: Db, storage?: StorageService) {
                 eq(issues.assigneeAgentId, authorization.agentId),
                 or(
                   ne(issues.status, "in_progress"),
-                  authorization.runId
-                    ? and(
-                        eq(issues.status, "in_progress"),
-                        eq(issues.checkoutRunId, authorization.runId),
-                      )
-                    : sql`false`,
+                  and(
+                    eq(issues.status, "in_progress"),
+                    or(
+                      isNull(issues.checkoutRunId),
+                      authorization.runId
+                        ? eq(issues.checkoutRunId, authorization.runId)
+                        : sql`false`,
+                    ),
+                  ),
                 ),
               ),
             )

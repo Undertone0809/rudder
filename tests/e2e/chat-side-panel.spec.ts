@@ -2714,6 +2714,7 @@ test.describe("Chat Side Panel", () => {
         title: "Side Panel Library directory host chat",
         issueCreationMode: "manual_approval",
         planMode: false,
+        initialMessage: { body: "Browse the Library directory." },
       },
     });
     expect(hostChatRes.ok(), await hostChatRes.text()).toBe(true);
@@ -2750,27 +2751,45 @@ test.describe("Chat Side Panel", () => {
 
     const sidePanel = page.getByTestId("chat-side-panel");
     await expect(sidePanel).toBeVisible({ timeout: 15_000 });
-    const directoryView = sidePanel.getByTestId("chat-side-panel-library-directory-view");
+    // Library live surfaces are leased into the page-level runtime portal.
+    const activeLiveSurface = page.locator(
+      '[data-testid="library-live-surface"][data-active="true"]',
+    );
+    const directoryView = activeLiveSurface.getByTestId("library-live-surface-directory");
     await expect(directoryView).toBeVisible();
-    await expect(directoryView.getByTestId("chat-side-panel-library-file-count")).toBeVisible();
-    await expect(directoryView.getByTestId("chat-side-panel-library-file-count")).toHaveText("2 files · 1 folder");
+    await expect(directoryView).toContainText("3 items");
     await expect(directoryView).toContainText("alpha.md");
     await expect(directoryView).toContainText("bravo.md");
-    const nestedFolder = directoryView.getByRole("button", { name: /nested/ });
-    await expect(nestedFolder).toHaveAttribute("aria-expanded", "false");
+    const nestedFolder = directoryView.getByRole("button", { name: "nested", exact: true });
     await nestedFolder.click();
-    await expect(nestedFolder).toHaveAttribute("aria-expanded", "true");
+    await expect(directoryView).toContainText(`${directoryPath}/nested`);
     await expect(directoryView).toContainText("charlie.md");
 
     await directoryView.getByRole("button", { name: "charlie.md" }).click();
-    const filePathNavigation = sidePanel.getByRole("navigation", { name: "Library file path" });
-    await expect(filePathNavigation.getByText("nested", { exact: true })).toBeVisible();
-    await expect(filePathNavigation.getByText("charlie.md", { exact: true })).toBeVisible();
-    await filePathNavigation.hover();
-    await expect(page.getByTestId("chat-side-panel-library-full-path"))
-      .toContainText(`${directoryPath}/nested/charlie.md`);
-    await expect(sidePanel).toContainText("Nested file preview.");
-    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(2);
+    const fileView = activeLiveSurface.getByTestId("library-live-surface-markdown-editor");
+    await expect(fileView).toBeVisible();
+    await expect(fileView).toContainText("Nested file preview.");
+    await expect(sidePanel.getByTestId("chat-side-panel-tab")).toHaveCount(3);
+
+    // The full Library root and an empty Side Panel both use workspace queries.
+    // Refreshing the root must not inherit the Side Panel's inactive-directory state.
+    await sidePanel.getByTestId("chat-side-panel-collapse").click();
+    await page.goto(`/${organization.issuePrefix}/library`);
+    await expect(page.getByTestId("org-workspaces-files-card")).toBeVisible();
+    await page.getByTestId("side-panel-hover-edge").hover();
+    await page.getByTestId("global-side-panel-trigger").click({ force: true });
+    const emptySidePanel = page.getByTestId("chat-side-panel");
+    await expect(emptySidePanel.getByTestId("chat-side-panel-empty-state")).toBeVisible();
+
+    await page.getByTestId("org-workspaces-new-file-button").click();
+    const createRootFileDialog = page.getByRole("dialog", { name: "New file" });
+    await createRootFileDialog.getByLabel("Name").fill("cache-isolation.md");
+    await createRootFileDialog.getByRole("button", { name: "Create file" }).click();
+    await expect(page.getByText("File created")).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-files-card")).not.toContainText(
+      "Library directory target is unavailable",
+    );
+    await expect(emptySidePanel).not.toContainText("Library directory target is unavailable");
   });
 
   test("opens a Library file after a failed directory request", async ({ page }) => {

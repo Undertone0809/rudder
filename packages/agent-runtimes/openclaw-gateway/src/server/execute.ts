@@ -9,6 +9,8 @@ import {
   buildRudderEnv,
   parseObject,
   RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
+  RUDDER_PROMPT_SECTION_TAGS,
+  wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import crypto, { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
@@ -392,7 +394,10 @@ function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>):
     "Run this procedure now. Do not guess undocumented endpoints and do not ask for additional heartbeat docs.",
     "Translate the heartbeat instruction into the explicit HTTP workflow below. The listed HTTP endpoints override any CLI command guidance.",
     "",
-    RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
+    wrapPromptSection(
+      RUDDER_PROMPT_SECTION_TAGS.heartbeatInstruction,
+      RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
+    ),
     "",
     "Set these values in your run context:",
     ...envLines,

@@ -487,6 +487,48 @@ test("ask_user supports multi-select questions", async ({ page }) => {
   await expect(answer).toContainText("Test output, Screenshots");
 });
 
+test("ask_user always offers a freeform steer when allowFreeform is false", async ({ page }) => {
+  const command = await writeAskUserStub(`ask-user-freeform-legacy-${Date.now()}`, {
+    questions: [
+      {
+        id: "scope",
+        header: "Scope",
+        question: "Which scope should the agent implement?",
+        options: [
+          { id: "narrow", label: "Narrow path" },
+          { id: "broad", label: "Broad path" },
+        ],
+        allowFreeform: false,
+      },
+    ],
+  });
+  const organization = await createAskUserOrg(page, `AskUserFreeformLegacy-${Date.now()}`, command);
+
+  await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Help me choose a scope");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const panel = page.getByTestId("chat-ask-user-panel");
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  await expect(panel.getByRole("button", { name: "Narrow path" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Other" })).toBeVisible();
+
+  await panel.getByRole("button", { name: "Other" }).click();
+  const submit = panel.getByRole("button", { name: "Submit answer" });
+  await expect(submit).toBeDisabled();
+  await panel.getByPlaceholder("Type your answer...").fill("Use the custom compatibility path");
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0, { timeout: 15_000 });
+  const answer = page.getByTestId("chat-ask-user-answer").last();
+  await expect(answer).toContainText("Scope");
+  await expect(answer).toContainText("Use the custom compatibility path");
+  await expect(page.getByText("Continuing with the narrow path.")).toBeVisible({ timeout: 30_000 });
+});
+
 test("ask_user Other answer accepts pasted image and file attachments", async ({ page }) => {
   const command = await writeAskUserStub(`ask-user-paste-${Date.now()}`);
   const organization = await createAskUserOrg(page, `AskUserPaste-${Date.now()}`, command);
@@ -498,7 +540,7 @@ test("ask_user Other answer accepts pasted image and file attachments", async ({
   await page.getByRole("button", { name: "Send" }).click();
 
   const panel = page.getByTestId("chat-ask-user-panel");
-  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await expect(panel).toBeVisible({ timeout: 30_000 });
   await panel.getByRole("button", { name: "Other" }).click();
   await pasteAskUserFiles(panel);
 

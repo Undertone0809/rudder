@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidePanelProvider, useSidePanel } from "../context/SidePanelContext";
 import {
   RunConversationListItem,
+  RunListItem,
   RunRailList,
   RunsTab,
   runFeedbackTargetForContext,
@@ -298,6 +299,26 @@ describe("RunConversationListItem", () => {
 });
 
 describe("RunRailList", () => {
+  it("wraps long run reasons inside the left rail column", () => {
+    act(() => {
+      root.render(
+        <RunListItem
+          run={run({
+            id: "changes-requested-run",
+            contextSnapshot: { wakeReason: "issue_changes_requested" },
+          })}
+          isSelected={false}
+          agentId="agent-route"
+        />,
+      );
+    });
+
+    const topRow = container.querySelector<HTMLElement>("[data-testid='run-list-top-row']");
+    expect(topRow?.classList.contains("items-start")).toBe(true);
+    expect(topRow?.firstElementChild?.classList.contains("flex-wrap")).toBe(true);
+    expect(container.querySelector("[data-testid='run-list-reason']")?.textContent).toBe("Changes requested");
+  });
+
   it("renders a conversation once while keeping unlinked runs standalone", () => {
     const group = conversationEntry({ isSelected: false });
     const standalone = run({ id: "standalone-run", chatConversationId: null });

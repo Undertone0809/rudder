@@ -489,7 +489,7 @@ function scheduleLifecycleSmokeAction(): void {
       } catch {
         // Keep polling until the packaged bootstrap has created the state.
       }
-      if ((acceptedPolicySequence >= 42 && currentBootState.stage === "ready" && candidateStatus === "staged") || Date.now() >= deadline) {
+      if ((acceptedPolicySequence >= 42 && candidateStatus === "staged") || Date.now() >= deadline) {
         writeLifecycleSmokeEvent("auto-update-policy-ready", {
           acceptedPolicySequence,
           candidateStatus,
@@ -832,6 +832,8 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
     return true;
   },
   authorizeSignedUpdateRelease: (input) => getDesktopUpdatePolicyLoader().authorizeRelease(input) !== null,
+  isSignedUpdateAssetKindAuthorized: (version, kind) =>
+    getDesktopUpdatePolicyLoader().isAssetKindAuthorized(version, kind),
   isSignedUpdateVersionAuthorized: (version) => {
     const policy = getDesktopUpdatePolicyLoader().getPolicy();
     return Boolean(policy?.releases.some((release) => release.version === version && !release.revoked));

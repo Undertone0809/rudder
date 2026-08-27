@@ -25,6 +25,7 @@ import {
   resolveRudderMcpCliCommand,
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
+  RUDDER_PROMPT_SECTION_TAGS,
   asBoolean,
   asNumber,
   asString,
@@ -52,6 +53,7 @@ import {
   runChildProcess,
   selectPromptTemplate,
   shouldIncludeRuntimeHeartbeatInstructions,
+  wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -467,15 +469,13 @@ async function renderSelectedOpenCodeSkillPrompt(
     sections.push(`## Skill: ${entry.key}\n\n${content.trim()}`);
   }
   if (sections.length === 0) return "";
-  return [
-    "# Enabled Rudder Skills",
-    "",
+  return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.enabledSkills, [
     "Rudder is the source of truth for runtime skill enablement.",
     "Only skills listed in this section are enabled by Rudder for this run. OpenCode built-in/provider-native skills, Claude-compatible operator-home skills, project skills, host-global skills, bundled skills, vendor-default skills, and the current OpenCode client session may expose other capabilities, but they are not Rudder-enabled skills and must not be described as this agent's Rudder skills unless listed here.",
     "When the user asks what skills are enabled, loaded, available, or what skills you have in Rudder, answer with only the runtime skill names listed in this section. Use a plain newline-separated list. Do not use prose, bullets, Markdown, code spans, explanations, prefixes, or suffixes. If exactly one skill is listed, answer exactly that runtime skill name and nothing else. Do not list, summarize, or explain provider-native OpenCode skills, operator-home skills, project skills, host-global skills, bundled skills, vendor-default skills, or current-session capabilities in that answer.",
     "",
     sections.join("\n\n"),
-  ].join("\n");
+  ].join("\n"));
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -811,9 +811,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const instructionFrame = wrapPromptSection(
+    RUDDER_PROMPT_SECTION_TAGS.agentInstruction,
+    joinPromptSections([
+      instructionsPrefix,
+      selectedSkillPrompt,
+    ]),
+  );
   const prompt = joinPromptSections([
-    instructionsPrefix,
-    selectedSkillPrompt,
+    instructionFrame,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,

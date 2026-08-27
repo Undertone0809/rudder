@@ -224,7 +224,9 @@ describe("agent startup context prompt", () => {
       },
     });
 
-    expect(prompt).toContain("## Recent Rudder Context");
+    expect(prompt).toContain("<recent_rudder_context>");
+    expect(prompt).toContain("</recent_rudder_context>");
+    expect(prompt).not.toContain("## Recent Rudder Context");
     expect(prompt).toContain("#### today memory: 2026-06-19.md");
     expect(prompt).toContain("- Morning calibration");
     expect(prompt).toContain("#### yesterday memory: 2026-06-18.md");

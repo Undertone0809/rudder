@@ -1409,6 +1409,7 @@ describe("issue lifecycle routes", () => {
       .send({ status: "done" });
 
     expect(res.status).toBe(200);
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "in_review" }),
@@ -2429,11 +2430,7 @@ describe("issue lifecycle routes", () => {
       .send({ status: "done", comment: "Implemented the requested changes." });
 
     expect(res.status).toBe(200);
-    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      ASSIGNEE_AGENT_ID,
-      RUN_ID,
-    );
+    expect(mockIssueService.assertCheckoutOwner).not.toHaveBeenCalled();
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({ status: "in_review" }),

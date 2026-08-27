@@ -315,6 +315,21 @@ function openEntryOpenSubmenu(entryPath: string) {
   });
 }
 
+function openEntryCopySubmenu(entryPath: string) {
+  const trigger = document.querySelector<HTMLElement>(
+    `[data-testid="org-workspaces-entry-copy-submenu-${entryPath}"]`,
+  );
+  expect(trigger).toBeTruthy();
+  act(() => {
+    trigger?.dispatchEvent(new MouseEvent("pointermove", { bubbles: true }));
+    trigger?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  const submenu = document.querySelector<HTMLElement>("[data-slot='dropdown-menu-sub-content']");
+  expect(submenu).toBeTruthy();
+  return submenu;
+}
+
 describe("OrganizationWorkspaceFilesSidebar", () => {
   it("renders a workspace launcher in the sidebar header", async () => {
     const listWorkspaceLaunchTargets = vi.fn().mockResolvedValue([
@@ -446,8 +461,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar();
 
     const instructionsMenu = openEntryMenu("agents/Asher/instructions");
-    expect(instructionsMenu?.textContent).toContain("Copy link");
-    expect(instructionsMenu?.textContent).toContain("Copy absolute path");
+    expect(instructionsMenu?.textContent).toContain("Copy");
+    expect(instructionsMenu?.textContent).not.toContain("Copy link");
+    expect(instructionsMenu?.textContent).not.toContain("Copy absolute path");
     expect(instructionsMenu?.textContent).toContain("New file");
     expect(instructionsMenu?.textContent).not.toContain("Create copy");
     expect(instructionsMenu?.textContent).not.toContain("Delete");
@@ -458,8 +474,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     });
 
     const heartbeatMenu = openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
-    expect(heartbeatMenu?.textContent).toContain("Copy link");
-    expect(heartbeatMenu?.textContent).toContain("Copy absolute path");
+    expect(heartbeatMenu?.textContent).toContain("Copy");
+    expect(heartbeatMenu?.textContent).not.toContain("Copy link");
+    expect(heartbeatMenu?.textContent).not.toContain("Copy absolute path");
     expect(heartbeatMenu?.textContent).not.toContain("Create copy");
     expect(heartbeatMenu?.textContent).not.toContain("Delete");
     expect(heartbeatMenu?.textContent).not.toContain("Rename");
@@ -517,6 +534,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar();
 
     openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
+    openEntryCopySubmenu("agents/Asher/instructions/HEARTBEAT.md");
     const copyLinkItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
       .find((item) => item.textContent?.includes("Copy link"));
     expect(copyLinkItem).toBeTruthy();
@@ -531,8 +549,10 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
       title: "Library link copied",
       tone: "info",
     });
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toBeNull();
 
     openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
+    openEntryCopySubmenu("agents/Asher/instructions/HEARTBEAT.md");
     const copyAbsolutePathItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
       .find((item) => item.textContent?.includes("Copy absolute path"));
     expect(copyAbsolutePathItem).toBeTruthy();
@@ -544,9 +564,11 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(mockState.pushToast).toHaveBeenLastCalledWith(expect.objectContaining({
       title: "Absolute path copied",
     }));
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toBeNull();
 
     copyText.mockRejectedValueOnce(new Error("Clipboard denied"));
     openEntryMenu("agents/Asher/instructions/HEARTBEAT.md");
+    openEntryCopySubmenu("agents/Asher/instructions/HEARTBEAT.md");
     const failingCopyLinkItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
       .find((item) => item.textContent?.includes("Copy link"));
     expect(failingCopyLinkItem).toBeTruthy();
@@ -559,6 +581,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
       body: "Clipboard denied",
       tone: "error",
     });
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toBeNull();
   });
 
   it("copies directory Library links with the directory query", async () => {
@@ -568,6 +591,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar();
 
     openEntryMenu("agents/Asher/instructions");
+    openEntryCopySubmenu("agents/Asher/instructions");
     const copyLinkItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
       .find((item) => item.textContent?.includes("Copy link"));
     expect(copyLinkItem).toBeTruthy();
@@ -578,6 +602,7 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     expect(copyText).toHaveBeenLastCalledWith(
       "[instructions](/library?directory=agents%2FAsher%2Finstructions)",
     );
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toBeNull();
   });
 
   it("keeps delete available for ordinary workspace files", () => {
@@ -617,8 +642,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar("agents/Asher/memory/notes.md");
 
     const memoryFolderMenu = openEntryMenu("agents/Asher/memory");
-    expect(memoryFolderMenu?.textContent).toContain("Copy link");
-    expect(memoryFolderMenu?.textContent).toContain("Copy absolute path");
+    expect(memoryFolderMenu?.textContent).toContain("Copy");
+    expect(memoryFolderMenu?.textContent).not.toContain("Copy link");
+    expect(memoryFolderMenu?.textContent).not.toContain("Copy absolute path");
     expect(memoryFolderMenu?.textContent).toContain("New file");
     expect(memoryFolderMenu?.textContent).not.toContain("Create copy");
     expect(memoryFolderMenu?.textContent).not.toContain("Delete");
@@ -629,8 +655,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     });
 
     const memoryFileMenu = openEntryMenu("agents/Asher/memory/notes.md");
-    expect(memoryFileMenu?.textContent).toContain("Copy link");
-    expect(memoryFileMenu?.textContent).toContain("Copy absolute path");
+    expect(memoryFileMenu?.textContent).toContain("Copy");
+    expect(memoryFileMenu?.textContent).not.toContain("Copy link");
+    expect(memoryFileMenu?.textContent).not.toContain("Copy absolute path");
     expect(memoryFileMenu?.textContent).not.toContain("Create copy");
     expect(memoryFileMenu?.textContent).not.toContain("Delete");
     expect(memoryFileMenu?.textContent).not.toContain("Rename");
@@ -640,8 +667,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar("agents/Asher/skills/agent-helper/SKILL.md");
 
     const agentSkillsFolderMenu = openEntryMenu("agents/Asher/skills");
-    expect(agentSkillsFolderMenu?.textContent).toContain("Copy link");
-    expect(agentSkillsFolderMenu?.textContent).toContain("Copy absolute path");
+    expect(agentSkillsFolderMenu?.textContent).toContain("Copy");
+    expect(agentSkillsFolderMenu?.textContent).not.toContain("Copy link");
+    expect(agentSkillsFolderMenu?.textContent).not.toContain("Copy absolute path");
     expect(agentSkillsFolderMenu?.textContent).toContain("New file");
     expect(agentSkillsFolderMenu?.textContent).not.toContain("Create copy");
     expect(agentSkillsFolderMenu?.textContent).not.toContain("Delete");
@@ -652,8 +680,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     });
 
     const agentSkillFileMenu = openEntryMenu("agents/Asher/skills/agent-helper/SKILL.md");
-    expect(agentSkillFileMenu?.textContent).toContain("Copy link");
-    expect(agentSkillFileMenu?.textContent).toContain("Copy absolute path");
+    expect(agentSkillFileMenu?.textContent).toContain("Copy");
+    expect(agentSkillFileMenu?.textContent).not.toContain("Copy link");
+    expect(agentSkillFileMenu?.textContent).not.toContain("Copy absolute path");
     expect(agentSkillFileMenu?.textContent).not.toContain("Create copy");
     expect(agentSkillFileMenu?.textContent).not.toContain("Delete");
     expect(agentSkillFileMenu?.textContent).not.toContain("Rename");
@@ -663,8 +692,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     renderSidebar("skills/org-helper/SKILL.md");
 
     const skillsRootMenu = openEntryMenu("skills");
-    expect(skillsRootMenu?.textContent).toContain("Copy link");
-    expect(skillsRootMenu?.textContent).toContain("Copy absolute path");
+    expect(skillsRootMenu?.textContent).toContain("Copy");
+    expect(skillsRootMenu?.textContent).not.toContain("Copy link");
+    expect(skillsRootMenu?.textContent).not.toContain("Copy absolute path");
     expect(skillsRootMenu?.textContent).not.toContain("New file");
     expect(skillsRootMenu?.textContent).not.toContain("New folder");
     expect(skillsRootMenu?.textContent).not.toContain("Create copy");
@@ -676,8 +706,9 @@ describe("OrganizationWorkspaceFilesSidebar", () => {
     });
 
     const orgSkillFileMenu = openEntryMenu("skills/org-helper/SKILL.md");
-    expect(orgSkillFileMenu?.textContent).toContain("Copy link");
-    expect(orgSkillFileMenu?.textContent).toContain("Copy absolute path");
+    expect(orgSkillFileMenu?.textContent).toContain("Copy");
+    expect(orgSkillFileMenu?.textContent).not.toContain("Copy link");
+    expect(orgSkillFileMenu?.textContent).not.toContain("Copy absolute path");
     expect(orgSkillFileMenu?.textContent).not.toContain("Create copy");
     expect(orgSkillFileMenu?.textContent).not.toContain("Delete");
     expect(orgSkillFileMenu?.textContent).not.toContain("Rename");

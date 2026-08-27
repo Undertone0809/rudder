@@ -1648,11 +1648,16 @@ describe("chatAssistantService operator profile prompt injection", () => {
   });
 
   it("prepends the shared org resources section to chat prompts when present", async () => {
-    mockRunContextService.buildSceneContext.mockResolvedValueOnce(makeSceneContext({
+    const startupContextMarkdown = "<recent_rudder_context>\nprivate startup context\n</recent_rudder_context>";
+    mockRunContextService.buildSceneContext.mockResolvedValueOnce({
+      ...makeSceneContext({
         cwd: process.cwd(),
         source: "project_primary",
         orgResourcesPrompt: "## Organization Resources\n\n- Main codebase: ~/projects/rudder",
-    }));
+      }),
+      rudderStartupContext: { markdown: startupContextMarkdown },
+      rudderStartupContextMetrics: { totalChars: startupContextMarkdown.length },
+    });
 
     const svc = chatAssistantService({} as any);
 
@@ -1666,6 +1671,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
     expect(prompt).toContain("## Organization Resources");
     expect(prompt).toContain("Main codebase: ~/projects/rudder");
+    expect(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context).toMatchObject({
+      rudderStartupContext: { markdown: startupContextMarkdown },
+      rudderStartupContextMetrics: { totalChars: startupContextMarkdown.length },
+    });
   });
 
   it("includes available issue labels and labelIds schema guidance for issue proposals", async () => {

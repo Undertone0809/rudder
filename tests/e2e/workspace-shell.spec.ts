@@ -198,7 +198,10 @@ test.describe("Workspace shell", () => {
 
     await filesCard.getByRole("button", { name: "agents", exact: true }).hover();
     await page.getByTestId("org-workspaces-entry-more-agents").click();
-    const copyAbsolutePathItem = page.getByRole("menuitem", { name: "Copy absolute path" });
+    const copySubmenuTrigger = page.getByTestId("org-workspaces-entry-copy-submenu-agents");
+    await expect(copySubmenuTrigger).toBeVisible();
+    await copySubmenuTrigger.hover();
+    const copyAbsolutePathItem = page.getByRole("menuitem", { name: "Copy absolute path", exact: true });
     await expect(copyAbsolutePathItem).toBeVisible();
     const menuBox = await page.locator('[data-slot="dropdown-menu-content"]').boundingBox();
     const copyItemMetrics = await copyAbsolutePathItem.evaluate((element) => ({
@@ -864,7 +867,8 @@ test.describe("Workspace shell", () => {
     await projectFolderRow.hover();
     await page.getByTestId(`org-workspaces-entry-more-projects/${project.urlKey}`).click();
     let treeMenu = page.getByRole("menu");
-    await expect(treeMenu.getByRole("menuitem", { name: "Copy absolute path" })).toBeVisible();
+    await treeMenu.getByRole("menuitem", { name: "Copy", exact: true }).hover();
+    await expect(page.getByRole("menuitem", { name: "Copy absolute path", exact: true })).toBeVisible();
     await expect(treeMenu.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
     await page.keyboard.press("Escape");
 
@@ -1250,7 +1254,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("org-workspaces-path-breadcrumb").getByRole("button", { name: "root-created.md" })).toBeVisible();
 
     await filesCard.getByRole("button", { name: "docs", exact: true }).click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New file" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
@@ -1259,7 +1263,7 @@ test.describe("Workspace shell", () => {
 
     await page.getByTestId("org-workspaces-entry-more-draft.md").click();
     await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveClass(/will-change/);
-    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New file" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "New folder" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
@@ -1279,7 +1283,7 @@ test.describe("Workspace shell", () => {
     await expect(filesCard.getByRole("button", { name: "renamed-draft.md", exact: true })).toHaveCount(0);
 
     await page.getByTestId("org-workspaces-entry-more-artifacts").click();
-    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New file" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
@@ -1304,7 +1308,7 @@ test.describe("Workspace shell", () => {
     await expect(filesCard.getByRole("button", { name: "menu-folder", exact: true })).toBeVisible();
 
     await page.getByTestId("org-workspaces-entry-more-agents").click();
-    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New file" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "New folder" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
@@ -1314,7 +1318,7 @@ test.describe("Workspace shell", () => {
     const jadeWorkspaceButton = filesCard.getByRole("button", { name: "Jade", exact: true });
     await expect(jadeWorkspaceButton).toBeVisible();
     await page.getByTestId(`org-workspaces-entry-more-agents/${originalWorkspaceKey}`).click();
-    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New file" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "New folder" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
@@ -1329,7 +1333,7 @@ test.describe("Workspace shell", () => {
     await jadeWorkspaceButton.click();
     await expect(filesCard.getByRole("button", { name: "instructions", exact: true })).toBeVisible();
     await page.getByTestId(`org-workspaces-entry-more-agents/${originalWorkspaceKey}/instructions`).click();
-    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New file" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
@@ -1361,7 +1365,7 @@ test.describe("Workspace shell", () => {
     const tabMenu = page.getByTestId("org-workspaces-tab-context-menu");
     await expect(tabMenu).toBeVisible();
     await expect(tabMenu).toHaveClass(/motion-chat-composer-menu-pop/);
-    await expect(tabMenu.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(tabMenu.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: /Open in IDE|Open in Cursor/ })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: "Close", exact: true })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: "Close others" })).toBeVisible();

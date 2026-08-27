@@ -550,6 +550,8 @@ export function isInternalAgentInstructionText(text: string): boolean {
   const firstLine = trimmed.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim().toLowerCase() ?? "";
   const normalized = compactWhitespace(trimmed).toLowerCase();
 
+  if (firstLine === "<rudder_agent_instruction>") return true;
+  if (firstLine === "<rudder_agent_operating_contract>") return true;
   if (firstLine === "rudder agent operating contract") return true;
   if (normalized.includes("rudder protocol by delivering a progress update")) return true;
   if (

@@ -2589,10 +2589,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
         },
         context: {
           rudderScene: "heartbeat",
-          rudderResourcesPrompt: "## Your Current Automations\n\n- Daily inbox review",
+          rudderResourcesPrompt: "<current_automations>\n- Daily inbox review\n</current_automations>",
           rudderWorkspace: {
-            orgResourcesPrompt: "## Your Current Automations\n\n- Daily inbox review",
-            resourcesPrompt: "## Your Current Automations\n\n- Daily inbox review",
+            orgResourcesPrompt: "<current_automations>\n- Daily inbox review\n</current_automations>",
+            resourcesPrompt: "<current_automations>\n- Daily inbox review\n</current_automations>",
           },
         },
         authToken: "run-jwt-token",
@@ -2612,20 +2612,21 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.prompt).toContain("# Agent Soul");
       expect(capture.prompt).toContain("# Agent Tools");
       expect(capture.prompt).toContain("# Tacit Memory");
-      expect(capture.prompt).toContain("# Enabled Rudder Skills");
+      expect(capture.prompt).toContain("<rudder_agent_instruction>");
+      expect(capture.prompt).toContain("<enabled_rudder_skills>");
       expect(capture.prompt).toContain("Only skills listed in this section are enabled by Rudder for this run.");
       expect(capture.prompt).toContain("- rudder");
       expect(capture.prompt).not.toContain("- rudder: rudder/rudder");
-      expect(capture.prompt).toContain("## Your Current Automations");
-      expect(capture.prompt.match(/## Your Current Automations/g)).toHaveLength(1);
-      expect(capture.prompt).toContain("# Rudder Heartbeat Instruction");
+      expect(capture.prompt).toContain("<current_automations>");
+      expect(capture.prompt.match(/<current_automations>/g)).toHaveLength(1);
+      expect(capture.prompt).toContain("<rudder_heartbeat_instruction>");
       expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
       expect(capture.prompt.indexOf("# Agent Instructions")).toBeLessThan(capture.prompt.indexOf("# Agent Soul"));
       expect(capture.prompt.indexOf("# Agent Soul")).toBeLessThan(capture.prompt.indexOf("# Agent Tools"));
       expect(capture.prompt.indexOf("# Agent Tools")).toBeLessThan(capture.prompt.indexOf("# Tacit Memory"));
-      expect(capture.prompt.indexOf("# Tacit Memory")).toBeLessThan(capture.prompt.indexOf("## Your Current Automations"));
-      expect(capture.prompt.indexOf("## Your Current Automations")).toBeLessThan(
-        capture.prompt.indexOf("# Rudder Heartbeat Instruction"),
+      expect(capture.prompt.indexOf("# Tacit Memory")).toBeLessThan(capture.prompt.indexOf("<current_automations>"));
+      expect(capture.prompt.indexOf("<current_automations>")).toBeLessThan(
+        capture.prompt.indexOf("<rudder_heartbeat_instruction>"),
       );
       expect(capture.prompt).not.toContain("## Current Time");
       expect(capture.prompt).not.toContain("Instruction load time:");
@@ -2634,9 +2635,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(agentInstructionStack).toContain("# Agent Soul");
       expect(agentInstructionStack).toContain("# Agent Tools");
       expect(agentInstructionStack).toContain("# Tacit Memory");
-      expect(agentInstructionStack).toContain("# Enabled Rudder Skills");
+      expect(agentInstructionStack).toContain("<rudder_agent_instruction>");
+      expect(agentInstructionStack).toContain("<enabled_rudder_skills>");
       expect(agentInstructionStack).not.toContain("## Agent Instruction:");
-      expect(agentInstructionStack).toContain("## Your Current Automations");
+      expect(agentInstructionStack).toContain("<current_automations>");
       expect(agentInstructionStack).not.toContain("[startup context omitted from persisted prompt]");
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
@@ -2718,9 +2720,9 @@ describe("codex execute", { timeout: 20_000 }, () => {
         expect(result.exitCode).toBe(0);
         expect(result.errorMessage).toBeNull();
         const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-        expect(capture.prompt).toContain("# Rudder Agent Operating Contract");
+        expect(capture.prompt).toContain("<rudder_agent_operating_contract>");
         expect(capture.prompt).toContain("Respond to the wake comment.");
-        expect(capture.prompt).not.toContain("# Rudder Heartbeat Instruction");
+        expect(capture.prompt).not.toContain("<rudder_heartbeat_instruction>");
         expect(commandNotes).not.toContain("Loaded Rudder heartbeat instructions from runtime code");
         expect(promptMetrics.runtimeHeartbeatChars).toBe(0);
         expect(promptMetrics.heartbeatChars).toBe(0);
@@ -2786,9 +2788,9 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.prompt).toContain("# Rudder Agent Operating Contract");
+      expect(capture.prompt).toContain("<rudder_agent_operating_contract>");
       expect(capture.prompt).toContain("Work on the assigned issue.");
-      expect(capture.prompt).not.toContain("# Rudder Heartbeat Instruction");
+      expect(capture.prompt).not.toContain("<rudder_heartbeat_instruction>");
       expect(commandNotes).not.toContain("Loaded Rudder heartbeat instructions from runtime code");
       expect(promptMetrics.runtimeHeartbeatChars).toBe(0);
       expect(promptMetrics.heartbeatChars).toBe(0);

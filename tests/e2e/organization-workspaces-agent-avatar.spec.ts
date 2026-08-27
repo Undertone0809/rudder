@@ -130,7 +130,9 @@ test.describe("Organization workspaces agent avatar", () => {
       await page.getByTestId(`org-workspaces-entry-more-${entryPath}`).click();
 
       const menu = page.getByRole("menu");
-      await expect(menu).toContainText("Copy absolute path");
+      await expect(menu.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
+      await menu.getByRole("menuitem", { name: "Copy", exact: true }).hover();
+      await expect(page.getByRole("menuitem", { name: "Copy absolute path", exact: true })).toBeVisible();
       if (options?.includesNewFile) {
         await expect(menu).toContainText("New file");
       }

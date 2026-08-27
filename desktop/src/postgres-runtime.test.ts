@@ -512,6 +512,23 @@ describe("desktop PostgreSQL runtime payload", () => {
     expect(childEnv[RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV]).toBeUndefined();
   });
 
+  it("preserves packaged update smoke release overrides in child environments", () => {
+    const childEnv = createDesktopUpdateChildEnvironment({
+      resourcesPath: "/Applications/Rudder.app/Contents/Resources",
+      env: {
+        RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+        RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL: "http://127.0.0.1:4321",
+        RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL: "http://127.0.0.1:4321",
+      },
+    });
+
+    expect(childEnv).toMatchObject({
+      RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+      RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL: "http://127.0.0.1:4321",
+      RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL: "http://127.0.0.1:4321",
+    });
+  });
+
   it("preserves complete Desktop-managed PostgreSQL paths for target runtime staging", async () => {
     const resourcesRoot = await makeTempRoot();
     const managedBinDir = await makePostgresBinDir(resourcesRoot, "darwin-arm64");

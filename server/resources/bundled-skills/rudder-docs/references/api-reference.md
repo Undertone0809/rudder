@@ -155,10 +155,12 @@ Use the incremental `after` form when you already know the thread.
 - `GET /api/orgs/:orgId/costs/by-project`
 
 `POST /api/orgs/:orgId/agent-hires` is the governed Agent creation route behind
-`rudder agent hire`. It returns `approval: null` for direct creation or an Agent
-in `pending_approval` plus the approval record when organization policy requires
-review. Normal runtime work should follow [Agent creation](agent-creation.md)
-and the installed CLI instead of calling this route directly.
+`rudder agent hire`. It returns `approval: null` for direct creation. A
+board-originated hire stays direct even when `requireBoardApprovalForNewAgents`
+is enabled; an agent-originated hire under that policy returns an Agent in
+`pending_approval` plus exactly one approval record. Normal runtime work should
+follow [Agent creation](agent-creation.md) and the installed CLI instead of
+calling this route directly.
 
 The member directory is a read-only, organization-scoped view for Agent
 context. It returns only active visible members with `name`, `type`, `role`,

@@ -15,6 +15,7 @@ export type DesktopAutoUpdateTargetIdentity = {
   profile: string;
   instanceId: string;
   sourceReleaseDigest: string;
+  assetKind?: "full" | "shell";
 };
 
 export type DesktopAutoUpdateCandidate = DesktopAutoUpdateTargetIdentity & {
@@ -93,12 +94,16 @@ function parseCandidate(value: unknown): DesktopAutoUpdateCandidate {
     || !["staged", "claimed", "applying", "committed", "quarantined"].includes(String(status))
     || (value.assetName !== undefined && (typeof value.assetName !== "string" || value.assetName.includes("/")))
     || (value.assetChecksum !== undefined && !isSha256Digest(value.assetChecksum))
+    || (value.assetKind !== undefined && value.assetKind !== "full" && value.assetKind !== "shell")
     || (value.stagedArtifactPath !== undefined && (typeof value.stagedArtifactPath !== "string" || !path.isAbsolute(value.stagedArtifactPath)))
     || (value.stagedArtifactDigest !== undefined && !isSha256Digest(value.stagedArtifactDigest))
   ) {
     throw new Error("Rudder automatic update candidate is invalid; recovery is required.");
   }
-  return value as unknown as DesktopAutoUpdateCandidate;
+  return {
+    ...value,
+    assetKind: value.assetKind === "shell" ? "shell" : "full",
+  } as unknown as DesktopAutoUpdateCandidate;
 }
 
 function parsePreparation(value: unknown): DesktopAutoUpdatePreparation {
@@ -317,6 +322,7 @@ export function targetIdentityDigest(target: DesktopAutoUpdateTargetIdentity): s
     profile: target.profile,
     instanceId: target.instanceId,
     sourceReleaseDigest: target.sourceReleaseDigest,
+    assetKind: target.assetKind ?? "full",
   };
   return createHash("sha256")
     .update(JSON.stringify(Object.keys(identity).sort().reduce<Record<string, unknown>>((result, key) => {

@@ -1058,7 +1058,9 @@ describe("loadAgentInstructionsPrefix", () => {
       onLog: async () => {},
     });
 
-    expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+    expect(loaded.prefix).toContain("<rudder_agent_operating_contract>");
+    expect(loaded.prefix).toContain("</rudder_agent_operating_contract>");
+    expect(loaded.prefix).not.toContain("# Rudder Agent Operating Contract");
     expect(loaded.prefix).toContain(RUDDER_AGENT_OPERATING_CONTRACT);
     expect(loaded.prefix).toContain("installed but not enabled");
     expect(loaded.prefix).toContain("library:projects/<project-key>/");
@@ -1113,7 +1115,8 @@ describe("loadAgentInstructionsPrefix", () => {
       onLog: async () => {},
     });
 
-    expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+    expect(loaded.prefix).toContain("<rudder_agent_operating_contract>");
+    expect(loaded.prefix).toContain("<rudder_heartbeat_instruction>");
     expect(loaded.prefix).toContain(RUDDER_AGENT_HEARTBEAT_INSTRUCTION);
     expect(loaded.prefix).toContain("platform-owned heartbeat/self-check pipeline");
     expect(loaded.commandNotes).toEqual([
@@ -1152,8 +1155,9 @@ describe("loadAgentInstructionsPrefix", () => {
         },
       });
 
-      expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+      expect(loaded.prefix).toContain("<rudder_agent_operating_contract>");
       expect(loaded.prefix).toContain("# Agent Instructions");
+      expect(loaded.prefix).toContain("<AGENTS.md>\n# Agent Instructions\n</AGENTS.md>");
       expect(loaded.prefix).toContain("The above AGENTS.md instruction file was loaded from $AGENT_HOME/instructions.");
       expect(loaded.prefix).toContain("relative file references from $AGENT_HOME/instructions/");
       expect(loaded.prefix).not.toContain("Tacit Memory");
@@ -1171,6 +1175,49 @@ describe("loadAgentInstructionsPrefix", () => {
         stream: "stdout",
         chunk: expect.stringContaining("[rudder] Loaded agent instructions file: $AGENT_HOME/instructions/AGENTS.md"),
       }));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a stable escaped wrapper for a non-canonical configured entry file", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-custom-entry-"));
+    const instructionsPath = path.join(root, "instructions", "custom role.md");
+    const contents = "    generic entry code block\n\nKeep <angle brackets> and Markdown unchanged.\n";
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, contents, "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        onLog: async () => {},
+      });
+
+      expect(loaded.prefix).toContain(
+        `<agent_instruction_file path="$AGENT_HOME/instructions/custom role.md">\n${contents.trimEnd()}\n</agent_instruction_file>`,
+      );
+      expect(loaded.prefix).not.toContain("<custom role.md>");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves leading blank lines and indented Markdown in canonical instruction files", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-leading-markdown-"));
+    const instructionsPath = path.join(root, "instructions", "SOUL.md");
+    const contents = "\n    canonical code block\n\nKeep the leading bytes.\n";
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, contents, "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        onLog: async () => {},
+      });
+
+      expect(loaded.prefix).toContain(
+        `<SOUL.md>\n${contents.trimEnd()}\n</SOUL.md>`,
+      );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -1200,6 +1247,10 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.prefix).toContain("# Persona");
       expect(loaded.prefix).toContain("# Tools");
       expect(loaded.prefix).toContain("# Tacit Memory");
+      expect(loaded.prefix).toContain("<AGENTS.md>\n# Agent Instructions\n</AGENTS.md>");
+      expect(loaded.prefix).toContain("<SOUL.md>\n# Persona\n\nYou are QA.\n</SOUL.md>");
+      expect(loaded.prefix).toContain("<TOOLS.md>\n# Tools\n\n- Use rudder.\n</TOOLS.md>");
+      expect(loaded.prefix).toContain("<MEMORY.md>\n# Tacit Memory\n\n- Prefer concise updates.\n</MEMORY.md>");
       expect(loaded.prefix).not.toContain("# Heartbeat");
       expect(loaded.prefix).not.toContain("## Current Time");
       expect(loaded.prefix).toContain("The above AGENTS.md, SOUL.md, TOOLS.md, MEMORY.md instruction files were loaded from $AGENT_HOME/instructions.");
@@ -1240,16 +1291,16 @@ describe("loadAgentInstructionsPrefix", () => {
       const loaded = await loadAgentInstructionsPrefix({
         instructionsFilePath: instructionsPath,
         includeHeartbeatInstructions: true,
-        instructionContextSections: ["## Recent Rudder Context\n\n#### today memory: 2026-06-21.md\n- Calibrate prompt stack"],
+        instructionContextSections: ["<recent_rudder_context>\n#### today memory: 2026-06-21.md\n- Calibrate prompt stack\n</recent_rudder_context>"],
         onLog: async () => {},
       });
 
-      const operatingContractIndex = loaded.prefix.indexOf("# Rudder Agent Operating Contract");
+      const operatingContractIndex = loaded.prefix.indexOf("<rudder_agent_operating_contract>");
       const soulIndex = loaded.prefix.indexOf("# Persona");
       const toolsIndex = loaded.prefix.indexOf("# Tool Notes");
       const memoryIndex = loaded.prefix.indexOf("# Memory Notes");
-      const recentContextIndex = loaded.prefix.indexOf("## Recent Rudder Context");
-      const heartbeatIndex = loaded.prefix.indexOf("# Rudder Heartbeat Instruction");
+      const recentContextIndex = loaded.prefix.indexOf("<recent_rudder_context>");
+      const heartbeatIndex = loaded.prefix.indexOf("<rudder_heartbeat_instruction>");
 
       expect(operatingContractIndex).toBeGreaterThanOrEqual(0);
       expect(soulIndex).toBeGreaterThan(operatingContractIndex);
@@ -1261,6 +1312,9 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(loaded.prefix).toContain("# Persona");
       expect(loaded.prefix).toContain("# Tool Notes");
       expect(loaded.prefix).toContain("# Memory Notes");
+      expect(loaded.prefix).toContain("<SOUL.md>\n# Persona");
+      expect(loaded.prefix).toContain("<TOOLS.md>\n# Tool Notes");
+      expect(loaded.prefix).toContain("<MEMORY.md>\n# Memory Notes");
       expect(loaded.prefix).not.toContain("## Agent Instruction:");
       expect(loaded.prefix).not.toContain("Agent Instruction: SOUL.md");
       expect(loaded.prefix).not.toContain("The above SOUL.md content was loaded");
@@ -1288,7 +1342,7 @@ describe("loadAgentInstructionsPrefix", () => {
       });
 
       expect(loaded.prefix).toContain("# Persona");
-      expect(loaded.prefix).toContain("# Rudder Heartbeat Instruction");
+      expect(loaded.prefix).toContain("<rudder_heartbeat_instruction>");
       expect(loaded.prefix).not.toContain("# Heartbeat\n\n- Check assignments.");
       expect(loaded.commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
       expect(loaded.commandNotes).not.toContain("Loaded supplemental agent heartbeat notes from $AGENT_HOME/instructions/HEARTBEAT.md");
@@ -1313,8 +1367,8 @@ describe("loadAgentInstructionsPrefix", () => {
     try {
       const instructionContext = prepareAgentInstructionRuntimeContext({
         rudderWorkspace: {
-          orgResourcesPrompt: "## Your Current Automations\n\n- Morning review",
-          resourcesPrompt: "## Your Current Automations\n\n- Morning review",
+          orgResourcesPrompt: "<current_automations>\n- Morning review\n</current_automations>",
+          resourcesPrompt: "<current_automations>\n- Morning review\n</current_automations>",
         },
       });
       const loaded = await loadAgentInstructionsPrefix({
@@ -1324,13 +1378,13 @@ describe("loadAgentInstructionsPrefix", () => {
         onLog: async () => {},
       });
 
-      const operatingContractIndex = loaded.prefix.indexOf("# Rudder Agent Operating Contract");
+      const operatingContractIndex = loaded.prefix.indexOf("<rudder_agent_operating_contract>");
       const agentContractIndex = loaded.prefix.indexOf("# Agent Contract");
       const soulIndex = loaded.prefix.indexOf("# Agent Soul");
       const toolsIndex = loaded.prefix.indexOf("# Agent Tools");
       const memoryIndex = loaded.prefix.indexOf("# Agent Memory");
-      const automationsIndex = loaded.prefix.indexOf("## Your Current Automations");
-      const heartbeatIndex = loaded.prefix.indexOf("# Rudder Heartbeat Instruction");
+      const automationsIndex = loaded.prefix.indexOf("<current_automations>");
+      const heartbeatIndex = loaded.prefix.indexOf("<rudder_heartbeat_instruction>");
 
       expect(operatingContractIndex).toBeGreaterThanOrEqual(0);
       expect(agentContractIndex).toBeGreaterThan(operatingContractIndex);
@@ -1340,7 +1394,7 @@ describe("loadAgentInstructionsPrefix", () => {
       expect(automationsIndex).toBeGreaterThan(memoryIndex);
       expect(heartbeatIndex).toBeGreaterThan(automationsIndex);
       expect(loaded.prefix).not.toContain("## Current Time");
-      expect(loaded.prefix).toMatch(/# Rudder Heartbeat Instruction[\s\S]*runtime\.$/);
+      expect(loaded.prefix).toMatch(/<rudder_heartbeat_instruction>[\s\S]*runtime\.\n<\/rudder_heartbeat_instruction>$/);
       expect(renderTemplate(
         "{{context.rudderWorkspace.orgResourcesPrompt}}",
         { context: instructionContext.promptContext },
@@ -1351,7 +1405,7 @@ describe("loadAgentInstructionsPrefix", () => {
   });
 
   it("moves all documented resource prompt aliases into the stable instruction stack", async () => {
-    const canonicalPrompt = "## Your Current Automations\n\n- Canonical";
+    const canonicalPrompt = "<current_automations>\n- Canonical\n</current_automations>";
     const topLevelOnly = prepareAgentInstructionRuntimeContext({
       rudderResourcesPrompt: canonicalPrompt,
     });
@@ -1382,7 +1436,7 @@ describe("loadAgentInstructionsPrefix", () => {
   });
 
   it("prefers canonical resourcesPrompt and only clears matching resource prompt aliases", async () => {
-    const canonicalPrompt = "## Project Context Resources\n\n- Canonical library context";
+    const canonicalPrompt = "<project_context_resources>\n- Canonical library context\n</project_context_resources>";
     const legacyPrompt = "## Legacy Resources\n\n- Legacy fallback";
     const prepared = prepareAgentInstructionRuntimeContext({
       rudderResourcesPrompt: canonicalPrompt,
@@ -1419,7 +1473,7 @@ describe("loadAgentInstructionsPrefix", () => {
         },
       });
 
-      expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+      expect(loaded.prefix).toContain("<rudder_agent_operating_contract>");
       expect(loaded.prefix).not.toContain("# Heartbeat");
       expect(loaded.commandNotes).toContain("Ignored legacy HEARTBEAT.md instructions file: $AGENT_HOME/instructions/HEARTBEAT.md");
       expect(loaded.heartbeatFilePath).toBeNull();
@@ -1450,7 +1504,7 @@ describe("loadAgentInstructionsPrefix", () => {
         onLog: async () => {},
       });
 
-      expect(loaded.prefix).toContain("# Rudder Heartbeat Instruction");
+      expect(loaded.prefix).toContain("<rudder_heartbeat_instruction>");
       expect(loaded.prefix).not.toContain("# Heartbeat\n\n- Check assignments.");
       expect(loaded.commandNotes).toContain("Loaded Rudder heartbeat instructions from runtime code");
       expect(loaded.commandNotes).toContain("Ignored legacy HEARTBEAT.md instructions file: $AGENT_HOME/instructions/HEARTBEAT.md");
@@ -1478,7 +1532,7 @@ describe("loadAgentInstructionsPrefix", () => {
         },
       });
 
-      expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+      expect(loaded.prefix).toContain("<rudder_agent_operating_contract>");
       expect(loaded.prefix).not.toContain("# Agent Instructions");
       expect(loaded.readFailed).toBe(true);
       expect(loaded.commandNotes).toContain(

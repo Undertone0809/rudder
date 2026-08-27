@@ -1,4 +1,4 @@
-import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
+import { RUDDER_PROMPT_SECTION_TAGS, wrapPromptSection, type RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import { automations, automationTriggers, issues, projects, projectWorkspaces } from "@rudderhq/db";
 import {
@@ -17,10 +17,10 @@ import { logger } from "../middleware/logger.js";
 import { agentInstructionsService } from "./agent-instructions.js";
 import { agentStartupContextService } from "./agent-startup-context.js";
 import {
-  type BrowserCapabilityServiceOptions,
   isBrowserSkillSelectionKey,
   resolveBrowserCapability,
   resolveBrowserCapabilityDeployment,
+  type BrowserCapabilityServiceOptions,
 } from "./browser-capability.js";
 import { computerBrokerRegistry } from "./computer-broker.js";
 import { resolveComputerUseCapability } from "./computer-capability.js";
@@ -199,10 +199,7 @@ function appendMarkdownTable(lines: string[], headers: string[], rows: string[][
 
 function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
   if (resources.length === 0) return "";
-  const lines = [
-    "## Project Context Resources",
-    "",
-  ];
+  const lines: string[] = [];
   appendMarkdownTable(lines, [
     "Priority",
     "Role",
@@ -235,7 +232,7 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
       );
     });
   }
-  return lines.join("\n").trim();
+  return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.projectContextResources, lines.join("\n"));
 }
 
 function buildCompiledResourcesPrompt(
@@ -257,8 +254,6 @@ function buildCustomIntegrationToolsPrompt(
 ) {
   if (customIntegrationTools.length === 0) return "";
   const lines = [
-    "## Connected Custom Integration Tools",
-    "",
     "These tools are configured for this agent. Use only Rudder-mediated tool calls for them; never ask the operator for stored secrets or credentials.",
     "",
   ];
@@ -277,20 +272,18 @@ function buildCustomIntegrationToolsPrompt(
     markdownCodeCell(tool.externalToolName),
     markdownTableCell(tool.description),
   ]));
-  return lines.join("\n").trim();
+  return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.connectedCustomIntegrationTools, lines.join("\n"));
 }
 
 function buildAgentAutomationsPrompt(
   agentAutomations: AgentAutomationPromptItem[],
 ) {
   if (agentAutomations.length === 0) return "";
-  return [
-    "## Your Current Automations",
-    "",
+  return wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.currentAutomations, [
     "These are your current automations; use the ID to inspect details when needed.",
     "",
     tableForAgentAutomations(agentAutomations),
-  ].join("\n");
+  ].join("\n"));
 }
 
 function tableForAgentAutomations(agentAutomations: AgentAutomationPromptItem[]) {

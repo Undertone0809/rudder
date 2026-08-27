@@ -43,6 +43,7 @@ import {
   resolveDesktopReleaseTag,
   resolveDesktopReleaseVersion,
   resolveDesktopShellAssetName,
+  resolveDesktopSmokeReleaseBaseUrls,
   runtimeSupportsDesktopShellAssets,
   selectChecksumAsset,
   selectChecksummedDesktopAssetCandidate,
@@ -838,12 +839,39 @@ describe("desktop start command helpers", () => {
       ),
     ).toBe("https://github.com/Undertone0809/rudder/releases/download/canary/v0.3.1-canary.2/SHASUMS256.txt");
     expect(
+      buildGithubReleaseAssetDownloadUrl(
+        "Undertone0809/rudder",
+        "v99.0.0",
+        "SHASUMS256.txt",
+        "http://127.0.0.1:4321",
+      ),
+    ).toBe("http://127.0.0.1:4321/Undertone0809/rudder/releases/download/v99.0.0/SHASUMS256.txt");
+    expect(
       buildReleaseMirrorAssetDownloadUrl(
         "https://rudder-releases-cn-12345.cos.ap-shanghai.myqcloud.com/",
         "canary/v0.3.1-canary.2",
         "SHASUMS256.txt",
       ),
     ).toBe("https://rudder-releases-cn-12345.cos.ap-shanghai.myqcloud.com/releases/canary/v0.3.1-canary.2/SHASUMS256.txt");
+  });
+
+  it("uses release URL overrides only for the packaged automatic update smoke", () => {
+    expect(resolveDesktopSmokeReleaseBaseUrls({})).toEqual({
+      apiBaseUrl: "https://api.github.com",
+      downloadBaseUrl: "https://github.com",
+    });
+    expect(resolveDesktopSmokeReleaseBaseUrls({
+      RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+      RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL: "http://127.0.0.1:4321/",
+      RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL: "http://127.0.0.1:4322///",
+    })).toEqual({
+      apiBaseUrl: "http://127.0.0.1:4321",
+      downloadBaseUrl: "http://127.0.0.1:4322",
+    });
+    expect(() => resolveDesktopSmokeReleaseBaseUrls({
+      RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+      RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL: "file:///tmp/releases",
+    })).toThrow("must use HTTP or HTTPS");
   });
 
   it("resolves desktop download source from options and environment", () => {
@@ -2284,6 +2312,115 @@ describe("runtime install helpers", () => {
     }
   });
 
+  it("bounds Desktop runtime preparation and removes an incomplete target cache", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-deadline-test."));
+    const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+    try {
+      const timeoutError = Object.assign(new Error("spawnSync npm ETIMEDOUT"), { code: "ETIMEDOUT" });
+      const spawnSyncImpl = vi.fn(() => ({
+        status: null,
+        signal: "SIGTERM",
+        stdout: "",
+        stderr: "",
+        error: timeoutError,
+      }));
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        timeoutMs: 42,
+        now: () => 0,
+        cleanupIncompleteOnFailure: true,
+      })).rejects.toMatchObject({ name: "RuntimeInstallError" });
+
+      expect(spawnSyncImpl).toHaveBeenCalledWith(
+        expect.stringMatching(/npm(?:\.cmd)?$/),
+        expect.arrayContaining(["install", "@rudderhq/server@1.2.3"]),
+        expect.objectContaining({ timeout: 42 }),
+      );
+      await vi.waitFor(async () => {
+        await expect(access(cacheDir)).rejects.toThrow();
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not delay Desktop full fallback while incomplete cache cleanup is stalled", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-cleanup-deadline-test."));
+    let releaseCleanup!: () => void;
+    let markCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const stalledCleanup = vi.fn(async (_workDir: string) => {
+      markCleanupStarted();
+      await new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    });
+    try {
+      const timeoutError = Object.assign(new Error("spawnSync npm ETIMEDOUT"), { code: "ETIMEDOUT" });
+      const spawnSyncImpl = vi.fn(() => ({
+        status: null,
+        signal: "SIGTERM",
+        stdout: "",
+        stderr: "",
+        error: timeoutError,
+      }));
+      const startedAt = Date.now();
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        timeoutMs: 42,
+        now: () => 0,
+        cleanupIncompleteOnFailure: true,
+        removeIncompleteCache: stalledCleanup,
+      })).rejects.toMatchObject({ name: "RuntimeInstallError" });
+
+      expect(Date.now() - startedAt).toBeLessThan(250);
+      await cleanupStarted;
+      expect(stalledCleanup).toHaveBeenCalledWith(resolveRuntimeCacheDir("1.2.3", root));
+    } finally {
+      releaseCleanup?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not remove a metadata-complete target cache after a bounded repair failure", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-deadline-preserve-test."));
+    const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    try {
+      await mkdir(cacheDir, { recursive: true });
+      await writeFile(path.join(cacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      writeRuntimePackageSync(cacheDir, "@rudderhq/server", "1.2.3");
+      await writeFile(path.join(cacheDir, RUNTIME_METADATA_FILE), JSON.stringify({
+        version: 1,
+        packageName: "@rudderhq/server",
+        packageVersion: "1.2.3",
+        installedAt: "now",
+      }), "utf8");
+      process.env.RUDDER_POSTGRES_BIN_DIR = path.join(root, "invalid-postgres");
+      const spawnSyncImpl = vi.fn();
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        timeoutMs: 42,
+        now: () => 0,
+        cleanupIncompleteOnFailure: true,
+        preparePostgresPayload: true,
+      })).rejects.toMatchObject({ name: "RuntimeInstallError" });
+
+      await expect(readRuntimeInstallMetadata(cacheDir)).resolves.toMatchObject({ packageVersion: "1.2.3" });
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("forces optional dependencies into runtime installs for platform binaries", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-install-flags-test."));
     try {
@@ -2825,6 +2962,60 @@ describe("runtime install helpers", () => {
     }
   });
 
+  it("returns promptly for full fallback when PostgreSQL download cleanup is stalled", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-postgres-cleanup-fallback-test."));
+    const archivePath = path.join(root, "invalid-postgresql-18.4.zip");
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousManagedPostgresBinDir = process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+    const previousArchiveUrl = process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+    const previousArchiveSha256 = process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256;
+    let releaseCleanup!: () => void;
+    let markCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const stalledCleanup = vi.fn(async (_workDir: string) => {
+      markCleanupStarted();
+      await new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    });
+    try {
+      delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      await writeFile(archivePath, "invalid archive bytes", "utf8");
+      process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = pathToFileURL(archivePath).href;
+      process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256 = "0".repeat(64);
+      const startedAt = Date.now();
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: path.join(root, "home"),
+        spawnSyncImpl: vi.fn(() => ({ status: 0, stdout: "added runtime", stderr: "" })) as never,
+        postgresVersionProbe: () => "PostgreSQL 18.4",
+        preparePostgresPayload: true,
+        pruneRuntimeCache: false,
+        timeoutMs: 5_000,
+        cleanupIncompleteOnFailure: true,
+        cleanupPostgresDownloadWorkDir: stalledCleanup,
+      })).rejects.toThrow("SHA-256 mismatch");
+
+      expect(Date.now() - startedAt).toBeLessThan(250);
+      await cleanupStarted;
+      expect(stalledCleanup).toHaveBeenCalledTimes(1);
+      expect(stalledCleanup.mock.calls[0]?.[0]).toContain(
+        path.join("runtime-payloads", ".downloads", "postgres-18.4-"),
+      );
+    } finally {
+      releaseCleanup?.();
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousManagedPostgresBinDir === undefined) delete process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR = previousManagedPostgresBinDir;
+      if (previousArchiveUrl === undefined) delete process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
+      else process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = previousArchiveUrl;
+      if (previousArchiveSha256 === undefined) delete process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256;
+      else process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256 = previousArchiveSha256;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the embedded PostgreSQL fallback until packaged health verification", async () => {
     const platformPackage = currentEmbeddedPostgresPlatformPackage();
     if (!platformPackage) return;
@@ -3150,6 +3341,51 @@ describe("runtime install helpers", () => {
       expect(result.cacheDir).toBe(resolveRuntimeCacheDir("latest", root));
       expect(result.output).toBe("added 1 package");
       expect(spawnSyncImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves latest and live caches when exact-version fallback is disabled", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-no-fallback-test."));
+    const targetCacheDir = resolveRuntimeCacheDir("1.2.3-missing", root);
+    try {
+      const latestCacheDir = await writeRuntimeCacheEntry(root, "latest", {
+        installedAt: "2026-08-27T00:00:00.000Z",
+        payload: "latest-preserved",
+      });
+      const liveCacheDir = await writeRuntimeCacheEntry(root, "1.2.2", {
+        installedAt: "2026-08-26T00:00:00.000Z",
+        payload: "live-preserved",
+      });
+      const descriptorDir = path.join(root, "instances", "live", "runtime");
+      await mkdir(descriptorDir, { recursive: true });
+      await writeFile(path.join(descriptorDir, "server.json"), JSON.stringify({
+        instanceId: "live",
+        pid: process.pid,
+        version: "1.2.2",
+      }));
+      const spawnSyncImpl = vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "npm error code ETARGET\nnpm error notarget No matching version found for @rudderhq/server@1.2.3-missing.",
+      }));
+
+      await expect(ensureRuntimeInstalled({
+        version: "1.2.3-missing",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+        allowLatestFallback: false,
+        cleanupIncompleteOnFailure: true,
+        pruneRuntimeCache: false,
+      })).rejects.toMatchObject({ name: "RuntimeInstallError" });
+
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(1);
+      await expect(readFile(path.join(latestCacheDir, "payload.txt"), "utf8")).resolves.toBe("latest-preserved");
+      await expect(readFile(path.join(liveCacheDir, "payload.txt"), "utf8")).resolves.toBe("live-preserved");
+      await vi.waitFor(async () => {
+        await expect(access(targetCacheDir)).rejects.toThrow();
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
