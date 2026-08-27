@@ -94,7 +94,7 @@ export const agentRunsApi = {
       `/workspace-operations/${operationId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
       { cache: "no-store" },
     ),
-  cancel: (runId: string) => api.post<void>(`/agent-runs/${runId}/cancel`, {}),
+  cancel: (runId: string) => api.post<AgentRun>(`/agent-runs/${runId}/cancel`, {}),
   retry: (runId: string) => api.post<AgentRun>(`/agent-runs/${runId}/retry`, {}),
   liveRunsForIssue: (issueId: string) =>
     api.get<LiveRunForIssue[]>(`/issues/${issueId}/live-runs`),

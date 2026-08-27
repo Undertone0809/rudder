@@ -752,4 +752,12 @@ export const zhCN: Messages = {
   "chat.annotations.added": "已添加批注",
   "chat.annotations.removed": "已移除批注",
   "newIssue.agentRequest.accepted": "已发送给 Agent，完成后会在 Inbox 通知你",
+  "newIssue.agentRequest.undo": "撤销",
+  "newIssue.agentRequest.undoing": "正在取消...",
+  "newIssue.agentRequest.cancelling": "正在取消本次 Agent Run...",
+  "newIssue.agentRequest.undoUnavailable": "该 Agent Run 已无法取消",
+  "newIssue.agentRequest.runFinished": "该 Agent Run 已处于 {{status}} 状态。",
+  "newIssue.agentRequest.runUnavailable": "该 Agent Run 已不可用。",
+  "newIssue.agentRequest.undoFailed": "无法取消 Agent Run",
+  "newIssue.agentRequest.undoFailedBody": "Agent Run 可能仍在运行，请重试撤销。",
 };

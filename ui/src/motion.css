@@ -266,6 +266,12 @@
   initial-value: 0deg;
 }
 
+@property --motion-toast-countdown-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .motion-new-issue-dialog {
   view-transition-name: new-issue-dialog;
   transition:
@@ -363,6 +369,41 @@
   opacity: 0.72;
   --motion-live-surface-angle: 0deg;
   animation: rudder-live-surface 2200ms var(--motion-ease-standard) infinite;
+}
+
+.motion-toast-countdown {
+  position: relative;
+}
+
+.motion-toast-countdown::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: -1px;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 2px;
+  background:
+    conic-gradient(
+      from var(--motion-toast-countdown-angle),
+      transparent 0deg 284deg,
+      color-mix(in oklab, var(--accent-base) 22%, transparent) 306deg,
+      color-mix(in oklab, var(--accent-base) 82%, white) 330deg,
+      color-mix(in oklab, var(--accent-base) 30%, transparent) 350deg,
+      transparent 360deg
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.86;
+  --motion-toast-countdown-angle: 0deg;
+  animation: rudder-toast-countdown var(--motion-toast-countdown-duration) linear both;
+  animation-delay: calc(-1 * var(--motion-toast-countdown-elapsed, 0ms));
 }
 
 .motion-live-dot {
@@ -841,6 +882,15 @@
   }
 }
 
+@keyframes rudder-toast-countdown {
+  from {
+    --motion-toast-countdown-angle: 0deg;
+  }
+  to {
+    --motion-toast-countdown-angle: 360deg;
+  }
+}
+
 @keyframes rudder-live-dot {
   0% {
     opacity: 0.42;
@@ -1106,6 +1156,7 @@
   .motion-new-issue-created-banner,
   .motion-state-flash,
   .motion-live-surface::before,
+  .motion-toast-countdown::before,
   .motion-live-dot::after,
   .motion-kanban-card[data-live="true"],
   .motion-kanban-card[data-just-dropped="true"],
@@ -1162,6 +1213,11 @@
 
   .motion-live-surface::before {
     opacity: 0.48;
+  }
+
+  .motion-toast-countdown::before {
+    opacity: 0.62;
+    --motion-toast-countdown-angle: 0deg;
   }
 
   .motion-draft-issue-card[data-deleting="true"] {

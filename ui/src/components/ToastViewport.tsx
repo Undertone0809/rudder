@@ -1,7 +1,7 @@
 import { semanticDotToneClasses, semanticTextToneClasses } from "@/components/ui/semanticTones";
 import { Link } from "@/lib/router";
 import { Download, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useToast, type ToastItem } from "../context/ToastContext";
 import { cn } from "../lib/utils";
@@ -25,10 +25,12 @@ function ToastActionControl({
   toast: ToastItem;
   onDismiss: (id: string) => void;
 }) {
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   if (!toast.action) return null;
 
   const className = cn(
-    "mt-2 inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] px-3 text-xs font-semibold transition-colors",
+    "mt-2 inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] px-3 text-xs font-semibold transition-colors disabled:cursor-wait disabled:opacity-60",
     toast.icon === "download"
       ? "bg-foreground text-background hover:bg-foreground/90"
       : cn("underline-offset-4 hover:opacity-90", semanticTextToneClasses[toast.tone]),
@@ -38,17 +40,24 @@ function ToastActionControl({
     return (
       <button
         type="button"
-        onClick={() => {
-          Promise.resolve()
-            .then(() => toast.action?.onClick?.())
-            .then(() => onDismiss(toast.id))
-            .catch(() => {
-              // The action owns its user-facing error. Keep the toast available for retry.
-            });
+        disabled={pending}
+        aria-busy={pending}
+        onClick={async () => {
+          if (pendingRef.current) return;
+          pendingRef.current = true;
+          setPending(true);
+          try {
+            await toast.action?.onClick?.();
+            onDismiss(toast.id);
+          } catch {
+            // The action owns its user-facing error. Keep the toast available for retry.
+            pendingRef.current = false;
+            setPending(false);
+          }
         }}
         className={className}
       >
-        {toast.action.label}
+        {pending ? toast.action.pendingLabel ?? toast.action.label : toast.action.label}
       </button>
     );
   }
@@ -76,6 +85,9 @@ function AnimatedToast({
   onDismiss: (id: string) => void;
 }) {
   const [visible, setVisible] = useState(false);
+  const [countdownElapsedMs] = useState(() => toast.countdown
+    ? Math.min(toast.ttlMs, Math.max(0, Date.now() - toast.createdAt))
+    : 0);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setVisible(true));
@@ -84,8 +96,17 @@ function AnimatedToast({
 
   return (
     <li
+      data-toast-id={toast.id}
+      data-countdown={toast.countdown ? "true" : undefined}
+      style={toast.countdown
+        ? ({
+          "--motion-toast-countdown-duration": `${toast.ttlMs}ms`,
+          "--motion-toast-countdown-elapsed": `${countdownElapsedMs}ms`,
+        } as CSSProperties)
+        : undefined}
       className={cn(
         "pointer-events-auto overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-popover text-popover-foreground shadow-[0_16px_40px_rgba(15,23,42,0.16)] backdrop-blur-xl transition-[transform,opacity] duration-200 ease-out dark:shadow-[0_16px_44px_rgba(0,0,0,0.45)]",
+        toast.countdown && "motion-toast-countdown",
         visible
           ? "translate-y-0 opacity-100"
           : "translate-y-3 opacity-0",

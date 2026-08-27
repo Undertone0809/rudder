@@ -12,11 +12,14 @@ import { ToastViewport } from "./ToastViewport";
 
 let cleanupFn: (() => void) | null = null;
 
-function renderToastHarness() {
+function renderToastHarness(options: {
+  countdown?: boolean;
+  onAction?: () => void | Promise<void>;
+} = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  const onAction = vi.fn();
+  const onAction = vi.fn(options.onAction);
 
   function Harness() {
     const { pushToast } = useToast();
@@ -28,10 +31,13 @@ function renderToastHarness() {
           title: "New version available",
           body: "v0.2.25 is ready to download.",
           tone: "info",
-          persistent: true,
+          persistent: options.countdown ? false : true,
+          ttlMs: options.countdown ? 12_000 : undefined,
+          countdown: options.countdown,
           icon: "download",
           action: {
-            label: "Download update",
+            label: options.countdown ? "Undo" : "Download update",
+            pendingLabel: options.countdown ? "Cancelling..." : undefined,
             onClick: onAction,
           },
         })}
@@ -96,5 +102,73 @@ describe("ToastViewport", () => {
 
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).not.toContain("New version available");
+  });
+
+  it("ties opt-in countdown motion to the toast TTL and blocks duplicate actions while pending", async () => {
+    let resolveAction: (() => void) | null = null;
+    const actionPromise = new Promise<void>((resolve) => {
+      resolveAction = resolve;
+    });
+    const { container, onAction } = renderToastHarness({
+      countdown: true,
+      onAction: () => actionPromise,
+    });
+
+    act(() => {
+      container.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await act(async () => Promise.resolve());
+    const toast = document.body.querySelector('[data-toast-id="desktop-update-available"]') as HTMLElement | null;
+    expect(toast?.dataset.countdown).toBe("true");
+    expect(toast?.className).toContain("motion-toast-countdown");
+    expect(toast?.style.getPropertyValue("--motion-toast-countdown-duration")).toBe("12000ms");
+    expect(toast?.style.getPropertyValue("--motion-toast-countdown-elapsed")).toMatch(/^\d+ms$/);
+
+    const action = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Undo");
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      action?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(action?.disabled).toBe(true);
+    expect(action?.textContent).toBe("Cancelling...");
+
+    await act(async () => {
+      resolveAction?.();
+      await actionPromise;
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).not.toContain("New version available");
+  });
+
+  it("keeps a failed action notification available for retry", async () => {
+    const { container, onAction } = renderToastHarness({
+      countdown: true,
+      onAction: async () => {
+        throw new Error("runtime did not acknowledge cancellation");
+      },
+    });
+
+    act(() => {
+      container.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => Promise.resolve());
+
+    const action = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Undo");
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("New version available");
+    expect(action?.disabled).toBe(false);
+    expect(action?.textContent).toBe("Undo");
   });
 });
