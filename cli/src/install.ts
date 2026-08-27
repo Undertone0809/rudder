@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { resolveNpmCommandInvocation } from "./npm-command.js";
 
 export const CLI_NPM_PACKAGE_NAME = "@rudderhq/cli";
 export const CLI_BIN_NAME = "rudder";
@@ -81,9 +82,10 @@ export function getGlobalInstalledPackageVersion(
   execFileSyncImpl: typeof execFileSync = execFileSync,
 ): string | null {
   try {
+    const npm = resolveNpmCommandInvocation();
     const output = execFileSyncImpl(
-      process.platform === "win32" ? "npm.cmd" : "npm",
-      ["list", "--global", "--depth=0", "--json", packageName],
+      npm.command,
+      [...npm.args, "list", "--global", "--depth=0", "--json", packageName],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -176,10 +178,11 @@ function runNpmGlobalInstall(
   spawnSyncImpl: typeof spawnSync,
   args: string[],
 ): SpawnSyncResultLike {
-  return spawnSyncImpl(process.platform === "win32" ? "npm.cmd" : "npm", args, {
+  const npm = resolveNpmCommandInvocation();
+  return spawnSyncImpl(npm.command, [...npm.args, ...args], {
     encoding: "utf8",
     stdio: ["inherit", "pipe", "pipe"],
-    ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+    ...(process.platform === "win32" ? { windowsHide: true } : {}),
   });
 }
 
