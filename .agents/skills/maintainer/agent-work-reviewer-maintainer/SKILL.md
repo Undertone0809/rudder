@@ -210,10 +210,13 @@ Map each claim to actual evidence:
 - black-box verifier evidence establishes terminal acceptance
 - commit, CI, and release evidence establish handoff or publication state
 
-For final handoff, verify that `product-acceptance-verifier-maintainer` returned
-`PASS` for the same candidate fingerprint, runtime, organization/data identity,
-and acceptance packet. `FAIL`, `QUESTION`, missing proof, or candidate drift
-blocks final `accept`. Reviewer approval never upgrades a missing verifier pass.
+For final handoff where `AGENTS.md` requires terminal verification, verify that
+`product-acceptance-verifier-maintainer` returned `PASS` for the same candidate
+fingerprint, runtime, organization/data identity, and acceptance packet.
+`FAIL`, `QUESTION`, missing required proof, or candidate drift blocks final
+`accept`. When verifier eligibility is not met, record the verifier as not
+required and judge the final candidate from the applicable checks and reviewer
+evidence. Do not invent a black-box surface merely to obtain a verdict.
 
 ## Findings And Convergence
 
@@ -278,10 +281,13 @@ A final handoff verdict can be `accept` only when all are true:
 1. The implementation solves the stated user job and matches current contracts.
 2. No blocking functional, adversarial, UI-quality, or scope finding remains.
 3. Required checks and current rendered evidence passed.
-4. A distinct verifier returned `PASS` for the exact current candidate.
+4. When `AGENTS.md` requires terminal verification, a distinct verifier returned
+   `PASS` for the exact current candidate; otherwise the verifier is explicitly
+   recorded as not required.
 5. No relevant code, artifact, build, runtime, organization, or data drift
-   occurred after that verification.
+   occurred after the final applicable checks, review, and any required
+   verification.
 
-If review requests any implementation change, the verifier lease becomes stale.
-After the fix, rebuild or restart as needed, rerun the verifier on the new
-candidate, then run the final reviewer round again.
+If review requests any implementation change, prior review and verifier evidence
+becomes stale. After the fix, rebuild or restart as needed, rerun any required
+verifier on the new candidate, then run the final reviewer round again.
