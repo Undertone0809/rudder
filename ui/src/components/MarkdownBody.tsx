@@ -934,62 +934,78 @@ export function MarkdownBody({
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
   const { mentions } = useMarkdownMentions();
-  const agentMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "agent")
-      .map((mention) => [mention.agentId ?? mention.id.replace(/^agent:/, ""), mention] as const),
-  );
-  const projectMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "project" && mention.projectId)
-      .map((mention) => [mention.projectId!, mention] as const),
-  );
-  const issueMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "issue" && mention.issueId)
-      .map((mention) => [mention.issueId!, mention] as const),
-  );
-  const issueMentions = mentions.filter((mention) => mention.kind === "issue" && mention.issueId);
-  const automationMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "automation" && mention.automationId)
-      .map((mention) => [mention.automationId!, mention] as const),
-  );
-  const chatMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "chat" && mention.chatConversationId)
-      .map((mention) => [mention.chatConversationId!, mention] as const),
-  );
-  const libraryDocMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "library_doc" && mention.libraryDocumentId)
-      .map((mention) => [mention.libraryDocumentId!, mention] as const),
-  );
-  const libraryEntryMentionById = new Map(
-    mentions
-      .filter((mention) => mention.kind === "library_file" && mention.libraryEntryId)
-      .map((mention) => [mention.libraryEntryId!, mention] as const),
-  );
-  const libraryFileMentionByPath = new Map(
-    mentions
-      .filter((mention) => mention.kind === "library_file" && mention.libraryFilePath)
-      .map((mention) => [mention.libraryFilePath!, mention] as const),
-  );
-  const libraryDirectoryMentionByPath = new Map(
-    mentions
-      .filter((mention) => mention.kind === "library_directory" && mention.libraryDirectoryPath)
-      .map((mention) => [mention.libraryDirectoryPath!, mention] as const),
-  );
-  const skillPreviewByHref = new Map(
-    (skillReferences ?? [])
-      .map((preview) => [normalizeSkillReferenceLookupKey(preview.href), preview] as const)
-      .filter(([key]) => key.length > 0),
-  );
-  const skillPreviewByLabel = new Map(
-    (skillReferences ?? [])
-      .map((preview) => [normalizeSkillReferenceLookupKey(preview.label), preview] as const)
-      .filter(([key]) => key.length > 0),
-  );
+  const mentionLookups = useMemo(() => ({
+    agentMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "agent")
+        .map((mention) => [mention.agentId ?? mention.id.replace(/^agent:/, ""), mention] as const),
+    ),
+    projectMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "project" && mention.projectId)
+        .map((mention) => [mention.projectId!, mention] as const),
+    ),
+    issueMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "issue" && mention.issueId)
+        .map((mention) => [mention.issueId!, mention] as const),
+    ),
+    issueMentions: mentions.filter((mention) => mention.kind === "issue" && mention.issueId),
+    automationMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "automation" && mention.automationId)
+        .map((mention) => [mention.automationId!, mention] as const),
+    ),
+    chatMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "chat" && mention.chatConversationId)
+        .map((mention) => [mention.chatConversationId!, mention] as const),
+    ),
+    libraryDocMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "library_doc" && mention.libraryDocumentId)
+        .map((mention) => [mention.libraryDocumentId!, mention] as const),
+    ),
+    libraryEntryMentionById: new Map(
+      mentions
+        .filter((mention) => mention.kind === "library_file" && mention.libraryEntryId)
+        .map((mention) => [mention.libraryEntryId!, mention] as const),
+    ),
+    libraryFileMentionByPath: new Map(
+      mentions
+        .filter((mention) => mention.kind === "library_file" && mention.libraryFilePath)
+        .map((mention) => [mention.libraryFilePath!, mention] as const),
+    ),
+    libraryDirectoryMentionByPath: new Map(
+      mentions
+        .filter((mention) => mention.kind === "library_directory" && mention.libraryDirectoryPath)
+        .map((mention) => [mention.libraryDirectoryPath!, mention] as const),
+    ),
+  }), [mentions]);
+  const {
+    agentMentionById,
+    automationMentionById,
+    chatMentionById,
+    issueMentionById,
+    issueMentions,
+    libraryDirectoryMentionByPath,
+    libraryDocMentionById,
+    libraryEntryMentionById,
+    libraryFileMentionByPath,
+    projectMentionById,
+  } = mentionLookups;
+  const { skillPreviewByHref, skillPreviewByLabel } = useMemo(() => ({
+    skillPreviewByHref: new Map(
+      (skillReferences ?? [])
+        .map((preview) => [normalizeSkillReferenceLookupKey(preview.href), preview] as const)
+        .filter(([key]) => key.length > 0),
+    ),
+    skillPreviewByLabel: new Map(
+      (skillReferences ?? [])
+        .map((preview) => [normalizeSkillReferenceLookupKey(preview.label), preview] as const)
+        .filter(([key]) => key.length > 0),
+    ),
+  }), [skillReferences]);
   const organizationPrefix = currentOrganizationPrefixFromLocation();
   const { normalizedChildren, sourceMap } = useMemo(() => {
     const renderedSource = linkBareAgentMentions(
@@ -1021,7 +1037,7 @@ export function MarkdownBody({
     event.clipboardData.setData("text/plain", markdownSource);
     event.preventDefault();
   };
-  const handleMarkdownLinkClick = (
+  const handleMarkdownLinkClick = useCallback((
     event: MouseEvent<HTMLAnchorElement>,
     href: string,
     label: string,
@@ -1038,7 +1054,7 @@ export function MarkdownBody({
     if (!internalRoute) return;
     event.preventDefault();
     navigateInternalAppRoute(internalRoute);
-  };
+  }, [onLinkClick, organizationPrefix]);
   const renderPre = useCallback(({ node, children: preChildren, ...preProps }: ComponentProps<"pre"> & ExtraProps) => {
     const mermaidSource = extractMermaidSource(preChildren);
     if (mermaidSource) {
@@ -1080,54 +1096,116 @@ export function MarkdownBody({
     }
     return <pre {...preProps} {...sourceAttributes}>{preChildren}</pre>;
   }, [enableCodeBlockCopy, resolvedTheme, sourceAttributesForNode]);
-  const components: Components = {
+  const renderStateRef = useRef({
+    agentMentionById,
+    automationMentionById,
+    chatMentionById,
+    enableImagePreview,
+    handleMarkdownLinkClick,
+    issueMentionById,
+    issueMentions,
+    libraryDirectoryMentionByPath,
+    libraryDocMentionById,
+    libraryEntryMentionById,
+    libraryFileMentionByPath,
+    onLinkClick,
+    organizationPrefix,
+    projectMentionById,
+    renderListItem,
+    renderPre,
+    resolveImageSrc,
+    skillPreviewByHref,
+    skillPreviewByLabel,
+    sourceAttributesForNode,
+  });
+  renderStateRef.current = {
+    agentMentionById,
+    automationMentionById,
+    chatMentionById,
+    enableImagePreview,
+    handleMarkdownLinkClick,
+    issueMentionById,
+    issueMentions,
+    libraryDirectoryMentionByPath,
+    libraryDocMentionById,
+    libraryEntryMentionById,
+    libraryFileMentionByPath,
+    onLinkClick,
+    organizationPrefix,
+    projectMentionById,
+    renderListItem,
+    renderPre,
+    resolveImageSrc,
+    skillPreviewByHref,
+    skillPreviewByLabel,
+    sourceAttributesForNode,
+  };
+  const components = useMemo<Components>(() => ({
     p: ({ node, children: paragraphChildren, ...paragraphProps }) => (
-      <p {...paragraphProps} {...sourceAttributesForNode(node)}>{paragraphChildren}</p>
+      <p {...paragraphProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{paragraphChildren}</p>
     ),
     h1: ({ node, children: headingChildren, ...headingProps }) => (
-      <h1 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h1>
+      <h1 {...headingProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{headingChildren}</h1>
     ),
     h2: ({ node, children: headingChildren, ...headingProps }) => (
-      <h2 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h2>
+      <h2 {...headingProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{headingChildren}</h2>
     ),
     h3: ({ node, children: headingChildren, ...headingProps }) => (
-      <h3 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h3>
+      <h3 {...headingProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{headingChildren}</h3>
     ),
     h4: ({ node, children: headingChildren, ...headingProps }) => (
-      <h4 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h4>
+      <h4 {...headingProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{headingChildren}</h4>
     ),
     h5: ({ node, children: headingChildren, ...headingProps }) => (
-      <h5 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h5>
+      <h5 {...headingProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{headingChildren}</h5>
     ),
     h6: ({ node, children: headingChildren, ...headingProps }) => (
-      <h6 {...headingProps} {...sourceAttributesForNode(node)}>{headingChildren}</h6>
+      <h6 {...headingProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{headingChildren}</h6>
     ),
     strong: ({ node, children: strongChildren, ...strongProps }) => (
-      <strong {...strongProps} {...sourceAttributesForNode(node)}>{strongChildren}</strong>
+      <strong {...strongProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{strongChildren}</strong>
     ),
     em: ({ node, children: emphasisChildren, ...emphasisProps }) => (
-      <em {...emphasisProps} {...sourceAttributesForNode(node)}>{emphasisChildren}</em>
+      <em {...emphasisProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{emphasisChildren}</em>
     ),
     del: ({ node, children: deletedChildren, ...deletedProps }) => (
-      <del {...deletedProps} {...sourceAttributesForNode(node)}>{deletedChildren}</del>
+      <del {...deletedProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{deletedChildren}</del>
     ),
     code: ({ node, children: codeChildren, ...codeProps }) => (
-      <code {...codeProps} {...sourceAttributesForNode(node)}>{codeChildren}</code>
+      <code {...codeProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{codeChildren}</code>
     ),
-    li: renderListItem,
+    li: (props) => renderStateRef.current.renderListItem(props),
     table: ({ node, children: tableChildren, ...tableProps }) => (
       <div className="rudder-markdown-table-scroll">
-        <table {...tableProps} {...sourceAttributesForNode(node)}>{tableChildren}</table>
+        <table {...tableProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{tableChildren}</table>
       </div>
     ),
     th: ({ node, children: cellChildren, ...cellProps }) => (
-      <th {...cellProps} {...sourceAttributesForNode(node)}>{cellChildren}</th>
+      <th {...cellProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{cellChildren}</th>
     ),
     td: ({ node, children: cellChildren, ...cellProps }) => (
-      <td {...cellProps} {...sourceAttributesForNode(node)}>{cellChildren}</td>
+      <td {...cellProps} {...renderStateRef.current.sourceAttributesForNode(node)}>{cellChildren}</td>
     ),
-    pre: renderPre,
+    pre: (props) => renderStateRef.current.renderPre(props),
     a: ({ node, href, children: linkChildren }) => {
+      const {
+        agentMentionById,
+        automationMentionById,
+        chatMentionById,
+        handleMarkdownLinkClick,
+        issueMentionById,
+        issueMentions,
+        libraryDirectoryMentionByPath,
+        libraryDocMentionById,
+        libraryEntryMentionById,
+        libraryFileMentionByPath,
+        onLinkClick,
+        organizationPrefix,
+        projectMentionById,
+        skillPreviewByHref,
+        skillPreviewByLabel,
+        sourceAttributesForNode,
+      } = renderStateRef.current;
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {
         const fallbackMentionLabel = mentionDisplayLabel(stripMentionChipLabelPrefix(flattenText(linkChildren)));
@@ -1324,30 +1402,31 @@ export function MarkdownBody({
         </a>
       );
     },
-  };
-  components.img = ({ node: _node, src, alt, ...imgProps }) => {
-    const resolved = src && resolveImageSrc ? resolveImageSrc(src) : null;
-    const imageSrc = resolved ?? src ?? "";
-    if (enableImagePreview && imageSrc) {
+    img: ({ node: _node, src, alt, ...imgProps }) => {
+      const { enableImagePreview, resolveImageSrc } = renderStateRef.current;
+      const resolved = src && resolveImageSrc ? resolveImageSrc(src) : null;
+      const imageSrc = resolved ?? src ?? "";
+      if (enableImagePreview && imageSrc) {
+        return (
+          <InspectableImage
+            {...imgProps}
+            src={imageSrc}
+            alt={alt ?? ""}
+            name={alt?.trim() || "Markdown image"}
+            previewTestId="markdown-body-image-preview-dialog"
+            previewTitleFallback="Image preview"
+          />
+        );
+      }
       return (
-        <InspectableImage
+        <img
           {...imgProps}
           src={imageSrc}
           alt={alt ?? ""}
-          name={alt?.trim() || "Markdown image"}
-          previewTestId="markdown-body-image-preview-dialog"
-          previewTitleFallback="Image preview"
         />
       );
-    }
-    return (
-      <img
-        {...imgProps}
-        src={imageSrc}
-        alt={alt ?? ""}
-      />
-    );
-  };
+    },
+  }), []);
 
   return (
     <>

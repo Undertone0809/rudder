@@ -297,6 +297,33 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("preserves rendered image nodes across unrelated parent rerenders", () => {
+    function Harness() {
+      const [renderCount, setRenderCount] = useState(0);
+      return (
+        <ThemeProvider>
+          <button type="button" onClick={() => setRenderCount((count) => count + 1)}>
+            Rerender {renderCount}
+          </button>
+          <MarkdownBody onLinkClick={() => false}>
+            {"![Evidence](/api/attachments/stable/content)"}
+          </MarkdownBody>
+        </ThemeProvider>
+      );
+    }
+
+    const container = render(<Harness />);
+    const initialImage = container.querySelector("img");
+    expect(initialImage).toBeTruthy();
+
+    act(() => {
+      container.querySelector("button")?.click();
+    });
+
+    expect(container.querySelector("img")).toBe(initialImage);
+    expect(initialImage?.isConnected).toBe(true);
+  });
+
   it("stores raw source offsets alongside rendered offsets after response normalization", () => {
     const source = "Plan\\n\\n-[]任务\\n<br />\\nDone";
     const container = render(

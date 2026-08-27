@@ -1640,3 +1640,74 @@ test("keeps the mobile issue comment composer compact, growing, and bounded", as
     element.scrollHeight - element.scrollTop - element.clientHeight
   ))).toBeLessThanOrEqual(1);
 });
+
+test("preserves issue description images across background refresh and scrolling", async ({ page }) => {
+  test.setTimeout(180_000);
+  const orgResponse = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Image-Stability-${Date.now()}` },
+  });
+  expect(orgResponse.ok()).toBe(true);
+  const organization = await orgResponse.json() as { id: string; issuePrefix: string };
+  const description = [
+    "## Image stability fixture",
+    "![Evidence](/android-chrome-512x512.png)",
+    ...Array.from(
+      { length: 80 },
+      (_, paragraphIndex) => `Description paragraph ${paragraphIndex + 1}.`,
+    ),
+  ].join("\n\n");
+  const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Issue description image stability fixture",
+      description,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueResponse.ok()).toBe(true);
+  const issue = await issueResponse.json() as { id: string; identifier?: string | null };
+  const issuePath = `/api/issues/${issue.identifier ?? issue.id}`;
+  let issueRefreshCount = 0;
+  page.on("response", (response) => {
+    if (response.request().method() === "GET" && new URL(response.url()).pathname === issuePath) {
+      issueRefreshCount += 1;
+    }
+  });
+
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+  const images = page.locator(".rudder-markdown img");
+  await expect(images).toHaveCount(1, { timeout: 90_000 });
+  const refreshCountAfterLoad = issueRefreshCount;
+  await images.first().evaluate(() => {
+    const stabilityWindow = window as typeof window & { __issueDescriptionImages?: Element[] };
+    stabilityWindow.__issueDescriptionImages = Array.from(
+      document.querySelectorAll(".rudder-markdown img"),
+    );
+  });
+
+  await expect.poll(() => issueRefreshCount, { timeout: 10_000 }).toBeGreaterThan(refreshCountAfterLoad);
+  const imageStability = () => images.first().evaluate(() => {
+    const stabilityWindow = window as typeof window & { __issueDescriptionImages?: Element[] };
+    const initialImages = stabilityWindow.__issueDescriptionImages ?? [];
+    const currentImages = Array.from(document.querySelectorAll(".rudder-markdown img"));
+    return {
+      connected: initialImages.filter((image) => image.isConnected).length,
+      current: currentImages.length,
+      same: currentImages.filter((image, index) => image === initialImages[index]).length,
+    };
+  });
+  expect(await imageStability()).toEqual({ connected: 1, current: 1, same: 1 });
+
+  const issueScrollRoot = page.getByTestId("issue-detail-main-scroll");
+  await issueScrollRoot.evaluate((element) => {
+    element.scrollTop = Math.min(200, element.scrollHeight - element.clientHeight);
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await page.waitForTimeout(100);
+  await issueScrollRoot.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+
+  expect(await imageStability()).toEqual({ connected: 1, current: 1, same: 1 });
+});
