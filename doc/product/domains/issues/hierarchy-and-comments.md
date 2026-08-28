@@ -15,6 +15,7 @@ related_code:
   - ui/src/components/IssueProperties.tsx
   - ui/src/components/CommentThread.tsx
   - ui/src/components/CommentThread.submit.ts
+  - ui/src/components/CommentComposer.tsx
   - ui/src/i18n/locales/en.ts
   - ui/src/i18n/locales/zh-CN.ts
 related_tests:
@@ -22,6 +23,7 @@ related_tests:
   - tests/e2e/issue-comment-mentions.spec.ts
   - tests/e2e/issue-comment-mention-boundary.spec.ts
   - tests/e2e/issue-comment-send-confirmation.spec.ts
+  - tests/e2e/issue-comment-pending-agent-wakes.spec.ts
   - server/src/__tests__/issue-comment-reopen-routes.test.ts
   - ui/src/components/CommentThread.test.tsx
   - ui/src/context/I18nContext.test.ts
@@ -107,6 +109,11 @@ Product model:
   or Library links; rendering belongs to collaboration contracts.
 - Comment creation and editing are issue-local evidence; wakeup eligibility belongs to
   `ROUTING.ATTENTION.001` and `ROUTING.COMMENT.WAKE.001`.
+- While composing a new comment, every valid Agent mention exposes whether that
+  Agent will start when the comment is sent. The operator may cancel one Agent
+  without deleting the visible mention or changing other Agent targets. A
+  cancelled mention remains a readable Agent reference and may be restored
+  before submission.
 
 Flow:
 
@@ -117,6 +124,10 @@ Flow:
    while confirming sends the unchanged comment body. A valid wake mention
    bypasses this guard. A reopen comment that will wake an eligible Agent
    assignee follows the explicit reopen path and is not blocked by this guard.
+   The composer derives its pending and cancelled Agent states from the current
+   draft on every edit, deduplicates repeated mentions by Agent identity, and
+   preserves those states when submission fails. Successful submission clears
+   them with the accepted draft.
 3. Rudder writes the comment and records `issue.comment_added` activity.
 4. Rudder parses directed agent mentions and explicit reopen intent.
 5. Routing decides which agents, if any, should wake and with what source.
@@ -147,6 +158,9 @@ Invariants:
   removing a mention does not wake the removed agent.
 - Adding a mention again after a prior edit removed it is a new directed
   request and may wake that agent again.
+- Cancelling a pending Agent start changes only that Agent's wake intent. The
+  visible reference, surrounding comment body, and other Agent wake intents
+  remain unchanged, including when the same Agent appears more than once.
 - Reopen-via-comment is explicit state/workflow evidence, not a hidden status
   mutation.
 - Timeline disclosure must not make collaboration evidence unreachable. An
@@ -165,6 +179,8 @@ Related code:
 
 - `server/src/routes/issues.comments-attachments.ts`
 - `ui/src/components/CommentThread.tsx`
+- `ui/src/components/CommentComposer.tsx`
+- `packages/shared/src/project-mentions.ts`
 - `ui/src/components/CommentThread.timeline.ts`
 - `ui/src/components/CommentThreadTimelineRows.tsx`
 - `ui/src/components/IssueTimelineDisclosure.tsx`
@@ -178,6 +194,8 @@ Related tests:
 - `server/src/__tests__/issue-comment-reopen-routes.test.ts`
 - `tests/e2e/issue-comment-mentions.spec.ts`
 - `tests/e2e/issue-comment-mention-boundary.spec.ts`
+- `tests/e2e/issue-comment-pending-agent-wakes.spec.ts`
+- `ui/src/components/CommentComposer.test.tsx`
 - `tests/e2e/thread-pressure.spec.ts`
 - `ui/src/components/CommentThread.test.tsx`
 - `ui/src/components/issue-timeline-disclosure.test.ts`

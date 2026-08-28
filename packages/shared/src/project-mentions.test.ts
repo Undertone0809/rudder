@@ -32,6 +32,7 @@ import {
   parseLibraryEntryMentionHref,
   parseLibraryFileMentionHref,
   parseProjectMentionHref,
+  setAgentMentionIntent,
 } from "./project-mentions.js";
 
 describe("project-mentions", () => {
@@ -104,6 +105,26 @@ describe("project-mentions", () => {
       .toEqual(["agent-reference", "agent-wake"]);
     expect(extractAgentWakeMentionIds(`[@Reference](${referenceHref}) [@Wake](${wakeHref})`))
       .toEqual(["agent-wake"]);
+  });
+
+  it("changes one Agent mention intent without changing labels, other Agents, or code", () => {
+    const markdown = [
+      "[Noah](agent://agent-noah?intent=wake) and [Noah again](agent://agent-noah?intent=wake)",
+      "[Sage](agent://agent-sage?intent=wake)",
+      "`[Noah code](agent://agent-noah?intent=wake)`",
+      "```md\n[Noah fenced](agent://agent-noah?intent=wake)\n```",
+    ].join("\n");
+
+    const cancelled = setAgentMentionIntent(markdown, "agent-noah", "reference");
+    expect(cancelled).toContain("[Noah](agent://agent-noah)");
+    expect(cancelled).toContain("[Noah again](agent://agent-noah)");
+    expect(cancelled).toContain("[Sage](agent://agent-sage?intent=wake)");
+    expect(cancelled).toContain("`[Noah code](agent://agent-noah?intent=wake)`");
+    expect(cancelled).toContain("[Noah fenced](agent://agent-noah?intent=wake)");
+    expect(extractAgentWakeMentionIds(cancelled)).toEqual(["agent-sage"]);
+
+    const restored = setAgentMentionIntent(cancelled, "agent-noah", "wake");
+    expect(extractAgentWakeMentionIds(restored)).toEqual(["agent-noah", "agent-sage"]);
   });
 
   it("builds issue mentions with only the stable issue id", () => {

@@ -22,6 +22,7 @@ import {
   createMilkdownWebsiteIconElement,
   fragmentContainsRudderToken,
   getMilkdownProseMirrorView,
+  findSelectedRudderTokenRangeFromDom,
   hasRudderMarkdownReference,
   imageFilesFromFileList,
   insertMissingRudderTokenBoundarySpaces,
@@ -186,6 +187,49 @@ describe("getMilkdownProseMirrorView", () => {
     };
 
     expect(getMilkdownProseMirrorView(ctx)).toBeNull();
+  });
+});
+
+describe("Milkdown selected token deletion", () => {
+  it("maps a fully selected mention from the DOM when ProseMirror selection is stale", () => {
+    const href = buildAgentMentionHref("agent-product", null, "wake");
+    const root = document.createElement("div");
+    const paragraph = document.createElement("p");
+    const mention = document.createElement("a");
+    mention.dataset.mentionKind = "agent";
+    mention.dataset.mentionHref = href;
+    mention.href = href;
+    mention.textContent = "Noah Product";
+    paragraph.append(mention, " please review");
+    root.append(paragraph);
+    document.body.append(root);
+
+    const domRange = document.createRange();
+    domRange.selectNode(mention);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(domRange);
+
+    const doc = {
+      content: { size: 40 },
+      descendants(callback: (node: ReturnType<typeof websiteTextNode>, pos: number) => void) {
+        callback(websiteTextNode("Noah Product", href), 5);
+      },
+    };
+    const view = {
+      state: { doc },
+      posAtDOM: vi.fn(() => 5),
+    } as Parameters<typeof findSelectedRudderTokenRangeFromDom>[0];
+
+    expect(findSelectedRudderTokenRangeFromDom(view, root)).toEqual({
+      from: 5,
+      to: 17,
+      href,
+      label: "Noah Product",
+    });
+
+    selection?.removeAllRanges();
+    root.remove();
   });
 });
 
