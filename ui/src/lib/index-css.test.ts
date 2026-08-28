@@ -145,6 +145,14 @@ describe("index.css motion rules", () => {
     expect(automationIconBlock).toContain("M21 13v2a4 4 0 0 1-4 4H3");
   });
 
+  it("keeps an agent icon visible when mention metadata is unavailable", () => {
+    const agentIconBlock = cssBlock('a.rudder-mention-chip[data-mention-kind="agent"]::before');
+
+    expect(agentIconBlock).toContain("--rudder-mention-icon-mask, url(\"data:image/svg+xml");
+    expect(agentIconBlock).not.toContain("--rudder-mention-icon-mask, none");
+    expect(agentIconBlock).toContain("linear-gradient(currentColor, currentColor)");
+  });
+
   it("keeps command palette visible and avoids duplicate centering transforms", () => {
     const commandPaletteContent = cssBlock(".command-palette-content");
     const commandPaletteOpen = cssBlock('.command-palette-content[data-state="open"]');

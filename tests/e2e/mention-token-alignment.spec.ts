@@ -127,6 +127,46 @@ test("mention tokens align with surrounding text on every rendered surface", asy
   }
 });
 
+test("read-only agent mentions keep a fallback icon without metadata", async ({ page }) => {
+  await loadAlignmentPage(
+    page,
+    `
+      <style>
+        body {
+          margin: 0;
+          padding: 48px;
+          background: white;
+          color: black;
+        }
+        .fallback-fixture {
+          font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+          font-size: 16px;
+          line-height: 24px;
+        }
+      </style>
+      <p class="fallback-fixture">
+        Reviewer Rowan:
+        <a class="rudder-mention-chip rudder-mention-chip--agent" data-mention-kind="agent">1c6709e7</a>
+      </p>
+    `,
+  );
+
+  const iconStyles = await page.locator("a[data-mention-kind='agent']").evaluate((element) => {
+    const styles = getComputedStyle(element, "::before");
+    return {
+      backgroundImage: styles.backgroundImage,
+      content: styles.content,
+      maskImage: styles.maskImage,
+      webkitMaskImage: styles.webkitMaskImage,
+    };
+  });
+
+  expect(iconStyles.content).toBe('""');
+  expect(iconStyles.backgroundImage).toContain("linear-gradient");
+  expect(iconStyles.maskImage).not.toBe("none");
+  expect(iconStyles.webkitMaskImage).not.toBe("none");
+});
+
 test("composer reference tokens align inside the chat input line", async ({ page }) => {
   await loadAlignmentPage(
     page,

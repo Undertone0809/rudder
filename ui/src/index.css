@@ -3658,7 +3658,7 @@ button[draggable="false"] {
   border: 0;
   border-radius: 999px;
   background:
-    var(--rudder-mention-agent-avatar-background, currentColor),
+    var(--rudder-mention-agent-avatar-background, linear-gradient(currentColor, currentColor)),
     var(--rudder-mention-agent-avatar-shell-background, transparent);
   mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
   -webkit-mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
@@ -3904,10 +3904,10 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
   height: 1.08em;
   border-radius: 999px;
   background:
-    var(--rudder-mention-agent-avatar-background, currentColor),
+    var(--rudder-mention-agent-avatar-background, linear-gradient(currentColor, currentColor)),
     var(--rudder-mention-agent-avatar-shell-background, transparent);
-  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
-  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
+  mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;
@@ -5625,10 +5625,10 @@ a.rudder-project-mention-chip::before {
 a.rudder-mention-chip[data-mention-kind="agent"]::before {
   border-radius: 999px;
   background:
-    var(--rudder-mention-agent-avatar-background, currentColor),
+    var(--rudder-mention-agent-avatar-background, linear-gradient(currentColor, currentColor)),
     var(--rudder-mention-agent-avatar-shell-background, transparent);
-  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
-  mask-image: var(--rudder-mention-icon-mask, none);
+  -webkit-mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
+  mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;
