@@ -216,7 +216,7 @@ test.describe("Issue detail properties layout", () => {
       data: { name: `Responsive-Issue-Detail-${Date.now()}` },
     });
     expect(orgRes.ok(), await orgRes.text()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
