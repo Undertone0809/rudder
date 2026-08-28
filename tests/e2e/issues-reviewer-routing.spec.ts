@@ -34,7 +34,7 @@ test.describe("Issue reviewer routing", () => {
     await dialog.getByPlaceholder("Issue title").fill("Reviewer routed issue");
     await dialog.getByRole("button", { name: "Reviewer" }).click();
     await dialog.getByPlaceholder("Search reviewers...").fill("Review Bot");
-    const reviewerBadge = dialog.locator('[data-slot="agent-title-badge"]').filter({ hasText: "Chief Technology Officer" });
+    const reviewerBadge = dialog.locator('[data-slot="agent-menu-supporting-label"]').filter({ hasText: "Chief Technology Officer" });
     await expect(reviewerBadge.first()).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Review Bot (Chief Technology Officer)" })).toHaveCount(0);
     await dialog.getByRole("button", { name: "Review Bot" }).click();
