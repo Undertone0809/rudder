@@ -1452,7 +1452,7 @@ export function CommentThread({
       attachmentAccept={COMMENT_ATTACHMENT_ACCEPT}
       escapeBackWhenEmpty={escapeBackWhenEmpty}
       beforeSubmit={canReopen ? (
-        <label className="col-span-3 row-start-2 mt-2 flex cursor-pointer select-none items-center gap-1.5 justify-self-end text-xs text-muted-foreground md:mt-0">
+        <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground">
           <input
             type="checkbox"
             checked={reopen}
