@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "R6Z-130-b1-agent-contract-foundation",
-  "status": "integration_pending",
+  "status": "delivered",
   "owner": {
     "root_id": "R6Z-130",
     "agent_id": "agt_884d42a1"
@@ -148,16 +148,7 @@
       "Recovery validation confirmed the v4 fingerprint exactly when encoding each sorted path with NUL and each content hash with newline. A two-NUL diagnostic variant produced af83bc54dac695a9c44cdc92fd560a46d970e79e1bc28a957de14efda5f88514 but did not represent candidate drift.",
       "Target origin/main advanced from b0da9a751ec6507d789d118bf8c0603f4347e7ef to 2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c after the v4 verifier PASS. The upstream changed-path set did not intersect the 19 B1 candidate paths; the isolated branch was refrozen over the new base without conflict and all v4 receipts were invalidated."
     ],
-    "invalidated_receipts": [
-      "stage-review-reject-v1",
-      "stage-review-reject-v2",
-      "stage-review-accept-v3-pre-b0da9a75",
-      "stage-review-accept-v3-post-b0da9a75",
-      "verifier-pass-v3-post-b0da9a75",
-      "stage-review-accept-v4-b0da9a75",
-      "verifier-pass-v4-b0da9a75",
-      "final-review-needs-more-evidence-v4-b0da9a75"
-    ]
+    "invalidated_receipts": []
   },
   "integration": {
     "authorized": true,
@@ -168,17 +159,19 @@
     "observed_remote_sha": "2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c",
     "branch_refs": [
       "refs/heads/codex/r6z-130-b1-20260828@2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c",
-      "refs/heads/main@2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c"
+      "refs/heads/main@2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c",
+      "refs/heads/codex/r6z-130-b1-20260828@cbce03011be0a32f00e494573618674d7eb8d0a7",
+      "refs/heads/main@cbce03011be0a32f00e494573618674d7eb8d0a7"
     ],
     "isolation_trigger": "concurrent_write_risk",
     "isolated_worktree": "/private/tmp/rudder-r6z-130-b1-20260828",
     "patch_tree_sha": "7375fef2d9ccd739f8b8c4382dfb442a7990560d",
     "expected_old_sha": "2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c",
+      "delivered_sha": "cbce03011be0a32f00e494573618674d7eb8d0a7"
     },
     "index_update_mode": "none"
   },
@@ -196,14 +189,19 @@
     "evidence": [
       "Implementation isolated from origin/main in /private/tmp/rudder-r6z-130-b1-20260828.",
       "Immediately before integration, the shared checkout raw .git/index SHA-256 was 537d9a63e2388b6c56075c0561fc9f04cf688e9b28bb59fa4c26c4d3b7df8c1d.",
-      "The fixed 260-path shared worktree inventory, encoded as path NUL plus raw worktree content hash or missing marker, had SHA-256 2dc1e38a032b012d9b8890e39997c33eb42145901df02b1a66c56cf6c286cd6b before integration."
+      "The fixed 260-path shared worktree inventory, encoded as path NUL plus raw worktree content hash or missing marker, had SHA-256 2dc1e38a032b012d9b8890e39997c33eb42145901df02b1a66c56cf6c286cd6b before integration.",
+      "After the compare-and-swap ref update and push, the raw shared index and fixed-path worktree fingerprints remained byte-identical."
     ]
   },
   "terminal": {
-    "delivered_ref": null,
-    "delivered_sha": null,
-    "delivered_tree_sha": null,
-    "timestamp": null,
-    "proof": []
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "cbce03011be0a32f00e494573618674d7eb8d0a7",
+    "delivered_tree_sha": "834d8f50953f27a70d39a4fdd70cbb605bb54783",
+    "timestamp": "2026-08-28T17:45:35Z",
+    "proof": [
+      "Local refs/heads/main advanced by git update-ref only when its observed old SHA matched 2f7a89bc5b4e7df6e5f22c5cd16f4a3988ab958c.",
+      "Remote refs/heads/main advanced with force-with-lease bound to the same expected-old SHA and read back as cbce03011be0a32f00e494573618674d7eb8d0a7.",
+      "Shared checkout index and worktree content fingerprints were unchanged across integration."
+    ]
   }
 }
