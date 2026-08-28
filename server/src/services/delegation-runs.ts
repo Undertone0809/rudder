@@ -108,7 +108,7 @@ export function delegationRunService(
       .from(agentWakeupRequests)
       .where(and(
         eq(agentWakeupRequests.orgId, orgId),
-        eq(agentWakeupRequests.idempotencyKey, idempotencyKey),
+        eq(agentWakeupRequests.delegationIdempotencyKey, idempotencyKey),
       ))
       .orderBy(desc(agentWakeupRequests.createdAt), desc(agentWakeupRequests.id))
       .limit(1)
@@ -120,6 +120,19 @@ export function delegationRunService(
     const run = await dependencies.heartbeat.getRun(request.runId);
     if (!run || run.orgId !== request.orgId || run.agentId !== request.agentId) return null;
     return run;
+  }
+
+  function assertRequestMatches(
+    request: typeof agentWakeupRequests.$inferSelect,
+    input: { task: string; targetAgentId: string; idempotencyKey: string },
+  ) {
+    const existingTask = readPayloadString(request.payload, "delegationTask");
+    if (request.agentId !== input.targetAgentId || existingTask !== input.task) {
+      throw conflict("Delegation idempotency key conflicts with an existing task or target", {
+        idempotencyKey: input.idempotencyKey,
+        existingTargetAgentId: request.agentId,
+      });
+    }
   }
 
   async function validateInput(input: CreateDelegationRunInput) {
@@ -185,13 +198,7 @@ export function delegationRunService(
     const validated = await validateInput(input);
     const existing = await findRequest(validated.orgId, validated.idempotencyKey);
     if (existing) {
-      const existingTask = readPayloadString(existing.payload, "delegationTask");
-      if (existing.agentId !== validated.targetAgentId || existingTask !== validated.task) {
-        throw conflict("Delegation idempotency key conflicts with an existing task or target", {
-          idempotencyKey: validated.idempotencyKey,
-          existingTargetAgentId: existing.agentId,
-        });
-      }
+      assertRequestMatches(existing, validated);
       const existingRun = await loadRun(existing);
       const existingSourceRunId = readPayloadString(existing.payload, "sourceRunId")
         ?? (existingRun && typeof existingRun.sourceRunId === "string" ? existingRun.sourceRunId : null)
@@ -238,6 +245,7 @@ export function delegationRunService(
         reason: DELEGATION_RUN_TRIGGER_REASON,
         payload,
         idempotencyKey: validated.idempotencyKey,
+        delegationIdempotencyKey: validated.idempotencyKey,
         sourceRunId: input.sourceRunId,
         requestedByActorType: "agent",
         requestedByActorId: input.sourceAgentId,
@@ -246,8 +254,7 @@ export function delegationRunService(
     } catch (error) {
       const raced = await findRequest(validated.orgId, validated.idempotencyKey);
       if (!raced) throw error;
-      const racedTask = readPayloadString(raced.payload, "delegationTask");
-      if (raced.agentId !== validated.targetAgentId || racedTask !== validated.task) throw error;
+      assertRequestMatches(raced, validated);
     }
 
     const request = run?.wakeupRequestId
@@ -262,6 +269,7 @@ export function delegationRunService(
         .then((rows) => rows[0] ?? null)
       : await findRequest(validated.orgId, validated.idempotencyKey);
     if (!request) throw conflict("Delegation admission did not persist a traceable wakeup request");
+    assertRequestMatches(request, validated);
 
     const admittedRun = await loadRun(request) ?? run;
     return {

@@ -58,6 +58,7 @@ function wakeupRequest(task: string, status = "queued", agentId = targetAgentId)
     requestedByActorType: "agent",
     requestedByActorId: sourceAgentId,
     idempotencyKey: "delegation-key-1",
+    delegationIdempotencyKey: "delegation-key-1",
     runId: targetRunId,
   };
 }
@@ -132,6 +133,7 @@ describe("delegationRunService", () => {
       reason: DELEGATION_RUN_TRIGGER_REASON,
       sourceRunId,
       idempotencyKey: "delegation-key-1",
+      delegationIdempotencyKey: "delegation-key-1",
       contextSnapshot: expect.objectContaining({
         scene: DELEGATION_RUN_SCENE,
         targetType: "wakeup_request",
@@ -183,6 +185,28 @@ describe("delegationRunService", () => {
       wakeupRequestId,
       admissionStatus: "replayed",
       replayed: true,
+    });
+  });
+
+  it("rejects a conflicting task that wins the organization-wide admission race", async () => {
+    const racedRequest = wakeupRequest("different task");
+    const db = createDbStub({ persistedRequest: racedRequest, targetAgentId });
+    const service = delegationRunService(db, {
+      heartbeat: {
+        getRun: vi.fn().mockResolvedValue(sourceRun()),
+        wakeup: vi.fn().mockResolvedValue(targetRun()),
+      },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+
+    await expect(service.create({
+      sourceAgentId,
+      sourceRunId,
+      task: "Inspect the target independently",
+      targetAgentId,
+      idempotencyKey: "delegation-key-1",
+    })).rejects.toMatchObject({
+      message: "Delegation idempotency key conflicts with an existing task or target",
     });
   });
 

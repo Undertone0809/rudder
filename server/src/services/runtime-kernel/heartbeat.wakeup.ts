@@ -246,6 +246,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         requestedByActorType: opts.requestedByActorType ?? null,
         requestedByActorId: opts.requestedByActorId ?? null,
         idempotencyKey: opts.idempotencyKey ?? null,
+        delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
         finishedAt: new Date(),
       }).onConflictDoNothing();
     };
@@ -393,6 +394,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           requestedByActorType: opts.requestedByActorType ?? null,
           requestedByActorId: opts.requestedByActorId ?? null,
           idempotencyKey: opts.idempotencyKey ?? null,
+          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
         });
       });
       return null;
@@ -464,6 +466,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               requestedByActorType: opts.requestedByActorType ?? null,
               requestedByActorId: opts.requestedByActorId ?? null,
               idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
               finishedAt: new Date(),
             });
           }
@@ -623,6 +626,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
                 requestedByActorType: opts.requestedByActorType ?? null,
                 requestedByActorId: opts.requestedByActorId ?? null,
                 idempotencyKey: opts.idempotencyKey ?? null,
+                delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
                 runId: mergedRun.id,
                 finishedAt: new Date(),
               });
@@ -713,6 +717,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               requestedByActorType: opts.requestedByActorType ?? null,
               requestedByActorId: opts.requestedByActorId ?? null,
               idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
             });
           }
 
@@ -738,6 +743,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               requestedByActorType: opts.requestedByActorType ?? null,
               requestedByActorId: opts.requestedByActorId ?? null,
               idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
             });
 
         const existingRun = await findLinkedRun(tx, wakeupRequest);
@@ -869,6 +875,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             requestedByActorType: opts.requestedByActorType ?? null,
             requestedByActorId: opts.requestedByActorId ?? null,
             idempotencyKey: opts.idempotencyKey ?? null,
+            delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
             runId: lockedRun.id,
             finishedAt: new Date(),
           });
@@ -934,6 +941,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           requestedByActorType: opts.requestedByActorType ?? null,
           requestedByActorId: opts.requestedByActorId ?? null,
           idempotencyKey: opts.idempotencyKey ?? null,
+          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
         });
       }
 
