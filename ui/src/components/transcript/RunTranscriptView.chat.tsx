@@ -3,7 +3,7 @@ import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef,
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
@@ -924,7 +924,7 @@ export function segmentChatTranscriptBlocks(blocks: TranscriptBlock[]): ChatTran
     flushActions();
     segments.push({
       type: "block",
-      key: `${block.type}-${block.ts}-${index}`,
+      key: transcriptBlockStableKey(block, index),
       block,
     });
   });
@@ -1253,7 +1253,7 @@ export function TranscriptChatTurn({
       {segments.map((segment, index) => {
         if (detailVariant) {
           return segment.type === "block" ? (
-            <Fragment key={`${segment.block.type}-${segment.block.ts}-${index}`}>
+            <Fragment key={segment.key}>
               {renderTranscriptBlock({
                 block: segment.block,
                 index,
@@ -1291,7 +1291,7 @@ export function TranscriptChatTurn({
         return segment.type === "block"
           ? (
             <div
-              key={`${segment.block.type}-${segment.block.ts}-${index}`}
+              key={segment.key}
               data-transcript-chat-column={
                 segment.block.type === "message" && segment.block.source === "steer"
                   ? "full"
@@ -1578,7 +1578,7 @@ export function TranscriptChatTimeline({
         const fullWidth = block.type === "message" && block.source === "steer";
         return (
           <div
-            key={`${block.type}-${block.ts}-${index}`}
+            key={transcriptBlockStableKey(block, index)}
             data-transcript-chat-column={fullWidth ? "full" : "reading"}
             className={fullWidth ? CHAT_FULL_COLUMN_CLASS : CHAT_READING_COLUMN_CLASS}
           >

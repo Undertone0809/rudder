@@ -819,7 +819,7 @@ export function renderTranscriptBlock({
   streaming?: boolean;
 }) {
   return (
-    <div key={`${block.type}-${block.ts}-${index}`} className={cn(index === -1 && "hidden")}>
+    <div className={cn(index === -1 && "hidden")}>
       <TranscriptRunAnnotationBlock block={block} presentation={presentation} context={runAnnotationContext} streaming={streaming}>
         {block.type === "message" && (
           <TranscriptMessageBlock

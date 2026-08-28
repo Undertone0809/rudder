@@ -625,6 +625,51 @@ describe("MarkdownBody", () => {
     expect(container.querySelector(".rudder-mermaid-source")).toBeNull();
   });
 
+  it("keeps existing list, link, and loaded website icon nodes mounted as markdown grows", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    let source = "- [Rudder](https://rudderhq.dev/docs)";
+    const renderSource = () => {
+      act(() => {
+        root.render(
+          <ThemeProvider>
+            <MarkdownBody>{source}</MarkdownBody>
+          </ThemeProvider>,
+        );
+      });
+    };
+
+    renderSource();
+    const logo = container.querySelector<HTMLImageElement>("img.rudder-website-link-logo")!;
+    await act(async () => {
+      logo.dispatchEvent(new Event("load"));
+      await Promise.resolve();
+    });
+
+    const firstItem = container.querySelector("li")!;
+    const firstLink = container.querySelector<HTMLAnchorElement>("a.rudder-website-link")!;
+    const firstIcon = firstLink.querySelector<HTMLElement>(".rudder-website-link-icon")!;
+    expect(firstLink.querySelector("[data-website-icon='generic']")).toBeNull();
+
+    for (let index = 1; index <= 20; index += 1) {
+      source += `\n- Streamed item ${index}`;
+      renderSource();
+
+      expect(firstItem.isConnected).toBe(true);
+      expect(firstLink.isConnected).toBe(true);
+      expect(firstIcon.isConnected).toBe(true);
+      expect(container.querySelector("li")).toBe(firstItem);
+      expect(container.querySelector("a.rudder-website-link")).toBe(firstLink);
+      expect(firstLink.querySelector(".rudder-website-link-icon")).toBe(firstIcon);
+      expect(firstLink.querySelector("[data-website-icon='generic']")).toBeNull();
+    }
+  });
+
   it("renders markdown images without a resolver", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
