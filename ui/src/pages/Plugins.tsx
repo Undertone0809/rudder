@@ -1,6 +1,8 @@
 import { agentsApi } from "@/api/agents";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
+import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
+import { PluginIcon, themedPluginIconUrl } from "@/components/PluginIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useOrganization } from "@/context/OrganizationContext";
+import { useTheme } from "@/context/ThemeContext";
 import { appRoute } from "@/lib/apps-workspace";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
@@ -30,7 +33,9 @@ import type {
   Agent,
   RudderInstalledPlugin,
   RudderMcpUiResourceContent,
+  RudderPluginCatalogEntry,
   RudderPluginComponentLink,
+  RudderPluginDiscoverEntry,
   RudderPluginImportReport,
   RudderPluginPackageFileInput,
 } from "@rudderhq/shared";
@@ -129,8 +134,71 @@ function stateLabel(plugin: RudderInstalledPlugin) {
   return "Ready";
 }
 
+function localAppIdentity(component: RudderPluginComponentLink | null): {
+  desktopInstallationId: string;
+  appPublicId: string;
+  localBindingId: string;
+} | null {
+  if (component?.type !== "app") return null;
+  const { desktopInstallationId, appPublicId, localBindingId } = component.metadata;
+  if (
+    typeof desktopInstallationId !== "string"
+    || typeof appPublicId !== "string"
+    || typeof localBindingId !== "string"
+    || !desktopInstallationId
+    || !appPublicId
+    || !localBindingId
+  ) return null;
+  return { desktopInstallationId, appPublicId, localBindingId };
+}
+
+function configuredPluginIconUrl(
+  plugin: RudderPluginDiscoverEntry,
+  entries: readonly RudderPluginCatalogEntry[],
+  resolvedTheme: "light" | "dark",
+) {
+  return themedPluginIconUrl(
+    entries.find((entry) => entry.slug === plugin.catalogSlug)?.iconUrl,
+    resolvedTheme,
+  );
+}
+
+function InstalledPluginIcon({
+  plugin,
+  iconUrl,
+  testId,
+}: {
+  plugin: RudderInstalledPlugin;
+  iconUrl?: string | null;
+  testId?: string;
+}) {
+  const appComponent = plugin.components.length === 1 && plugin.components[0]?.type === "app"
+    ? plugin.components[0]
+    : null;
+  const identity = localAppIdentity(appComponent);
+  if (identity) {
+    return (
+      <LocalAppIdentityIcon
+        className="h-full w-full rounded-[inherit]"
+        identity={identity}
+        testId={testId}
+      />
+    );
+  }
+  return (
+    <PluginIcon
+      src={iconUrl}
+      fallback={appComponent ? AppWindow : Blocks}
+      fallbackClassName="h-4.5 w-4.5"
+      className="h-full w-full p-1"
+      testId={testId}
+    />
+  );
+}
+
 function PluginDetailDialog({
   plugin,
+  iconUrl,
   open,
   onOpenChange,
   onAssignSkills,
@@ -147,6 +215,7 @@ function PluginDetailDialog({
   error,
 }: {
   plugin: RudderInstalledPlugin | null;
+  iconUrl?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAssignSkills: () => void;
@@ -174,7 +243,7 @@ function PluginDetailDialog({
         <DialogHeader>
           <div className="flex items-start gap-3 pr-8">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/45">
-              <Blocks className="h-5 w-5" aria-hidden />
+              <InstalledPluginIcon plugin={plugin} iconUrl={iconUrl} testId="installed-plugin-dialog-icon" />
             </div>
             <div className="min-w-0">
               <DialogTitle>{plugin.displayName}</DialogTitle>
@@ -451,6 +520,7 @@ function ImportPreviewDialog({
 
 export function Plugins() {
   const { selectedOrganizationId } = useOrganization();
+  const { resolvedTheme } = useTheme();
   const { setHeaderActions } = useBreadcrumbs();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -685,6 +755,12 @@ export function Plugins() {
   const skills = useMemo(() => (skillsQuery.data ?? []).filter((skill) =>
     !normalizedSearch || `${skill.name} ${skill.description ?? ""} ${skill.sourceLabel ?? ""}`.toLowerCase().includes(normalizedSearch)), [skillsQuery.data, normalizedSearch]);
   const tab: HubTab = explicitTab ?? "plugins";
+  const installedCatalogIcons = useMemo(() => new Map(
+    (directoryQuery.data?.installed ?? []).map((plugin) => {
+      const catalogEntry = (catalogQuery.data?.entries ?? []).find((entry) => entry.installedPluginId === plugin.id);
+      return [plugin.id, themedPluginIconUrl(catalogEntry?.iconUrl, resolvedTheme)] as const;
+    }),
+  ), [catalogQuery.data?.entries, directoryQuery.data?.installed, resolvedTheme]);
   const createSkillInChat = useCallback(() => navigate(`/messenger/chat?prefill=${encodeURIComponent(
     "Use the skill-creator skill to help me create a reusable Skill. Start by asking what outcome this Skill should reliably produce, then build and validate it with me.",
   )}`), [navigate]);
@@ -865,7 +941,9 @@ export function Plugins() {
                       if (appKey && !plugin.pendingUpdate) navigate(appRoute(appKey));
                       else openPluginDetail(plugin);
                     }}>
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40">{plugin.components.length === 1 && plugin.components[0]?.type === "app" ? <AppWindow className="h-4.5 w-4.5" /> : <Blocks className="h-4.5 w-4.5" />}</div>
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
+                        <InstalledPluginIcon plugin={plugin} iconUrl={installedCatalogIcons.get(plugin.id)} testId="installed-plugin-icon" />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className={cn("text-[11px]", plugin.enabled && plugin.setupState === "ready" && !plugin.pendingUpdate ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{plugin.pendingUpdate ? "Update available" : stateLabel(plugin)}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
@@ -879,7 +957,9 @@ export function Plugins() {
                   ))}
                   {localApps.map((app) => (
                     <button key={app.id} type="button" disabled={!app.appKey} onClick={() => app.appKey && navigate(appRoute(app.appKey))} className="group flex min-h-[104px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35 disabled:cursor-not-allowed disabled:opacity-55">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><AppWindow className="h-4.5 w-4.5" /></div>
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
+                        <AppWindow className="h-4.5 w-4.5" aria-hidden />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{app.name}</span><span className={cn("text-[11px]", app.appKey ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{app.appKey ? "Ready" : app.buildStatus.replaceAll("_", " ")}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">Private interactive capability built in Rudder.</p>
@@ -923,7 +1003,14 @@ export function Plugins() {
                 <div className="grid gap-2 md:grid-cols-2">
                   {discover.map((plugin) => (
                     <button key={plugin.slug} type="button" className="group flex min-h-[112px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35" onClick={() => navigate(`/hub/plugins/${encodeURIComponent(plugin.slug)}`)}>
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40"><img src={plugin.iconUrl} alt="" className="h-full w-full object-cover" /></div>
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
+                        <PluginIcon
+                          src={themedPluginIconUrl(plugin.iconUrl, resolvedTheme)}
+                          className="h-full w-full p-1"
+                          fallbackClassName="h-4.5 w-4.5"
+                          testId="catalog-plugin-icon"
+                        />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span>{plugin.updateAvailable ? <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400">Update available</span> : plugin.installedPluginId ? <span className="text-[11px] text-emerald-700 dark:text-emerald-400">Installed</span> : null}</div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.shortDescription}</p>
@@ -960,7 +1047,14 @@ export function Plugins() {
                         }
                       }}
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Blocks className="h-4.5 w-4.5" /></div>
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
+                        <PluginIcon
+                          src={configuredPluginIconUrl(plugin, catalogQuery.data?.entries ?? [], resolvedTheme)}
+                          className="h-full w-full p-1"
+                          fallbackClassName="h-4.5 w-4.5"
+                          testId="configured-plugin-icon"
+                        />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className="text-[11px] text-muted-foreground">{plugin.category ?? "Plugin"}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
@@ -1140,6 +1234,7 @@ export function Plugins() {
       />
       <PluginDetailDialog
         plugin={detailPlugin}
+        iconUrl={detailPlugin ? installedCatalogIcons.get(detailPlugin.id) : null}
         open={Boolean(detailPlugin) && !mcpUiResource}
         onOpenChange={(open) => !open && closePluginDetail()}
         onAssignSkills={() => {

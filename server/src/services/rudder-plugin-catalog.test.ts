@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   catalogSourceMatches,
@@ -6,6 +9,7 @@ import {
   fetchPluginCatalogResource,
   parseSkillsAddSource,
   resolveGitHubVersion,
+  rudderPluginCatalogService,
   synthesizeSkillsPlugin,
 } from "./rudder-plugin-catalog.js";
 
@@ -99,6 +103,177 @@ describe("fetchPluginCatalogResource", () => {
       {},
       allowed,
     )).rejects.toThrow(/outside the allowed HTTPS hosts/);
+  });
+});
+
+describe("rudderPluginCatalogService", () => {
+  it("coalesces concurrent cold loads before writing the shared cache", async () => {
+    const catalogUrl = "https://catalog.example/catalog.json";
+    const iconBody = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    let catalogRequests = 0;
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === catalogUrl) {
+        catalogRequests += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return json({
+          schemaVersion: 1,
+          updatedAt: "2026-08-28T00:00:00Z",
+          plugins: [{
+            slug: "demo",
+            displayName: "Demo",
+            developer: "Example",
+            category: "Developer Tools",
+            shortDescription: "A demo Plugin.",
+            sourceKind: "codex_plugin",
+            sourcePath: "plugins/demo/source.json",
+            iconPath: "plugins/demo/assets/icon.png",
+            iconDarkPath: "plugins/demo/assets/icon-dark.png",
+          }],
+        });
+      }
+      if (url.endsWith("/icon.png") || url.endsWith("/icon-dark.png")) {
+        return new Response(iconBody, { status: 200, headers: { "content-type": "image/png" } });
+      }
+      return new Response("not found", { status: 404 });
+    };
+    const cacheDirectory = await mkdtemp(path.join(os.tmpdir(), "rudder-plugin-catalog-test-"));
+    try {
+      const catalog = rudderPluginCatalogService(
+        {} as Parameters<typeof rudderPluginCatalogService>[0],
+        {} as Parameters<typeof rudderPluginCatalogService>[1],
+        { fetch: fetcher as typeof fetch, catalogUrl, cachePath: path.join(cacheDirectory, "catalog.json") },
+      );
+      const icons = await Promise.all([
+        catalog.icon("demo", false),
+        catalog.icon("demo", true),
+        catalog.icon("demo", false),
+      ]);
+
+      expect(catalogRequests).toBe(1);
+      expect(icons).toHaveLength(3);
+      expect(icons.every((icon) => icon.content.equals(Buffer.from(iconBody)))).toBe(true);
+    } finally {
+      await rm(cacheDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("shows the latest saved Preview when a package file fetch is interrupted", async () => {
+    const catalogUrl = "https://catalog.example/catalog.json";
+    const commitSha = "a".repeat(40);
+    const descriptor = {
+      schemaVersion: 1,
+      slug: "demo",
+      kind: "codex_plugin",
+      displayName: "Demo",
+      developer: "Example",
+      category: "Developer Tools",
+      shortDescription: "A demo Plugin.",
+      longDescription: "A demo Plugin with a saved Preview.",
+      capabilities: ["Read"],
+      websiteUrl: "https://github.com/example/demo",
+      privacyPolicyUrl: "https://example.com/privacy",
+      termsOfServiceUrl: "https://example.com/terms",
+      license: { spdx: "MIT", sourceUrl: "https://example.com/license", note: "Fixture" },
+      source: {
+        repositoryUrl: "https://github.com/example/demo",
+        skillsAddSource: "example/demo",
+        subdirectory: "",
+        versionStrategy: "latest_stable_release_or_head",
+      },
+      assets: { icon: "assets/icon.png", iconDark: "assets/icon-dark.png", origin: "rudder_generic" },
+    };
+    const savedMetadata = {
+      catalogSlug: "demo",
+      sourceKind: "codex_plugin",
+      skillsAddSource: "example/demo",
+      repository: "https://github.com/example/demo",
+      subdirectory: "",
+      resolutionStrategy: "default_branch_head",
+      resolvedVersion: "abcdef123456",
+      commitSha,
+      immutable: true,
+      descriptor,
+    };
+    const results = [
+      [],
+      [{ id: "saved-preview" }],
+      [{
+        report: { id: "saved-preview", status: "review_required", report: { components: [], warnings: [] } },
+        pkg: {
+          id: "saved-package",
+          name: "demo",
+          normalizedManifest: { displayName: "Demo", publisher: "Example", category: "Developer Tools", shortDescription: "A demo Plugin." },
+        },
+        source: { metadata: savedMetadata },
+      }],
+      [],
+    ];
+    let selectCalls = 0;
+    const db = {
+      select: () => {
+        const result = results[selectCalls++] ?? [];
+        const query = {
+          from: () => query,
+          innerJoin: () => query,
+          leftJoin: () => query,
+          where: () => query,
+          orderBy: () => query,
+          limit: () => query,
+          then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve(result).then(resolve, reject),
+        };
+        return query;
+      },
+    };
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === catalogUrl) {
+        return json({
+          schemaVersion: 1,
+          updatedAt: "2026-08-28T00:00:00Z",
+          plugins: [{
+            slug: "demo",
+            displayName: "Demo",
+            developer: "Example",
+            category: "Developer Tools",
+            shortDescription: "A demo Plugin.",
+            sourceKind: "codex_plugin",
+            sourcePath: "plugins/demo/source.json",
+            iconPath: "plugins/demo/assets/icon.png",
+            iconDarkPath: "plugins/demo/assets/icon-dark.png",
+          }],
+        });
+      }
+      if (url.endsWith("/plugins/demo/source.json")) return json(descriptor);
+      if (url === "https://api.github.com/repos/example/demo") return json({ private: false, default_branch: "main" });
+      if (url === "https://api.github.com/repos/example/demo/releases?per_page=30") return json([]);
+      if (url === "https://api.github.com/repos/example/demo/commits/main") return json({ sha: commitSha });
+      if (url === `https://api.github.com/repos/example/demo/git/trees/${commitSha}?recursive=1`) {
+        return json({ truncated: false, tree: [{ path: ".codex-plugin/plugin.json", type: "blob", sha: "b".repeat(40), size: 40 }] });
+      }
+      if (url.startsWith("https://raw.githubusercontent.com/example/demo/")) {
+        throw new Error("fetch failed: read ECONNRESET");
+      }
+      return new Response("not found", { status: 404 });
+    };
+    const cacheDirectory = await mkdtemp(path.join(os.tmpdir(), "rudder-plugin-catalog-fallback-test-"));
+    try {
+      const catalog = rudderPluginCatalogService(
+        db as unknown as Parameters<typeof rudderPluginCatalogService>[0],
+        {} as Parameters<typeof rudderPluginCatalogService>[1],
+        { fetch: fetcher as typeof fetch, catalogUrl, cachePath: path.join(cacheDirectory, "catalog.json") },
+      );
+
+      await expect(catalog.previewCatalog("org-1", "demo")).resolves.toMatchObject({
+        previewId: "saved-preview",
+        action: "install",
+        iconUrl: "/api/plugins/catalog/demo/icon",
+        warnings: ["GitHub is temporarily unavailable. Showing the most recent saved immutable Preview."],
+      });
+      expect(selectCalls).toBe(4);
+    } finally {
+      await rm(cacheDirectory, { recursive: true, force: true });
+    }
   });
 });
 
