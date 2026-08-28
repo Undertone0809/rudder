@@ -213,6 +213,20 @@ describe("Issues agent participant scope", () => {
 });
 
 describe("Issues draft scope", () => {
+  it("centers the empty draft state without an English helper message", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([]));
+
+    renderIssues();
+
+    const view = document.querySelector("[data-testid='issue-drafts-view']");
+    const emptyState = view?.firstElementChild;
+    expect(view?.className).toContain("items-center");
+    expect(view?.className).toContain("justify-center");
+    expect(emptyState?.className).toContain("w-full");
+    expect(emptyState?.className).toContain("min-h-[18rem]");
+    expect(view?.textContent).not.toContain("No draft issues.");
+  });
+
   it("renders saved draft issues in the main content and opens a selected draft", () => {
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
       { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
