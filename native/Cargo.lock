@@ -1310,6 +1310,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-agent-contract-core"
+version = "0.7.15"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "rudder-archive-core"
 version = "0.7.15"
 dependencies = [

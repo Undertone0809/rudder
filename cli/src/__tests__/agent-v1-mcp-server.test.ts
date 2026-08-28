@@ -1,4 +1,5 @@
 import {
+  RUDDER_AGENT_CONTRACT,
   RUDDER_BROWSER_MCP_CONTRACT_HASH,
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
@@ -168,6 +169,62 @@ describe("agent-v1 MCP server", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps every direct API descriptor aligned with the public MCP dispatcher", async () => {
+    const directCapabilities = RUDDER_AGENT_CONTRACT.capabilities.flatMap((capability) => (
+      capability.api.transport === "direct"
+      && capability.api.pathTemplate
+      && capability.api.method
+        ? [{
+            ...capability,
+            api: {
+              transport: "direct" as const,
+              pathTemplate: capability.api.pathTemplate,
+              method: capability.api.method,
+            },
+          }]
+        : []
+    ));
+    expect(directCapabilities).toHaveLength(46);
+
+    for (const capability of directCapabilities) {
+      if (!capability.mcp) throw new Error(`Direct capability lacks MCP descriptor: ${capability.id}`);
+      const input = SAMPLE_INPUT_BY_TOOL[capability.mcp.name] ?? {};
+      const expectedPath = capability.api.pathTemplate
+        .replace("{orgId}", "runtime-org")
+        .replace("{goal}", String(input.goal))
+        .replace("{issue}", String(input.issue))
+        .replace("{run}", String(input.run));
+      const requests: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
+      const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        requests.push([url, init]);
+        return new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runAgentV1McpJsonRpcMessage({
+        jsonrpc: "2.0",
+        id: capability.id,
+        method: "tools/call",
+        params: { name: capability.mcp.name, arguments: input },
+      }, buildMcpServerEnv({
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: "runtime-key",
+        RUDDER_ORG_ID: "runtime-org",
+        RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+        RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+        RUDDER_BROWSER_ENABLED: "true",
+      }), capability.id.startsWith("browser.") ? "browser" : "core");
+
+      expect(fetchMock, capability.id).toHaveBeenCalledTimes(1);
+      const [url, init] = requests[0]!;
+      expect(new URL(String(url)).pathname, capability.id).toBe(expectedPath);
+      expect(init?.method ?? "GET", capability.id).toBe(capability.api.method);
+    }
   });
 
   it("exposes Computer Use only on the enabled dedicated MCP surface", async () => {

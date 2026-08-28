@@ -4,956 +4,6824 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "capabilityId": "agent.me",
     "name": "rudder_agent_me",
     "description": "Show the authenticated agent identity and budget.",
+    "semanticDescription": "Show the authenticated agent identity and budget. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Show the authenticated agent identity and budget"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "agent.inbox",
     "name": "rudder_agent_inbox",
     "description": "List the compact assignee and reviewer work inbox for the authenticated agent.",
+    "semanticDescription": "List the compact assignee and reviewer work inbox for the authenticated agent. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List the compact assignee and reviewer work inbox for the authenticated agent"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "organization.members.list",
     "name": "rudder_organization_members_list",
     "description": "List active visible human and agent members in the authenticated organization.",
+    "semanticDescription": "List active visible human and agent members in the authenticated organization. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List active visible human and agent members in the authenticated organization"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Page size.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "query": {
+          "description": "Optional member name filter.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "description": "Member type filter.",
+          "enum": [
+            "human",
+            "agent",
+            "all"
+          ],
+          "maxLength": 10,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "agent.capabilities",
     "name": "rudder_agent_capabilities",
     "description": "List the stable Rudder agent command contract.",
+    "semanticDescription": "List the stable Rudder agent command contract. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List the stable Rudder agent command contract"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "agent.update",
     "name": "rudder_agent_update",
     "description": "Update an agent's identity fields; defaults to the authenticated agent.",
+    "semanticDescription": "Update an agent's identity fields; defaults to the authenticated agent. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Update an agent's identity fields"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "description": "Agent capability summary.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "clearCapabilities": {
+          "description": "Clear the current capability summary.",
+          "type": "boolean"
+        },
+        "clearDescription": {
+          "description": "Compatibility alias for clearCapabilities.",
+          "type": "boolean"
+        },
+        "clearTitle": {
+          "description": "Clear the current title.",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Compatibility alias for capabilities.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Agent name.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "role": {
+          "description": "Agent role.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "description": "Agent title.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "agent.skills.create",
     "name": "rudder_agent_skills_create",
     "description": "Create an agent-private skill package under AGENT_HOME/skills.",
+    "semanticDescription": "Create an agent-private skill package under AGENT_HOME/skills. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Create an agent-private skill package under AGENT_HOME/skills"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "description": "Compatibility alias for markdown.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Skill description.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "enable": {
+          "description": "Enable the created skill for the runtime agent.",
+          "type": "boolean"
+        },
+        "markdown": {
+          "description": "SKILL.md content.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Skill display name.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "slug": {
+          "description": "Skill slug.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "agent.skills.enable",
     "name": "rudder_agent_skills_enable",
     "description": "Add skill selections to an agent without replacing existing enabled skills.",
+    "semanticDescription": "Add skill selections to an agent without replacing existing enabled skills. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Add skill selections to an agent without replacing existing enabled skills"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "selectionRefs": {
+          "description": "Skill selection references.",
+          "items": {
+            "description": "Skill selection references.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        }
+      },
+      "required": [
+        "selectionRefs"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "agent.skills.sync",
     "name": "rudder_agent_skills_sync",
     "description": "Sync the desired enabled skill set for an agent.",
+    "semanticDescription": "Sync the desired enabled skill set for an agent. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Sync the desired enabled skill set for an agent"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "desiredSkills": {
+          "description": "Comma-separated desired skill references.",
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "desiredSkills"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "goal.list",
     "name": "rudder_goal_list",
     "description": "Discover Goals owned by the authenticated Agent; defaults to active Goals and returns current progress, next step, and attention state.",
+    "semanticDescription": "Discover Goals owned by the authenticated Agent; defaults to active Goals and returns current progress, next step, and attention state. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Discover Goals owned by the authenticated Agent"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "facet": {
+          "description": "Current Goal workspace facet.",
+          "enum": [
+            "agent_advancing",
+            "needs_attention",
+            "waiting_focus",
+            "waiting_external",
+            "ready_for_acceptance",
+            "closed"
+          ],
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "focus": {
+          "description": "Filter by whether the Goal is the organization Focus Goal.",
+          "type": "boolean"
+        },
+        "lifecycle": {
+          "description": "Goal lifecycle filter; active is the safe default.",
+          "enum": [
+            "draft",
+            "active",
+            "closed",
+            "all"
+          ],
+          "maxLength": 20,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum owned Goals to return.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "goal.context",
     "name": "rudder_goal_context",
     "description": "Read the owned Goal agreement and current operating context before acting: contract revision, criteria, boundaries, progress, next step, attention, proposals, and recent feedback.",
+    "semanticDescription": "Read the owned Goal agreement and current operating context before acting: contract revision, criteria, boundaries, progress, next step, attention, proposals, and recent feedback. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read the owned Goal agreement and current operating context before acting: contract revision, criteria, boundaries, progress, next step, attention, proposals, and recent feedback"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "description": "Goal UUID returned by rudder_goal_list.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "goal.progress",
     "name": "rudder_goal_progress",
     "description": "Record evidence-backed progress for a Goal owned by the authenticated Agent and attribute it to the current Run.",
+    "semanticDescription": "Record evidence-backed progress for a Goal owned by the authenticated Agent and attribute it to the current Run. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Record evidence-backed progress for a Goal owned by the authenticated Agent and attribute it to the current Run"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "activityKind": {
+          "description": "Progress classification.",
+          "enum": [
+            "progress",
+            "evidence",
+            "bottleneck"
+          ],
+          "maxLength": 30,
+          "minLength": 1,
+          "type": "string"
+        },
+        "evidenceRefs": {
+          "description": "URI-like references to artifacts, measurements, or other supporting evidence.",
+          "items": {
+            "description": "URI-like evidence reference.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "goal": {
+          "description": "Goal UUID or typed short reference (gol_<prefix>) from the current Goal Runtime Context.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Stable key for safe retry.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "summary": {
+          "description": "Plain-language progress, observed change, or named blocker.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal",
+        "summary",
+        "evidenceRefs",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "goal.checkpoint",
     "name": "rudder_goal_checkpoint",
     "description": "Atomically persist a Goal checkpoint, optional Plan revision, continuation, checkpoint activity, and eligible automatic continuation wake.",
+    "semanticDescription": "Atomically persist a Goal checkpoint, optional Plan revision, continuation, checkpoint activity, and eligible automatic continuation wake. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Atomically persist a Goal checkpoint, optional Plan revision, continuation, checkpoint activity, and eligible automatic continuation wake"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "continuation": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "Continuation policy.",
+              "enum": [
+                "commitment",
+                "wait",
+                "decision",
+                "verification"
+              ],
+              "maxLength": 100000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "summary": {
+              "description": "What should happen next or what is awaited.",
+              "maxLength": 100000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "wakeCondition": {
+              "oneOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "evidenceRefs": {
+          "description": "URI-like references to artifacts, measurements, or other supporting evidence.",
+          "items": {
+            "description": "URI-like evidence reference.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "expectedPlanRevision": {
+          "description": "Plan revision read before this checkpoint.",
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "goal": {
+          "description": "Goal UUID or typed short reference (gol_<prefix>) from the current Goal Runtime Context.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Stable key for safe retry.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "plan": {
+          "additionalProperties": false,
+          "description": "Optional complete next Plan revision; omit when the current Plan remains valid.",
+          "properties": {
+            "budgetAllocations": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "hypotheses": {
+              "items": {},
+              "maxItems": 1000,
+              "type": "array"
+            },
+            "invalidationConditions": {
+              "items": {},
+              "maxItems": 1000,
+              "type": "array"
+            },
+            "rejectedPaths": {
+              "items": {},
+              "maxItems": 1000,
+              "type": "array"
+            },
+            "selectedPaths": {
+              "items": {},
+              "maxItems": 1000,
+              "type": "array"
+            },
+            "sequencing": {
+              "items": {},
+              "maxItems": 1000,
+              "type": "array"
+            },
+            "summary": {
+              "description": "Plan summary.",
+              "maxLength": 100000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "summary"
+          ],
+          "type": "object"
+        },
+        "summary": {
+          "description": "Plain-language bounded-run checkpoint summary.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal",
+        "summary",
+        "evidenceRefs",
+        "expectedPlanRevision",
+        "continuation",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "goal.change.propose",
     "name": "rudder_goal_change_propose",
     "description": "Propose a reviewable change to the current Goal contract when evidence shows its outcome, criteria, boundaries, or deadlines should change.",
+    "semanticDescription": "Propose a reviewable change to the current Goal contract when evidence shows its outcome, criteria, boundaries, or deadlines should change. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Propose a reviewable change to the current Goal contract when evidence shows its outcome, criteria, boundaries, or deadlines should change"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "afterContract": {
+          "additionalProperties": false,
+          "description": "Only the Goal contract fields that should change.",
+          "minProperties": 1,
+          "properties": {
+            "actionDeadline": {
+              "description": "Proposed ISO-8601 action deadline, or null to clear it.",
+              "oneOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "autonomyEnvelope": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "criteria": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "evaluator": {
+                    "description": "Criterion evaluator.",
+                    "enum": [
+                      "artifact",
+                      "metric",
+                      "policy",
+                      "human"
+                    ],
+                    "maxLength": 20,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "evidenceRequirements": {
+                    "items": {
+                      "description": "URI-like required evidence reference.",
+                      "maxLength": 8192,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "id": {
+                    "description": "Stable criterion id.",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "label": {
+                    "description": "Plain-language success criterion.",
+                    "maxLength": 100000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "evaluator"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "evaluationDeadline": {
+              "description": "Proposed ISO-8601 evaluation deadline, or null to clear it.",
+              "oneOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "evaluationPolicy": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "humanAuthorities": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "objectiveMode": {
+              "description": "Proposed objective mode.",
+              "enum": [
+                "target",
+                "maximize",
+                "maintain",
+                "decide"
+              ],
+              "maxLength": 20,
+              "minLength": 1,
+              "type": "string"
+            },
+            "outcomeStatement": {
+              "description": "Proposed result-oriented outcome.",
+              "maxLength": 100000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "contractRevision": {
+          "description": "Current Goal contract revision.",
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "evidenceRefs": {
+          "description": "URI-like references supporting the proposed change.",
+          "items": {
+            "description": "URI-like evidence reference.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "goal": {
+          "description": "Goal UUID or typed short reference (gol_<prefix>) from the current Goal Runtime Context.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Stable key for safe retry.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Why the current contract should change and what evidence invalidated it.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal",
+        "contractRevision",
+        "afterContract",
+        "rationale",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "goal.result.propose",
     "name": "rudder_goal_result_propose",
     "description": "Submit an evidence-backed Goal result for mandatory human acceptance without closing the Goal.",
+    "semanticDescription": "Submit an evidence-backed Goal result for mandatory human acceptance without closing the Goal. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Submit an evidence-backed Goal result for mandatory human acceptance without closing the Goal"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "contractRevision": {
+          "description": "Current Goal contract revision.",
+          "maximum": 1000000000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "criteria": {
+          "description": "Criterion outcomes for the current contract revision.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "description": "Criterion id from the Goal Runtime Context.",
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "description": "Observed criterion status.",
+                "enum": [
+                  "met",
+                  "unmet",
+                  "breached",
+                  "unknown"
+                ],
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "status"
+            ],
+            "type": "object"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "decision": {
+          "description": "Optional decision reached for decide-mode Goals.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "evidenceRefs": {
+          "description": "URI-like references supporting the proposed result.",
+          "items": {
+            "description": "URI-like evidence reference.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "goal": {
+          "description": "Goal UUID or typed short reference (gol_<prefix>) from the current Goal Runtime Context.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Stable key for safe retry.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "resultPayload": {
+          "additionalProperties": true,
+          "description": "Optional structured result details.",
+          "type": "object"
+        },
+        "resultValue": {
+          "description": "Optional measured result value.",
+          "oneOf": [
+            {
+              "maxLength": 100000,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        },
+        "riskSummary": {
+          "description": "Known risks, limitations, or remaining gaps.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal",
+        "contractRevision",
+        "criteria",
+        "evidenceRefs",
+        "riskSummary",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.get",
     "name": "rudder_issue_get",
     "description": "Read a full issue by UUID or identifier.",
+    "semanticDescription": "Read a full issue by UUID or identifier. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read a full issue by UUID or identifier"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.list",
     "name": "rudder_issue_list",
     "description": "List issues with optional status, assignee, and project filters without requiring a search query.",
+    "semanticDescription": "List issues with optional status, assignee, and project filters without requiring a search query. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List issues with optional status, assignee, and project filters without requiring a search query"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Comma-separated issue statuses.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.search",
     "name": "rudder_issue_search",
     "description": "Search issues with the server-side issue index across title, identifier, description, and comments.",
+    "semanticDescription": "Search issues with the server-side issue index across title, identifier, description, and comments. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Search issues with the server-side issue index across title, identifier, description, and comments"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "query": {
+          "description": "Non-empty server-side issue search query.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Comma-separated issue statuses.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.context",
     "name": "rudder_issue_context",
     "description": "Read the compact heartbeat context for an issue; wake comments may be addressed by full id or cmt_<uuid-prefix>.",
+    "semanticDescription": "Read the compact heartbeat context for an issue; wake comments may be addressed by full id or cmt_<uuid-prefix>. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read the compact heartbeat context for an issue"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "wakeCommentId": {
+          "description": "Wake comment id or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.checkout",
     "name": "rudder_issue_checkout",
     "description": "Atomically checkout an issue for the current or specified agent.",
+    "semanticDescription": "Atomically checkout an issue for the current or specified agent. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Atomically checkout an issue for the current or specified agent"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedStatuses": {
+          "description": "Comma-separated allowed prior statuses.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.comment",
     "name": "rudder_issue_comment",
     "description": "Add a comment to an issue, optionally uploading images and appending Markdown image links.",
+    "semanticDescription": "Add a comment to an issue, optionally uploading images and appending Markdown image links. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Add a comment to an issue, optionally uploading images and appending Markdown image links"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "body"
+          ]
+        },
+        {
+          "required": [
+            "comment"
+          ]
+        }
+      ],
+      "properties": {
+        "body": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comment": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "images": {
+          "description": "Local image paths to attach.",
+          "items": {
+            "description": "Local image paths to attach.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reopen": {
+          "description": "Reopen the issue while commenting.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.comments.list",
     "name": "rudder_issue_comments_list",
     "description": "List issue comments, optionally only newer comments after a full comment id or cmt_<uuid-prefix> with --after.",
+    "semanticDescription": "List issue comments, optionally only newer comments after a full comment id or cmt_<uuid-prefix> with --after. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List issue comments, optionally only newer comments after a full comment id or cmt_<uuid-prefix> with --after"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "description": "Return comments after this comment id or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "order": {
+          "description": "Comment order.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "maxLength": 10,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.comments.get",
     "name": "rudder_issue_comments_get",
     "description": "Read one issue comment by full id or cmt_<uuid-prefix> scoped to the issue.",
+    "semanticDescription": "Read one issue comment by full id or cmt_<uuid-prefix> scoped to the issue. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one issue comment by full id or cmt_<uuid-prefix> scoped to the issue"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "comment": {
+          "description": "Comment id or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "comment"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.update",
     "name": "rudder_issue_update",
     "description": "Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment.",
+    "semanticDescription": "Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "billingCode": {
+          "description": "Billing code.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "body": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comment": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Issue description.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Goal id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "hiddenAt": {
+          "description": "Hidden timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "images": {
+          "description": "Local image paths to attach.",
+          "items": {
+            "description": "Local image paths to attach.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "parentId": {
+          "description": "Parent issue id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "priority": {
+          "description": "New issue priority.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "requestDepth": {
+          "description": "Requested issue depth.",
+          "maxLength": 30,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "New issue status.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "description": "Issue title.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.review",
     "name": "rudder_issue_review",
     "description": "Record a structured reviewer decision with a required comment.",
+    "semanticDescription": "Record a structured reviewer decision with a required comment. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Record a structured reviewer decision with a required comment"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "comment"
+          ]
+        },
+        {
+          "required": [
+            "body"
+          ]
+        }
+      ],
+      "properties": {
+        "body": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comment": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "decision": {
+          "description": "Structured review decision.",
+          "enum": [
+            "approve",
+            "request_changes",
+            "needs_followup",
+            "blocked"
+          ],
+          "maxLength": 30,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "decision"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.commit",
     "name": "rudder_issue_commit",
     "description": "Report a code commit created during issue work as structured issue activity.",
+    "semanticDescription": "Report a code commit created during issue work as structured issue activity. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Report a code commit created during issue work as structured issue activity"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "description": "Git branch name.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "count": {
+          "description": "Number of commits represented.",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "message": {
+          "description": "Commit subject or status message.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "repoPath": {
+          "description": "Repository path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        },
+        "sha": {
+          "description": "Git commit SHA.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspacePath": {
+          "description": "Workspace path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "sha",
+        "message"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.done",
     "name": "rudder_issue_done",
     "description": "Mark an issue done with a required completion comment, optionally uploading images.",
+    "semanticDescription": "Mark an issue done with a required completion comment, optionally uploading images. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Mark an issue done with a required completion comment, optionally uploading images"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "comment"
+          ]
+        },
+        {
+          "required": [
+            "body"
+          ]
+        }
+      ],
+      "properties": {
+        "body": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comment": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "images": {
+          "description": "Local image paths to attach.",
+          "items": {
+            "description": "Local image paths to attach.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.block",
     "name": "rudder_issue_block",
     "description": "Request human assistance after bounded recovery attempts; repeated matching claims are audited before the Issue becomes blocked.",
+    "semanticDescription": "Request human assistance after bounded recovery attempts; repeated matching claims are audited before the Issue becomes blocked. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Request human assistance after bounded recovery attempts"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "comment"
+          ]
+        },
+        {
+          "required": [
+            "body"
+          ]
+        }
+      ],
+      "properties": {
+        "body": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comment": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "images": {
+          "description": "Local image paths to attach.",
+          "items": {
+            "description": "Local image paths to attach.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "issue": {
+          "description": "Issue UUID, identifier, or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "project.list",
     "name": "rudder_project_list",
     "description": "List projects in an organization.",
+    "semanticDescription": "List projects in an organization. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List projects in an organization"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "project.get",
     "name": "rudder_project_get",
     "description": "Read one project by ID or shortname.",
+    "semanticDescription": "Read one project by ID or shortname. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one project by ID or shortname"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "description": "Project UUID or shortname.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "project.create",
     "name": "rudder_project_create",
     "description": "Create a project in the organization.",
+    "semanticDescription": "Create a project in the organization. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Create a project in the organization"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "description": "Display color.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Project description.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Goal id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalIds": {
+          "description": "Goal ids.",
+          "items": {
+            "description": "Goal ids.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "leadAgentId": {
+          "description": "Lead agent id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Project name.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Project status.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "targetDate": {
+          "description": "Target date.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "project.update",
     "name": "rudder_project_update",
     "description": "Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt.",
+    "semanticDescription": "Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archivedAt": {
+          "description": "Archive timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "color": {
+          "description": "Display color.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Project description.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Goal id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalIds": {
+          "description": "Goal ids.",
+          "items": {
+            "description": "Goal ids.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "leadAgentId": {
+          "description": "Lead agent id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Project name.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "project": {
+          "description": "Project UUID or shortname.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Project status.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "targetDate": {
+          "description": "Target date.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "user.activity",
     "name": "rudder_user_activity",
     "description": "Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity.",
+    "semanticDescription": "Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "include": {
+          "description": "Comma-separated optional sections.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issueId": {
+          "description": "Issue id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Page size.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "projectId": {
+          "description": "Project id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "relatedAgentId": {
+          "description": "Related agent id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "since": {
+          "description": "Activity start timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "until": {
+          "description": "Activity end timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "user": {
+          "description": "User id, reference, or self.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "library.file.list",
     "name": "rudder_library_file_list",
     "description": "List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated.",
+    "semanticDescription": "List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List Library files and folders"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "directory": {
+          "description": "Library-relative directory path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        },
+        "path": {
+          "description": "Compatibility alias for directory.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "library.file.get",
     "name": "rudder_library_file_get",
     "description": "Fallback read when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`.",
+    "semanticDescription": "Fallback read when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Fallback read when local filesystem access is unavailable"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Library-relative file path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "library.file.ref",
     "name": "rudder_library_file_ref",
     "description": "Return the stable Markdown reference for one Library file without printing file content.",
+    "semanticDescription": "Return the stable Markdown reference for one Library file without printing file content. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Return the stable Markdown reference for one Library file without printing file content"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Library-relative file path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "library.file.link",
     "name": "rudder_library_file_link",
     "description": "Compatibility alias for `rudder library file ref <path>`.",
+    "semanticDescription": "Compatibility alias for `rudder library file ref <path>`. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Compatibility alias for `rudder library file ref <path>`"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Library-relative file path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "library.file.put",
     "name": "rudder_library_file_put",
     "description": "Fallback create/update when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`.",
+    "semanticDescription": "Fallback create/update when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Fallback create/update when local filesystem access is unavailable"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "body"
+          ]
+        },
+        {
+          "required": [
+            "content"
+          ]
+        }
+      ],
+      "properties": {
+        "body": {
+          "description": "Direct file content.",
+          "maxLength": 1000000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "content": {
+          "description": "Compatibility alias for body.",
+          "maxLength": 1000000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "path": {
+          "description": "Library-relative file path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "issue.create",
     "name": "rudder_issue_create",
     "description": "Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.",
+    "semanticDescription": "Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Create a new issue or subtask with the generic issue surface"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "billingCode": {
+          "description": "Billing code.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Issue description.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Goal id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "labelIds": {
+          "description": "Issue label ids.",
+          "items": {
+            "description": "Issue label ids.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "parentId": {
+          "description": "Parent issue id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "priority": {
+          "description": "Issue priority.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id or reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "requestDepth": {
+          "description": "Requested issue depth.",
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "status": {
+          "description": "Issue status.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "description": "Issue title.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "approval.get",
     "name": "rudder_approval_get",
     "description": "Read one approval request.",
+    "semanticDescription": "Read one approval request. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one approval request"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "description": "Approval UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "approval.issues",
     "name": "rudder_approval_issues",
     "description": "List the issues linked to an approval.",
+    "semanticDescription": "List the issues linked to an approval. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List the issues linked to an approval"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "description": "Approval UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "approval.comment",
     "name": "rudder_approval_comment",
     "description": "Add a comment to an approval.",
+    "semanticDescription": "Add a comment to an approval. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Add a comment to an approval"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "body"
+          ]
+        },
+        {
+          "required": [
+            "comment"
+          ]
+        }
+      ],
+      "properties": {
+        "approval": {
+          "description": "Approval UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "body": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "comment": {
+          "description": "Direct Markdown body.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.list",
     "name": "rudder_skill_list",
     "description": "List organization-visible skills.",
+    "semanticDescription": "List organization-visible skills. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List organization-visible skills"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.search",
     "name": "rudder_skill_search",
     "description": "Search organization-visible skills by name, slug, description, or source.",
+    "semanticDescription": "Search organization-visible skills by name, slug, description, or source. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Search organization-visible skills by name, slug, description, or source"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "description": "Skill name, slug, description, source, or selection key to search for.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.get",
     "name": "rudder_skill_get",
     "description": "Read one organization skill detail.",
+    "semanticDescription": "Read one organization skill detail. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one organization skill detail"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "description": "Organization skill id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.file",
     "name": "rudder_skill_file",
     "description": "Read one file from an organization skill package.",
+    "semanticDescription": "Read one file from an organization skill package. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one file from an organization skill package"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Skill package file path.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        },
+        "skill": {
+          "description": "Organization skill id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.import",
     "name": "rudder_skill_import",
     "description": "Import a skill package into the organization skill library.",
+    "semanticDescription": "Import a skill package into the organization skill library. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Import a skill package into the organization skill library"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "description": "Local path, URL, or repository reference.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.scan-local",
     "name": "rudder_skill_scan_local",
     "description": "Scan local roots for skill packages and import new ones.",
+    "semanticDescription": "Scan local roots for skill packages and import new ones. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Scan local roots for skill packages and import new ones"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "description": "Comma-separated local roots.",
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "skill.scan-projects",
     "name": "rudder_skill_scan_projects",
     "description": "Scan the org workspace and any legacy project workspace records for skill packages and import new ones.",
+    "semanticDescription": "Scan the org workspace and any legacy project workspace records for skill packages and import new ones. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Scan the org workspace and any legacy project workspace records for skill packages and import new ones"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "projectIds": {
+          "description": "Comma-separated project ids.",
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspaceIds": {
+          "description": "Comma-separated workspace ids.",
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "plugin.search",
     "name": "rudder_plugin_search",
     "description": "Search installed, local, and discoverable Rudder plugins.",
+    "semanticDescription": "Search installed, local, and discoverable Rudder plugins. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Search installed, local, and discoverable Rudder plugins"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "description": "Plugin name, description, publisher, source, or component to search for.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "plugin.get",
     "name": "rudder_plugin_get",
     "description": "Read an installed plugin, including its components and current setup state; use this to resolve plugin:// references.",
+    "semanticDescription": "Read an installed plugin, including its components and current setup state; use this to resolve plugin:// references. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read an installed plugin, including its components and current setup state"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plugin": {
+          "description": "Installed plugin UUID from a plugin:// reference or plugin search result.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.tabs",
     "name": "rudder_browser_tabs",
     "description": "List Browser tabs owned by the current Rudder agent run.",
+    "semanticDescription": "List Browser tabs owned by the current Rudder agent run. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List Browser tabs owned by the current Rudder agent run"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.user-tabs",
     "name": "rudder_browser_user_tabs",
     "description": "List user-visible tabs currently open in Rudder's built-in Browser without taking control of them.",
+    "semanticDescription": "List user-visible tabs currently open in Rudder's built-in Browser without taking control of them. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List user-visible tabs currently open in Rudder's built-in Browser without taking control of them"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.open",
     "name": "rudder_browser_open",
     "description": "Open a run-owned tab in the Rudder Browser.",
+    "semanticDescription": "Open a run-owned tab in the Rudder Browser. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Open a run-owned tab in the Rudder Browser"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "HTTP or HTTPS URL.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.navigate",
     "name": "rudder_browser_navigate",
     "description": "Navigate a run-owned Rudder Browser tab.",
+    "semanticDescription": "Navigate a run-owned Rudder Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Navigate a run-owned Rudder Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "description": "HTTP or HTTPS URL.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "url"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.back",
     "name": "rudder_browser_back",
     "description": "Navigate a run-owned Rudder Browser tab back in history.",
+    "semanticDescription": "Navigate a run-owned Rudder Browser tab back in history. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Navigate a run-owned Rudder Browser tab back in history"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.forward",
     "name": "rudder_browser_forward",
     "description": "Navigate a run-owned Rudder Browser tab forward in history.",
+    "semanticDescription": "Navigate a run-owned Rudder Browser tab forward in history. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Navigate a run-owned Rudder Browser tab forward in history"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.reload",
     "name": "rudder_browser_reload",
     "description": "Reload a run-owned Rudder Browser tab.",
+    "semanticDescription": "Reload a run-owned Rudder Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false,
+      "title": "Reload a run-owned Rudder Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.viewport",
     "name": "rudder_browser_viewport",
     "description": "Inspect, set, or reset the responsive viewport for the current Rudder Browser run.",
+    "semanticDescription": "Inspect, set, or reset the responsive viewport for the current Rudder Browser run. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Inspect, set, or reset the responsive viewport for the current Rudder Browser run"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Viewport action.",
+          "enum": [
+            "get",
+            "set",
+            "reset"
+          ],
+          "type": "string"
+        },
+        "height": {
+          "description": "Viewport height in CSS pixels.",
+          "maximum": 2160,
+          "minimum": 240,
+          "type": "number"
+        },
+        "width": {
+          "description": "Viewport width in CSS pixels.",
+          "maximum": 3840,
+          "minimum": 320,
+          "type": "number"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.visibility",
     "name": "rudder_browser_visibility",
     "description": "Inspect or change whether the current run's selected Rudder Browser tab is visible.",
+    "semanticDescription": "Inspect or change whether the current run's selected Rudder Browser tab is visible. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Inspect or change whether the current run's selected Rudder Browser tab is visible"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "visible": {
+          "description": "Whether the selected Agent Browser tab is visible.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.snapshot",
     "name": "rudder_browser_snapshot",
     "description": "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids.",
+    "semanticDescription": "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Capture a bounded DOM and accessibility-oriented snapshot, including frame structure and ephemeral node ids"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "boxes": {
+          "description": "Include viewport-relative element boxes.",
+          "type": "boolean"
+        },
+        "depth": {
+          "description": "Maximum snapshot tree depth.",
+          "maximum": 30,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxNodes": {
+          "description": "Maximum snapshot nodes.",
+          "maximum": 3000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.locator",
     "name": "rudder_browser_locator",
     "description": "Perform read-only bounded Browser locator text, attribute, state, count, or wait operations.",
+    "semanticDescription": "Perform read-only bounded Browser locator text, attribute, state, count, or wait operations. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Perform read-only bounded Browser locator text, attribute, state, count, or wait operations"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Read-only locator action.",
+          "enum": [
+            "count",
+            "allTextContents",
+            "textContent",
+            "innerText",
+            "attribute",
+            "visible",
+            "enabled",
+            "checked",
+            "selected",
+            "wait"
+          ],
+          "type": "string"
+        },
+        "locator": {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "additionalProperties": false,
+              "properties": {
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "exact": {
+              "description": "Require an exact text or attribute match.",
+              "type": "boolean"
+            },
+            "filter": {
+              "additionalProperties": false,
+              "properties": {
+                "has": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "hasNot": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "hasNotText": {
+                  "description": "Excluded descendant text.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "hasText": {
+                  "description": "Required descendant text.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "visible": {
+                  "description": "Filter by current visibility.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "frame": {
+              "items": {
+                "description": "CSS iframe selector.",
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "index": {
+              "description": "Zero-based locator match index.",
+              "maximum": 499,
+              "minimum": 0,
+              "type": "number"
+            },
+            "name": {
+              "description": "Accessible name used with the role strategy.",
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "or": {
+              "additionalProperties": false,
+              "properties": {
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "position": {
+              "description": "Locator endpoint after an explicit count.",
+              "enum": [
+                "first",
+                "last"
+              ],
+              "type": "string"
+            },
+            "scope": {
+              "additionalProperties": false,
+              "properties": {
+                "and": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "filter": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "has": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exact": {
+                          "description": "Require an exact text or attribute match.",
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "description": "Accessible name used with the role strategy.",
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "description": "Locator strategy.",
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "strategy",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "hasNot": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exact": {
+                          "description": "Require an exact text or attribute match.",
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "description": "Accessible name used with the role strategy.",
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "description": "Locator strategy.",
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "strategy",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "hasNotText": {
+                      "description": "Excluded descendant text.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "hasText": {
+                      "description": "Required descendant text.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "visible": {
+                      "description": "Filter by current visibility.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "index": {
+                  "description": "Zero-based locator match index.",
+                  "maximum": 499,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "or": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "position": {
+                  "description": "Locator endpoint after an explicit count.",
+                  "enum": [
+                    "first",
+                    "last"
+                  ],
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "strategy": {
+              "description": "Locator strategy.",
+              "enum": [
+                "css",
+                "testId",
+                "href",
+                "role",
+                "label",
+                "placeholder",
+                "text"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "description": "Selector, role, label, placeholder, href, test id, or text value.",
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "strategy",
+            "value"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Attribute name for attribute reads.",
+          "maxLength": 200,
+          "type": "string"
+        },
+        "state": {
+          "description": "Wait state.",
+          "enum": [
+            "attached",
+            "detached",
+            "visible",
+            "hidden"
+          ],
+          "type": "string"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeoutMs": {
+          "description": "Wait timeout in milliseconds.",
+          "maximum": 30000,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "tabId",
+        "action",
+        "locator"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.cua",
     "name": "rudder_browser_cua",
     "description": "Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab.",
+    "semanticDescription": "Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Perform trusted coordinate mouse, scroll, drag, keyboard, and text input in a run-owned Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Coordinate input or inspection action.",
+          "enum": [
+            "click",
+            "doubleClick",
+            "move",
+            "scroll",
+            "drag",
+            "keypress",
+            "type",
+            "elementInfo"
+          ],
+          "type": "string"
+        },
+        "button": {
+          "oneOf": [
+            {
+              "description": "Mouse button number.",
+              "maximum": 5,
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "description": "Mouse button.",
+              "enum": [
+                "left",
+                "middle",
+                "right"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "keys": {
+          "items": {
+            "description": "Keyboard key or modifier.",
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10,
+          "type": "array"
+        },
+        "path": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "description": "Path X coordinate.",
+                "type": "number"
+              },
+              "y": {
+                "description": "Path Y coordinate.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "type": "object"
+          },
+          "maxItems": 200,
+          "minItems": 2,
+          "type": "array"
+        },
+        "scrollX": {
+          "description": "Horizontal scroll delta.",
+          "type": "number"
+        },
+        "scrollY": {
+          "description": "Vertical scroll delta.",
+          "type": "number"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "text": {
+          "description": "Text to type.",
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "x": {
+          "description": "Viewport X coordinate.",
+          "type": "number"
+        },
+        "y": {
+          "description": "Viewport Y coordinate.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "tabId",
+        "action"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.dom-cua",
     "name": "rudder_browser_dom_cua",
     "description": "Inspect a bounded read-only DOM snapshot with ephemeral node ids.",
+    "semanticDescription": "Inspect a bounded read-only DOM snapshot with ephemeral node ids. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Inspect a bounded read-only DOM snapshot with ephemeral node ids"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Read-only DOM snapshot action.",
+          "enum": [
+            "get"
+          ],
+          "type": "string"
+        },
+        "depth": {
+          "description": "Maximum DOM depth.",
+          "maximum": 30,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxNodes": {
+          "description": "Maximum DOM nodes.",
+          "maximum": 3000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "action"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.dialog",
     "name": "rudder_browser_dialog",
     "description": "Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab.",
+    "semanticDescription": "Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Inspect, accept, or dismiss the active JavaScript dialog in a run-owned Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Dialog action.",
+          "enum": [
+            "get",
+            "accept",
+            "dismiss"
+          ],
+          "type": "string"
+        },
+        "promptText": {
+          "description": "Prompt response text.",
+          "maxLength": 10000,
+          "type": "string"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "action"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.clipboard",
     "name": "rudder_browser_clipboard",
     "description": "Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard.",
+    "semanticDescription": "Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Read or write the isolated virtual clipboard for the current Browser run without touching the OS clipboard"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Virtual clipboard action.",
+          "enum": [
+            "read",
+            "readText",
+            "write",
+            "writeText",
+            "clear"
+          ],
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "base64": {
+                      "description": "Base64 clipboard payload.",
+                      "maxLength": 650000,
+                      "type": "string"
+                    },
+                    "mimeType": {
+                      "description": "Clipboard MIME type.",
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "text": {
+                      "description": "Text clipboard payload.",
+                      "maxLength": 500000,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "mimeType"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              "presentationStyle": {
+                "description": "Clipboard presentation style.",
+                "enum": [
+                  "unspecified",
+                  "inline",
+                  "attachment"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "entries"
+            ],
+            "type": "object"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "text": {
+          "description": "Plain clipboard text.",
+          "maxLength": 500000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.logs",
     "name": "rudder_browser_logs",
     "description": "Read bounded console and runtime logs captured for a run-owned Browser tab.",
+    "semanticDescription": "Read bounded console and runtime logs captured for a run-owned Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Read bounded console and runtime logs captured for a run-owned Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clear": {
+          "description": "Clear the tab log buffer after reading.",
+          "type": "boolean"
+        },
+        "filter": {
+          "description": "Case-insensitive log substring filter.",
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "levels": {
+          "items": {
+            "description": "Log level.",
+            "enum": [
+              "debug",
+              "info",
+              "log",
+              "warn",
+              "error"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "type": "array"
+        },
+        "limit": {
+          "description": "Maximum log entries.",
+          "maximum": 500,
+          "minimum": 1,
+          "type": "number"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.download",
     "name": "rudder_browser_download",
     "description": "Download explicit locator media without dispatching page input into a bounded run-owned artifact.",
+    "semanticDescription": "Download explicit locator media without dispatching page input into a bounded run-owned artifact. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Download explicit locator media without dispatching page input into a bounded run-owned artifact"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "locator": {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "additionalProperties": false,
+              "properties": {
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "exact": {
+              "description": "Require an exact text or attribute match.",
+              "type": "boolean"
+            },
+            "filter": {
+              "additionalProperties": false,
+              "properties": {
+                "has": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "hasNot": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "hasNotText": {
+                  "description": "Excluded descendant text.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "hasText": {
+                  "description": "Required descendant text.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "visible": {
+                  "description": "Filter by current visibility.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "frame": {
+              "items": {
+                "description": "CSS iframe selector.",
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "index": {
+              "description": "Zero-based locator match index.",
+              "maximum": 499,
+              "minimum": 0,
+              "type": "number"
+            },
+            "name": {
+              "description": "Accessible name used with the role strategy.",
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "or": {
+              "additionalProperties": false,
+              "properties": {
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "position": {
+              "description": "Locator endpoint after an explicit count.",
+              "enum": [
+                "first",
+                "last"
+              ],
+              "type": "string"
+            },
+            "scope": {
+              "additionalProperties": false,
+              "properties": {
+                "and": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "filter": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "has": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exact": {
+                          "description": "Require an exact text or attribute match.",
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "description": "Accessible name used with the role strategy.",
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "description": "Locator strategy.",
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "strategy",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "hasNot": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exact": {
+                          "description": "Require an exact text or attribute match.",
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "description": "Accessible name used with the role strategy.",
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "description": "Locator strategy.",
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "strategy",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "hasNotText": {
+                      "description": "Excluded descendant text.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "hasText": {
+                      "description": "Required descendant text.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "visible": {
+                      "description": "Filter by current visibility.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "index": {
+                  "description": "Zero-based locator match index.",
+                  "maximum": 499,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "or": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "position": {
+                  "description": "Locator endpoint after an explicit count.",
+                  "enum": [
+                    "first",
+                    "last"
+                  ],
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "strategy": {
+              "description": "Locator strategy.",
+              "enum": [
+                "css",
+                "testId",
+                "href",
+                "role",
+                "label",
+                "placeholder",
+                "text"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "description": "Selector, role, label, placeholder, href, test id, or text value.",
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "strategy",
+            "value"
+          ],
+          "type": "object"
+        },
+        "mode": {
+          "description": "Read-only media download mode.",
+          "enum": [
+            "media"
+          ],
+          "type": "string"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "mode",
+        "locator"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.assets",
     "name": "rudder_browser_assets",
     "description": "List page assets or bundle an explicit bounded selection into a run-owned temporary artifact.",
+    "semanticDescription": "List page assets or bundle an explicit bounded selection into a run-owned temporary artifact. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "List page assets or bundle an explicit bounded selection into a run-owned temporary artifact"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "Asset action.",
+          "enum": [
+            "list",
+            "bundle"
+          ],
+          "type": "string"
+        },
+        "assetIds": {
+          "items": {
+            "description": "Asset id.",
+            "maxLength": 160,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "inventoryId": {
+          "description": "Prior asset inventory id.",
+          "maxLength": 160,
+          "type": "string"
+        },
+        "kinds": {
+          "items": {
+            "description": "Asset kind.",
+            "enum": [
+              "font",
+              "image",
+              "stylesheet",
+              "video"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "type": "array"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "action"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.content",
     "name": "rudder_browser_content",
     "description": "Export current page content or an eligible Google Workspace document into a bounded run-owned artifact.",
+    "semanticDescription": "Export current page content or an eligible Google Workspace document into a bounded run-owned artifact. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Export current page content or an eligible Google Workspace document into a bounded run-owned artifact"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "description": "Content export format.",
+          "enum": [
+            "text",
+            "pdf",
+            "md",
+            "docx",
+            "xlsx",
+            "csv",
+            "pptx"
+          ],
+          "type": "string"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "format"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.wait",
     "name": "rudder_browser_wait",
     "description": "Wait for bounded URL, text, disappearance, or time conditions in a run-owned Browser tab.",
+    "semanticDescription": "Wait for bounded URL, text, disappearance, or time conditions in a run-owned Browser tab. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Wait for bounded URL, text, disappearance, or time conditions in a run-owned Browser tab"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "text": {
+          "description": "Text that must appear.",
+          "maxLength": 10000,
+          "type": "string"
+        },
+        "textGone": {
+          "description": "Text that must disappear.",
+          "maxLength": 10000,
+          "type": "string"
+        },
+        "timeMs": {
+          "description": "Fixed bounded delay in milliseconds.",
+          "maximum": 30000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "timeoutMs": {
+          "description": "Wait timeout in milliseconds.",
+          "maximum": 30000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "url": {
+          "description": "URL substring.",
+          "maxLength": 8192,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.read",
     "name": "rudder_browser_read",
     "description": "Read a structured snapshot from a run-owned Rudder Browser tab.",
+    "semanticDescription": "Read a structured snapshot from a run-owned Rudder Browser tab. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read a structured snapshot from a run-owned Rudder Browser tab"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.click",
     "name": "rudder_browser_click",
     "description": "Click an element reference returned by Rudder Browser read.",
+    "semanticDescription": "Click an element reference returned by Rudder Browser read. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Click an element reference returned by Rudder Browser read"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "description": "Element reference returned by rudder_browser_read.",
+          "maxLength": 160,
+          "type": "string"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "ref"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.type",
     "name": "rudder_browser_type",
     "description": "Type into an element reference in a run-owned Rudder Browser tab.",
+    "semanticDescription": "Type into an element reference in a run-owned Rudder Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Type into an element reference in a run-owned Rudder Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "description": "Element reference returned by rudder_browser_read.",
+          "maxLength": 160,
+          "type": "string"
+        },
+        "submit": {
+          "description": "Submit the owning form after typing.",
+          "type": "boolean"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "text": {
+          "description": "Text to enter.",
+          "maxLength": 100000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId",
+        "ref",
+        "text"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.screenshot",
     "name": "rudder_browser_screenshot",
     "description": "Capture a screenshot of a run-owned Rudder Browser tab.",
+    "semanticDescription": "Capture a screenshot of a run-owned Rudder Browser tab. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Capture a screenshot of a run-owned Rudder Browser tab"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clip": {
+          "additionalProperties": false,
+          "properties": {
+            "height": {
+              "description": "Clip height.",
+              "minimum": 1,
+              "type": "number"
+            },
+            "width": {
+              "description": "Clip width.",
+              "minimum": 1,
+              "type": "number"
+            },
+            "x": {
+              "description": "Clip X coordinate.",
+              "type": "number"
+            },
+            "y": {
+              "description": "Clip Y coordinate.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        },
+        "format": {
+          "description": "Image format.",
+          "enum": [
+            "png",
+            "jpeg"
+          ],
+          "type": "string"
+        },
+        "fullPage": {
+          "description": "Capture the full scrollable page.",
+          "type": "boolean"
+        },
+        "locator": {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "additionalProperties": false,
+              "properties": {
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "exact": {
+              "description": "Require an exact text or attribute match.",
+              "type": "boolean"
+            },
+            "filter": {
+              "additionalProperties": false,
+              "properties": {
+                "has": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "hasNot": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "hasNotText": {
+                  "description": "Excluded descendant text.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "hasText": {
+                  "description": "Required descendant text.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "visible": {
+                  "description": "Filter by current visibility.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "frame": {
+              "items": {
+                "description": "CSS iframe selector.",
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "index": {
+              "description": "Zero-based locator match index.",
+              "maximum": 499,
+              "minimum": 0,
+              "type": "number"
+            },
+            "name": {
+              "description": "Accessible name used with the role strategy.",
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "or": {
+              "additionalProperties": false,
+              "properties": {
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "position": {
+              "description": "Locator endpoint after an explicit count.",
+              "enum": [
+                "first",
+                "last"
+              ],
+              "type": "string"
+            },
+            "scope": {
+              "additionalProperties": false,
+              "properties": {
+                "and": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "exact": {
+                  "description": "Require an exact text or attribute match.",
+                  "type": "boolean"
+                },
+                "filter": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "has": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exact": {
+                          "description": "Require an exact text or attribute match.",
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "description": "Accessible name used with the role strategy.",
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "description": "Locator strategy.",
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "strategy",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "hasNot": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exact": {
+                          "description": "Require an exact text or attribute match.",
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "description": "Accessible name used with the role strategy.",
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "strategy": {
+                          "description": "Locator strategy.",
+                          "enum": [
+                            "css",
+                            "testId",
+                            "href",
+                            "role",
+                            "label",
+                            "placeholder",
+                            "text"
+                          ],
+                          "type": "string"
+                        },
+                        "value": {
+                          "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "strategy",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "hasNotText": {
+                      "description": "Excluded descendant text.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "hasText": {
+                      "description": "Required descendant text.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "visible": {
+                      "description": "Filter by current visibility.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "index": {
+                  "description": "Zero-based locator match index.",
+                  "maximum": 499,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "name": {
+                  "description": "Accessible name used with the role strategy.",
+                  "maxLength": 2000,
+                  "type": "string"
+                },
+                "or": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "exact": {
+                      "description": "Require an exact text or attribute match.",
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "description": "Accessible name used with the role strategy.",
+                      "maxLength": 2000,
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "description": "Locator strategy.",
+                      "enum": [
+                        "css",
+                        "testId",
+                        "href",
+                        "role",
+                        "label",
+                        "placeholder",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "strategy",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "position": {
+                  "description": "Locator endpoint after an explicit count.",
+                  "enum": [
+                    "first",
+                    "last"
+                  ],
+                  "type": "string"
+                },
+                "strategy": {
+                  "description": "Locator strategy.",
+                  "enum": [
+                    "css",
+                    "testId",
+                    "href",
+                    "role",
+                    "label",
+                    "placeholder",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "description": "Selector, role, label, placeholder, href, test id, or text value.",
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "strategy",
+                "value"
+              ],
+              "type": "object"
+            },
+            "strategy": {
+              "description": "Locator strategy.",
+              "enum": [
+                "css",
+                "testId",
+                "href",
+                "role",
+                "label",
+                "placeholder",
+                "text"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "description": "Selector, role, label, placeholder, href, test id, or text value.",
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "strategy",
+            "value"
+          ],
+          "type": "object"
+        },
+        "quality": {
+          "description": "JPEG quality.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "browser.close",
     "name": "rudder_browser_close",
     "description": "Close a run-owned Rudder Browser tab.",
+    "semanticDescription": "Close a run-owned Rudder Browser tab. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false,
+      "title": "Close a run-owned Rudder Browser tab"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tabId": {
+          "description": "Run-owned Rudder Browser tab id.",
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "tabId"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.list",
     "name": "rudder_automation_list",
     "description": "List automations for an organization with compact local filters.",
+    "semanticDescription": "List automations for an organization with compact local filters. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List automations for an organization with compact local filters"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "outputMode": {
+          "description": "Output mode filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Automation status filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.get",
     "name": "rudder_automation_get",
     "description": "Read one automation detail including triggers and recent runs.",
+    "semanticDescription": "Read one automation detail including triggers and recent runs. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one automation detail including triggers and recent runs"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.runs",
     "name": "rudder_automation_runs",
     "description": "List recent runs for one automation.",
+    "semanticDescription": "List recent runs for one automation. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List recent runs for one automation"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum run rows.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.triggers.list",
     "name": "rudder_automation_triggers_list",
     "description": "List triggers configured for one automation.",
+    "semanticDescription": "List triggers configured for one automation. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List triggers configured for one automation"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.triggers.create",
     "name": "rudder_automation_triggers_create",
     "description": "Create a schedule, webhook, or API trigger through the governed automation API.",
+    "semanticDescription": "Create a schedule, webhook, or API trigger through the governed automation API. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Create a schedule, webhook, or API trigger through the governed automation API"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cronExpression": {
+          "description": "Cron expression.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "disabled": {
+          "description": "Create the trigger disabled.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "description": "Create the trigger enabled.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "Trigger kind.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "label": {
+          "description": "Trigger label.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "description": "JSON payload object or JSON string.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "replayWindowSec": {
+          "description": "Webhook replay window in seconds.",
+          "maxLength": 30,
+          "minLength": 1,
+          "type": "string"
+        },
+        "signingMode": {
+          "description": "Webhook signing mode.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "timezone": {
+          "description": "IANA timezone.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.triggers.update",
     "name": "rudder_automation_triggers_update",
     "description": "Update an automation trigger through the governed automation API.",
+    "semanticDescription": "Update an automation trigger through the governed automation API. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Update an automation trigger through the governed automation API"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cronExpression": {
+          "description": "Cron expression.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "disabled": {
+          "description": "Disable the trigger.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "description": "Enable the trigger.",
+          "type": "boolean"
+        },
+        "label": {
+          "description": "Trigger label.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "description": "JSON payload object or JSON string.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "replayWindowSec": {
+          "description": "Webhook replay window in seconds.",
+          "maxLength": 30,
+          "minLength": 1,
+          "type": "string"
+        },
+        "signingMode": {
+          "description": "Webhook signing mode.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "timezone": {
+          "description": "IANA timezone.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "trigger": {
+          "description": "Automation trigger UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "trigger"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.triggers.delete",
     "name": "rudder_automation_triggers_delete",
     "description": "Delete an automation trigger through the governed automation API.",
+    "semanticDescription": "Delete an automation trigger through the governed automation API. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Delete an automation trigger through the governed automation API"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "trigger": {
+          "description": "Automation trigger UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "trigger"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.triggers.rotate-secret",
     "name": "rudder_automation_triggers_rotate_secret",
     "description": "Rotate an automation webhook trigger secret through the governed automation API.",
+    "semanticDescription": "Rotate an automation webhook trigger secret through the governed automation API. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Rotate an automation webhook trigger secret through the governed automation API"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "trigger": {
+          "description": "Automation trigger UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "trigger"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.create",
     "name": "rudder_automation_create",
     "description": "Create an automation through the governed automation API.",
+    "semanticDescription": "Create an automation through the governed automation API. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Create an automation through the governed automation API"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "catchUpPolicy": {
+          "description": "Catch-up policy.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "concurrencyPolicy": {
+          "description": "Concurrency policy.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Compatibility alias for instructions.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Goal id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "instructions": {
+          "description": "Automation instructions.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "notifyOnIssueCreated": {
+          "description": "Notify when an issue is created.",
+          "type": "boolean"
+        },
+        "outputMode": {
+          "description": "Automation output mode.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "parentIssueId": {
+          "description": "Parent issue id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "description": "JSON payload object or JSON string.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "priority": {
+          "description": "Issue priority.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Automation status.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "description": "Automation title.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.update",
     "name": "rudder_automation_update",
     "description": "Update automation fields through the governed automation API.",
+    "semanticDescription": "Update automation fields through the governed automation API. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Update automation fields through the governed automation API"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "assigneeAgentId": {
+          "description": "Assignee agent id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "catchUpPolicy": {
+          "description": "Catch-up policy.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "concurrencyPolicy": {
+          "description": "Concurrency policy.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "description": {
+          "description": "Compatibility alias for instructions.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Goal id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "instructions": {
+          "description": "Automation instructions.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "notifyOnIssueCreated": {
+          "description": "Notify when an issue is created.",
+          "type": "boolean"
+        },
+        "outputMode": {
+          "description": "Automation output mode.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "parentIssueId": {
+          "description": "Parent issue id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "description": "JSON payload object or JSON string.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "priority": {
+          "description": "Issue priority.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Project id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Automation status.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "description": "Automation title.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.enable",
     "name": "rudder_automation_enable",
     "description": "Enable an automation by setting status to active.",
+    "semanticDescription": "Enable an automation by setting status to active. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Enable an automation by setting status to active"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.disable",
     "name": "rudder_automation_disable",
     "description": "Disable an automation by setting status to paused.",
+    "semanticDescription": "Disable an automation by setting status to paused. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Disable an automation by setting status to paused"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "automation.run",
     "name": "rudder_automation_run",
     "description": "Trigger a manual automation run.",
+    "semanticDescription": "Trigger a manual automation run. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Trigger a manual automation run"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "automation": {
+          "description": "Automation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Idempotency key.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "description": "JSON payload object or JSON string.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "source": {
+          "description": "Invocation source.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "triggerId": {
+          "description": "Trigger id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "automation"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.list",
     "name": "rudder_chat_list",
     "description": "List chat conversations without dumping full message history.",
+    "semanticDescription": "List chat conversations without dumping full message history. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List chat conversations without dumping full message history"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "Maximum chat rows.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "query": {
+          "description": "Optional chat query.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Chat status filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.search",
     "name": "rudder_chat_search",
     "description": "Search chats with bounded snippets and optional scope filtering.",
+    "semanticDescription": "Search chats with bounded snippets and optional scope filtering. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Search chats with bounded snippets and optional scope filtering"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "Maximum matches.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "query": {
+          "description": "Non-empty chat search query.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "description": "Search scope.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "snippetChars": {
+          "description": "Maximum snippet characters.",
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "status": {
+          "description": "Chat status filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.get",
     "name": "rudder_chat_get",
     "description": "Read one chat conversation record.",
+    "semanticDescription": "Read one chat conversation record. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one chat conversation record"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "description": "Chat conversation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.messages",
     "name": "rudder_chat_messages",
     "description": "Read bounded chat messages with page cursors; transcript output is omitted unless requested.",
+    "semanticDescription": "Read bounded chat messages with page cursors; transcript output is omitted unless requested. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read bounded chat messages with page cursors"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "description": "Chat conversation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "includeOutput": {
+          "description": "Compatibility alias for includeTranscript.",
+          "type": "boolean"
+        },
+        "includeTranscript": {
+          "description": "Include bounded transcript data.",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Maximum message rows.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxOutputChars": {
+          "description": "Maximum output characters per row.",
+          "maximum": 20000,
+          "minimum": 100,
+          "type": "number"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.transcript",
     "name": "rudder_chat_transcript",
     "description": "Read paginated chat messages with assistant transcript entries clipped in human output.",
+    "semanticDescription": "Read paginated chat messages with assistant transcript entries clipped in human output. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read paginated chat messages with assistant transcript entries clipped in human output"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "description": "Chat conversation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum transcript rows.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxOutputChars": {
+          "description": "Maximum output characters per row.",
+          "maximum": 20000,
+          "minimum": 100,
+          "type": "number"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.read",
     "name": "rudder_chat_read",
     "description": "Read a bounded recent-message snapshot for one chat with page cursors.",
+    "semanticDescription": "Read a bounded recent-message snapshot for one chat with page cursors. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read a bounded recent-message snapshot for one chat with page cursors"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "description": "Chat conversation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "includeOutput": {
+          "description": "Compatibility alias for includeTranscript.",
+          "type": "boolean"
+        },
+        "includeTranscript": {
+          "description": "Include bounded transcript data.",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Maximum message rows.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxOutputChars": {
+          "description": "Maximum output characters per row.",
+          "maximum": 20000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "turnLimit": {
+          "description": "Maximum transcript turns.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.create",
     "name": "rudder_chat_create",
     "description": "Create a chat conversation with its first message.",
+    "semanticDescription": "Create a chat conversation with its first message. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Create a chat conversation with its first message"
+    },
     "mutating": true,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "description": "Initial agent-authored chat message.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issueCreationMode": {
+          "description": "Issue creation mode.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "payload": {
+          "description": "JSON payload object or JSON string.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "planMode": {
+          "description": "Start the chat in plan mode.",
+          "type": "boolean"
+        },
+        "preferredAgentId": {
+          "description": "Preferred responding agent id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "summary": {
+          "description": "Chat summary.",
+          "maxLength": 10000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "description": "Chat title.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.send",
     "name": "rudder_chat_send",
     "description": "Send an agent-authored message directly to the operator in a chat.",
+    "semanticDescription": "Send an agent-authored message directly to the operator in a chat. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Send an agent-authored message directly to the operator in a chat"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": true,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "description": "Agent-authored chat message.",
+          "maxLength": 500000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "chat": {
+          "description": "Chat conversation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "editUserMessageId": {
+          "description": "User message id to edit.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "body"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "chat.archive",
     "name": "rudder_chat_archive",
     "description": "Archive a chat conversation without deleting it.",
+    "semanticDescription": "Archive a chat conversation without deleting it. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Archive a chat conversation without deleting it"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "description": "Chat conversation UUID or short reference.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.list",
     "name": "rudder_runs_list",
     "description": "List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility.",
+    "semanticDescription": "List lightweight run summaries with stable pagination and filters; use --full only for legacy full-row compatibility. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List lightweight run summaries with stable pagination and filters"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "createdBefore": {
+          "description": "Only runs created before this timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issueId": {
+          "description": "Linked issue id filter.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Summary page size.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "loadedSkill": {
+          "description": "Loaded skill filter.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "relatedAgentId": {
+          "description": "Agent id filter.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "runIdPrefix": {
+          "description": "Run id prefix filter.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "runtime": {
+          "description": "Runtime type filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Run status filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "updatedAfter": {
+          "description": "Only runs updated after this timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "usedSkill": {
+          "description": "Used skill filter.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.by-skill",
     "name": "rudder_runs_by_skill",
     "description": "Build a paginated skill evidence packet from lightweight run summaries; use --full only for legacy full-row compatibility.",
+    "semanticDescription": "Build a paginated skill evidence packet from lightweight run summaries; use --full only for legacy full-row compatibility. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Build a paginated skill evidence packet from lightweight run summaries"
+    },
     "mutating": false,
     "requiresOrgId": true,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "createdBefore": {
+          "description": "Only runs created before this timestamp.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "evidence": {
+          "description": "Skill evidence type.",
+          "enum": [
+            "used",
+            "loaded"
+          ],
+          "maxLength": 20,
+          "minLength": 1,
+          "type": "string"
+        },
+        "issueId": {
+          "description": "Linked issue id filter.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Summary page size.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        },
+        "relatedAgentId": {
+          "description": "Agent id filter.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "runtime": {
+          "description": "Runtime type filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "skill": {
+          "description": "Skill key or display name.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "description": "Run status filter.",
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.get",
     "name": "rudder_runs_get",
     "description": "Read one bounded run summary; use --full only from a direct trusted CLI for raw detail.",
+    "semanticDescription": "Read one bounded run summary; use --full only from a direct trusted CLI for raw detail. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read one bounded run summary"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.events",
     "name": "rudder_runs_events",
     "description": "List a bounded page of persisted run events with a lossless opaque cursor and clipped payload previews.",
+    "semanticDescription": "List a bounded page of persisted run events with a lossless opaque cursor and clipped payload previews. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List a bounded page of persisted run events with a lossless opaque cursor and clipped payload previews"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "afterSeq": {
+          "description": "Legacy sequence-only cursor.",
+          "maximum": 10000000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "description": "Event page size.",
+          "maximum": 500,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxChars": {
+          "description": "Maximum preview characters per event.",
+          "maximum": 20000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.log",
     "name": "rudder_runs_log",
     "description": "Read a bounded byte range of stored run log content.",
+    "semanticDescription": "Read a bounded byte range of stored run log content. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read a bounded byte range of stored run log content"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limitBytes": {
+          "description": "Maximum bytes for ranged read.",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "maxChars": {
+          "description": "Maximum displayed log characters.",
+          "maximum": 100000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "offset": {
+          "description": "Byte offset for ranged read.",
+          "maximum": 1000000000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.transcript",
     "name": "rudder_runs_transcript",
     "description": "Read a compact server-normalized transcript; --json changes encoding only and --full is direct-CLI-only raw access.",
+    "semanticDescription": "Read a compact server-normalized transcript; --json changes encoding only and --full is direct-CLI-only raw access. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "Read a compact server-normalized transcript"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "aroundError": {
+          "description": "Transcript error step id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "chronological": {
+          "description": "Return oldest-first rows.",
+          "type": "boolean"
+        },
+        "contextTurns": {
+          "description": "Turns around the selected error.",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "number"
+        },
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "errorsOnly": {
+          "description": "Return only error rows.",
+          "type": "boolean"
+        },
+        "includeOutput": {
+          "description": "Include clipped row output.",
+          "type": "boolean"
+        },
+        "maxChars": {
+          "description": "Maximum output characters per row.",
+          "maximum": 20000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "narrative": {
+          "description": "Use narrative row formatting.",
+          "type": "boolean"
+        },
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "turnLimit": {
+          "description": "Maximum turns.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.errors",
     "name": "rudder_runs_errors",
     "description": "List failed tool calls, stderr, runtime failures, and jump-to-context commands.",
+    "semanticDescription": "List failed tool calls, stderr, runtime failures, and jump-to-context commands. Mutating: no. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: not attached.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": true,
+      "title": "List failed tool calls, stderr, runtime failures, and jump-to-context commands"
+    },
     "mutating": false,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": false
+    "attachesRunIdWhenAvailable": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "Opaque pagination cursor.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxChars": {
+          "description": "Maximum output characters per error.",
+          "maximum": 20000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.cancel",
     "name": "rudder_runs_cancel",
     "description": "Cancel a heartbeat run through the governed server route.",
+    "semanticDescription": "Cancel a heartbeat run through the governed server route. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Cancel a heartbeat run through the governed server route"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   },
   {
     "capabilityId": "runs.retry",
     "name": "rudder_runs_retry",
     "description": "Retry a failed, timed out, or cancelled run through the governed server route.",
+    "semanticDescription": "Retry a failed, timed out, or cancelled run through the governed server route. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "readOnlyHint": false,
+      "title": "Retry a failed, timed out, or cancelled run through the governed server route"
+    },
     "mutating": true,
     "requiresOrgId": false,
     "requiresAgentId": false,
-    "attachesRunIdWhenAvailable": true
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "description": "Run UUID, typed short reference (run_<prefix>), or legacy bare short prefix.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    }
   }
 ] as const;
 export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";
+export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "e0d6f8e2e3478cb54147d6034c3bedd6d0d976b7a2e0b9452d3632c637df0e40";

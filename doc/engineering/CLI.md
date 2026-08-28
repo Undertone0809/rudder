@@ -5,6 +5,21 @@ Rudder CLI now supports both:
 - instance setup/diagnostics (`onboard`, `doctor`, `configure`, `env`, `allowed-hostname`)
 - Rudder client operations (issues, approvals, agents, activity, dashboard)
 
+## Agent Contract Generation
+
+`contracts/rudder-agent-contract/v1.json` is the versioned source of truth for
+first-party Agent API transport descriptors, CLI capabilities, MCP tool
+descriptors, comparison-normalization allowlists, and differential fixtures.
+The Node CLI and MCP dispatcher remain the behavior authority during the Rust
+migration; the contract records that current behavior without moving listener,
+authorization, query, migration, or mutation ownership.
+
+Run `pnpm mcp-contract:generate` after changing the source. It deterministically
+updates the CLI and MCP TypeScript artifacts plus the Rust contract resource.
+CI and local validation use `pnpm mcp-contract:check` to reject stale outputs.
+Only JSON Pointers listed in a fixture's normalization profile may be replaced
+during Node/Rust comparisons; all other fields remain semantic.
+
 ## Base Usage
 
 Use repo script in development:

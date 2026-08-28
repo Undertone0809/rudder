@@ -33,6 +33,12 @@ export {
   resolveOrganizationStorageKey
 } from "./organization-storage.js";
 export {
+  RUDDER_AGENT_CONTRACT,
+  RUDDER_AGENT_CONTRACT_HASH,
+  RUDDER_AGENT_CONTRACT_VERSION,
+  normalizeRudderAgentContractValue
+} from "./rudder-agent-contract.js";
+export {
   RUDDER_MCP_CLIENT_CAPABILITIES_META_KEY,
   RUDDER_MCP_CLIENT_INFO_META_KEY,
   RUDDER_MCP_LEGACY_PROTOCOL_VERSIONS,
