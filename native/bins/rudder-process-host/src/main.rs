@@ -472,7 +472,7 @@ fn main() {
                     let receipt_written = active
                         .as_ref()
                         .and_then(|child| child.evidence.as_ref())
-                        .map_or(true, |evidence| evidence.write_terminal(&terminal).is_ok());
+                        .is_none_or(|evidence| evidence.write_terminal(&terminal).is_ok());
                     if !receipt_written {
                         terminal = terminal_message(
                             "failed",
