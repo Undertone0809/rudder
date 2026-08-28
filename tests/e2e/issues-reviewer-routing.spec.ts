@@ -53,7 +53,7 @@ test.describe("Issue reviewer routing", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues/${createdIssue.identifier}`);
     await expect(page.getByText("Reviewer", { exact: true })).toBeVisible();
     await expect(page.getByText("Review Bot", { exact: true })).toBeVisible();
-    await expect(page.locator('[data-slot="agent-title-badge"]').filter({ hasText: "Chief Technology Officer" })).toBeVisible();
+    await expect(page.locator('[data-slot="agent-menu-supporting-label"]').filter({ hasText: "Chief Technology Officer" })).toBeVisible();
   });
 
   test("does not show a duplicate-assignee indicator when reviewer and assignee match", async ({ page }) => {
