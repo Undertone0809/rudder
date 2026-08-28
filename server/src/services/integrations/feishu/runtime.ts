@@ -15,7 +15,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import { logger } from "../../../middleware/logger.js";
 import type { StorageService } from "../../../storage/types.js";
 import { chatAgentRunService } from "../../chat-agent-runs.js";
-import { chatAssistantService, ChatAssistantStreamError } from "../../chat-assistant.js";
+import {
+  chatAssistantService,
+  ChatAssistantStreamError,
+  userVisiblePartialBodyFromError,
+} from "../../chat-assistant.js";
 import {
   claimChatGeneration,
   setActiveChatGenerationId,
@@ -119,6 +123,11 @@ export interface FeishuIntegrationRuntime {
 }
 
 type FeishuAssistantRunner = Pick<ReturnType<typeof chatAssistantService>, "streamChatAssistantReply">;
+
+interface FeishuAcceptedReplyState {
+  activeRunId: string | null;
+  assistantMessage: ChatMessage | null;
+}
 
 function firstString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -617,6 +626,7 @@ export function feishuIntegrationRuntimeService(
       ownerToken?: string | null;
       release: () => void;
     },
+    replyState: FeishuAcceptedReplyState,
     resume?: { runId: string; ownerToken: string },
   ) {
     const conversation = await chats.getById(result.conversationId) as ChatConversation | null;
@@ -647,7 +657,6 @@ export function feishuIntegrationRuntimeService(
     let waitingForNetwork = false;
     let assistantMessage: ChatMessage | null = null;
     try {
-      let activeRunId: string | null = null;
       const streamed = await assistant.streamChatAssistantReply({
         conversation,
         contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
@@ -665,7 +674,7 @@ export function feishuIntegrationRuntimeService(
           : {}),
         abortSignal: activeGeneration.abortController.signal,
         onRunCreated: (runId) => {
-          activeRunId = runId;
+          replyState.activeRunId = runId;
         },
         onWaitingForNetwork: async (suspension: AgentRuntimeNetworkSuspension) => {
           const marked = await chats.generationProtocol.markWaitingForNetwork({
@@ -701,9 +710,10 @@ export function feishuIntegrationRuntimeService(
         kind: persistableAssistantKind(reply.kind),
         body: reply.body,
         structuredPayload: null,
-        runId: activeRunId,
+        runId: replyState.activeRunId,
         replyingAgentId: reply.replyingAgentId ?? integration.agentId,
       }) as ChatMessage;
+      replyState.assistantMessage = assistantMessage;
       if (await deleteAssistantMessageIfStopped(assistantMessage.id)) {
         generationTerminalStatus = "stopped";
         return;
@@ -719,7 +729,7 @@ export function feishuIntegrationRuntimeService(
         text: reply.body,
         conversationId: conversation.id,
         chatMessageId: assistantMessage.id,
-        runId: activeRunId ?? result.runId,
+        runId: replyState.activeRunId ?? result.runId,
         issueId: result.issueId,
         abortSignal: activeGeneration.abortController.signal,
       });
@@ -727,8 +737,8 @@ export function feishuIntegrationRuntimeService(
         generationTerminalStatus = "stopped";
         return;
       }
-      if (activeRunId) {
-        await chatRuns.linkAssistantMessage(activeRunId, conversation.id, assistantMessage.id);
+      if (replyState.activeRunId) {
+        await chatRuns.linkAssistantMessage(replyState.activeRunId, conversation.id, assistantMessage.id);
       }
       if (await deleteAssistantMessageIfStopped(assistantMessage.id)) {
         generationTerminalStatus = "stopped";
@@ -757,6 +767,55 @@ export function feishuIntegrationRuntimeService(
     }
   }
 
+  async function persistAndSendFailedReply(
+    integration: FeishuRuntimeIntegration,
+    credential: FeishuCredential,
+    event: FeishuInboundMessage,
+    result: Extract<AgentIntegrationInboundDispatchResult, { status: "accepted" }>,
+    replyState: FeishuAcceptedReplyState,
+    error: unknown,
+  ) {
+    const body = error instanceof ChatAssistantStreamError
+      ? userVisiblePartialBodyFromError(error)
+      : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
+    const failurePayload = error instanceof ChatAssistantStreamError
+      ? {
+          recoverableFailure: {
+            recoverable: error.retryable !== false,
+            ...(error.retryable === false ? { retryable: false } : {}),
+            code: error.errorCode,
+            message: error.userMessage,
+            runId: replyState.activeRunId,
+            ...(error.failurePhase ? { phase: error.failurePhase } : {}),
+            ...(error.action ? { action: error.action } : {}),
+          },
+        }
+      : null;
+    const assistantMessage = replyState.assistantMessage ?? await chats.addMessage(result.conversationId, {
+      orgId: integration.orgId,
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body,
+      structuredPayload: failurePayload,
+      runId: replyState.activeRunId,
+      replyingAgentId: integration.agentId,
+    }) as ChatMessage;
+    await sendAndRecord({
+      integration,
+      credential,
+      chatId: event.chatId,
+      text: assistantMessage.body,
+      conversationId: result.conversationId,
+      chatMessageId: assistantMessage.id,
+      runId: replyState.activeRunId,
+      issueId: result.issueId,
+    });
+    if (replyState.activeRunId) {
+      await chatRuns.linkAssistantMessage(replyState.activeRunId, result.conversationId, assistantMessage.id);
+    }
+  }
+
   async function runAcceptedReplyInBackground(
     integration: FeishuRuntimeIntegration,
     credential: FeishuCredential,
@@ -781,26 +840,24 @@ export function feishuIntegrationRuntimeService(
       : null;
     leaseTimer?.unref?.();
     let didEnterReplyCompletion = false;
+    const replyState: FeishuAcceptedReplyState = {
+      activeRunId: result.runId ?? null,
+      assistantMessage: null,
+    };
     try {
       await withWorkingReaction(sender, integration, credential, event, async () => {
         didEnterReplyCompletion = true;
         try {
-          await completeAcceptedReply(integration, credential, event, result, activeGeneration);
+          await completeAcceptedReply(integration, credential, event, result, activeGeneration, replyState);
         } catch (error) {
-          activeGeneration.release();
-          const body = error instanceof ChatAssistantStreamError && error.partialBody
-            ? error.partialBody
-            : "Rudder accepted your message, but the agent reply failed before a final response was produced.";
-          await sendAndRecord({
-            integration,
-            credential,
-            chatId: event.chatId,
-            text: body,
-            conversationId: result.conversationId,
-            chatMessageId: result.chatMessageId,
-            runId: result.runId,
-            issueId: result.issueId,
-          });
+          await persistAndSendFailedReply(integration, credential, event, result, replyState, error)
+            .catch((fallbackError: unknown) => {
+              logger.warn({
+                err: fallbackError,
+                integrationId: integration.id,
+                conversationId: result.conversationId,
+              }, "Feishu failed reply persistence or delivery failed");
+            });
           throw error;
         }
       });
@@ -912,6 +969,10 @@ export function feishuIntegrationRuntimeService(
         text: "",
       },
     } satisfies Extract<AgentIntegrationInboundDispatchResult, { status: "accepted" }>;
+    const replyState: FeishuAcceptedReplyState = {
+      activeRunId: run.id,
+      assistantMessage: null,
+    };
     try {
       await completeAcceptedReply(
         integration,
@@ -925,9 +986,20 @@ export function feishuIntegrationRuntimeService(
           ownerToken: resumed.controlOwnerToken,
           release,
         },
+        replyState,
         { runId: run.id, ownerToken },
       );
     } catch (error) {
+      await persistAndSendFailedReply(
+        integration,
+        credential,
+        event,
+        result,
+        replyState,
+        error,
+      ).catch((fallbackError: unknown) => {
+        logger.warn({ err: fallbackError, runId: run.id }, "Feishu network-wait failure response delivery failed");
+      });
       logger.warn({ err: error, runId: run.id }, "Feishu network-wait recovery failed");
       release();
     }
