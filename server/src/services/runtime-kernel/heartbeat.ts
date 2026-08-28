@@ -2401,11 +2401,11 @@ export function heartbeatService(
     let terminalized = 0;
 
     for (const pending of pendingWakeups) {
-      const source = ["timer", "assignment", "review", "on_demand", "automation"].includes(pending.source)
+      const source = ["timer", "assignment", "review", "on_demand", "automation", "delegation"].includes(pending.source)
         ? pending.source as WakeupOptions["source"]
         : "on_demand";
       const triggerDetail = pending.triggerDetail
-        && ["manual", "ping", "callback", "system"].includes(pending.triggerDetail)
+        && ["manual", "ping", "callback", "system", "agent_run_created"].includes(pending.triggerDetail)
         ? pending.triggerDetail as WakeupOptions["triggerDetail"]
         : undefined;
       const requestedByActorType = pending.requestedByActorType
@@ -2420,6 +2420,7 @@ export function heartbeatService(
           reason: pending.reason,
           payload: readDeferredWakePayload(pending.payload),
           contextSnapshot: readDeferredWakeContext(pending.payload),
+          sourceRunId: readNonEmptyString(readDeferredWakeContext(pending.payload).sourceRunId),
           requestedByActorType,
           requestedByActorId: pending.requestedByActorId,
           idempotencyKey: pending.idempotencyKey,

@@ -8510,6 +8510,65 @@ export const RUDDER_AGENT_CONTRACT = {
         },
         "name": "rudder_runs_retry"
       }
+    },
+    {
+      "api": {
+        "method": "POST",
+        "pathTemplate": "/api/agent-runs/delegation",
+        "transport": "direct"
+      },
+      "cli": {
+        "attachesRunIdWhenAvailable": true,
+        "category": "runs",
+        "command": "rudder runs create --task <text> --idempotency-key <key> [--target-agent-id <id>]",
+        "contract": "agent-v1",
+        "description": "Create an independently governed Delegation Run for the current or another same-organization Agent.",
+        "id": "runs.create",
+        "mutating": true,
+        "requiresAgentId": true,
+        "requiresOrgId": false,
+        "requiresRunId": true
+      },
+      "id": "runs.create",
+      "mcp": {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "readOnlyHint": false,
+          "title": "Create an independently governed Delegation Run"
+        },
+        "capabilityId": "runs.create",
+        "description": "Create an independently governed Delegation Run for the current or another same-organization Agent. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "description": "Required stable key for safe replay.",
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "targetAgentId": {
+              "description": "Optional same-organization target Agent id.",
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "task": {
+              "description": "Delegation task to run independently.",
+              "maxLength": 20000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "task",
+            "idempotencyKey"
+          ],
+          "type": "object"
+        },
+        "name": "rudder_runs_create"
+      }
     }
   ],
   "contractVersion": "rudder.agent-contract/v1",
@@ -9316,4 +9375,4 @@ export const RUDDER_AGENT_CONTRACT = {
   },
   "schema": "rudder.agent-contract-source/v1"
 } as const;
-export const RUDDER_AGENT_CONTRACT_HASH = "e0d6f8e2e3478cb54147d6034c3bedd6d0d976b7a2e0b9452d3632c637df0e40";
+export const RUDDER_AGENT_CONTRACT_HASH = "12d96cf69f9d3e5fde61bbd24b5e0f3e3d76746b43e5049e88ca3f38017a042a";

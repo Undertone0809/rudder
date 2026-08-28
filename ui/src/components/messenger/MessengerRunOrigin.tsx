@@ -24,6 +24,7 @@ const sceneLabels: Record<MessengerRunOriginDescriptor["scene"], string> = {
   issue: "Issue Run",
   review: "Review Run",
   automation: "Automation Run",
+  delegation: "Delegation Run",
 };
 
 const sourceLabels: Record<MessengerRunOriginDescriptor["scene"], string> = {
@@ -32,6 +33,7 @@ const sourceLabels: Record<MessengerRunOriginDescriptor["scene"], string> = {
   issue: "Issue",
   review: "Review",
   automation: "Automation",
+  delegation: "Delegation",
 };
 
 const sceneIcons: Record<MessengerRunOriginDescriptor["scene"], LucideIcon> = {
@@ -40,6 +42,7 @@ const sceneIcons: Record<MessengerRunOriginDescriptor["scene"], LucideIcon> = {
   issue: FileText,
   review: ShieldCheck,
   automation: Workflow,
+  delegation: Workflow,
 };
 
 export function failedRunOrigin(item: MessengerSystemThreadItem): MessengerRunOriginDescriptor | null {

@@ -163,6 +163,7 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_runs_errors: { run: "run_123" },
   rudder_runs_cancel: { run: "run_123" },
   rudder_runs_retry: { run: "run_123" },
+  rudder_runs_create: { task: "Inspect the target independently", idempotencyKey: "delegation-1" },
 };
 
 describe("agent-v1 MCP server", () => {
@@ -186,7 +187,7 @@ describe("agent-v1 MCP server", () => {
           }]
         : []
     ));
-    expect(directCapabilities).toHaveLength(46);
+    expect(directCapabilities).toHaveLength(47);
 
     for (const capability of directCapabilities) {
       if (!capability.mcp) throw new Error(`Direct capability lacks MCP descriptor: ${capability.id}`);

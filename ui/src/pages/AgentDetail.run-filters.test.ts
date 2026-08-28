@@ -321,6 +321,22 @@ describe("agent run filters", () => {
     }))).toEqual(["Source: Heartbeat"]);
   });
 
+  it("filters and labels Delegation Runs distinctly from Heartbeat Runs", () => {
+    const delegated = run({
+      invocationSource: "delegation",
+      contextSnapshot: { scene: "delegation", sourceRunId: "source-run-1" },
+    });
+    const heartbeat = run({ invocationSource: "timer" });
+
+    expect(applyRunFilters([heartbeat, delegated], defaultFilterState({
+      scenes: ["delegation"],
+    }))).toEqual([delegated]);
+    expect(runFilterChips(defaultFilterState({
+      sources: ["delegation"],
+      scenes: ["delegation"],
+    }))).toEqual(["Source: Delegation", "Scene: Delegation"]);
+  });
+
   it("filters timer and manual heartbeat invocations through the normalized heartbeat scene", () => {
     const timerRun = run({
       id: "11111111-0000-4000-8000-000000000000",
