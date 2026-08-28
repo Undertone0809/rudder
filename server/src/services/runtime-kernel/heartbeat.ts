@@ -87,8 +87,8 @@ import {
 } from "./heartbeat.terminal.js";
 import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 
-const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 12 * 60 * 60 * 1000;
-const DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 0;
+const DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = 0;
 const TERMINAL_EFFECT_CLAIM_RENEW_INTERVAL_MS = 60_000;
 
 // heartbeatService is instantiated by routes and the scheduler. Execution
@@ -2191,11 +2191,9 @@ export function heartbeatService(
       return claimedRuns;
     });
   }
-
-
   const baseContext = {
     db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, withHeartbeatRecoveryLock, formatDurationMs,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({
@@ -2218,7 +2216,7 @@ export function heartbeatService(
     ...wakeupHandlers,
   });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
-  const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy } = recoveryHandlers;
+  const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy, warnInactiveRuns } = recoveryHandlers;
   const { enqueueWakeup } = wakeupHandlers;
   const { releaseIssueExecutionAndPromote } = releaseHandlers;
   const { executeRun } = executeHandlers;
@@ -2726,6 +2724,8 @@ export function heartbeatService(
     reapOrphanedRuns,
 
     reapInactiveRuns,
+
+    warnInactiveRuns,
 
     reapTimedOutRuns,
 

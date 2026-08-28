@@ -396,6 +396,123 @@ describe("heartbeat orphaned process recovery", () => {
     expect(agent?.status).toBe("error");
   });
 
+  it("does not impose an absolute duration limit unless one is configured", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const checkedAt = new Date("2026-03-20T00:00:00.000Z");
+    const { orgId, agentId, runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    await db.insert(heartbeatRunEvents).values({
+      orgId,
+      agentId,
+      runId,
+      seq: 1,
+      eventType: "adapter.progress",
+      stream: "stdout",
+      level: "info",
+      message: "Run is still producing progress after 24 hours",
+      createdAt: new Date("2026-03-19T23:59:00.000Z"),
+    });
+
+    const result = await heartbeatService(db).reapTimedOutRuns({ now: checkedAt });
+
+    expect(result).toEqual({ timedOut: 0, runIds: [] });
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({ status: "running", finishedAt: null, errorCode: null });
+  });
+
+  it("does not impose an inactivity limit unless one is configured", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const { runId } = await seedRunFixture({
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+
+    const result = await heartbeatService(db).reapInactiveRuns({
+      now: new Date("2026-03-20T00:00:00.000Z"),
+    });
+
+    expect(result).toEqual({ timedOut: 0, runIds: [] });
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({ status: "running", finishedAt: null, errorCode: null });
+  });
+
+  it("warns once after 24 hours of inactivity without changing runtime state", async () => {
+    const startedAt = new Date("2026-03-19T00:00:00.000Z");
+    const warnedAt = new Date("2026-03-20T00:00:00.000Z");
+    const { agentId, runId, wakeupRequestId } = await seedRunFixture({
+      agentStatus: "running",
+      processPid: null,
+      includeIssue: false,
+      startedAt,
+      updatedAt: startedAt,
+    });
+    const heartbeat = heartbeatService(db);
+
+    await expect(heartbeat.warnInactiveRuns({ now: warnedAt })).resolves.toEqual({
+      warned: 1,
+      runIds: [runId],
+    });
+    await expect(heartbeat.warnInactiveRuns({ now: new Date("2026-03-21T00:00:00.000Z") })).resolves.toEqual({
+      warned: 0,
+      runIds: [],
+    });
+
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({ status: "running", finishedAt: null, error: null, errorCode: null });
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, wakeupRequestId))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({ status: "claimed", finishedAt: null, error: null });
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(agent?.status).toBe("running");
+
+    const warnings = await db
+      .select()
+      .from(heartbeatRunEvents)
+      .where(and(
+        eq(heartbeatRunEvents.runId, runId),
+        eq(heartbeatRunEvents.idempotencyKey, "run-inactivity-warning:24h:v1"),
+      ));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      eventType: "lifecycle",
+      stream: "system",
+      level: "warn",
+      message: "Run has had no recorded activity for 24h 0m; it remains running",
+      payload: {
+        kind: "inactivity_warning",
+        minInactivityMs: 24 * 60 * 60 * 1000,
+        inactiveMs: 24 * 60 * 60 * 1000,
+        lastActivityAt: startedAt.toISOString(),
+        warnedAt: warnedAt.toISOString(),
+      },
+    });
+  });
+
   it("times out active runs that stop producing server-visible activity", async () => {
     const child = spawnAliveProcess();
     childProcesses.add(child);
