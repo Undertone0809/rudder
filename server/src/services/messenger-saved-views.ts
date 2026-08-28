@@ -194,11 +194,12 @@ function stableJson(value: unknown): string {
 
 function keepRequestFingerprint(input: KeepMessengerSavedView, target: MessengerSavedViewTarget) {
   return createHash("sha256").update(stableJson({
-    version: 1,
+    version: input.primaryRailPinned ? 2 : 1,
     target,
     title: input.title,
     subtitle: input.subtitle ?? null,
     favicon: input.favicon ?? null,
+    ...(input.primaryRailPinned ? { primaryRailPinned: true } : {}),
     placement: input.placement,
   })).digest("hex");
 }
@@ -461,6 +462,12 @@ export function messengerSavedViewsService(db: Db) {
 
   async function keep(orgId: string, userId: string, input: KeepMessengerSavedView) {
     const target = validatedTarget(input.target);
+    if (input.primaryRailPinned && target.kind !== "local_app") {
+      throw badRequest("Only Local App Saved Views can be pinned to the Primary Rail");
+    }
+    if (input.primaryRailPinned && input.placement.kind !== "loose") {
+      throw badRequest("Local App Primary Rail pins must use loose placement");
+    }
     const instanceId = target.viewInstanceId;
     const resourceKey = messengerSavedViewResourceKey(target);
     const canonicalResourceKey = messengerSavedViewCanonicalResourceKey(target);
@@ -540,6 +547,18 @@ export function messengerSavedViewsService(db: Db) {
       const existing = byMutation ?? byInstance;
       if (existing && existing.canonicalResourceKey !== canonicalResourceKey) {
         throw conflict("This view instance is already associated with a different target");
+      }
+      if (input.primaryRailPinned && !existing?.primaryRailPinnedAt) {
+        const [pinnedRows] = await txDb
+          .select({ value: count() })
+          .from(messengerSavedViews)
+          .where(and(
+            ownerWhere(orgId, userId),
+            isNotNull(messengerSavedViews.primaryRailPinnedAt),
+          ));
+        if ((pinnedRows?.value ?? 0) >= MAX_PRIMARY_RAIL_PINS) {
+          throw badRequest(`Primary Rail supports up to ${MAX_PRIMARY_RAIL_PINS} pinned Local Apps`);
+        }
       }
 
       let group: typeof messengerCustomGroups.$inferSelect | null = null;
@@ -639,7 +658,8 @@ export function messengerSavedViewsService(db: Db) {
         const exactReplay = isDeepStrictEqual(byMutation.targetPayload, target)
           && byMutation.title === input.title
           && byMutation.subtitle === (input.subtitle ?? null)
-          && byMutation.favicon === (input.favicon ?? null);
+          && byMutation.favicon === (input.favicon ?? null)
+          && (!input.primaryRailPinned || Boolean(byMutation.primaryRailPinnedAt));
         if (!exactReplay) {
           throw conflict("This Saved View mutation id was already used with different input");
         }
@@ -671,7 +691,8 @@ export function messengerSavedViewsService(db: Db) {
           && isDeepStrictEqual(existing.targetPayload, target)
           && existing.title === input.title
           && existing.subtitle === (input.subtitle ?? null)
-          && existing.favicon === (input.favicon ?? null);
+          && existing.favicon === (input.favicon ?? null)
+          && (!input.primaryRailPinned || Boolean(existing.primaryRailPinnedAt));
         if (unchanged) {
           savedView = existing;
           action = null;
@@ -685,6 +706,7 @@ export function messengerSavedViewsService(db: Db) {
             subtitle: input.subtitle ?? null,
             favicon: input.favicon ?? null,
             hiddenAt: null,
+            ...(input.primaryRailPinned ? { primaryRailPinnedAt: now } : {}),
             updatedAt: now,
           }).where(and(ownerWhere(orgId, userId), eq(messengerSavedViews.id, existing.id))).returning();
           action = wasHidden ? "messenger.saved_view_restored" : "messenger.saved_view_updated";
@@ -708,11 +730,17 @@ export function messengerSavedViewsService(db: Db) {
           subtitle: input.subtitle ?? null,
           favicon: input.favicon ?? null,
           sortOrder: (last?.sortOrder ?? -1) + 1,
+          ...(input.primaryRailPinned ? { primaryRailPinnedAt: now } : {}),
           updatedAt: now,
         }).returning();
         action = "messenger.saved_view_created";
       }
-      if (action) await logMutation(txDb, orgId, userId, action, savedView, { source: "keep" });
+      if (action) {
+        await logMutation(txDb, orgId, userId, action, savedView, {
+          source: "keep",
+          ...(input.primaryRailPinned ? { primaryRailPinned: true } : {}),
+        });
+      }
 
       const savedItemKey = messengerSavedViewItemKey(savedView.id);
       if (existingMembership && existingMembership.groupId !== group?.id) {

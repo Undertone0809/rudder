@@ -68,12 +68,28 @@ export const keepMessengerSavedViewSchema = z.object({
   target: messengerSavedViewTargetSchema,
   ...savedViewMetadataShape,
   clientMutationId: uuid,
+  primaryRailPinned: z.literal(true).optional(),
   placement: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("anchor"), anchor: messengerSavedViewAnchorSchema }).strict(),
     z.object({ kind: z.literal("group"), groupId: uuid }).strict(),
     z.object({ kind: z.literal("loose") }).strict(),
   ]),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.primaryRailPinned && value.target.kind !== "local_app") {
+    ctx.addIssue({
+      code: "custom",
+      message: "Only Local App Saved Views can be pinned to the Primary Rail",
+      path: ["primaryRailPinned"],
+    });
+  }
+  if (value.primaryRailPinned && value.placement.kind !== "loose") {
+    ctx.addIssue({
+      code: "custom",
+      message: "Local App Primary Rail pins must use loose placement",
+      path: ["placement"],
+    });
+  }
+});
 
 export const updateMessengerSavedViewSchema = z.object({
   target: messengerSavedViewTargetSchema.optional(),
