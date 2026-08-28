@@ -286,11 +286,7 @@ describe("agent-v1 registry", () => {
     expect(RUDDER_CORE_MCP_TOOL_NAMES).toEqual(expect.arrayContaining(runtimeAllowlist));
     expect(RUDDER_CORE_MCP_TOOL_NAMES.filter((name) => !runtimeAllowlist.includes(
       name as (typeof runtimeAllowlist)[number],
-    ))).toEqual([
-      "rudder_skill_search",
-      "rudder_plugin_search",
-      "rudder_plugin_get",
-    ]);
+    ))).toEqual([]);
   });
 
   it("derives core and Browser semantic hashes from the canonical tool manifest", () => {

@@ -63,7 +63,11 @@ mod tests {
             .as_array()
             .expect("fixtures must be an array")
             .iter()
-            .chain(source["g0DifferentialFixtures"].as_array().expect("G0 fixtures must be an array"));
+            .chain(
+                source["g0DifferentialFixtures"]
+                    .as_array()
+                    .expect("G0 fixtures must be an array"),
+            );
         for fixture in fixtures {
             let profile = fixture["profile"].as_str().expect("fixture profile");
             let expected = &fixture["expected"];
