@@ -21,6 +21,9 @@ type WakePayload = {
   runId: string;
   agentId: string;
   orgId: string;
+  scene: string | null;
+  sourceRunId: string | null;
+  delegationTask: string | null;
   taskId: string | null;
   issueId: string | null;
   wakeReason: string | null;
@@ -307,12 +310,15 @@ function stringifyForLog(value: unknown, maxChars: number): string {
   return `${text.slice(0, maxChars)}... [truncated ${text.length - maxChars} chars]`;
 }
 
-function buildWakePayload(ctx: AgentRuntimeExecutionContext): WakePayload {
+export function buildWakePayload(ctx: AgentRuntimeExecutionContext): WakePayload {
   const { runId, agent, context } = ctx;
   return {
     runId,
     agentId: agent.id,
     orgId: agent.orgId,
+    scene: nonEmpty(context.scene) ?? nonEmpty(context.rudderScene),
+    sourceRunId: nonEmpty(context.sourceRunId),
+    delegationTask: nonEmpty(context.delegationTask),
     taskId: nonEmpty(context.taskId) ?? nonEmpty(context.issueId),
     issueId: nonEmpty(context.issueId),
     wakeReason: nonEmpty(context.wakeReason),
@@ -350,6 +356,7 @@ function buildRudderEnvForWake(ctx: AgentRuntimeExecutionContext, wakePayload: W
     rudderEnv.RUDDER_API_URL = rudderApiUrlOverride;
   }
   if (wakePayload.taskId) rudderEnv.RUDDER_TASK_ID = wakePayload.taskId;
+  if (wakePayload.delegationTask) rudderEnv.RUDDER_DELEGATION_TASK = wakePayload.delegationTask;
   if (wakePayload.wakeReason) rudderEnv.RUDDER_WAKE_REASON = wakePayload.wakeReason;
   if (wakePayload.wakeCommentId) rudderEnv.RUDDER_WAKE_COMMENT_ID = wakePayload.wakeCommentId;
   if (wakePayload.approvalId) rudderEnv.RUDDER_APPROVAL_ID = wakePayload.approvalId;
@@ -361,7 +368,7 @@ function buildRudderEnvForWake(ctx: AgentRuntimeExecutionContext, wakePayload: W
   return rudderEnv;
 }
 
-function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>): string {
+export function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>): string {
   const claimedApiKeyPath = "~/.openclaw/workspace/rudder-claimed-api-key.json";
   const orderedKeys = [
     "RUDDER_RUN_ID",
@@ -369,6 +376,7 @@ function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>):
     "RUDDER_ORG_ID",
     "RUDDER_API_URL",
     "RUDDER_TASK_ID",
+    "RUDDER_DELEGATION_TASK",
     "RUDDER_WAKE_REASON",
     "RUDDER_WAKE_COMMENT_ID",
     "RUDDER_APPROVAL_ID",
@@ -385,19 +393,32 @@ function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>):
 
   const issueIdHint = payload.taskId ?? payload.issueId ?? "";
   const apiBaseHint = rudderEnv.RUDDER_API_URL ?? "<set RUDDER_API_URL>";
+  const isDelegation = payload.scene === "delegation";
 
   const lines = [
-    "Rudder wake event for a cloud adapter.",
+    isDelegation ? "Rudder Delegation Run event for a cloud adapter." : "Rudder wake event for a cloud adapter.",
     "",
     "HTTP compatibility mode: this runtime has not migrated to the CLI contract yet.",
     "",
-    "Run this procedure now. Do not guess undocumented endpoints and do not ask for additional heartbeat docs.",
-    "Translate the heartbeat instruction into the explicit HTTP workflow below. The listed HTTP endpoints override any CLI command guidance.",
-    "",
-    wrapPromptSection(
-      RUDDER_PROMPT_SECTION_TAGS.heartbeatInstruction,
-      RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
-    ),
+    isDelegation
+      ? "Run this independent bounded task with the target Agent's own runtime context. Do not inherit the source Run's transcript, session, workspace, credentials, environment variables, or arbitrary paths."
+      : "Run this procedure now. Do not guess undocumented endpoints and do not ask for additional heartbeat docs.",
+    ...(isDelegation
+      ? [
+        "",
+        "## Delegated Task",
+        payload.delegationTask ?? "",
+        "",
+        `Source Run ${payload.sourceRunId ?? "unknown"} is provenance only; use the target Agent's own context.`,
+      ]
+      : [
+        "Translate the heartbeat instruction into the explicit HTTP workflow below. The listed HTTP endpoints override any CLI command guidance.",
+        "",
+        wrapPromptSection(
+          RUDDER_PROMPT_SECTION_TAGS.heartbeatInstruction,
+          RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
+        ),
+      ]),
     "",
     "Set these values in your run context:",
     ...envLines,
@@ -407,6 +428,8 @@ function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>):
     "",
     `api_base=${apiBaseHint}`,
     `task_id=${payload.taskId ?? ""}`,
+    `delegation_task=${payload.delegationTask ?? ""}`,
+    `source_run_id=${payload.sourceRunId ?? ""}`,
     `issue_id=${payload.issueId ?? ""}`,
     `wake_reason=${payload.wakeReason ?? ""}`,
     `wake_comment_id=${payload.wakeCommentId ?? ""}`,
@@ -421,6 +444,15 @@ function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>):
     "- Do NOT call guessed endpoints like /api/cloud-adapter/*, /api/cloud-adapters/*, /api/adapters/cloud/*, or /api/heartbeat.",
     "- Treat HTTP compatibility as a narrow fallback. Preserve the Rudder heartbeat semantics even when the transport is HTTP.",
     "",
+    ...(isDelegation
+      ? [
+        "Workflow:",
+        "1) Execute only the bounded Delegation task above.",
+        "2) Return a concise result through the normal Run result path.",
+        "",
+        "Complete the delegated task in this run.",
+      ]
+      : [
     "Workflow:",
     "1) GET /api/agents/me",
     "2) If RUDDER_APPROVAL_ID exists:",
@@ -462,6 +494,7 @@ function buildWakeText(payload: WakePayload, rudderEnv: Record<string, string>):
     "- POST /api/orgs/{orgId}/issues (when asked to create a new issue)",
     "",
     "Complete the workflow in this run.",
+      ]),
   ];
   return lines.join("\n");
 }
@@ -496,6 +529,9 @@ function buildStandardRudderPayload(
     orgId: ctx.agent.orgId,
     agentId: ctx.agent.id,
     agentName: ctx.agent.name,
+    scene: wakePayload.scene,
+    sourceRunId: wakePayload.sourceRunId,
+    delegationTask: wakePayload.delegationTask,
     taskId: wakePayload.taskId,
     issueId: wakePayload.issueId,
     issueIds: wakePayload.issueIds,

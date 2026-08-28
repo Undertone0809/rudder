@@ -63,6 +63,7 @@ const sourceLabels: Record<HeartbeatInvocationSource, string> = {
   on_demand: "Manual",
   automation: "Automation",
   chat: "Chat",
+  delegation: "Delegation",
 };
 
 const contextLabels: Record<RunFilterContext, string> = {
@@ -78,6 +79,7 @@ const sceneLabels: Record<AgentRunScene, string> = {
   automation: "Automation",
   review: "Review",
   heartbeat: "Heartbeat",
+  delegation: "Delegation",
 };
 
 const targetTypeLabels: Record<AgentRunTargetType, string> = {

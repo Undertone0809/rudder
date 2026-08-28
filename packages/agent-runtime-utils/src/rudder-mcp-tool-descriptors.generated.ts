@@ -953,7 +953,16 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "requiresOrgId": false,
     "requiresAgentId": false,
     "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "runs.create",
+    "name": "rudder_runs_create",
+    "description": "Create an independently governed Delegation Run for the current or another same-organization Agent.",
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "457869e72e5cd04a54f036324e167365ff4c13aa396a74ec3ed11676f7c70e67";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

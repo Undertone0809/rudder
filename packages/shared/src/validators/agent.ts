@@ -180,6 +180,19 @@ export const wakeAgentSchema = z.object({
 
 export type WakeAgent = z.infer<typeof wakeAgentSchema>;
 
+const delegationTaskSchema = z.string().trim().min(1).refine(
+  (value) => new TextEncoder().encode(value).byteLength <= 20_000,
+  "task must be no more than 20,000 UTF-8 bytes",
+);
+
+export const createDelegationRunSchema = z.object({
+  task: delegationTaskSchema,
+  targetAgentId: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: z.string().trim().min(1).max(500),
+});
+
+export type CreateDelegationRun = z.infer<typeof createDelegationRunSchema>;
+
 export const resetAgentSessionSchema = z.object({
   taskKey: z.string().min(1).optional().nullable(),
 });

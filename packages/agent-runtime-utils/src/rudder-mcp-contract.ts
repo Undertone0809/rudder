@@ -783,6 +783,12 @@ function coreMcpInputSchema(id: string): RudderMcpInputSchema {
         body: string("Agent-authored chat message.", { maxLength: 500_000 }),
         editUserMessageId: string("User message id to edit.", { maxLength: 200 }),
       }, ["chat", "body"]);
+    case "runs.create":
+      return schema({
+        task: string("Delegation task to run independently.", { minLength: 1, maxLength: 20_000 }),
+        targetAgentId: string("Optional same-organization target Agent id.", { maxLength: 200 }),
+        idempotencyKey: string("Required stable key for safe replay.", { minLength: 1, maxLength: 500 }),
+      }, ["task", "idempotencyKey"]);
     case "runs.list":
       return schema({
         updatedAfter: string("Only runs updated after this timestamp.", { maxLength: 100 }),
@@ -870,7 +876,8 @@ export function rudderMcpSemanticToolContract(
       destructiveHint: RUDDER_MCP_DESTRUCTIVE_CAPABILITY_IDS.has(tool.capabilityId),
       idempotentHint: !tool.mutating
         || tool.capabilityId === "browser.reload"
-        || tool.capabilityId === "browser.close",
+        || tool.capabilityId === "browser.close"
+        || tool.capabilityId === "runs.create",
       ...(RUDDER_MCP_OPEN_WORLD_CAPABILITY_IDS.has(tool.capabilityId) ? { openWorldHint: true } : {}),
     },
   };

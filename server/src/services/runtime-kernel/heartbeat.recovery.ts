@@ -260,6 +260,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           triggerDetail: opts.triggerDetail,
           status: "queued",
           wakeupRequestId: wakeupRequest.id,
+          sourceRunId: run.sourceRunId ?? readNonEmptyString(recoveryContextSnapshot.sourceRunId),
           contextSnapshot: recoveryContextSnapshot,
           sessionIdBefore: sessionBefore,
           sessionParamsBeforeJson:

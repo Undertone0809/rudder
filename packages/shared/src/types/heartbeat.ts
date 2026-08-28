@@ -77,6 +77,8 @@ export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
   automationRunId?: string | null;
   automationId?: string | null;
   wakeupRequestId?: string | null;
+  sourceRunId?: string | null;
+  delegationTask?: string | null;
   issueId?: string | null;
   goalId?: string | null;
   relationship?: "assignee" | "reviewer" | "collaborator";
@@ -100,6 +102,8 @@ export interface HeartbeatRun {
   finishedAt: Date | null;
   error: string | null;
   wakeupRequestId: string | null;
+  /** Source Run for a governed Delegation Run; null for ordinary runs. */
+  sourceRunId?: string | null;
   exitCode: number | null;
   signal: string | null;
   usageJson: Record<string, unknown> | null;

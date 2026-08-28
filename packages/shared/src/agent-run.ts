@@ -10,6 +10,7 @@ export interface AgentRunOriginInput {
   invocationSource: string;
   triggerDetail: string | null;
   wakeupRequestId: string | null;
+  sourceRunId?: string | null;
   chatConversationId?: string | null;
   contextSnapshot: HeartbeatRunContextSnapshot | Record<string, unknown> | null;
 }
@@ -27,6 +28,7 @@ export interface AgentRunOrigin {
   automationRunId: string | null;
   automationId: string | null;
   wakeupRequestId: string | null;
+  sourceRunId: string | null;
 }
 
 export interface AgentRunOverview {
@@ -67,7 +69,8 @@ function isAgentRunScene(value: unknown): value is AgentRunScene {
     || value === "chat"
     || value === "automation"
     || value === "review"
-    || value === "heartbeat";
+    || value === "heartbeat"
+    || value === "delegation";
 }
 
 function isAgentRunTargetType(value: unknown): value is AgentRunTargetType {
@@ -84,6 +87,7 @@ function resolveScene(run: AgentRunOriginInput, context: Record<string, unknown>
   if (isAgentRunScene(context.rudderScene)) return context.rudderScene;
   if (run.invocationSource === "chat" || run.chatConversationId || stringValue(context.conversationId)) return "chat";
   if (run.invocationSource === "review") return "review";
+  if (run.invocationSource === "delegation") return "delegation";
   if (run.invocationSource === "timer") return "heartbeat";
   if (stringValue(context.automationRunId)) return "automation";
   if (stringValue(context.issueId)) return "issue";
@@ -172,6 +176,7 @@ export function toAgentRunOrigin(run: AgentRunOriginInput): AgentRunOrigin {
     automationRunId: stringValue(context.automationRunId),
     automationId: stringValue(context.automationId),
     wakeupRequestId: run.wakeupRequestId ?? stringValue(context.wakeupRequestId),
+    sourceRunId: run.sourceRunId ?? stringValue(context.sourceRunId),
   };
 }
 
@@ -192,6 +197,7 @@ export function toAgentRun(run: HeartbeatRun): AgentRun {
     automationRunId: origin.automationRunId,
     automationId: origin.automationId,
     wakeupRequestId: origin.wakeupRequestId,
+    sourceRunId: origin.sourceRunId,
   };
 }
 
@@ -213,6 +219,7 @@ export function toHeartbeatRun(run: HeartbeatRun): HeartbeatRun {
     finishedAt: run.finishedAt,
     error: run.error,
     wakeupRequestId: run.wakeupRequestId,
+    sourceRunId: run.sourceRunId ?? null,
     exitCode: run.exitCode,
     signal: run.signal,
     usageJson: run.usageJson,

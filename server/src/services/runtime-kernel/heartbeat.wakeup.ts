@@ -28,6 +28,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const reason = opts.reason ?? null;
     const payload = opts.payload ?? null;
     const existingWakeupRequestId = readNonEmptyString(opts.existingWakeupRequestId);
+    const sourceRunId = readNonEmptyString(opts.sourceRunId) ?? readNonEmptyString(contextSnapshot.sourceRunId);
     const originTerminalRunId = readNonEmptyString(opts.originTerminalRunId);
     const expectedIssueExecutionRunId = readNonEmptyString(opts.expectedIssueExecutionRunId);
     const {
@@ -752,6 +753,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             triggerDetail,
             status: "queued",
             wakeupRequestId: wakeupRequest.id,
+            sourceRunId,
             contextSnapshot: enrichedContextSnapshot,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
@@ -949,6 +951,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           triggerDetail,
           status: "queued",
           wakeupRequestId: wakeupRequest.id,
+          sourceRunId,
           contextSnapshot: enrichedContextSnapshot,
           sessionIdBefore: sessionBefore,
           sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
@@ -1205,6 +1208,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             triggerDetail,
             status: "queued",
             wakeupRequestId: pendingWakeup.id,
+            sourceRunId: readNonEmptyString(recoveredContext.sourceRunId) ?? sourceRunId,
             contextSnapshot: recoveredContext,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: recoveredSessionSelection.sessionParams,

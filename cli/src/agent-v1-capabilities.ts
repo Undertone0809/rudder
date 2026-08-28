@@ -1407,4 +1407,16 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     requiresRunId: false,
     attachesRunIdWhenAvailable: true,
   },
+  {
+    id: "runs.create",
+    command: "rudder runs create --task <text> --idempotency-key <key> [--target-agent-id <id>]",
+    category: "runs",
+    description: "Create an independently governed Delegation Run for the current or another same-organization Agent.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: false,
+    requiresAgentId: true,
+    requiresRunId: true,
+    attachesRunIdWhenAvailable: true,
+  },
 ];

@@ -1114,6 +1114,13 @@
       "when": 1787392800000,
       "tag": "0158_agent_run_goal_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1787906400000,
+      "tag": "0159_delegation_run_provenance",
+      "breakpoints": true
     }
   ]
 }

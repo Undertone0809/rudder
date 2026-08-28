@@ -175,8 +175,31 @@ describe("toAgentRun", () => {
       automationRunId: null,
       automationId: null,
       wakeupRequestId: "wakeup-1",
+      sourceRunId: null,
     });
     expect(JSON.stringify(origin)).not.toMatch(/private-display-id|private\/workspace|private-token|private-key/);
+  });
+
+  it("projects a Delegation Run with source provenance and an independent target", () => {
+    const run = toAgentRun(heartbeatRun({
+      invocationSource: "delegation",
+      triggerDetail: "agent_run_created",
+      sourceRunId: "source-run-1",
+      wakeupRequestId: "wakeup-1",
+      contextSnapshot: {
+        scene: "delegation",
+        targetType: "wakeup_request",
+        triggerKind: "agent_run_created",
+        sourceRunId: "source-run-1",
+        delegationTask: "Review the target independently",
+      },
+    }));
+
+    expect(run.scene).toBe("delegation");
+    expect(run.targetType).toBe("wakeup_request");
+    expect(run.targetId).toBe("wakeup-1");
+    expect(run.sourceRunId).toBe("source-run-1");
+    expect(run.contextSnapshot?.delegationTask).toBe("Review the target independently");
   });
 
   it("honors explicit automation target metadata while preserving linked chat facts", () => {
