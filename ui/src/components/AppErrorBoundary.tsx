@@ -29,6 +29,8 @@ function currentRouteKey(): string {
 }
 
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
+  private autoRecoveryReserved = false;
+
   override state: AppErrorBoundaryState = {
     error: null,
     info: null,
@@ -46,8 +48,13 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
+    if (isAutoReloadableRenderError(error) && this.autoRecoveryReserved) {
+      return;
+    }
+
     const autoReloading = isAutoReloadableRenderError(error) && this.reserveAutoRecoveryAttempt(error);
     if (autoReloading) {
+      this.autoRecoveryReserved = true;
       console.warn("[rudder-ui] recoverable render error; reloading UI once", error, info);
       this.setState({ error, info, autoReloading });
       this.reloadUi();
