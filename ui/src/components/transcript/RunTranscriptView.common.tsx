@@ -326,6 +326,25 @@ export type TranscriptBlock =
       sourceEntryIds?: string[];
     };
 
+export function transcriptBlockStableKey(block: TranscriptBlock, fallbackIndex: number) {
+  const sourceEntryId = block.sourceEntryIds?.[0]?.trim() || null;
+  const blockIdentity = (() => {
+    if (block.type === "message" || block.type === "thinking") {
+      if (block.segmentId?.trim()) return `segment:${block.segmentId.trim()}`;
+      if (block.generationId && Number.isInteger(block.generationSeqStart)) {
+        return `generation:${block.generationId}:${block.generationSeqStart}`;
+      }
+      if (block.type === "message" && block.messageId?.trim()) return `message:${block.messageId.trim()}`;
+    }
+    if (block.type === "tool" && block.toolUseId?.trim()) return `tool:${block.toolUseId.trim()}`;
+    if (block.type === "activity" && block.activityId?.trim()) return `activity:${block.activityId.trim()}`;
+    if (block.type === "todo_list" && block.todoListId?.trim()) return `todo:${block.todoListId.trim()}`;
+    return sourceEntryId ? `entry:${sourceEntryId}` : null;
+  })();
+
+  return `${block.type}:${blockIdentity ?? `${block.ts}:${fallbackIndex}`}`;
+}
+
 export interface ChatTranscriptTurn {
   key: string;
   index: number;

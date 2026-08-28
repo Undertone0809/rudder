@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
-import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
 
@@ -1007,7 +1007,7 @@ export function normalizeChatTranscriptTurns(
       });
 
       return {
-        key: `turn-${index + 1}-${blocks[0]?.ts ?? index}`,
+        key: `turn-${index + 1}-${blocks[0] ? transcriptBlockStableKey(blocks[0], 0) : index}`,
         index: index + 1,
         ts: blocks[0]?.ts ?? new Date().toISOString(),
         blocks,
