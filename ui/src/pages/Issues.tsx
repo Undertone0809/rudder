@@ -122,8 +122,8 @@ function DraftIssuesView({
 }) {
   if (drafts.length === 0) {
     return (
-      <div data-testid="issue-drafts-view" className="flex h-full min-h-0 flex-col">
-        <EmptyState icon={PencilLine} message="No draft issues." />
+      <div data-testid="issue-drafts-view" className="flex h-full min-h-0 flex-col items-center justify-center px-6 py-8">
+        <EmptyState icon={PencilLine} className="min-h-[18rem]" />
       </div>
     );
   }

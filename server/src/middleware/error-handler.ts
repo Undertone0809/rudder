@@ -12,6 +12,13 @@ export interface ErrorContext {
   reqQuery?: unknown;
 }
 
+function isZodErrorLike(err: unknown): err is { issues: unknown[] } {
+  if (err instanceof ZodError) return true;
+  if (!err || typeof err !== "object") return false;
+  const candidate = err as { name?: unknown; issues?: unknown };
+  return candidate.name === "ZodError" && Array.isArray(candidate.issues);
+}
+
 function attachErrorContext(
   req: Request,
   res: Response,
@@ -53,8 +60,8 @@ export function errorHandler(
     return;
   }
 
-  if (err instanceof ZodError) {
-    res.status(400).json({ error: "Validation error", details: err.errors });
+  if (isZodErrorLike(err)) {
+    res.status(400).json({ error: "Validation error", details: err.issues });
     return;
   }
 

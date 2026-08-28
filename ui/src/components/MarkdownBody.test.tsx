@@ -1334,6 +1334,20 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-status="in_progress"');
   });
 
+  it("renders a fallback icon for empty-label wake mentions without current agent data", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"[](agent://1c6709e7-2e99-4e72-8eb6-0d611f844d66?intent=wake)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-mention-kind="agent"');
+    expect(html).toContain('class="rudder-inline-token-label">1c6709e7</span>');
+    expect(html).toContain("--rudder-mention-icon-mask");
+  });
+
   it("renders empty-label issue links without current mention data as readable links", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
