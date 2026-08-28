@@ -231,6 +231,39 @@ describe("server config env loading", () => {
     expect(loadConfig().heartbeatRunTimeoutMs).toBe(6 * 60 * 60 * 1000);
   });
 
+  it("disables the Agent Run inactivity limit by default", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    delete process.env.HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS;
+
+    const loadConfig = await importLoadConfig();
+
+    expect(loadConfig().heartbeatRunInactivityTimeoutMs).toBe(0);
+  });
+
+  it("keeps malformed Agent Run inactivity limits disabled", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = "not-a-duration";
+
+    const loadConfig = await importLoadConfig();
+
+    expect(loadConfig().heartbeatRunInactivityTimeoutMs).toBe(0);
+  });
+
+  it("allows deployments to opt into an Agent Run inactivity limit", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = "1800000";
+
+    const loadConfig = await importLoadConfig();
+
+    expect(loadConfig().heartbeatRunInactivityTimeoutMs).toBe(30 * 60 * 1000);
+  });
+
   it("accepts a dedicated HTTPS workspace preview origin", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
     process.chdir(tempDir);

@@ -342,10 +342,10 @@ export function loadConfig(): Config {
   const heartbeatRunInactivityTimeoutMsRaw = Number(heartbeatRunInactivityTimeoutMsValue);
   const heartbeatRunInactivityTimeoutMs =
     !heartbeatRunInactivityTimeoutMsValue
-      ? 30 * 60 * 1000
+      ? 0
       : Number.isFinite(heartbeatRunInactivityTimeoutMsRaw)
         ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
-        : 30 * 60 * 1000;
+        : 0;
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);
 
   return {

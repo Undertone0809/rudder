@@ -10,7 +10,7 @@ test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
 });
 
-test("keeps a long-running Agent Run alive while it is still making progress", async ({ page }, testInfo) => {
+test("keeps an inactive Agent Run alive and warns after 24 hours", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
 
   const orgResponse = await page.request.post("/api/orgs", {
@@ -46,7 +46,7 @@ test("keeps a long-running Agent Run alive while it is still making progress", a
     executionLeaseExpiresAt: new Date(now.getTime() + 10 * 60 * 1000),
     stdoutExcerpt: "Still making progress after 24 hours",
     createdAt: startedAt,
-    updatedAt: now,
+    updatedAt: startedAt,
   });
   await e2eDb.insert(heartbeatRunEvents).values({
     orgId: organization.id,
@@ -56,8 +56,8 @@ test("keeps a long-running Agent Run alive while it is still making progress", a
     eventType: "adapter.progress",
     stream: "stdout",
     level: "info",
-    message: "Still making progress after 24 hours",
-    createdAt: now,
+    message: "Agent Run started",
+    createdAt: startedAt,
   });
 
   await page.addInitScript((orgId: string) => {
@@ -70,11 +70,12 @@ test("keeps a long-running Agent Run alive while it is still making progress", a
   await expect(page.getByTestId("run-stdout-excerpt")).toContainText("Still making progress after 24 hours");
 
   // The recovery watchdog runs every 30 seconds in the E2E server. Waiting for
-  // a full cycle proves the server does not apply the former 12-hour cap.
+  // a full cycle proves default inactivity handling warns without terminating.
   await page.waitForTimeout(35_000);
   await page.reload({ waitUntil: "domcontentloaded" });
 
   await expect(page.getByTestId("run-summary-card")).toContainText("running", { timeout: 30_000 });
+  await expect(page.getByText("Run has had no recorded activity for 24h 0m; it remains running")).toBeVisible();
   const persistedRun = await e2eDb
     .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
     .from(heartbeatRuns)
