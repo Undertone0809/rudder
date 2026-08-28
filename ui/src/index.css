@@ -3357,6 +3357,7 @@ button[draggable="false"] {
 .issue-detail-container {
   container-name: issue-detail;
   container-type: inline-size;
+  overflow-anchor: none;
 }
 
 .issue-detail-layout {

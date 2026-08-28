@@ -38,8 +38,9 @@ Flow:
 2. Reviewer wake uses `ROUTING.REVIEWER.001`.
 3. Reviewer inspects issue, output, run evidence, and comments.
 4. Reviewer records structured decision with required comment.
-5. Accepted work can complete; changes-requested routes back to assignee;
-   blocked/human-needed states remain visible.
+5. Accepted work can complete; changes-requested routes active implementation
+   back to the assignee; needs-follow-up returns deferred work to the assignee's
+   `todo` queue; blocked/human-needed states remain visible.
 
 Invariants:
 
@@ -51,6 +52,11 @@ Invariants:
   invent a structured decision requirement or transfer assignee ownership.
 - Structured reviewer decisions remain limited to reviewable states even
   though the reviewer may perform other explicitly requested work in any state.
+- `needs_followup` is a decision, not an Issue status. Recording it from
+  `in_review` or `blocked` atomically persists the required review comment and
+  returns the Issue to `todo`, then wakes the assignee once. A repeated decision
+  against the resulting non-reviewable state is rejected, preventing loops and
+  duplicate comments.
 
 Evidence:
 
@@ -58,6 +64,8 @@ Evidence:
   behavior.
 - `server/src/__tests__/agent-inbox-reviewer.test.ts` verifies reviewer work is
   exposed through agent-facing inbox semantics.
+- `server/src/__tests__/issue-lifecycle-routes.test.ts` verifies the
+  needs-follow-up transition, failure path, duplicate guard, and assignee wake.
 - Known gap: richer multi-reviewer workflows should get separate contracts if
   they become implemented product behavior.
 

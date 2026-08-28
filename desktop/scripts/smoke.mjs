@@ -7011,6 +7011,41 @@ async function runLocalAppsScenario(mode) {
       "closing the Local App shortcut picker must preserve the exact guest",
     );
 
+    await initial.sidePanel.getByTestId("local-app-more").click();
+    const directPinItem = run.page.getByRole("menuitem", { name: "Pin to Primary Rail", exact: true });
+    await directPinItem.waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(await directPinItem.isEnabled(), true, "an unsaved Local App should be directly pinnable");
+    const directPinRequestPromise = run.page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return request.method() === "POST"
+        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
+    }, { timeout: 15_000 });
+    const directPinResponsePromise = run.page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST"
+        && url.pathname === `/api/orgs/${company.id}/messenger/saved-views/keep`;
+    }, { timeout: 15_000 });
+    await directPinItem.click();
+    const [directPinRequest, directPinResponse] = await Promise.all([
+      directPinRequestPromise,
+      directPinResponsePromise,
+    ]);
+    const directPinRequestBody = directPinRequest.postDataJSON();
+    assert.equal(directPinRequestBody?.primaryRailPinned, true, "direct PIN must request an atomic Primary Rail pin");
+    assert.deepEqual(directPinRequestBody?.placement, { kind: "loose" }, "direct PIN must keep the app loose in Messenger");
+    assertExactLocalAppSavedViewTarget(
+      directPinRequestBody?.target,
+      expectedSavedViewTarget,
+      "Direct PIN request",
+    );
+    assertNoLocalAppRuntimeDetails(directPinRequestBody, privacyOptions("Direct PIN request"));
+    assert.equal(directPinResponse.status(), 201, "direct Local App PIN returned an unexpected status");
+    const directPinResult = JSON.parse(await directPinResponse.text());
+    assert.ok(directPinResult?.savedView?.primaryRailPinnedAt, "direct PIN response must include the persisted pin timestamp");
+    await run.page.getByText("Pinned to Primary Rail", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+    const pinnedRailLink = run.page.locator(`a[href$="/apps/saved/${directPinResult.savedView.id}"]`);
+    await pinnedRailLink.waitFor({ state: "visible", timeout: 15_000 });
+
     const keepButton = initial.sidePanel.getByTestId("chat-side-panel-keep-in-messenger");
     await keepButton.waitFor({ state: "visible", timeout: 15_000 });
     assert.equal(await keepButton.isEnabled(), true, "Local App Keep in Messenger should be enabled");

@@ -258,6 +258,47 @@ describe("POST /api/orgs/:orgId/logo", () => {
 });
 
 describe("GET /api/assets/:assetId/content", () => {
+  afterEach(() => {
+    getAssetByIdMock.mockReset();
+  });
+
+  it("returns a stable image body across repeated reads", async () => {
+    const storage = createStorageService("image/png");
+    const body = Buffer.from("repeatable-image-body");
+    getAssetByIdMock.mockResolvedValue({
+      ...createAsset(),
+      byteSize: body.length,
+    });
+    vi.mocked(storage.getObject).mockImplementation(async () => ({
+      stream: Readable.from([body]),
+      contentType: "image/png",
+      contentLength: body.length,
+    }));
+
+    const app = createApp(storage);
+    const first = await request(app).get("/api/assets/asset-1/content");
+    const replay = await request(app).get("/api/assets/asset-1/content");
+
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(first.headers["content-type"]).toContain("image/png");
+    expect(replay.headers["content-type"]).toContain("image/png");
+    expect(first.body).toEqual(body);
+    expect(replay.body).toEqual(body);
+    expect(storage.getObject).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an explicit 404 without opening storage for an expired asset", async () => {
+    const storage = createStorageService("image/png");
+    getAssetByIdMock.mockResolvedValue(null);
+
+    const res = await request(createApp(storage)).get("/api/assets/missing/content");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Asset not found" });
+    expect(storage.getObject).not.toHaveBeenCalled();
+  });
+
   it("forces HTML assets to download with a sandboxed response", async () => {
     const storage = createStorageService("text/html");
     const html = "<script>document.body.dataset.executed='yes'</script>";

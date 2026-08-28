@@ -603,6 +603,7 @@ describe("index.css motion rules", () => {
 
     expect(issueContainer).toContain("container-name: issue-detail");
     expect(issueContainer).toContain("container-type: inline-size");
+    expect(issueContainer).toContain("overflow-anchor: none");
     expect(compactLayout).toContain('"heading"');
     expect(compactLayout).toContain("width: calc(100% - 0.5rem)");
     expect(compactLayout).toContain("align-content: start");

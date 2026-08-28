@@ -47,6 +47,7 @@ type SavedViewUpdateInput = Partial<Omit<SavedViewCreateInput, "target">> & {
 };
 type SavedViewKeepInput = SavedViewCreateInput & {
   clientMutationId: string;
+  primaryRailPinned?: true;
   placement: MessengerSavedViewPlacement;
 };
 

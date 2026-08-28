@@ -17,13 +17,17 @@ import {
   localAppStatusRefetchInterval,
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
+import {
+  savedViewKeepInputFromSidePanelTarget,
+  type MessengerSavedViewKeepInput,
+} from "@/lib/messenger-saved-views";
 import { queryKeys } from "@/lib/queryKeys";
 import { useNavigate } from "@/lib/router";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, CircleAlert, Loader2, MessageSquare, MoreHorizontal, Pencil, Pin, Play, RotateCw, Square, TerminalSquare } from "lucide-react";
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import { LocalAppDefinitionReviewDialog } from "./LocalAppsPanel";
 
 type LocalAppTarget = Extract<SidePanelTarget, { kind: "local_app" }>;
@@ -35,6 +39,21 @@ function runtimeLabel(status: DesktopLocalAppRuntimeView["status"]) {
 
 function errorMessage(value: unknown, fallback: string) {
   return value instanceof Error ? value.message : fallback;
+}
+
+function localAppPinIntentKey(organizationId: string, target: LocalAppTarget) {
+  return JSON.stringify([
+    organizationId,
+    target.desktopInstallationId,
+    target.appPublicId,
+    target.localBindingId,
+    target.viewInstanceId,
+  ]);
+}
+
+function newMutationId() {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, "0")}`;
 }
 
 export function LocalAppPanelView({
@@ -54,6 +73,12 @@ export function LocalAppPanelView({
   const toast = useOptionalToast();
   const [logsOpen, setLogsOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [keptSavedViewId, setKeptSavedViewId] = useState<string | null>(null);
+  const keepAndPinIntentRef = useRef<{
+    input: MessengerSavedViewKeepInput;
+    key: string;
+  } | null>(null);
+  const effectiveSavedViewId = savedViewId ?? keptSavedViewId;
   const localApps = readDesktopShell()?.localApps;
   const supported = Boolean(localApps?.supported);
   const definitionsQuery = useQuery({
@@ -63,24 +88,60 @@ export function LocalAppPanelView({
     staleTime: 1_000,
   });
   const savedViewQuery = useQuery({
-    queryKey: queryKeys.messenger.savedView(selectedOrganizationId ?? "__none__", savedViewId ?? "__none__"),
-    queryFn: () => messengerApi.getSavedView(selectedOrganizationId!, savedViewId!),
-    enabled: Boolean(selectedOrganizationId && savedViewId),
+    queryKey: queryKeys.messenger.savedView(selectedOrganizationId ?? "__none__", effectiveSavedViewId ?? "__none__"),
+    queryFn: () => messengerApi.getSavedView(selectedOrganizationId!, effectiveSavedViewId!),
+    enabled: Boolean(selectedOrganizationId && effectiveSavedViewId),
   });
   const pinMutation = useMutation({
-    mutationFn: (pinned: boolean) => messengerApi.updateSavedView(
-      selectedOrganizationId!,
-      savedViewId!,
-      { primaryRailPinned: pinned },
-    ),
+    mutationFn: async (pinned: boolean) => {
+      if (effectiveSavedViewId) {
+        return messengerApi.updateSavedView(
+          selectedOrganizationId!,
+          effectiveSavedViewId,
+          { primaryRailPinned: pinned },
+        );
+      }
+      const intentKey = localAppPinIntentKey(selectedOrganizationId!, target);
+      let input = keepAndPinIntentRef.current?.key === intentKey
+        ? keepAndPinIntentRef.current.input
+        : null;
+      if (!input) {
+        input = savedViewKeepInputFromSidePanelTarget(target, {
+          clientMutationId: newMutationId(),
+          placement: { kind: "loose" },
+          primaryRailPinned: true,
+        });
+        if (input) keepAndPinIntentRef.current = { input, key: intentKey };
+      }
+      if (!input) throw new Error("This Local App cannot be kept in Messenger.");
+      const result = await messengerApi.keepSavedView(selectedOrganizationId!, input);
+      return result.savedView;
+    },
     onSuccess: (updated) => {
+      const wasUnsaved = !effectiveSavedViewId;
+      setKeptSavedViewId(updated.id);
       queryClient.setQueryData(
-        queryKeys.messenger.savedView(selectedOrganizationId!, savedViewId!),
+        queryKeys.messenger.savedView(selectedOrganizationId!, updated.id),
         updated,
       );
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId!),
-      });
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.messenger.primaryRailPins(selectedOrganizationId!),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.messenger.customGroups(selectedOrganizationId!),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["messenger", selectedOrganizationId!, "saved-views"],
+        }),
+      ]);
+      if (wasUnsaved) {
+        toast?.pushToast({
+          title: "Pinned to Primary Rail",
+          body: "Kept in Messenger and pinned.",
+          tone: "success",
+        });
+      }
     },
     onError: (error) => {
       toast?.pushToast({
@@ -269,9 +330,8 @@ export function LocalAppPanelView({
               {logsOpen ? "Hide logs" : "Show logs"}
             </DropdownMenuItem>
             <DropdownMenuItem
-              disabled={!savedViewId
-                || !selectedOrganizationId
-                || savedViewQuery.isPending
+              disabled={!selectedOrganizationId
+                || (Boolean(effectiveSavedViewId) && savedViewQuery.isPending)
                 || pinMutation.isPending}
               onClick={() => {
                 if (savedViewQuery.isError) {
@@ -282,9 +342,9 @@ export function LocalAppPanelView({
               }}
             >
               <Pin className="h-4 w-4" />
-              {!savedViewId
-                ? "Keep in Messenger to pin"
-                : savedViewQuery.isPending
+              {pinMutation.isPending && !effectiveSavedViewId
+                ? "Keeping and pinning…"
+                : effectiveSavedViewId && savedViewQuery.isPending
                   ? "Checking pin status…"
                   : savedViewQuery.isError
                     ? "Retry pin status"

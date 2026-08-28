@@ -431,6 +431,7 @@ export {
   parseLibraryDirectoryMentionHref,
   parseLibraryDocMentionHref,
   parseLibraryEntryMentionHref, parseLibraryFileMentionHref, parsePluginMentionHref, parseProjectMentionHref,
+  setAgentMentionIntent,
   type ParsedAgentMention,
   type ParsedAutomationMention,
   type ParsedChatMention,

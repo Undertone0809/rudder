@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 
 const CHILDREN_ONLY_MESSAGE = "React.Children.only expected to receive a single React element child.";
+const INSERT_BEFORE_MESSAGE = "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.";
 const AUTO_RECOVERY_STORAGE_KEY = "rudder:app-error-boundary:auto-recovery.v1";
 
 function ThrowingChild() {
@@ -14,6 +15,11 @@ function ThrowingChild() {
 
 function ThrowingChildrenOnlyChild() {
   throw new Error(CHILDREN_ONLY_MESSAGE);
+  return <div />;
+}
+
+function ThrowingInsertBeforeChild() {
+  throw new Error(INSERT_BEFORE_MESSAGE);
   return <div />;
 }
 
@@ -67,6 +73,59 @@ describe("AppErrorBoundary", () => {
     expect(container.textContent).toContain("Rudder is refreshing the UI...");
     expect(container.textContent).not.toContain("Rudder hit a UI failure.");
     expect(container.textContent).not.toContain(CHILDREN_ONLY_MESSAGE);
+  });
+
+  it("reloads once for the transient insertBefore commit failure from the reported UI crash", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reloadApp = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { reloadApp },
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+
+    createRoot(container).render(
+      <AppErrorBoundary>
+        <ThrowingInsertBeforeChild />
+      </AppErrorBoundary>,
+    );
+
+    await vi.waitFor(() => {
+      expect(reloadApp).toHaveBeenCalledTimes(1);
+    });
+    expect(container.textContent).toContain("Rudder is refreshing the UI...");
+    expect(container.textContent).not.toContain("Rudder hit a UI failure.");
+    expect(container.textContent).not.toContain(INSERT_BEFORE_MESSAGE);
+  });
+
+  it("falls back to diagnostics when the insertBefore failure repeats after automatic recovery", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reloadApp = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { reloadApp },
+    });
+    window.sessionStorage.setItem(AUTO_RECOVERY_STORAGE_KEY, JSON.stringify({
+      attemptedAt: Date.now(),
+      message: INSERT_BEFORE_MESSAGE,
+      route: "/",
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+
+    createRoot(container).render(
+      <AppErrorBoundary>
+        <ThrowingInsertBeforeChild />
+      </AppErrorBoundary>,
+    );
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("Rudder hit a UI failure.");
+    });
+    expect(reloadApp).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(INSERT_BEFORE_MESSAGE);
   });
 
   it("falls back to diagnostics when the recoverable failure repeats after an automatic reload", async () => {
