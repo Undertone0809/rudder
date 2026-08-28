@@ -432,6 +432,51 @@ export function extractAgentWakeMentionIds(markdown: string): string[] {
   return [...ids];
 }
 
+function replaceOutsideMarkdownCode(
+  markdown: string,
+  replaceSegment: (segment: string) => string,
+): string {
+  const codeRe = /```[\s\S]*?```|`[^`\n]*`/g;
+  let cursor = 0;
+  let result = "";
+  let match: RegExpExecArray | null;
+  while ((match = codeRe.exec(markdown)) !== null) {
+    result += replaceSegment(markdown.slice(cursor, match.index));
+    result += match[0];
+    cursor = match.index + match[0].length;
+  }
+  return result + replaceSegment(markdown.slice(cursor));
+}
+
+export function setAgentMentionIntent(
+  markdown: string,
+  agentId: string,
+  intent: "reference" | "wake",
+): string {
+  const normalizedAgentId = agentId.trim();
+  if (!markdown || !normalizedAgentId) return markdown;
+
+  return replaceOutsideMarkdownCode(markdown, (segment) => segment.replace(
+    AGENT_MENTION_LINK_RE,
+    (link, href: string) => {
+      const parsed = parseAgentMentionHref(href);
+      if (!parsed || parsed.agentId !== normalizedAgentId) return link;
+      let url: URL;
+      try {
+        url = new URL(href);
+      } catch {
+        return link;
+      }
+      if (intent === "wake") {
+        url.searchParams.set("intent", "wake");
+      } else {
+        url.searchParams.delete("intent");
+      }
+      return link.replace(href, url.toString());
+    },
+  ));
+}
+
 export function extractAutomationMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();

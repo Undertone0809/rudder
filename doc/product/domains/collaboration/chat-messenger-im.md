@@ -3677,7 +3677,8 @@ Desktop Local App working instances as loose Messenger rows or inside custom
 groups without turning them into message threads. A Saved View row opens or
 focuses its instance in the Messenger Main Workbench. Moving a live Side Panel
 target transfers that same instance into Main; it does not reopen a copy in
-Side.
+Side. A Local App Saved View can also be pinned to the Primary Rail as an
+independent navigation shortcut.
 
 ### Intent / User Job
 
@@ -3686,6 +3687,8 @@ Side.
   and return later without receiving false unread or attention signals.
 - Main can hold multiple mixed Browser, Automation, Library, and Local App tabs,
   including session-only tabs that have not been kept in Messenger.
+- An operator can pin a Local App directly from its working surface without
+  first understanding or performing a separate Keep step.
 
 ### Why / Design Reasoning
 
@@ -3719,6 +3722,10 @@ Side.
 - Every visible Saved View has either loose placement or exactly one custom-
   group membership. Messenger has no fixed `Saved` section or normal hidden-item
   manager.
+- Only a Local App Saved View may have a `primaryRailPinnedAt` timestamp. That
+  pin is an independent navigation projection: it does not change loose/group
+  placement, Main tab state, or Local App process state. One operator may pin
+  at most 100 Local Apps per organization.
 - A Saved View uses `/messenger/saved/:id` as its stable route. Selecting or
   directly loading that route opens or focuses the exact live Main tab when it
   exists, otherwise hydrates a Main tab from durable fallback data. It never
@@ -3756,14 +3763,18 @@ Side.
 
 - `Move to Messenger` on an eligible active Side Panel target.
 - `Keep in Messenger` on an eligible session-only Main Browser tab.
+- `Pin to Primary Rail` and `Unpin from Primary Rail` in a Local App working
+  surface's More menu. An unsaved Local App exposes the same enabled Pin action;
+  it does not require a disabled `Keep in Messenger to pin` precursor.
 - Messenger Saved View row actions: Open, Move to Messenger sidebar, Move to
   group, Remove from Messenger, and loose or group-local reorder.
 - Main tab actions: focus, reorder, close, create Browser tab, Browser Keep,
   Remove, and target-specific controls. A Local App tab exposes project
   settings from its hover/focus More menu.
 - Direct navigation to `/messenger/saved/:id` or `/messenger/workbench`.
-- Organization-scoped Saved View list/create/get/update/reorder/delete APIs and
-  generic custom-group item APIs.
+- Organization-scoped Saved View list/create/get/update/reorder/delete APIs,
+  including an atomic Local App Keep-and-Pin input and pinned-only list filter,
+  plus generic custom-group item APIs.
 - Browser main-frame/in-page navigation, title, and
   `page-favicon-updated` events used to refresh recovery metadata.
 
@@ -3812,6 +3823,12 @@ Side.
     removes only membership. Moving a loose Saved View into a group, or dropping
     it on an eligible loose Chat or Issue, creates the corresponding membership
     without replacing or closing its Main tab or live runtime.
+13. Pinning an existing Local App Saved View sets its Primary Rail pin without
+    changing placement. Pinning a session-only Local App atomically creates its
+    loose Saved View and Primary Rail pin in one idempotent keep mutation. An
+    uncertain response is retried with the same mutation id, so it cannot create
+    a duplicate Saved View or consume a second pin. Unpinning removes only the
+    Primary Rail shortcut.
 
 ### Decision Table
 
@@ -3831,6 +3848,8 @@ Side.
 | Close while saved | Live Main tab has a Saved binding | Dispose tab; keep row for later cold open | Delete durable membership | UI/E2E |
 | Group to loose | Grouped Saved View is moved to Messenger sidebar or its group is separated | Keep the Saved View and return it to loose manual order | Delete the row or close/stop its runtime | Service/UI/E2E |
 | Loose to group | Loose Saved View is moved into a group or dropped on an eligible loose Chat/Issue | Assign one membership and preserve the same Saved View/runtime | Duplicate the row or restart the target | Service/UI/E2E |
+| First Local App pin | Exact Local App instance has no Saved View | Atomically create one loose Saved View and pin it to the Primary Rail | Require a separate Keep, create an unpinned intermediate row, or duplicate on retry | Validator, service, UI, and packaged Desktop |
+| Existing Local App pin toggle | Exact Local App Saved View already exists | Set or clear only its Primary Rail shortcut | Move its Messenger placement, close its tab, or stop its process | Service and UI tests |
 | Web/mobile Browser open | No Electron guest capability | Keep the row and ask to open in Rudder Desktop | Drop the record or fake a guest | UI E2E |
 
 ### Actor-Visible Input
@@ -3839,7 +3858,8 @@ Side.
   Browser tabs expose `Keep in Messenger`; a blank Browser tab is not durable.
 - Messenger shows Saved Views as loose rows or inside custom groups. Rows share
   Chat/Issue density, focus, actions, drag handle, pointer DnD, and keyboard DnD
-  behavior without acquiring pin/unpin controls.
+  behavior without acquiring pin/unpin controls. The Local App working surface,
+  not its Saved View row, owns the Primary Rail Pin toggle.
 - A Saved View row is selected only while the current Messenger route is
   `/messenger/saved/:id` for that row. A live or active Main Workbench tab
   retained behind Chat, Issue, or another Messenger route must not leave the
@@ -3864,13 +3884,17 @@ Side.
 - Missing or device-local targets show an explicit unavailable/retry state in
   the Main tab. Browser rows on web/mobile remain movable/removable and ask for
   Rudder Desktop.
+- A pinned Local App appears after the fixed Primary Rail destinations and opens
+  its exact Saved View route. Unpinning removes that shortcut while leaving its
+  Messenger row, Main tab, and process unchanged.
 - Saved View rows never show unread, attention, mark-read, or latest-message
   time UI.
 
 ### Persisted Evidence
 
 - `messenger_saved_views` must store the scoped typed target, presentation and
-  recovery metadata, compatibility fields, and timestamps.
+  recovery metadata, compatibility fields, timestamps, and nullable
+  `primaryRailPinnedAt` for Local App shortcuts.
 - `messenger_custom_group_entries.thread_key` must store the opaque
   `saved-view:<id>` membership and group-local order when a Saved View is
   grouped; a loose Saved View has no such membership.
@@ -3914,6 +3938,14 @@ Side.
    - Expected state/action: Retain the Saved View but deny target hydration.
    - Visible output: Actionable unavailable state with no attention badge.
    - Evidence: Isolation/service/UI E2E.
+5. Pin an unsaved Local App:
+   - Trigger: Open a session-only Local App's More menu and choose
+     `Pin to Primary Rail`.
+   - Expected state/action: One mutation creates a loose Saved View and sets its
+     Primary Rail pin; replaying the same uncertain request returns that result.
+   - Visible output: The action stays enabled before Keep, then the exact Local
+     App appears in the Primary Rail without restarting or moving its runtime.
+   - Evidence: Validator/service/UI tests and packaged Desktop smoke.
 
 ### Invariants / Non-Goals
 
@@ -3938,8 +3970,16 @@ Side.
   physical guest/editor session.
 - Main Workbench tab order and Messenger group order are independent.
 - Loose Saved View order is device-level manual directory state and remains
-  independent of Main Workbench tab order. Saved Views have no pin/unpin
-  lifecycle, unread state, attention state, or synthetic activity timestamp.
+  independent of Main Workbench tab order. Only Local App Saved Views have the
+  bounded Primary Rail pin/unpin lifecycle; other Saved Views have no pin/unpin
+  lifecycle. No Saved View has unread state, attention state, or synthetic
+  activity timestamp.
+- Local App Primary Rail pin state is independent of loose/group placement,
+  Main tab order, and process lifecycle. Pinning an unsaved Local App always
+  uses loose placement, accepts only `primaryRailPinned: true`, and atomically
+  creates the Saved View and pin. The per-operator, per-organization limit is
+  100; non-Local-App targets and requests above the limit fail without partial
+  mutation.
 - Remove deletes durable binding only; Close disposes the current Main
   instance only. Neither action stops a Local App process.
 - Saved Views never participate in unread/attention counts, mark-read APIs, or
@@ -3963,9 +4003,10 @@ Side.
 ### Drift Boundaries
 
 - Adding a target kind, changing deduplication identity, loose/group placement,
-  group membership semantics, attention exclusion, live guest ownership,
-  Main/Side transfer, Remove/Close semantics, recovery guarantees, capacity, or
-  web/mobile behavior requires updating this contract.
+  group membership semantics, Local App Primary Rail pin lifecycle or limit,
+  attention exclusion, live guest ownership, Main/Side transfer, Remove/Close
+  semantics, recovery guarantees, capacity, or web/mobile behavior requires
+  updating this contract.
 - Component names, query-cache layout, throttle duration, row styling, exact
   masked-surface color, and the internal activity payload may change without a
   contract update when visible behavior and persisted evidence stay
