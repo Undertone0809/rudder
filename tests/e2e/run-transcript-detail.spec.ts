@@ -1322,7 +1322,9 @@ test.describe("Run transcript detail", () => {
     const toolBTrigger = toolB.getByTestId("run-transcript-annotation-trigger");
     await expect(toolATrigger).toBeVisible();
     await expect(toolBTrigger).toBeVisible();
-    await toolATrigger.hover();
+    const toolARow = toolA.getByRole("button", { name: /Expand command details: Ran printf same/ });
+    await expect(toolARow).toBeVisible();
+    await toolARow.hover();
     await expect(toolATrigger).toHaveCSS("opacity", "1");
     await toolATrigger.focus();
     await expect(toolATrigger).toBeFocused();
