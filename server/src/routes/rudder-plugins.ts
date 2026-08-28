@@ -58,7 +58,7 @@ export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServi
 
   router.get("/orgs/:orgId/plugins", async (req, res) => {
     const orgId = req.params.orgId as string;
-    assertCanRead(req, orgId);
+    assertCompanyAccess(req, orgId);
     res.json(await plugins.directory(orgId));
   });
 
@@ -116,7 +116,7 @@ export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServi
 
   router.get("/orgs/:orgId/plugins/:pluginId", async (req, res) => {
     const orgId = req.params.orgId as string;
-    assertCanRead(req, orgId);
+    assertCompanyAccess(req, orgId);
     const plugin = await plugins.getInstalled(orgId, req.params.pluginId as string);
     if (!plugin) {
       res.status(404).json({ error: "Installed Plugin not found" });

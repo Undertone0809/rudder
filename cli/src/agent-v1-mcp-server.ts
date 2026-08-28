@@ -1406,6 +1406,8 @@ function cliArgsForCapability(
     }
     case "skill.list":
       return ["skill", "list"];
+    case "skill.search":
+      return ["skill", "search", requiredString(input, "query")];
     case "skill.get":
       return ["skill", "get", requiredAnyString(input, ["skill", "skillId"])];
     case "skill.file": {
@@ -1428,6 +1430,10 @@ function cliArgsForCapability(
       pushOptional(args, "--workspace-ids", input.workspaceIds);
       return args;
     }
+    case "plugin.search":
+      return ["plugin", "search", requiredString(input, "query")];
+    case "plugin.get":
+      return ["plugin", "get", requiredAnyString(input, ["plugin", "pluginId"])];
     case "browser.tabs":
       return ["browser", "tabs"];
     case "browser.user-tabs":
