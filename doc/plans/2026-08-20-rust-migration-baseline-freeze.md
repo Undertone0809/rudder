@@ -20,7 +20,7 @@ freeze package. The package adds the two accepted inventory artifacts that had
 not yet landed on `main`, this consolidation document, and the reviewable
 current-source delta overlay.
 
-Package fingerprint: `d5846a8f0e3ec19d33f26ed8583f6821a7b0143e6fd115a74cbf06342af4e5b3`
+Package fingerprint: `b93fb56bb85b40836d2768237064b0cba6db99bc1e6e81ced915e129d62f4188`
 
 The fingerprint is SHA-256 over the four added paths in lexical order, each
 encoded as `path`, a NUL byte, normalized file bytes, and a second NUL byte.
@@ -63,7 +63,7 @@ At the G0 candidate:
   `db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24`,
   and unchanged Browser hash
   `640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923`;
-- authority overlay: 3 public route delta units, 5 current writer delta units,
+- authority overlay: 4 public route delta units, 5 current writer delta units,
   6 process/helper delta units, and 1 release policy delta unit are classified
   with exact sources, write boundaries, failure/recovery behavior, evidence
   status, candidate Rust authority, and retirement gates;
@@ -79,7 +79,8 @@ At the G0 candidate:
 - the source delta since the accepted A1 candidate touches the known route,
   run, chat, goal, issue, organization, workspace-backup, and migration units.
   The two added public routes, two plugin Agent-read authorization changes,
-  conservative network-suspension classifier, durable Run-to-Goal binding,
+  Goal typed-reference middleware, conservative network-suspension classifier
+  and recovery controller, durable Run-to-Goal binding across every writer,
   needs-follow-up Issue transition, Feishu failed-reply persistence, and
   shell-free npm helper are explicit overlay rows. No new route module,
   transaction-owning source file, public listener root, or migration runner
@@ -133,7 +134,7 @@ Contract IDs frozen for downstream evidence:
 | accepted artifact SHA-256 verification | PASS; all four hashes match the accepted identities above |
 | current route/transaction/migration count reconciliation | PASS; A1-comparable public route identity is 498 direct declarations / 43 files and 506 bindings, plus 6 private collector declarations / 2 files; 187 transaction calls / 50 files; 161 SQL files / 159 journal entries |
 | current CLI/MCP reconciliation | PASS; 117 total / 106 agent-v1 / 11 compatibility-only CLI capabilities, 106 MCP tools, core hash `db0fd5ef...`, Browser hash `640c060d...` |
-| route/writer/process/release delta overlay | PASS; 3 route, 5 writer, 6 process/helper, and 1 release policy authority units have stable rows and no unclassified current authority addition remains at the source base |
+| route/writer/process/release delta overlay | PASS; 4 route, 5 writer, 6 process/helper, and 1 release policy authority units have stable rows and no unclassified current authority addition remains at the source base |
 | A3 accepted workload packet | PASS at its frozen candidate; workflow tests 4/4, smoke 2 warmups + 7 measured iterations, thread-heavy 3 warmups + 20 measured iterations; not rerun or promoted as a current-candidate Rust comparison |
 
 ## Evidence Gaps And No-Go Boundaries

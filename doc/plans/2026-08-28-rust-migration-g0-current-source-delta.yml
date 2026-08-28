@@ -22,6 +22,7 @@ counts:
     private_collector_declaration_files: 2
     current_public_delta_route_identities: 2
     current_public_authority_delta_bindings: 2
+    current_non_declaration_authority_delta_units: 1
   transactions_and_migrations:
     transaction_call_sites: 187
     transaction_source_files: 50
@@ -64,6 +65,18 @@ counts:
     supplementary_commands: 2
     current_candidate_rust_comparisons: 0
 route_delta:
+  - id: 'delta.route.goal_typed_reference_middleware'
+    sources:
+      - 'server/src/routes/goals.ts'
+      - 'server/src/services/goals.ts'
+      - 'server/src/__tests__/goals-contract.test.ts'
+    route: 'router.param("id") middleware for all 19 /api/goals/:id read and mutation routes'
+    current_node_authority: 'For authenticated Agents, the Goal router resolves every non-UUID :id value as an organization-scoped typed short reference before downstream read or mutation handlers run; board actors and UUID inputs retain their existing identity path.'
+    writer_boundary: 'Identity normalization only; read and mutation handlers retain their existing authorization, validation, transaction, activity, and wake boundaries.'
+    failure_and_recovery: 'Ambiguous Agent references return conflict, unknown references continue to downstream not-found handling, cross-organization candidates are never resolved, and retries do not add effects beyond the selected downstream handler.'
+    evidence_status: 'Non-declaration middleware authority and focused typed-reference contract coverage classified separately from direct router declaration counts.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'B1 must freeze middleware ordering and fixtures for UUID, typed short, ambiguous, unknown, cross-organization, Agent-versus-board, read, and mutation paths before any Rust Goal route dispatch.'
   - id: 'delta.route.goal_activity_timeline'
     sources:
       - 'server/src/routes/goals.ts'
@@ -151,14 +164,21 @@ writer_delta:
   - id: 'delta.writer.heartbeat_attempt_ledger'
     sources:
       - 'packages/agent-runtime-utils/src/network-suspension.ts'
+      - 'packages/agent-runtimes/claude-local/src/server/execute.ts'
+      - 'packages/agent-runtimes/codex-local/src/server/execute.ts'
+      - 'packages/agent-runtimes/cursor-local/src/server/execute.ts'
+      - 'packages/agent-runtimes/gemini-local/src/server/execute.ts'
+      - 'packages/agent-runtimes/opencode-local/src/server/execute.ts'
+      - 'packages/agent-runtimes/pi-local/src/server/execute.ts'
       - 'server/src/services/runtime-kernel/heartbeat-attempt-ledger.ts'
       - 'server/src/services/runtime-kernel/heartbeat.execute.ts'
+      - 'server/src/services/runtime-kernel/heartbeat.ts'
       - 'packages/db/src/schema/heartbeat_run_attempts.ts'
       - 'packages/db/src/migrations/0157_agent_run_network_wait.sql'
-    current_node_authority: 'The runtime adapter classifier owns the conservative provider-transport decision and continuation/side-effect-risk semantics; the Runtime kernel consumes that decision and owns attempt insertion, non-terminal network-wait checkpoints, terminal attempt updates, and latest-open-attempt recovery.'
+    current_node_authority: 'The six production runtime adapters own provider/error/progress evidence production; the shared classifier owns the conservative provider-transport decision and continuation/side-effect-risk semantics. The Runtime kernel consumes that decision and owns attempt insertion, non-terminal network-wait checkpoints, terminal attempt updates, latest-open-attempt recovery, continuation admission, claim/resume, unsafe fail-closed, and retry exhaustion.'
     writer_boundary: 'Drizzle writes heartbeat_run_attempts, fenced by run id plus attempt index and terminal-state guards.'
     failure_and_recovery: 'Credentials, quota, configuration, provider 5xx, tool activity, or ambiguous non-network failures remain terminal; resumable transport failures preserve session/submission/side-effect evidence. Unique insert races re-read the winner, terminal rows are immutable, and recovery resumes only from durable waiting/checkpoint state.'
-    evidence_status: 'Classifier, Server consumer, writer, schema, and migration sources classified; no authority change is made by G0.'
+    evidence_status: 'All six production adapter evidence producers, classifier, Server consumer, recovery controller, writer, schema, and migration sources classified; no authority change is made by G0.'
     candidate_rust_authority: 'none at G0'
     retirement_gate: 'A mutation slice after B1/B2/B4 must prove conservative failure classification, submission phase, resume_same_session/fresh_if_pristine/fail_closed continuation, side-effect risk, attempt identity, checkpoint, terminal fencing, recovery, and activity/result parity before Node retirement.'
   - id: 'delta.writer.agent_run_goal_binding'
@@ -167,14 +187,17 @@ writer_delta:
       - 'packages/db/src/migrations/0158_agent_run_goal_binding.sql'
       - 'server/src/services/runtime-kernel/heartbeat.wakeup.ts'
       - 'server/src/services/runtime-kernel/heartbeat.recovery.ts'
+      - 'server/src/services/runtime-kernel/heartbeat.release.ts'
       - 'server/src/services/runtime-kernel/heartbeat.sessions.ts'
+      - 'server/src/services/chat-assistant.ts'
+      - 'server/src/services/chat-agent-runs.ts'
       - 'server/src/services/goals.ts'
-    current_node_authority: 'The Runtime kernel validates and persists explicit Run-to-Goal ownership, preserves it through compatible wake coalescing, retry, process-loss, and passive-follow-up recovery, and exposes Goal-bound Runs to the Goal timeline.'
+    current_node_authority: 'Chat admission and the Runtime kernel validate and persist explicit Run-to-Goal ownership, preserve it through compatible wake coalescing, retry, process-loss, passive-follow-up recovery, and deferred wake promotion, and expose Goal-bound Runs to the Goal timeline.'
     writer_boundary: 'Drizzle writes heartbeat_runs.goal_id only within the Run organization; the migration backfills only matching organization-scoped Goal ids from the compatibility snapshot and keeps the foreign key nullable with on-delete set null.'
-    failure_and_recovery: 'Cross-organization Goal binding and coalescing across different Goals fail closed. Recovery revalidates the Goal in the Run organization, clears stale compatibility ownership when invalid, and copies only a validated Goal id into the replacement Run.'
-    evidence_status: 'Schema, migration, wake/coalescing, session hydration, recovery, and timeline-consumer sources classified; no authority change is made by G0.'
+    failure_and_recovery: 'Cross-organization Goal binding and coalescing across different Goals fail closed. Recovery revalidates the Goal in the Run organization, clears stale compatibility ownership when invalid, and copies only a validated Goal id into replacement Runs; deferred promotion carries the normalized Goal id from its admitted context snapshot.'
+    evidence_status: 'Schema, migration, Chat admission writer, wake/coalescing writers, session hydration, recovery writers, deferred-promotion writer, and timeline-consumer sources classified; no authority change is made by G0.'
     candidate_rust_authority: 'none at G0'
-    retirement_gate: 'A later Run mutation slice must prove organization fencing, migration/backfill compatibility, wake admission, coalescing conflict, retry/process-loss/passive-follow-up recovery, nullable deletion, and Goal timeline parity before Node retirement.'
+    retirement_gate: 'A later Run mutation slice must prove organization fencing, migration/backfill compatibility, Chat and wake admission, coalescing conflict, retry/process-loss/passive-follow-up recovery, deferred promotion, nullable deletion, and Goal timeline parity before Node retirement.'
   - id: 'delta.writer.workspace_restore_reconciliation'
     sources:
       - 'server/src/services/workspace-restore-reconciliation.ts'
