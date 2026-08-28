@@ -534,13 +534,18 @@ export function RunsTab({
   const sidePanel = useSidePanel();
   const { pushToast } = useToast();
   const feedbackTargetRef = useRef<RunFeedbackTarget | null>(null);
+  const restoredFeedbackContextRef = useRef<string | null>(null);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const contextKey = `agent-runs:${agentRouteId}`;
   useEffect(() => {
     sidePanel.setContextKey(contextKey);
-  }, [contextKey, sidePanel]);
+  }, [contextKey, sidePanel.setContextKey]);
   useEffect(() => {
+    if (sidePanel.contextKey !== contextKey) return;
+    const restoreKey = `${contextKey}:${orgId}:${agentId}`;
+    if (restoredFeedbackContextRef.current === restoreKey) return;
+    restoredFeedbackContextRef.current = restoreKey;
     const existing = runFeedbackTargetForContext(null, sidePanel.tabs, orgId, agentId);
     feedbackTargetRef.current = existing;
     if (existing) {
@@ -574,7 +579,7 @@ export function RunsTab({
     } catch {
       // Ignore malformed or unavailable local draft storage.
     }
-  }, [agentId, contextKey, orgId, sidePanel]);
+  }, [agentId, contextKey, orgId, sidePanel.contextKey, sidePanel.open, sidePanel.openTargetForContext, sidePanel.tabs]);
   useEffect(() => {
     feedbackTargetRef.current = runFeedbackTargetForContext(
       feedbackTargetRef.current,
