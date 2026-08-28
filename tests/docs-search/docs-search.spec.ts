@@ -121,7 +121,8 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/releases",
       title: "Changelog",
-      latestDate: "August 20, 2026",
+      latestDate: "August 28, 2026",
+      latestVersion: "v0.7.15",
       filterTag: "New",
       statusTag: "Status",
       tags: ["Improved", "New", "Fixed", "Status"],
@@ -129,7 +130,8 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
     {
       route: "/zh/releases",
       title: "更新日志",
-      latestDate: "2026年8月20日",
+      latestDate: "2026年8月28日",
+      latestVersion: "v0.7.15",
       filterTag: "新功能",
       statusTag: "版本状态",
       tags: ["改进", "新功能", "问题修复", "版本状态"],
@@ -145,9 +147,9 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
       page.locator(`h2#${version}`).locator(
         "xpath=ancestor::div[contains(@class, 'update-container')]",
       );
-    await expect(page.locator("h2#v0-7-12")).toBeVisible();
-    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(45);
-    const latestUpdate = page.locator("h2#v0-7-12").locator(
+    await expect(page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`)).toBeVisible();
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(46);
+    const latestUpdate = page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`).locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
     await expect(latestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
@@ -182,7 +184,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(item.route);
-    const mobileLatestUpdate = page.locator("h2#v0-7-12").locator(
+    const mobileLatestUpdate = page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`).locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
     await expect(mobileLatestUpdate.getByText(item.latestDate, { exact: true })).toBeVisible();
