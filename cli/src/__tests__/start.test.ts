@@ -2357,8 +2357,8 @@ describe("runtime install helpers", () => {
       })).rejects.toMatchObject({ name: "RuntimeInstallError" });
 
       expect(spawnSyncImpl).toHaveBeenCalledWith(
-        expect.stringMatching(/npm(?:\.cmd)?$/),
-        expect.arrayContaining(["install", "@rudderhq/server@1.2.3"]),
+        npmInstallInvocation.command,
+        expect.arrayContaining([...npmInstallInvocation.args, "install", "@rudderhq/server@1.2.3"]),
         expect.objectContaining({ timeout: 42 }),
       );
       await vi.waitFor(async () => {

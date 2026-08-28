@@ -7011,7 +7011,7 @@ async function runLocalAppsScenario(mode) {
       "closing the Local App shortcut picker must preserve the exact guest",
     );
 
-    await initial.sidePanel.getByTestId("local-app-more").click();
+    await initial.view.getByTestId("local-app-more").click();
     const directPinItem = run.page.getByRole("menuitem", { name: "Pin to Primary Rail", exact: true });
     await directPinItem.waitFor({ state: "visible", timeout: 15_000 });
     assert.equal(await directPinItem.isEnabled(), true, "an unsaved Local App should be directly pinnable");
