@@ -37,6 +37,8 @@ describe("process adapter Delegation delivery", () => {
       config: { command: "worker" },
       context: {
         scene: "delegation",
+        sourceRunId: "source-run-1",
+        sourceAgentId: "source-agent-1",
         delegationTask: "Inspect the target independently",
       },
       onLog: async () => {},
@@ -49,7 +51,7 @@ describe("process adapter Delegation delivery", () => {
       "worker",
       [],
       expect.objectContaining({
-        stdin: "Rudder Delegation Run task:\n\nInspect the target independently",
+        stdin: expect.stringContaining("Source Run source-run-1 and Source Agent source-agent-1 are provenance only"),
         env: expect.objectContaining({
           RUDDER_AGENT_ID: "agent-1",
           RUDDER_DELEGATION_TASK: "Inspect the target independently",
@@ -57,7 +59,8 @@ describe("process adapter Delegation delivery", () => {
       }),
     );
     expect(meta).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: "Rudder Delegation Run task:\n\nInspect the target independently",
+      prompt: expect.stringContaining("Do not inherit the source Run's transcript, session, workspace, credentials, environment variables, or arbitrary paths"),
     }));
+    expect(mockRunChildProcess.mock.calls[0]?.[3]?.stdin).toContain("## Delegated Task\n\nInspect the target independently");
   });
 });

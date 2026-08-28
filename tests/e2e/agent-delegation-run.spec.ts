@@ -1,15 +1,15 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import {
+  buildMcpServerEnv,
+  runAgentV1McpJsonRpcMessage,
+} from "../../cli/src/agent-v1-mcp-server.ts";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agentWakeupRequests,
   createDb,
   heartbeatRuns,
 } from "../../packages/db/src/index.ts";
-import {
-  buildMcpServerEnv,
-  runAgentV1McpJsonRpcMessage,
-} from "../../cli/src/agent-v1-mcp-server.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import {
   E2E_BASE_URL,

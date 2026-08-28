@@ -32,6 +32,8 @@ describe("OpenClaw Delegation delivery", () => {
     expect(text).toContain("## Delegated Task");
     expect(text).toContain("Inspect the target independently");
     expect(text).toContain("Source Run source-run-1 is provenance only");
+    expect(text).toContain("Preserve Delegation isolation and provenance-only source semantics");
+    expect(text).not.toContain("Preserve the Rudder heartbeat semantics");
     expect(text).not.toContain(RUDDER_AGENT_HEARTBEAT_INSTRUCTION);
   });
 });

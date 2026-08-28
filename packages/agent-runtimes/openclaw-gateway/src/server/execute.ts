@@ -442,7 +442,9 @@ export function buildWakeText(payload: WakePayload, rudderEnv: Record<string, st
     "- Use X-Rudder-Run-Id: $RUDDER_RUN_ID on every mutating API call.",
     "- Use only /api endpoints listed below.",
     "- Do NOT call guessed endpoints like /api/cloud-adapter/*, /api/cloud-adapters/*, /api/adapters/cloud/*, or /api/heartbeat.",
-    "- Treat HTTP compatibility as a narrow fallback. Preserve the Rudder heartbeat semantics even when the transport is HTTP.",
+    isDelegation
+      ? "- Treat HTTP compatibility as a narrow fallback. Preserve Delegation isolation and provenance-only source semantics even when the transport is HTTP."
+      : "- Treat HTTP compatibility as a narrow fallback. Preserve the Rudder heartbeat semantics even when the transport is HTTP.",
     "",
     ...(isDelegation
       ? [

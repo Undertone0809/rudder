@@ -51,6 +51,7 @@ function wakeupRequest(task: string, status = "queued", agentId = targetAgentId)
     payload: {
       delegationTask: task,
       delegationTargetAgentId: targetAgentId,
+      sourceAgentId,
       sourceRunId,
     },
     status,
@@ -206,8 +207,34 @@ describe("delegationRunService", () => {
       targetAgentId,
       idempotencyKey: "delegation-key-1",
     })).rejects.toMatchObject({
-      message: "Delegation idempotency key conflicts with an existing task or target",
+      message: "Delegation idempotency key conflicts with an existing task, target, or source",
     });
+  });
+
+  it("rejects replaying another source Agent's organization-wide idempotency key", async () => {
+    const existing = {
+      ...wakeupRequest("Inspect the target independently"),
+      requestedByActorId: "77777777-7777-4777-8777-777777777777",
+    };
+    const wakeup = vi.fn();
+    const service = delegationRunService(createDbStub({ existingRequest: existing, targetAgentId }), {
+      heartbeat: {
+        getRun: vi.fn().mockResolvedValue(sourceRun()),
+        wakeup,
+      },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+
+    await expect(service.create({
+      sourceAgentId,
+      sourceRunId,
+      task: "Inspect the target independently",
+      targetAgentId,
+      idempotencyKey: "delegation-key-1",
+    })).rejects.toMatchObject({
+      message: "Delegation idempotency key conflicts with an existing task, target, or source",
+    });
+    expect(wakeup).not.toHaveBeenCalled();
   });
 
   it("returns a traceable skipped admission when the target is unavailable", async () => {
