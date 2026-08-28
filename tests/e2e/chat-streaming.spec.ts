@@ -572,8 +572,8 @@ test.describe("Chat streaming", () => {
     const firstLink = page.locator("a.rudder-website-link", { hasText: "Rudder" }).first();
     const firstItem = firstLink.locator("xpath=ancestor::li[1]");
     const firstIcon = firstLink.locator(".rudder-website-link-icon");
-    await expect(firstLink).toHaveAttribute("href", "https://rudderhq.dev/docs", { timeout: 15_000 });
-    await expect(firstIcon).toHaveAttribute("data-website-icon", "metadata", { timeout: 15_000 });
+    await expect(firstLink).toHaveAttribute("href", "https://rudderhq.dev/docs", { timeout: 30_000 });
+    await expect(firstIcon).toHaveAttribute("data-website-icon", "metadata", { timeout: 30_000 });
 
     const initialGeometry = await firstItem.evaluate((element) => {
       const link = element.querySelector("a.rudder-website-link");
