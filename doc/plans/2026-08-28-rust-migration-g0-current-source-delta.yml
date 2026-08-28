@@ -1,0 +1,177 @@
+schema: 'rudder.rust-migration-g0-current-source-delta/v1'
+issue: 'R6Z-129'
+title: 'G0 current-source authority delta overlay'
+scope: 'Authority-bearing source drift between the accepted A-wave artifacts and the G0 source base.'
+candidate:
+  source_base_sha: '3a29c690e6ba0b21b35e273d869e1a73f8ccc526'
+  source_base_tree: '8dfe316dd45210f0be7449e561c683a8e4e85194'
+  historical_exception:
+    issue: 'R6Z-131'
+    candidate_sha: '3343eda1330a40217d3e451b3710ca373f76183e'
+    integration_sha: '81b0f6583cea3d01f2d7b1792bfe44c0512e5532'
+    authority: 'Loopback-only Actix/SQLx foundation; no product route, public listener, query, migration, queue, or release authority.'
+  evidence_status: 'review_required'
+counts:
+  routes:
+    non_test_source_files: 59
+    declaration_files: 45
+    declarations: 504
+    path_variants: 507
+  transactions_and_migrations:
+    transaction_call_sites: 187
+    transaction_source_files: 50
+    sql_migration_files: 161
+    migration_journal_entries: 159
+  cli:
+    accepted_a2_capabilities: 113
+    current_capabilities: 114
+    accepted_a2_agent_v1: 101
+    current_agent_v1: 103
+    accepted_a2_compatibility_only: 12
+    current_compatibility_only: 11
+  mcp:
+    accepted_a2_canonical_tools: 101
+    current_canonical_tools: 103
+    current_core_tools: 78
+    current_browser_tools: 25
+    accepted_a2_core_hash: 'be398a9df736442f6771b37d76f73dba0964d77acfbcfcf20ba67afcc307e49a'
+    current_core_hash: 'b70b3cc3508c81a0c046f3478d6a57daf094cb58608b7a16ff648daceba12475'
+    accepted_and_current_browser_hash: '640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923'
+  writers:
+    accepted_a1_background_writer_units: 27
+    current_delta_writer_units: 2
+  process_and_helpers:
+    accepted_a1_state_owning_helpers: 2
+    accepted_a1_runtime_process_units: 4
+    accepted_a1_helper_adapter_units: 3
+    current_delta_authority_units: 5
+  release:
+    accepted_a4_ownership_rows: 12
+    accepted_a4_bounded_entrypoints: 18
+    current_delta_policy_units: 1
+    current_checksum_jobs_added: 2
+    current_mirror_jobs_gated: 2
+  benchmark:
+    scale_profiles: 2
+    measured_paths: 5
+    paired_comparison_blocks: 7
+    required_commands: 6
+    supplementary_commands: 2
+    current_candidate_rust_comparisons: 0
+command_and_tool_delta:
+  - id: 'delta.contract.organization_members_list'
+    sources:
+      - 'cli/src/agent-v1-capabilities.ts'
+      - 'cli/src/agent-v1-registry.ts'
+      - 'packages/agent-runtime-utils/src/rudder-mcp-contract.ts'
+      - 'server/src/services/organization-members.ts'
+    delta: 'Adds organization.members.list as an agent-v1 CLI capability and rudder_organization_members_list as a canonical core MCP tool.'
+    writer_boundary: 'Read-only organization-scoped member projection; no product state mutation.'
+    failure_and_recovery: 'Typed validation and bounded pagination fail closed; retry is read-only.'
+    evidence_status: 'Current source count and generated descriptor parity verified at source base.'
+    candidate_rust_authority: 'none'
+    retirement_gate: 'B1 must generate the same command/tool schema and differential read-only fixtures before any Rust dispatch path is accepted.'
+  - id: 'delta.contract.issue_create_promotion'
+    sources:
+      - 'cli/src/agent-v1-capabilities.ts'
+      - 'packages/agent-runtime-utils/src/rudder-mcp-contract.ts'
+    delta: 'Promotes existing issue.create from compatibility-only to agent-v1 and adds its canonical MCP input schema; this changes two agent-v1/tool counts but only one total CLI capability.'
+    writer_boundary: 'Existing governed Issue creation route remains the sole mutation authority.'
+    failure_and_recovery: 'Existing validation, organization authorization, and idempotent caller retry boundaries remain authoritative.'
+    evidence_status: 'Current source count and generated descriptor parity verified at source base.'
+    candidate_rust_authority: 'none'
+    retirement_gate: 'B1 differential fixtures must preserve authorization, validation, default assignee, activity, and run-attribution behavior.'
+writer_delta:
+  - id: 'delta.writer.heartbeat_attempt_ledger'
+    sources:
+      - 'server/src/services/runtime-kernel/heartbeat-attempt-ledger.ts'
+      - 'packages/db/src/schema/heartbeat_run_attempts.ts'
+      - 'packages/db/src/migrations/0157_agent_run_network_wait.sql'
+    current_node_authority: 'Runtime kernel owns attempt insertion, network-wait checkpoints, terminal attempt updates, and latest-open-attempt recovery.'
+    writer_boundary: 'Drizzle writes heartbeat_run_attempts, fenced by run id plus attempt index and terminal-state guards.'
+    failure_and_recovery: 'Unique insert races re-read the winner; terminal rows are immutable; recovery resumes from durable waiting/checkpoint state.'
+    evidence_status: 'Source and schema classified; no authority change is made by G0.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'A mutation slice after B1/B2/B4 must prove attempt identity, checkpoint, terminal fencing, recovery, and activity/result parity before Node retirement.'
+  - id: 'delta.writer.workspace_restore_reconciliation'
+    sources:
+      - 'server/src/services/workspace-restore-reconciliation.ts'
+      - 'server/src/services/workspace-backups.ts'
+      - 'server/src/services/workspace-backup-v2.ts'
+    current_node_authority: 'Node startup reconciliation validates restore receipts, reconciles exact operation-owned roots, and conditionally marks the backup restored.'
+    writer_boundary: 'Filesystem rename/remove/fsync plus an organization-scoped workspace_backups update after tree-hash proof.'
+    failure_and_recovery: 'Invalid or ambiguous receipts remain blocked and preserved; only validated roots are mutated; restart retries the durable receipt.'
+    evidence_status: 'Source classified; no authority change is made by G0.'
+    candidate_rust_authority: 'none at G0; native archive/manifest helpers do not own restore commit'
+    retirement_gate: 'A later mutation slice must prove receipt validation, crash-phase replay, tree identity, rollback, database status, and directory durability parity.'
+process_and_helper_delta:
+  - id: 'delta.helper.organization_members_projection'
+    sources:
+      - 'server/src/services/organization-members.ts'
+    current_node_authority: 'Read-only organization member projection used by the new CLI/MCP contract.'
+    writer_boundary: 'none'
+    failure_and_recovery: 'Authorization/filter/pagination errors fail the read; retry has no side effect.'
+    evidence_status: 'Classified with command/tool delta.'
+    candidate_rust_authority: 'none'
+    retirement_gate: 'B1 schema plus read-only differential fixture acceptance.'
+  - id: 'delta.process.native_workspace_manifest'
+    sources:
+      - 'server/src/services/workspace-manifest-native.ts'
+      - 'native/crates/workspace-manifest-core/src/lib.rs'
+      - 'native/bins/rudder-native/src/main.rs'
+    current_node_authority: 'Node resolves policy, owns session lifecycle, validates bounded manifests, and consumes a Rust watcher-produced cache file.'
+    writer_boundary: 'Rust helper writes only its derived manifest cache; it does not mutate project or product state.'
+    failure_and_recovery: 'Optional policy returns Node fallback/null before acceptance; required policy fails closed; invalid manifests are removed and rebuilt.'
+    evidence_status: 'Bounded native helper classified; not a public listener or product writer.'
+    candidate_rust_authority: 'Accepted only as a bounded derived-cache helper under Node orchestration.'
+    retirement_gate: 'Do not transfer workspace backup/restore or product-state authority through this helper; preserve protocol, bounds, watcher cleanup, and fallback evidence.'
+  - id: 'delta.process.native_agent_run_host'
+    sources:
+      - 'packages/agent-runtime-utils/src/native-process-runner.ts'
+      - 'native/bins/rudder-process-host/src/main.rs'
+      - 'native/crates/native-protocol/src/lib.rs'
+    current_node_authority: 'Node runtime adapter owns run admission/result semantics and may delegate bounded child-process lifecycle to the Rust host.'
+    writer_boundary: 'Per-run transient process/runtime files and relayed stdout/stderr only; persisted Run state remains Server authority.'
+    failure_and_recovery: 'Pre-acceptance host failures fall back to Node unless required; accepted work never falls back silently; process-group cleanup is proven after host loss.'
+    evidence_status: 'Bounded process helper classified; no queue or Run state authority transfer at G0.'
+    candidate_rust_authority: 'Child-process spawn, relay, timeout, cancellation, and cleanup helper only.'
+    retirement_gate: 'Later acceptance must prove handshake, backpressure, output bounds, cancellation, timeout, cleanup receipt, host-loss, and persisted result parity.'
+  - id: 'delta.helper.postgres_runtime_acquisition'
+    sources:
+      - 'cli/src/runtime/native-payload.ts'
+      - 'cli/src/runtime/postgres-archive-node.ts'
+      - 'cli/src/runtime/postgres-runtime-download.ts'
+      - 'cli/src/runtime/postgres-runtime-source.ts'
+      - 'native/crates/runtime-payload-core/src/lib.rs'
+    current_node_authority: 'CLI selects trusted platform sources, enforces download limits and hashes, and stages runtime payloads; the Server/database runtime still owns PostgreSQL startup, queries, and migrations.'
+    writer_boundary: 'Installation/runtime cache files only; no product database row or migration-journal mutation.'
+    failure_and_recovery: 'Timeout, size, path, extraction, or hash mismatch aborts and cleans partial output; a later invocation may retry from trusted source.'
+    evidence_status: 'Packaging/runtime helper classified; no database authority transfer at G0.'
+    candidate_rust_authority: 'Bounded archive inspection/extraction helper only.'
+    retirement_gate: 'Preserve signed/trusted source policy, exact hashes, path traversal rejection, cleanup, platform coverage, and current database ownership.'
+  - id: 'delta.process.b2_server_foundation_exception'
+    sources:
+      - 'native/bins/rudder-server-foundation/src/main.rs'
+      - 'native/crates/server-foundation/src/lib.rs'
+    current_node_authority: 'The production Node Server remains the only public product listener and owns routes, queries, migrations, queues, and lifecycle.'
+    writer_boundary: 'B2 foundation may bind loopback ephemeral HTTP and optionally test SQLx readiness; it owns no product mutation or migration path.'
+    failure_and_recovery: 'Configuration rejects non-loopback binding and invalid limits; readiness and shutdown are bounded and fail closed.'
+    evidence_status: 'Historical ordering deviation bound to candidate 3343eda1330a40217d3e451b3710ca373f76183e and integration 81b0f6583cea3d01f2d7b1792bfe44c0512e5532.'
+    candidate_rust_authority: 'Behavior-neutral loopback foundation only; no additional expansion is authorized by G0.'
+    retirement_gate: 'B1 contract acceptance and B4 adapter acceptance remain prerequisites before any route/query slice; public listener and mutation authority require their own reviewed cutover.'
+release_delta:
+  - id: 'delta.release.cos_mirror_policy'
+    sources:
+      - 'scripts/release-mirror-policy.mjs'
+      - '.github/workflows/release.yml'
+      - 'scripts/release-workflow-contract.test.mjs'
+    current_node_authority: 'Release preflight resolves an explicit opt-in COS mirror policy; GitHub checksum completion remains required with or without mirroring.'
+    writer_boundary: 'Release workflow publication/checksum state only; no runtime or product-state authority.'
+    failure_and_recovery: 'Invalid boolean input fails preflight; mirror-enabled and checksum-only branches are mutually gated and finalization verifies the selected branch.'
+    evidence_status: 'New policy helper, two checksum jobs, and two gated mirror jobs classified; G0 changes no release implementation.'
+    candidate_rust_authority: 'none'
+    retirement_gate: 'B3 must preserve explicit opt-in, immutable asset/checksum ordering, branch exclusivity, retry/resume behavior, and stable finalization before replacing this authority.'
+open_gaps:
+  - 'A3 remains a Node-only baseline: no current-candidate Rust comparison, p99, full process-tree RSS, memory-time, or authenticated packaged CLI/MCP claim is promoted.'
+  - 'The overlay classifies current authority for B1 gating but does not accept R6Z-124 or replace any historical A-wave artifact.'
+  - 'Any source-authority change after source base 3a29c690e6ba0b21b35e273d869e1a73f8ccc526 requires a new delta rebind before a downstream mutation slice.'

@@ -1,6 +1,6 @@
 # Rust Migration G0 Baseline Freeze
 
-Status: accepted baseline candidate
+Status: review candidate
 
 Issue: R6Z-129
 
@@ -13,10 +13,20 @@ migration foundation. It does not transfer runtime authority, change Product
 Logic, create a second public listener, change database migration ownership, or
 authorize a release.
 
-The freeze candidate is `3a29c690e6ba0b21b35e273d869e1a73f8ccc526`
-(tree `8dfe316dd45210f0be7449e561c683a8e4e85194`). The candidate starts from a
-clean `origin/main` worktree. The only G0 changes are the two accepted inventory
-artifacts that had not yet landed on `main` and this consolidation document.
+The G0 source base is `3a29c690e6ba0b21b35e273d869e1a73f8ccc526`
+(tree `8dfe316dd45210f0be7449e561c683a8e4e85194`). It was a clean `origin/main`
+worktree before the G0 documentation package was applied; it is not itself the
+freeze package. The package adds the two accepted inventory artifacts that had
+not yet landed on `main`, this consolidation document, and the reviewable
+current-source delta overlay.
+
+Package fingerprint: `e8bdabde4f7b6d15f6309b8178333f693e8c396d9e15a508199b61bb324fa156`
+
+The fingerprint is SHA-256 over the four added paths in lexical order, each
+encoded as `path`, a NUL byte, normalized file bytes, and a second NUL byte.
+Normalization removes only the `Package fingerprint:` line from this document.
+The exact candidate commit remains an external Git identity recorded in the
+review handoff because a commit cannot contain its own SHA.
 
 ## Accepted Inputs
 
@@ -26,6 +36,10 @@ artifacts that had not yet landed on `main` and this consolidation document.
 | A2 | R6Z-126 | `doc/plans/2026-08-20-rust-cli-mcp-contract-inventory.yml` | delivery commit `1c177839362bb4a858b151c467c32a9d7cef8b78`; SHA-256 `8cbe6bfd6f4d78746d02d890880862884270b234a7304c745a3e3b76f7086c49` |
 | A3 | R6Z-127 | `doc/plans/2026-08-20-rust-performance-baseline.yml` | delivery commit `c945ff93c2288429e13396194aa6c7515b547cbe`; SHA-256 `81c92776ceab8430cf2b06c8e5e4951972315a167d7a2903503425e6b3b45976`; reviewer accept and independent verifier PASS |
 | A4 | R6Z-128 | `doc/plans/2026-08-20-rust-electron-release-inventory.yml` | source `a63048f2b5388ae77ccf486fd72ee8f26e8624de`; SHA-256 `7b2c183903b8536efd14bb79a6cccc732a257546a8c5c09b790676a6a5b8a529`; independent review approve |
+
+Current-source drift is frozen separately in
+`doc/plans/2026-08-28-rust-migration-g0-current-source-delta.yml`; it preserves
+the accepted A-wave artifact hashes instead of rewriting their provenance.
 
 ## Current-Source Reconciliation
 
@@ -41,6 +55,22 @@ At the G0 candidate:
 - transaction scan: 187 production `.transaction(` call sites across 50 files;
 - migration scan: 161 SQL files and 159 journal entries, with the two legacy
   allowlist entries already described by A1;
+- CLI/MCP scan: 114 total CLI capabilities, 103 agent-v1 capabilities, 11
+  compatibility-only capabilities, 103 canonical MCP tools (78 core and 25
+  Browser), core hash
+  `b70b3cc3508c81a0c046f3478d6a57daf094cb58608b7a16ff648daceba12475`,
+  and unchanged Browser hash
+  `640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923`;
+- authority overlay: 2 current writer delta units, 5 process/helper delta
+  units, and 1 release policy delta unit are classified with exact sources,
+  write boundaries, failure/recovery behavior, evidence status, candidate Rust
+  authority, and retirement gates;
+- release scan: the accepted A4 package contains 12 ownership rows and 18
+  bounded entrypoints; the delta adds 1 explicit mirror-policy unit, gates 2
+  mirror jobs, and adds 2 checksum-only jobs;
+- benchmark scan: A3 retains 2 scale profiles, 5 measured paths, 7 paired
+  comparison blocks, 6 required commands, and 2 supplementary commands; G0
+  promotes 0 current-candidate Rust comparisons;
 - public listener authority remains the Node HTTP listener plus its live-event
   WebSocket upgrade; the optional analytics collector and dynamic loopback
   workspace listeners remain bounded non-public authorities described by A1;
@@ -87,15 +117,17 @@ Contract IDs frozen for downstream evidence:
 
 | Check | Result |
 | --- | --- |
-| `git status --short --branch` | PASS; clean `origin/main` base with exactly the three G0 documentation additions before commit |
+| `git status --short --branch` | PASS; clean source base with exactly the four G0 documentation additions before commit |
 | `pnpm product-logic:check` | PASS; 96 contracts valid |
 | `pnpm architecture:audit:test` | PASS; 18 tests |
 | `pnpm mcp-contract:check` | PASS; generated descriptors match the canonical contract |
 | `pnpm --filter @rudderhq/server typecheck` | PASS |
 | `pnpm --filter @rudderhq/cli typecheck` | PASS |
-| strict `js-yaml@4.2.0` parse of all four YAML inventories | PASS; A1 contains 2 documents and A2-A4 contain 1 each |
+| strict `js-yaml@4.2.0` parse of all five YAML inventories | PASS; A1 contains 2 documents and A2-A4 plus the delta overlay contain 1 each |
 | accepted artifact SHA-256 verification | PASS; all four hashes match the accepted identities above |
 | current route/transaction/migration count reconciliation | PASS; 504 declarations / 45 declaration files, 187 transaction calls / 50 files, 161 SQL files / 159 journal entries |
+| current CLI/MCP reconciliation | PASS; 114 total / 103 agent-v1 / 11 compatibility-only CLI capabilities, 103 MCP tools, core hash `b70b3cc...`, Browser hash `640c060d...` |
+| writer/process/release delta overlay | PASS; 2 writer, 5 process/helper, and 1 release policy authority units have stable rows and no unclassified current authority addition remains at the source base |
 | A3 accepted workload packet | PASS at its frozen candidate; workflow tests 4/4, smoke 2 warmups + 7 measured iterations, thread-heavy 3 warmups + 20 measured iterations; not rerun or promoted as a current-candidate Rust comparison |
 
 ## Evidence Gaps And No-Go Boundaries
@@ -109,9 +141,13 @@ Contract IDs frozen for downstream evidence:
   unavailable.
 - A4's explicit release-CI packaged recovery/update matrix and release-set
   compatibility work remain B3 responsibilities.
-- `origin/main` already contains the separately delivered B2 native foundation.
-  This retroactive G0 reconciliation neither reviews nor expands B2 authority;
-  it restores the declared gate before B1 and later slices proceed.
+- `origin/main` already contains the separately delivered B2 native foundation:
+  candidate `3343eda1330a40217d3e451b3710ca373f76183e`, integration
+  `81b0f6583cea3d01f2d7b1792bfe44c0512e5532`. The original G0-before-B2
+  ordering was not met and cannot be restored retroactively. The amended G0
+  contract treats that exact loopback-only foundation as the sole historical
+  exception and establishes a forward-only baseline before B1 and every later
+  authority expansion. G0 neither reviews nor expands B2 authority.
 - G0 does not close R6Z-124. That later live-inventory refresh remains separate
   evidence and cannot silently replace the accepted R6Z-125 artifact without
   its own review and verifier packet.
@@ -129,8 +165,8 @@ B1 may proceed after this exact G0 candidate is accepted. It must:
    output, cancellation, and runtime-context errors;
 6. pass `cargo check --manifest-path native/Cargo.toml`,
    `pnpm mcp-contract:check`, CLI typecheck, and Product Logic validation;
-7. hand the accepted contract crate/module to B2 and B4 without transferring
-   listener, query, migration, or release authority.
+7. hand the accepted contract crate/module to B4 and any later B2 extension
+   without transferring listener, query, migration, or release authority.
 
 ## Dependency Change
 
