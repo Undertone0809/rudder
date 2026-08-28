@@ -894,6 +894,17 @@ describe("agent-v1 MCP server", () => {
       ...env,
       RUDDER_AGENT_ID: "runtime-agent",
     })).toThrow(/selectionRefs item 0 must be string.*tools\/list/i);
+    expect(() => buildAgentV1ToolCallPlan("rudder_goal_change_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      afterContract: {},
+      rationale: "evidence changed",
+      idempotencyKey: "key",
+    }, {
+      ...env,
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    })).toThrow(/afterContract must contain at least 1 properties.*tools\/list/i);
     expect(() => buildAgentV1ToolCallPlan("rudder_browser_locator", {
       tabId: "tab-1",
       action: "count",

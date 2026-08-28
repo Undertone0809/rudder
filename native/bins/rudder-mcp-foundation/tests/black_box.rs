@@ -152,6 +152,90 @@ fn serves_initialize_and_tool_manifest_over_stdio() {
 }
 
 #[test]
+fn node_and_rust_distinguish_notifications_from_explicit_null_ids() {
+    let empty_env = BTreeMap::new();
+    let cases = [
+        ("initialize", serde_json::json!({})),
+        ("tools/list", serde_json::json!({})),
+        (
+            "tools/call",
+            serde_json::json!({
+                "name": "rudder_issue_get",
+                "arguments": { "issue": "R6Z-1" }
+            }),
+        ),
+    ];
+    for (method, params) in cases {
+        let missing = format!(
+            "{}\n",
+            serde_json::json!({ "jsonrpc": "2.0", "method": method, "params": params })
+        );
+        let missing_node = collect_lines(node_command(), &missing, &empty_env);
+        let missing_rust = collect_lines(
+            Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+            &missing,
+            &empty_env,
+        );
+        assert_eq!(missing_node.len(), 1, "Node omitted-id {method}");
+        assert_eq!(missing_rust.len(), 1, "Rust omitted-id {method}");
+        assert_eq!(missing_node[0]["id"], Value::Null);
+        assert_eq!(missing_rust[0]["id"], Value::Null);
+        if method == "tools/call" {
+            assert_eq!(
+                validation_projection(&missing_rust[0]),
+                validation_projection(&missing_node[0])
+            );
+        } else {
+            assert_eq!(missing_rust[0]["result"], missing_node[0]["result"]);
+        }
+
+        let explicit_null = format!(
+            "{}\n",
+            serde_json::json!({ "jsonrpc": "2.0", "id": null, "method": method, "params": params })
+        );
+        let node = collect_lines(node_command(), &explicit_null, &empty_env);
+        let rust = collect_lines(
+            Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+            &explicit_null,
+            &empty_env,
+        );
+        assert_eq!(node.len(), 1, "Node {method}");
+        assert_eq!(rust.len(), 1, "Rust {method}");
+        assert_eq!(node[0]["id"], Value::Null);
+        assert_eq!(rust[0]["id"], Value::Null);
+        if method == "tools/call" {
+            assert_eq!(
+                validation_projection(&rust[0]),
+                validation_projection(&node[0])
+            );
+        } else {
+            assert_eq!(rust[0]["result"], node[0]["result"]);
+        }
+    }
+
+    let missing_unknown = "{\"jsonrpc\":\"2.0\",\"method\":\"unknown\"}\n";
+    assert!(collect_lines(node_command(), missing_unknown, &empty_env).is_empty());
+    assert!(
+        collect_lines(
+            Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+            missing_unknown,
+            &empty_env,
+        )
+        .is_empty()
+    );
+    let null_unknown = "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"unknown\"}\n";
+    let node = collect_lines(node_command(), null_unknown, &empty_env);
+    let rust = collect_lines(
+        Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+        null_unknown,
+        &empty_env,
+    );
+    assert_eq!(node.len(), 1);
+    assert_eq!(rust.len(), 1);
+    assert_eq!(rust[0]["error"]["code"], node[0]["error"]["code"]);
+}
+
+#[test]
 fn accepts_content_length_prefix_split_across_process_writes() {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -275,6 +359,117 @@ fn node_and_rust_processes_match_protocol_and_validation_envelopes() {
     assert_eq!(
         rust[1]["result"]["structuredContent"]["code"],
         "rudder_mcp_invalid_arguments"
+    );
+}
+
+#[test]
+fn node_and_rust_normalize_legacy_aliases_before_validation() {
+    let messages = [
+        serde_json::json!({"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"rudder_agent_skills_enable","arguments":{"selections":["skill-ref"]}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"rudder_goal_context","arguments":{"goalId":"gol_1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"rudder_issue_get","arguments":{"issueId":"R6Z-1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"rudder_project_get","arguments":{"projectId":"prj_1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"rudder_approval_get","arguments":{"approvalId":"apr_1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"rudder_skill_get","arguments":{"skillId":"skl_1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"rudder_automation_get","arguments":{"automationId":"aut_1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"rudder_runs_transcript","arguments":{"run":"run_1","maxOutputChars":500}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"rudder_chat_get","arguments":{"chatId":"cht_1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"rudder_issue_get","arguments":{"issue":"R6Z-1","issueId":123}}}),
+    ];
+    let stream = messages
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let empty_env = BTreeMap::new();
+    let node = collect_lines(node_command(), &stream, &empty_env);
+    let rust = collect_lines(
+        Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+        &stream,
+        &empty_env,
+    );
+    assert_eq!(node.len(), messages.len());
+    assert_eq!(rust.len(), messages.len());
+    for index in 0..messages.len() {
+        assert_eq!(
+            validation_projection(&rust[index]),
+            validation_projection(&node[index]),
+            "message {}",
+            index + 1
+        );
+        assert_eq!(
+            rust[index]["result"]["structuredContent"]["code"],
+            "rudder_mcp_missing_runtime_context",
+            "message {}",
+            index + 1
+        );
+    }
+}
+
+#[test]
+fn rejects_empty_object_for_live_min_properties_constraint() {
+    let message = format!(
+        "{}\n",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {
+                "name": "rudder_goal_change_propose",
+                "arguments": {
+                    "goal": "gol_1",
+                    "contractRevision": 1,
+                    "afterContract": {},
+                    "rationale": "evidence changed",
+                    "idempotencyKey": "key"
+                }
+            }
+        })
+    );
+    let empty_env = BTreeMap::new();
+    let node = collect_lines(node_command(), &message, &empty_env);
+    let rust = collect_lines(
+        Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+        &message,
+        &empty_env,
+    );
+    assert_eq!(node.len(), 1);
+    assert_eq!(rust.len(), 1);
+    assert_eq!(
+        validation_projection(&rust[0]),
+        validation_projection(&node[0])
+    );
+    assert_eq!(
+        rust[0]["result"]["structuredContent"]["code"],
+        "rudder_mcp_invalid_arguments"
+    );
+}
+
+#[test]
+fn oversized_whitespace_prefix_fails_at_the_process_boundary() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(&vec![
+            b' ';
+            rudder_agent_tools_foundation::MAX_REQUEST_BYTES + 1
+        ])
+        .unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("MCP message exceeds the bounded byte limit")
     );
 }
 

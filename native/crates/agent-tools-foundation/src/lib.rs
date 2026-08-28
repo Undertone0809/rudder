@@ -1,5 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -94,16 +94,50 @@ fn nonempty_env(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct JsonRpcRequest {
     #[serde(default)]
     pub jsonrpc: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<Value>,
+    #[serde(skip)]
+    id_present: bool,
     #[serde(default)]
     pub method: Option<String>,
     #[serde(default)]
     pub params: Option<Value>,
+}
+
+impl<'de> Deserialize<'de> for JsonRpcRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Fields {
+            #[serde(default)]
+            jsonrpc: Option<String>,
+            #[serde(default)]
+            method: Option<String>,
+            #[serde(default)]
+            params: Option<Value>,
+        }
+
+        let mut value = Value::deserialize(deserializer)?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| de::Error::custom("JSON-RPC request must be an object"))?;
+        let id_present = object.contains_key("id");
+        let id = object.remove("id");
+        let fields: Fields = serde_json::from_value(value).map_err(de::Error::custom)?;
+        Ok(Self {
+            jsonrpc: fields.jsonrpc,
+            id,
+            id_present,
+            method: fields.method,
+            params: fields.params,
+        })
+    }
 }
 
 pub trait ToolDispatcher {
@@ -587,27 +621,36 @@ pub fn handle_message(
     dispatcher: &mut impl ToolDispatcher,
 ) -> Option<Value> {
     let id = request.id.clone().unwrap_or(Value::Null);
-    let notification = request.id.is_none();
+    let notification = !request.id_present;
     if has_conflicting_protocol_versions(request.params.as_ref()) {
-        return (!notification)
-            .then(|| rpc_error(id, -32602, "Conflicting MCP protocol versions", None));
+        return Some(rpc_error(
+            id,
+            -32602,
+            "Conflicting MCP protocol versions",
+            None,
+        ));
     }
     let requested_protocol = protocol_version_from_params(request.params.as_ref());
     if requested_protocol == Some(MCP_MODERN_PROTOCOL_VERSION)
         && request.method.as_deref() != Some("server/discover")
         && !has_modern_envelope(request.params.as_ref())
     {
-        return (!notification).then(|| {
-            rpc_error(
-                id,
-                -32602,
-                "Invalid _meta envelope for protocol revision 2026-07-28",
-                Some(json!({ "required": [MCP_PROTOCOL_VERSION_META_KEY, MCP_CLIENT_CAPABILITIES_META_KEY] })),
-            )
-        });
+        return Some(rpc_error(
+            id,
+            -32602,
+            "Invalid _meta envelope for protocol revision 2026-07-28",
+            Some(
+                json!({ "required": [MCP_PROTOCOL_VERSION_META_KEY, MCP_CLIENT_CAPABILITIES_META_KEY] }),
+            ),
+        ));
     }
     let result = match request.method.as_deref() {
-        Some("notifications/initialized") => return None,
+        Some("notifications/initialized") => {
+            if notification {
+                return None;
+            }
+            Ok(json!({}))
+        }
         Some("notifications/cancelled") => {
             let request_id = request
                 .params
@@ -692,8 +735,8 @@ pub fn handle_message(
         } else {
             json!({})
         }),
-        Some("tools/call") => validate_tool_call(request, surface, context)
-            .and_then(|_| dispatcher.dispatch(request))
+        Some("tools/call") => prepare_tool_call(request, surface, context)
+            .and_then(|request| dispatcher.dispatch(&request))
             .map(|result| {
                 if is_modern_request(request.params.as_ref()) {
                     modern_result(
@@ -712,9 +755,6 @@ pub fn handle_message(
             return Some(rpc_error(id, -32601, "Unsupported JSON-RPC method", None));
         }
     };
-    if notification {
-        return None;
-    }
     Some(match result {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
         Err(error) if request.method.as_deref() == Some("tools/call") => tool_error_response(
@@ -739,11 +779,11 @@ pub fn handle_message(
     })
 }
 
-fn validate_tool_call(
+fn prepare_tool_call(
     request: &JsonRpcRequest,
     surface: Surface,
     context: &RuntimeContext,
-) -> Result<(), FoundationError> {
+) -> Result<JsonRpcRequest, FoundationError> {
     let params = request.params.as_ref().and_then(Value::as_object).ok_or(
         FoundationError::InvalidRequest("tools/call params must be an object"),
     )?;
@@ -754,7 +794,7 @@ fn validate_tool_call(
             .ok_or(FoundationError::InvalidRequest(
                 "tools/call name is required",
             ))?;
-    let args = match params.get("arguments") {
+    let raw_args = match params.get("arguments") {
         None => serde_json::Map::new(),
         Some(value) => value
             .as_object()
@@ -767,13 +807,76 @@ fn validate_tool_call(
         .into_iter()
         .find(|entry| entry["mcp"]["name"] == name)
         .ok_or_else(|| FoundationError::ToolNotAvailable(name.to_owned()))?;
+    let capability_id = capability["id"]
+        .as_str()
+        .ok_or(FoundationError::InvalidRequest(
+            "generated capability id is missing",
+        ))?;
+    let args = normalize_legacy_arguments(capability_id, raw_args);
     reject_reserved_identity(&args)?;
     validate_schema(name, &args, &capability["mcp"]["inputSchema"])?;
     if surface == Surface::Browser && !context.browser_enabled {
         return Err(FoundationError::BrowserDisabled);
     }
     validate_runtime_context(&capability, context)?;
-    Ok(())
+    let mut normalized = request.clone();
+    let mut normalized_params = params.clone();
+    normalized_params.insert("arguments".to_owned(), Value::Object(args));
+    normalized.params = Some(Value::Object(normalized_params));
+    Ok(normalized)
+}
+
+fn normalize_legacy_arguments(
+    capability_id: &str,
+    mut args: serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    for &(alias, canonical) in legacy_argument_aliases(capability_id) {
+        let Some(value) = args.remove(alias) else {
+            continue;
+        };
+        args.entry(canonical.to_owned()).or_insert(value);
+    }
+    args
+}
+
+fn legacy_argument_aliases(capability_id: &str) -> &'static [(&'static str, &'static str)] {
+    match capability_id {
+        "agent.skills.enable" => &[("selections", "selectionRefs"), ("skills", "selectionRefs")],
+        "goal.context"
+        | "goal.progress"
+        | "goal.checkpoint"
+        | "goal.change.propose"
+        | "goal.result.propose" => &[("goalId", "goal")],
+        "issue.get"
+        | "issue.context"
+        | "issue.checkout"
+        | "issue.comment"
+        | "issue.comments.list"
+        | "issue.update"
+        | "issue.review"
+        | "issue.commit"
+        | "issue.done"
+        | "issue.block" => &[("issueId", "issue")],
+        "issue.comments.get" => &[("issueId", "issue"), ("commentId", "comment")],
+        "project.get" | "project.update" => &[("projectId", "project")],
+        "approval.get" | "approval.issues" | "approval.comment" => &[("approvalId", "approval")],
+        "skill.get" | "skill.file" => &[("skillId", "skill")],
+        "automation.get"
+        | "automation.runs"
+        | "automation.triggers.list"
+        | "automation.triggers.create"
+        | "automation.update"
+        | "automation.enable"
+        | "automation.disable"
+        | "automation.run" => &[("automationId", "automation")],
+        "automation.triggers.update"
+        | "automation.triggers.delete"
+        | "automation.triggers.rotate-secret" => &[("triggerId", "trigger")],
+        "runs.transcript" => &[("maxOutputChars", "maxChars")],
+        "chat.get" | "chat.messages" | "chat.transcript" | "chat.read" | "chat.send"
+        | "chat.archive" => &[("chatId", "chat")],
+        _ => &[],
+    }
 }
 
 fn reject_reserved_identity(args: &serde_json::Map<String, Value>) -> Result<(), FoundationError> {
@@ -940,6 +1043,11 @@ fn schema_violation(value: &Value, schema: &Value) -> Option<String> {
         }
     }
     if let Some(object) = value.as_object() {
+        if let Some(minimum) = schema.get("minProperties").and_then(Value::as_u64)
+            && object.len() < minimum as usize
+        {
+            return Some(format!("must contain at least {minimum} properties"));
+        }
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
@@ -1098,8 +1206,14 @@ impl<R: Read> MessageReader<R> {
                         };
                     }
                 }
-                None if self.eof => return Ok(None),
-                None => {}
+                None => {
+                    if self.buffer.len() > MAX_REQUEST_BYTES {
+                        return Err(FoundationError::MessageLimit);
+                    }
+                    if self.eof {
+                        return Ok(None);
+                    }
+                }
             }
             let mut chunk = [0_u8; 8_192];
             let count = self.input.read(&mut chunk)?;
@@ -1107,6 +1221,9 @@ impl<R: Read> MessageReader<R> {
                 self.eof = true;
             } else {
                 self.buffer.extend_from_slice(&chunk[..count]);
+                if self.mode.is_none() && self.buffer.len() > MAX_REQUEST_BYTES {
+                    return Err(FoundationError::MessageLimit);
+                }
             }
         }
     }
@@ -1169,17 +1286,20 @@ where
             }
             continue;
         }
-        if request.method.as_deref() == Some("tools/call") && request.id.is_some() {
-            if let Err(error) = validate_tool_call(&request, surface, &context) {
-                let response = tool_error_response(
-                    request.id.unwrap_or(Value::Null),
-                    error,
-                    surface,
-                    is_modern_request(request.params.as_ref()),
-                );
-                write_stdio_response(&output, mode, surface, &response)?;
-                continue;
-            }
+        if request.method.as_deref() == Some("tools/call") {
+            let request = match prepare_tool_call(&request, surface, &context) {
+                Ok(request) => request,
+                Err(error) => {
+                    let response = tool_error_response(
+                        request.id.unwrap_or(Value::Null),
+                        error,
+                        surface,
+                        is_modern_request(request.params.as_ref()),
+                    );
+                    write_stdio_response(&output, mode, surface, &response)?;
+                    continue;
+                }
+            };
             let id = request.id.clone().unwrap_or(Value::Null);
             dispatcher.begin_request(&id);
             active.lock().unwrap().insert(request_id_key(&id));
@@ -1386,6 +1506,7 @@ fn target_triple() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[derive(Default)]
     struct RecordingDispatcher {
@@ -1515,6 +1636,31 @@ mod tests {
         .unwrap()
     }
 
+    fn collect_schema_keywords(schema: &Value, keywords: &mut BTreeSet<String>) {
+        let Some(schema) = schema.as_object() else {
+            return;
+        };
+        keywords.extend(schema.keys().cloned());
+        for child in schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|properties| properties.values())
+        {
+            collect_schema_keywords(child, keywords);
+        }
+        if let Some(items) = schema.get("items") {
+            collect_schema_keywords(items, keywords);
+        }
+        for child in ["oneOf", "anyOf"]
+            .into_iter()
+            .flat_map(|key| schema.get(key).and_then(Value::as_array))
+            .flatten()
+        {
+            collect_schema_keywords(child, keywords);
+        }
+    }
+
     fn complete_context() -> RuntimeContext {
         RuntimeContext {
             api_url: Some("http://127.0.0.1:3100".to_owned()),
@@ -1563,6 +1709,24 @@ mod tests {
         assert_eq!(
             contract_hash(Surface::Browser),
             "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923"
+        );
+    }
+
+    #[test]
+    fn distinguishes_missing_ids_from_explicit_null_ids() {
+        let missing: JsonRpcRequest =
+            serde_json::from_value(json!({ "jsonrpc": "2.0", "method": "ping" })).unwrap();
+        let explicit_null: JsonRpcRequest =
+            serde_json::from_value(json!({ "jsonrpc": "2.0", "id": null, "method": "ping" }))
+                .unwrap();
+        assert!(!missing.id_present);
+        assert!(missing.id.is_none());
+        assert!(explicit_null.id_present);
+        assert_eq!(explicit_null.id, Some(Value::Null));
+        assert!(serde_json::to_value(missing).unwrap().get("id").is_none());
+        assert_eq!(
+            serde_json::to_value(explicit_null).unwrap()["id"],
+            Value::Null
         );
     }
 
@@ -1630,6 +1794,7 @@ mod tests {
         let schema = json!({
             "type": "object",
             "additionalProperties": false,
+            "minProperties": 4,
             "required": ["name", "nested", "items", "shape"],
             "properties": {
                 "name": { "type": "string", "minLength": 1, "maxLength": 3, "enum": ["ok", "no"] },
@@ -1677,6 +1842,67 @@ mod tests {
             "rudder_mcp_invalid_arguments"
         );
         assert_eq!(dispatcher.calls, 0);
+
+        let empty_change = request(
+            10,
+            "tools/call",
+            json!({
+                "name": "rudder_goal_change_propose",
+                "arguments": {
+                    "goal": "gol_1",
+                    "contractRevision": 1,
+                    "afterContract": {},
+                    "rationale": "evidence changed",
+                    "idempotencyKey": "key"
+                }
+            }),
+        );
+        let response = handle_message(
+            &empty_change,
+            Surface::Core,
+            &complete_context(),
+            &mut dispatcher,
+        )
+        .unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["code"],
+            "rudder_mcp_invalid_arguments"
+        );
+    }
+
+    #[test]
+    fn generated_input_schemas_use_only_covered_keywords() {
+        let mut actual = BTreeSet::new();
+        for capability in capabilities(Surface::Core)
+            .into_iter()
+            .chain(capabilities(Surface::Browser))
+        {
+            collect_schema_keywords(&capability["mcp"]["inputSchema"], &mut actual);
+        }
+        let covered = BTreeSet::from_iter(
+            [
+                "additionalProperties",
+                "anyOf",
+                "description",
+                "enum",
+                "format",
+                "items",
+                "maxItems",
+                "maxLength",
+                "maximum",
+                "minItems",
+                "minLength",
+                "minProperties",
+                "minimum",
+                "oneOf",
+                "properties",
+                "required",
+                "type",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+        assert_eq!(actual, covered);
     }
 
     #[test]
