@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button";
-import { Paperclip } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { extractAgentMentionIds, extractAgentWakeMentionIds, setAgentMentionIntent } from "@rudderhq/shared";
+import { Paperclip, RotateCcw, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 
 const DEFAULT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
@@ -85,6 +87,20 @@ export function CommentComposer({
   const activeSurfaceRef = surfaceRef ?? ownSurfaceRef;
   const [attaching, setAttaching] = useState(false);
   const [editorScrollElement, setEditorScrollElement] = useState<HTMLDivElement | null>(null);
+  const agentMentionsById = useMemo(() => new Map(
+    (mentions ?? [])
+      .filter((mention) => mention.kind === "agent" && mention.agentId)
+      .map((mention) => [mention.agentId!, mention]),
+  ), [mentions]);
+  const mentionedAgents = useMemo(() => {
+    const wakingAgentIds = new Set(extractAgentWakeMentionIds(body));
+    return extractAgentMentionIds(body)
+      .map((agentId) => {
+        const mention = agentMentionsById.get(agentId);
+        return mention ? { mention, waking: wakingAgentIds.has(agentId) } : null;
+      })
+      .filter((entry): entry is { mention: MentionOption; waking: boolean } => Boolean(entry));
+  }, [agentMentionsById, body]);
 
   useEffect(() => {
     if (!editorScrollElement || typeof ResizeObserver === "undefined") return;
@@ -192,39 +208,86 @@ export function CommentComposer({
       onMouseDown={focusComposerEditor}
       tabIndex={-1}
     >
-      <div
-        ref={setEditorScrollElement}
-        data-testid="issue-comment-composer-editor-scroll"
-        className="motion-comment-composer-height scrollbar-auto-hide relative col-start-2 row-start-1 h-[var(--comment-composer-editor-height)] min-w-0 max-h-[min(24dvh,10rem)] overflow-y-auto overscroll-contain pr-1 md:h-auto md:max-h-[min(38dvh,22rem)]"
-        style={{ "--comment-composer-editor-height": "1.875rem" } as CSSProperties}
-      >
-        {!body.trim() ? (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-start pt-px text-sm text-muted-foreground md:hidden"
-          >
-            {placeholder}
-          </span>
-        ) : null}
-        <MarkdownEditor
-          ref={activeEditorRef}
-          engine="milkdown"
-          value={body}
-          onChange={onBodyChange}
-          ariaLabel={editorAriaLabel}
-          placeholder={placeholder}
-          mentions={mentions}
-          agentMentionIntent="wake"
-          onMentionQueryChange={onMentionQueryChange}
-          mentionMenuAnchorRef={activeSurfaceRef}
-          mentionMenuPlacement="container"
-          onSubmit={onSubmit}
-          imageUploadHandler={imageUploadHandler}
-          className="rounded-[var(--radius-md)] bg-transparent"
-          contentClassName="min-h-7 bg-transparent text-sm leading-6 text-foreground md:min-h-16"
-          bordered={false}
-        />
+      <div className="col-start-2 row-start-1 min-w-0 md:block">
+        <div
+          ref={setEditorScrollElement}
+          data-testid="issue-comment-composer-editor-scroll"
+          className="motion-comment-composer-height scrollbar-auto-hide relative h-[var(--comment-composer-editor-height)] min-w-0 max-h-[min(24dvh,10rem)] overflow-y-auto overscroll-contain pr-1 md:h-auto md:max-h-[min(38dvh,22rem)]"
+          style={{ "--comment-composer-editor-height": "1.875rem" } as CSSProperties}
+        >
+          {!body.trim() ? (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-start pt-px text-sm text-muted-foreground md:hidden"
+            >
+              {placeholder}
+            </span>
+          ) : null}
+          <MarkdownEditor
+            ref={activeEditorRef}
+            engine="milkdown"
+            value={body}
+            onChange={onBodyChange}
+            ariaLabel={editorAriaLabel}
+            placeholder={placeholder}
+            mentions={mentions}
+            agentMentionIntent="wake"
+            onMentionQueryChange={onMentionQueryChange}
+            mentionMenuAnchorRef={activeSurfaceRef}
+            mentionMenuPlacement="container"
+            onSubmit={onSubmit}
+            imageUploadHandler={imageUploadHandler}
+            className="rounded-[var(--radius-md)] bg-transparent"
+            contentClassName="min-h-7 bg-transparent text-sm leading-6 text-foreground md:min-h-16"
+            bordered={false}
+          />
+        </div>
       </div>
+      {mentionedAgents.length > 0 ? (
+        <div
+          data-testid="comment-agent-wake-status"
+          className="col-span-3 row-start-2 mt-2 flex min-w-0 flex-wrap items-center gap-2"
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="status" aria-live="polite">
+            {mentionedAgents.map(({ mention, waking }) => {
+              const agentId = mention.agentId!;
+              const actionLabel = waking
+                ? `Cancel starting ${mention.name} when this comment is sent`
+                : `Start ${mention.name} when this comment is sent`;
+              return (
+                <button
+                  key={agentId}
+                  type="button"
+                  data-testid={`comment-agent-wake-status-${agentId}`}
+                  data-wake-state={waking ? "pending" : "skipped"}
+                  aria-label={actionLabel}
+                  title={actionLabel}
+                  className="control-hover inline-flex min-h-8 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)] px-2 py-1 text-xs text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={() => {
+                    onBodyChange(setAgentMentionIntent(body, agentId, waking ? "reference" : "wake"));
+                    requestAnimationFrame(() => activeEditorRef.current?.focus());
+                  }}
+                >
+                  <AgentIdentity
+                    name={mention.name}
+                    icon={mention.agentIcon}
+                    role={mention.agentRole}
+                    size="sm"
+                    className="min-w-0 max-w-[10rem]"
+                  />
+                  <span className="shrink-0 text-muted-foreground">
+                    {waking ? "will start when sent" : "won't start this time"}
+                  </span>
+                  {waking
+                    ? <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    : <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </div>
+          {beforeSubmit ? <div className="ml-auto flex shrink-0 items-center">{beforeSubmit}</div> : null}
+        </div>
+      ) : null}
       {attachmentStatus ? <div className="col-span-3 mt-2 md:mt-2">{attachmentStatus}</div> : null}
       <div className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3">
         {(imageUploadHandler || onAttachFile) ? (
@@ -250,7 +313,11 @@ export function CommentComposer({
             </Button>
           </div>
         ) : null}
-        {beforeSubmit}
+        {mentionedAgents.length === 0 && beforeSubmit ? (
+          <div className="col-span-3 row-start-2 mt-2 flex justify-end md:contents">
+            {beforeSubmit}
+          </div>
+        ) : null}
         <div className="col-start-3 row-start-1 flex items-center gap-1.5 self-end">
           {secondaryAction}
           <Button type="button" size="sm" disabled={!canSubmit || attaching} onClick={onSubmit}>

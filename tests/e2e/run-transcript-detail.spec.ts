@@ -1063,7 +1063,7 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("exposes item-scoped annotation affordances across transcript types and action rows", async ({ page }) => {
+  test("annotates a failed tool result block with its own source identity", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
@@ -1262,13 +1262,13 @@ test.describe("Run transcript detail", () => {
         eventType: "transcript.entry",
         stream: "system",
         level: "info",
-        message: "chat transcript second tool result entry",
+        message: "chat transcript failed tool result entry",
         payload: {
           kind: "tool_result",
           toolUseId: "coverage-tool-b",
           toolName: "shell",
-          content: "same result",
-          isError: false,
+          content: '{"error":{"code":"invalid_parameter","message":"prompt_cache_retention is not supported on this model"}}',
+          isError: true,
           ts: eventAt(9).toISOString(),
         },
         createdAt: eventAt(9),
@@ -1322,12 +1322,19 @@ test.describe("Run transcript detail", () => {
     const toolBTrigger = toolB.getByTestId("run-transcript-annotation-trigger");
     await expect(toolATrigger).toBeVisible();
     await expect(toolBTrigger).toBeVisible();
-    await toolATrigger.hover();
+    const toolARow = toolA.getByRole("button", { name: /Expand command details: Ran printf same/ });
+    await expect(toolARow).toBeVisible();
+    await toolARow.hover();
     await expect(toolATrigger).toHaveCSS("opacity", "1");
     await toolATrigger.focus();
     await expect(toolATrigger).toBeFocused();
     await toolBTrigger.focus();
     await expect(toolBTrigger).toBeFocused();
+    await toolB.locator('[data-transcript-action-row-disclosure="true"]').click();
+    const failedToolRow = toolB.getByRole("button", { name: /Collapse command details: Ran printf same/ });
+    await expect(failedToolRow).toBeVisible();
+    await failedToolRow.hover();
+    await expect(toolBTrigger).toHaveCSS("opacity", "1");
 
     const annotationEditor = page.locator("[data-testid='chat-response-annotation-editor'][data-state='open']");
     const saveItemAnnotation = async (trigger: Locator, comment: string) => {
@@ -1357,13 +1364,14 @@ test.describe("Run transcript detail", () => {
       expect.objectContaining({
         sourceEntryId: sourceEntryIdForSeq(8),
         sourceMemberIds: [sourceEntryIdForSeq(8), sourceEntryIdForSeq(9)],
+        selectedText: expect.stringContaining("prompt_cache_retention is not supported on this model"),
       }),
     ]));
 
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-r6z-106-transcript-annotation-items-mobile.png", fullPage: true });
+    await page.screenshot({ path: "/tmp/rudder-r6z-100-failed-tool-annotation-mobile.png", fullPage: true });
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
     expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
     expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
