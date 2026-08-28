@@ -3,8 +3,8 @@ issue: 'R6Z-129'
 title: 'G0 current-source authority delta overlay'
 scope: 'Authority-bearing source drift between the accepted A-wave artifacts and the G0 source base.'
 candidate:
-  source_base_sha: '3a29c690e6ba0b21b35e273d869e1a73f8ccc526'
-  source_base_tree: '8dfe316dd45210f0be7449e561c683a8e4e85194'
+  source_base_sha: 'f159583282d4dd5935848a92df3eb58787fdd1e5'
+  source_base_tree: '0bcd165e9f81521963268a3a77ca1ec35a521088'
   historical_exception:
     issue: 'R6Z-131'
     candidate_sha: '3343eda1330a40217d3e451b3710ca373f76183e'
@@ -20,7 +20,8 @@ counts:
     current_public_bindings_a1_semantics: 506
     private_collector_declarations: 6
     private_collector_declaration_files: 2
-    current_public_delta_routes: 2
+    current_public_delta_route_identities: 2
+    current_public_authority_delta_bindings: 2
   transactions_and_migrations:
     transaction_call_sites: 187
     transaction_source_files: 50
@@ -28,27 +29,27 @@ counts:
     migration_journal_entries: 159
   cli:
     accepted_a2_capabilities: 113
-    current_capabilities: 114
+    current_capabilities: 117
     accepted_a2_agent_v1: 101
-    current_agent_v1: 103
+    current_agent_v1: 106
     accepted_a2_compatibility_only: 12
     current_compatibility_only: 11
   mcp:
     accepted_a2_canonical_tools: 101
-    current_canonical_tools: 103
-    current_core_tools: 78
+    current_canonical_tools: 106
+    current_core_tools: 81
     current_browser_tools: 25
     accepted_a2_core_hash: 'be398a9df736442f6771b37d76f73dba0964d77acfbcfcf20ba67afcc307e49a'
-    current_core_hash: 'b70b3cc3508c81a0c046f3478d6a57daf094cb58608b7a16ff648daceba12475'
+    current_core_hash: 'db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24'
     accepted_and_current_browser_hash: '640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923'
   writers:
     accepted_a1_background_writer_units: 27
-    current_delta_writer_units: 3
+    current_delta_writer_units: 5
   process_and_helpers:
     accepted_a1_state_owning_helpers: 2
     accepted_a1_runtime_process_units: 4
     accepted_a1_helper_adapter_units: 3
-    current_delta_authority_units: 5
+    current_delta_authority_units: 6
   release:
     accepted_a4_ownership_rows: 12
     accepted_a4_bounded_entrypoints: 18
@@ -85,6 +86,17 @@ route_delta:
     evidence_status: 'Current public route identity and service source classified with the CLI/MCP organization-members delta.'
     candidate_rust_authority: 'none at G0'
     retirement_gate: 'B1 must freeze the route/schema identity and differential fixtures before any Rust read dispatch; preserve authorization, filtering, pagination, full-id, and error parity.'
+  - id: 'delta.route.plugin_agent_reads'
+    sources:
+      - 'server/src/routes/rudder-plugins.ts'
+      - 'server/src/services/rudder-plugins.ts'
+    route: 'GET /api/orgs/:orgId/plugins and GET /api/orgs/:orgId/plugins/:pluginId'
+    current_node_authority: 'The existing plugin directory/detail routes now admit organization-scoped Agents as well as board actors; the plugin service remains authoritative for installed, local-app, discoverable, component, and setup-state projections.'
+    writer_boundary: 'Read-only access expansion on two existing routes; plugin import, enablement, configuration, rollback, update, and uninstall mutations retain their existing stricter authorization.'
+    failure_and_recovery: 'Cross-organization access fails closed, missing installed plugins return not found, and repeated reads have no side effect.'
+    evidence_status: 'Two existing public route bindings have their current Agent-read authorization and service boundary classified.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'B1 must freeze both route/schema identities; any Rust read path must prove organization fencing, directory/detail projection, not-found, and unchanged mutation authorization parity.'
 command_and_tool_delta:
   - id: 'delta.contract.organization_members_list'
     sources:
@@ -109,6 +121,32 @@ command_and_tool_delta:
     evidence_status: 'Current source count and generated descriptor parity verified at source base.'
     candidate_rust_authority: 'none'
     retirement_gate: 'B1 differential fixtures must preserve authorization, validation, default assignee, activity, and run-attribution behavior.'
+  - id: 'delta.contract.skill_search'
+    sources:
+      - 'cli/src/agent-v1-capabilities.ts'
+      - 'cli/src/agent-v1-registry.ts'
+      - 'cli/src/commands/client/skill.ts'
+      - 'packages/agent-runtime-utils/src/rudder-mcp-contract.ts'
+    delta: 'Adds skill.search as an agent-v1 CLI capability and canonical core MCP tool over the existing organization skill list projection.'
+    writer_boundary: 'Read-only client-side filtering of the organization-scoped skill list; no skill import, scan, file, or Agent enablement mutation.'
+    failure_and_recovery: 'Organization authorization and list retrieval fail closed; empty or unmatched queries return a bounded empty result and retry has no side effect.'
+    evidence_status: 'Current source count and generated descriptor parity verified at source base.'
+    candidate_rust_authority: 'none'
+    retirement_gate: 'B1 must freeze the query/tool schema and differential fixtures for organization fencing, normalized matching, empty results, and bounded output.'
+  - id: 'delta.contract.plugin_discovery_reads'
+    sources:
+      - 'cli/src/agent-v1-capabilities.ts'
+      - 'cli/src/agent-v1-registry.ts'
+      - 'cli/src/commands/client/plugin.ts'
+      - 'packages/agent-runtime-utils/src/rudder-mcp-contract.ts'
+      - 'server/src/routes/rudder-plugins.ts'
+      - 'server/src/services/rudder-plugins.ts'
+    delta: 'Adds plugin.search and plugin.get as agent-v1 CLI capabilities and canonical core MCP tools over the Agent-readable plugin directory/detail routes.'
+    writer_boundary: 'Read-only discovery and installed-plugin detail projection; no plugin lifecycle or setup mutation.'
+    failure_and_recovery: 'Organization authorization and route errors fail closed; search is a normalized bounded in-memory projection and retry has no side effect.'
+    evidence_status: 'Current source count, generated descriptor parity, CLI implementation, and Server authorization boundary verified at source base.'
+    candidate_rust_authority: 'none'
+    retirement_gate: 'B1 must freeze both schemas and differential fixtures for organization fencing, installed/local/discover matching, component projection, plugin reference resolution, not-found, and bounded output.'
 writer_delta:
   - id: 'delta.writer.heartbeat_attempt_ledger'
     sources:
@@ -148,6 +186,29 @@ writer_delta:
     evidence_status: 'Source classified; no authority change is made by G0.'
     candidate_rust_authority: 'none at G0; native archive/manifest helpers do not own restore commit'
     retirement_gate: 'A later mutation slice must prove receipt validation, crash-phase replay, tree identity, rollback, database status, and directory durability parity.'
+  - id: 'delta.writer.issue_needs_followup_transition'
+    sources:
+      - 'server/src/routes/issues.ts'
+      - 'server/src/__tests__/issue-lifecycle-routes.test.ts'
+      - 'tests/e2e/issues-reviewer-routing.spec.ts'
+    current_node_authority: 'The atomic reviewer decision route maps needs_followup on in_review or blocked work back to todo while preserving the assignee, recording the decision/activity, and applying duplicate and failure guards.'
+    writer_boundary: 'One organization-scoped Issue review transaction owns the decision, status transition, comment/activity effects, and any governed follow-up wake behavior.'
+    failure_and_recovery: 'Unauthorized or stale-status decisions fail without partial transition; duplicate decisions do not repeat status, comment, or wake effects; reload reads the durable todo state.'
+    evidence_status: 'Route writer plus focused lifecycle and real reviewer-routing E2E sources classified; G0 changes no Issue behavior.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'A later Issue mutation slice must prove authorization, eligible prior states, atomic todo transition, assignee retention, activity/comment/wake effects, duplicate suppression, failure rollback, and reload parity.'
+  - id: 'delta.writer.feishu_failed_agent_reply'
+    sources:
+      - 'server/src/services/integrations/feishu/runtime.ts'
+      - 'server/src/__tests__/agent-integration-feishu-db-dispatcher.test.ts'
+      - 'server/src/services/chat-assistant.ts'
+      - 'server/src/services/chat-agent-runs.ts'
+    current_node_authority: 'The Feishu integration runtime persists a failed assistant Chat message with user-visible partial/fallback body and recoverable-failure metadata, sends that exact durable message outbound, and links it to the active Agent Run for both initial and network-resumed replies.'
+    writer_boundary: 'Organization-scoped chat message insertion plus existing outbound-message receipt and Run-to-assistant-message link writers; the integration does not mutate unrelated Chat, Issue, or Run terminal state.'
+    failure_and_recovery: 'A previously persisted assistant message is reused, fallback persistence/delivery failures are logged without duplicating the primary failure, stopped generations retain their deletion guard, and network recovery uses the same durable failure path.'
+    evidence_status: 'Feishu runtime writer, focused database dispatcher coverage, partial-body authority, and Run link consumer classified; G0 changes no integration behavior.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'A later integration/runtime slice must prove partial/fallback body, failed status and structured payload, single-message persistence, outbound identity, Run link, stopped-generation deletion, fallback failure, and network-resume parity.'
 process_and_helper_delta:
   - id: 'delta.helper.organization_members_projection'
     sources:
@@ -203,6 +264,17 @@ process_and_helper_delta:
     evidence_status: 'Historical ordering deviation bound to candidate 3343eda1330a40217d3e451b3710ca373f76183e and integration 81b0f6583cea3d01f2d7b1792bfe44c0512e5532.'
     candidate_rust_authority: 'Behavior-neutral loopback foundation only; no additional expansion is authorized by G0.'
     retirement_gate: 'B1 contract acceptance and B4 adapter acceptance remain prerequisites before any route/query slice; public listener and mutation authority require their own reviewed cutover.'
+  - id: 'delta.helper.shell_free_npm_invocation'
+    sources:
+      - 'cli/src/npm-command.ts'
+      - 'cli/src/install.ts'
+      - 'cli/src/runtime/install.ts'
+    current_node_authority: 'The CLI resolves npm directly on POSIX and through cmd.exe /d /s /c npm.cmd on Windows, then owns bounded global CLI install and runtime package install/pack process invocation without shell mode.'
+    writer_boundary: 'Global CLI installation and Rudder runtime-cache/staging filesystem paths only; no product database or Server Run state mutation.'
+    failure_and_recovery: 'Exit status, timeout, package conflict, pack/extract, cleanup, and fallback paths remain explicit; failed staging is removed and a later invocation may retry without an implicit shell.'
+    evidence_status: 'Cross-platform command resolver and both process-owning consumers classified; G0 changes no install behavior.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'Any replacement must preserve Windows/POSIX command resolution, argument boundaries, no-shell execution, timeout, output/error collection, conflict recovery, staging cleanup, and trusted package source behavior.'
 release_delta:
   - id: 'delta.release.cos_mirror_policy'
     sources:
@@ -218,4 +290,4 @@ release_delta:
 open_gaps:
   - 'A3 remains a Node-only baseline: no current-candidate Rust comparison, p99, full process-tree RSS, memory-time, or authenticated packaged CLI/MCP claim is promoted.'
   - 'The overlay classifies current authority for B1 gating but does not accept R6Z-124 or replace any historical A-wave artifact.'
-  - 'Any source-authority change after source base 3a29c690e6ba0b21b35e273d869e1a73f8ccc526 requires a new delta rebind before a downstream mutation slice.'
+  - 'Any source-authority change after source base f159583282d4dd5935848a92df3eb58787fdd1e5 requires a new delta rebind before a downstream mutation slice.'
