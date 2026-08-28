@@ -5,6 +5,7 @@ import {
   agents,
   agentWakeupRequests,
   goals,
+  heartbeatRunEvents,
   heartbeatRuns,
   issues,
   requests
@@ -16,6 +17,7 @@ import type {
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { asBoolean, asNumber, parseObject } from "../../agent-runtimes/utils.js";
 import { conflict } from "../../errors.js";
+import { logger } from "../../middleware/logger.js";
 import { issueMaterialUpdateActivitySql } from "../issue-activity-filters.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -26,8 +28,73 @@ import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
+const HEARTBEAT_RUN_INACTIVITY_WARNING_MS = 24 * 60 * 60 * 1000;
+const HEARTBEAT_RUN_INACTIVITY_WARNING_KEY = "run-inactivity-warning:24h:v1";
+
 export function createHeartbeatRecoveryHandlers(context: any) {
-  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+  const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, withHeartbeatRecoveryLock, formatDurationMs } = context;
+
+  async function warnInactiveRunsLocked(opts?: { minInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    const minInactivityMs = opts?.minInactivityMs ?? HEARTBEAT_RUN_INACTIVITY_WARNING_MS;
+    if (!Number.isFinite(minInactivityMs) || minInactivityMs <= 0) return { warned: 0, runIds: [] };
+
+    const now = opts?.now ?? new Date();
+    const activeRuns = await db
+      .select({
+        run: heartbeatRuns,
+        lastEventAt: sql<Date | null>`max(${heartbeatRunEvents.createdAt})`,
+      })
+      .from(heartbeatRuns)
+      .leftJoin(heartbeatRunEvents, eq(heartbeatRunEvents.runId, heartbeatRuns.id))
+      .where(eq(heartbeatRuns.status, "running"))
+      .groupBy(heartbeatRuns.id);
+
+    const warned: string[] = [];
+    for (const { run, lastEventAt } of activeRuns) {
+      if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
+      const activityTimes = [run.updatedAt, lastEventAt, run.processStartedAt, run.startedAt, run.createdAt]
+        .map((value) => value ? new Date(value).getTime() : null)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+      const lastActivityMs = activityTimes.length > 0 ? Math.max(...activityTimes) : null;
+      if (!lastActivityMs || now.getTime() - lastActivityMs < minInactivityMs) continue;
+
+      const existingWarning = await db
+        .select({ id: heartbeatRunEvents.id })
+        .from(heartbeatRunEvents)
+        .where(and(
+          eq(heartbeatRunEvents.runId, run.id),
+          eq(heartbeatRunEvents.idempotencyKey, HEARTBEAT_RUN_INACTIVITY_WARNING_KEY),
+        ))
+        .then((rows) => rows[0] ?? null);
+      if (existingWarning) continue;
+
+      const inactiveMs = now.getTime() - lastActivityMs;
+      await appendRunEvent(run, {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "warn",
+        message: `Run has had no recorded activity for ${formatDurationMs(minInactivityMs)}; it remains running`,
+        payload: {
+          kind: "inactivity_warning",
+          minInactivityMs,
+          inactiveMs,
+          lastActivityAt: new Date(lastActivityMs).toISOString(),
+          warnedAt: now.toISOString(),
+        },
+        idempotencyKey: HEARTBEAT_RUN_INACTIVITY_WARNING_KEY,
+      });
+      warned.push(run.id);
+    }
+
+    if (warned.length > 0) {
+      logger.warn({ warnedCount: warned.length, runIds: warned, minInactivityMs }, "warned about inactive heartbeat runs");
+    }
+    return { warned: warned.length, runIds: warned };
+  }
+
+  async function warnInactiveRuns(opts?: { minInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
+    return withHeartbeatRecoveryLock(() => warnInactiveRunsLocked(opts));
+  }
 
   async function enqueueRecoveryRun(
     run: typeof heartbeatRuns.$inferSelect,
@@ -848,5 +915,5 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     };
   }
 
-  return { enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, runHasPendingBlockAuditAttempt, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue };
+  return { enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, runHasPendingBlockAuditAttempt, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, warnInactiveRuns };
 }

@@ -1205,8 +1205,7 @@ async function startServerRuntime(
       maxInactivityMs: config.heartbeatRunInactivityTimeoutMs,
       recoveryCutoff: startupRecoveryCutoff,
     }))
-    .then(() => heartbeat.warnInactiveRuns({ recoveryCutoff: startupRecoveryCutoff }))
-    .then(() => heartbeat.reapOrphanedRuns({ recoveryCutoff: startupRecoveryCutoff }))
+    .then(() => heartbeat.warnInactiveRuns({ recoveryCutoff: startupRecoveryCutoff })).then(() => heartbeat.reapOrphanedRuns({ recoveryCutoff: startupRecoveryCutoff }))
     .then(() => heartbeat.resumePendingWakeupRequests())
     .then(() => heartbeat.resumeQueuedRuns())
     .catch((err) => {
@@ -1217,8 +1216,7 @@ async function startServerRuntime(
       .recoverNetworkWaitingRuns()
       .then(() => heartbeat.reapTimedOutRuns({ maxRuntimeMs: config.heartbeatRunTimeoutMs }))
       .then(() => heartbeat.reapInactiveRuns({ maxInactivityMs: config.heartbeatRunInactivityTimeoutMs }))
-      .then(() => heartbeat.warnInactiveRuns())
-      .then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
+      .then(() => heartbeat.warnInactiveRuns()).then(() => heartbeat.reapOrphanedRuns({ staleThresholdMs: 5 * 60 * 1000 }))
       .then(() => heartbeat.resumePendingWakeupRequests())
       .then(() => heartbeat.resumeQueuedRuns())
       .catch((err) => {
