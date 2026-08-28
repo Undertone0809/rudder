@@ -20,7 +20,7 @@ freeze package. The package adds the two accepted inventory artifacts that had
 not yet landed on `main`, this consolidation document, and the reviewable
 current-source delta overlay.
 
-Package fingerprint: `e8bdabde4f7b6d15f6309b8178333f693e8c396d9e15a508199b61bb324fa156`
+Package fingerprint: `9ee5e09c33adaf160572a97db1be961e6f61dca2468f3a1b90a2b62143975471`
 
 The fingerprint is SHA-256 over the four added paths in lexical order, each
 encoded as `path`, a NUL byte, normalized file bytes, and a second NUL byte.
@@ -49,9 +49,11 @@ delta rather than rewriting accepted evidence without a fresh review.
 
 At the G0 candidate:
 
-- route scan: 59 non-test route source files, 45 files with router method
-  declarations, 504 declarations, and 507 path variants after the three
-  documented execution-workspace aliases;
+- route scan: 59 non-test route source files; using the accepted A1 public-route
+  semantics, direct public `router.*` declarations advanced from 496 to 498
+  across the same 43 files, and current public bindings total 506. The separate
+  private analytics collectors contain 6 declarations across 2 files. Both
+  added public route identities are frozen as stable overlay rows;
 - transaction scan: 187 production `.transaction(` call sites across 50 files;
 - migration scan: 161 SQL files and 159 journal entries, with the two legacy
   allowlist entries already described by A1;
@@ -61,10 +63,10 @@ At the G0 candidate:
   `b70b3cc3508c81a0c046f3478d6a57daf094cb58608b7a16ff648daceba12475`,
   and unchanged Browser hash
   `640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923`;
-- authority overlay: 2 current writer delta units, 5 process/helper delta
-  units, and 1 release policy delta unit are classified with exact sources,
-  write boundaries, failure/recovery behavior, evidence status, candidate Rust
-  authority, and retirement gates;
+- authority overlay: 2 public route delta units, 3 current writer delta units,
+  5 process/helper delta units, and 1 release policy delta unit are classified
+  with exact sources, write boundaries, failure/recovery behavior, evidence
+  status, candidate Rust authority, and retirement gates;
 - release scan: the accepted A4 package contains 12 ownership rows and 18
   bounded entrypoints; the delta adds 1 explicit mirror-policy unit, gates 2
   mirror jobs, and adds 2 checksum-only jobs;
@@ -76,7 +78,9 @@ At the G0 candidate:
   workspace listeners remain bounded non-public authorities described by A1;
 - the source delta since the accepted A1 candidate touches the known route,
   run, chat, goal, issue, organization, workspace-backup, and migration units.
-  No new route module, transaction-owning source file, public listener root, or
+  The two added public routes, conservative network-suspension classifier, and
+  durable Run-to-Goal binding/recovery path are explicit overlay rows. No new
+  route module, transaction-owning source file, public listener root, or
   migration runner root is left unclassified by the current scans;
 - the source delta since A4 touches Desktop identity/update/recovery, release
   compatibility, and smoke coverage within the authority units already mapped
@@ -125,9 +129,9 @@ Contract IDs frozen for downstream evidence:
 | `pnpm --filter @rudderhq/cli typecheck` | PASS |
 | strict `js-yaml@4.2.0` parse of all five YAML inventories | PASS; A1 contains 2 documents and A2-A4 plus the delta overlay contain 1 each |
 | accepted artifact SHA-256 verification | PASS; all four hashes match the accepted identities above |
-| current route/transaction/migration count reconciliation | PASS; 504 declarations / 45 declaration files, 187 transaction calls / 50 files, 161 SQL files / 159 journal entries |
+| current route/transaction/migration count reconciliation | PASS; A1-comparable public route identity is 498 direct declarations / 43 files and 506 bindings, plus 6 private collector declarations / 2 files; 187 transaction calls / 50 files; 161 SQL files / 159 journal entries |
 | current CLI/MCP reconciliation | PASS; 114 total / 103 agent-v1 / 11 compatibility-only CLI capabilities, 103 MCP tools, core hash `b70b3cc...`, Browser hash `640c060d...` |
-| writer/process/release delta overlay | PASS; 2 writer, 5 process/helper, and 1 release policy authority units have stable rows and no unclassified current authority addition remains at the source base |
+| route/writer/process/release delta overlay | PASS; 2 route, 3 writer, 5 process/helper, and 1 release policy authority units have stable rows and no unclassified current authority addition remains at the source base |
 | A3 accepted workload packet | PASS at its frozen candidate; workflow tests 4/4, smoke 2 warmups + 7 measured iterations, thread-heavy 3 warmups + 20 measured iterations; not rerun or promoted as a current-candidate Rust comparison |
 
 ## Evidence Gaps And No-Go Boundaries
