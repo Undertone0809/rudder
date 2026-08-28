@@ -25,6 +25,24 @@ interface SkillListOptions extends BaseClientOptions {
   orgId?: string;
 }
 
+export function searchOrganizationSkills(rows: OrganizationSkillListItem[], query: string): OrganizationSkillListItem[] {
+  const normalized = query.trim().toLocaleLowerCase("en-US");
+  if (!normalized) return [];
+  return rows.filter((row) => [
+    row.id,
+    row.key,
+    row.slug,
+    row.name,
+    row.description,
+    row.sourceType,
+    row.sourceLocator,
+    row.sourceRef,
+    row.sourceLabel,
+    row.sourceBadge,
+    row.sourcePath,
+  ].some((value) => typeof value === "string" && value.toLocaleLowerCase("en-US").includes(normalized)));
+}
+
 interface SkillImportOptions extends BaseClientOptions {
   orgId?: string;
   source: string;
@@ -82,6 +100,24 @@ export function registerSkillCommands(program: Command): void {
               }),
             );
           }
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
+  );
+
+  addCommonClientOptions(
+    skill
+      .command("search")
+      .description(getAgentCliCapabilityById("skill.search").description)
+      .argument("<query>", "Skill name, slug, description, source, or selection key")
+      .option("-O, --org-id <id>", "Organization ID")
+      .action(async (query: string, opts: SkillListOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const rows = (await ctx.api.get<OrganizationSkillListItem[]>(`/api/orgs/${ctx.orgId}/skills`)) ?? [];
+          printOutput(searchOrganizationSkills(rows, query), { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }

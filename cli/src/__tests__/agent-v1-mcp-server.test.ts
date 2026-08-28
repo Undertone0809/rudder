@@ -94,11 +94,14 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_approval_get: { approval: "apr_123" },
   rudder_approval_issues: { approval: "apr_123" },
   rudder_approval_comment: { approval: "apr_123", body: "Question" },
+  rudder_skill_search: { query: "design" },
   rudder_skill_get: { skill: "skill_123" },
   rudder_skill_file: { skill: "skill_123", path: "SKILL.md" },
   rudder_skill_import: { source: "/tmp/skill" },
   rudder_skill_scan_local: { roots: "/tmp/skills" },
   rudder_skill_scan_projects: { projectIds: "proj_123" },
+  rudder_plugin_search: { query: "Canva" },
+  rudder_plugin_get: { plugin: "86f6573e-2707-438b-9334-696c91fd0856" },
   rudder_browser_open: { url: "https://example.com" },
   rudder_browser_navigate: { tabId: "tab-1", url: "https://example.com/next" },
   rudder_browser_back: { tabId: "tab-1" },
@@ -450,6 +453,27 @@ describe("agent-v1 MCP server", () => {
       "projects/test-project",
       "--json",
     ]);
+  });
+
+  it("routes plugin references and plugin or skill searches through read-only discovery commands", () => {
+    const env = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+    };
+
+    expect(buildAgentV1ToolCallPlan("rudder_plugin_get", {
+      plugin: "86f6573e-2707-438b-9334-696c91fd0856",
+    }, env).args).toEqual([
+      "plugin",
+      "get",
+      "86f6573e-2707-438b-9334-696c91fd0856",
+      "--json",
+    ]);
+    expect(buildAgentV1ToolCallPlan("rudder_plugin_search", { query: "Canva" }, env).args)
+      .toEqual(["plugin", "search", "Canva", "--json"]);
+    expect(buildAgentV1ToolCallPlan("rudder_skill_search", { query: "design" }, env).args)
+      .toEqual(["skill", "search", "design", "--json"]);
   });
 
   it("keeps runtime identity out of MCP tool schemas and descriptions", async () => {

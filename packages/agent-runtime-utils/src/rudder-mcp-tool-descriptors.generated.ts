@@ -379,6 +379,15 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": false
   },
   {
+    "capabilityId": "skill.search",
+    "name": "rudder_skill_search",
+    "description": "Search organization-visible skills by name, slug, description, or source.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
     "capabilityId": "skill.get",
     "name": "rudder_skill_get",
     "description": "Read one organization skill detail.",
@@ -422,6 +431,24 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "requiresOrgId": true,
     "requiresAgentId": false,
     "attachesRunIdWhenAvailable": true
+  },
+  {
+    "capabilityId": "plugin.search",
+    "name": "rudder_plugin_search",
+    "description": "Search installed, local, and discoverable Rudder plugins.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": false
+  },
+  {
+    "capabilityId": "plugin.get",
+    "name": "rudder_plugin_get",
+    "description": "Read an installed plugin, including its components and current setup state; use this to resolve plugin:// references.",
+    "mutating": false,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": false
   },
   {
     "capabilityId": "browser.tabs",
@@ -928,5 +955,5 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     "attachesRunIdWhenAvailable": true
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "b70b3cc3508c81a0c046f3478d6a57daf094cb58608b7a16ff648daceba12475";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";

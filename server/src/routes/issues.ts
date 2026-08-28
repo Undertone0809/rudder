@@ -371,7 +371,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       case "blocked":
         return "blocked";
       case "needs_followup":
-        return null;
+        return "todo";
       default:
         return null;
     }
