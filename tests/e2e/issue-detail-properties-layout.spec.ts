@@ -282,7 +282,9 @@ test.describe("Issue detail properties layout", () => {
     await page.goto(`/${organization.issuePrefix}/issues/${issueRef}`);
 
     const layout = page.getByTestId("issue-detail-layout");
-    await expect(page).toHaveURL(new RegExp(`/[^/]+/issues/${issueRef}$`));
+    await expect(page).toHaveURL(
+      new RegExp(`/${organization.urlKey}/issues/${issueRef}$`),
+    );
     const routeBeforeSplit = page.url();
     await expect(layout).toBeVisible();
     await expect(page.getByRole("button", { name: "Copy ID" })).toHaveCount(1);
