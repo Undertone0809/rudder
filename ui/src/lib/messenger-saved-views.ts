@@ -12,11 +12,13 @@ export type MessengerSavedViewKeepInput = {
   subtitle: string | null;
   favicon: string | null;
   clientMutationId: string;
+  primaryRailPinned?: true;
   placement: MessengerSavedViewPlacement;
 };
 
 type SavedViewKeepOptions = {
   clientMutationId: string;
+  primaryRailPinned?: true;
   placement: MessengerSavedViewPlacement;
 };
 
@@ -100,6 +102,7 @@ export function savedViewKeepInputFromSidePanelTarget(
     subtitle: savedViewSubtitle(target),
     favicon: target.kind === "browser" ? target.favicon ?? null : null,
     clientMutationId: options.clientMutationId,
+    ...(options.primaryRailPinned ? { primaryRailPinned: true as const } : {}),
     placement: options.placement,
   };
 }

@@ -197,4 +197,35 @@ describe("Messenger Saved View UI model", () => {
       viewInstanceId: "local-view-1",
     });
   });
+
+  it("builds an atomic loose keep payload for a direct Local App pin", () => {
+    const input = savedViewKeepInputFromSidePanelTarget({
+      kind: "local_app",
+      desktopInstallationId: "desktop-installation",
+      appPublicId: "public-app",
+      localBindingId: "local-binding",
+      label: "Marketing command center",
+      viewInstanceId: "local-view-1",
+    }, {
+      clientMutationId: "00000000-0000-4000-8000-000000000001",
+      placement: { kind: "loose" },
+      primaryRailPinned: true,
+    });
+
+    expect(input).toEqual({
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-installation",
+        appPublicId: "public-app",
+        localBindingId: "local-binding",
+        viewInstanceId: "local-view-1",
+      },
+      title: "Marketing command center",
+      subtitle: "Local app",
+      favicon: null,
+      clientMutationId: "00000000-0000-4000-8000-000000000001",
+      placement: { kind: "loose" },
+      primaryRailPinned: true,
+    });
+  });
 });
