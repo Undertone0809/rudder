@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/agent-contract-core",
+  "crates/agent-tools-foundation",
   "crates/archive-core",
   "crates/native-protocol",
   "crates/update-helper-core",
@@ -10,6 +11,8 @@ members = [
   "crates/server-foundation",
   "crates/workspace-manifest-core",
   "bins/rudder-native",
+  "bins/rudder-cli-foundation",
+  "bins/rudder-mcp-foundation",
   "bins/rudder-process-host",
   "bins/rudder-process-tree-sampler",
   "bins/rudder-server-foundation",

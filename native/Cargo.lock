@@ -1317,6 +1317,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-agent-tools-foundation"
+version = "0.7.15"
+dependencies = [
+ "base64",
+ "rudder-agent-contract-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-archive-core"
 version = "0.7.15"
 dependencies = [
@@ -1326,6 +1338,22 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "rudder-cli-foundation"
+version = "0.7.15"
+dependencies = [
+ "rudder-agent-tools-foundation",
+ "serde_json",
+]
+
+[[package]]
+name = "rudder-mcp-foundation"
+version = "0.7.15"
+dependencies = [
+ "rudder-agent-tools-foundation",
+ "serde_json",
 ]
 
 [[package]]
