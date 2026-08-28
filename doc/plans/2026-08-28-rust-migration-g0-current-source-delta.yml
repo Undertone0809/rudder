@@ -3,8 +3,8 @@ issue: 'R6Z-129'
 title: 'G0 current-source authority delta overlay'
 scope: 'Authority-bearing source drift between the accepted A-wave artifacts and the G0 source base.'
 candidate:
-  source_base_sha: 'f159583282d4dd5935848a92df3eb58787fdd1e5'
-  source_base_tree: '0bcd165e9f81521963268a3a77ca1ec35a521088'
+  source_base_sha: 'ee96872456e68746304c304e6348a394c14ddd99'
+  source_base_tree: '1bc9a56323eb072944653aed02df51a0e5494e1b'
   historical_exception:
     issue: 'R6Z-131'
     candidate_sha: '3343eda1330a40217d3e451b3710ca373f76183e'
@@ -45,7 +45,7 @@ counts:
     accepted_and_current_browser_hash: '640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923'
   writers:
     accepted_a1_background_writer_units: 27
-    current_delta_writer_units: 5
+    current_delta_writer_units: 6
   process_and_helpers:
     accepted_a1_state_owning_helpers: 2
     accepted_a1_runtime_process_units: 4
@@ -233,6 +233,17 @@ writer_delta:
     evidence_status: 'Feishu runtime writer, focused database dispatcher coverage, partial-body authority, and Run link consumer classified; G0 changes no integration behavior.'
     candidate_rust_authority: 'none at G0'
     retirement_gate: 'A later integration/runtime slice must prove partial/fallback body, failed status and structured payload, single-message persistence, outbound identity, Run link, stopped-generation deletion, fallback failure, and network-resume parity.'
+  - id: 'delta.writer.messenger_local_app_keep_and_pin'
+    sources:
+      - 'packages/shared/src/validators/messenger.ts'
+      - 'server/src/services/messenger-saved-views.ts'
+      - 'server/src/__tests__/messenger-service.test.ts'
+    current_node_authority: 'The shared input contract and Node Saved View service allow an exact session-only Local App to be kept as a loose organization/user-scoped Saved View and pinned to the Primary Rail in one idempotent transaction; existing Local App rows can acquire the same pin without changing their durable identity.'
+    writer_boundary: 'The existing Saved View transaction validates a Local App plus loose placement, enforces the per-operator 100-pin cap, writes messenger_saved_views.primary_rail_pinned_at together with create/restore metadata, and records the mutation receipt and activity under the same organization and user.'
+    failure_and_recovery: 'Non-Local-App or grouped Keep-and-Pin inputs fail before mutation, capacity failure creates no row or pin, and retry with the same clientMutationId must reproduce the same target and pin intent; a committed retry returns the same Saved View without creating a duplicate or consuming another pin.'
+    evidence_status: 'Shared validation, transactional writer, cap, exact replay, new and existing Saved View paths, and focused service coverage classified at the rebased source.'
+    candidate_rust_authority: 'none at G0'
+    retirement_gate: 'A later Messenger mutation slice must prove organization/user fencing, Local-App-only and loose-only validation, atomic first Keep-and-Pin, existing-row pinning, 100-pin capacity, exact idempotent replay, receipt/activity identity, rollback, and no placement or runtime-process side effects before Node retirement.'
 process_and_helper_delta:
   - id: 'delta.helper.organization_members_projection'
     sources:
@@ -314,4 +325,4 @@ release_delta:
 open_gaps:
   - 'A3 remains a Node-only baseline: no current-candidate Rust comparison, p99, full process-tree RSS, memory-time, or authenticated packaged CLI/MCP claim is promoted.'
   - 'The overlay classifies current authority for B1 gating but does not accept R6Z-124 or replace any historical A-wave artifact.'
-  - 'Any source-authority change after source base f159583282d4dd5935848a92df3eb58787fdd1e5 requires a new delta rebind before a downstream mutation slice.'
+  - 'Any source-authority change after source base ee96872456e68746304c304e6348a394c14ddd99 requires a new delta rebind before a downstream mutation slice.'
