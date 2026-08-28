@@ -24,6 +24,7 @@ import "./index.css";
 import "./motion.css";
 
 const E2E_CHILDREN_ONLY_ERROR_MESSAGE = "React.Children.only expected to receive a single React element child.";
+const E2E_INSERT_BEFORE_ERROR_MESSAGE = "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.";
 
 declare global {
   interface ImportMeta {
@@ -34,7 +35,7 @@ declare global {
   }
 
   interface Window {
-    __RUDDER_E2E_THROW_APP_RENDER_ERROR__?: "children-only";
+    __RUDDER_E2E_THROW_APP_RENDER_ERROR__?: "children-only" | "insert-before";
   }
 }
 
@@ -106,6 +107,9 @@ const queryClient = new QueryClient({
 function AppRoot() {
   if (import.meta.env.DEV && window.__RUDDER_E2E_THROW_APP_RENDER_ERROR__ === "children-only") {
     throw new Error(E2E_CHILDREN_ONLY_ERROR_MESSAGE);
+  }
+  if (import.meta.env.DEV && window.__RUDDER_E2E_THROW_APP_RENDER_ERROR__ === "insert-before") {
+    throw new Error(E2E_INSERT_BEFORE_ERROR_MESSAGE);
   }
 
   return <App />;

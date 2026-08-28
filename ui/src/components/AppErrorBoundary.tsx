@@ -12,15 +12,16 @@ type AppErrorBoundaryState = {
   autoReloading: boolean;
 };
 
-const AUTO_RELOADABLE_ERROR_MESSAGES = [
+const AUTO_RELOADABLE_ERROR_MESSAGE_PREFIXES = [
   "React.Children.only expected to receive a single React element child.",
+  "Failed to execute 'insertBefore' on 'Node'",
 ];
 const AUTO_RECOVERY_STORAGE_KEY = "rudder:app-error-boundary:auto-recovery.v1";
 const AUTO_RECOVERY_WINDOW_MS = 30_000;
 const DESKTOP_RELOAD_FALLBACK_MS = 5_000;
 
 function isAutoReloadableRenderError(error: Error): boolean {
-  return AUTO_RELOADABLE_ERROR_MESSAGES.includes(error.message);
+  return AUTO_RELOADABLE_ERROR_MESSAGE_PREFIXES.some((prefix) => error.message.startsWith(prefix));
 }
 
 function currentRouteKey(): string {
@@ -28,6 +29,8 @@ function currentRouteKey(): string {
 }
 
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
+  private autoRecoveryReserved = false;
+
   override state: AppErrorBoundaryState = {
     error: null,
     info: null,
@@ -45,8 +48,13 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
+    if (isAutoReloadableRenderError(error) && this.autoRecoveryReserved) {
+      return;
+    }
+
     const autoReloading = isAutoReloadableRenderError(error) && this.reserveAutoRecoveryAttempt(error);
     if (autoReloading) {
+      this.autoRecoveryReserved = true;
       console.warn("[rudder-ui] recoverable render error; reloading UI once", error, info);
       this.setState({ error, info, autoReloading });
       this.reloadUi();

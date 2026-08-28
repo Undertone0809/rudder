@@ -21,6 +21,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
+import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import { getIssueScopeFilters } from "../lib/issue-scope-filters";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import {
@@ -394,6 +395,8 @@ export function Issues() {
     data: issuePages,
     isLoading,
     error,
+    isFetching,
+    refetch: refetchIssues,
     hasNextPage: hasMoreIssues,
     fetchNextPage: fetchMoreIssues,
     isFetchingNextPage: isLoadingMoreIssues,
@@ -423,6 +426,7 @@ export function Issues() {
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length === ISSUE_LIST_INITIAL_LIMIT ? allPages.length * ISSUE_LIST_INITIAL_LIMIT : undefined,
     enabled: !!selectedOrganizationId && !isDraftScope,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
   const issues = useMemo(() => {
     const byId = new Map<string, Issue>();
@@ -501,6 +505,9 @@ export function Issues() {
         issues={visibleIssues}
         isLoading={isLoading}
         error={error as Error | null}
+        hasData={issuePages !== undefined}
+        isFetching={isFetching}
+        onRetry={() => void refetchIssues()}
         agents={agents}
         projects={projects}
         liveIssueIds={liveIssueIds}

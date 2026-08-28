@@ -16,6 +16,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { agentTitleBadgeLabel, formatChatAgentLabel } from "../lib/agent-labels";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { groupBy } from "../lib/groupBy";
+import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import {
   issueSortOptions,
   issuePriorityOrder as priorityOrder,
@@ -31,6 +32,7 @@ import { AgentIcon } from "./AgentIconPicker";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { EmptyState } from "./EmptyState";
 import { IssueLabelChip } from "./IssueLabelChip";
+import { IssueRefreshNotice } from "./IssueRefreshNotice";
 import { IssueRow } from "./IssueRow";
 import { DEFAULT_ISSUE_DISPLAY_PROPERTIES, KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
 import { PageSkeleton } from "./PageSkeleton";
@@ -262,6 +264,9 @@ interface IssuesListProps {
   issues: Issue[];
   isLoading?: boolean;
   error?: Error | null;
+  hasData?: boolean;
+  isFetching?: boolean;
+  onRetry?: () => void;
   agents?: Agent[];
   projects?: ProjectOption[];
   liveIssueIds?: Set<string>;
@@ -298,6 +303,9 @@ export function IssuesList({
   issues,
   isLoading,
   error,
+  hasData = issues.length > 0,
+  isFetching = false,
+  onRetry,
   agents,
   projects,
   liveIssueIds,
@@ -389,7 +397,12 @@ export function IssuesList({
     });
   }, [scopedKey]);
 
-  const { data: searchedIssues = [] } = useQuery({
+  const {
+    data: searchedIssuesData,
+    error: searchError,
+    isFetching: isSearchFetching,
+    refetch: refetchSearch,
+  } = useQuery({
     queryKey: [
       ...queryKeys.issues.search(selectedOrganizationId!, normalizedIssueSearch, projectId, activeIssueSearchFields),
       searchFilters ?? {},
@@ -401,7 +414,14 @@ export function IssuesList({
       ...searchFilters,
     }),
     enabled: !!selectedOrganizationId && normalizedIssueSearch.length > 0,
+    ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
+  const searchedIssues = searchedIssuesData ?? [];
+  const searchActive = normalizedIssueSearch.length > 0;
+  const activeError = searchActive ? searchError : error;
+  const activeHasData = searchActive ? searchedIssuesData !== undefined : hasData;
+  const activeRetrying = searchActive ? isSearchFetching : isFetching;
+  const retryActiveQuery = searchActive ? () => void refetchSearch() : onRetry;
 
   const agentById = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
   const agentLabel = useCallback((id: string | null) => {
@@ -1016,9 +1036,17 @@ export function IssuesList({
       )}
 
       {isLoading && <PageSkeleton variant="issues-list" />}
-      {error && <p className="text-sm text-destructive">{error.message}</p>}
+      {activeError ? (
+        <IssueRefreshNotice
+          error={activeError as Error}
+          hasData={activeHasData}
+          resourceLabel="issues"
+          onRetry={retryActiveQuery ?? (() => undefined)}
+          retrying={activeRetrying}
+        />
+      ) : null}
 
-      {!isLoading && filtered.length === 0 && viewState.viewMode !== "board" && (
+      {!isLoading && (!activeError || activeHasData) && filtered.length === 0 && viewState.viewMode !== "board" && (
         <div className="flex min-h-[58vh] items-center justify-center">
           <EmptyState
             icon={CircleDot}
@@ -1029,7 +1057,7 @@ export function IssuesList({
         </div>
       )}
 
-      {!isLoading && viewState.viewMode === "board" && (
+      {!isLoading && (!activeError || activeHasData) && viewState.viewMode === "board" && (
         <div className="flex min-h-0 flex-1 flex-col">
           {filtered.length === 0 ? (
             <div className="mb-3 rounded-[calc(var(--radius-sm)+1px)] border border-dashed border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)] px-4 py-3 text-sm text-muted-foreground">

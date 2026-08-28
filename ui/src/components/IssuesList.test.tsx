@@ -4,6 +4,7 @@ import type { Issue } from "@rudderhq/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ISSUE_REFRESH_INTERVAL_MS } from "../lib/issue-refresh";
 import { IssuesList } from "./IssuesList";
 
 (
@@ -11,14 +12,19 @@ import { IssuesList } from "./IssuesList";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const openNewIssueMock = vi.fn();
+const queryOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+  useQuery: (options: { queryKey: readonly unknown[] }) => {
+    queryOptions.push(options);
+    const { queryKey } = options;
     if (queryKey[0] === "auth") {
       return {
         data: { user: { id: "user-1" } },
         isLoading: false,
         error: null,
+        isFetching: false,
+        refetch: vi.fn(),
       };
     }
     if (queryKey[0] === "issues" && queryKey[2] === "labels") {
@@ -26,12 +32,16 @@ vi.mock("@tanstack/react-query", () => ({
         data: [label],
         isLoading: false,
         error: null,
+        isFetching: false,
+        refetch: vi.fn(),
       };
     }
     return {
       data: [],
       isLoading: false,
       error: null,
+      isFetching: false,
+      refetch: vi.fn(),
     };
   },
 }));
@@ -62,6 +72,7 @@ let cleanupFn: (() => void) | null = null;
 const storage = new Map<string, string>();
 
 beforeEach(() => {
+  queryOptions.length = 0;
   storage.clear();
   Object.defineProperty(window, "localStorage", {
     value: {
@@ -185,6 +196,55 @@ function renderIssuesList(
 }
 
 describe("IssuesList", () => {
+  it("configures remote search for polling and focus/reconnect recovery", () => {
+    renderIssuesList(vi.fn());
+
+    const searchOptions = queryOptions.find(({ queryKey }) => (
+      Array.isArray(queryKey) && queryKey[0] === "issues" && queryKey[2] === "search"
+    ));
+    expect(searchOptions).toMatchObject({
+      refetchInterval: ISSUE_REFRESH_INTERVAL_MS,
+      refetchIntervalInBackground: false,
+      refetchOnReconnect: "always",
+      refetchOnWindowFocus: "always",
+    });
+  });
+
+  it("keeps loaded issues visible and exposes retry when a refresh fails", () => {
+    window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
+    const onRetry = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          error={new Error("temporary outage")}
+          hasData
+          onRetry={onRetry}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Could not refresh issues.");
+    expect(container.textContent).toContain("Showing the last loaded issues.");
+    expect(container.textContent).toContain(baseIssue.title);
+    const retryButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Retry",
+    );
+    act(() => retryButton?.click());
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it("defaults to board mode when no saved issue view preference exists", () => {
     const onUpdateIssue = vi.fn();
     const container = renderIssuesList(onUpdateIssue);
