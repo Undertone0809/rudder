@@ -115,8 +115,7 @@ export {
 export {
   agentIconSchema, agentInstructionsBundleModeSchema, agentPermissionsSchema, createAgentHireSchema, createAgentKeySchema, createAgentSchema, createDelegationRunSchema, diceBearNotionistsAgentIconSchema, oreoAgentIconSchema, resetAgentSessionSchema,
   testAgentRuntimeEnvironmentSchema, updateAgentInstructionsBundleSchema, updateAgentInstructionsPathSchema, updateAgentPermissionsSchema, updateAgentSchema,
-  uploadedAgentIconSchema, upsertAgentInstructionsFileSchema, wakeAgentSchema, type CreateAgent, type CreateDelegationRun,
-  type CreateAgentHire, type CreateAgentKey, type ResetAgentSession,
+  uploadedAgentIconSchema, upsertAgentInstructionsFileSchema, wakeAgentSchema, type CreateAgent, type CreateAgentHire, type CreateAgentKey, type CreateDelegationRun, type ResetAgentSession,
   type TestAgentRuntimeEnvironment, type UpdateAgent,
   type UpdateAgentInstructionsBundle, type UpdateAgentInstructionsPath, type UpdateAgentPermissions, type UpsertAgentInstructionsFile, type WakeAgent
 } from "./agent.js";

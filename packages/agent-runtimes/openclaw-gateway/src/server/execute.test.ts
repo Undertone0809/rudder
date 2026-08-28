@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { RUDDER_AGENT_HEARTBEAT_INSTRUCTION } from "@rudderhq/agent-runtime-utils/server-utils";
+import { describe, expect, it } from "vitest";
 import { buildWakePayload, buildWakeText } from "./execute.js";
 
 describe("OpenClaw Delegation delivery", () => {
