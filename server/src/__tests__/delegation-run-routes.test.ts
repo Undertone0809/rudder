@@ -169,12 +169,8 @@ describe("Delegation Run route", () => {
       scene: "delegation",
       admissionStatus: "queued",
       replayed: false,
-      run: {
-        id: targetRunId,
-        scene: "delegation",
-        sourceRunId,
-      },
     });
+    expect(res.body).not.toHaveProperty("run");
     expect(heartbeat.wakeup).toHaveBeenCalledWith(sourceAgentId, expect.objectContaining({
       sourceRunId,
       contextSnapshot: expect.objectContaining({ sourceRunId }),

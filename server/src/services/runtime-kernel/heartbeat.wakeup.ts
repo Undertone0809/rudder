@@ -281,7 +281,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     if (agent.status === "terminated" || agent.status === "pending_approval") {
       if (await deferGoalRequest("deferred_goal_blocked", "agent.unavailable")) return null;
-      if (existingWakeupRequestId) await writeSkippedRequest("agent.unavailable");
+      await writeSkippedRequest("agent.unavailable");
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
     }
 

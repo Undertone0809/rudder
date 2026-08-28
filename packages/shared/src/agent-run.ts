@@ -61,6 +61,12 @@ export function toPublicHeartbeatRunContextSnapshot(
   delete context.resumeSessionDisplayId;
   delete context.forceFreshSession;
   delete context.sessionResumeSuppressed;
+  if (context.scene === "delegation" || context.rudderScene === "delegation") {
+    delete context.delegationTask;
+    delete context.sourceAgentId;
+    delete context.targetAgentId;
+    delete context.taskKey;
+  }
   return context;
 }
 

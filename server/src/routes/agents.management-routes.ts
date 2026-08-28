@@ -1172,7 +1172,6 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       scene: admission.scene,
       admissionStatus: admission.admissionStatus,
       replayed: admission.replayed,
-      run: admission.run ? toAgentRun(admission.run as any) : null,
     });
   });
 

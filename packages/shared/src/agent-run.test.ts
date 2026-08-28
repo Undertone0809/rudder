@@ -191,6 +191,9 @@ describe("toAgentRun", () => {
         targetType: "wakeup_request",
         triggerKind: "agent_run_created",
         sourceRunId: "source-run-1",
+        sourceAgentId: "source-agent-1",
+        targetAgentId: "target-agent-1",
+        taskKey: "private-task-key",
         delegationTask: "Review the target independently",
       },
     }));
@@ -199,7 +202,10 @@ describe("toAgentRun", () => {
     expect(run.targetType).toBe("wakeup_request");
     expect(run.targetId).toBe("wakeup-1");
     expect(run.sourceRunId).toBe("source-run-1");
-    expect(run.contextSnapshot?.delegationTask).toBe("Review the target independently");
+    expect(run.contextSnapshot).not.toHaveProperty("delegationTask");
+    expect(run.contextSnapshot).not.toHaveProperty("sourceAgentId");
+    expect(run.contextSnapshot).not.toHaveProperty("targetAgentId");
+    expect(run.contextSnapshot).not.toHaveProperty("taskKey");
   });
 
   it("honors explicit automation target metadata while preserving linked chat facts", () => {

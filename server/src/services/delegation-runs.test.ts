@@ -210,7 +210,33 @@ describe("delegationRunService", () => {
     });
   });
 
-  it("enforces the UTF-8 byte limit before admission", async () => {
+  it("returns a traceable skipped admission when the target is unavailable", async () => {
+    const skippedRequest = {
+      ...wakeupRequest("Inspect the target independently", "skipped", sourceAgentId),
+      runId: null,
+    };
+    const service = delegationRunService(createDbStub({ persistedRequest: skippedRequest }), {
+      heartbeat: {
+        getRun: vi.fn().mockResolvedValue(sourceRun()),
+        wakeup: vi.fn().mockRejectedValue(new Error("Agent is not invokable in its current state")),
+      },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+
+    await expect(service.create({
+      sourceAgentId,
+      sourceRunId,
+      task: "Inspect the target independently",
+      idempotencyKey: "delegation-key-1",
+    })).resolves.toMatchObject({
+      runId: null,
+      wakeupRequestId,
+      admissionStatus: "skipped",
+      replayed: false,
+    });
+  });
+
+  it("enforces the Unicode character limit before admission", async () => {
     const service = delegationRunService(createDbStub({}), {
       heartbeat: { getRun: vi.fn(), wakeup: vi.fn() },
       access: { hasPermission: vi.fn().mockResolvedValue(true) },
@@ -219,9 +245,9 @@ describe("delegationRunService", () => {
     await expect(service.create({
       sourceAgentId,
       sourceRunId,
-      task: "🙂".repeat(5_001),
+      task: "🙂".repeat(20_001),
       idempotencyKey: "delegation-oversize",
-    })).rejects.toMatchObject({ message: "Delegation task must be no more than 20,000 UTF-8 bytes" });
+    })).rejects.toMatchObject({ message: "Delegation task must be no more than 20,000 Unicode characters" });
   });
 
   it("requires tasks:assign only for cross-agent delegation", async () => {

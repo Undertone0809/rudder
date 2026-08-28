@@ -7,7 +7,7 @@ import { conflict, forbidden, notFound } from "../errors.js";
 export const DELEGATION_RUN_SCENE = "delegation" as const;
 export const DELEGATION_RUN_SOURCE = "delegation" as const;
 export const DELEGATION_RUN_TRIGGER_REASON = "agent_run_created" as const;
-export const DELEGATION_RUN_TASK_MAX_BYTES = 20_000;
+export const DELEGATION_RUN_TASK_MAX_CHARACTERS = 20_000;
 
 type DelegationRunRecord = Awaited<ReturnType<DelegationHeartbeat["getRun"]>>;
 
@@ -56,8 +56,8 @@ export type DelegationRunAdmission = {
   replayed: boolean;
 };
 
-function textByteLength(value: string) {
-  return new TextEncoder().encode(value).byteLength;
+function textCharacterLength(value: string) {
+  return Array.from(value).length;
 }
 
 function readPayloadString(payload: unknown, key: string) {
@@ -139,8 +139,8 @@ export function delegationRunService(
     const task = input.task.trim();
     const idempotencyKey = input.idempotencyKey.trim();
     if (!task) throw conflict("Delegation task must not be empty");
-    if (textByteLength(task) > DELEGATION_RUN_TASK_MAX_BYTES) {
-      throw conflict("Delegation task must be no more than 20,000 UTF-8 bytes");
+    if (textCharacterLength(task) > DELEGATION_RUN_TASK_MAX_CHARACTERS) {
+      throw conflict("Delegation task must be no more than 20,000 Unicode characters");
     }
     if (!idempotencyKey) throw conflict("Delegation idempotency key must not be empty");
 

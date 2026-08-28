@@ -181,8 +181,8 @@ export const wakeAgentSchema = z.object({
 export type WakeAgent = z.infer<typeof wakeAgentSchema>;
 
 const delegationTaskSchema = z.string().trim().min(1).refine(
-  (value) => new TextEncoder().encode(value).byteLength <= 20_000,
-  "task must be no more than 20,000 UTF-8 bytes",
+  (value) => Array.from(value).length <= 20_000,
+  "task must be no more than 20,000 Unicode characters",
 );
 
 export const createDelegationRunSchema = z.object({
