@@ -210,7 +210,7 @@ export function PrimaryRail({
       primaryRailPinned: true,
       limit: 100,
     }),
-    enabled: Boolean(selectedOrganizationId && pluginsEnabled),
+    enabled: Boolean(selectedOrganizationId),
   });
   const location = useLocation();
   const navigate = useNavigate();
@@ -297,18 +297,16 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
-  const pinnedLocalAppItems: RailItem[] = pluginsEnabled
-    ? (pinnedLocalAppsQuery.data?.items ?? [])
-      .filter((savedView) => savedView.targetPayload.kind === "local_app")
-      .map((savedView) => ({
-        key: `saved-view:${savedView.id}`,
-        to: localAppSavedViewRoute(savedView.id),
-        label: savedView.title,
-        icon: MessageSquare,
-        localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
-        active: relativePath === localAppSavedViewRoute(savedView.id),
-      }))
-    : [];
+  const pinnedLocalAppItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
+    .filter((savedView) => savedView.targetPayload.kind === "local_app")
+    .map((savedView) => ({
+      key: `saved-view:${savedView.id}`,
+      to: localAppSavedViewRoute(savedView.id),
+      label: savedView.title,
+      icon: MessageSquare,
+      localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
+      active: relativePath === localAppSavedViewRoute(savedView.id),
+    }));
   const activeFixedRailIndex = railItems.findIndex((item) => item.active);
   const activePinnedRailIndex = pinnedLocalAppItems.findIndex((item) => item.active);
   const activeRailIndex = activeFixedRailIndex >= 0

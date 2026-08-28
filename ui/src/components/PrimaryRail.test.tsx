@@ -574,8 +574,8 @@ describe("PrimaryRail active motion indicator", () => {
     expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("2");
   });
 
-  it("shows pinned Local App Saved Views after the fixed destinations", async () => {
-    mockState.generalSettings = { experimentalPluginsEnabled: true, experimentalSitesEnabled: true, experimentalGoalsEnabled: false };
+  it("shows pinned Local App Saved Views after the fixed destinations without requiring Hub", async () => {
+    mockState.generalSettings = { experimentalPluginsEnabled: false, experimentalSitesEnabled: false, experimentalGoalsEnabled: false };
     mockState.pinnedLocalApps = [{
       id: "saved-local-a",
       title: "MKT dashboard with a very long project name",
@@ -592,6 +592,8 @@ describe("PrimaryRail active motion indicator", () => {
 
     const pinnedLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("MKT dashboard with a very long project name"));
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent === "Hub")).toBeUndefined();
     expect(pinnedLink?.getAttribute("href")).toBe("/apps/saved/saved-local-a");
     expect(pinnedLink?.querySelector('[data-testid="primary-rail-local-app-icon"]')).not.toBeNull();
     expect(pinnedLink?.lastElementChild?.className).toContain("truncate");
