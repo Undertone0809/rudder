@@ -6,7 +6,7 @@ import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { normalizeTranscript, resolveTranscriptFileTarget, resolveTranscriptLocalFileTarget, RunTranscriptView } from "./RunTranscriptView";
 import { TranscriptThinkingBlock } from "./RunTranscriptView.blocks";
-import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
+import { filterChatAssistantTranscriptEntries, getTranscriptMcpBrandIcon, segmentChatTranscriptBlocks, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
 import { describeToolSemanticInfo, extractMcpToolDetails, formatMcpSummary } from "./RunTranscriptView.semantic";
 import { getTranscriptAgentAvatarImageSrc } from "./TranscriptAgentAvatarIcon";
@@ -1256,6 +1256,40 @@ describe("RunTranscriptView", () => {
       "First turn progress.",
       "Second turn progress.",
     ]);
+  });
+
+  it("keeps Chat turn and block keys stable as assistant deltas advance their timestamp", () => {
+    const initialEntries: TranscriptEntry[] = [
+      { kind: "system", ts: "2026-07-19T00:00:00.000Z", text: "turn started" },
+      {
+        kind: "assistant",
+        ts: "2026-07-19T00:00:01.000Z",
+        text: "- [Rudder](https://rudderhq.dev/docs)",
+        delta: true,
+        segmentId: "streamed-markdown",
+        sourceEntryId: "streamed-markdown-1",
+      },
+    ];
+    const appendedEntries: TranscriptEntry[] = [
+      ...initialEntries,
+      {
+        kind: "assistant",
+        ts: "2026-07-19T00:00:02.000Z",
+        text: "\n- Streamed item 1",
+        delta: true,
+        segmentId: "streamed-markdown",
+        sourceEntryId: "streamed-markdown-2",
+      },
+    ];
+
+    const initial = normalizeChatTranscriptTurns(initialEntries, true).turns[0]!;
+    const appended = normalizeChatTranscriptTurns(appendedEntries, true).turns[0]!;
+    const initialSegment = segmentChatTranscriptBlocks(initial.blocks)[0]!;
+    const appendedSegment = segmentChatTranscriptBlocks(appended.blocks)[0]!;
+
+    expect(appended.blocks[0]?.ts).not.toBe(initial.blocks[0]?.ts);
+    expect(appended.key).toBe(initial.key);
+    expect(appendedSegment.key).toBe(initialSegment.key);
   });
 
   it("uses orphan tool result content as the chat action summary", () => {
