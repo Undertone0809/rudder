@@ -11,6 +11,7 @@ export type AgentCliCapabilityCategory =
   | "runs"
   | "approval"
   | "skill"
+  | "plugin"
   | "browser"
   | "user"
   | "library"
@@ -77,6 +78,7 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   runs: "Runs",
   approval: "Approval",
   skill: "Skill",
+  plugin: "Plugin",
   browser: "Browser",
   user: "User",
   library: "Library",

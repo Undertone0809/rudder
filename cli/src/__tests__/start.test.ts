@@ -64,6 +64,7 @@ import {
   isTransientBinaryPath,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
+import { resolveNpmCommandInvocation } from "../npm-command.js";
 import { runCli } from "../program.js";
 import {
   ensureRuntimeInstalled,
@@ -80,11 +81,11 @@ import { createByteProgress, formatByteProgress } from "../utils/progress.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
-const npmInstallCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmInstallInvocation = resolveNpmCommandInvocation();
 const npmInstallSpawnOptions = {
   encoding: "utf8",
   stdio: ["inherit", "pipe", "pipe"],
-  ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+  ...(process.platform === "win32" ? { windowsHide: true } : {}),
 };
 
 function currentEmbeddedPostgresPlatformPackage(): string | null {
@@ -232,6 +233,19 @@ function createDeferred<T = void>() {
 }
 
 describe("persistent CLI install helpers", () => {
+  it.runIf(process.platform === "win32")("invokes npm.cmd through cmd.exe without Node shell mode", () => {
+    const npm = resolveNpmCommandInvocation();
+    const result = spawnSync(npm.command, [...npm.args, "--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(String(result.stdout).trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it("detects npx execution from transient _npx entry paths", () => {
     expect(
       isLikelyNpxExecutionContext("/tmp/npm-cache/_npx/abc/node_modules/@rudderhq/cli/dist/index.js", {}),
@@ -269,6 +283,14 @@ describe("persistent CLI install helpers", () => {
     );
 
     expect(hasGlobalInstalledPackage(CLI_NPM_PACKAGE_NAME, execFileSyncImpl as never)).toBe(true);
+    expect(execFileSyncImpl).toHaveBeenCalledWith(
+      npmInstallInvocation.command,
+      [...npmInstallInvocation.args, "list", "--global", "--depth=0", "--json", CLI_NPM_PACKAGE_NAME],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
   });
 
   it("detects a persistent rudder binary on PATH", () => {
@@ -351,8 +373,8 @@ describe("persistent CLI install helpers", () => {
     });
 
     expect(spawnSyncImpl).toHaveBeenCalledWith(
-      npmInstallCommand,
-      ["install", "--global", "@rudderhq/cli@0.1.0"],
+      npmInstallInvocation.command,
+      [...npmInstallInvocation.args, "install", "--global", "@rudderhq/cli@0.1.0"],
       npmInstallSpawnOptions,
     );
   });
@@ -384,14 +406,14 @@ describe("persistent CLI install helpers", () => {
 
     expect(spawnSyncImpl).toHaveBeenNthCalledWith(
       1,
-      npmInstallCommand,
-      ["install", "--global", "@rudderhq/cli@0.1.0"],
+      npmInstallInvocation.command,
+      [...npmInstallInvocation.args, "install", "--global", "@rudderhq/cli@0.1.0"],
       npmInstallSpawnOptions,
     );
     expect(spawnSyncImpl).toHaveBeenNthCalledWith(
       2,
-      npmInstallCommand,
-      ["install", "--global", "--force", "@rudderhq/cli@0.1.0"],
+      npmInstallInvocation.command,
+      [...npmInstallInvocation.args, "install", "--global", "--force", "@rudderhq/cli@0.1.0"],
       npmInstallSpawnOptions,
     );
   });
@@ -2435,8 +2457,9 @@ describe("runtime install helpers", () => {
       });
 
       expect(spawnSyncImpl).toHaveBeenCalledWith(
-        npmInstallCommand,
+        npmInstallInvocation.command,
         [
+          ...npmInstallInvocation.args,
           "install",
           "--prefix",
           resolveRuntimeCacheDir("1.2.3", root),
@@ -2449,7 +2472,7 @@ describe("runtime install helpers", () => {
         {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
-          ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+          ...(process.platform === "win32" ? { windowsHide: true } : {}),
         },
       );
     } finally {
@@ -3196,6 +3219,12 @@ describe("runtime install helpers", () => {
       expect(result.output).toContain("added runtime");
       expect(result.output).toContain("extracted platform package");
       expect(spawnSyncImpl).toHaveBeenCalledTimes(3);
+      expect(spawnSyncImpl.mock.calls[1]?.[0]).toBe(npmInstallInvocation.command);
+      expect(spawnSyncImpl.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
+        ...npmInstallInvocation.args,
+        "pack",
+      ]));
+      expect(spawnSyncImpl.mock.calls[1]?.[2]).not.toHaveProperty("shell");
       expect(spawnSyncImpl).toHaveBeenNthCalledWith(
         2,
         expect.any(String),

@@ -87,11 +87,14 @@ operating-practices guide for operating behavior:
 | `rudder_approval_issues` | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
 | `rudder_approval_comment` | `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
 | `rudder_skill_list` | `rudder skill list --org-id <id>` | List organization-visible skills. | no | required | no | no |
+| `rudder_skill_search` | `rudder skill search <query> --org-id <id>` | Search organization-visible skills by name, slug, description, or source. | no | required | no | no |
 | `rudder_skill_get` | `rudder skill get <skill-id> --org-id <id>` | Read one organization skill detail. | no | required | no | no |
 | `rudder_skill_file` | `rudder skill file <skill-id> --org-id <id> [--path SKILL.md]` | Read one file from an organization skill package. | no | required | no | no |
 | `rudder_skill_import` | `rudder skill import --org-id <id> --source <source>` | Import a skill package into the organization skill library. | yes | required | no | attached when available |
 | `rudder_skill_scan_local` | `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
 | `rudder_skill_scan_projects` | `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
+| `rudder_plugin_search` | `rudder plugin search <query> --org-id <id>` | Search installed, local, and discoverable Rudder plugins. | no | required | no | no |
+| `rudder_plugin_get` | `rudder plugin get <plugin-id> --org-id <id>` | Read an installed plugin, including its components and current setup state; use this to resolve plugin:// references. | no | required | no | no |
 | `rudder_browser_tabs` | `rudder browser tabs` | List Browser tabs owned by the current Rudder agent run. | no | required | required | required |
 | `rudder_browser_user_tabs` | `rudder browser user-tabs` | List user-visible tabs currently open in Rudder's built-in Browser without taking control of them. | no | required | required | required |
 | `rudder_browser_open` | `rudder browser open <url>` | Open a run-owned tab in the Rudder Browser. | yes | required | required | required |

@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
+import { resolveNpmCommandInvocation } from "../npm-command.js";
 import { tryInstallNativePayload } from "./native-payload.js";
 import { downloadRuntimePostgresArchive } from "./postgres-runtime-download.js";
 import { resolvePostgresRuntimeArchiveSource } from "./postgres-runtime-source.js";
@@ -687,14 +688,15 @@ function runNpmRuntimeInstall(
   deadline?: RuntimeInstallDeadline,
 ): SpawnSyncResultLike {
   const timeout = remainingRuntimeInstallMs(deadline, cacheDir, `npm install ${packageSpec}`);
+  const npm = resolveNpmCommandInvocation();
   return spawnSyncImpl(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["install", "--prefix", cacheDir, ...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
+    npm.command,
+    [...npm.args, "install", "--prefix", cacheDir, ...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       ...(timeout === undefined ? {} : { timeout }),
-      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+      ...(process.platform === "win32" ? { windowsHide: true } : {}),
     },
   );
 }
@@ -861,15 +863,16 @@ function runNpmPack(
   deadline?: RuntimeInstallDeadline,
 ): SpawnSyncResultLike {
   const timeout = remainingRuntimeInstallMs(deadline, cacheDir, `npm pack ${packageSpec}`);
+  const npm = resolveNpmCommandInvocation();
   return spawnSyncImpl(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["pack", packageSpec, "--pack-destination", destinationDir, ...RUNTIME_NPM_PACK_FLAGS],
+    npm.command,
+    [...npm.args, "pack", packageSpec, "--pack-destination", destinationDir, ...RUNTIME_NPM_PACK_FLAGS],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...NPM_PLATFORM_REPAIR_ENV },
       ...(timeout === undefined ? {} : { timeout }),
-      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+      ...(process.platform === "win32" ? { windowsHide: true } : {}),
     },
   );
 }

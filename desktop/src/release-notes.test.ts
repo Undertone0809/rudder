@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createReleaseNotesReservation,
   markReleaseNotesShown,
   parseReleaseNotesMarkdown,
   readReleaseNotes,
@@ -55,6 +56,22 @@ describe("desktop release notes", () => {
         },
       ],
     });
+  });
+
+  it("retains reserved notes across renderer reloads until acknowledgement", () => {
+    const reservation = createReleaseNotesReservation();
+    const notes = {
+      version: "0.4.0",
+      title: "What's new in Rudder 0.4.0",
+      sections: [{ title: "Bug Fixes", items: ["Fixed startup."] }],
+    };
+
+    expect(reservation.get("0.4.0")).toBeNull();
+    reservation.reserve(notes);
+    expect(reservation.get("v0.4.0")).toEqual(notes);
+
+    reservation.clear();
+    expect(reservation.get("0.4.0")).toBeNull();
   });
 
   it("does not show release notes on first launch but records the baseline version", async () => {
