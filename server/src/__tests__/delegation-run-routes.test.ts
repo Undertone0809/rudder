@@ -52,7 +52,11 @@ function createDbStub(task: string) {
                   payload: {
                     delegationTask: task,
                     delegationTargetAgentId: sourceAgentId,
+                    sourceAgentId,
+                    sourceRunId,
                   },
+                  requestedByActorType: "agent",
+                  requestedByActorId: sourceAgentId,
                 }])
             : [];
         return Promise.resolve(rows).then(resolve, reject);

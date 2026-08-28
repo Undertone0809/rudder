@@ -41,8 +41,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(159);
-    expect(result.candidateSqlFiles).toBe(161);
+    expect(result.candidateMigrations).toBe(160);
+    expect(result.candidateSqlFiles).toBe(162);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.13",
       "0.7.12",
@@ -61,8 +61,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(159);
-    expect(result.candidateSqlFiles).toBe(161);
+    expect(result.candidateMigrations).toBe(160);
+    expect(result.candidateSqlFiles).toBe(162);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.12",
       "0.7.11",

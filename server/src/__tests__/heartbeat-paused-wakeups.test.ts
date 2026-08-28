@@ -17,7 +17,7 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
-import express from "express";
+import express, { Router } from "express";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -39,6 +39,7 @@ vi.mock("../services/budgets.ts", async () => {
 });
 
 import { errorHandler } from "../middleware/index.js";
+import { registerAgentManagementRoutes } from "../routes/agents.management-routes.js";
 import { goalRoutes } from "../routes/goals.js";
 import { heartbeatService } from "../services/heartbeat.ts";
 
@@ -184,6 +185,73 @@ describe("heartbeat paused wakeups", () => {
     });
 
     return { orgId, agentId, issuePrefix };
+  }
+
+  async function seedDelegationRouteFixture(
+    targetStatus: "paused" | "idle" | "terminated" = "idle",
+  ) {
+    const { orgId, agentId: targetAgentId } = await seedAgentFixture(targetStatus);
+    const sourceAgentId = randomUUID();
+    const sourceRunId = randomUUID();
+    const now = new Date("2026-08-28T00:00:00.000Z");
+
+    await db.insert(agents).values({
+      id: sourceAgentId,
+      orgId,
+      name: "Delegation Source",
+      role: "engineer",
+      status: "running",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId: sourceAgentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "running",
+      contextSnapshot: { taskKey: "delegation-source" },
+      startedAt: now,
+      updatedAt: now,
+    });
+
+    const realHeartbeat = heartbeatService(db);
+    const heartbeat = {
+      ...realHeartbeat,
+      wakeup: (
+        agentId: string,
+        options: Parameters<typeof realHeartbeat.wakeup>[1],
+      ) => realHeartbeat.wakeup(agentId, { ...options, startImmediately: false }),
+    };
+    const router = Router();
+    registerAgentManagementRoutes({
+      router,
+      db,
+      svc: {
+        getById: vi.fn().mockResolvedValue({ id: sourceAgentId, orgId, name: "Delegation Source" }),
+      },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+      heartbeat,
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.actor = {
+        type: "agent",
+        agentId: sourceAgentId,
+        orgId,
+        runId: sourceRunId,
+      };
+      next();
+    });
+    app.use("/api", router);
+    app.use(errorHandler);
+
+    return { app, orgId, sourceAgentId, sourceRunId, targetAgentId };
   }
 
   async function seedIssue(input: {
@@ -387,6 +455,205 @@ describe("heartbeat paused wakeups", () => {
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
     expect(runs).toHaveLength(0);
+  });
+
+  it("persists a deferred Delegation admission through the public route when the target is paused", async () => {
+    const { app, sourceAgentId, sourceRunId, targetAgentId } =
+      await seedDelegationRouteFixture("paused");
+
+    const response = await request(app)
+      .post("/api/agent-runs/delegation")
+      .send({
+        task: "Inspect the paused target independently",
+        targetAgentId,
+        idempotencyKey: "delegation-paused-target",
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      runId: null,
+      sourceRunId,
+      targetAgentId,
+      scene: "delegation",
+      admissionStatus: "deferred",
+      replayed: false,
+    });
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.delegationIdempotencyKey, "delegation-paused-target"))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({
+      agentId: targetAgentId,
+      source: "delegation",
+      status: "deferred_agent_paused",
+      runId: null,
+      requestedByActorType: "agent",
+      requestedByActorId: sourceAgentId,
+    });
+    expect(wakeup?.id).toBe(response.body.wakeupRequestId);
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.agentId, targetAgentId),
+        eq(heartbeatRuns.invocationSource, "delegation"),
+      ));
+    expect(runs).toHaveLength(0);
+  });
+
+  it("persists a skipped Delegation admission through the public route on budget hard-stop", async () => {
+    const { app, sourceAgentId, sourceRunId, targetAgentId } =
+      await seedDelegationRouteFixture("idle");
+    mockBudgetService.getInvocationBlock.mockResolvedValue({
+      reason: "Agent budget hard-stop reached.",
+      scopeType: "agent",
+      scopeId: targetAgentId,
+    });
+
+    const response = await request(app)
+      .post("/api/agent-runs/delegation")
+      .send({
+        task: "Inspect the budget-blocked target independently",
+        targetAgentId,
+        idempotencyKey: "delegation-budget-blocked",
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      runId: null,
+      sourceRunId,
+      targetAgentId,
+      scene: "delegation",
+      admissionStatus: "skipped",
+      replayed: false,
+    });
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.delegationIdempotencyKey, "delegation-budget-blocked"))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({
+      agentId: targetAgentId,
+      source: "delegation",
+      status: "skipped",
+      reason: "budget.blocked",
+      runId: null,
+      requestedByActorType: "agent",
+      requestedByActorId: sourceAgentId,
+    });
+    expect(wakeup?.id).toBe(response.body.wakeupRequestId);
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.agentId, targetAgentId),
+        eq(heartbeatRuns.invocationSource, "delegation"),
+      ));
+    expect(runs).toHaveLength(0);
+  });
+
+  it("persists a skipped Delegation admission through the public route for a terminated target", async () => {
+    const { app, sourceAgentId, sourceRunId, targetAgentId } =
+      await seedDelegationRouteFixture("terminated");
+
+    const response = await request(app)
+      .post("/api/agent-runs/delegation")
+      .send({
+        task: "Record that the terminated target cannot execute",
+        targetAgentId,
+        idempotencyKey: "delegation-target-unavailable",
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      runId: null,
+      sourceRunId,
+      targetAgentId,
+      scene: "delegation",
+      admissionStatus: "skipped",
+      replayed: false,
+    });
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.delegationIdempotencyKey, "delegation-target-unavailable"))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({
+      agentId: targetAgentId,
+      source: "delegation",
+      status: "skipped",
+      reason: "agent.unavailable",
+      runId: null,
+      requestedByActorType: "agent",
+      requestedByActorId: sourceAgentId,
+    });
+    expect(wakeup?.id).toBe(response.body.wakeupRequestId);
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.agentId, targetAgentId),
+        eq(heartbeatRuns.invocationSource, "delegation"),
+      ));
+    expect(runs).toHaveLength(0);
+  });
+
+  it("queues a Delegation admission through the public route when target concurrency is saturated", async () => {
+    const { app, orgId, sourceRunId, targetAgentId } =
+      await seedDelegationRouteFixture("idle");
+    const blocker = await seedRunningBlocker({
+      orgId,
+      agentId: targetAgentId,
+      taskKey: "occupied-target-slot",
+    });
+
+    const response = await request(app)
+      .post("/api/agent-runs/delegation")
+      .send({
+        task: "Wait for capacity, then inspect the target independently",
+        targetAgentId,
+        idempotencyKey: "delegation-concurrency-saturated",
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      sourceRunId,
+      targetAgentId,
+      scene: "delegation",
+      admissionStatus: "queued",
+      replayed: false,
+    });
+    expect(response.body.runId).toEqual(expect.any(String));
+    expect(response.body.runId).not.toBe(blocker.runId);
+
+    const wakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.delegationIdempotencyKey, "delegation-concurrency-saturated"))
+      .then((rows) => rows[0] ?? null);
+    expect(wakeup).toMatchObject({
+      agentId: targetAgentId,
+      source: "delegation",
+      status: "queued",
+      runId: response.body.runId,
+    });
+    const run = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, response.body.runId))
+      .then((rows) => rows[0] ?? null);
+    expect(run).toMatchObject({
+      agentId: targetAgentId,
+      invocationSource: "delegation",
+      status: "queued",
+      sourceRunId,
+      wakeupRequestId: wakeup?.id,
+      sessionReuseScope: "none",
+    });
   });
 
   it("replays paused assignee mentions into the existing issue execution queue", async () => {

@@ -128,24 +128,32 @@ export function delegationRunService(
       task: string;
       targetAgentId: string;
       idempotencyKey: string;
-      sourceAgentId: string;
-      sourceRunId: string;
     },
   ) {
     const existingTask = readPayloadString(request.payload, "delegationTask");
-    const existingSourceRunId = readPayloadString(request.payload, "sourceRunId");
-    if (
-      request.agentId !== input.targetAgentId
-      || existingTask !== input.task
-      || request.requestedByActorType !== "agent"
-      || request.requestedByActorId !== input.sourceAgentId
-      || existingSourceRunId !== input.sourceRunId
-    ) {
-      throw conflict("Delegation idempotency key conflicts with an existing task, target, or source", {
+    if (request.agentId !== input.targetAgentId || existingTask !== input.task) {
+      throw conflict("Delegation idempotency key conflicts with an existing task or target", {
         idempotencyKey: input.idempotencyKey,
         existingTargetAgentId: request.agentId,
       });
     }
+  }
+
+  function requestProvenance(
+    request: typeof agentWakeupRequests.$inferSelect,
+    run: DelegationRunRecord,
+  ) {
+    const sourceRunId = readPayloadString(request.payload, "sourceRunId")
+      ?? (run && typeof run.sourceRunId === "string" ? run.sourceRunId : null);
+    const sourceAgentId = request.requestedByActorType === "agent"
+      ? request.requestedByActorId
+      : readPayloadString(request.payload, "sourceAgentId");
+    if (!sourceRunId || !sourceAgentId) {
+      throw conflict("Delegation admission is missing persisted source provenance", {
+        wakeupRequestId: request.id,
+      });
+    }
+    return { sourceRunId, sourceAgentId };
   }
 
   async function validateInput(input: CreateDelegationRunInput) {
@@ -211,21 +219,15 @@ export function delegationRunService(
     const validated = await validateInput(input);
     const existing = await findRequest(validated.orgId, validated.idempotencyKey);
     if (existing) {
-      assertRequestMatches(existing, {
-        ...validated,
-        sourceAgentId: input.sourceAgentId,
-        sourceRunId: input.sourceRunId,
-      });
+      assertRequestMatches(existing, validated);
       const existingRun = await loadRun(existing);
-      const existingSourceRunId = readPayloadString(existing.payload, "sourceRunId")
-        ?? (existingRun && typeof existingRun.sourceRunId === "string" ? existingRun.sourceRunId : null)
-        ?? input.sourceRunId;
+      const provenance = requestProvenance(existing, existingRun);
       return {
         run: existingRun,
         runId: existing.runId ?? existingRun?.id ?? null,
         wakeupRequestId: existing.id,
-        sourceRunId: existingSourceRunId,
-        sourceAgentId: existing.requestedByActorId!,
+        sourceRunId: provenance.sourceRunId,
+        sourceAgentId: provenance.sourceAgentId,
         targetAgentId: validated.targetAgentId,
         scene: DELEGATION_RUN_SCENE,
         admissionStatus: "replayed",
@@ -272,11 +274,7 @@ export function delegationRunService(
     } catch (error) {
       const raced = await findRequest(validated.orgId, validated.idempotencyKey);
       if (!raced) throw error;
-      assertRequestMatches(raced, {
-        ...validated,
-        sourceAgentId: input.sourceAgentId,
-        sourceRunId: input.sourceRunId,
-      });
+      assertRequestMatches(raced, validated);
     }
 
     const request = run?.wakeupRequestId
@@ -291,11 +289,7 @@ export function delegationRunService(
         .then((rows) => rows[0] ?? null)
       : await findRequest(validated.orgId, validated.idempotencyKey);
     if (!request) throw conflict("Delegation admission did not persist a traceable wakeup request");
-    assertRequestMatches(request, {
-      ...validated,
-      sourceAgentId: input.sourceAgentId,
-      sourceRunId: input.sourceRunId,
-    });
+    assertRequestMatches(request, validated);
 
     const admittedRun = await loadRun(request) ?? run;
     return {

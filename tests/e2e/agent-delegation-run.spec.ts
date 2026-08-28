@@ -48,7 +48,8 @@ function structuredContent(response: Awaited<ReturnType<typeof runAgentV1McpJson
   return response?.result?.structuredContent as Record<string, unknown>;
 }
 
-test("source Run creates and inspects an independent Delegation Run through MCP", async ({ request }) => {
+test("source Run creates and inspects an independent Delegation Run through MCP", async ({ page, request }) => {
+  test.setTimeout(120_000);
   const organization = await createOrganization(request);
   const sourceAgent = await createE2EChatAgent(request, organization.id, {
     name: "Delegation Source",
@@ -100,6 +101,17 @@ test("source Run creates and inspects an independent Delegation Run through MCP"
     replayed: false,
   });
   expect(createResult).not.toHaveProperty("run");
+
+  const cancelSourceResult = structuredContent(await runAgentV1McpJsonRpcMessage({
+    jsonrpc: "2.0",
+    id: "delegation-cancel-source",
+    method: "tools/call",
+    params: { name: "rudder_runs_cancel", arguments: { run: sourceRunId } },
+  }, env));
+  expect(cancelSourceResult).toMatchObject({
+    id: `run_${sourceRunId.slice(0, 8)}`,
+    status: "cancelled",
+  });
 
   let targetRunId: string | null = null;
   await expect.poll(async () => {
@@ -157,4 +169,97 @@ test("source Run creates and inspects an independent Delegation Run through MCP"
   }, env));
   expect(Array.isArray(transcriptResult.rows)).toBe(true);
   expect((transcriptResult.rows as unknown[]).length).toBeGreaterThan(0);
+
+  const sourceAfterDelegation = await e2eDb
+    .select({ status: heartbeatRuns.status })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.id, sourceRunId))
+    .then((rows) => rows[0]);
+  expect(sourceAfterDelegation?.status).toBe("cancelled");
+  const sourceAgentRuns = await e2eDb
+    .select({ id: heartbeatRuns.id })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.agentId, sourceAgent.id));
+  expect(sourceAgentRuns).toEqual([{ id: sourceRunId }]);
+
+  const listFixtureRunId = randomUUID();
+  await e2eDb.insert(heartbeatRuns).values({
+    id: listFixtureRunId,
+    orgId: organization.id,
+    agentId: targetAgent.id,
+    invocationSource: "delegation",
+    triggerDetail: "agent_run_created",
+    status: "succeeded",
+    sourceRunId,
+    startedAt,
+    finishedAt: new Date(),
+    contextSnapshot: { scene: "delegation", sourceRunId },
+    createdAt: startedAt,
+    updatedAt: new Date(),
+  });
+
+  await page.addInitScript((orgId: string) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/agents/${targetAgent.id}/runs/${targetRunId}`, { waitUntil: "domcontentloaded" });
+  const mainContent = page.locator("#main-content");
+  await expect(mainContent.getByTestId("run-agent-run-facts").getByText("Delegation", { exact: true })).toBeVisible();
+  await mainContent.getByTestId("agent-runs-history-trigger").click();
+  const historyPopover = page.getByTestId("agent-runs-history-popover");
+  await historyPopover.getByRole("button", { name: /^Filter/ }).click();
+  const filterPopover = page.getByTestId("run-filter-popover");
+  await expect(filterPopover.getByTestId("run-filter-scene-section").getByRole("button", { name: "Delegation" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/r6z-155-delegation-filter.png", fullPage: true });
+
+  const failedDelegationRunId = randomUUID();
+  const failedAt = new Date();
+  await e2eDb.insert(heartbeatRuns).values({
+    id: failedDelegationRunId,
+    orgId: organization.id,
+    agentId: targetAgent.id,
+    invocationSource: "delegation",
+    triggerDetail: "agent_run_created",
+    status: "failed",
+    sourceRunId,
+    startedAt: failedAt,
+    finishedAt: failedAt,
+    error: "Synthetic retry fixture",
+    contextSnapshot: {
+      scene: "delegation",
+      rudderScene: "delegation",
+      sourceRunId,
+      sourceAgentId: sourceAgent.id,
+      targetAgentId: targetAgent.id,
+      delegationTask: "Retry this bounded delegated task.",
+      forceFreshSession: true,
+    },
+    createdAt: failedAt,
+    updatedAt: failedAt,
+  });
+  const retryResult = structuredContent(await runAgentV1McpJsonRpcMessage({
+    jsonrpc: "2.0",
+    id: "delegation-retry",
+    method: "tools/call",
+    params: { name: "rudder_runs_retry", arguments: { run: failedDelegationRunId } },
+  }, env));
+  expect(retryResult).toMatchObject({
+    id: expect.any(String),
+    retryOfRunId: failedDelegationRunId.replaceAll("-", "").slice(0, 12),
+    sourceRunId: sourceRunId.replaceAll("-", "").slice(0, 12),
+  });
+  await expect.poll(async () => e2eDb
+    .select({
+      id: heartbeatRuns.id,
+      status: heartbeatRuns.status,
+      invocationSource: heartbeatRuns.invocationSource,
+      sourceRunId: heartbeatRuns.sourceRunId,
+    })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.retryOfRunId, failedDelegationRunId))
+    .then((rows) => rows[0] ?? null), { timeout: RUN_TIMEOUT }).toMatchObject({
+    id: expect.any(String),
+    status: "succeeded",
+    invocationSource: "delegation",
+    sourceRunId,
+  });
 });

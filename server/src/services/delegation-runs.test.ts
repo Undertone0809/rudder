@@ -13,6 +13,9 @@ const targetAgentId = "33333333-3333-4333-8333-333333333333";
 const sourceRunId = "44444444-4444-4444-8444-444444444444";
 const targetRunId = "55555555-5555-4555-8555-555555555555";
 const wakeupRequestId = "66666666-6666-4666-8666-666666666666";
+const otherSourceAgentId = "77777777-7777-4777-8777-777777777777";
+const otherSourceRunId = "88888888-8888-4888-8888-888888888888";
+const otherTargetAgentId = "99999999-9999-4999-8999-999999999999";
 
 function sourceRun() {
   return {
@@ -68,6 +71,8 @@ function createDbStub(input: {
   existingRequest?: Record<string, unknown> | null;
   persistedRequest?: Record<string, unknown> | null;
   targetAgentId?: string;
+  sourceAgent?: Record<string, unknown> | null;
+  targetAgent?: Record<string, unknown> | null;
 }) {
   let agentLookups = 0;
   let wakeupRequestLookups = 0;
@@ -90,8 +95,10 @@ function createDbStub(input: {
       then(resolve: (value: unknown[]) => unknown, reject: (error: unknown) => unknown) {
         const rows = table === agents
           ? (++agentLookups === 1
-            ? [{ id: sourceAgentId, orgId }]
-            : [{ id: input.targetAgentId ?? sourceAgentId, orgId }])
+            ? (input.sourceAgent === null ? [] : [input.sourceAgent ?? { id: sourceAgentId, orgId }])
+            : (input.targetAgent === null
+              ? []
+              : [input.targetAgent ?? { id: input.targetAgentId ?? sourceAgentId, orgId }]))
           : table === agentWakeupRequests
             ? (++wakeupRequestLookups === 1
               ? (input.existingRequest ? [input.existingRequest] : [])
@@ -207,19 +214,49 @@ describe("delegationRunService", () => {
       targetAgentId,
       idempotencyKey: "delegation-key-1",
     })).rejects.toMatchObject({
-      message: "Delegation idempotency key conflicts with an existing task, target, or source",
+      message: "Delegation idempotency key conflicts with an existing task or target",
     });
   });
 
-  it("rejects replaying another source Agent's organization-wide idempotency key", async () => {
+  it("rejects reusing an organization-wide idempotency key for another target", async () => {
+    const existing = wakeupRequest("Inspect the target independently");
+    const wakeup = vi.fn();
+    const service = delegationRunService(createDbStub({
+      existingRequest: existing,
+      targetAgent: { id: otherTargetAgentId, orgId },
+    }), {
+      heartbeat: { getRun: vi.fn().mockResolvedValue(sourceRun()), wakeup },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+
+    await expect(service.create({
+      sourceAgentId,
+      sourceRunId,
+      task: "Inspect the target independently",
+      targetAgentId: otherTargetAgentId,
+      idempotencyKey: "delegation-key-1",
+    })).rejects.toMatchObject({
+      message: "Delegation idempotency key conflicts with an existing task or target",
+    });
+    expect(wakeup).not.toHaveBeenCalled();
+  });
+
+  it("replays another source Run's matching organization, target, key, and task with persisted provenance", async () => {
     const existing = {
       ...wakeupRequest("Inspect the target independently"),
-      requestedByActorId: "77777777-7777-4777-8777-777777777777",
+      requestedByActorId: otherSourceAgentId,
+      payload: {
+        ...wakeupRequest("Inspect the target independently").payload,
+        sourceAgentId: otherSourceAgentId,
+        sourceRunId: otherSourceRunId,
+      },
     };
     const wakeup = vi.fn();
     const service = delegationRunService(createDbStub({ existingRequest: existing, targetAgentId }), {
       heartbeat: {
-        getRun: vi.fn().mockResolvedValue(sourceRun()),
+        getRun: vi.fn()
+          .mockResolvedValueOnce(sourceRun())
+          .mockResolvedValueOnce({ ...targetRun(), sourceRunId: otherSourceRunId }),
         wakeup,
       },
       access: { hasPermission: vi.fn().mockResolvedValue(true) },
@@ -231,10 +268,85 @@ describe("delegationRunService", () => {
       task: "Inspect the target independently",
       targetAgentId,
       idempotencyKey: "delegation-key-1",
-    })).rejects.toMatchObject({
-      message: "Delegation idempotency key conflicts with an existing task, target, or source",
+    })).resolves.toMatchObject({
+      sourceAgentId: otherSourceAgentId,
+      sourceRunId: otherSourceRunId,
+      admissionStatus: "replayed",
+      replayed: true,
     });
     expect(wakeup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a source Run owned by another authenticated Agent", async () => {
+    const service = delegationRunService(createDbStub({}), {
+      heartbeat: {
+        getRun: vi.fn().mockResolvedValue({ ...sourceRun(), agentId: otherSourceAgentId }),
+        wakeup: vi.fn(),
+      },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+
+    await expect(service.create({
+      sourceAgentId,
+      sourceRunId,
+      task: "Inspect the target independently",
+      idempotencyKey: "source-owner-mismatch",
+    })).rejects.toMatchObject({ message: "Source Run does not belong to the authenticated Agent" });
+  });
+
+  it("rejects missing and cross-organization targets", async () => {
+    const missingTarget = delegationRunService(createDbStub({ targetAgent: null }), {
+      heartbeat: { getRun: vi.fn().mockResolvedValue(sourceRun()), wakeup: vi.fn() },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+    await expect(missingTarget.create({
+      sourceAgentId,
+      sourceRunId,
+      targetAgentId,
+      task: "Inspect the target independently",
+      idempotencyKey: "missing-target",
+    })).rejects.toMatchObject({ message: "Target Agent not found" });
+
+    const crossOrgTarget = delegationRunService(createDbStub({
+      targetAgent: { id: targetAgentId, orgId: "99999999-9999-4999-8999-999999999999" },
+    }), {
+      heartbeat: { getRun: vi.fn().mockResolvedValue(sourceRun()), wakeup: vi.fn() },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+    await expect(crossOrgTarget.create({
+      sourceAgentId,
+      sourceRunId,
+      targetAgentId,
+      task: "Inspect the target independently",
+      idempotencyKey: "cross-org-target",
+    })).rejects.toMatchObject({ message: "Target Agent must belong to the same organization" });
+  });
+
+  it.each([
+    ["deferred_agent_paused", "deferred"],
+    ["coalesced", "coalesced"],
+    ["skipped", "skipped"],
+  ])("projects %s admission through the Delegation response as %s", async (status, expected) => {
+    const persisted = {
+      ...wakeupRequest("Inspect the target independently", status, sourceAgentId),
+      runId: status === "skipped" ? null : targetRunId,
+    };
+    const service = delegationRunService(createDbStub({ persistedRequest: persisted }), {
+      heartbeat: {
+        getRun: vi.fn()
+          .mockResolvedValueOnce(sourceRun())
+          .mockResolvedValueOnce(targetRun(sourceAgentId)),
+        wakeup: vi.fn().mockResolvedValue(status === "skipped" ? null : targetRun(sourceAgentId)),
+      },
+      access: { hasPermission: vi.fn().mockResolvedValue(true) },
+    });
+
+    await expect(service.create({
+      sourceAgentId,
+      sourceRunId,
+      task: "Inspect the target independently",
+      idempotencyKey: `admission-${status}`,
+    })).resolves.toMatchObject({ admissionStatus: expected });
   });
 
   it("returns a traceable skipped admission when the target is unavailable", async () => {
