@@ -20,7 +20,7 @@ freeze package. The package adds the two accepted inventory artifacts that had
 not yet landed on `main`, this consolidation document, and the reviewable
 current-source delta overlay.
 
-Package fingerprint: `b93fb56bb85b40836d2768237064b0cba6db99bc1e6e81ced915e129d62f4188`
+Package fingerprint: `4c7f4d0e3079a4af3d081962026d0b5a5dd9325ec4098470d8720b4bc72affa2`
 
 The fingerprint is SHA-256 over the four added paths in lexical order, each
 encoded as `path`, a NUL byte, normalized file bytes, and a second NUL byte.
@@ -79,8 +79,9 @@ At the G0 candidate:
 - the source delta since the accepted A1 candidate touches the known route,
   run, chat, goal, issue, organization, workspace-backup, and migration units.
   The two added public routes, two plugin Agent-read authorization changes,
-  Goal typed-reference middleware, conservative network-suspension classifier
-  and recovery controller, durable Run-to-Goal binding across every writer,
+  Goal typed-reference middleware, conservative network-suspension classifier,
+  bounded retry/backoff policy and recovery controller, durable Run-to-Goal
+  binding across every writer,
   needs-follow-up Issue transition, Feishu failed-reply persistence, and
   shell-free npm helper are explicit overlay rows. No new route module,
   transaction-owning source file, public listener root, or migration runner
