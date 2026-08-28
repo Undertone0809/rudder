@@ -408,6 +408,22 @@
       "rationale": "Chat assistant orchestration and compatibility behavior remain concentrated while the collaboration service boundaries stabilize.",
       "target": "Extract assistant orchestration behind focused collaboration modules and reduce the service below 1500 lines.",
       "expiry": "2026-12-31"
+    },
+    {
+      "path": "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "lines": 1501,
+      "owner": "agent-contract-runtime",
+      "rationale": "The generated agent contract is intentionally materialized as one synchronized runtime artifact for CLI, MCP, and native consumers.",
+      "target": "Keep the generated contract synchronized while evaluating a compact transport-neutral representation that preserves one-source generation.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "lines": 1501,
+      "owner": "agent-contract-runtime",
+      "rationale": "The generated MCP descriptor catalog is intentionally materialized for stable runtime discovery and schema parity across consumers.",
+      "target": "Keep generated descriptors synchronized while evaluating a compact generated representation without splitting the public catalog contract.",
+      "expiry": "2027-03-31"
     }
   ]
 }
