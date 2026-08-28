@@ -42,6 +42,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { errorHandler } from "../middleware/index.js";
 import { integrationRoutes } from "../routes/integrations.js";
 import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
+import { ChatAssistantStreamError } from "../services/chat-assistant.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest } from "../services/chat-generation-locks.js";
 import { chatService } from "../services/chats.js";
 import { agentIntegrationService } from "../services/integrations/agent-integrations.js";
@@ -2492,6 +2493,115 @@ describe("Feishu inbound dispatcher DB deps", () => {
       status: "final",
     });
     expect(outbounds[0]?.chatMessageId).toBe(messages[1]?.id);
+  });
+
+  it("persists a user-visible failed Feishu reply and links its run transcript", async () => {
+    const seeded = await seedIntegration({
+      credentialValue: JSON.stringify({ appSecret: "feishu-app-secret" }),
+    });
+    const sent: Array<{ chatId: string; text: string }> = [];
+    let failedRunId: string | null = null;
+    const sender: FeishuOutboundSender = {
+      sendText: async (input) => {
+        sent.push({ chatId: input.chatId, text: input.text });
+        return { messageId: "om_failed_agent_reply" };
+      },
+    };
+    const runtime = feishuIntegrationRuntimeService(db, {
+      sender,
+      assistant: {
+        streamChatAssistantReply: async (input) => {
+          const [run] = await db.insert(heartbeatRuns).values({
+            orgId: seeded.orgId,
+            agentId: seeded.agentId,
+            status: "failed",
+            error: "assistant result validation failed",
+            chatConversationId: input.conversation.id,
+          }).returning();
+          failedRunId = run!.id;
+          input.onRunCreated?.(run!.id);
+          throw new ChatAssistantStreamError(
+            "assistant result validation failed",
+            "I prepared the requested release issue proposal.",
+            [],
+            {
+              partialBodyUserVisible: true,
+              errorCode: "chat_result_malformed_json",
+              userMessage: "The assistant returned an incomplete final reply. Rudder saved the attempt and transcript; retry when ready.",
+            },
+          );
+        },
+      },
+    });
+
+    const result = await runtime.handleEvent(
+      {
+        id: seeded.integrationId,
+        orgId: seeded.orgId,
+        agentId: seeded.agentId,
+        providerRegion: "feishu_cn",
+        appCredentialSecretId: seeded.secretId,
+        externalAppId: "cli_a_feishu_app",
+        externalBotOpenId: "ou_bot",
+      },
+      { appSecret: "feishu-app-secret" },
+      {
+        appId: "cli_a_feishu_app",
+        botOpenId: "ou_bot",
+        eventId: "event_failed_reply",
+        messageId: "om_failed_reply",
+        chatId: "oc_chat",
+        chatType: "p2p",
+        senderOpenId: "ou_sender",
+        senderUnionId: "on_sender",
+        body: "prepare a release issue proposal",
+      },
+    );
+
+    expect(result.status).toBe("accepted");
+    await waitUntil(() => {
+      expect(sent).toEqual([{
+        chatId: "oc_chat",
+        text: "I prepared the requested release issue proposal.",
+      }]);
+    });
+    await waitUntil(async () => {
+      const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+      expect(outbound).toMatchObject({
+        externalMessageId: "om_failed_agent_reply",
+        status: "final",
+      });
+    });
+    const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: "I prepared the requested release issue proposal.",
+      runId: failedRunId,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          code: "chat_result_malformed_json",
+          message: "The assistant returned an incomplete final reply. Rudder saved the attempt and transcript; retry when ready.",
+          runId: failedRunId,
+        },
+      },
+    });
+    const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+    expect(outbound).toMatchObject({
+      externalChatId: "oc_chat",
+      externalMessageId: "om_failed_agent_reply",
+      status: "final",
+      chatMessageId: messages[1]?.id,
+      runId: failedRunId,
+    });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, failedRunId!));
+    expect(run?.contextSnapshot).toMatchObject({
+      assistantMessageId: messages[1]?.id,
+      messageId: messages[1]?.id,
+    });
   });
 
   it("dedupes repeated messages before appending a second chat message", async () => {
