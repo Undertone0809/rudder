@@ -197,9 +197,12 @@ test.describe("Issue auto refresh", () => {
     expect(before).not.toBeNull();
 
     await updateIssue(page, createdIssues[200]!.id, "in_progress");
-    await expect(page.locator('[data-slot="issue-status-icon"][data-status="in_progress"]')).toHaveCount(1, {
-      timeout: 15_000,
-    });
+    const updatedIssueRow = page.locator("main a").filter({ hasText: createdIssues[200]!.title }).first();
+    await expect(updatedIssueRow.locator('[data-slot="issue-status-icon"]').first()).toHaveAttribute(
+      "data-status",
+      "in_progress",
+      { timeout: 15_000 },
+    );
     await expect(anchor).toBeVisible();
     const after = await anchor.boundingBox();
     expect(after).not.toBeNull();
