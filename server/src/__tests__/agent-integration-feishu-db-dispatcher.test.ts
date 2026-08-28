@@ -2565,6 +2565,13 @@ describe("Feishu inbound dispatcher DB deps", () => {
         text: "I prepared the requested release issue proposal.",
       }]);
     });
+    await waitUntil(async () => {
+      const [outbound] = await db.select().from(agentIntegrationOutboundMessages);
+      expect(outbound).toMatchObject({
+        externalMessageId: "om_failed_agent_reply",
+        status: "final",
+      });
+    });
     const messages = await db.select().from(chatMessages).orderBy(chatMessages.createdAt, chatMessages.id);
     expect(messages).toHaveLength(2);
     expect(messages[1]).toMatchObject({
