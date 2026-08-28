@@ -13231,6 +13231,29 @@ describe("messengerService and issue follows", () => {
       overLimit.id,
       { primaryRailPinned: true },
     )).rejects.toMatchObject({ status: 400 });
+    const overLimitKeepBaseline = {
+      savedViews: await db.select().from(messengerSavedViews),
+      receipts: await db.select().from(messengerSavedViewMutations),
+      memberships: await db.select().from(messengerCustomGroupEntries),
+      activities: await db.select().from(activityLog),
+    };
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-a",
+        appPublicId: "public-over-limit-keep",
+        localBindingId: "binding-over-limit-keep",
+        viewInstanceId: "local-app-over-limit-keep",
+      },
+      title: "Over pin limit keep",
+      clientMutationId: randomUUID(),
+      primaryRailPinned: true,
+      placement: { kind: "loose" },
+    })).rejects.toMatchObject({ status: 400 });
+    expect(await db.select().from(messengerSavedViews)).toEqual(overLimitKeepBaseline.savedViews);
+    expect(await db.select().from(messengerSavedViewMutations)).toEqual(overLimitKeepBaseline.receipts);
+    expect(await db.select().from(messengerCustomGroupEntries)).toEqual(overLimitKeepBaseline.memberships);
+    expect(await db.select().from(activityLog)).toEqual(overLimitKeepBaseline.activities);
 
     const unpinned = await savedViewsSvc.update(orgId, userId, localApp.id, { primaryRailPinned: false });
     expect(unpinned.primaryRailPinnedAt).toBeNull();
@@ -13246,6 +13269,80 @@ describe("messengerService and issue follows", () => {
     );
     expect(remainingPins.items).toHaveLength(99);
     expect(remainingPins.items.some((view) => view.id === localApp.id)).toBe(false);
+  });
+
+  it("atomically keeps and pins a Local App while preserving idempotent replay", async () => {
+    const orgId = randomUUID();
+    const userId = "local-app-keep-pin-user";
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Local App Keep Pin Org",
+      urlKey: deriveOrganizationUrlKey("Local App Keep Pin Org"),
+      issuePrefix: "LKP",
+    });
+    const input = {
+      target: {
+        kind: "local_app" as const,
+        desktopInstallationId: "desktop-a",
+        appPublicId: "public-a",
+        localBindingId: "binding-a",
+        viewInstanceId: "local-app-view-a",
+      },
+      title: "Pinned from Local Apps",
+      clientMutationId: randomUUID(),
+      primaryRailPinned: true as const,
+      placement: { kind: "loose" as const },
+    };
+
+    const group = await messengerSvc.createCustomGroup(orgId, userId, "Must stay empty");
+    const baseline = {
+      savedViews: await db.select().from(messengerSavedViews),
+      receipts: await db.select().from(messengerSavedViewMutations),
+      memberships: await db.select().from(messengerCustomGroupEntries),
+      activities: await db.select().from(activityLog),
+    };
+    for (const placement of [
+      { kind: "group" as const, groupId: group.id },
+      { kind: "anchor" as const, anchor: { kind: "chat" as const, conversationId: randomUUID() } },
+    ]) {
+      await expect(savedViewsSvc.keep(orgId, userId, {
+        ...input,
+        clientMutationId: randomUUID(),
+        placement,
+      })).rejects.toMatchObject({ status: 400 });
+      expect(await db.select().from(messengerSavedViews)).toEqual(baseline.savedViews);
+      expect(await db.select().from(messengerSavedViewMutations)).toEqual(baseline.receipts);
+      expect(await db.select().from(messengerCustomGroupEntries)).toEqual(baseline.memberships);
+      expect(await db.select().from(activityLog)).toEqual(baseline.activities);
+    }
+
+    const first = await savedViewsSvc.keep(orgId, userId, input);
+    expect(first).toMatchObject({
+      savedView: {
+        title: "Pinned from Local Apps",
+        primaryRailPinnedAt: expect.any(Date),
+      },
+      group: null,
+    });
+    await expect(savedViewsSvc.keep(orgId, userId, input)).resolves.toEqual(first);
+    expect((await savedViewsSvc.list(orgId, userId, { primaryRailPinned: true })).items)
+      .toEqual([first.savedView]);
+    expect((await db.select().from(activityLog).where(
+      eq(activityLog.entityId, first.savedView.id),
+    )).some((event) => (
+      (event.details as { primaryRailPinned?: boolean } | null)?.primaryRailPinned === true
+    ))).toBe(true);
+
+    await expect(savedViewsSvc.keep(orgId, userId, {
+      ...input,
+      target: {
+        kind: "browser",
+        tabId: "tab-a",
+        url: "https://example.test",
+        viewInstanceId: "browser-view-a",
+      },
+      clientMutationId: randomUUID(),
+    })).rejects.toMatchObject({ status: 400 });
   });
 
   it("reorders Saved Views and transactionally removes their group membership and empty group", async () => {

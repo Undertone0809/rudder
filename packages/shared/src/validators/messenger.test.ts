@@ -159,6 +159,40 @@ describe("Messenger Saved View validators", () => {
     }).success).toBe(true);
     expect(keepMessengerSavedViewSchema.safeParse({
       ...base,
+      primaryRailPinned: true,
+      placement: { kind: "loose" },
+    }).success).toBe(false);
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
+      target: {
+        kind: "local_app",
+        desktopInstallationId: "desktop-a",
+        appPublicId: "app-a",
+        localBindingId: "binding-a",
+        viewInstanceId,
+      },
+      primaryRailPinned: true,
+      placement: { kind: "loose" },
+    }).success).toBe(true);
+    for (const placement of [
+      { kind: "group" as const, groupId: automationId },
+      { kind: "anchor" as const, anchor: { kind: "chat" as const, conversationId: automationId } },
+    ]) {
+      expect(keepMessengerSavedViewSchema.safeParse({
+        ...base,
+        target: {
+          kind: "local_app",
+          desktopInstallationId: "desktop-a",
+          appPublicId: "app-a",
+          localBindingId: "binding-a",
+          viewInstanceId,
+        },
+        primaryRailPinned: true,
+        placement,
+      }).success).toBe(false);
+    }
+    expect(keepMessengerSavedViewSchema.safeParse({
+      ...base,
       placement: { kind: "loose", groupId: automationId },
     }).success).toBe(false);
     expect(keepMessengerSavedViewSchema.safeParse({

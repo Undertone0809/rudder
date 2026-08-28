@@ -15,6 +15,16 @@ vi.mock("@/context/OrganizationContext", () => ({
   useOrganization: () => ({ selectedOrganizationId: "org-a" }),
 }));
 
+const messengerMocks = vi.hoisted(() => ({
+  getSavedView: vi.fn(),
+  keepSavedView: vi.fn(),
+  updateSavedView: vi.fn(),
+}));
+
+vi.mock("@/api/messenger", () => ({
+  messengerApi: messengerMocks,
+}));
+
 const definition: DesktopLocalAppDefinition = {
   id: "definition-a",
   desktopInstallationId: "installation-a",
@@ -40,6 +50,28 @@ const target: Extract<SidePanelTarget, { kind: "local_app" }> = {
   localBindingId: "binding-a",
   label: "Marketing dashboard",
   viewInstanceId: "view-a",
+};
+
+const pinnedSavedView = {
+  id: "saved-view-a",
+  orgId: "org-a",
+  userId: "user-a",
+  targetKind: "local_app",
+  targetPayload: {
+    kind: "local_app",
+    desktopInstallationId: "installation-a",
+    appPublicId: "public-a",
+    localBindingId: "binding-a",
+    viewInstanceId: "view-0",
+  },
+  title: "Marketing dashboard",
+  subtitle: "Local app",
+  favicon: null,
+  sortOrder: 0,
+  hiddenAt: null,
+  primaryRailPinnedAt: new Date("2026-08-28T00:00:00.000Z"),
+  createdAt: new Date("2026-08-28T00:00:00.000Z"),
+  updatedAt: new Date("2026-08-28T00:00:00.000Z"),
 };
 
 let root: Root | null = null;
@@ -118,6 +150,9 @@ function openMoreMenu() {
 }
 
 beforeEach(() => {
+  messengerMocks.getSavedView.mockReset().mockResolvedValue(pinnedSavedView);
+  messengerMocks.keepSavedView.mockReset().mockResolvedValue({ savedView: pinnedSavedView, group: null });
+  messengerMocks.updateSavedView.mockReset().mockResolvedValue(pinnedSavedView);
   list.mockReset().mockResolvedValue([definition]);
   status.mockReset().mockResolvedValue({ status: "stopped", generation: null } satisfies DesktopLocalAppRuntimeView);
   start.mockReset().mockResolvedValue({ status: "running", generation: "generation-a" } satisfies DesktopLocalAppRuntimeView);
@@ -145,6 +180,82 @@ afterEach(() => {
 });
 
 describe("LocalAppPanelView", () => {
+  it("keeps and pins an unsaved Local App in one enabled action", async () => {
+    renderView();
+    await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-start"]')).not.toBeNull());
+
+    await act(async () => {
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Pin to Primary Rail"));
+    });
+    const pinItem = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find((item) => item.textContent?.includes("Pin to Primary Rail"));
+    expect(pinItem?.hasAttribute("aria-disabled")).toBe(false);
+
+    await act(async () => {
+      pinItem?.click();
+      await settle();
+    });
+    await vi.waitFor(() => expect(messengerMocks.keepSavedView).toHaveBeenCalledTimes(1));
+    expect(messengerMocks.keepSavedView).toHaveBeenCalledWith("org-a", expect.objectContaining({
+      clientMutationId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      placement: { kind: "loose" },
+      primaryRailPinned: true,
+      target: expect.objectContaining({
+        kind: "local_app",
+        localBindingId: "binding-a",
+        viewInstanceId: "view-0",
+      }),
+    }));
+    expect(messengerMocks.updateSavedView).not.toHaveBeenCalled();
+
+    await act(async () => {
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Unpin from Primary Rail"));
+    });
+  });
+
+  it("retries a committed keep with the exact original request after a lost response", async () => {
+    messengerMocks.keepSavedView
+      .mockRejectedValueOnce(new Error("Response lost after commit"))
+      .mockResolvedValueOnce({ savedView: pinnedSavedView, group: null });
+    renderView();
+    await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-start"]')).not.toBeNull());
+
+    await act(async () => {
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Pin to Primary Rail"));
+      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        .find((item) => item.textContent?.includes("Pin to Primary Rail"))?.click();
+      await settle();
+    });
+    await vi.waitFor(() => expect(messengerMocks.keepSavedView).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      root!.render(
+        <QueryClientProvider client={queryClient!}>
+          <LocalAppPanelView
+            key={0}
+            active
+            target={{ ...target, label: "Renamed after uncertain commit", viewInstanceId: "view-0" }}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      openMoreMenu();
+      await vi.waitFor(() => expect(document.body.textContent).toContain("Pin to Primary Rail"));
+      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        .find((item) => item.textContent?.includes("Pin to Primary Rail"))?.click();
+      await settle();
+    });
+    await vi.waitFor(() => expect(messengerMocks.keepSavedView).toHaveBeenCalledTimes(2));
+    expect(messengerMocks.keepSavedView.mock.calls[1]).toEqual(messengerMocks.keepSavedView.mock.calls[0]);
+    expect(messengerMocks.keepSavedView.mock.calls[1]?.[1]).toMatchObject({
+      title: "Marketing dashboard",
+    });
+  });
+
   it("hydrates definition and status without auto-starting a stopped app", async () => {
     renderView();
     await vi.waitFor(() => expect(host?.querySelector('[data-testid="local-app-start"]')).not.toBeNull());
