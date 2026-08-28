@@ -25,10 +25,9 @@ import type { ManagedMcpConnectionServiceOptions } from "./mcp/managed-connectio
 import { rudderPluginService } from "./rudder-plugins.js";
 
 const DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/Undertone0809/rudder-plugins/main/catalog.json";
-const MAX_FILES = 500;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const FETCH_CONCURRENCY = 12;
+const GITHUB_RAW_FILE_FETCH_THRESHOLD = 500;
 const MAX_REDIRECTS = 3;
 const CATALOG_DEGRADED_VISIBILITY_MS = 30_000;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "__pycache__"]);
@@ -612,15 +611,13 @@ export async function resolveGitHubVersion(
   }
 }
 
-function safePackageEntries(tree: GitTreeEntry[], subdirectory: string): Array<GitTreeEntry & { relativePath: string }> {
+export function safePackageEntries(tree: GitTreeEntry[], subdirectory: string): Array<GitTreeEntry & { relativePath: string }> {
   const prefix = subdirectory ? `${subdirectory.replace(/\/$/, "")}/` : "";
   const entries = tree
     .filter((entry) => entry.type === "blob" && (!prefix || entry.path.startsWith(prefix)))
     .map((entry) => ({ ...entry, relativePath: prefix ? entry.path.slice(prefix.length) : entry.path }))
     .filter((entry) => entry.relativePath.length > 0);
   if (entries.length === 0) throw unprocessable("Plugin source directory is empty");
-  if (entries.length > MAX_FILES) throw unprocessable("Plugin package exceeds the 500-file V1 limit");
-  let total = 0;
   const folded = new Set<string>();
   for (const entry of entries) {
     const relativePath = safeRelativePath(entry.relativePath, "package file");
@@ -629,8 +626,6 @@ function safePackageEntries(tree: GitTreeEntry[], subdirectory: string): Array<G
     folded.add(lower);
     const size = entry.size ?? 0;
     if (size > MAX_FILE_BYTES) throw unprocessable(`Plugin file exceeds 2 MiB: ${relativePath}`);
-    total += size;
-    if (total > MAX_TOTAL_BYTES) throw unprocessable("Plugin package exceeds the 10 MiB V1 limit");
   }
   return entries;
 }
@@ -660,6 +655,9 @@ async function fetchGitHubFiles(
     } satisfies GitTreeEntry;
   }).filter((entry): entry is GitTreeEntry => Boolean(entry));
   const selected = safePackageEntries(tree, resolution.subdirectory);
+  if (selected.length > GITHUB_RAW_FILE_FETCH_THRESHOLD) {
+    return fetchGitHubArchiveFiles(fetcher, resolution);
+  }
   const files = new Array<RudderPluginPackageFileInput>(selected.length);
   let next = 0;
   async function worker() {
@@ -683,7 +681,7 @@ async function fetchGitHubFiles(
   return { tree, files };
 }
 
-async function fetchGitHubArchiveFiles(
+export async function fetchGitHubArchiveFiles(
   fetcher: FetchLike,
   resolution: RudderPluginSourceResolution,
 ): Promise<{ tree: GitTreeEntry[]; files: RudderPluginPackageFileInput[] }> {
@@ -703,18 +701,12 @@ async function fetchGitHubArchiveFiles(
     throw new PluginSourceUnavailableError(`GitHub archive returned HTTP ${response.status}`);
   }
   if (!response.ok) throw unprocessable(`GitHub archive returned HTTP ${response.status}`);
-  const contentLength = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_BYTES) {
-    throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
-  }
-  const archive = Buffer.from(await response.arrayBuffer());
-  if (archive.byteLength > MAX_TOTAL_BYTES) throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
-
   const tree: GitTreeEntry[] = [];
   const files: RudderPluginPackageFileInput[] = [];
   const folded = new Set<string>();
   const sourcePrefix = resolution.subdirectory ? `${resolution.subdirectory.replace(/\/$/, "")}/` : "";
   let archiveRoot: string | null = null;
+  let compressedBytes = 0;
   let totalBytes = 0;
   let failure: Error | null = null;
   const unzip = new Unzip((file) => {
@@ -750,11 +742,6 @@ async function fetchGitHubArchiveFiles(
       file.terminate();
       return;
     }
-    if (files.length >= MAX_FILES) {
-      failure = new Error("Plugin package exceeds the 500-file V1 limit");
-      file.terminate();
-      return;
-    }
     if (file.originalSize !== undefined && file.originalSize > MAX_FILE_BYTES) {
       failure = new Error(`Plugin file exceeds 2 MiB: ${normalized}`);
       file.terminate();
@@ -776,10 +763,8 @@ async function fetchGitHubArchiveFiles(
       }
       entryBytes += data.byteLength;
       totalBytes += data.byteLength;
-      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_TOTAL_BYTES) {
-        failure = new Error(entryBytes > MAX_FILE_BYTES
-          ? `Plugin file exceeds 2 MiB: ${normalized}`
-          : "Plugin package exceeds the 10 MiB V1 limit");
+      if (entryBytes > MAX_FILE_BYTES) {
+        failure = new Error(`Plugin file exceeds 2 MiB: ${normalized}`);
         file.terminate();
         return;
       }
@@ -793,15 +778,27 @@ async function fetchGitHubArchiveFiles(
   });
   unzip.register(UnzipInflate);
   unzip.register(UnzipPassThrough);
+  const reader = response.body?.getReader();
+  if (!reader) throw unprocessable("GitHub archive response has no body");
   try {
-    unzip.push(archive, true);
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      compressedBytes += chunk.value.byteLength;
+      unzip.push(chunk.value, false);
+      if (failure) {
+        await reader.cancel();
+        break;
+      }
+    }
+    if (!failure) unzip.push(new Uint8Array(), true);
   } catch (error) {
     throw unprocessable(`Invalid GitHub Plugin archive: ${error instanceof Error ? error.message : String(error)}`);
   }
   const archiveFailure = failure as Error | null;
   if (archiveFailure) throw unprocessable(archiveFailure.message);
   if (files.length === 0) throw unprocessable("Plugin source directory is empty");
-  if (totalBytes > archive.byteLength * 100) {
+  if (compressedBytes > 0 && totalBytes > compressedBytes * 100) {
     throw unprocessable("Plugin archive exceeds the 100:1 expansion limit");
   }
   return { tree, files };

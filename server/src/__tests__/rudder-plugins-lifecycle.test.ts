@@ -879,6 +879,130 @@ describe("Rudder Plugin V1 lifecycle", () => {
     expect(reinstalled.id).not.toBe(installed.id);
   });
 
+  it("previews, reopens, and installs a catalog archive above the former package ceilings", { timeout: 120_000 }, async () => {
+    const { org } = await seedOrg("Scientific Catalog", "SCI");
+    const commitSha = "9e8b0cb0b09059f2fd4505e57ab4e00c8be1cef6";
+    const catalogUrl = "https://raw.githubusercontent.com/Undertone0809/rudder-plugins/main/catalog.json";
+    const descriptorUrl = "https://raw.githubusercontent.com/Undertone0809/rudder-plugins/main/plugins/scientific-agent-skills/source.json";
+    const skillFiles = Object.fromEntries(Array.from({ length: 163 }, (_, index) => {
+      const number = String(index + 1).padStart(3, "0");
+      return [`scientific-agent-skills-${commitSha}/skills/scientific-${number}/SKILL.md`, strToU8(
+        `---\nname: Scientific ${number}\ndescription: Execute scientific workflow ${number}.\n---\n\n# Scientific ${number}\n`,
+      )];
+    }));
+    const referenceFiles = Object.fromEntries(Array.from({ length: 400 }, (_, index) => {
+      const number = String(index + 1).padStart(3, "0");
+      return [
+        `scientific-agent-skills-${commitSha}/skills/scientific-001/references/reference-${number}.txt`,
+        new Uint8Array(28 * 1024).fill(65 + (index % 26)),
+      ];
+    }));
+    const archiveEntries = { ...skillFiles, ...referenceFiles };
+    const archive = zipSync(archiveEntries, { level: 0 });
+    const tree = Object.entries(archiveEntries).map(([archivePath, content], index) => ({
+      path: archivePath.slice(archivePath.indexOf("/") + 1),
+      type: "blob",
+      sha: index.toString(16).padStart(40, "0"),
+      size: content.byteLength,
+    }));
+    const descriptor = {
+      schemaVersion: 1,
+      slug: "scientific-agent-skills",
+      kind: "skills_add",
+      displayName: "Scientific Agent Skills",
+      developer: "K-Dense",
+      category: "Education & Research",
+      shortDescription: "Scientific workflows packaged as reusable agent Skills.",
+      longDescription: "A production-shaped catalog fixture for the Scientific Agent Skills package.",
+      capabilities: ["Read", "Write"],
+      websiteUrl: "https://github.com/K-Dense-AI/scientific-agent-skills",
+      privacyPolicyUrl: "https://github.com/K-Dense-AI/scientific-agent-skills",
+      termsOfServiceUrl: "https://github.com/K-Dense-AI/scientific-agent-skills",
+      license: {
+        spdx: "MIT",
+        sourceUrl: "https://github.com/K-Dense-AI/scientific-agent-skills/blob/main/LICENSE",
+        note: "MIT license; fixture content is generated for Rudder E2E coverage.",
+      },
+      source: {
+        repositoryUrl: "https://github.com/K-Dense-AI/scientific-agent-skills",
+        skillsAddSource: "K-Dense-AI/scientific-agent-skills",
+        subdirectory: "skills",
+        versionStrategy: "latest_stable_release_or_head",
+      },
+      assets: { icon: "icon.png", iconDark: "icon-dark.png", origin: "rudder_generic" },
+    };
+    const fetcher = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === catalogUrl) {
+        return new Response(JSON.stringify({
+          schemaVersion: 1,
+          updatedAt: "2026-08-28T00:00:00.000Z",
+          plugins: [{
+            slug: descriptor.slug,
+            displayName: descriptor.displayName,
+            developer: descriptor.developer,
+            category: descriptor.category,
+            shortDescription: descriptor.shortDescription,
+            sourceKind: descriptor.kind,
+            sourcePath: "plugins/scientific-agent-skills/source.json",
+            iconPath: "plugins/scientific-agent-skills/icon.png",
+            iconDarkPath: "plugins/scientific-agent-skills/icon-dark.png",
+          }],
+        }));
+      }
+      if (url === descriptorUrl) return new Response(JSON.stringify(descriptor));
+      if (url.endsWith("/repos/K-Dense-AI/scientific-agent-skills")) {
+        return new Response(JSON.stringify({ default_branch: "main", private: false }));
+      }
+      if (url.includes("/repos/K-Dense-AI/scientific-agent-skills/releases?")) {
+        return new Response(JSON.stringify([{ tag_name: "v2.64.0", draft: false, prerelease: false }]));
+      }
+      if (url.endsWith("/repos/K-Dense-AI/scientific-agent-skills/commits/v2.64.0")) {
+        return new Response(JSON.stringify({ sha: commitSha }));
+      }
+      if (url.includes(`/repos/K-Dense-AI/scientific-agent-skills/git/trees/${commitSha}?recursive=1`)) {
+        return new Response(JSON.stringify({ truncated: false, tree }));
+      }
+      if (url === `https://codeload.github.com/K-Dense-AI/scientific-agent-skills/zip/${commitSha}`) {
+        return new Response(Buffer.from(archive), {
+          headers: { "content-type": "application/zip", "content-length": String(archive.byteLength) },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const preview = await catalogService(fetcher as typeof fetch)
+      .previewCatalog(org.id, "scientific-agent-skills");
+    expect(preview).toMatchObject({
+      action: "install",
+      previewId: expect.any(String),
+      packageId: expect.any(String),
+      resolution: { version: "2.64.0", commitSha, strategy: "stable_release" },
+    });
+    expect(preview.groups.skills).toHaveLength(163);
+
+    const [pkg] = await db.select().from(pluginPackages).where(eq(pluginPackages.id, preview.packageId!));
+    expect(pkg?.snapshot.length).toBeGreaterThan(500);
+    expect(pkg?.snapshot.reduce((total, file) => total + Buffer.from(file.content, "base64").byteLength, 0))
+      .toBeGreaterThan(10 * 1024 * 1024);
+
+    const offlineCatalog = catalogService((async () => {
+      throw new Error("network must not be used while reopening a persisted Preview");
+    }) as typeof fetch);
+    const reopened = await offlineCatalog.previewDetail(org.id, preview.previewId!);
+    expect(reopened).toMatchObject({
+      previewId: preview.previewId,
+      packageId: preview.packageId,
+      resolution: { version: "2.64.0", commitSha },
+    });
+    expect(reopened.groups.skills).toHaveLength(163);
+
+    const installed = await service().install(org.id, preview.previewId!);
+    expect(installed).toMatchObject({ packageId: preview.packageId, version: "2.64.0" });
+    expect(await db.select().from(pluginComponentLinks).where(eq(pluginComponentLinks.installedPluginId, installed.id)))
+      .toHaveLength(163);
+  });
+
   it("creates a cold Preview through the public archive fallback when GitHub API returns 403", async () => {
     const { org } = await seedOrg("API Fallback", "APF");
     const commitSha = "b36e0829c6d0140e93cfef2ca599b1b07d4a7797";

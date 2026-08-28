@@ -134,12 +134,15 @@ Invariants:
   package-manager lifecycle steps, or third-party installers. Network access is
   limited to bounded catalog and public source retrieval before the immutable
   Preview is created.
-- Traversal, absolute paths, duplicate/case-colliding paths, oversize files,
-  oversize packages, invalid JSON, invalid identity, and literal MCP secrets
-  are rejected.
-- ZIP input is limited to 500 files, 2 MiB per file, 10 MiB compressed and
-  expanded package size, and a 100:1 expansion ratio. Rudder strips at most one
-  common outer package root and then applies the normal path checks.
+- Traversal, absolute paths, duplicate/case-colliding paths, files over the
+  per-file ceiling, invalid JSON, invalid identity, and literal MCP secrets are
+  rejected. Deployment-enforced transport or host-resource limits may also
+  reject an import independently of Plugin package semantics.
+- Plugin packages have no product-level file-count or aggregate-byte ceiling.
+  Each file remains limited to 2 MiB and ZIP input remains limited to a 100:1
+  expansion ratio. Rudder strips at most one common outer package root and then
+  applies the normal path checks. Deployments may still enforce transport and
+  host-resource limits independently of Plugin package semantics.
 - GitHub marketplace ingestion accepts only HTTPS `github.com` repositories
   with a full 40-character commit SHA. Rudder fetches that immutable archive;
   moving branches and tags are not accepted as provenance.

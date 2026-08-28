@@ -36,6 +36,7 @@ function pluginFiles(input: {
   skillCount: number;
   includeUnsupportedApp?: boolean;
   changedSkill?: number;
+  extraFileCount?: number;
 }): RudderPluginPackageFileInput[] {
   const manifest: Record<string, unknown> = {
     name: input.name,
@@ -64,6 +65,11 @@ function pluginFiles(input: {
     ...(input.includeUnsupportedApp
       ? [{ path: ".app.json", content: JSON.stringify({ studio: "asdk_app_e2e" }), encoding: "utf8" as const }]
       : []),
+    ...Array.from({ length: input.extraFileCount ?? 0 }, (_, index) => ({
+      path: `skills/workflow-01/references/reference-${String(index + 1).padStart(3, "0")}.md`,
+      content: `Reference ${index + 1}.`,
+      encoding: "utf8" as const,
+    })),
   ];
 }
 
@@ -100,8 +106,8 @@ function detailFromReport(
   return {
     slug,
     displayName,
-    developer: slug === "marketing-skills" ? "Corey Haines" : "Jesse Vincent",
-    category: slug === "marketing-skills" ? "Marketing" : "Developer Tools",
+    developer: slug === "marketing-skills" ? "Corey Haines" : slug === "scientific-agent-skills" ? "K-Dense" : "Jesse Vincent",
+    category: slug === "marketing-skills" ? "Marketing" : slug === "scientific-agent-skills" ? "Education & Research" : "Developer Tools",
     shortDescription: `${components.filter((component) => component.type === "skill").length} installable Skills in one immutable Plugin.`,
     longDescription: `A production-shaped ${displayName} Preview used to verify the complete Rudder Plugin journey.`,
     capabilities: ["Read", "Write"],
@@ -132,6 +138,7 @@ function detailFromReport(
 }
 
 const catalogRows = [
+  ["scientific-agent-skills", "Scientific Agent Skills", "K-Dense", "Education & Research", "skills_add"],
   ["superpowers", "Superpowers", "obra", "Developer Tools", "codex_plugin"],
   ["marketing-skills", "Marketing Skills", "Corey Haines", "Marketing", "skills_add"],
   ["vercel", "Vercel", "Vercel", "Developer Tools", "codex_plugin"],
@@ -163,7 +170,16 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
     skillCount: 49,
     includeUnsupportedApp: true,
   }));
+  const scientific = await inspectPlugin(page.request, organization.id, "Scientific Agent Skills", pluginFiles({
+    name: "scientific-agent-skills-e2e",
+    displayName: "Scientific Agent Skills",
+    version: "2.64.0",
+    skillCount: 163,
+    extraFileCount: 400,
+  }));
+  expect(scientific.limits.fileCount).toBeGreaterThan(500);
   const details = new Map<string, RudderPluginDetail>([
+    ["scientific-agent-skills", detailFromReport("scientific-agent-skills", "Scientific Agent Skills", scientific, { sourceKind: "skills_add" })],
     ["superpowers", detailFromReport("superpowers", "Superpowers", superpowersV1)],
     ["marketing-skills", detailFromReport("marketing-skills", "Marketing Skills", marketing, { sourceKind: "skills_add" })],
   ]);
@@ -258,6 +274,13 @@ test("discovers, reopens, installs, updates, assigns, and uninstalls immutable P
   for (const [, displayName] of catalogRows) {
     await expect(page.getByText(displayName, { exact: true }).first()).toBeVisible();
   }
+
+  await page.getByText("Scientific Agent Skills", { exact: true }).first().click();
+  await expect(page).toHaveURL(/\/hub\/plugins\/scientific-agent-skills\?preview=/);
+  await expect(page.getByRole("heading", { name: "Scientific Agent Skills", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Skills 163/ })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("scientific-agent-skills-detail-desktop-light.png"), fullPage: true });
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
 
   await page.getByText("Superpowers", { exact: true }).first().click();
   await expect(page).toHaveURL(/\/hub\/plugins\/superpowers\?preview=/);

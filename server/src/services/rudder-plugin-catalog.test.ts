@@ -1,11 +1,14 @@
+import { strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import {
   catalogSourceMatches,
   createCatalogFreshnessLease,
   discoverSkillsAddPaths,
+  fetchGitHubArchiveFiles,
   fetchPluginCatalogResource,
   parseSkillsAddSource,
   resolveGitHubVersion,
+  safePackageEntries,
   synthesizeSkillsPlugin,
 } from "./rudder-plugin-catalog.js";
 
@@ -237,6 +240,71 @@ describe("discoverSkillsAddPaths", () => {
     expect(result).toHaveLength(49);
     expect(result[0]).toBe("skills/skill-00/SKILL.md");
     expect(result.at(-1)).toBe("skills/skill-48/SKILL.md");
+  });
+
+  it("discovers a production-shaped 163-Skill bundle deterministically", () => {
+    const tree = Array.from({ length: 163 }, (_, index) => blob(`skills/skill-${String(index).padStart(3, "0")}/SKILL.md`));
+    const result = discoverSkillsAddPaths(tree, "skills");
+    expect(result).toHaveLength(163);
+    expect(result[0]).toBe("skills/skill-000/SKILL.md");
+    expect(result.at(-1)).toBe("skills/skill-162/SKILL.md");
+  });
+});
+
+describe("safePackageEntries", () => {
+  it("accepts more than 500 files and more than 10 MiB in aggregate", () => {
+    const tree = Array.from({ length: 600 }, (_, index) => ({
+      path: `skills/skill-${index}/asset.bin`,
+      type: "blob" as const,
+      sha: "a".repeat(40),
+      size: 20_000,
+    }));
+
+    const entries = safePackageEntries(tree, "skills");
+
+    expect(entries).toHaveLength(600);
+    expect(entries.reduce((total, entry) => total + (entry.size ?? 0), 0))
+      .toBeGreaterThan(10 * 1024 * 1024);
+  });
+
+  it("retains duplicate-path and per-file size rejection", () => {
+    expect(() => safePackageEntries([
+      { path: "skills/Demo/SKILL.md", type: "blob", sha: "a".repeat(40), size: 20 },
+      { path: "skills/demo/skill.md", type: "blob", sha: "b".repeat(40), size: 20 },
+    ], "skills")).toThrow("duplicate or case-colliding path");
+    expect(() => safePackageEntries([
+      { path: "skills/demo/large.bin", type: "blob", sha: "a".repeat(40), size: 2 * 1024 * 1024 + 1 },
+    ], "skills")).toThrow("exceeds 2 MiB");
+  });
+});
+
+describe("fetchGitHubArchiveFiles", () => {
+  it("streams a selected subtree with more than 500 files", async () => {
+    const archive = zipSync(Object.fromEntries([
+      ...Array.from({ length: 600 }, (_, index) => [
+        `scientific-agent-skills/skills/skill-${index}/reference.md`,
+        strToU8(`Reference ${index}`),
+      ]),
+      ["scientific-agent-skills/skills/skill-0/SKILL.md", strToU8("---\nname: Skill 0\n---\n")],
+      ["scientific-agent-skills/docs/ignored.txt", strToU8("Not part of the selected subtree")],
+    ]));
+    const fetcher = (async () => new Response(archive, {
+      status: 200,
+      headers: { "content-type": "application/zip" },
+    })) as typeof fetch;
+
+    const result = await fetchGitHubArchiveFiles(fetcher, {
+      repositoryUrl: "https://github.com/K-Dense-AI/scientific-agent-skills",
+      source: "K-Dense-AI/scientific-agent-skills",
+      subdirectory: "skills",
+      strategy: "stable_release",
+      version: "2.64.0",
+      commitSha: "a".repeat(40),
+    });
+
+    expect(result.files).toHaveLength(601);
+    expect(result.files.every((file) => !file.path.startsWith("docs/"))).toBe(true);
+    expect(result.tree.some((entry) => entry.path === "skills/skill-0/SKILL.md")).toBe(true);
   });
 });
 

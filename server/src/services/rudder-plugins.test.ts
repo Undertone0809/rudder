@@ -138,12 +138,21 @@ describe("inspectRudderPluginPackage", () => {
     ]))).toThrow("duplicate or case-colliding path");
   });
 
-  it("enforces file count and byte limits before parsing", () => {
-    const tooMany = Array.from({ length: 500 }, (_, index) => ({
+  it("accepts large packages while retaining the per-file byte limit", () => {
+    const manyFiles = Array.from({ length: 600 }, (_, index) => ({
       path: `assets/${index}.txt`,
       content: "x",
     }));
-    expect(() => inspectRudderPluginPackage(input(tooMany))).toThrow("500-file");
+    const largePackage = inspectRudderPluginPackage(input(manyFiles));
+    expect(largePackage.normalized.files).toHaveLength(601);
+
+    const aggregateOverTenMiB = Array.from({ length: 6 }, (_, index) => ({
+      path: `assets/large-${index}.bin`,
+      content: "x".repeat(1_800_000),
+    }));
+    expect(inspectRudderPluginPackage(input(aggregateOverTenMiB)).normalized.totalBytes)
+      .toBeGreaterThan(10 * 1024 * 1024);
+
     expect(() => inspectRudderPluginPackage(input([
       { path: "skills/research/SKILL.md", content: "x".repeat(2 * 1024 * 1024 + 1) },
     ]))).toThrow("exceeds 2 MiB");
@@ -210,6 +219,20 @@ describe("inspectRudderPluginArchivePackage", () => {
     expect(result.report.components).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: "skill:research", status: "ready" }),
     ]));
+  });
+
+  it("accepts ZIP packages with more than 500 files", () => {
+    const files = Object.fromEntries(Array.from({ length: 600 }, (_, index) => [
+      `research-kit/assets/${index}.txt`,
+      `asset-${index}`,
+    ]));
+    const result = inspectRudderPluginArchivePackage(archive({
+      "research-kit/.codex-plugin/plugin.json": manifest(),
+      "research-kit/skills/research/SKILL.md": "---\nname: Research\n---\n",
+      ...files,
+    }));
+
+    expect(result.normalized.files).toHaveLength(602);
   });
 
   it("rejects traversal, malformed archives, and high-ratio expansion before persistence", () => {

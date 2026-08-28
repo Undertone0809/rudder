@@ -2,26 +2,26 @@ import { z } from "zod";
 
 export const rudderPluginPackageFileSchema = z.object({
   path: z.string().min(1).max(1_024),
-  content: z.string().max(14_000_000),
+  content: z.string(),
   encoding: z.enum(["utf8", "base64"]).optional().default("utf8"),
 }).strict();
 
 export const inspectRudderPluginSchema = z.object({
   sourceLabel: z.string().trim().min(1).max(240),
   sourceType: z.literal("local_upload").optional().default("local_upload"),
-  files: z.array(rudderPluginPackageFileSchema).min(1).max(500),
+  files: z.array(rudderPluginPackageFileSchema).min(1),
 }).strict();
 
 export const inspectRudderPluginArchiveSchema = z.object({
   sourceLabel: z.string().trim().min(1).max(240),
   filename: z.string().trim().min(1).max(240).refine((value) => /\.zip$/i.test(value), "Only ZIP Plugin archives are supported"),
-  content: z.string().min(1).max(14_000_000),
+  content: z.string().min(1),
   encoding: z.literal("base64"),
 }).strict();
 
 export const configureRudderPluginMarketplaceSchema = z.object({
   sourceLabel: z.string().trim().min(1).max(240),
-  files: z.array(rudderPluginPackageFileSchema).min(1).max(500).optional(),
+  files: z.array(rudderPluginPackageFileSchema).min(1).optional(),
   github: z.object({
     repository: z.string().url().max(500),
     commit: z.string().regex(/^[0-9a-f]{40}$/i, "A full 40-character Git commit SHA is required"),
