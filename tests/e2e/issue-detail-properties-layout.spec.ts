@@ -382,7 +382,7 @@ test.describe("Issue detail properties layout", () => {
     await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
     await page.mouse.move(1920 - 350, resizerY, { steps: 10 });
     await page.mouse.up();
-    await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resize-shield")).toBeHidden();
     await expect.poll(() => readResponsiveIssueLayout(page)).toMatchObject({
       mode: "wide",
       visiblePropertiesCount: 1,
@@ -406,7 +406,7 @@ test.describe("Issue detail properties layout", () => {
     await expect(page.getByTestId("side-panel-resize-shield")).toBeVisible();
     await page.mouse.move(1920 - 710, resizedY, { steps: 10 });
     await page.mouse.up();
-    await expect(page.getByTestId("side-panel-resize-shield")).toHaveCount(0);
+    await expect(page.getByTestId("side-panel-resize-shield")).toBeHidden();
     await expect.poll(() => readResponsiveIssueLayout(page)).toMatchObject({ mode: "compact" });
     await expect(activityEditor).toContainText(preservedDraft);
     await expect.poll(() => activityEditor.evaluate((element) => (
