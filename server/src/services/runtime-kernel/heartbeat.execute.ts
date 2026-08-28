@@ -49,7 +49,6 @@ import {
   isWorkspacePermissionPreflightError,
   preflightManagedAgentWorkspace,
 } from "../managed-workspace-preflight.js";
-import { listProjectResourceAttachments } from "../resource-catalog.js";
 import { type RunLogHandle } from "../run-log-store.js";
 import {
   buildWorkspaceReadyComment,
@@ -60,11 +59,7 @@ import {
   releaseRuntimeServicesForRun
 } from "../workspace-runtime.js";
 import {
-  AssignmentDependencyPreflightError,
   createAssignmentRunFailureBudget,
-  inspectAssignmentRunWorkspace,
-  repairAssignmentRunWorkspace,
-  resolveProjectWorkingSetCwd,
   type AssignmentRunGuardrailCheckpoint,
 } from "./assignment-run-guardrail.js";
 import {
@@ -411,32 +406,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
       issueSettings: issueExecutionWorkspaceSettings,
       legacyUseProjectWorkspace: runtimeOverrides?.useProjectWorkspace ?? null,
     });
-    let resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
+    const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
       agent,
       context,
       previousSessionParams,
       { useProjectWorkspace: executionWorkspaceMode !== "agent_default" },
     );
-    let configuredProjectWorkingSetCwd: string | null = null;
-    if (assignmentGuardrailEnabled && executionProjectId) {
-      const projectResources = await listProjectResourceAttachments(db, agent.orgId, executionProjectId);
-      const projectWorkingSetCwd = resolveProjectWorkingSetCwd(projectResources);
-      configuredProjectWorkingSetCwd = projectWorkingSetCwd;
-      if (projectWorkingSetCwd) {
-        const workingSetAvailable = await inspectAssignmentRunWorkspace({
-          actualCwd: projectWorkingSetCwd,
-          projectWorkingSetCwd,
-        }).then((result) => result.cwdPresent);
-        if (workingSetAvailable) {
-          resolvedWorkspace = {
-            ...resolvedWorkspace,
-            cwd: projectWorkingSetCwd,
-            source: "project_primary",
-            projectId: executionProjectId,
-          };
-        }
-      }
-    }
     const workspaceManagedConfig = buildExecutionWorkspaceAdapterConfig({
       agentConfig: config,
       projectPolicy: projectExecutionWorkspacePolicy,
@@ -804,88 +779,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
         level: "info",
         message: "run started",
       });
-      if (assignmentGuardrailEnabled) {
-        const initialWorkspacePreflight = await inspectAssignmentRunWorkspace({
-          actualCwd: executionWorkspace.cwd,
-          projectWorkingSetCwd: configuredProjectWorkingSetCwd ?? resolvedWorkspace.cwd,
-        });
-        const dependencyRepair = initialWorkspacePreflight.ready
-          ? null
-          : await repairAssignmentRunWorkspace({ preflight: initialWorkspacePreflight });
-        const workspacePreflight = dependencyRepair?.final ?? initialWorkspacePreflight;
-        if (dependencyRepair && !dependencyRepair.succeeded) {
-          await appendRunEvent(currentRun, {
-            eventType: "runtime.assignment_dependency_repair",
-            stream: "system",
-            level: "warn",
-            message: dependencyRepair.skippedReason
-              ? `assignment dependency repair skipped: ${dependencyRepair.skippedReason}`
-              : "assignment dependency repair did not make the workspace ready",
-            payload: {
-              command: dependencyRepair.command,
-              attempted: dependencyRepair.attempted,
-              coalesced: dependencyRepair.coalesced,
-              rechecked: dependencyRepair.rechecked,
-              succeeded: dependencyRepair.succeeded,
-              output: dependencyRepair.output,
-              skippedReason: dependencyRepair.skippedReason,
-              workspaceFingerprint: dependencyRepair.workspaceFingerprint,
-              readinessFingerprint: dependencyRepair.readinessFingerprint,
-              initialReady: dependencyRepair.initial.ready,
-              finalReady: dependencyRepair.final.ready,
-            },
-          });
-        } else if (dependencyRepair?.attempted) {
-          await appendRunEvent(currentRun, {
-            eventType: "runtime.assignment_dependency_repair",
-            stream: "system",
-            level: "info",
-            message: "assignment dependency repair completed",
-            payload: {
-              command: dependencyRepair.command,
-              attempted: dependencyRepair.attempted,
-              coalesced: dependencyRepair.coalesced,
-              rechecked: dependencyRepair.rechecked,
-              succeeded: dependencyRepair.succeeded,
-              output: dependencyRepair.output,
-              skippedReason: dependencyRepair.skippedReason,
-              workspaceFingerprint: dependencyRepair.workspaceFingerprint,
-              readinessFingerprint: dependencyRepair.readinessFingerprint,
-              initialReady: dependencyRepair.initial.ready,
-              finalReady: dependencyRepair.final.ready,
-            },
-          });
-        }
-        await appendRunEvent(currentRun, {
-          eventType: "runtime.assignment_preflight",
-          stream: "system",
-          level: workspacePreflight.ready ? "info" : "error",
-          message: workspacePreflight.ready
-            ? dependencyRepair?.attempted
-              ? "assignment run workspace preflight passed after dependency repair"
-              : "assignment run workspace preflight passed"
-            : "assignment run workspace preflight failed",
-          payload: {
-            ...workspacePreflight,
-            initialReady: dependencyRepair?.initial.ready ?? workspacePreflight.ready,
-            dependencyRepair: dependencyRepair
-              ? {
-                  command: dependencyRepair.command,
-                  attempted: dependencyRepair.attempted,
-                  coalesced: dependencyRepair.coalesced,
-                  rechecked: dependencyRepair.rechecked,
-                  succeeded: dependencyRepair.succeeded,
-                  output: dependencyRepair.output,
-                  skippedReason: dependencyRepair.skippedReason,
-                }
-              : null,
-          },
-        });
-        if (!workspacePreflight.ready) {
-          throw new AssignmentDependencyPreflightError(workspacePreflight, dependencyRepair);
-        }
-      }
-
       handle = await runLogStore.begin({
         orgId: run.orgId,
         agentId: run.agentId,
@@ -1623,9 +1516,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         }
       }
     } catch (err) {
-      const isAssignmentDependencyPreflightFailure = err instanceof AssignmentDependencyPreflightError;
       const isWorkspacePreflightFailure =
-        isAssignmentDependencyPreflightFailure ||
         isWorkspacePermissionPreflightError(err) ||
         isManagedWorkspaceConfigurationError(err);
       const message = redactCurrentUserText(
@@ -1752,11 +1643,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
         if (ownsTerminalState) {
           await appendForbiddenMarkerEvent(failedRun, buildForbiddenMarkerScan(null));
           await appendRunEvent(failedRun, {
-            eventType: isAssignmentDependencyPreflightFailure
-              ? "runtime.assignment_preflight_failed"
-              : isWorkspacePreflightFailure
-                ? "runtime.workspace_preflight_failed"
-                : "error",
+            eventType: isWorkspacePreflightFailure
+              ? "runtime.workspace_preflight_failed"
+              : "error",
             stream: "system",
             level: "error",
             message,
@@ -1764,9 +1653,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
               ? {
                   payload: {
                     errorCode: err.errorCode,
-                    ...(isAssignmentDependencyPreflightFailure
-                      ? err.failure
-                      : { failure: err.failure }),
+                    failure: err.failure,
                   },
                 }
               : {}),

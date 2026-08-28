@@ -19,7 +19,7 @@ import { Unzip, UnzipInflate, UnzipPassThrough } from "fflate";
 import { JSDOM } from "jsdom";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { notFound, unprocessable } from "../errors.js";
+import { HttpError, notFound, unprocessable } from "../errors.js";
 import { resolveRudderInstanceRoot } from "../home-paths.js";
 import type { ManagedMcpConnectionServiceOptions } from "./mcp/managed-connections.js";
 import { rudderPluginService } from "./rudder-plugins.js";
@@ -107,6 +107,11 @@ type CatalogCache = { etag: string | null; fetchedAt: string; document: CatalogD
 type CatalogLoad = { cache: CatalogCache; freshness: "fresh" | "stale" };
 
 class PluginSourceUnavailableError extends Error {}
+
+function throwAsPluginSourceUnavailable(error: unknown): never {
+  if (error instanceof HttpError || error instanceof PluginSourceUnavailableError) throw error;
+  throw new PluginSourceUnavailableError(error instanceof Error ? error.message : String(error));
+}
 
 function isPluginSourceUnavailable(error: unknown): error is PluginSourceUnavailableError {
   return error instanceof PluginSourceUnavailableError;
@@ -668,11 +673,11 @@ async function fetchGitHubFiles(
       next += 1;
       const entry = selected[index]!;
       const response = await fetchBounded(
-        fetcher,
-        `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${resolution.commitSha}/${entry.path.split("/").map(encodeURIComponent).join("/")}`,
-        { headers: { "user-agent": "Rudder-Plugin-Hub" } },
-        new Set(["raw.githubusercontent.com"]),
-      );
+          fetcher,
+          `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${resolution.commitSha}/${entry.path.split("/").map(encodeURIComponent).join("/")}`,
+          { headers: { "user-agent": "Rudder-Plugin-Hub" } },
+          new Set(["raw.githubusercontent.com"]),
+        ).catch((error) => throwAsPluginSourceUnavailable(error));
       if (!response.ok) throw unprocessable(`Plugin file fetch failed with HTTP ${response.status}: ${entry.relativePath}`);
       const content = Buffer.from(await response.arrayBuffer());
       if (content.byteLength > MAX_FILE_BYTES) throw unprocessable(`Plugin file exceeds 2 MiB: ${entry.relativePath}`);
@@ -899,6 +904,7 @@ export function rudderPluginCatalogService(
   const catalogHosts = new Set([catalogHost]);
   const cachePath = options.cachePath ?? path.resolve(resolveRudderInstanceRoot(), "cache", "plugin-catalog", "catalog.json");
   let memory: CatalogCache | null = null;
+  let catalogLoadPromise: Promise<CatalogLoad> | null = null;
   const resolutionCache = new Map<string, { expiresAt: number; value: RudderPluginSourceResolution }>();
   const freshnessLease = createCatalogFreshnessLease();
 
@@ -922,26 +928,32 @@ export function rudderPluginCatalogService(
   }
 
   async function loadCatalog(): Promise<CatalogLoad> {
-    const previous = await readCache();
-    try {
-      const response = await fetchBounded(fetcher, catalogUrl, {
-        headers: {
-          accept: "application/json",
-          "user-agent": "Rudder-Plugin-Hub",
-          ...(previous?.etag ? { "if-none-match": previous.etag } : {}),
-        },
-      }, catalogHosts);
-      if (response.status === 304 && previous) {
-        return { cache: previous, freshness: freshnessLease.observe("fresh") };
+    if (catalogLoadPromise) return catalogLoadPromise;
+    catalogLoadPromise = (async () => {
+      const previous = await readCache();
+      try {
+        const response = await fetchBounded(fetcher, catalogUrl, {
+          headers: {
+            accept: "application/json",
+            "user-agent": "Rudder-Plugin-Hub",
+            ...(previous?.etag ? { "if-none-match": previous.etag } : {}),
+          },
+        }, catalogHosts);
+        if (response.status === 304 && previous) {
+          return { cache: previous, freshness: freshnessLease.observe("fresh") };
+        }
+        const document = validateCatalog(await responseJson(response, "Plugin catalog"));
+        const cache = { etag: response.headers.get("etag"), fetchedAt: new Date().toISOString(), document };
+        await writeCache(cache);
+        return { cache, freshness: freshnessLease.observe("fresh") };
+      } catch (error) {
+        if (previous) return { cache: previous, freshness: freshnessLease.observe("stale") };
+        throw error;
       }
-      const document = validateCatalog(await responseJson(response, "Plugin catalog"));
-      const cache = { etag: response.headers.get("etag"), fetchedAt: new Date().toISOString(), document };
-      await writeCache(cache);
-      return { cache, freshness: freshnessLease.observe("fresh") };
-    } catch (error) {
-      if (previous) return { cache: previous, freshness: freshnessLease.observe("stale") };
-      throw error;
-    }
+    })().finally(() => {
+      catalogLoadPromise = null;
+    });
+    return catalogLoadPromise;
   }
 
   function catalogAssetUrl(relativePath: string): string {
@@ -954,7 +966,7 @@ export function rudderPluginCatalogService(
     if (!entry) throw notFound("Plugin catalog entry not found");
     const response = await fetchBounded(fetcher, catalogAssetUrl(entry.sourcePath), {
       headers: { accept: "application/json", "user-agent": "Rudder-Plugin-Hub" },
-    }, catalogHosts);
+    }, catalogHosts).catch((error) => throwAsPluginSourceUnavailable(error));
     const descriptor = validateDescriptor(await responseJson(response, "Plugin source descriptor"), entry);
     return { entry, descriptor, freshness: loaded.freshness };
   }
@@ -1180,7 +1192,7 @@ export function rudderPluginCatalogService(
         `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`,
       );
       if (current) return current;
-      return preparePreview(orgId, descriptor, resolution, slug, `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`);
+      return await preparePreview(orgId, descriptor, resolution, slug, `/api/plugins/catalog/${encodeURIComponent(slug)}/icon`);
     } catch (error) {
       if (!isPluginSourceUnavailable(error)) throw error;
       const stored = await db.select({ id: pluginImportReports.id })

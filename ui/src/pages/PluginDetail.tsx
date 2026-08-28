@@ -1,5 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
+import { PluginIcon, themedPluginIconUrl } from "@/components/PluginIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -306,7 +307,6 @@ export function PluginDetail() {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [imageFailed, setImageFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accessExpansionConfirmed, setAccessExpansionConfirmed] = useState(false);
   const [skillConflictStrategy, setSkillConflictStrategy] = useState<"keep" | "replace" | "rename" | null>(null);
@@ -327,13 +327,7 @@ export function PluginDetail() {
     refetchOnWindowFocus: false,
   });
   const detail = detailQuery.data ?? null;
-  const themedIconUrl = detail?.iconUrl
-    ? `${detail.iconUrl}${detail.iconUrl.includes("?") ? "&" : "?"}theme=${resolvedTheme}`
-    : "";
-
-  useEffect(() => {
-    setImageFailed(false);
-  }, [themedIconUrl]);
+  const themedIconUrl = themedPluginIconUrl(detail?.iconUrl, resolvedTheme);
 
   useEffect(() => {
     if (!selectedOrganizationId || !detail?.previewId || previewId === detail.previewId) return;
@@ -491,11 +485,13 @@ export function PluginDetail() {
         <header className="mt-8 flex flex-col gap-5 border-b border-[color:var(--border-soft)] pb-8 sm:flex-row sm:items-start">
           <div className="flex min-w-0 flex-1 items-start gap-4 sm:gap-5">
             <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-sm">
-              {!imageFailed && themedIconUrl ? (
-                <img src={themedIconUrl} alt="" className="h-full w-full object-cover" onError={() => setImageFailed(true)} />
-              ) : (
-                <Package className="h-7 w-7 text-muted-foreground" aria-hidden />
-              )}
+              <PluginIcon
+                src={themedIconUrl}
+                fallback={Package}
+                className="h-full w-full p-1"
+                fallbackClassName="h-7 w-7 text-muted-foreground"
+                testId="plugin-detail-icon"
+              />
             </div>
             <div className="min-w-0 pt-0.5">
               <div className="flex flex-wrap items-center gap-2">

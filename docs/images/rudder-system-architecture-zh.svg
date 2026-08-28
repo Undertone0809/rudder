@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Rudder 如何串起一次完整的 Agent 工作</title>
+  <desc id="desc">组织是边界，目标给工作方向，Chat 或 Issue 承载请求，Agent 通过运行工具产生一次 Agent Run，输出与证据接受人的评审，确认后的经验进入上下文、技能、决策或工作流，影响未来运行。</desc>
+  <defs>
+    <pattern id="paper-lines" width="64" height="64" patternUnits="userSpaceOnUse"><path d="M0 63.5H64" stroke="#6a9bcc" stroke-opacity="0.065"/></pattern>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#141413"/></marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#788c5d"/></marker>
+    <style>
+      .serif{font-family:"Noto Serif SC","Songti SC",STSong,"Lora",Georgia,serif;fill:#141413}
+      .mono{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;fill:#5b5851;letter-spacing:1.3px}
+      .head{font-family:"Noto Serif SC","Songti SC",STSong,"Lora",Georgia,serif;fill:#141413;font-size:25px;font-weight:700}
+      .body{font-family:"Noto Serif SC","Songti SC",STSong,"Lora",Georgia,serif;fill:#4e4b44;font-size:19px}
+      .edge{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;fill:#6b685f;font-size:13px;letter-spacing:.7px}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#faf9f5"/><rect width="1600" height="900" fill="url(#paper-lines)"/>
+  <text x="80" y="144" class="serif" font-size="49" font-weight="700">一个组织，串起一次完整的 Agent 工作</text>
+  <text x="80" y="187" class="serif" font-size="21" fill="#5d5a52">这不是功能清单，而是一条可追溯关系：为什么做、在哪里推进、谁执行、留下什么、由谁决定。</text>
+
+  <rect x="82" y="234" width="1436" height="566" fill="none" stroke="#141413" stroke-width="2"/>
+  <rect x="82" y="234" width="230" height="44" fill="#141413"/>
+  <text x="104" y="263" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" fill="#faf9f5" font-size="14" letter-spacing="1.4">ORGANIZATION BOUNDARY</text>
+
+  <g transform="translate(128 360)">
+    <rect width="210" height="150" fill="#d97757"/>
+    <text x="24" y="49" class="head">目标</text><text x="24" y="83" class="body">解释为什么做</text>
+    <text x="24" y="123" class="edge">GOAL</text>
+  </g>
+  <path d="M338 435H410" stroke="#141413" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="348" y="418" class="edge">TRACES TO</text>
+
+  <g transform="translate(430 334)">
+    <rect width="244" height="202" fill="#faf9f5" stroke="#141413" stroke-width="2"/>
+    <rect width="244" height="14" fill="#6a9bcc"/>
+    <text x="24" y="65" class="head">Chat 或 Issue</text><text x="24" y="101" class="body">承载请求与上下文</text><text x="24" y="136" class="body">按需增加协作结构</text>
+    <text x="24" y="176" class="edge">WORK SURFACE</text>
+  </g>
+  <path d="M674 435H746" stroke="#141413" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="688" y="418" class="edge">ROUTES TO</text>
+
+  <g transform="translate(766 334)">
+    <rect width="210" height="202" fill="#faf9f5" stroke="#141413" stroke-width="2"/>
+    <rect width="210" height="14" fill="#788c5d"/>
+    <text x="24" y="65" class="head">Agent</text><text x="24" y="101" class="body">长期职责</text><text x="24" y="136" class="body">指令、技能与预算</text>
+    <text x="24" y="176" class="edge">REUSABLE TEAMMATE</text>
+  </g>
+  <path d="M976 435H1048" stroke="#141413" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="989" y="418" class="edge">STARTS</text>
+
+  <g transform="translate(1068 334)">
+    <rect width="244" height="202" fill="#6a9bcc"/>
+    <text x="24" y="65" class="head">Agent Run</text><text x="24" y="101" class="body">调用运行工具</text><text x="24" y="136" class="body">一次尝试，一条记录</text>
+    <text x="24" y="176" class="edge" fill="#333">CODEX · CLAUDE · HTTP</text>
+  </g>
+
+  <path d="M1190 536V594" stroke="#141413" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1208" y="570" class="edge">PRODUCES</text>
+  <g transform="translate(1030 614)">
+    <rect width="320" height="118" fill="#faf9f5" stroke="#141413" stroke-width="2"/>
+    <text x="24" y="48" class="head">输出与证据</text><text x="24" y="82" class="body">文件、回答、链接、用量、错误</text>
+  </g>
+
+  <path d="M1030 673H910" stroke="#141413" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="932" y="656" class="edge">REVIEW</text>
+  <g transform="translate(644 614)">
+    <rect width="246" height="118" fill="#d97757"/>
+    <text x="24" y="48" class="head">人做决定</text><text x="24" y="82" class="body">接受、退回、阻塞、继续</text>
+  </g>
+
+  <path d="M644 673H524" stroke="#788c5d" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <text x="546" y="656" class="edge" fill="#788c5d">IF APPROVED</text>
+  <g transform="translate(164 614)">
+    <rect width="340" height="118" fill="#faf9f5" stroke="#788c5d" stroke-width="2"/>
+    <text x="24" y="48" class="head">沉淀可复用经验</text><text x="24" y="82" class="body">上下文 · 技能 · 决策 · 工作流</text>
+  </g>
+
+  <path d="M256 614C256 568 320 566 420 566H830C908 566 871 536 871 536" fill="none" stroke="#788c5d" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <text x="390" y="590" class="edge" fill="#788c5d">BETTER FUTURE RUNS</text>
+</svg>

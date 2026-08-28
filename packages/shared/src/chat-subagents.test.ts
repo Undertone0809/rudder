@@ -255,4 +255,123 @@ describe("chat subagent transcript projection", () => {
       }),
     ]);
   });
+
+  it("keeps a captured response and transcript when a newer status snapshot is sparse", () => {
+    const entries: ChatStreamTranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-07-29T04:00:00.000Z",
+        name: "subagent_activity",
+        toolUseId: "activity-complete",
+        input: {
+          id: "activity-complete",
+          activity_kind: "completed",
+          agent_path: "/root/runtime_verifier",
+          receiver_thread_ids: ["thread-runtime"],
+          agent_transcripts: {
+            "thread-runtime": {
+              status: "completed",
+              entries: [
+                {
+                  kind: "assistant",
+                  ts: "2026-07-29T04:00:01.000Z",
+                  text: "Runtime verification passed.",
+                  phase: "final_answer",
+                  segmentId: "final-a",
+                },
+                {
+                  kind: "assistant",
+                  ts: "2026-07-29T04:00:01.000Z",
+                  text: "Runtime verification passed.",
+                  phase: "final_answer",
+                  segmentId: "final-b",
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-07-29T04:00:01.500Z",
+        toolUseId: "activity-complete",
+        toolName: "subagent_activity",
+        isError: false,
+        content: JSON.stringify({
+          id: "activity-complete",
+          activity_kind: "completed",
+          agent_path: "/root/runtime_verifier",
+          receiver_thread_ids: ["thread-runtime"],
+          agent_transcripts: {
+            "thread-runtime": {
+              status: "completed",
+              entries: [
+                {
+                  kind: "assistant",
+                  ts: "2026-07-29T04:00:01.000Z",
+                  text: "Runtime verification passed.",
+                  phase: "final_answer",
+                  segmentId: "final-a",
+                  generationId: "generation-projection",
+                  generationSeqStart: 7,
+                  generationSeqEnd: 7,
+                },
+                {
+                  kind: "assistant",
+                  ts: "2026-07-29T04:00:01.000Z",
+                  text: "Runtime verification passed.",
+                  phase: "final_answer",
+                  segmentId: "final-b",
+                  generationId: "generation-projection",
+                  generationSeqStart: 8,
+                  generationSeqEnd: 8,
+                },
+              ],
+            },
+          },
+        }),
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-07-29T04:00:02.000Z",
+        name: "wait_agent",
+        toolUseId: "wait-after-complete",
+        input: { receiver_thread_ids: ["thread-runtime"] },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-07-29T04:00:03.000Z",
+        toolUseId: "wait-after-complete",
+        toolName: "wait_agent",
+        isError: false,
+        content: JSON.stringify({
+          receiver_thread_ids: ["thread-runtime"],
+          agents_states: {
+            "thread-runtime": { status: "completed" },
+          },
+        }),
+      },
+    ];
+
+    expect(collectChatSubagentInspections(entries, context)).toEqual([
+      expect.objectContaining({
+        threadId: "thread-runtime",
+        state: "done",
+        status: "completed",
+        response: "Runtime verification passed.",
+        entries: [
+          expect.objectContaining({
+            kind: "assistant",
+            segmentId: "final-a",
+            generationId: "generation-projection",
+          }),
+          expect.objectContaining({
+            kind: "assistant",
+            segmentId: "final-b",
+            generationId: "generation-projection",
+          }),
+        ],
+      }),
+    ]);
+  });
 });

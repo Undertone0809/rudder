@@ -125,6 +125,150 @@ test.describe("Plugins V1", () => {
     });
   });
 
+  test("renders catalog icons for both discovery and installed Plugin cards", async ({ page }, testInfo) => {
+    const organization = await createOrganization(page.request, "Plugin-Icons");
+    const installedAt = "2026-08-28T00:00:00.000Z";
+    const iconPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+
+    await page.route(new RegExp(`/api/orgs/${organization.id}/plugins$`), async (route) => {
+      await route.fulfill({
+        status: 200,
+      json: {
+          installed: [{
+            id: "installed-canva",
+            orgId: organization.id,
+            packageId: "package-canva",
+            previousPackageId: null,
+            name: "canva",
+            displayName: "Canva",
+            description: "Search Canva designs.",
+            version: "1.0.0",
+            publisher: "Canva",
+            sourceLabel: "Canva",
+            digest: "a".repeat(64),
+            enabled: true,
+            lifecycleState: "installed",
+            setupState: "ready",
+            healthState: "healthy",
+            updateState: "none",
+            components: [{
+              id: "component-canva",
+              type: "skill",
+              key: "skill:canva",
+              displayName: "Canva",
+              status: "ready",
+              targetId: "skill-canva",
+              metadata: {},
+            }],
+            manifest: {},
+            pendingUpdate: null,
+            installedAt,
+            updatedAt: installedAt,
+          }],
+          localApps: [],
+          discover: [{
+            reportId: "report-canva",
+            packageId: "package-canva-source",
+            catalogSlug: "canva",
+            name: "canva",
+            displayName: "Renamed Canva",
+            description: "A configured Canva source with a customized display name.",
+            version: "1.0.0",
+            publisher: "Different Publisher",
+            sourceLabel: "Pinned Marketplace/canva",
+            sourceType: "git",
+            digest: "b".repeat(64),
+            category: "Creativity",
+            policy: {},
+            components: [],
+          }, {
+            reportId: "report-unrelated-canva",
+            packageId: "package-unrelated-canva-source",
+            catalogSlug: null,
+            name: "canva",
+            displayName: "Unrelated Canva Fork",
+            description: "A same-named source that is not the curated Canva entry.",
+            version: "1.0.0",
+            publisher: "Different Publisher",
+            sourceLabel: "Pinned Marketplace/canva",
+            sourceType: "git",
+            digest: "c".repeat(64),
+            category: "Creativity",
+            policy: {},
+            components: [],
+          }],
+          discoverSource: "configured",
+        },
+      });
+    });
+    await page.route(new RegExp(`/api/orgs/${organization.id}/plugins/catalog$`), async (route) => {
+      await route.fulfill({
+        status: 200,
+        json: {
+          entries: [{
+            slug: "canva",
+            displayName: "Canva",
+            developer: "Canva",
+            category: "Creativity",
+            shortDescription: "Search, create, and adapt Canva designs.",
+            sourceKind: "codex_plugin",
+            iconUrl: "/api/plugins/catalog/canva/icon",
+            installedPluginId: "installed-canva",
+            installedVersion: null,
+            installedSourceSha: null,
+            latestVersion: "1.0.0",
+            latestSourceSha: "a".repeat(40),
+            updateAvailable: false,
+          }],
+          freshness: "fresh",
+          updatedAt: installedAt,
+        },
+      });
+    });
+    const catalogIconSlugs = ["superpowers", "marketing-skills", "vercel", "base44", "canva", "remotion", "zotero"];
+    const iconRequests = await Promise.all(catalogIconSlugs.flatMap((slug) => ["light", "dark"].map(async (theme) => {
+      const response = await page.request.get(`${E2E_BASE_URL}/api/plugins/catalog/${slug}/icon?theme=${theme}`);
+      expect(response.ok(), `${slug} ${theme}: ${await response.text()}`).toBe(true);
+      expect(response.headers()["content-type"]).toContain("image/png");
+      const body = await response.body();
+      expect(body.subarray(0, 8)).toEqual(iconPng.subarray(0, 8));
+      return { slug, theme, bodyLength: body.length };
+    })));
+    expect(iconRequests).toHaveLength(catalogIconSlugs.length * 2);
+    expect(iconRequests.every((request) => request.bodyLength > 64)).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/hub`);
+    await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
+    await expect(page.getByTestId("installed-plugin-icon")).toHaveCount(1);
+    await expect(page.getByTestId("catalog-plugin-icon")).toHaveCount(1);
+    await expect(page.getByTestId("configured-plugin-icon")).toHaveCount(2);
+    await expect(page.locator('img[data-testid="configured-plugin-icon"]')).toHaveCount(1);
+    await expect(page.locator('svg[data-testid="configured-plugin-icon"]')).toHaveCount(1);
+    await expect(page.getByTestId("installed-plugin-icon")).toHaveAttribute(
+      "src",
+      /\/api\/plugins\/catalog\/canva\/icon\?theme=/,
+    );
+    await expect(page.getByTestId("catalog-plugin-icon")).toHaveAttribute(
+      "src",
+      /\/api\/plugins\/catalog\/canva\/icon\?theme=/,
+    );
+    await expect(page.locator('img[data-testid="configured-plugin-icon"]')).toHaveAttribute(
+      "src",
+      /\/api\/plugins\/catalog\/canva\/icon\?theme=/,
+    );
+    await expect(page.getByTestId("installed-plugin-icon")).toHaveJSProperty("complete", true);
+    await expect(page.getByTestId("catalog-plugin-icon")).toHaveJSProperty("complete", true);
+    await expect(page.locator('img[data-testid="configured-plugin-icon"]')).toHaveJSProperty("complete", true);
+    await page.screenshot({
+      path: `/tmp/rudder-plugin-icons-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
+  });
+
   test("gates the Hub rail behind Experimental Plugins while preserving direct routes", async ({ page }, testInfo) => {
     const organization = await createOrganization(page.request, "Plugins-Rail-Gate");
     await page.request.patch(`${E2E_BASE_URL}/api/instance/settings/general`, {

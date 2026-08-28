@@ -18,6 +18,59 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月28日" description="v0.7.15" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.15
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.15)
+
+这个版本让 Rudder 更容易理解 Agent 的工具结果和运行记录，并为 Chat、Desktop 及跨平台安装提供更可靠的恢复体验。
+
+### 新功能
+
+- 为 40 个内置 Rudder MCP 工具增加语义结果卡片，覆盖 Goal、Issue、Project、审批和 Automation。卡片可链接到相关记录，显示摘要和结构化回执，长列表按需渐进加载，明确呈现最终结果，并隐藏 Webhook 密钥。
+- 在 Run Detail 中为稳定的 Transcript 条目增加批注，并支持选中文本后将其作为反馈发送。
+- 将命令详情重做为聚焦的 Shell 视图，支持复制命令输出，并移除 Task 和 Markdown 页签。
+
+### 改进
+
+- 改进 Chat 反馈恢复：对话缺失时仍保留草稿和批注，Project 上下文加载失败会重试，并防止同一发送操作重复提交。
+- 让失败的 Chat 回复更容易处理：现在聚焦于“重试”和“打开运行”，不再显示过时的回复内容或操作。
+- Chat 草稿不再需要等待运行时上下文准备完成后才可用。
+- 改进 Markdown 渲染和编辑中链接、图片及文本选中的稳定性，并让窄窗口下的 Issue 创建控件保持可用。
+- 改进 Desktop 账户信息连续性：头像在重启后仍会保留，图片无法加载时回退为姓名首字母。
+
+### 问题修复
+
+- 修复 Windows CLI 安装和运行时安装中的 npm 调用问题。
+- 修复 Desktop 渲染器重新加载后版本说明消失的问题；在用户确认前，版本说明会继续可用。
+
+</Update>
+
+<Update label="2026年8月26日" description="v0.7.14" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.14
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.14)
+
+这个版本让 Agent 工作更容易调整和检查，并进一步明确了 Rudder 的关键工作流和文档。
+
+### 新功能
+
+- 为支持的本地运行时增加语义化 Agent 指令边界，并覆盖执行过程中指令上下文的保留行为。
+- 为概览文档增加中英文架构图，并将 App Builder 标记为 Beta。
+
+### 改进
+
+- Ask User 问题现在始终提供 `Other` 自由文本回答，即使调用方关闭了自由文本选项；该回答也支持相同的附件流程。
+- 统一 Goal 详情页签的几何样式，并改善 Transcript、工作区复制操作和 Chat 工作流的呈现。
+
+### 问题修复
+
+- 让 Agent hire 审批检查识别操作者，在授权场景下允许 Issue 无需 checkout 即可完成，并隔离未激活 Library 侧栏的查询。
+
+</Update>
+
 <Update label="2026年8月23日" description="v0.7.13" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.13

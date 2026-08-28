@@ -529,6 +529,202 @@ test.describe("Chat streaming", () => {
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
   });
 
+  test("keeps streamed Markdown list, link, and loaded icon nodes stable", async ({ page }) => {
+    test.setTimeout(120_000);
+    const evidenceDir = path.join(os.tmpdir(), "r6z-175-e2e");
+    await fs.mkdir(evidenceDir, { recursive: true });
+    await page.setViewportSize({ width: 1_600, height: 1_000 });
+
+    const pageErrors: string[] = [];
+    const requestFailures: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("requestfailed", (request) => {
+      const errorText = request.failure()?.errorText ?? "unknown request failure";
+      if (!errorText.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${errorText}`);
+    });
+
+    const organization = await createStreamingOrg(
+      page,
+      `Stable-Markdown-${Date.now()}`,
+      {
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_APP_SERVER_STUB,
+          chatAppServerEnabled: true,
+        },
+      },
+    );
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.theme", "dark");
+    }, organization.id);
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 60_000 });
+    await composer.fill("Keep streamed Markdown nodes stable");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const stopButton = page.getByRole("button", { name: "Stop streaming" });
+    await expect(stopButton).toBeVisible({ timeout: 15_000 });
+    const firstLink = page.locator("a.rudder-website-link", { hasText: "Rudder" }).first();
+    const firstItem = firstLink.locator("xpath=ancestor::li[1]");
+    const firstIcon = firstLink.locator(".rudder-website-link-icon");
+    await expect(firstLink).toHaveAttribute("href", "https://rudderhq.dev/docs", { timeout: 30_000 });
+    await expect(firstIcon).toHaveAttribute("data-website-icon", "metadata", { timeout: 30_000 });
+
+    const initialGeometry = await firstItem.evaluate((element) => {
+      const link = element.querySelector("a.rudder-website-link");
+      const icon = link?.querySelector(".rudder-website-link-icon");
+      if (!(link instanceof HTMLElement) || !(icon instanceof HTMLElement)) {
+        throw new Error("Expected the first streamed list item to contain its link and icon");
+      }
+      const itemBox = element.getBoundingClientRect();
+      const linkBox = link.getBoundingClientRect();
+      const iconBox = icon.getBoundingClientRect();
+      const virtualRow = element.closest("[data-virtualized-activity-key]");
+      const transcriptItem = element.closest("[data-testid='chat-transcript-item']");
+      const transcriptColumn = element.closest("[data-transcript-chat-column]");
+      const markdown = element.closest(".rudder-markdown");
+      if (!virtualRow || !transcriptItem || !transcriptColumn || !markdown) {
+        throw new Error("Expected the streamed list item to be inside the Chat transcript hierarchy");
+      }
+      const tracked = {
+        virtualRow,
+        transcriptItem,
+        transcriptColumn,
+        markdown,
+        item: element,
+        link,
+        icon,
+        removed: false,
+        observer: null as MutationObserver | null,
+      };
+      tracked.observer = new MutationObserver(() => {
+        if (!element.isConnected || !link.isConnected || !icon.isConnected) tracked.removed = true;
+      });
+      tracked.observer.observe(document.body, { childList: true, subtree: true });
+      (window as typeof window & { __r6z175Tracked?: typeof tracked }).__r6z175Tracked = tracked;
+      return {
+        item: { x: itemBox.x, y: itemBox.y, height: itemBox.height },
+        link: { x: linkBox.x, y: linkBox.y, height: linkBox.height },
+        icon: { width: iconBox.width, height: iconBox.height },
+        marker: getComputedStyle(element).listStyleType,
+      };
+    });
+    expect(initialGeometry.marker).toBe("disc");
+
+    await expect(firstItem.locator("xpath=ancestor::ul[1]")).toContainText("Streamed item 20", { timeout: 15_000 });
+    await expect(stopButton).toBeVisible();
+    const retainedState = await firstItem.evaluate((currentItem) => {
+      const tracked = (window as typeof window & {
+        __r6z175Tracked?: {
+          virtualRow: Element;
+          transcriptItem: Element;
+          transcriptColumn: Element;
+          markdown: Element;
+          item: Element;
+          link: Element;
+          icon: Element;
+          removed: boolean;
+          observer: MutationObserver;
+        };
+      }).__r6z175Tracked;
+      if (!tracked) throw new Error("Streamed Markdown node tracker was not installed");
+      const currentLink = currentItem.querySelector("a.rudder-website-link");
+      const currentIcon = currentLink?.querySelector(".rudder-website-link-icon");
+      tracked.observer.disconnect();
+      return {
+        removed: tracked.removed,
+        virtualRowConnected: tracked.virtualRow.isConnected,
+        transcriptItemConnected: tracked.transcriptItem.isConnected,
+        transcriptColumnConnected: tracked.transcriptColumn.isConnected,
+        markdownConnected: tracked.markdown.isConnected,
+        sameItem: currentItem === tracked.item,
+        sameLink: currentLink === tracked.link,
+        sameIcon: currentIcon === tracked.icon,
+        itemConnected: tracked.item.isConnected,
+        linkConnected: tracked.link.isConnected,
+        iconConnected: tracked.icon.isConnected,
+        marker: getComputedStyle(currentItem).listStyleType,
+        genericIcon: currentIcon?.getAttribute("data-website-icon") === "generic",
+      };
+    });
+    expect(retainedState).toEqual({
+      removed: false,
+      virtualRowConnected: true,
+      transcriptItemConnected: true,
+      transcriptColumnConnected: true,
+      markdownConnected: true,
+      sameItem: true,
+      sameLink: true,
+      sameIcon: true,
+      itemConnected: true,
+      linkConnected: true,
+      iconConnected: true,
+      marker: "disc",
+      genericIcon: false,
+    });
+    const finalStreamingGeometry = await firstItem.evaluate((element) => {
+      const link = element.querySelector("a.rudder-website-link")!;
+      const icon = link.querySelector(".rudder-website-link-icon")!;
+      const itemBox = element.getBoundingClientRect();
+      const linkBox = link.getBoundingClientRect();
+      const iconBox = icon.getBoundingClientRect();
+      return {
+        item: { x: itemBox.x, y: itemBox.y, height: itemBox.height },
+        link: { x: linkBox.x, y: linkBox.y, height: linkBox.height },
+        icon: { width: iconBox.width, height: iconBox.height },
+      };
+    });
+    expect(finalStreamingGeometry).toEqual({
+      item: initialGeometry.item,
+      link: initialGeometry.link,
+      icon: initialGeometry.icon,
+    });
+    await page.screenshot({ path: path.join(evidenceDir, "streaming-desktop-dark.png"), fullPage: true });
+
+    await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
+    await expect(stopButton).toHaveCount(0);
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(assistantMessage.locator("li")).toHaveCount(21);
+    await expect(assistantMessage.locator(".rudder-website-link-icon").first())
+      .toHaveAttribute("data-website-icon", "metadata");
+    await page.screenshot({ path: path.join(evidenceDir, "final-desktop-dark.png"), fullPage: true });
+
+    const chatId = currentChatId(page.url());
+    const chatUrl = `/${organization.issuePrefix}/messenger/chat/${chatId}`;
+    await page.reload();
+    await expect(page.getByTestId("chat-assistant-message").last().locator("li")).toHaveCount(21, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-assistant-message").last().locator(".rudder-website-link-icon").first())
+      .toHaveAttribute("data-website-icon", "metadata");
+
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+    await page.goto(chatUrl);
+    const reopenedMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(reopenedMessage.locator("li")).toHaveCount(21, { timeout: 15_000 });
+    await expect(reopenedMessage.locator("li").first()).toHaveCSS("list-style-type", "disc");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(reopenedMessage).toBeVisible();
+    const mobileLayout = await reopenedMessage.locator(".rudder-markdown").evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      marker: getComputedStyle(element.querySelector("li")!).listStyleType,
+    }));
+    expect(mobileLayout.scrollWidth).toBeLessThanOrEqual(mobileLayout.clientWidth);
+    expect(mobileLayout.marker).toBe("disc");
+    const lastMobileItem = reopenedMessage.locator("li").last();
+    await lastMobileItem.scrollIntoViewIfNeeded();
+    await expect(lastMobileItem).toBeVisible();
+    await page.screenshot({ path: path.join(evidenceDir, "reopened-mobile-dark.png"), fullPage: true });
+
+    expect(pageErrors).toEqual([]);
+    expect(requestFailures).toEqual([]);
+  });
+
   test("clears composer loading before slow message reconciliation completes", async ({ page }) => {
     const organization = await createStreamingOrg(
       page,

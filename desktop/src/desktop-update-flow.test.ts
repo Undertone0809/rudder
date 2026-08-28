@@ -442,7 +442,7 @@ describe("desktop update flow", () => {
       { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
-      const { flow } = createFlow({
+      const { flow, sentProgressEvents } = createFlow({
         hasSignedUpdatePolicyCapability: () => true,
         hasExternalUpdateHelperCapability: () => true,
         getExternalUpdateHelper: () => ({
@@ -452,16 +452,30 @@ describe("desktop update flow", () => {
           mode: 0o755,
           sha256: "a".repeat(64),
         }),
+        isSignedUpdateAssetKindAuthorized: (_version, kind) => kind === "full" || kind === "shell",
       });
 
       await flow.runAutomaticUpdateCheck();
       expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock.mock.calls[0]?.[1]).toContain("--desktop-runtime-best-effort");
+      expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--no-runtime");
+      child.stdout.emit("data", `${JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "preparing_runtime",
+        message: "Preparing the target runtime for a lightweight update.",
+      })}\n`);
+      child.stdout.emit("data", `${JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "resolving_release",
+        message: "Resolving Desktop release...",
+      })}\n`);
       child.stdout.emit("data", `${JSON.stringify({
         source: "rudder-desktop-update",
         phase: "prepared",
         message: "Prepared",
-        assetName: "Rudder-99.0.0-macos-arm64-portable.zip",
+        assetName: "Rudder-99.0.0-macos-arm64-shell.zip",
         assetChecksum: artifactDigest,
+        assetKind: "shell",
         releaseDigest: "release-digest",
         stagedArtifactPath: artifactPath,
         stagedArtifactDigest: artifactDigest,
@@ -469,12 +483,23 @@ describe("desktop update flow", () => {
       child.emit("close", 0);
       await new Promise((resolve) => setImmediate(resolve));
 
+      expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+        phase: "preparing_runtime",
+        message: "Preparing the target runtime for a lightweight update.",
+      }));
+      expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+        phase: "resolving_release",
+        message: "Resolving Desktop release...",
+      }));
+      expect(sentProgressEvents).not.toContainEqual(expect.objectContaining({ phase: "prepared" }));
+
       expect(readDesktopAutoUpdateState(statePath)).toMatchObject({
         candidate: {
           version: "99.0.0",
           status: "staged",
           stagedArtifactPath: artifactPath,
           stagedArtifactDigest: artifactDigest,
+          assetKind: "shell",
         },
         preparation: null,
       });
@@ -482,6 +507,61 @@ describe("desktop update flow", () => {
       fetchMock.mockRestore();
       fs.rmSync(statePath, { force: true });
       fs.rmSync(artifactPath, { force: true });
+    }
+  });
+
+  it("uses the full automatic update path when policy does not authorize shell", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(Date.now() - 1).toISOString(),
+    });
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+      { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
+    ]), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const { flow } = createFlow({
+        hasSignedUpdatePolicyCapability: () => true,
+        hasExternalUpdateHelperCapability: () => true,
+        isSignedUpdateAssetKindAuthorized: (_version, kind) => kind === "full",
+      });
+
+      await flow.runAutomaticUpdateCheck();
+
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock.mock.calls[0]?.[1]).toContain("--no-runtime");
+      expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--desktop-runtime-best-effort");
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("does not automatically download shell when the signed policy lacks a full fallback", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(Date.now() - 1).toISOString(),
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+      { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
+    ]), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const { flow } = createFlow({
+        hasSignedUpdatePolicyCapability: () => true,
+        hasExternalUpdateHelperCapability: () => true,
+        isSignedUpdateAssetKindAuthorized: (_version, kind) => kind === "shell",
+      });
+
+      await flow.runAutomaticUpdateCheck();
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(readDesktopAutoUpdateState(statePath).candidate).toBeNull();
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
     }
   });
 
@@ -712,6 +792,7 @@ describe("desktop update flow", () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const listRunningRunsForUpdate = vi.fn(async () => createRunSummary());
+    const authorizeSignedUpdateRelease = vi.fn(() => true);
     try {
       const { flow } = createFlow({
         getBootState: () => ({
@@ -721,6 +802,7 @@ describe("desktop update flow", () => {
         hasExternalUpdateHelperCapability: () => true,
         getExternalUpdateHelper: () => ({ path: "/tmp/rudder-update-helper", protocol: "rudder-update-helper 0.1.0 protocol=1", ownerUid: 501, mode: 0o755, sha256: "a".repeat(64) }),
         hasSignedUpdatePolicyCapability: () => true,
+        authorizeSignedUpdateRelease,
         listRunningRunsForUpdate,
       });
 
@@ -742,6 +824,13 @@ describe("desktop update flow", () => {
         checkpoint: { instanceId: "default", databaseRevision: expect.any(String), migrationCompatible: true },
       });
       expect(JSON.stringify(request)).not.toContain("sourceReleaseDigest");
+      expect(authorizeSignedUpdateRelease).toHaveBeenCalledWith({
+        version: candidate.version,
+        assetName: candidate.assetName,
+        assetSha256: candidate.assetChecksum,
+        assetKind: "full",
+        releaseDigest,
+      });
       expect(listRunningRunsForUpdate).toHaveBeenCalledTimes(1);
     } finally {
       fs.rmSync(artifactPath, { force: true });
@@ -1123,7 +1212,8 @@ describe("desktop update flow", () => {
       status: "started",
     });
     expect(spawnMock.mock.calls[0]?.[1]).toContain("--wait-for-active-runs");
-    expect(spawnMock.mock.calls[0]?.[1]).toContain("--no-runtime");
+    expect(spawnMock.mock.calls[0]?.[1]).toContain("--desktop-runtime-best-effort");
+    expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--no-runtime");
 
     child.stdout.emit("data", `${JSON.stringify({
       source: "rudder-desktop-update",

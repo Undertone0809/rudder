@@ -1,61 +1,167 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentCliCapabilities } from "../cli/src/agent-v1-registry.js";
-import {
-  rudderMcpInputSchemaForCapability,
-  rudderMcpSemanticToolContract,
-} from "../packages/agent-runtime-utils/src/rudder-mcp-contract.js";
-import { fingerprintRudderMcpToolManifest } from "../packages/agent-runtime-utils/src/rudder-mcp-fingerprint.js";
+import { stableRudderMcpContractJson } from "../packages/agent-runtime-utils/src/rudder-mcp-fingerprint.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outputPath = path.join(
-  repoRoot,
-  "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
-);
+const sourcePath = path.join(repoRoot, "contracts/rudder-agent-contract/v1.json");
+const outputs = {
+  cli: path.join(repoRoot, "cli/src/agent-v1-capabilities.generated.ts"),
+  mcp: path.join(repoRoot, "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts"),
+  contract: path.join(repoRoot, "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts"),
+  rust: path.join(repoRoot, "native/crates/agent-contract-core/src/contract.generated.json"),
+};
 
-function toolName(capabilityId: string): string {
-  return `rudder_${capabilityId.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")}`;
+type JsonObject = Record<string, unknown>;
+
+interface ContractCapability {
+  id: string;
+  cli: JsonObject;
+  mcp: (JsonObject & { name: string }) | null;
+  api: {
+    transport: "direct" | "cli-fallback";
+    method?: "GET" | "POST" | "PATCH";
+    pathTemplate?: string;
+  };
 }
 
-function render(): string {
-  const descriptors = getAgentCliCapabilities()
-    .filter((capability) => capability.contract === "agent-v1")
-    .map((capability) => ({
-      capabilityId: capability.id,
-      name: toolName(capability.id),
-      description: capability.description,
-      mutating: capability.mutating,
-      requiresOrgId: capability.requiresOrgId,
-      requiresAgentId: capability.requiresAgentId,
-      attachesRunIdWhenAvailable: capability.attachesRunIdWhenAvailable,
-    }));
-  const semanticContracts = descriptors.map((descriptor) => rudderMcpSemanticToolContract({
-    ...descriptor,
-    inputSchema: rudderMcpInputSchemaForCapability(descriptor.capabilityId),
-  }));
-  const coreContractHash = fingerprintRudderMcpToolManifest(
-    semanticContracts.filter((tool) => !tool.name.startsWith("rudder_browser_")),
-  );
-  const browserContractHash = fingerprintRudderMcpToolManifest(
-    semanticContracts.filter((tool) => tool.name.startsWith("rudder_browser_")),
-  );
+interface ContractSource extends JsonObject {
+  schema: "rudder.agent-contract-source/v1";
+  contractVersion: "rudder.agent-contract/v1";
+  capabilities: ContractCapability[];
+  normalizationProfiles: Record<string, string[]>;
+  differentialFixtures: Array<{
+    id: string;
+    profile: string;
+    left: unknown;
+    right: unknown;
+    expected: unknown;
+  }>;
+  g0DifferentialFixtures: Array<ContractSource["differentialFixtures"][number] & {
+    nodeEvidence: string[];
+  }>;
+}
 
+function stableJson(value: unknown): string {
+  return `${JSON.stringify(JSON.parse(stableRudderMcpContractJson(value)), null, 2)}\n`;
+}
+
+function sourceHash(source: ContractSource): string {
+  return createHash("sha256").update(stableRudderMcpContractJson(source)).digest("hex");
+}
+
+function assertSource(value: unknown): asserts value is ContractSource {
+  if (!value || typeof value !== "object") throw new Error("Rudder agent contract source must be an object");
+  const source = value as Partial<ContractSource>;
+  if (source.schema !== "rudder.agent-contract-source/v1" || source.contractVersion !== "rudder.agent-contract/v1") {
+    throw new Error("Unsupported Rudder agent contract source version");
+  }
+  if (!Array.isArray(source.capabilities) || !source.normalizationProfiles
+    || !Array.isArray(source.differentialFixtures) || !Array.isArray(source.g0DifferentialFixtures)) {
+    throw new Error("Incomplete Rudder agent contract source");
+  }
+  const ids = new Set<string>();
+  for (const capability of source.capabilities) {
+    if (!capability || typeof capability.id !== "string" || ids.has(capability.id)) {
+      throw new Error(`Invalid or duplicate capability id: ${String(capability?.id)}`);
+    }
+    ids.add(capability.id);
+    if ((capability.cli as { id?: unknown }).id !== capability.id) throw new Error(`CLI descriptor id mismatch for ${capability.id}`);
+    if (capability.mcp && capability.mcp.capabilityId !== capability.id) throw new Error(`MCP descriptor id mismatch for ${capability.id}`);
+    if (capability.api.transport === "direct" && (!capability.api.method || !capability.api.pathTemplate)) {
+      throw new Error(`Incomplete direct API descriptor for ${capability.id}`);
+    }
+  }
+  for (const [profile, pointers] of Object.entries(source.normalizationProfiles)) {
+    if (!Array.isArray(pointers) || pointers.some((pointer) => typeof pointer !== "string" || !pointer.startsWith("/"))) {
+      throw new Error(`Invalid normalization profile: ${profile}`);
+    }
+  }
+  for (const fixture of [...source.differentialFixtures, ...source.g0DifferentialFixtures]) {
+    if (!source.normalizationProfiles[fixture.profile]) throw new Error(`Unknown fixture normalization profile: ${fixture.profile}`);
+  }
+  for (const fixture of source.g0DifferentialFixtures) {
+    if (!Array.isArray(fixture.nodeEvidence) || fixture.nodeEvidence.length === 0
+      || fixture.nodeEvidence.some((entry) => typeof entry !== "string" || entry.trim().length === 0)) {
+      throw new Error(`G0 fixture lacks Node authority evidence: ${fixture.id}`);
+    }
+  }
+}
+
+async function readSource(): Promise<ContractSource> {
+  const parsed = JSON.parse(await readFile(sourcePath, "utf8")) as unknown;
+  assertSource(parsed);
+  return JSON.parse(stableRudderMcpContractJson(parsed)) as ContractSource;
+}
+
+function fingerprintTools(tools: Array<JsonObject & { name: string }>): string {
+  const semantic = tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  }));
+  return createHash("sha256").update(stableRudderMcpContractJson(semantic)).digest("hex");
+}
+
+function renderCli(source: ContractSource): string {
   return [
     "// Generated by scripts/generate-rudder-mcp-tool-descriptors.ts. Do not edit by hand.",
-    `export const RUDDER_MCP_TOOL_DESCRIPTORS = ${JSON.stringify(descriptors, null, 2)} as const;`,
-    `export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = ${JSON.stringify(coreContractHash)};`,
-    `export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = ${JSON.stringify(browserContractHash)};`,
+    'import type { AgentCliCapability } from "./agent-v1-registry.js";',
+    `export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = ${JSON.stringify(source.capabilities.map((capability) => capability.cli), null, 2)};`,
     "",
   ].join("\n");
 }
 
-const expected = render();
-if (process.argv.includes("--check")) {
-  const actual = await readFile(outputPath, "utf8").catch(() => "");
-  if (actual !== expected) {
-    throw new Error("Rudder MCP tool descriptors are stale; run pnpm mcp-contract:generate");
-  }
-} else {
-  await writeFile(outputPath, expected, "utf8");
+function renderMcp(source: ContractSource): string {
+  const tools = source.capabilities.flatMap((capability) => capability.mcp ? [capability.mcp] : []);
+  const descriptors = source.capabilities.flatMap((capability) => capability.mcp ? [{
+    capabilityId: capability.id,
+    name: capability.mcp.name,
+    description: capability.cli.description,
+    semanticDescription: capability.mcp.description,
+    annotations: capability.mcp.annotations,
+    mutating: capability.cli.mutating,
+    requiresOrgId: capability.cli.requiresOrgId,
+    requiresAgentId: capability.cli.requiresAgentId,
+    attachesRunIdWhenAvailable: capability.cli.attachesRunIdWhenAvailable,
+    inputSchema: capability.mcp.inputSchema,
+  }] : []);
+  const coreHash = fingerprintTools(tools.filter((tool) => !tool.name.startsWith("rudder_browser_")));
+  const browserHash = fingerprintTools(tools.filter((tool) => tool.name.startsWith("rudder_browser_")));
+  return [
+    "// Generated by scripts/generate-rudder-mcp-tool-descriptors.ts. Do not edit by hand.",
+    `export const RUDDER_MCP_TOOL_DESCRIPTORS = ${JSON.stringify(descriptors, null, 2)} as const;`,
+    `export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = ${JSON.stringify(coreHash)};`,
+    `export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = ${JSON.stringify(browserHash)};`,
+    `export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = ${JSON.stringify(sourceHash(source))};`,
+    "",
+  ].join("\n");
 }
+
+function renderContract(source: ContractSource): string {
+  return [
+    "// Generated by scripts/generate-rudder-mcp-tool-descriptors.ts. Do not edit by hand.",
+    `export const RUDDER_AGENT_CONTRACT = ${JSON.stringify(source, null, 2)} as const;`,
+    `export const RUDDER_AGENT_CONTRACT_HASH = ${JSON.stringify(sourceHash(source))};`,
+    "",
+  ].join("\n");
+}
+
+async function writeOrCheck(filePath: string, expected: string, check: boolean): Promise<void> {
+  if (check) {
+    const actual = await readFile(filePath, "utf8").catch(() => "");
+    if (actual !== expected) throw new Error(`${path.relative(repoRoot, filePath)} is stale; run pnpm mcp-contract:generate`);
+    return;
+  }
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, expected, "utf8");
+}
+
+const check = process.argv.includes("--check");
+const source = await readSource();
+await writeOrCheck(sourcePath, stableJson(source), check);
+await writeOrCheck(outputs.cli, renderCli(source), check);
+await writeOrCheck(outputs.mcp, renderMcp(source), check);
+await writeOrCheck(outputs.contract, renderContract(source), check);
+await writeOrCheck(outputs.rust, stableJson({ ...source, artifactHash: sourceHash(source) }), check);

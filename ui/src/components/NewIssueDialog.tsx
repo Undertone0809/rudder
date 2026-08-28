@@ -29,17 +29,18 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { agentRunsApi } from "../api/agent-runs";
 import { agentsApi, type AgentRuntimeModel } from "../api/agents";
 import { assetsApi } from "../api/assets";
 import { authApi } from "../api/auth";
 import { ApiError } from "../api/client";
-import { issuesApi } from "../api/issues";
+import { issuesApi, type AgentIssueCreationRequest } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
-import { useDialog } from "../context/DialogContext";
+import { useDialog, type NewIssueDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { useToast } from "../context/ToastContext";
+import { useToast, type ToastAction } from "../context/ToastContext";
 import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -91,6 +92,9 @@ import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName 
 import { ProjectIcon } from "./ProjectIdentity";
 
 const DEBOUNCE_MS = 800;
+const AGENT_ISSUE_UNDO_TTL_MS = 12_000;
+const AGENT_ISSUE_UNDO_POLL_MS = 750;
+const AGENT_ISSUE_UNDO_REOPEN_DELAY_MS = 220;
 
 type StagedIssueFile = {
   id: string;
@@ -98,6 +102,26 @@ type StagedIssueFile = {
   kind: "document" | "attachment";
   documentKey?: string;
   title?: string | null;
+};
+
+type AgentIssueUndoDraft = {
+  orgId: string;
+  defaults: NewIssueDefaults;
+  openContextLocation: { pathname: string; search: string } | null;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  selectedLabelIds: string[];
+  assigneeValue: string;
+  reviewerValue: string;
+  projectId: string;
+  goalId: string;
+  projectWorkspaceId: string;
+  assigneeModelOverride: string;
+  assigneeThinkingEffort: string;
+  assigneeChrome: boolean;
+  stagedFiles: StagedIssueFile[];
 };
 
 const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
@@ -206,19 +230,21 @@ function shouldRotateAgentIssueIdempotencyKey(error: unknown) {
   return error instanceof ApiError && error.status >= 400 && error.status < 500;
 }
 
+function isCancellableAgentRunStatus(status: string) {
+  return status === "queued" || status === "running";
+}
+
 export function NewIssueDialog() {
-  const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
+  const { newIssueOpen, newIssueDefaults, openNewIssue, closeNewIssue } = useDialog();
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
   const queryClient = useQueryClient();
-  const { pushToast } = useToast();
+  const { pushToast, updateToast } = useToast();
   const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [creationMode, setCreationMode] = useState<IssueCreationMode>("manual");
-  const [agentCreationAgentId, setAgentCreationAgentId] = useState("");
-  const [agentInstruction, setAgentInstruction] = useState("");
   const [status, setStatus] = useState("todo");
   const [priority, setPriority] = useState("");
   const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
@@ -244,6 +270,10 @@ export function NewIssueDialog() {
   const pendingDraftSaveRef = useRef<{ draft: IssueDraft; savedDraftId: string | null } | null>(null);
   const agentIssueIdempotencyKeyRef = useRef<string | null>(null);
   const agentIssueSubmissionInFlightRef = useRef(false);
+  const agentIssueUndoDraftToRestoreRef = useRef<AgentIssueUndoDraft | null>(null);
+  const agentIssueUndoRestoreOpenRef = useRef(false);
+  const agentIssueUndoRestoreTimerRef = useRef<number | null>(null);
+  const agentIssueUndoWatcherCleanupRef = useRef(new Map<string, () => void>());
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
   const previousAssigneeAgentIdRef = useRef<string | null>(null);
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
@@ -257,7 +287,6 @@ export function NewIssueDialog() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
-  const agentInstructionEditorRef = useRef<MarkdownEditorRef>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -382,9 +411,8 @@ export function NewIssueDialog() {
 
   useEffect(() => {
     if (!newIssueOpen) return;
+    if (agentIssueUndoDraftToRestoreRef.current || agentIssueUndoRestoreOpenRef.current) return;
     setCreationMode("manual");
-    setAgentInstruction("");
-    setAgentCreationAgentId(newIssueDefaults.assigneeAgentId ?? "");
     agentIssueIdempotencyKeyRef.current = createAgentIssueIdempotencyKey();
   }, [newIssueOpen]);
 
@@ -530,6 +558,7 @@ export function NewIssueDialog() {
       parentId,
       contextSnapshot,
       idempotencyKey,
+      undoDraft: _undoDraft,
     }: {
       orgId: string;
       agentId: string;
@@ -539,6 +568,7 @@ export function NewIssueDialog() {
       parentId: string | null;
       contextSnapshot: Record<string, unknown>;
       idempotencyKey: string;
+      undoDraft: AgentIssueUndoDraft;
     }) => issuesApi.createAgentIssueRequest(orgId, {
       agentId,
       instruction,
@@ -548,14 +578,11 @@ export function NewIssueDialog() {
       contextSnapshot,
       idempotencyKey,
     }),
-    onSuccess: () => {
+    onSuccess: (request, { undoDraft }) => {
       clearPendingDraftSave();
       clearIssueAutosave();
       deleteIssueDraft(activeSavedIssueDraftId);
-      pushToast({
-        title: t("newIssue.agentRequest.accepted"),
-        tone: "success",
-      });
+      showAgentIssueUndoToast(request, undoDraft);
       reset();
       closeNewIssue();
     },
@@ -658,6 +685,14 @@ export function NewIssueDialog() {
   // Restore draft or apply defaults when dialog opens
   useEffect(() => {
     if (!newIssueOpen) return;
+    const undoDraft = agentIssueUndoDraftToRestoreRef.current;
+    if (undoDraft) {
+      agentIssueUndoDraftToRestoreRef.current = null;
+      agentIssueUndoRestoreOpenRef.current = true;
+      applyAgentIssueUndoDraft(undoDraft);
+      return;
+    }
+    if (agentIssueUndoRestoreOpenRef.current) return;
     setDialogCompanyId(selectedOrganizationId);
     const openContextLocation = openContextLocationRef.current ?? {
       pathname: location.pathname,
@@ -803,13 +838,203 @@ export function NewIssueDialog() {
     };
   }, [flushPendingDraftSave]);
 
+  useEffect(() => () => {
+    if (agentIssueUndoRestoreTimerRef.current !== null) {
+      window.clearTimeout(agentIssueUndoRestoreTimerRef.current);
+    }
+    for (const cleanup of agentIssueUndoWatcherCleanupRef.current.values()) cleanup();
+    agentIssueUndoWatcherCleanupRef.current.clear();
+  }, []);
+
+  function captureAgentIssueUndoDraft(orgId: string): AgentIssueUndoDraft {
+    return {
+      orgId,
+      defaults: { ...newIssueDefaults },
+      openContextLocation: openContextLocationRef.current
+        ? { ...openContextLocationRef.current }
+        : null,
+      title,
+      description,
+      status,
+      priority,
+      selectedLabelIds: [...selectedLabelIds],
+      assigneeValue,
+      reviewerValue,
+      projectId,
+      goalId,
+      projectWorkspaceId,
+      assigneeModelOverride,
+      assigneeThinkingEffort,
+      assigneeChrome,
+      stagedFiles: [...stagedFiles],
+    };
+  }
+
+  function applyAgentIssueUndoDraft(draft: AgentIssueUndoDraft) {
+    openContextLocationRef.current = draft.openContextLocation;
+    setDialogCompanyId(draft.orgId);
+    setTitle(draft.title);
+    setDescription(draft.description);
+    setCreationMode("agent");
+    setStatus(draft.status);
+    setPriority(draft.priority);
+    setSelectedLabelIds(draft.selectedLabelIds);
+    setLabelSearch("");
+    setAssigneeValue(draft.assigneeValue);
+    setReviewerValue(draft.reviewerValue);
+    setProjectId(draft.projectId);
+    setGoalId(draft.goalId);
+    setProjectWorkspaceId(draft.projectWorkspaceId);
+    setAssigneeOptionsOpen(false);
+    setAssigneeModelOverride(draft.assigneeModelOverride);
+    setAssigneeThinkingEffort(draft.assigneeThinkingEffort);
+    setAssigneeChrome(draft.assigneeChrome);
+    setStagedFiles(draft.stagedFiles);
+    setIsFileDragOver(false);
+    setCompanyOpen(false);
+    // Submission deletes the source saved draft. Undo restores its content as
+    // a fresh editable draft so subsequent Manual autosave cannot target a
+    // stale saved-draft id.
+    setActiveSavedIssueDraftId(null);
+  }
+
+  function restoreAgentIssueUndoDraft(draft: AgentIssueUndoDraft) {
+    agentIssueUndoDraftToRestoreRef.current = draft;
+    agentIssueUndoRestoreOpenRef.current = false;
+    agentIssueIdempotencyKeyRef.current = createAgentIssueIdempotencyKey();
+    if (agentIssueUndoRestoreTimerRef.current !== null) {
+      window.clearTimeout(agentIssueUndoRestoreTimerRef.current);
+    }
+    // Let the closing Radix dialog and overlay leave before reopening. An
+    // immediate false-to-true transition can strand the old overlay above the
+    // restored form and make the visible dialog non-interactive.
+    agentIssueUndoRestoreTimerRef.current = window.setTimeout(() => {
+      agentIssueUndoRestoreTimerRef.current = null;
+      openNewIssue(draft.defaults);
+    }, AGENT_ISSUE_UNDO_REOPEN_DELAY_MS);
+  }
+
+  function stopAgentIssueUndoWatcher(toastId: string) {
+    agentIssueUndoWatcherCleanupRef.current.get(toastId)?.();
+  }
+
+  function watchAgentIssueUndoAvailability(
+    toastId: string,
+    runId: string,
+    terminalPresentation: "accepted" | "unavailable" = "accepted",
+  ) {
+    let checking = false;
+    const cleanup = () => {
+      window.clearInterval(intervalHandle);
+      window.clearTimeout(expiryHandle);
+      agentIssueUndoWatcherCleanupRef.current.delete(toastId);
+    };
+    const checkAvailability = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const run = await agentRunsApi.get(runId);
+        if (isCancellableAgentRunStatus(run.status)) return;
+        cleanup();
+        updateToast(toastId, terminalPresentation === "accepted"
+          ? { action: null }
+          : {
+            title: t("newIssue.agentRequest.undoUnavailable"),
+            body: t("newIssue.agentRequest.runFinished", { status: run.status }),
+            tone: run.status === "cancelled" ? "info" : "warn",
+            countdown: false,
+            action: null,
+          });
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) return;
+        cleanup();
+        updateToast(toastId, {
+          title: t("newIssue.agentRequest.undoUnavailable"),
+          body: t("newIssue.agentRequest.runUnavailable"),
+          tone: "warn",
+          countdown: false,
+          action: null,
+        });
+      } finally {
+        checking = false;
+      }
+    };
+    const intervalHandle = window.setInterval(checkAvailability, AGENT_ISSUE_UNDO_POLL_MS);
+    const expiryHandle = window.setTimeout(cleanup, AGENT_ISSUE_UNDO_TTL_MS);
+    agentIssueUndoWatcherCleanupRef.current.set(toastId, cleanup);
+  }
+
+  function showAgentIssueUndoToast(request: AgentIssueCreationRequest, undoDraft: AgentIssueUndoDraft) {
+    const toastId = `agent-issue-request-${request.id}`;
+    const runId = request.runId;
+    let undoAction: ToastAction | undefined;
+
+    if (runId && isCancellableAgentRunStatus(request.status)) {
+      undoAction = {
+        label: t("newIssue.agentRequest.undo"),
+        pendingLabel: t("newIssue.agentRequest.undoing"),
+        onClick: async () => {
+          stopAgentIssueUndoWatcher(toastId);
+          updateToast(toastId, {
+            body: t("newIssue.agentRequest.cancelling"),
+            persistent: true,
+            countdown: false,
+          });
+          let terminalFailure = false;
+          try {
+            const cancelledRun = await agentRunsApi.cancel(runId);
+            if (cancelledRun.status !== "cancelled") {
+              terminalFailure = true;
+              updateToast(toastId, {
+                title: t("newIssue.agentRequest.undoUnavailable"),
+                body: t("newIssue.agentRequest.runFinished", { status: cancelledRun.status }),
+                tone: "warn",
+                persistent: true,
+                countdown: false,
+                action: null,
+              });
+              throw new Error(`Agent Run is already ${cancelledRun.status}`);
+            }
+            restoreAgentIssueUndoDraft(undoDraft);
+          } catch (error) {
+            if (!terminalFailure) {
+              updateToast(toastId, {
+                title: t("newIssue.agentRequest.undoFailed"),
+                body: error instanceof Error ? error.message : t("newIssue.agentRequest.undoFailedBody"),
+                tone: "error",
+                persistent: true,
+                countdown: false,
+                action: undoAction,
+              });
+              watchAgentIssueUndoAvailability(toastId, runId, "unavailable");
+            }
+            throw error;
+          }
+        },
+      };
+    }
+
+    const pushedToastId = pushToast({
+      id: toastId,
+      dedupeKey: toastId,
+      title: t("newIssue.agentRequest.accepted"),
+      tone: "success",
+      ttlMs: AGENT_ISSUE_UNDO_TTL_MS,
+      countdown: true,
+      action: undoAction,
+    });
+    if (pushedToastId && runId && undoAction) {
+      watchAgentIssueUndoAvailability(pushedToastId, runId);
+    }
+  }
+
   function reset() {
+    agentIssueUndoDraftToRestoreRef.current = null;
+    agentIssueUndoRestoreOpenRef.current = false;
     setDocumentSessionId((current) => current + 1);
     setTitle("");
     setDescription("");
     setCreationMode("manual");
-    setAgentCreationAgentId("");
-    setAgentInstruction("");
     setStatus("todo");
     setPriority("");
     setSelectedLabelIds([]);
@@ -834,10 +1059,15 @@ export function NewIssueDialog() {
   }
 
   function handleCloseNewIssue() {
-    flushPendingDraftSave();
+    agentIssueUndoDraftToRestoreRef.current = null;
+    agentIssueUndoRestoreOpenRef.current = false;
+    if (creationMode === "agent") {
+      clearPendingDraftSave();
+      clearIssueAutosave();
+    } else {
+      flushPendingDraftSave();
+    }
     setCreationMode("manual");
-    setAgentCreationAgentId("");
-    setAgentInstruction("");
     setDocumentSessionId((current) => current + 1);
     agentIssueIdempotencyKeyRef.current = null;
     agentIssueSubmissionInFlightRef.current = false;
@@ -850,7 +1080,6 @@ export function NewIssueDialog() {
     setDialogCompanyId(orgId);
     setAssigneeValue("");
     setReviewerValue("");
-    setAgentCreationAgentId("");
     setProjectId("");
     setGoalId("");
     setProjectWorkspaceId("");
@@ -895,21 +1124,18 @@ export function NewIssueDialog() {
     if (isCreatingOrRedirecting || nextMode === creationMode) return;
     if (nextMode === "agent") clearPendingDraftSave();
     setCreationMode(nextMode);
-    if (nextMode === "agent" && !agentCreationAgentId && selectedAssigneeAgentId) {
-      setAgentCreationAgentId(selectedAssigneeAgentId);
-    }
   }
 
   function handleSubmit() {
     if (!effectiveCompanyId || isCreatingOrRedirecting) return;
     if (creationMode === "agent") {
       if (agentIssueSubmissionInFlightRef.current) return;
-      const instruction = agentInstruction.trim();
-      if (!agentCreationAgentId || !instruction) return;
+      const instruction = description.trim();
+      if (!selectedAssigneeAgentId || !instruction) return;
       agentIssueSubmissionInFlightRef.current = true;
       createAgentIssueRequest.mutate({
         orgId: effectiveCompanyId,
-        agentId: agentCreationAgentId,
+        agentId: selectedAssigneeAgentId,
         instruction,
         projectId: projectId || null,
         goalId: goalId || null,
@@ -920,6 +1146,7 @@ export function NewIssueDialog() {
           search: openContextLocationRef.current?.search ?? location.search,
         },
         idempotencyKey: agentIssueIdempotencyKeyRef.current ??= createAgentIssueIdempotencyKey(),
+        undoDraft: captureAgentIssueUndoDraft(effectiveCompanyId),
       });
       return;
     }
@@ -1105,13 +1332,12 @@ export function NewIssueDialog() {
       (agents ?? []).filter((agent) => agent.status !== "terminated" && agent.status !== "pending_approval"),
       recentAssigneeIds,
     ).map((agent) => ({
-      id: agent.id,
+      id: assigneeValueFromSelection({ assigneeAgentId: agent.id }),
       label: agent.name,
       searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
     })),
     [agents, recentAssigneeIds],
   );
-  const agentCreationAgent = (agents ?? []).find((agent) => agent.id === agentCreationAgentId) ?? null;
   const reviewerOptions = useMemo<InlineEntityOption[]>(
     () => [
       ...currentUserAssigneeOption(currentUserId),
@@ -1159,8 +1385,8 @@ export function NewIssueDialog() {
   const isCreatingOrRedirecting =
     createIssue.isPending || createAgentIssueRequest.isPending || Boolean(redirectingIssueRef);
   const hasIssueTitle = title.trim().length > 0;
-  const hasAgentInstruction = agentCreationAgentId.length > 0 && agentInstruction.trim().length > 0;
-  const canSubmit = creationMode === "agent" ? hasAgentInstruction : hasIssueTitle;
+  const hasAgentRequest = Boolean(selectedAssigneeAgentId) && description.trim().length > 0;
+  const canSubmit = creationMode === "agent" ? hasAgentRequest : hasIssueTitle;
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1441,7 +1667,7 @@ export function NewIssueDialog() {
                 <div className="min-w-0 space-y-1">
                   <div className="text-[11px] font-medium text-muted-foreground">Agent</div>
                   <InlineEntitySelector
-                    value={agentCreationAgentId}
+                    value={assigneeValue}
                     options={agentCreationOptions}
                     placeholder="Select an Agent"
                     noneLabel="Select an Agent"
@@ -1450,22 +1676,24 @@ export function NewIssueDialog() {
                     variant="field"
                     className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                     disablePortal
-                    onConfirm={() => agentInstructionEditorRef.current?.focus()}
+                    onConfirm={() => descriptionEditorRef.current?.focus()}
                     onChange={(value) => {
                       if (isCreatingOrRedirecting) return;
-                      setAgentCreationAgentId(value);
-                      if (value) trackRecentAssignee(value);
+                      const nextAssigneeAgentId = parseAssigneeValue(value).assigneeAgentId;
+                      setAssigneeValue(value);
+                      if (nextAssigneeAgentId) trackRecentAssignee(nextAssigneeAgentId);
                     }}
                     renderTriggerValue={(option) =>
-                      option && agentCreationAgent ? (
-                        <AgentMenuLabel agent={agentCreationAgent} agentAvatarStyle="bare" />
+                      option && currentAssignee ? (
+                        <AgentMenuLabel agent={currentAssignee} agentAvatarStyle="bare" />
                       ) : (
                         <span className="text-muted-foreground">Select an Agent</span>
                       )
                     }
                     renderOption={(option) => {
                       if (!option.id) return <span className="truncate">{option.label}</span>;
-                      const agent = (agents ?? []).find((candidate) => candidate.id === option.id);
+                      const optionAgentId = parseAssigneeValue(option.id).assigneeAgentId;
+                      const agent = (agents ?? []).find((candidate) => candidate.id === optionAgentId);
                       return agent
                         ? <AgentMenuLabel agent={agent} agentAvatarStyle="bare" />
                         : <span className="truncate">{option.label}</span>;
@@ -1503,20 +1731,20 @@ export function NewIssueDialog() {
               </div>
             </div>
             <div
-              data-slot="agent-issue-instruction"
+              data-slot="agent-issue-description"
               className="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pb-2 pt-3"
             >
               <MarkdownEditor
-                ref={agentInstructionEditorRef}
+                ref={descriptionEditorRef}
                 engine="codemirror"
-                documentIdentity={`new-issue-agent:${effectiveCompanyId ?? "none"}:${documentSessionId}`}
-                value={agentInstruction}
+                documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
+                value={description}
                 onChange={(value) => {
-                  if (!isCreatingOrRedirecting) setAgentInstruction(value);
+                  if (!isCreatingOrRedirecting) setDescription(value);
                 }}
                 readOnly={isCreatingOrRedirecting}
-                ariaLabel="Instruction"
-                placeholder="Describe the Issue you want the Agent to create..."
+                ariaLabel="Issue Description"
+                placeholder="Add description..."
                 bordered={false}
                 mentions={mentionOptions}
                 onMentionQueryChange={setLibraryFileMentionQuery}
@@ -1789,6 +2017,7 @@ export function NewIssueDialog() {
               engine="codemirror" documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
               value={description}
               onChange={setDescription}
+              ariaLabel="Issue Description"
               placeholder="Add description..."
               bordered={false}
               mentions={mentionOptions}
@@ -1969,16 +2198,28 @@ export function NewIssueDialog() {
           {/* More (dates) */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger asChild>
-              <button className="inline-flex items-center justify-center rounded-md border border-border p-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground">
+              <button
+                type="button"
+                aria-label="More issue properties"
+                className="inline-flex items-center justify-center rounded-md border border-border p-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground"
+              >
                 <MoreHorizontal className="h-3 w-3" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-44 p-1" align="start">
-              <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
+            <PopoverContent
+              data-testid="new-issue-more-menu"
+              className="w-44 p-1"
+              side="bottom"
+              align="start"
+              sideOffset={8}
+              collisionPadding={12}
+              updatePositionStrategy="always"
+            >
+              <button type="button" className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
                 Start date
               </button>
-              <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
+              <button type="button" className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
                 Due date
               </button>

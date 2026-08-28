@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { ThemeProvider } from "@/context/ThemeContext";
+import { ISSUE_REFRESH_INTERVAL_MS } from "@/lib/issue-refresh";
 import { ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -25,17 +26,24 @@ const mockState = vi.hoisted(() => ({
   session: { user: { id: "local-board" } },
   setBreadcrumbs: vi.fn(),
   issuesListProps: null as null | Record<string, unknown>,
+  infiniteQueryOptions: null as null | Record<string, unknown>,
+  refetchIssues: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useInfiniteQuery: () => ({
-    data: { pages: [[]] },
-    error: null,
-    fetchNextPage: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-    isLoading: false,
-  }),
+  useInfiniteQuery: (options: Record<string, unknown>) => {
+    mockState.infiniteQueryOptions = options;
+    return {
+      data: { pages: [[]] },
+      error: null,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetching: false,
+      isFetchingNextPage: false,
+      isLoading: false,
+      refetch: mockState.refetchIssues,
+    };
+  },
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "agents") return { data: mockState.agents, isLoading: false, error: null };
     if (queryKey[0] === "projects") return { data: mockState.projects, isLoading: false, error: null };
@@ -161,6 +169,8 @@ beforeEach(() => {
   mockState.openNewIssue.mockReset();
   mockState.pushToast.mockReset();
   mockState.issuesListProps = null;
+  mockState.infiniteQueryOptions = null;
+  mockState.refetchIssues.mockReset();
   mockState.search = "?scope=drafts";
   vi.stubGlobal("confirm", mockState.confirm);
   vi.stubGlobal("matchMedia", vi.fn(() => ({
@@ -212,7 +222,43 @@ describe("Issues agent participant scope", () => {
   });
 });
 
+describe("Issues refresh recovery", () => {
+  it("polls the loaded pages and exposes a retry for the active list query", () => {
+    mockState.search = "";
+
+    renderIssues();
+
+    expect(mockState.infiniteQueryOptions).toMatchObject({
+      refetchInterval: ISSUE_REFRESH_INTERVAL_MS,
+      refetchIntervalInBackground: false,
+      refetchOnReconnect: "always",
+      refetchOnWindowFocus: "always",
+    });
+    expect(mockState.issuesListProps).toMatchObject({
+      hasData: true,
+      isFetching: false,
+    });
+
+    (mockState.issuesListProps?.onRetry as (() => void) | undefined)?.();
+    expect(mockState.refetchIssues).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Issues draft scope", () => {
+  it("centers the empty draft state without an English helper message", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([]));
+
+    renderIssues();
+
+    const view = document.querySelector("[data-testid='issue-drafts-view']");
+    const emptyState = view?.firstElementChild;
+    expect(view?.className).toContain("items-center");
+    expect(view?.className).toContain("justify-center");
+    expect(emptyState?.className).toContain("w-full");
+    expect(emptyState?.className).toContain("min-h-[18rem]");
+    expect(view?.textContent).not.toContain("No draft issues.");
+  });
+
   it("renders saved draft issues in the main content and opens a selected draft", () => {
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
       { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },

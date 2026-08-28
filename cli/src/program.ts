@@ -1,4 +1,4 @@
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import { runMcpStdioServer, type RudderMcpServerSurface } from "./agent-v1-mcp-server.js";
 import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
@@ -15,6 +15,7 @@ import { registerDashboardCommands } from "./commands/client/dashboard.js";
 import { registerGoalCommands } from "./commands/client/goal.js";
 import { registerIssueCommands } from "./commands/client/issue.js";
 import { registerLibraryCommands } from "./commands/client/library.js";
+import { registerPluginCommands } from "./commands/client/plugin.js";
 import { registerProjectCommands } from "./commands/client/project.js";
 import { registerRunsCommands } from "./commands/client/runs.js";
 import { registerSkillCommands } from "./commands/client/skill.js";
@@ -104,6 +105,7 @@ export function createProgram(): Command {
     .option("--desktop-asset-name <name>", "Asset name bound to the exact staged Desktop candidate")
     .option("--desktop-asset-kind <kind>", "Asset kind bound to the exact staged Desktop candidate (full or shell)")
     .option("--desktop-release-digest <sha256>", "Release digest bound to the exact staged Desktop candidate")
+    .addOption(new Option("--desktop-runtime-best-effort").hideHelp())
     .option("--no-version-check", "Skip checking npm for a newer Rudder CLI version")
     .option("--dry-run", "Print the start actions without changing the machine", false)
     .action(startCommand);
@@ -225,6 +227,7 @@ export function createProgram(): Command {
   registerUserCommands(program);
   registerDashboardCommands(program);
   registerSkillCommands(program);
+  registerPluginCommands(program);
   registerLibraryCommands(program);
   registerAutomationCommands(program);
   registerBrowserCommands(program);

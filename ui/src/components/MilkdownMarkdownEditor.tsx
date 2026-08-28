@@ -617,6 +617,50 @@ function findRudderTokenRangeAt(doc: ProseMirrorDoc, targetPos: number): RudderT
   return match;
 }
 
+export function findSelectedRudderTokenRangeFromDom(
+  view: {
+    state: { doc: ProseMirrorDoc };
+    posAtDOM?: (node: Node, offset: number) => number;
+  },
+  root: HTMLElement | null,
+) {
+  if (!root || !view.posAtDOM || typeof window === "undefined") return null;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
+  const domRange = selection.getRangeAt(0);
+  const selectedText = selection.toString().replace(/\u200B/g, "").trim();
+  if (!selectedText) return null;
+
+  const selectedTokens = Array.from(root.querySelectorAll<HTMLElement>(
+    "a[data-mention-kind], a[data-skill-token='true']",
+  )).filter((element) => {
+    try {
+      return domRange.intersectsNode(element)
+        && (element.textContent ?? "").replace(/\u200B/g, "").trim() === selectedText;
+    } catch {
+      return false;
+    }
+  });
+  if (selectedTokens.length !== 1) return null;
+
+  const element = selectedTokens[0]!;
+  const href = element.dataset.mentionHref
+    ?? element.dataset.skillHref
+    ?? element.getAttribute("href")
+    ?? "";
+  try {
+    const start = view.posAtDOM(element, 0);
+    const end = view.posAtDOM(element, element.childNodes.length);
+    for (const candidate of [start, start - 1, end - 1, end]) {
+      const range = findRudderTokenRangeAt(view.state.doc, candidate);
+      if (range && (!href || range.href === href)) return range;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function findAdjacentRudderTokenRange(state: ProseMirrorState, direction: "backward" | "forward") {
   if (!state.selection.empty) return null;
   const { from } = state.selection;
@@ -1684,7 +1728,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     editor?.action((ctx) => {
       const view = getMilkdownProseMirrorView(ctx);
       if (!view) return;
-      const range = findAdjacentRudderTokenRange(view.state, direction);
+      const range = findSelectedRudderTokenRangeFromDom(view, containerRef.current)
+        ?? findAdjacentRudderTokenRange(view.state, direction);
       if (!range) return;
       let deleteTo = range.to;
       const followingText = view.state.doc.content.size > range.to

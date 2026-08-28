@@ -1,6 +1,7 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
+import { ApiError } from "@/api/client";
 import { healthApi } from "@/api/health";
 import { projectsApi } from "@/api/projects";
 import {
@@ -78,6 +79,16 @@ function transcriptEntries(message: ChatMessage) {
 }
 
 function noop() {}
+
+function hasApiStatus(error: unknown, status: number) {
+  if (error instanceof ApiError) return error.status === status;
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "status" in error
+    && (error as { status?: unknown }).status === status,
+  );
+}
 
 const EMPTY_CHAT_BODY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const STOP_TERMINAL_POLL_INTERVAL_MS = 250;
@@ -181,8 +192,10 @@ export function RunFeedbackChatPanel({
   const streamRunIdRef = useRef(0);
   const pendingStreamEventsRef = useRef<ChatStreamEvent[]>([]);
   const streamEventHandlerRef = useRef<((event: ChatStreamEvent) => Promise<void> | void) | null>(null);
+  const sendInFlightRef = useRef(false);
   const renderedTargetRef = useRef<Pick<RunFeedbackTarget, "conversationId" | "clientMutationId">>(target);
   targetRef.current = target;
+  mutationKeyRef.current = target.clientMutationId || mutationKeyRef.current;
 
   useEffect(() => {
     const previousTarget = renderedTargetRef.current;
@@ -234,6 +247,7 @@ export function RunFeedbackChatPanel({
     queryKey: queryKeys.chats.detail(organizationId, target.conversationId ?? "__run-feedback-draft__"),
     queryFn: () => chatsApi.get(target.conversationId!),
     enabled: Boolean(target.conversationId),
+    retry: (failureCount, queryError) => !hasApiStatus(queryError, 404) && failureCount < 2,
   });
   const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(organizationId, target.conversationId ?? "__run-feedback-draft__"),
@@ -291,9 +305,9 @@ export function RunFeedbackChatPanel({
     () => selectableChatAgents(agentsQuery.data),
     [agentsQuery.data],
   );
-  const activeAgentId = conversation?.preferredAgentId
-    ?? target.preferredAgentId
-    ?? target.agentId;
+  const activeAgentId = target.conversationId
+    ? conversation?.preferredAgentId ?? target.agentId
+    : target.agentId;
   const selectedAgent = useMemo(
     () => liveAgents.find((agent) => agent.id === activeAgentId) ?? null,
     [activeAgentId, liveAgents],
@@ -309,11 +323,7 @@ export function RunFeedbackChatPanel({
     || target.conversationId
     || messages.some((message) => message.role === "user"),
   );
-  const agentLocked = Boolean(
-    sending
-    || target.conversationId
-    || messages.some((message) => message.role === "user"),
-  );
+  const agentLocked = true;
   const annotationCount = annotationState.annotations.length;
   const annotationValidationError = validateChatResponseAnnotationState(
     annotationState.annotations,
@@ -324,10 +334,45 @@ export function RunFeedbackChatPanel({
 
   const updateTarget = useCallback((patch: Partial<RunFeedbackTarget>) => {
     const current = targetRef.current;
-    const next = { ...current, ...patch } satisfies RunFeedbackTarget;
+    const next = { ...current, ...patch, preferredAgentId: current.agentId } satisfies RunFeedbackTarget;
     targetRef.current = next;
     onReplaceTarget(sidePanelTargetKey(current), next);
   }, [onReplaceTarget]);
+
+  useEffect(() => {
+    if (target.preferredAgentId && target.preferredAgentId !== target.agentId) {
+      updateTarget({ preferredAgentId: target.agentId });
+    }
+  }, [target.agentId, target.preferredAgentId, updateTarget]);
+
+  const recoverUnavailableConversation = useCallback((conversationId: string) => {
+    const current = targetRef.current;
+    if (current.conversationId !== conversationId) return false;
+    const clientMutationId = makeId();
+    mutationKeyRef.current = clientMutationId;
+    activeConversationIdRef.current = null;
+    setMessages([]);
+    setStreamBody("");
+    setComposerMenu(null);
+    setComposerMenuPosition(null);
+    updateTarget({
+      conversationId: null,
+      projectLocked: false,
+      clientMutationId,
+      preferredAgentId: current.agentId,
+      recoveryNotice: "The previous feedback chat is no longer available. Your draft was kept. Choose a project and send again.",
+    });
+    return true;
+  }, [updateTarget]);
+
+  useEffect(() => {
+    if (
+      target.conversationId
+      && hasApiStatus(conversationQuery.error, 404)
+    ) {
+      recoverUnavailableConversation(target.conversationId);
+    }
+  }, [conversationQuery.error, recoverUnavailableConversation, target.conversationId]);
 
   const streamTargetMatchesCurrentTarget = useCallback(() => {
     const streamTarget = streamTargetRef.current;
@@ -500,7 +545,7 @@ export function RunFeedbackChatPanel({
   }, [closeComposerMenu, composerMenu]);
 
   const handleSend = async () => {
-    if (sending || stopping || stopIndeterminate || !canSend) return;
+    if (sendInFlightRef.current || sending || stopping || stopIndeterminate || !canSend) return;
     const sendTarget = targetRef.current;
     const body = draft.trim();
     const serialized = serializeChatResponseAnnotations(annotationState);
@@ -511,6 +556,8 @@ export function RunFeedbackChatPanel({
       draftPersistence: "durable",
       pushToast,
     })) return;
+    sendInFlightRef.current = true;
+    if (sendTarget.recoveryNotice) updateTarget({ recoveryNotice: null });
     setSending(true);
     setStopping(false);
     setStopIndeterminate(false);
@@ -607,7 +654,7 @@ export function RunFeedbackChatPanel({
       } else {
         await chatsApi.sendFirstMessageStream(organizationId, body, {
           signal: streamAbortController.signal,
-          preferredAgentId: sendTarget.preferredAgentId ?? sendTarget.agentId,
+          preferredAgentId: sendTarget.agentId,
           issueCreationMode: "manual_approval",
           planMode: false,
           modelOverride: null,
@@ -632,11 +679,19 @@ export function RunFeedbackChatPanel({
         ? sendError.name === "AbortError"
         : sendError instanceof Error && sendError.name === "AbortError";
       if (!isAbort || !stopRequestedRef.current) {
-        setError(chatErrorMessage(sendError, "feedback"));
+        if (
+          sendTarget.conversationId
+          && hasApiStatus(sendError, 404)
+        ) {
+          recoverUnavailableConversation(sendTarget.conversationId);
+        } else {
+          setError(chatErrorMessage(sendError, "feedback"));
+        }
       }
     } finally {
       const stopCutoffPending = stopCutoffAcceptedRef.current;
       streamAbortControllerRef.current = null;
+      sendInFlightRef.current = false;
       setSending(false);
       if (!stopCutoffPending && !stopRequestedRef.current) setStopping(false);
       if (!stopRequestedRef.current || stopCutoffPending) {
@@ -729,9 +784,9 @@ export function RunFeedbackChatPanel({
           ) : null}
         </div>
       </div>
-      {error || annotationValidationError ? (
+      {error || target.recoveryNotice || annotationValidationError ? (
         <div role="alert" className="px-4 pb-2 text-sm text-destructive">
-          {error ?? annotationValidationError}
+          {error ?? target.recoveryNotice ?? annotationValidationError}
         </div>
       ) : null}
       <div className="shrink-0 px-4 pb-4">
@@ -866,14 +921,30 @@ export function RunFeedbackChatPanel({
             onKeyDown={composerMenu === "agent" ? handleChatAgentMenuKeyDown : undefined}
           >
             {composerMenu === "project" ? (
-              <ChatProjectMenuContent
-                projects={(projectsQuery.data ?? []) as Project[]}
-                activeProjectId={projectId}
-                onSelect={(nextProjectId) => {
-                  handleProjectChange(nextProjectId ?? "");
-                  closeComposerMenu();
-                }}
-              />
+              <>
+                <ChatProjectMenuContent
+                  projects={(projectsQuery.data ?? []) as Project[]}
+                  activeProjectId={projectId}
+                  onSelect={(nextProjectId) => {
+                    handleProjectChange(nextProjectId ?? "");
+                    closeComposerMenu();
+                  }}
+                />
+                {projectsQuery.isError ? (
+                  <div className="mt-1 flex items-center justify-between gap-3 border-t border-[color:var(--border-soft)] px-3 py-2 text-xs">
+                    <span role="alert" className="text-destructive">Projects could not be loaded.</span>
+                    <button
+                      type="button"
+                      data-chat-composer-menu-item
+                      className="font-medium text-foreground hover:underline disabled:text-muted-foreground disabled:no-underline"
+                      disabled={projectsQuery.isFetching}
+                      onClick={() => void projectsQuery.refetch()}
+                    >
+                      {projectsQuery.isFetching ? "Retrying..." : "Retry"}
+                    </button>
+                  </div>
+                ) : null}
+              </>
             ) : (
               <ChatAgentMenuContent
                 agents={liveAgents}

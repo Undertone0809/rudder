@@ -147,8 +147,11 @@ export function createDesktopUpdateFlow(context: {
     version: string;
     assetName: string;
     assetSha256: string;
+    assetKind: "full" | "shell";
     releaseDigest: string;
   }) => boolean;
+  /** Authorizes the deterministic release asset name before automatic download. */
+  isSignedUpdateAssetKindAuthorized?: (version: string, kind: "full" | "shell") => boolean;
   /** Prevents downloading a version absent from the authenticated policy. */
   isSignedUpdateVersionAuthorized?: (version: string) => boolean;
   /** Optional explicit helper attestation for tests or an embedding shell. */
@@ -380,6 +383,7 @@ export function createDesktopUpdateFlow(context: {
         version: candidate.version,
         assetName: candidate.assetName,
         assetSha256: candidate.assetChecksum,
+        assetKind: candidate.assetKind ?? "full",
         releaseDigest: candidate.sourceReleaseDigest,
       }) !== true)) {
       console.warn("[rudder-desktop] automatic update deferred: candidate is not authorized by the signed release policy");
@@ -597,6 +601,16 @@ export function createDesktopUpdateFlow(context: {
       console.warn("[rudder-desktop] automatic update deferred: version is absent from the signed release policy");
       return;
     }
+    const hasKindAuthorization = context.isSignedUpdateAssetKindAuthorized !== undefined;
+    const fullAuthorized = hasKindAuthorization
+      ? context.isSignedUpdateAssetKindAuthorized!(version, "full")
+      : true;
+    if (!fullAuthorized) {
+      console.warn("[rudder-desktop] automatic update deferred: full fallback asset is absent from the signed release policy");
+      return;
+    }
+    const shellAuthorized = hasKindAuthorization
+      && context.isSignedUpdateAssetKindAuthorized!(version, "shell");
     const statePath = autoUpdateStatePath();
     const updateId = withAutomaticUpdateStateLock(statePath, () => {
       const state = readAutomaticState();
@@ -619,7 +633,7 @@ export function createDesktopUpdateFlow(context: {
     };
     const childLaunch = resolveDesktopUpdateChildLaunch({
       cliArgs: [
-        "start", "--no-cli", "--no-runtime", "--no-open", "--target-version", version,
+        "start", "--no-cli", shellAuthorized ? "--desktop-runtime-best-effort" : "--no-runtime", "--no-open", "--target-version", version,
         "--repo", DESKTOP_GITHUB_REPO, "--no-version-check", "--desktop-progress-json", "--desktop-prepare-only",
       ],
       childEnv: createDesktopUpdateChildEnvironment({ resourcesPath: process.resourcesPath }),
@@ -645,6 +659,7 @@ export function createDesktopUpdateFlow(context: {
     let prepared: {
       assetName?: string;
       assetChecksum?: string;
+      assetKind?: "full" | "shell";
       releaseDigest?: string;
       stagedArtifactPath?: string;
       stagedArtifactDigest?: string;
@@ -667,10 +682,13 @@ export function createDesktopUpdateFlow(context: {
           prepared = {
             assetName: event.assetName,
             assetChecksum: event.assetChecksum,
+            assetKind: event.assetKind,
             releaseDigest: event.releaseDigest,
             stagedArtifactPath: event.stagedArtifactPath,
             stagedArtifactDigest: event.stagedArtifactDigest,
           };
+        } else if (event) {
+          publishDesktopUpdateProgress(event);
         }
       }
     });
@@ -703,6 +721,7 @@ export function createDesktopUpdateFlow(context: {
             version,
             assetName: prepared.assetName,
             assetSha256: prepared.assetChecksum,
+            assetKind: prepared.assetKind ?? "full",
             releaseDigest: prepared.releaseDigest,
           }) !== true)) {
           console.warn("[rudder-desktop] automatic update preparation is not authorized by the signed release policy");
@@ -720,6 +739,7 @@ export function createDesktopUpdateFlow(context: {
           updateId,
           ...(prepared.assetName ? { assetName: prepared.assetName } : {}),
           ...(prepared.assetChecksum ? { assetChecksum: prepared.assetChecksum } : {}),
+          assetKind: prepared.assetKind ?? "full",
           stagedArtifactPath: prepared.stagedArtifactPath,
           stagedArtifactDigest: prepared.stagedArtifactDigest,
           stagedAt: new Date().toISOString(),
@@ -826,6 +846,7 @@ export function createDesktopUpdateFlow(context: {
 
   type DesktopUpdateProgressPhase =
     | "starting"
+    | "preparing_runtime"
     | "resolving_release"
     | "downloading_checksums"
     | "downloading_asset"
@@ -852,6 +873,7 @@ export function createDesktopUpdateFlow(context: {
     error?: string;
     assetName?: string;
     assetChecksum?: string;
+    assetKind?: "full" | "shell";
     releaseDigest?: string;
     stagedArtifactPath?: string;
     stagedArtifactDigest?: string;
@@ -976,6 +998,7 @@ export function createDesktopUpdateFlow(context: {
     const phase = record.phase as DesktopUpdateProgressPhase;
     if (![
       "starting",
+      "preparing_runtime",
       "resolving_release",
       "downloading_checksums",
       "downloading_asset",
@@ -1004,6 +1027,7 @@ export function createDesktopUpdateFlow(context: {
       ...(typeof record.error === "string" ? { error: record.error.slice(0, 1000) } : {}),
       ...(typeof record.assetName === "string" ? { assetName: record.assetName.slice(0, 200) } : {}),
       ...(typeof record.assetChecksum === "string" ? { assetChecksum: record.assetChecksum.slice(0, 128) } : {}),
+      ...(record.assetKind === "full" || record.assetKind === "shell" ? { assetKind: record.assetKind } : {}),
       ...(typeof record.releaseDigest === "string" ? { releaseDigest: record.releaseDigest.slice(0, 128) } : {}),
       ...(typeof record.stagedArtifactPath === "string" ? { stagedArtifactPath: record.stagedArtifactPath.slice(0, 4096) } : {}),
       ...(typeof record.stagedArtifactDigest === "string" ? { stagedArtifactDigest: record.stagedArtifactDigest.slice(0, 128) } : {}),
@@ -1302,6 +1326,7 @@ export function createDesktopUpdateFlow(context: {
       stagedArtifactDigest?: string;
       assetName?: string;
       sourceReleaseDigest?: string;
+      assetKind?: "full" | "shell";
     } = {},
   ): Promise<DesktopUpdateInstallResult> {
     const normalizedVersion = version?.trim();
@@ -1353,6 +1378,7 @@ export function createDesktopUpdateFlow(context: {
       stagedArtifactDigest?: string;
       assetName?: string;
       sourceReleaseDigest?: string;
+      assetKind?: "full" | "shell";
     } = {},
   ): Promise<DesktopUpdateInstallResult> {
     try {
@@ -1399,17 +1425,14 @@ export function createDesktopUpdateFlow(context: {
         ...(profileName ? ["--local-env", profileName] : []),
         "start",
         "--no-cli",
-        // The Desktop update contract downloads and replaces the portable app.
-        // Do not make replacement depend on a separate npm runtime install:
-        // that install can stall on registry resolution and leave the updater
-        // child alive without ever reaching the apply handoff.
-        "--no-runtime",
+        ...(options.automatic === true ? ["--no-runtime"] : ["--desktop-runtime-best-effort"]),
         ...(options.automatic === true ? ["--no-open"] : []),
         ...(options.automatic === true
           ? [
             "--desktop-asset-path", options.stagedArtifactPath ?? "",
             "--desktop-asset-checksum", options.stagedArtifactDigest ?? "",
             "--desktop-asset-name", options.assetName ?? "",
+            "--desktop-asset-kind", options.assetKind ?? "full",
             "--desktop-release-digest", options.sourceReleaseDigest ?? "",
           ]
           : []),

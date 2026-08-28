@@ -12,10 +12,13 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
   - server/src/services/issue-review-wakeup.ts
   - ui/src/components/CommentThread.submit.ts
+  - ui/src/components/CommentComposer.tsx
+  - packages/shared/src/project-mentions.ts
 related_tests:
   - server/src/__tests__/issue-lifecycle-routes.test.ts
   - tests/e2e/issue-comment-mentions.spec.ts
   - tests/e2e/issue-comment-mention-boundary.spec.ts
+  - tests/e2e/issue-comment-pending-agent-wakes.spec.ts
 related_plans:
   - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
@@ -32,6 +35,10 @@ Behavior:
 - Comments wake agents only through explicit wake mentions such as
   `agent://<id>?intent=wake`. If the assignee is explicitly mentioned, the
   assignee wakes through the mention path.
+- Before submission, the issue-comment composer makes each mentioned Agent's
+  wake intent visible and allows that Agent alone to be changed to a
+  reference-only mention. The final wake targets are always derived from the
+  submitted body rather than a separate client-side exclusion list.
 - A comment with explicit reopen intent on a closed issue may wake the assignee
   with reason `issue_reopened_via_comment` and wake source
   `issue.comment.reopen`.
@@ -103,6 +110,9 @@ Flow:
 2. The issue-comment composer may require explicit operator confirmation before
    posting a comment with no valid Agent wake mention. This is a localized
    submission guard only; it does not add a wake target or alter routing.
+   Before that guard runs, the composer shows the current deduplicated Agent
+   targets. Cancelling a target removes wake intent from every duplicate mention
+   of that Agent while preserving the readable references and all other targets.
 3. Routing parses explicit wake mentions such as agent links with wake intent.
    For an edit, it compares the persisted old body with the canonical updated
    body under a row lock and considers only newly added target agents.
@@ -130,6 +140,9 @@ Invariants:
   not gain issue ownership.
 - A plain issue comment does not wake the assignee unless the assignee is also
   a wake-mentioned target.
+- A cancelled Agent mention is a plain reference and cannot enqueue a wake.
+  Draft edits, submission failures, and retry must not reintroduce wake intent;
+  a new explicit mention or operator restore action may do so before sending.
 - The composer warning for an unmentioned comment does not convert a plain
   comment into a wake request; the operator may still explicitly confirm and
   post it as ordinary collaboration evidence.
@@ -159,9 +172,13 @@ Related code:
 
 - `server/src/routes/issues.comments-attachments.ts`
 - `server/src/services/runtime-kernel/heartbeat.wakeup.ts`
+- `packages/shared/src/project-mentions.ts`
+- `ui/src/components/CommentComposer.tsx`
 
 Related tests:
 
 - `server/src/__tests__/issue-lifecycle-routes.test.ts`
 - `tests/e2e/issue-comment-mentions.spec.ts`
 - `tests/e2e/issue-comment-mention-boundary.spec.ts`
+- `tests/e2e/issue-comment-pending-agent-wakes.spec.ts`
+- `ui/src/components/CommentComposer.test.tsx`

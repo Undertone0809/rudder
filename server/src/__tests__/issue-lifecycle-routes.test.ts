@@ -1866,7 +1866,7 @@ describe("issue lifecycle routes", () => {
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
-  it("records a structured needs-followup reviewer decision without changing status", async () => {
+  it("returns an in-review issue to todo when the reviewer records needs-followup", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
         status: "in_review",
@@ -1876,7 +1876,7 @@ describe("issue lifecycle routes", () => {
     );
     mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
       makeIssue({
-        status: (patch.status as "in_review" | undefined) ?? "in_review",
+        status: patch.status as "todo",
         assigneeAgentId: ASSIGNEE_AGENT_ID,
         reviewerAgentId: REVIEWER_AGENT_ID,
       }),
@@ -1892,7 +1892,7 @@ describe("issue lifecycle routes", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
-      expect.not.objectContaining({ status: expect.anything() }),
+      expect.objectContaining({ status: "todo" }),
       expect.objectContaining({
         agentId: REVIEWER_AGENT_ID,
         relationship: "reviewer",
@@ -1905,10 +1905,115 @@ describe("issue lifecycle routes", () => {
         action: "issue.review_decision_recorded",
         details: expect.objectContaining({
           decision: "needs_followup",
-          status: "in_review",
+          status: "todo",
         }),
       }),
     );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_changes_requested",
+        payload: expect.objectContaining({
+          mutation: "review_changes_requested",
+          commentId: "comment-1",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issue: expect.objectContaining({ status: "todo" }),
+          comment: expect.objectContaining({
+            body: "Waiting for the preview URL before final review.",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("returns a blocked issue to todo when the reviewer records needs-followup", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "blocked",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "todo",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "needs_followup",
+        comment: "The blocker is cleared; follow up from the normal queue.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "todo" }),
+      expect.objectContaining({
+        agentId: REVIEWER_AGENT_ID,
+        relationship: "reviewer",
+        requireReviewableStatus: true,
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({ reason: "issue_changes_requested" }),
+    );
+  });
+
+  it("does not persist or comment when a needs-followup transition fails", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockRejectedValue(new Error("temporary update failure"));
+
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "needs_followup",
+        comment: "Retry this follow-up after recovery.",
+      });
+
+    expect(res.status).toBe(500);
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.review_decision_recorded" }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a repeated needs-followup decision after the issue has returned to todo", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "todo",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(await createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "needs_followup",
+        comment: "Duplicate reviewer follow-up.",
+      });
+
+    expect(res.status).toBe(422);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
     await flushAsyncWork();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });

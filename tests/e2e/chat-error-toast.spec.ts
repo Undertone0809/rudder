@@ -141,6 +141,9 @@ test.describe("Chat error recovery", () => {
     });
     await expect(failedMessage).toContainText("Runtime unavailable");
     await expect(failedMessage).toContainText("Code chat_runtime_boot_failed");
+    await expect(failedMessage.getByTestId("chat-long-message-body")).toHaveCount(0);
+    await expect(failedMessage.getByRole("button", { name: "Copy message" })).toHaveCount(0);
+    await expect(failedMessage.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
     await expect(failedMessage.getByRole("button", { name: "Retry" })).toHaveCount(0);
     await expect(page.getByText("The assistant hit a system-level issue.", { exact: false })).toHaveCount(0);
     await expect(page.getByText("Failed to send message")).toHaveCount(0);
@@ -182,7 +185,18 @@ test.describe("Chat error recovery", () => {
     await expect(failedMessage).toContainText("Response failed");
     await expect(failedMessage).toContainText("The assistant runtime failed before finishing.");
     await expect(failedMessage).toContainText("Code chat_adapter_failed");
+    await expect(failedMessage.getByTestId("chat-long-message-body")).toHaveCount(0);
+    await expect(failedMessage.getByRole("button", { name: "Copy message" })).toHaveCount(0);
+    await expect(failedMessage.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
     await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const failureDetailBox = await failedMessage.getByRole("alert").boundingBox();
+    const retryButtonBox = await failedMessage.getByRole("button", { name: "Retry" }).boundingBox();
+    expect(failureDetailBox).not.toBeNull();
+    expect(retryButtonBox).not.toBeNull();
+    expect(retryButtonBox!.y).toBeGreaterThanOrEqual(failureDetailBox!.y + failureDetailBox!.height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
     const chatId = page.url().match(/\/messenger\/chat\/([^/?#]+)/)?.[1];
     expect(chatId).toBeTruthy();
@@ -229,10 +243,13 @@ test.describe("Chat error recovery", () => {
     await expect(page.getByTestId("chat-user-message-bubble").filter({
       hasText: "Please retry this failed request",
     })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
+    const recoveredMessage = page.getByTestId("chat-assistant-message").last();
+    await expect(recoveredMessage).toContainText("Streaming reply for chat.", {
       timeout: 15_000,
     });
     await expect(failedMessage).toHaveCount(0);
+    await expect(recoveredMessage.getByRole("button", { name: "Copy message" })).toBeVisible({ timeout: 15_000 });
+    await expect(recoveredMessage.getByRole("button", { name: "Fork from here" })).toBeVisible({ timeout: 15_000 });
   });
 
   test("refreshes a completed assistant answer as another turn variant", async ({ page }) => {

@@ -49,6 +49,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type MutableRefObject,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -784,6 +785,12 @@ function PortalMarkdownBody({
   readSourceRange: (from: number, to: number) => string;
   skillReferences: MarkdownSkillReferencePreview[];
 }) {
+  const descriptorRef = useRef(descriptor);
+  descriptorRef.current = descriptor;
+  const handleLinkClick = useCallback<NonNullable<ComponentProps<typeof MarkdownBody>["onLinkClick"]>>(
+    (input) => portalLinkClickHandler(descriptorRef.current)(input),
+    [],
+  );
   const keyboardScopeRef = useRef<HTMLSpanElement | null>(null);
   const tableCellInputRef = useRef<HTMLInputElement | null>(null);
   const [tableCellEdit, setTableCellEdit] = useState<MarkdownTableCellEdit | null>(null);
@@ -969,7 +976,7 @@ function PortalMarkdownBody({
           "rudder-codemirror-markdown-rendered",
           descriptor.type === "atomic" && "rudder-codemirror-markdown-rendered--atomic",
         )}
-        onLinkClick={portalLinkClickHandler(descriptor)}
+        onLinkClick={handleLinkClick}
         skillReferences={skillReferences}
         copyMarkdownOnCopy
         enableCodeBlockCopy

@@ -1,12 +1,19 @@
 import { expect, test, type Page } from "@playwright/test";
-import { E2E_BASE_URL } from "./support/e2e-env";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_BASE_URL, E2E_DATABASE_URL } from "./support/e2e-env";
 
 test.use({ serviceWorkers: "block" });
 
-const ONE_BY_ONE_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
-  "base64",
-);
+const e2eDb = createDb(E2E_DATABASE_URL);
+
+test.afterAll(async () => {
+  await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
+});
+
+const VISIBLE_TEST_PNG = readFileSync(new URL("../../ui/public/favicon-32x32.png", import.meta.url));
 
 type Organization = {
   id: string;
@@ -32,7 +39,7 @@ async function createImageAsset(page: Page, organizationId: string, name: string
       file: {
         name,
         mimeType: "image/png",
-        buffer: ONE_BY_ONE_PNG,
+        buffer: VISIBLE_TEST_PNG,
       },
     },
   });
@@ -209,4 +216,72 @@ test("Library Markdown keeps image loading, success, and retry states visible", 
     { loading: "Library loading", retry: "Library retry" },
     `${E2E_BASE_URL}/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`,
   );
+});
+
+test("Chat Markdown keeps image loading and retry states contained on a narrow viewport", async ({ page }) => {
+  test.setTimeout(120_000);
+  const organization = await createOrganization(page, "Chat-Markdown-Image-Loading");
+  const agent = await createE2EChatAgent(page.request, organization.id, { name: "Image Loading Agent" });
+  const loadingAsset = await createImageAsset(page, organization.id, "chat-loading.png");
+  const retryAsset = await createImageAsset(page, organization.id, "chat-retry.png");
+  const response = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Chat Markdown image states",
+      preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: {
+        body: [
+          "Review these images:",
+          "",
+          `![Chat loading](${loadingAsset.contentPath})`,
+          "",
+          `![Chat retry](${retryAsset.contentPath})`,
+        ].join("\n"),
+      },
+    },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+  const chat = await response.json() as { id: string };
+  await e2eDb.insert(chatMessages).values({
+    id: randomUUID(),
+    orgId: organization.id,
+    conversationId: chat.id,
+    role: "assistant",
+    kind: "message",
+    status: "completed",
+    body: [
+      "Review these images:",
+      "",
+      `![Chat loading](${loadingAsset.contentPath})`,
+      "",
+      `![Chat retry](${retryAsset.contentPath})`,
+    ].join("\n"),
+    structuredPayload: null,
+    replyingAgentId: agent.id,
+    chatTurnId: randomUUID(),
+    turnVariant: 0,
+  });
+  await selectOrganization(page, organization.id);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await assertMarkdownImageStates(
+    page,
+    { loading: loadingAsset.contentPath, retry: retryAsset.contentPath },
+    { loading: "Chat loading", retry: "Chat retry" },
+    `${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${chat.id}`,
+  );
+
+  const layout = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
+  for (const name of ["Chat loading", "Chat retry"]) {
+    const box = await page.locator(`button.rudder-inspectable-image-trigger[aria-label$="${name}"]`).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  }
+  await page.screenshot({ path: "/tmp/r6z-162-chat-markdown-mobile.png", fullPage: true });
 });

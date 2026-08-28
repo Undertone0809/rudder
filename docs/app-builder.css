@@ -1,0 +1,27 @@
+html:is(
+    [data-current-path="/concepts/app-builder"],
+    [data-current-path="/zh/concepts/app-builder"]
+  )
+  #page-title::after {
+  content: "Beta";
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 0.625rem;
+  padding: 0.125rem 0.4rem;
+  border-radius: 0.375rem;
+  vertical-align: 0.25em;
+  color: #0f766e;
+  background: rgb(15 118 110 / 10%);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+html.dark:is(
+    [data-current-path="/concepts/app-builder"],
+    [data-current-path="/zh/concepts/app-builder"]
+  )
+  #page-title::after {
+  color: #5eead4;
+  background: rgb(94 234 212 / 12%);
+}

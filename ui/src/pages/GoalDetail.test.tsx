@@ -1671,6 +1671,12 @@ describe("GoalDetail", () => {
     const activityViews = container.querySelector('[aria-label="Goal detail views"]');
     expect(activityViews).not.toBeNull();
     expect(activityViews?.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(activityViews?.classList).toContain("rounded-[calc(var(--radius-sm)+2px)]");
+    expect(activityViews?.classList).not.toContain("rounded-md");
+    for (const tab of activityViews?.querySelectorAll('[role="tab"]') ?? []) {
+      expect(tab.classList).toContain("rounded-[calc(var(--radius-sm)-1px)]");
+      expect(tab.classList).not.toContain("rounded");
+    }
     expect(activityViews?.textContent).toContain("Overview");
     expect(activityViews?.textContent).toContain("Activity");
     expect(activityViews?.textContent).not.toContain("Work");

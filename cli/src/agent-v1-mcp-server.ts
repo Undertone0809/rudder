@@ -48,7 +48,7 @@ export { RUDDER_BROWSER_MCP_SERVER_NAME, RUDDER_MCP_SERVER_NAME };
 const RUDDER_MCP_MAX_TOOL_RESULT_BYTES = 1_000_000;
 const RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES = 16_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
-const RUDDER_BROWSER_LIVENESS_INTERVAL_MS = 1_000;
+const RUDDER_BROWSER_LIVENESS_INTERVAL_MS = 5_000;
 const RUDDER_MCP_TOOL_PAGE_SIZE = 50;
 
 type JsonRpcId = string | number | null;
@@ -627,7 +627,7 @@ async function callToolDirectlyIfSupported(
   if (hasLocalImageInputs(input.images)) return null;
   const api = mcpApiClient(env, signal);
   const success = (data: unknown) => mcpSuccess(
-    toCliShortIdOutput(data),
+    capabilityId.startsWith("browser.") ? data : toCliShortIdOutput(data),
     capabilityId.startsWith("browser.")
       ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
       : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
@@ -1406,6 +1406,8 @@ function cliArgsForCapability(
     }
     case "skill.list":
       return ["skill", "list"];
+    case "skill.search":
+      return ["skill", "search", requiredString(input, "query")];
     case "skill.get":
       return ["skill", "get", requiredAnyString(input, ["skill", "skillId"])];
     case "skill.file": {
@@ -1428,6 +1430,10 @@ function cliArgsForCapability(
       pushOptional(args, "--workspace-ids", input.workspaceIds);
       return args;
     }
+    case "plugin.search":
+      return ["plugin", "search", requiredString(input, "query")];
+    case "plugin.get":
+      return ["plugin", "get", requiredAnyString(input, ["plugin", "pluginId"])];
     case "browser.tabs":
       return ["browser", "tabs"];
     case "browser.user-tabs":

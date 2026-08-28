@@ -1,5 +1,6 @@
 import {
   isInternalChatTranscriptLifecycleEntry,
+  type AgentRole,
   type ChatInlineAnnotation,
   type ChatInlineAnnotationInput,
   type ChatMessage,
@@ -164,6 +165,17 @@ export interface RunTranscriptViewProps {
   sentAnnotationContext?: TranscriptSentAnnotationContext;
   /** Stage an annotation for a completed Nice transcript block in Run Detail. */
   runAnnotationContext?: TranscriptRunAnnotationContext;
+  /** Organization Agent directory used only to resolve semantic-card identities. */
+  agentDirectory?: TranscriptAgentDirectoryEntry[];
+}
+
+export interface TranscriptAgentDirectoryEntry {
+  id: string;
+  shortRef?: string;
+  name: string;
+  icon?: string | null;
+  role?: AgentRole | null;
+  urlKey?: string | null;
 }
 
 export interface TranscriptRunAnnotationInput {
@@ -313,6 +325,25 @@ export type TranscriptBlock =
       collapseByDefault?: boolean;
       sourceEntryIds?: string[];
     };
+
+export function transcriptBlockStableKey(block: TranscriptBlock, fallbackIndex: number) {
+  const sourceEntryId = block.sourceEntryIds?.[0]?.trim() || null;
+  const blockIdentity = (() => {
+    if (block.type === "message" || block.type === "thinking") {
+      if (block.segmentId?.trim()) return `segment:${block.segmentId.trim()}`;
+      if (block.generationId && Number.isInteger(block.generationSeqStart)) {
+        return `generation:${block.generationId}:${block.generationSeqStart}`;
+      }
+      if (block.type === "message" && block.messageId?.trim()) return `message:${block.messageId.trim()}`;
+    }
+    if (block.type === "tool" && block.toolUseId?.trim()) return `tool:${block.toolUseId.trim()}`;
+    if (block.type === "activity" && block.activityId?.trim()) return `activity:${block.activityId.trim()}`;
+    if (block.type === "todo_list" && block.todoListId?.trim()) return `todo:${block.todoListId.trim()}`;
+    return sourceEntryId ? `entry:${sourceEntryId}` : null;
+  })();
+
+  return `${block.type}:${blockIdentity ?? `${block.ts}:${fallbackIndex}`}`;
+}
 
 export interface ChatTranscriptTurn {
   key: string;

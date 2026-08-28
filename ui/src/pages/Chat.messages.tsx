@@ -15,7 +15,7 @@ import { RudderEntityPreview } from "@/components/RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
-import { RunTranscriptView, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
+import { RunTranscriptView, type TranscriptAgentDirectoryEntry, type TranscriptAgentInspection, type TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -2546,6 +2546,7 @@ export function ChatMessageItem({
   const isUser = message.role === "user";
   if (shouldHideSteerFallbackAssistantBubble(message)) return null;
   const displayedState = displayedChatMessageState(message);
+  const isFailedAssistantMessage = !isUser && displayedState === "failed";
   const inlineAnnotations = isUser
     ? chatInlineAnnotationsFromStructuredPayload(message.structuredPayload)
     : [];
@@ -2569,6 +2570,7 @@ export function ChatMessageItem({
     : "Response failed";
   const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
   const canAnnotateAssistantBody = !isUser
+    && !isFailedAssistantMessage
     && message.kind === "message"
     && !message.supersededAt
     && message.body.trim().length > 0
@@ -2577,7 +2579,9 @@ export function ChatMessageItem({
     annotation.surface === "assistant_body"
     && annotation.sourceMessageId === message.id
   ));
-  const canShowAssistantMessageActions = !isUser && message.status !== "stopped";
+  const canShowAssistantMessageActions = !isUser
+    && !isFailedAssistantMessage
+    && message.status !== "stopped";
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
@@ -2631,36 +2635,38 @@ export function ChatMessageItem({
               />
             </div>
           ) : null}
-          {isEmptyStreamingAssistant ? (
-            <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-              <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
-            </div>
-          ) : (
-            <div
-              ref={assistantAnnotationSourceRef}
-              {...(canAnnotateAssistantBody ? {
-                [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
-                [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
-                "data-annotation-surface": "assistant_body",
-                "data-message-id": message.id,
-              } : {})}
-              className="relative"
-            >
-              <ChatLongMessageBody
-                body={visibleAssistantBody}
-                message={message}
-                skillReferences={skillReferences}
-                onMarkdownLinkClick={onMarkdownLinkClick}
-                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
-              />
-              <AnchoredResponseAnnotationMarkers
-                sourceRootRef={assistantAnnotationSourceRef}
-                source={visibleAssistantBody}
-                annotations={assistantResponseAnnotations}
-                onActivate={onEditResponseAnnotation}
-              />
-            </div>
-          )}
+          {!isFailedAssistantMessage ? (
+            isEmptyStreamingAssistant ? (
+              <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
+                <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
+              </div>
+            ) : (
+              <div
+                ref={assistantAnnotationSourceRef}
+                {...(canAnnotateAssistantBody ? {
+                  [CHAT_ANNOTATION_SOURCE_ATTRIBUTE]: `assistant:${message.id}`,
+                  [CHAT_ANNOTATION_BLOCK_ATTRIBUTE]: message.id,
+                  "data-annotation-surface": "assistant_body",
+                  "data-message-id": message.id,
+                } : {})}
+                className="relative"
+              >
+                <ChatLongMessageBody
+                  body={visibleAssistantBody}
+                  message={message}
+                  skillReferences={skillReferences}
+                  onMarkdownLinkClick={onMarkdownLinkClick}
+                  className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+                />
+                <AnchoredResponseAnnotationMarkers
+                  sourceRootRef={assistantAnnotationSourceRef}
+                  source={visibleAssistantBody}
+                  annotations={assistantResponseAnnotations}
+                  onActivate={onEditResponseAnnotation}
+                />
+              </div>
+            )
+          ) : null}
           <ChatRichReferences
             message={message}
             currentUserId={currentUserId}
@@ -2670,7 +2676,7 @@ export function ChatMessageItem({
             attachments={visibleMessageAttachments}
             onOpenFile={onOpenFile}
           />
-          {!isEmptyStreamingAssistant ? (
+          {!isEmptyStreamingAssistant && !isFailedAssistantMessage ? (
             <div
               className={cn(
                 "mt-2 flex h-7 items-center gap-1 text-muted-foreground",
@@ -3059,6 +3065,7 @@ export function StreamTranscriptItem({
   onOpenSkill,
   canOpenSkill,
   onOpenAgent,
+  agentDirectory,
   annotationSource,
   sentAnnotationContext,
   localizeText = (text) => text,
@@ -3078,6 +3085,7 @@ export function StreamTranscriptItem({
   onOpenSkill?: (target: TranscriptSkillTarget) => void;
   canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
   onOpenAgent?: (agent: TranscriptAgentInspection) => void;
+  agentDirectory?: TranscriptAgentDirectoryEntry[];
   annotationSource?: {
     sourceConversationId: string;
     sourceMessageId: string;
@@ -3181,26 +3189,29 @@ export function StreamTranscriptItem({
             <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
           </div>
         </div>
-        {showBody ? (
-          <div className="mt-3">
-            <RunTranscriptView
-              entries={timelineEntries}
-              mode="nice"
-              streaming={streamingActive}
-              collapseStdout
-              presentation="chat"
-              showDeveloperDiagnostics={showDeveloperDiagnostics}
-              hiddenAssistantMessageText={assistantMessageBody}
-              localizeText={localizeText}
-              onOpenFile={onOpenFile}
-              onOpenSkill={onOpenSkill}
-              canOpenSkill={canOpenSkill}
-              onOpenAgent={onOpenAgent}
-              annotationSource={annotationSource}
-              sentAnnotationContext={sentAnnotationContext}
-            />
-          </div>
-        ) : null}
+        <div
+          className={cn("mt-3", !showBody && "hidden")}
+          aria-hidden={!showBody}
+          data-testid="chat-transcript-content"
+        >
+          <RunTranscriptView
+            entries={timelineEntries}
+            mode="nice"
+            streaming={streamingActive}
+            collapseStdout
+            presentation="chat"
+            showDeveloperDiagnostics={showDeveloperDiagnostics}
+            hiddenAssistantMessageText={assistantMessageBody}
+            localizeText={localizeText}
+            onOpenFile={onOpenFile}
+            onOpenSkill={onOpenSkill}
+            canOpenSkill={canOpenSkill}
+            onOpenAgent={onOpenAgent}
+            agentDirectory={agentDirectory}
+            annotationSource={annotationSource}
+            sentAnnotationContext={sentAnnotationContext}
+          />
+        </div>
       </div>
     </div>
   );

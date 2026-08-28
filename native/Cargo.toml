@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/agent-contract-core",
   "crates/archive-core",
   "crates/native-protocol",
   "crates/update-helper-core",
@@ -16,6 +17,6 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.14"
+version = "0.7.15"
 edition = "2024"
 publish = false

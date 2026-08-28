@@ -312,6 +312,7 @@ export const uiLabCoverage: CoverageEntry[] = [
   { componentId: "ToastViewport", category: "shell", sourcePath: "ui/src/components/ToastViewport.tsx", status: "context-required", exampleKind: "registry-only", gaps: "Global toast viewport and queued toast state." },
   { componentId: "WorktreeBanner", category: "shell", sourcePath: "ui/src/components/WorktreeBanner.tsx", status: "context-required", exampleKind: "registry-only", gaps: "Reads environment-derived worktree metadata." },
   { componentId: "RunTranscriptView", category: "workflow", sourcePath: "ui/src/components/transcript/RunTranscriptView.tsx", status: "fixture-backed", exampleKind: "module" },
+  { componentId: "RudderMcpSemanticPresenter", category: "workflow", sourcePath: "ui/src/components/transcript/RunTranscriptView.rudder-mcp.tsx", status: "fixture-backed", exampleKind: "fixture" },
   { componentId: "CommentThread", category: "workflow", sourcePath: "ui/src/components/CommentThread.tsx", status: "covered", exampleKind: "module" },
   { componentId: "MarkdownEditor", category: "workflow", sourcePath: "ui/src/components/MarkdownEditor.tsx", status: "covered", exampleKind: "module" },
   { componentId: "ChatEmptyStatePromptOptions", category: "workflow", sourcePath: "ui/src/pages/Chat.parts.tsx", status: "fixture-backed", exampleKind: "fixture" },

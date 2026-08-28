@@ -193,6 +193,45 @@ describe("InstanceProfileSettings", () => {
     expect(container.textContent).toContain("zee@rudderhq.dev");
   });
 
+  it("falls back to initials for a broken avatar and retries a replacement image", async () => {
+    const listeners = new Set<(state: DesktopIdentityState) => void>();
+    const bridge = installSignedInBridge();
+    bridge.onStateChanged = vi.fn((listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    });
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = container.querySelector('[data-testid="profile-identity-row"]');
+    const failedImage = row?.querySelector("img");
+    expect(failedImage).not.toBeNull();
+    act(() => failedImage?.dispatchEvent(new Event("error")));
+
+    expect(row?.querySelector("img")).toBeNull();
+    expect(row?.querySelector('button[aria-label="Change avatar"]')?.textContent).toContain("ZE");
+
+    const replacement = "data:image/png;base64,bmV3";
+    act(() => {
+      listeners.forEach((listener) => listener({
+        status: "signed-in",
+        account: {
+          id: "account_zeeland",
+          email: "zee@rudderhq.dev",
+          name: "OAuth Provider Name",
+          image: replacement,
+        },
+        deviceId: "device_current",
+      }));
+    });
+
+    expect(row?.querySelector("img")?.getAttribute("src")).toBe(replacement);
+  });
+
   it("does not restore a stale account profile after sign-out", async () => {
     const profileResult = deferred<Awaited<ReturnType<DesktopIdentityApi["getProfile"]>>>();
     const signedIn: Extract<DesktopIdentityState, { status: "signed-in" }> = {

@@ -79,7 +79,11 @@ vi.mock("@tanstack/react-query", () => ({
           options.onSettled?.(undefined, error, variables, undefined);
           return;
         }
-        options.onSuccess?.({ status: mockState.agentMutationOutcome }, variables);
+        options.onSuccess?.({
+          id: "agent-request-1",
+          runId: null,
+          status: mockState.agentMutationOutcome,
+        }, variables);
         options.onSettled?.(undefined, null, variables, undefined);
       }),
       mutateAsync: vi.fn(),
@@ -183,7 +187,17 @@ vi.mock("./MarkdownEditor", () => ({
 }));
 
 vi.mock("./InlineEntitySelector", () => ({
-  InlineEntitySelector: ({ placeholder }: { placeholder?: string }) => <button type="button">{placeholder ?? "selector"}</button>,
+  InlineEntitySelector: ({
+    placeholder,
+    value,
+  }: {
+    placeholder?: string;
+    value?: string;
+  }) => (
+    <button type="button" data-selector-placeholder={placeholder} data-selector-value={value}>
+      {placeholder ?? "selector"}
+    </button>
+  ),
 }));
 
 vi.mock("./AgentIconPicker", () => ({
@@ -298,6 +312,7 @@ beforeEach(() => {
   mockState.mutationCalls.length = 0;
   mockState.agentMutationOutcome = "success";
   mockState.newIssueDefaults = {};
+  mockState.projects = [];
 });
 
 afterEach(() => {
@@ -367,7 +382,7 @@ describe("NewIssueDialog autosave", () => {
     });
 
     const instruction = document.querySelector<HTMLTextAreaElement>(
-      '[aria-label="Instruction"]',
+      '[aria-label="Issue Description"]',
     );
     expect(instruction).not.toBeNull();
     await fillTextarea(instruction!, "Create an issue for the onboarding regression.");
@@ -400,7 +415,7 @@ describe("NewIssueDialog autosave", () => {
     expect(document.body.textContent).not.toContain("Save Draft");
   });
 
-  it("uses the shared Markdown editor for Agent instructions and shows the localized accepted-request toast", async () => {
+  it("uses the shared Issue Description for Agent requests and shows the localized accepted-request toast", async () => {
     mockState.agentMutationOutcome = "deferred";
     mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
 
@@ -408,7 +423,7 @@ describe("NewIssueDialog autosave", () => {
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
-    const instructionEditor = document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]');
+    const instructionEditor = document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]');
     expect(instructionEditor?.dataset.imageUploadEnabled).toBe("true");
     await fillTextarea(
       instructionEditor!,
@@ -421,8 +436,13 @@ describe("NewIssueDialog autosave", () => {
     });
 
     expect(mockState.pushToast).toHaveBeenCalledWith({
+      id: "agent-issue-request-agent-request-1",
+      dedupeKey: "agent-issue-request-agent-request-1",
       title: "Sent to Agent. You'll be notified in Inbox when it's done.",
       tone: "success",
+      ttlMs: 12_000,
+      countdown: true,
+      action: undefined,
     });
     expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
   });
@@ -436,7 +456,7 @@ describe("NewIssueDialog autosave", () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')!,
       "Create the pending issue.",
     );
     const sendButton = [...document.querySelectorAll("button")]
@@ -448,7 +468,7 @@ describe("NewIssueDialog autosave", () => {
     });
 
     expect(sendButton?.disabled).toBe(true);
-    const pendingInstruction = document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]');
+    const pendingInstruction = document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]');
     expect(pendingInstruction?.readOnly).toBe(true);
     expect(pendingInstruction?.dataset.imageUploadEnabled).toBeUndefined();
     await fillTextarea(pendingInstruction!, "A changed request must not replace the submitted instruction.");
@@ -460,39 +480,58 @@ describe("NewIssueDialog autosave", () => {
     expect(mockState.mutationCalls[0]?.variables.instruction).toBe("Create the pending issue.");
   });
 
-  it("discards Agent-only state on close and returns to a clean Manual mode", async () => {
-    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+  it("preserves shared Description, assignee, and project state across mode switches", async () => {
+    mockState.projects = [{ id: "project-1", name: "Shared project", archivedAt: null }];
+    mockState.newIssueDefaults = {
+      title: "Shared issue title",
+      description: "Shared issue description",
+      assigneeAgentId: "agent-1",
+      projectId: "project-1",
+    };
 
     await renderDialog();
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')?.value)
+      .toBe("Shared issue description");
+    expect(document.querySelector<HTMLButtonElement>('[data-selector-placeholder="Assignee"]')?.dataset.selectorValue)
+      .toBe("agent:agent-1");
+    expect(document.querySelector<HTMLButtonElement>('[data-selector-placeholder="Project"]')?.dataset.selectorValue)
+      .toBe("project-1");
+
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')?.value)
+      .toBe("Shared issue description");
+    expect(document.querySelector<HTMLButtonElement>('[data-selector-placeholder="Select an Agent"]')?.dataset.selectorValue)
+      .toBe("agent:agent-1");
+    expect(document.querySelector<HTMLButtonElement>('[data-selector-placeholder="No project"]')?.dataset.selectorValue)
+      .toBe("project-1");
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
-      "This Agent request should be discarded.",
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')!,
+      "Edited from Agent mode",
     );
     await act(async () => {
-      document.querySelector<HTMLButtonElement>('button[aria-label="Close new issue dialog"]')?.click();
-    });
-
-    expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
-    expect(document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="true"]')?.textContent).toBe("Manual");
-    await act(async () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
-    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')?.value).toBe("");
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')?.value)
+      .toBe("Edited from Agent mode");
   });
 
-  it("discards Agent-only state through the Dialog dismissal path", async () => {
-    mockState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+  it("discards the shared autosave when the dialog is dismissed from Agent mode", async () => {
+    mockState.newIssueDefaults = {
+      description: "Manual draft before switching modes",
+      assigneeAgentId: "agent-1",
+    };
 
     await renderDialog();
+    await advanceAutosaveDebounce();
+    expect(window.localStorage.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)).not.toBeNull();
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
-      "Dismiss this Agent request.",
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')!,
+      "Agent request that must not leak into the next modal session",
     );
     await act(async () => {
       document.querySelector<HTMLButtonElement>('button[aria-label="Dismiss new issue dialog"]')?.click();
@@ -500,10 +539,7 @@ describe("NewIssueDialog autosave", () => {
 
     expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
     expect(document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="true"]')?.textContent).toBe("Manual");
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
-    });
-    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')?.value).toBe("");
+    expect(window.localStorage.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)).toBeNull();
   });
 
   it("keeps the dialog open and exposes a failed Agent response", async () => {
@@ -515,7 +551,7 @@ describe("NewIssueDialog autosave", () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')!,
       "Create the failed issue.",
     );
     await act(async () => {
@@ -546,7 +582,7 @@ describe("NewIssueDialog autosave", () => {
       document.querySelector<HTMLButtonElement>('button[role="tab"][aria-selected="false"]')?.click();
     });
     await fillTextarea(
-      document.querySelector<HTMLTextAreaElement>('[aria-label="Instruction"]')!,
+      document.querySelector<HTMLTextAreaElement>('[aria-label="Issue Description"]')!,
       "Create the retryable issue.",
     );
 

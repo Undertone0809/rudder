@@ -70,6 +70,19 @@ describe("Motion V1 CSS", () => {
     expect(liveSurfaceKeyframes).not.toContain("transform:");
   });
 
+  it("defines one-loop toast countdown motion with a reduced-motion fallback", () => {
+    const countdownRing =
+      motionCss.match(/\.motion-toast-countdown::before \{[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(countdownRing).toContain("conic-gradient");
+    expect(countdownRing).toContain("var(--motion-toast-countdown-duration)");
+    expect(countdownRing).toContain("var(--motion-toast-countdown-elapsed, 0ms)");
+    expect(countdownRing).toContain("rudder-toast-countdown");
+    expect(countdownRing).not.toContain("infinite");
+    expect(motionCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.motion-toast-countdown::before,[\s\S]*?animation: none !important/,
+    );
+  });
+
   it("defines a focused pop animation for chat composer menus", () => {
     expect(motionCss).toContain("@keyframes rudder-chat-composer-menu-pop");
     expect(motionCss).toContain("@keyframes rudder-chat-composer-menu-item-enter");

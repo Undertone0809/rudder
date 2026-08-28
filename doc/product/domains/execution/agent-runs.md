@@ -436,6 +436,10 @@ Behavior:
   runtimes/models can attempt execution.
 - Final outcome is derived from cancellation, timeout, adapter result, and
   forbidden runtime skill marker detection.
+- Operator cancellation is scoped to the exact Agent Run ID supplied by the
+  calling workflow. Cancelling an active queued or running Run may transition
+  it to `cancelled`; an already-terminal Run remains in its existing terminal
+  status so callers can report that cancellation did not occur.
 - For `openclaw_gateway` or `hermes_gateway`, execution revalidates the
   authenticated connection against the supported upstream version/protocol and
   capability matrix before creating provider work. It records the capability
@@ -477,6 +481,9 @@ Invariant:
   another Agent or organization are rejected.
 - A lost provider submission response is never converted into a duplicate
   upstream Run by an automatic retry.
+- A caller must not present an unchanged succeeded, failed, or timed-out Run as
+  successfully cancelled. Recovery UI may restore its prior input only after
+  the exact target Run returns `cancelled`.
 - Hermes continuity records must retain causally required tool/approval pairs,
   source transcript hash, projection version, and the exact 200-event,
   64 KiB/event, 512 KiB aggregate, and 32,000-token bounds. Dropping a tool
@@ -489,11 +496,16 @@ Rationale:
 - Assignee matching prevents stale tuning from silently changing a replacement
   agent's runtime, while issue-last precedence makes the operator's explicit
   one-job choice effective for the intended run.
+- Exact-target cancellation prevents a corrective action for one request from
+  stopping another Run owned by the same Agent, while unchanged terminal
+  status gives the caller enough evidence for honest failure feedback.
 
 Related code:
 
 - `packages/db/src/schema/issues.ts`
 - `server/src/services/runtime-kernel/heartbeat.execute.ts`
+- `server/src/services/runtime-kernel/heartbeat.misc.ts`
+- `server/src/routes/agents.management-routes.ts`
 - `server/src/services/runtime-kernel/heartbeat.sessions.ts`
 - `server/src/services/runtime-kernel/model-fallback.ts`
 
@@ -503,3 +515,5 @@ Related tests:
 - `server/src/__tests__/heartbeat-process-recovery.test.ts`
 - `server/src/__tests__/heartbeat-workspace-preflight.test.ts`
 - `tests/e2e/codex-model-order.spec.ts`
+- `tests/e2e/agent-run-cancel.spec.ts`
+- `tests/e2e/new-issue-agent-creation.spec.ts`

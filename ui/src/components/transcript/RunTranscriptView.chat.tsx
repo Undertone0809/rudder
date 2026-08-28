@@ -3,9 +3,10 @@ import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef,
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
+import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
 import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
 import { stripWrappedShell } from "./RunTranscriptView.shell";
 import { TranscriptAgentAvatarIcon, getTranscriptAgentAvatarInfo } from "./TranscriptAgentAvatarIcon";
@@ -368,6 +369,7 @@ export function TranscriptChatToolActionRow({
   const requestText = command ?? formatNiceToolRequest(block.name, block.input);
   const requestLabel = getNiceToolRequestLabel(block.name, block.input);
   const requestParameters = command ? null : formatNiceToolRequestParameters(block.name, block.input);
+  const rudderPresenter = getRudderMcpPresenterDefinition(block.name, block.input);
   const responseText = shouldHideChatToolResult(semantic)
     ? null
     : command
@@ -378,7 +380,8 @@ export function TranscriptChatToolActionRow({
           ? localizeText("Waiting for result...")
           : null;
   const canExpand = semantic.category !== "skill"
-    && Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
+    && !(rudderPresenter && block.status === "running")
+    && Boolean(rudderPresenter || command || responseText || (!isCommand && requestText !== "<empty>"));
   const visualStatus = block.status === "error" && !showFailureIndicators
     ? "completed"
     : block.status;
@@ -766,14 +769,15 @@ export function TranscriptChatToolActionRow({
         </div>
       ) : null}
       {canExpand && open ? (
-        command ? (
+        rudderPresenter ? (
+          <div className="motion-disclosure-enter ml-5 mt-2" data-rudder-semantic-presenter={rudderPresenter.toolName}>
+            <RudderMcpSemanticPresenter block={block} />
+          </div>
+        ) : command ? (
           <CommandTerminalDetail
             command={requestText}
             output={responseText}
             status={visualStatus}
-            taskLabel={semantic.label}
-            taskSummary={displaySummary}
-            duration={taskDuration}
             className="motion-disclosure-enter ml-5 mt-2"
           />
         ) : (
@@ -920,7 +924,7 @@ export function segmentChatTranscriptBlocks(blocks: TranscriptBlock[]): ChatTran
     flushActions();
     segments.push({
       type: "block",
-      key: `${block.type}-${block.ts}-${index}`,
+      key: transcriptBlockStableKey(block, index),
       block,
     });
   });
@@ -1249,7 +1253,7 @@ export function TranscriptChatTurn({
       {segments.map((segment, index) => {
         if (detailVariant) {
           return segment.type === "block" ? (
-            <Fragment key={`${segment.block.type}-${segment.block.ts}-${index}`}>
+            <Fragment key={segment.key}>
               {renderTranscriptBlock({
                 block: segment.block,
                 index,
@@ -1287,7 +1291,7 @@ export function TranscriptChatTurn({
         return segment.type === "block"
           ? (
             <div
-              key={`${segment.block.type}-${segment.block.ts}-${index}`}
+              key={segment.key}
               data-transcript-chat-column={
                 segment.block.type === "message" && segment.block.source === "steer"
                   ? "full"
@@ -1574,7 +1578,7 @@ export function TranscriptChatTimeline({
         const fullWidth = block.type === "message" && block.source === "steer";
         return (
           <div
-            key={`${block.type}-${block.ts}-${index}`}
+            key={transcriptBlockStableKey(block, index)}
             data-transcript-chat-column={fullWidth ? "full" : "reading"}
             className={fullWidth ? CHAT_FULL_COLUMN_CLASS : CHAT_READING_COLUMN_CLASS}
           >

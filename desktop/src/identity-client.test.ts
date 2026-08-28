@@ -255,6 +255,98 @@ describe("Desktop Identity client", () => {
     });
   });
 
+  it("persists the refreshed account avatar and falls back to it when profile is not deployed", async () => {
+    const avatar = "https://lh3.googleusercontent.com/a/avatar";
+    let stored = {
+      version: 1 as const,
+      issuer: "https://accounts.rudderhq.dev",
+      accountId: "account-1",
+      accountEmail: "river@rudderhq.dev",
+      accountName: "River Alvarez",
+      deviceId: "device-1",
+      refreshToken: "refresh-old",
+      refreshTokenExpiresAt: "2026-08-29T00:00:00.000Z",
+    };
+    const write = vi.fn((next) => { stored = next; });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: "access-new",
+        token_type: "Bearer",
+        expires_in: 900,
+        refresh_token: "refresh-new",
+        account: { id: "account-1", email: "river@rudderhq.dev", name: "River Alvarez", image: avatar },
+        device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: stored.issuer,
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: () => stored, write, clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+    });
+
+    await expect(client.getProfile()).resolves.toEqual({
+      id: "account-1",
+      email: "river@rudderhq.dev",
+      name: "River Alvarez",
+      image: avatar,
+    });
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({
+      refreshToken: "refresh-new",
+      accountImage: avatar,
+    }));
+  });
+
+  it("persists successful profile reads and updates without replacing the refresh credential", async () => {
+    const originalAvatar = "https://example.test/original.png";
+    const updatedAvatar = "data:image/png;base64,AAAA";
+    let stored = {
+      version: 1 as const,
+      issuer: "https://accounts.rudderhq.dev",
+      accountId: "account-1",
+      accountEmail: "river@rudderhq.dev",
+      accountName: "River Alvarez",
+      accountImage: originalAvatar,
+      deviceId: "device-1",
+      refreshToken: "refresh-old",
+      refreshTokenExpiresAt: "2026-08-29T00:00:00.000Z",
+    };
+    const write = vi.fn((next) => { stored = next; });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: "access-new",
+        token_type: "Bearer",
+        expires_in: 900,
+        refresh_token: "refresh-new",
+        account: { id: "account-1", email: "river@rudderhq.dev", name: "River Alvarez", image: originalAvatar },
+        device: { id: "device-1", installationId: "installation-1", displayName: "Test Mac" },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "account-1", email: "river@rudderhq.dev", name: "River", image: originalAvatar,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "account-1", email: "river@rudderhq.dev", name: "River", image: updatedAvatar,
+      }), { status: 200 }));
+    const client = createDesktopIdentityClient({
+      identityOrigin: stored.issuer,
+      installationId: "installation-1",
+      deviceName: "Test Mac",
+      vault: { read: () => stored, write, clear: vi.fn() },
+      openExternal: vi.fn(),
+      fetch,
+    });
+
+    await expect(client.getProfile()).resolves.toMatchObject({ name: "River", image: originalAvatar });
+    await expect(client.updateProfile({ image: updatedAvatar })).resolves.toMatchObject({ image: updatedAvatar });
+    expect(stored).toMatchObject({
+      accountName: "River",
+      accountImage: updatedAvatar,
+      refreshToken: "refresh-new",
+    });
+  });
+
   it("refreshes the device token and requests a one-time local server exchange", async () => {
     const stored = {
       version: 1 as const,

@@ -11,6 +11,7 @@ export type AgentCliCapabilityCategory =
   | "runs"
   | "approval"
   | "skill"
+  | "plugin"
   | "browser"
   | "user"
   | "library"
@@ -53,9 +54,17 @@ export interface AgentV1McpToolManifestEntry extends AgentCliCapabilitiesManifes
     type: "object";
     additionalProperties: boolean;
     properties: Record<string, unknown>;
-    required?: string[];
+    required?: readonly string[];
   };
   outputMode: "json";
+  semanticDescription?: string;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
 }
 
 export interface AgentV1McpToolsManifest {
@@ -77,6 +86,7 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   runs: "Runs",
   approval: "Approval",
   skill: "Skill",
+  plugin: "Plugin",
   browser: "Browser",
   user: "User",
   library: "Library",
@@ -153,6 +163,8 @@ export function buildAgentV1McpToolsManifest(
         capabilityId: entry.id,
         name: semanticContract.name,
         inputSchema: semanticContract.inputSchema,
+        semanticDescription: semanticContract.semanticDescription,
+        annotations: semanticContract.annotations,
         outputMode: "json" as const,
       };
     }),

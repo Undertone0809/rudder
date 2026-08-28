@@ -26,6 +26,9 @@ import type { MarkdownEditorRef } from "./MarkdownEditor";
 const websiteMetadataMocks = vi.hoisted(() => ({
   get: vi.fn(),
 }));
+const markdownBodyRenderMocks = vi.hoisted(() => ({
+  onLinkClicks: [] as Array<unknown>,
+}));
 const scrollIntoViewMock = vi.fn();
 
 vi.mock("../api/websiteMetadata", () => ({
@@ -56,6 +59,7 @@ vi.mock("./MarkdownBody", () => ({
       detailsHref?: string | null;
     }>;
   }) => {
+    markdownBodyRenderMocks.onLinkClicks.push(onLinkClick);
     const renderedSource = children.replace(/^#{1,6}\s+/u, "");
     const imageMatch = renderedSource.match(/^!\[([^\]]*)\]\(([^)]+)\)$/u);
     if (imageMatch) {
@@ -280,6 +284,7 @@ beforeEach(() => {
     }),
   });
   __clearWebsiteMetadataCacheForTests();
+  markdownBodyRenderMocks.onLinkClicks.length = 0;
   websiteMetadataMocks.get.mockReset();
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -421,6 +426,33 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
 
     expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
     expect(container?.textContent).not.toContain("![Screenshot](/api/assets/image/content)");
+  });
+
+  it("keeps the markdown portal link handler stable across parent rerenders", async () => {
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="![Screenshot](/api/assets/image/content)"
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+    const initialHandler = markdownBodyRenderMocks.onLinkClicks.at(-1);
+    expect(initialHandler).toBeTypeOf("function");
+
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="![Screenshot](/api/assets/image/content)"
+          onChange={() => undefined}
+          placeholder="Unrelated parent update"
+        />,
+      );
+    });
+    await flushReact();
+
+    expect(markdownBodyRenderMocks.onLinkClicks.at(-1)).toBe(initialHandler);
   });
 
   it("edits rendered table cells in place and targets hover actions to the visual row", async () => {

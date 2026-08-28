@@ -18,7 +18,7 @@ import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedGoalIdForChat, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asRecord, asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedGoalIdForChat, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import {
@@ -116,6 +116,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   async function resolveChatInvocation(input: {
     conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "modelOverride" | "effortOverride" | "primaryIssueId" | "contextLinks" | "planMode">;
     contextLinks: ChatContextLink[];
+    prepareExecutionContext?: boolean;
     materializeManagedInstructions?: boolean;
     materializeMissingRuntimeSkills?: boolean;
     agentIdSnapshot?: string | null;
@@ -125,6 +126,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runtimeSource = await resolveConversationRuntime(
       input.conversation,
       {
+        prepareRuntimeConfig: input.prepareExecutionContext !== false,
         materializeManagedInstructions: input.materializeManagedInstructions,
         materializeMissingRuntimeSkills: input.materializeMissingRuntimeSkills,
         ...(input.agentIdSnapshot !== undefined ? { agentIdSnapshot: input.agentIdSnapshot } : {}),
@@ -182,6 +184,19 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const linkedIssueIds = linkedIssueIdsForChat(input.conversation, input.contextLinks);
     const linkedProjectId = linkedProjectIdForChat(input.contextLinks);
     const linkedGoalId = linkedGoalIdForChat(input.contextLinks);
+    if (input.prepareExecutionContext === false) {
+      return {
+        runtimeSource,
+        adapter,
+        config,
+        linkedIssueIds,
+        linkedProjectId,
+        linkedGoalId,
+        resolvedWorkspace: null,
+        sceneContext: null,
+        availabilityError: null,
+      };
+    }
     const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
       runtimeSource.runtimeAgent,
       {
@@ -217,6 +232,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     orgId: string,
     agentId: string,
     options?: {
+      prepareRuntimeConfig?: boolean;
       materializeManagedInstructions?: boolean;
       materializeMissingRuntimeSkills?: boolean;
     },
@@ -239,7 +255,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     }
 
     const agentAdapterType = agent.agentRuntimeType as AgentRuntimeType;
-    const agentAdapterConfig = (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>;
+    const agentAdapterConfig = asRecord(agent.agentRuntimeConfig) ?? {};
     const registeredAdapter = findServerAdapter(agentAdapterType);
 
     if (!registeredAdapter) {
@@ -286,7 +302,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       };
     }
 
-    const preparedAgentRuntimeConfig = options?.materializeManagedInstructions
+    const shouldPrepareRuntimeConfig = options?.prepareRuntimeConfig !== false;
+    const preparedAgentRuntimeConfig = shouldPrepareRuntimeConfig && options?.materializeManagedInstructions
       ? await runContextSvc.materializeManagedInstructionsForRun({
         id: agent.id,
         orgId: agent.orgId,
@@ -299,21 +316,25 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         metadata: agent.metadata ?? null,
       })
       : agentAdapterConfig;
-    const { runtimeConfig, runtimeSkillEntries } = await runContextSvc.prepareRuntimeConfig({
-      scene: "chat",
-      materializeMissingRuntimeSkills: options?.materializeMissingRuntimeSkills !== false,
-      agent: {
-        id: agent.id,
-        orgId: agent.orgId,
-        name: agent.name,
-        role: agent.role,
-        workspaceKey: agent.workspaceKey,
-        status: agent.status,
-        agentRuntimeType: agentAdapterType,
-        agentRuntimeConfig: preparedAgentRuntimeConfig,
-        metadata: agent.metadata ?? null,
-      },
-    });
+    const preparedRuntime = shouldPrepareRuntimeConfig
+      ? await runContextSvc.prepareRuntimeConfig({
+        scene: "chat",
+        materializeMissingRuntimeSkills: options?.materializeMissingRuntimeSkills !== false,
+        agent: {
+          id: agent.id,
+          orgId: agent.orgId,
+          name: agent.name,
+          role: agent.role,
+          workspaceKey: agent.workspaceKey,
+          status: agent.status,
+          agentRuntimeType: agentAdapterType,
+          agentRuntimeConfig: preparedAgentRuntimeConfig,
+          metadata: agent.metadata ?? null,
+        },
+      })
+      : null;
+    const runtimeConfig = preparedRuntime?.runtimeConfig ?? preparedAgentRuntimeConfig;
+    const runtimeSkillEntries = preparedRuntime?.runtimeSkillEntries ?? [];
     return {
       descriptor: {
         sourceType: "agent",
@@ -341,6 +362,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   async function resolveConversationRuntime(
     conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "modelOverride" | "effortOverride">,
     options?: {
+      prepareRuntimeConfig?: boolean;
       materializeManagedInstructions?: boolean;
       materializeMissingRuntimeSkills?: boolean;
       agentIdSnapshot?: string | null;
@@ -1467,6 +1489,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           planMode: input.planMode ?? false,
         },
         contextLinks,
+        prepareExecutionContext: false,
         materializeMissingRuntimeSkills: false,
       });
       return resolved.runtimeSource.descriptor.available && !resolved.availabilityError

@@ -70,6 +70,26 @@ async function createAgent(
   return await response.json() as Agent;
 }
 
+async function createCancellableAgent(
+  page: Page,
+  organization: Organization,
+  name: string,
+): Promise<Agent> {
+  const response = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+    data: {
+      name,
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)"],
+      },
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return await response.json() as Agent;
+}
+
 async function selectOrganization(page: Page, organization: Organization) {
   await page.goto(E2E_BASE_URL);
   await page.evaluate((orgId) => {
@@ -148,6 +168,181 @@ async function getActivity(page: Page, organization: Organization, query: string
 }
 
 test.describe("New issue Agent creation", () => {
+  test("undoes the exact Agent creation Run and restores the editable Agent draft", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const screenshotPath = (name: string) =>
+      process.env.RUDDER_E2E_SCREENSHOT_DIR
+        ? `${process.env.RUDDER_E2E_SCREENSHOT_DIR}/${name}`
+        : testInfo.outputPath(name);
+    const suffix = Date.now();
+    const organization = await createOrganization(page, `undo-${suffix}`);
+    const agent = await createCancellableAgent(page, organization, "Undo Issue Builder");
+    const instruction = `Keep this exact Agent draft after Undo [E2E:${suffix}].`;
+    const savedDescription = "Keep this saved-draft content editable after cancelling the Agent Run.";
+    const submittedDescription = `${savedDescription}${instruction}`;
+    const savedDraftId = `undo-saved-draft-${suffix}`;
+    const restoredTitle = `Editable after Undo ${suffix}`;
+
+    await selectOrganization(page, organization);
+    await page.evaluate(({ orgId, draftId, title, savedDescription }) => {
+      window.localStorage.setItem("rudder:issue-drafts", JSON.stringify([{
+        id: draftId,
+        orgId,
+        title,
+        description: savedDescription,
+        status: "backlog",
+        priority: "high",
+        labelIds: [],
+        assigneeValue: "",
+        reviewerValue: "",
+        projectId: "",
+        goalId: "",
+        projectWorkspaceId: "",
+        assigneeModelOverride: "",
+        assigneeThinkingEffort: "",
+        assigneeChrome: false,
+        createdAt: "2026-08-28T00:00:00.000Z",
+        updatedAt: "2026-08-28T00:00:00.000Z",
+      }]));
+    }, { orgId: organization.id, draftId: savedDraftId, title: restoredTitle, savedDescription });
+    await page.goto(`${E2E_BASE_URL}/${organizationPath(organization)}/issues`);
+    await page.getByTestId("issue-draft-sidebar-entry").click();
+    await page.getByTestId("issue-draft-card").filter({ hasText: restoredTitle }).click();
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(dialog.getByText("Saved to Draft Issues")).toBeVisible();
+    await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Select an Agent" }).click();
+    await page.locator("[data-inline-entity-option]").filter({ hasText: "Undo Issue Builder" }).click();
+    await dialog.locator('[data-slot="agent-issue-description"] .cm-content').click();
+    await page.keyboard.insertText(instruction);
+
+    const acceptedResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/orgs/${organization.id}/agent-issue-creation-requests`),
+    );
+    await dialog.getByRole("button", { name: "Send to Agent" }).click();
+    const acceptedResponse = await acceptedResponsePromise;
+    expect(acceptedResponse.status()).toBe(202);
+    const accepted = await acceptedResponse.json() as AgentIssueCreationRequest;
+    expect(accepted.runId).toEqual(expect.any(String));
+
+    const toast = page.locator(`[data-toast-id="agent-issue-request-${accepted.id}"]`);
+    await expect(toast).toBeVisible();
+    await expect(toast).toHaveAttribute("data-countdown", "true");
+    await expect(toast.getByRole("button", { name: "Undo" })).toBeVisible();
+    const countdownDuration = await toast.evaluate((element) =>
+      (element as HTMLElement).style.getPropertyValue("--motion-toast-countdown-duration"));
+    expect(countdownDuration).toBe("12000ms");
+    if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: screenshotPath("agent-issue-undo-desktop.png"), fullPage: false });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: screenshotPath("agent-issue-undo-mobile.png"), fullPage: false });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.waitForTimeout(50);
+      await page.screenshot({ path: screenshotPath("agent-issue-undo-reduced-motion.png"), fullPage: false });
+      await page.setViewportSize({ width: 1280, height: 800 });
+    }
+
+    let cancellationCount = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST"
+        && new URL(request.url()).pathname === `/api/agent-runs/${accepted.runId}/cancel`
+      ) cancellationCount += 1;
+    });
+    const cancelResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname === `/api/agent-runs/${accepted.runId}/cancel`,
+    );
+    const undoButton = toast.getByRole("button", { name: "Undo" });
+    await undoButton.evaluate((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    });
+    const cancelResponse = await cancelResponsePromise;
+    expect(cancelResponse.ok()).toBe(true);
+    expect((await cancelResponse.json() as AgentRun).status).toBe("cancelled");
+    expect(cancellationCount).toBe(1);
+
+    await expect(toast).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("tab", { name: "Agent", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(dialog).toContainText("Undo Issue Builder");
+    const restoredInstruction = await dialog
+      .locator('[data-slot="agent-issue-description"] .cm-content')
+      .evaluate((element) => {
+        const tile = Reflect.get(element, "cmTile") as {
+          root?: { view?: { state?: { doc?: { toString(): string } } } };
+        } | undefined;
+        return tile?.root?.view?.state?.doc?.toString() ?? null;
+      });
+    expect(restoredInstruction).toBe(submittedDescription);
+    await expect(dialog.getByRole("button", { name: "Send to Agent" })).toBeEnabled();
+    await expect(dialog.getByText("Failed to send the Agent request. Try again.")).toHaveCount(0);
+    await waitForRequest(page, organization, accepted.id, "cancelled");
+
+    await dialog.getByRole("tab", { name: "Manual", exact: true }).click();
+    await expect(dialog.getByText("Saved to Draft Issues")).toHaveCount(0);
+    await expect(dialog.getByPlaceholder("Issue title")).toHaveValue(restoredTitle);
+    const editedTitle = `${restoredTitle} edited`;
+    await dialog.getByPlaceholder("Issue title").fill(editedTitle);
+    await expect.poll(async () => page.evaluate((deletedDraftId) => {
+      const savedDrafts = JSON.parse(window.localStorage.getItem("rudder:issue-drafts") ?? "[]") as Array<{ id: string }>;
+      const autosave = JSON.parse(window.localStorage.getItem("rudder:issue-autosave") ?? "null") as { title?: string } | null;
+      return {
+        sourceDraftDeleted: !savedDrafts.some((draft) => draft.id === deletedDraftId),
+        autosaveTitle: autosave?.title ?? null,
+      };
+    }, savedDraftId), {
+      timeout: 5_000,
+      intervals: [250, 500],
+    }).toEqual({ sourceDraftDeleted: true, autosaveTitle: editedTitle });
+  });
+
+  test("keeps failed Undo feedback and removes Undo when the Run becomes terminal", async ({ page }) => {
+    test.setTimeout(120_000);
+    const suffix = Date.now();
+    const organization = await createOrganization(page, `undo-failure-${suffix}`);
+    const agent = await createCancellableAgent(page, organization, "Undo Failure Builder");
+
+    await selectOrganization(page, organization);
+    await page.goto(`${E2E_BASE_URL}/${organizationPath(organization)}/issues`);
+    await openNewIssueDialog(page);
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    await dialog.getByRole("button", { name: "Select an Agent" }).click();
+    await page.locator("[data-inline-entity-option]").filter({ hasText: "Undo Failure Builder" }).click();
+    await dialog.locator('[data-slot="agent-issue-description"] .cm-content').click();
+    await page.keyboard.insertText(`Preserve this draft after a failed Undo [E2E:${suffix}].`);
+
+    const acceptedResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/orgs/${organization.id}/agent-issue-creation-requests`),
+    );
+    await dialog.getByRole("button", { name: "Send to Agent" }).click();
+    const accepted = await (await acceptedResponsePromise).json() as AgentIssueCreationRequest;
+    const toast = page.locator(`[data-toast-id="agent-issue-request-${accepted.id}"]`);
+    await expect(toast).toBeVisible();
+
+    await page.route(`**/api/agent-runs/${accepted.runId}/cancel`, async (route) => {
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Cancellation unavailable" }) });
+    });
+    await toast.getByRole("button", { name: "Undo" }).click();
+    await expect(toast).toContainText("Couldn't cancel Agent Run");
+    await expect(toast).toContainText("Cancellation unavailable");
+    await expect(toast.getByRole("button", { name: "Undo" })).toBeEnabled();
+    await expect(dialog).toBeHidden();
+
+    await page.unroute(`**/api/agent-runs/${accepted.runId}/cancel`);
+    const terminalResponse = await page.request.post(`${E2E_BASE_URL}/api/agent-runs/${accepted.runId}/cancel`, { data: {} });
+    expect(terminalResponse.ok()).toBe(true);
+    await expect(toast.getByRole("button", { name: "Undo" })).toHaveCount(0, { timeout: 10_000 });
+    await expect(toast).toContainText("Agent Run can no longer be cancelled");
+    await expect(dialog).toBeHidden();
+  });
+
   test("creates one real Issue, persists completion, and opens the unread Messenger result", async ({ page }, testInfo) => {
     const screenshotPath = (name: string) =>
       process.env.RUDDER_E2E_SCREENSHOT_DIR
@@ -169,7 +364,7 @@ test.describe("New issue Agent creation", () => {
     await dialog.getByRole("button", { name: "Select an Agent" }).click();
     await page.locator("[data-inline-entity-option]").filter({ hasText: "Issue Creation Builder" }).click();
     await expect(dialog.getByPlaceholder("Search Agents...")).toBeHidden();
-    const instructionEditor = dialog.locator('[data-slot="agent-issue-instruction"]');
+    const instructionEditor = dialog.locator('[data-slot="agent-issue-description"]');
     const instructionContent = instructionEditor.locator(".cm-content");
     await instructionContent.click();
     await page.keyboard.insertText(instruction);
@@ -494,7 +689,8 @@ test.describe("New issue Agent creation", () => {
     expect(crossOrganizationResponse.status()).toBe(422);
   });
 
-  test("accepts a deferred Agent request without a title and preserves Manual creation", async ({ page }, testInfo) => {
+  test("shares Description, assignee, and project across Manual and Agent creation", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
     const screenshotPath = (name: string) =>
       process.env.RUDDER_E2E_SCREENSHOT_DIR
         ? `${process.env.RUDDER_E2E_SCREENSHOT_DIR}/${name}`
@@ -502,71 +698,157 @@ test.describe("New issue Agent creation", () => {
     const suffix = Date.now();
     const organization = await createOrganization(page, String(suffix));
     const agent = await createAgent(page, organization, "Deferred Builder", E2E_CODEX_STUB);
+    const alternateAgent = await createAgent(page, organization, "Alternate Builder", E2E_CODEX_STUB);
+    const projectResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/projects`, {
+      data: { name: "Shared Modal Project", status: "planned" },
+    });
+    expect(projectResponse.ok()).toBe(true);
+    const project = await projectResponse.json() as { id: string; name: string };
+    const alternateProjectResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/projects`, {
+      data: { name: "Alternate Modal Project", status: "planned" },
+    });
+    expect(alternateProjectResponse.ok()).toBe(true);
+    const alternateProject = await alternateProjectResponse.json() as { id: string; name: string };
 
-    const pauseRes = await page.request.post(`${E2E_BASE_URL}/api/agents/${agent.id}/pause`);
+    const pauseRes = await page.request.post(`${E2E_BASE_URL}/api/agents/${alternateAgent.id}/pause`);
     expect(pauseRes.ok()).toBe(true);
     expect((await pauseRes.json() as { status: string }).status).toBe("paused");
 
     await selectOrganization(page, organization);
     await page.goto(`${E2E_BASE_URL}/${organizationPath(organization)}/issues`);
+    await expect(page.getByRole("link", { name: project.name, exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: alternateProject.name, exact: true })).toBeVisible();
 
     await openNewIssueDialog(page);
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
-
-    const agentSelector = dialog.getByRole("button", { name: "Select an Agent" });
-    await agentSelector.click();
-    const agentOption = page.locator("[data-inline-entity-option]").filter({ hasText: "Deferred Builder" });
-    await expect(agentOption).toHaveCount(1);
-    await agentOption.click();
-
-    const instruction = dialog.getByLabel("Instruction");
-    await instruction.click();
-    await page.keyboard.insertText("Create an issue for the deferred onboarding regression.");
-    const sendButton = dialog.getByRole("button", { name: "Send to Agent" });
-    await expect(sendButton).toBeEnabled();
-
-    const agentRequestPromise = page.waitForResponse((response) =>
-      response.request().method() === "POST"
-      && response.url().endsWith(`/api/orgs/${organization.id}/agent-issue-creation-requests`),
-    );
-    await sendButton.click();
-    const agentResponse = await agentRequestPromise;
-    expect(agentResponse.status()).toBe(202);
-    const agentRequest = await agentResponse.json() as { status: string; instruction: string };
-    expect(agentRequest).toMatchObject({
-      status: "deferred",
-      instruction: "Create an issue for the deferred onboarding regression.",
-    });
-    await expect(dialog).toBeHidden();
-    await expect(page.getByText("Sent to Agent. You'll be notified in Inbox when it's done.", { exact: true })).toBeVisible();
-
-    await openNewIssueDialog(page);
-    const manualDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
-    await expect(manualDialog).toBeVisible();
-    await expect(manualDialog.getByRole("tab", { name: "Manual", exact: true })).toHaveAttribute("aria-selected", "true");
-    await expect(manualDialog.getByPlaceholder("Issue title")).toBeVisible();
-    await expect(manualDialog.getByPlaceholder("Describe the Issue you want the Agent to create...")).toHaveCount(0);
+    const manualTitle = `Manual shared-state issue ${suffix}`;
+    const manualDescription = "Description entered before switching to Agent mode.";
+    await dialog.getByPlaceholder("Issue title").fill(manualTitle);
+    await dialog.getByRole("button", { name: "No assignee" }).click();
+    await dialog.getByPlaceholder("Search assignees...").fill("Deferred Builder");
+    await page.locator("[data-inline-entity-option]").filter({ hasText: "Deferred Builder" }).click();
+    await expect(dialog.getByPlaceholder("Search assignees...")).toBeHidden();
+    await dialog.getByRole("button", { name: "No project" }).first().click();
+    await dialog.getByPlaceholder("Search projects...").fill(project.name);
+    await page.locator('[data-inline-entity-option]:visible').filter({ hasText: project.name }).click({ force: true });
+    await expect(dialog.getByPlaceholder("Search projects...")).toBeHidden();
+    await dialog.getByLabel("Issue Description").click();
+    await page.keyboard.insertText(manualDescription);
     if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
       await page.waitForTimeout(400);
-      await page.screenshot({ path: screenshotPath("manual-issue-dialog.png"), fullPage: false });
+      await page.screenshot({ path: screenshotPath("shared-manual-issue-dialog.png"), fullPage: false });
     }
 
-    const manualTitle = `Manual regression issue ${suffix}`;
-    await manualDialog.getByPlaceholder("Issue title").fill(manualTitle);
+    await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "Deferred Builder" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: project.name })).toBeVisible();
+    await expect(dialog.getByLabel("Issue Description")).toContainText(manualDescription);
+    await dialog.getByRole("button", { name: "Deferred Builder" }).click();
+    await dialog.getByPlaceholder("Search Agents...").fill("Alternate Builder");
+    await page.locator("[data-inline-entity-option]").filter({ hasText: "Alternate Builder" }).click();
+    await expect(dialog.getByPlaceholder("Search Agents...")).toBeHidden();
+    await dialog.getByRole("button", { name: project.name }).click();
+    await dialog.getByPlaceholder("Search projects...").fill(alternateProject.name);
+    await page.locator('[data-inline-entity-option]:visible').filter({ hasText: alternateProject.name }).click({ force: true });
+    await expect(dialog.getByPlaceholder("Search projects...")).toBeHidden();
+    await dialog.getByLabel("Issue Description").click();
+    await page.keyboard.press("ControlOrMeta+A");
+    const agentDescription = "Create an issue from the shared description after switching modes.";
+    await page.keyboard.insertText(agentDescription);
+    await dialog.getByRole("tab", { name: "Manual", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "Alternate Builder" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: alternateProject.name })).toBeVisible();
+    await expect(dialog.getByLabel("Issue Description")).toContainText(agentDescription);
+
     const manualResponsePromise = page.waitForResponse((response) =>
       response.request().method() === "POST"
       && response.url().endsWith(`/api/orgs/${organization.id}/issues`)
       && response.ok(),
     );
-    await manualDialog.getByRole("button", { name: "Create Issue" }).click();
+    await dialog.getByRole("button", { name: "Create Issue" }).click();
     const manualIssue = await (await manualResponsePromise).json() as {
+      assigneeAgentId: string | null;
+      description: string | null;
       identifier: string | null;
+      projectId: string | null;
       title: string;
     };
-    expect(manualIssue.title).toBe(manualTitle);
-    await expect(page).toHaveURL(new RegExp(`/${organizationPath(organization)}/issues/${manualIssue.identifier ?? "[^/]+"}$`));
-    await expect(page.getByRole("heading", { name: manualTitle })).toBeVisible();
+    expect(manualIssue).toMatchObject({
+      assigneeAgentId: alternateAgent.id,
+      description: agentDescription,
+      projectId: alternateProject.id,
+      title: manualTitle,
+    });
+
+    await openNewIssueDialog(page);
+    const agentDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(agentDialog).toBeVisible();
+    await agentDialog.getByLabel("Issue Description").click();
+    await page.keyboard.insertText(agentDescription);
+    await agentDialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    await expect(agentDialog.getByRole("button", { name: "Alternate Builder" })).toBeVisible();
+    await expect(agentDialog.getByRole("button", { name: alternateProject.name })).toBeVisible();
+    await expect(agentDialog.getByLabel("Issue Description")).toContainText(agentDescription);
+    if (process.env.RUDDER_CAPTURE_AGENT_ISSUE_SCREENSHOTS === "1") {
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: screenshotPath("shared-agent-issue-dialog.png"), fullPage: false });
+      await page.setViewportSize({ width: 390, height: 844 });
+      const mobileDialogBox = await agentDialog.boundingBox();
+      expect(mobileDialogBox).not.toBeNull();
+      expect(mobileDialogBox!.x).toBeGreaterThanOrEqual(0);
+      expect(mobileDialogBox!.y).toBeGreaterThanOrEqual(0);
+      expect(mobileDialogBox!.x + mobileDialogBox!.width).toBeLessThanOrEqual(390);
+      expect(mobileDialogBox!.y + mobileDialogBox!.height).toBeLessThanOrEqual(844);
+      await page.screenshot({ path: screenshotPath("shared-agent-issue-dialog-mobile.png"), fullPage: false });
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
+
+    const agentRequestPromise = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/orgs/${organization.id}/agent-issue-creation-requests`),
+    );
+    await agentDialog.getByRole("button", { name: "Send to Agent" }).click();
+    const agentResponse = await agentRequestPromise;
+    expect(agentResponse.status()).toBe(202);
+    const agentRequest = await agentResponse.json() as {
+      agentId: string;
+      instruction: string;
+      projectId: string | null;
+      status: string;
+    };
+    expect(agentRequest).toMatchObject({
+      agentId: alternateAgent.id,
+      instruction: agentDescription,
+      projectId: alternateProject.id,
+      status: "deferred",
+    });
+    await expect(agentDialog).toBeHidden();
+    await expect(page.getByText("Sent to Agent. You'll be notified in Inbox when it's done.", { exact: true })).toBeVisible();
+
+    await openNewIssueDialog(page);
+    const reopenedDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(reopenedDialog.getByRole("tab", { name: "Manual", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(reopenedDialog.getByLabel("Issue Description")).toHaveText("");
+
+    const manualDraftDescription = "Manual draft preserved across an ordinary close.";
+    await reopenedDialog.getByLabel("Issue Description").click();
+    await page.keyboard.insertText(manualDraftDescription);
+    await expect.poll(async () => page.evaluate(() => localStorage.getItem("rudder:issue-autosave")))
+      .not.toBeNull();
+    await reopenedDialog.getByRole("button", { name: "Close new issue dialog" }).click();
+    await openNewIssueDialog(page);
+    const restoredManualDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(restoredManualDialog.getByLabel("Issue Description")).toContainText(manualDraftDescription);
+
+    await restoredManualDialog.getByRole("tab", { name: "Agent", exact: true }).click();
+    await restoredManualDialog.getByLabel("Issue Description").click();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.insertText("Agent request discarded by ordinary close.");
+    await restoredManualDialog.getByRole("button", { name: "Close new issue dialog" }).click();
+    await openNewIssueDialog(page);
+    const cleanReopenDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(cleanReopenDialog.getByRole("tab", { name: "Manual", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(cleanReopenDialog.getByLabel("Issue Description")).toHaveText("");
   });
 });

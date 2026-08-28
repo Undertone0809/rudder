@@ -176,6 +176,7 @@ export interface RudderInstalledPlugin {
 export interface RudderPluginDiscoverEntry {
   reportId: string;
   packageId: string;
+  catalogSlug: string | null;
   name: string;
   displayName: string;
   description: string | null;

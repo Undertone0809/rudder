@@ -10,6 +10,7 @@ import { useState } from "react";
 const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const PHASE_LABEL_KEYS: Record<DesktopUpdateProgressPhase, TranslationKey> = {
   starting: "about.updates.progress.phase.starting",
+  preparing_runtime: "about.updates.progress.phase.preparing_runtime",
   resolving_release: "about.updates.progress.phase.resolving_release",
   downloading_checksums: "about.updates.progress.phase.downloading_checksums",
   downloading_asset: "about.updates.progress.phase.downloading_asset",
@@ -108,6 +109,8 @@ export function DesktopUpdateStatusCard() {
     <aside
       aria-live="polite"
       className="pointer-events-none fixed bottom-[calc(1rem+5.75rem)] right-4 z-[1001] w-[min(calc(100vw-2rem),20rem)] md:bottom-4"
+      data-testid="desktop-update-status-card"
+      data-update-phase={currentProgress.phase}
     >
       <div
         className={cn(

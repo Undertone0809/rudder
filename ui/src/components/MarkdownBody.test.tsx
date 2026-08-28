@@ -297,6 +297,33 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("preserves rendered image nodes across unrelated parent rerenders", () => {
+    function Harness() {
+      const [renderCount, setRenderCount] = useState(0);
+      return (
+        <ThemeProvider>
+          <button type="button" onClick={() => setRenderCount((count) => count + 1)}>
+            Rerender {renderCount}
+          </button>
+          <MarkdownBody onLinkClick={() => false}>
+            {"![Evidence](/api/attachments/stable/content)"}
+          </MarkdownBody>
+        </ThemeProvider>
+      );
+    }
+
+    const container = render(<Harness />);
+    const initialImage = container.querySelector("img");
+    expect(initialImage).toBeTruthy();
+
+    act(() => {
+      container.querySelector("button")?.click();
+    });
+
+    expect(container.querySelector("img")).toBe(initialImage);
+    expect(initialImage?.isConnected).toBe(true);
+  });
+
   it("stores raw source offsets alongside rendered offsets after response normalization", () => {
     const source = "Plan\\n\\n-[]任务\\n<br />\\nDone";
     const container = render(
@@ -596,6 +623,51 @@ describe("MarkdownBody", () => {
     expect(mermaidMocks.render).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-testid="mock-mermaid-svg"]')).toBe(renderedSvg);
     expect(container.querySelector(".rudder-mermaid-source")).toBeNull();
+  });
+
+  it("keeps existing list, link, and loaded website icon nodes mounted as markdown grows", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    let source = "- [Rudder](https://rudderhq.dev/docs)";
+    const renderSource = () => {
+      act(() => {
+        root.render(
+          <ThemeProvider>
+            <MarkdownBody>{source}</MarkdownBody>
+          </ThemeProvider>,
+        );
+      });
+    };
+
+    renderSource();
+    const logo = container.querySelector<HTMLImageElement>("img.rudder-website-link-logo")!;
+    await act(async () => {
+      logo.dispatchEvent(new Event("load"));
+      await Promise.resolve();
+    });
+
+    const firstItem = container.querySelector("li")!;
+    const firstLink = container.querySelector<HTMLAnchorElement>("a.rudder-website-link")!;
+    const firstIcon = firstLink.querySelector<HTMLElement>(".rudder-website-link-icon")!;
+    expect(firstLink.querySelector("[data-website-icon='generic']")).toBeNull();
+
+    for (let index = 1; index <= 20; index += 1) {
+      source += `\n- Streamed item ${index}`;
+      renderSource();
+
+      expect(firstItem.isConnected).toBe(true);
+      expect(firstLink.isConnected).toBe(true);
+      expect(firstIcon.isConnected).toBe(true);
+      expect(container.querySelector("li")).toBe(firstItem);
+      expect(container.querySelector("a.rudder-website-link")).toBe(firstLink);
+      expect(firstLink.querySelector(".rudder-website-link-icon")).toBe(firstIcon);
+      expect(firstLink.querySelector("[data-website-icon='generic']")).toBeNull();
+    }
   });
 
   it("renders markdown images without a resolver", () => {
@@ -1260,6 +1332,20 @@ describe("MarkdownBody", () => {
     expect(html).toContain('class="rudder-inline-token-label">ZST-789 Renamed issue</span>');
     expect(html).toContain('href="/issues/issue-789"');
     expect(html).toContain('data-mention-status="in_progress"');
+  });
+
+  it("renders a fallback icon for empty-label wake mentions without current agent data", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"[](agent://1c6709e7-2e99-4e72-8eb6-0d611f844d66?intent=wake)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-mention-kind="agent"');
+    expect(html).toContain('class="rudder-inline-token-label">1c6709e7</span>');
+    expect(html).toContain("--rudder-mention-icon-mask");
   });
 
   it("renders empty-label issue links without current mention data as readable links", () => {

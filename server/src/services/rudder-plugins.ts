@@ -919,6 +919,7 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
       return {
         reportId: reportRow.id,
         packageId: pkg.id,
+        catalogSlug: asString(asRecord(source.metadata).catalogSlug),
         name: pkg.name,
         displayName: asString(normalized.displayName) ?? pkg.name,
         description: asString(normalized.shortDescription) ?? asString(normalized.description),

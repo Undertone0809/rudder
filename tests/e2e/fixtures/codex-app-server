@@ -84,6 +84,53 @@ function finish(body, status = "completed") {
   });
 }
 
+function finishStreamedMarkdown(body) {
+  if (completed) return;
+  completed = true;
+  if (fallbackTimer) clearTimeout(fallbackTimer);
+  const resultEnvelope = `\n${resultSentinel()}${JSON.stringify({
+    kind: "message",
+    body,
+    structuredPayload: null,
+  })}`;
+  const finalText = `${body}${resultEnvelope}`;
+  send({
+    method: "item/agentMessage/delta",
+    params: { threadId, turnId, itemId: "streamed-markdown-e2e", delta: resultEnvelope },
+  });
+  send({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: {
+        type: "agentMessage",
+        id: "streamed-markdown-e2e",
+        text: finalText,
+        phase: null,
+        memoryCitation: null,
+      },
+    },
+  });
+  send({
+    method: "turn/completed",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        items: [],
+        itemsView: { type: "full" },
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    },
+  });
+}
+
 function emitReasoning(itemId, text) {
   send({
     method: "item/completed",
@@ -114,6 +161,42 @@ rl.on("line", (line) => {
       .join("\n");
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (prompt.includes("Keep streamed Markdown nodes stable")) {
+      const firstFragment = "- [Rudder](https://rudderhq.dev/docs)";
+      const appendedFragments = Array.from(
+        { length: 20 },
+        (_, index) => `\n- Streamed item ${index + 1}`,
+      );
+      const body = `${firstFragment}${appendedFragments.join("")}`;
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: "streamed-markdown-e2e",
+            text: "",
+            phase: null,
+            memoryCitation: null,
+          },
+        },
+      });
+      [firstFragment, ...appendedFragments].forEach((delta, index) => {
+        setTimeout(() => {
+          send({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId,
+              turnId,
+              itemId: "streamed-markdown-e2e",
+              delta,
+            },
+          });
+        }, 250 + index * 150);
+      });
+      setTimeout(() => finishStreamedMarkdown(body), 4_600);
+    }
     if (
       prompt.includes("Keep commentary in Process")
       || prompt.includes("Complete fragmented commentary")
@@ -200,6 +283,8 @@ rl.on("line", (line) => {
       () => finish(`Initial App Server reply (${prompt.includes("Keep Steer message position stable") ? "marker-true" : "marker-false"})`),
       prompt.includes("Render dual reasoning streams")
         ? 1_000
+        : prompt.includes("Keep streamed Markdown nodes stable")
+          ? 60_000
         : prompt.includes("Keep commentary in Process")
           ? 60_000
         : prompt.includes("Complete fragmented commentary")

@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidePanelProvider, useSidePanel } from "../context/SidePanelContext";
+import { sidePanelTargetKey, type SidePanelTarget } from "../lib/side-panel-targets";
 import {
   RunConversationListItem,
   RunListItem,
@@ -132,6 +133,7 @@ function conversationEntry(overrides: Partial<Extract<RunRailEntry, { kind: "con
 let container: HTMLDivElement;
 let queryClient: QueryClient;
 let root: Root;
+let sidePanelControls: ReturnType<typeof useSidePanel> | null = null;
 
 beforeEach(() => {
   testState.navigate.mockReset();
@@ -149,6 +151,7 @@ beforeEach(() => {
     },
   });
   root = createRoot(container);
+  sidePanelControls = null;
 });
 
 afterEach(() => {
@@ -169,6 +172,7 @@ function expectRoundedClipPane(pane: HTMLElement | null) {
 
 function SidePanelStateProbe() {
   const sidePanel = useSidePanel();
+  sidePanelControls = sidePanel;
   return (
     <output
       data-testid="side-panel-state"
@@ -376,6 +380,65 @@ describe("RunsTab shared rail branches", () => {
     const probe = container.querySelector<HTMLOutputElement>("[data-testid='side-panel-state']");
     expect(probe?.dataset.open).toBe("false");
     expect(probe?.dataset.tabCount).toBe("0");
+  });
+
+  it("does not restore a feedback tab after the user closes it while another tab remains open", async () => {
+    const feedbackTarget: RunFeedbackTarget = {
+      kind: "run_feedback_chat",
+      agentId: "agent-1",
+      organizationId: "org-1",
+      conversationId: null,
+      projectLocked: false,
+      clientMutationId: "mutation-1",
+      projectId: null,
+      preferredAgentId: "agent-1",
+      body: "Draft feedback",
+      inlineAnnotations: [],
+      label: "Run feedback",
+    };
+    localStorage.setItem("rudder.run-feedback-draft:org-1:agent-1", JSON.stringify(feedbackTarget));
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <SidePanelStateProbe />
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={null}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(sidePanelControls?.contextKey).toBe("agent-runs:agent-route"));
+    });
+
+    const issueTarget: SidePanelTarget = {
+      kind: "issue",
+      issueId: "issue-1",
+      ref: "R6Z-1",
+      commentId: null,
+      label: "R6Z-1",
+    };
+    act(() => {
+      sidePanelControls?.openTargetForContext("agent-runs:agent-route", issueTarget);
+      sidePanelControls?.openTargetForContext("agent-runs:agent-route", feedbackTarget);
+    });
+    expect(sidePanelControls?.tabs.map((target) => target.kind)).toEqual(["issue", "run_feedback_chat"]);
+
+    await act(async () => {
+      sidePanelControls?.closeTarget(sidePanelTargetKey(feedbackTarget));
+      await Promise.resolve();
+    });
+
+    expect(sidePanelControls?.open).toBe(true);
+    expect(sidePanelControls?.tabs.map((target) => target.kind)).toEqual(["issue"]);
   });
 
   it("keeps the current run primary on mobile and reveals grouped history on demand", async () => {

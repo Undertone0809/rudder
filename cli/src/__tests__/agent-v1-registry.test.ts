@@ -88,11 +88,14 @@ describe("agent-v1 registry", () => {
       "approval.issues",
       "approval.comment",
       "skill.list",
+      "skill.search",
       "skill.get",
       "skill.file",
       "skill.import",
       "skill.scan-local",
       "skill.scan-projects",
+      "plugin.search",
+      "plugin.get",
       "browser.tabs",
       "browser.user-tabs",
       "browser.open",
@@ -255,7 +258,7 @@ describe("agent-v1 registry", () => {
     expect(mcpManifest.tools).toHaveLength(
       cliManifest.capabilities.length - browserToolNames.length,
     );
-    expect(mcpManifest.tools.map((tool) => tool.name)).toEqual(coreToolNames);
+    expect(mcpManifest.tools.map((tool) => tool.name)).toEqual(RUDDER_CORE_MCP_TOOL_NAMES);
 
     expect(mcpManifest.tools.every((tool) => tool.category !== "browser")).toBe(true);
     expect(mcpManifest.tools.map((tool) => tool.name)).toContain("rudder_issue_checkout");
@@ -278,10 +281,16 @@ describe("agent-v1 registry", () => {
     });
   });
 
-  it("keeps the lightweight runtime core manifest aligned with the canonical registry", () => {
-    expect(RUDDER_CORE_MCP_TOOL_NAMES).toEqual(
-      RUDDER_AGENT_V1_MCP_TOOL_NAMES.filter((name) => !name.startsWith("rudder_browser_")),
-    );
+  it("keeps Pi's legacy runtime allowlist as an explicit subset of the canonical registry", () => {
+    const runtimeAllowlist = RUDDER_AGENT_V1_MCP_TOOL_NAMES.filter((name) => !name.startsWith("rudder_browser_"));
+    expect(RUDDER_CORE_MCP_TOOL_NAMES).toEqual(expect.arrayContaining(runtimeAllowlist));
+    expect(RUDDER_CORE_MCP_TOOL_NAMES.filter((name) => !runtimeAllowlist.includes(
+      name as (typeof runtimeAllowlist)[number],
+    ))).toEqual([
+      "rudder_skill_search",
+      "rudder_plugin_search",
+      "rudder_plugin_get",
+    ]);
   });
 
   it("derives core and Browser semantic hashes from the canonical tool manifest", () => {
