@@ -3,6 +3,7 @@ import { once } from "node:events";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import {
+  httpRequestLogLevel,
   markBrowserHttpRequestBodySensitive,
   markHttpRequestBodySensitive,
   requestBodyForLogs,
@@ -12,6 +13,44 @@ import {
   serializeHttpRequestForLogs,
   serializeHttpResponseForLogs,
 } from "./logger.js";
+
+describe("HTTP request log levels", () => {
+  it("silences only successful Browser liveness probes", () => {
+    expect(httpRequestLogLevel(
+      { method: "POST", originalUrl: "/api/browser/liveness" },
+      { statusCode: 204 },
+    )).toBe("silent");
+    expect(httpRequestLogLevel(
+      { method: "post", originalUrl: "/API/BROWSER/LIVENESS/?source=mcp" },
+      { statusCode: 204 },
+    )).toBe("silent");
+
+    expect(httpRequestLogLevel(
+      { method: "POST", originalUrl: "/api/browser/liveness" },
+      { statusCode: 409 },
+    )).toBe("warn");
+    expect(httpRequestLogLevel(
+      { method: "POST", originalUrl: "/api/browser/liveness" },
+      { statusCode: 500 },
+    )).toBe("error");
+    expect(httpRequestLogLevel(
+      { method: "POST", originalUrl: "/api/browser/liveness" },
+      { statusCode: 204 },
+      new Error("connection closed"),
+    )).toBe("error");
+  });
+
+  it("keeps ordinary successful requests and non-POST liveness requests visible", () => {
+    expect(httpRequestLogLevel(
+      { method: "GET", originalUrl: "/api/browser/liveness" },
+      { statusCode: 200 },
+    )).toBe("info");
+    expect(httpRequestLogLevel(
+      { method: "POST", originalUrl: "/api/browser/tabs" },
+      { statusCode: 204 },
+    )).toBe("info");
+  });
+});
 
 describe("HTTP request-body logging", () => {
   it("redacts a request body after the route marks it sensitive", () => {

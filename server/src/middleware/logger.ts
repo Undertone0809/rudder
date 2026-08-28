@@ -25,6 +25,22 @@ function requestPathname(req: object): string {
     .replace(/\/+$/u, "");
 }
 
+export function httpRequestLogLevel(
+  req: object,
+  res: { statusCode: number },
+  err?: unknown,
+): "silent" | "error" | "warn" | "info" {
+  if (err || res.statusCode >= 500) return "error";
+  if (res.statusCode >= 400) return "warn";
+  const method = (req as { method?: unknown }).method;
+  if (typeof method === "string"
+    && method.toUpperCase() === "POST"
+    && requestPathname(req) === "/api/browser/liveness") {
+    return "silent";
+  }
+  return "info";
+}
+
 function isMcpOAuthCallbackRequest(req: object): boolean {
   return requestPathname(req) === "/api/mcp/oauth/callback";
 }
@@ -247,10 +263,8 @@ export const httpLogger = pinoHttp({
       return serializeHttpResponseForLogs(serializedResponse);
     },
   },
-  customLogLevel(_req, res, err) {
-    if (err || res.statusCode >= 500) return "error";
-    if (res.statusCode >= 400) return "warn";
-    return "info";
+  customLogLevel(req, res, err) {
+    return httpRequestLogLevel(req, res, err);
   },
   customSuccessMessage(req, res) {
     return `${req.method} ${requestUrlForLogs(req)} ${res.statusCode}`;

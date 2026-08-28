@@ -560,6 +560,22 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
+  it("probes Browser MCP liveness every five seconds by default", async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = vi.fn().mockResolvedValue(undefined);
+      const stop = startBrowserMcpLivenessMonitor({}, vi.fn(), { probe });
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(probe).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(probe).toHaveBeenCalledOnce();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("aborts an in-flight Browser call and suppresses pipelined responses after live revocation", async () => {
     const input = new PassThrough();
     const output = new PassThrough();
