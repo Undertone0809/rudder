@@ -17,6 +17,7 @@ related_code:
   - server/src/services/costs.ts
   - server/src/routes/costs.ts
   - server/src/services/activity.ts
+  - server/src/services/delegation-runs.ts
   - packages/shared/src/types/cost.ts
   - ui/src/hooks/useDateRange.ts
   - ui/src/lib/date-range-cache.ts
@@ -31,6 +32,9 @@ related_tests:
   - ui/src/lib/date-range-cache.test.ts
   - ui/src/pages/Costs.test.tsx
   - tests/e2e/cost-trend.spec.ts
+  - server/src/services/delegation-runs.test.ts
+  - server/src/__tests__/heartbeat-paused-wakeups.test.ts
+  - tests/e2e/agent-delegation-run.spec.ts
 edit_policy: user_confirmed_only
 ---
 
@@ -79,21 +83,25 @@ Flow:
    window where supported.
 3. Budget service checks monthly UTC period limits and thresholds.
 4. Soft alerts surface spend pressure; hard limits pause or block further work.
-5. Costs UI/API readbacks expose estimated spend, unified total tokens, cached
+5. Delegation requests pass through this same hard-stop check; `runs.create`
+   cannot bypass budget enforcement by directly inserting a Run.
+6. Costs UI/API readbacks expose estimated spend, unified total tokens, cached
    input tokens, cumulative overlapping Agent Run duration, explicit UTC
    hourly or daily trends, and Agent/Project distributions for the selected
    range. Costs offers Last 24 Hours, Last 7 Days, Last 30 Days, Year to Date,
    All Time, and Custom ranges; it defaults to Last 24 Hours and does not expose
    a Month to Date preset.
-6. Project distribution retains an Unattributed bucket so visible usage totals
+7. Project distribution retains an Unattributed bucket so visible usage totals
    reconcile with the organization summary; only valid Project IDs are
    accepted as trend filters.
-7. Budget state and Finance ledger readbacks remain available on their owning
+8. Budget state and Finance ledger readbacks remain available on their owning
    tabs without changing hard-stop enforcement semantics.
 
 Invariants:
 
 - Hard-stop budget behavior must block new hidden work when limit is reached.
+- A budget-blocked Delegation retains a queryable skipped/deferred admission
+  request without starting a Run.
 - Cost rollups must retain source run/event identity for audit.
 - Active duration counts each started run once, clips it to the selected
   interval, counts parallel runtime cumulatively, and excludes queued runs
@@ -137,12 +145,17 @@ Flow:
    change. `issue.execution_released` is this kind of internal audit: it proves
    terminal cleanup and idempotency, but it does not itself change the issue's
    operator-visible status, ownership, review state, or result.
+5. A material Delegation admission records source Run, source Agent, target
+   Agent, wakeup request, and admission status. Activity details do not include
+   the full delegated task body.
 
 Invariants:
 
 - Activity should describe material product changes, not every internal update.
 - Mutating product actions must not be invisible when later agents need to
   reconstruct why state changed.
+- Delegation audit projections must remain organization-scoped and expose only
+  allowlisted provenance, never the raw run context snapshot.
 - Agents reconstruct issue state from material issue activity, the issue's
   current status and routing fields, and the run's visible terminal lifecycle
   evidence. They must not depend on the internal `issue.execution_released`

@@ -9,10 +9,14 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.wakeup.ts
   - server/src/services/runtime-kernel/heartbeat.release.ts
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
+  - server/src/services/delegation-runs.ts
 related_tests:
   - server/src/__tests__/heartbeat-run-concurrency.test.ts
   - server/src/__tests__/heartbeat-passive-issue-closeout.test.ts
   - tests/e2e/issue-passive-followup.spec.ts
+  - server/src/services/delegation-runs.test.ts
+  - server/src/__tests__/heartbeat-paused-wakeups.test.ts
+  - tests/e2e/agent-delegation-run.spec.ts
 related_plans:
   - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
@@ -46,6 +50,13 @@ Behavior:
   releases and the target agent is still invokable.
 - Passive issue close-out may queue same-agent follow-up when the run ends
   without sufficient issue closure signal and timer continuity is not credible.
+- Delegation admission is independent of issue execution locks. It persists a
+  traceable wakeup request and reuses the same pause, budget, concurrency,
+  coalescing, queueing, and invokability decisions as other Agent Runs.
+- A Delegation idempotency key is unique within one organization. Replaying the
+  same target Agent and task returns the original persisted admission and
+  source provenance; reusing the key with another target or task conflicts
+  instead of creating a second Run.
 
 Invariant:
 
@@ -55,6 +66,10 @@ Invariant:
   the request or a separate governed workflow explicitly changes them.
 - Deferred wakeups must not be lost when a run finishes.
 - Passive follow-up is bounded and auditable.
+- A skipped or deferred Delegation may have no Run yet, but its wakeup request
+  remains queryable. Source or Delegation Run termination, cancellation, and
+  retry never cascade to the other Run, and retry preserves the original
+  `sourceRunId`.
 
 Rationale:
 
@@ -67,8 +82,12 @@ Related code:
 - `server/src/services/runtime-kernel/heartbeat.wakeup.ts`
 - `server/src/services/runtime-kernel/heartbeat.release.ts`
 - `server/src/services/runtime-kernel/heartbeat.recovery.ts`
+- `server/src/services/delegation-runs.ts`
 
 Related tests:
 
 - `server/src/__tests__/heartbeat-passive-issue-closeout.test.ts`
 - `tests/e2e/issue-passive-followup.spec.ts`
+- `server/src/services/delegation-runs.test.ts`
+- `server/src/__tests__/heartbeat-paused-wakeups.test.ts`
+- `tests/e2e/agent-delegation-run.spec.ts`
