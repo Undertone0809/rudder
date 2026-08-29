@@ -231,7 +231,11 @@ describe("heartbeat paused wakeups", () => {
       router,
       db,
       svc: {
-        getById: vi.fn().mockResolvedValue({ id: sourceAgentId, orgId, name: "Delegation Source" }),
+        getById: vi.fn(async (agentId: string) => db
+          .select()
+          .from(agents)
+          .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
+          .then((rows) => rows[0] ?? null)),
       },
       access: { hasPermission: vi.fn().mockResolvedValue(true) },
       heartbeat,
@@ -240,12 +244,14 @@ describe("heartbeat paused wakeups", () => {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-      req.actor = {
-        type: "agent",
-        agentId: sourceAgentId,
-        orgId,
-        runId: sourceRunId,
-      };
+      req.actor = req.header("x-test-actor") === "board"
+        ? { type: "board", source: "local_implicit", userId: "board-user" }
+        : {
+            type: "agent",
+            agentId: sourceAgentId,
+            orgId,
+            runId: sourceRunId,
+          };
       next();
     });
     app.use("/api", router);
@@ -654,6 +660,86 @@ describe("heartbeat paused wakeups", () => {
       wakeupRequestId: wakeup?.id,
       sessionReuseScope: "none",
     });
+  });
+
+  it("keeps Delegation idempotency independent when a normal wakeup uses the key first", async () => {
+    const { app, orgId, targetAgentId } = await seedDelegationRouteFixture("idle");
+    const idempotencyKey = "shared-normal-first";
+
+    const ordinary = await request(app)
+      .post(`/api/agents/${targetAgentId}/wakeup`)
+      .set("x-test-actor", "board")
+      .send({ source: "on_demand", idempotencyKey });
+    const delegated = await request(app)
+      .post("/api/agent-runs/delegation")
+      .send({
+        task: "Create an independent Delegation after a normal wakeup",
+        targetAgentId,
+        idempotencyKey,
+      });
+
+    expect(ordinary.status).toBe(202);
+    expect(ordinary.body).toMatchObject({ invocationSource: "on_demand" });
+    expect(delegated.status).toBe(202);
+    expect(delegated.body).toMatchObject({ scene: "delegation", replayed: false });
+    expect(delegated.body.runId).not.toBe(ordinary.body.id);
+
+    const requests = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.orgId, orgId));
+    expect(requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        idempotencyKey,
+        delegationIdempotencyKey: null,
+        source: "on_demand",
+      }),
+      expect.objectContaining({
+        idempotencyKey: null,
+        delegationIdempotencyKey: idempotencyKey,
+        source: "delegation",
+      }),
+    ]));
+  });
+
+  it("keeps normal wakeup idempotency independent when Delegation uses the key first", async () => {
+    const { app, orgId, targetAgentId } = await seedDelegationRouteFixture("idle");
+    const idempotencyKey = "shared-delegation-first";
+
+    const delegated = await request(app)
+      .post("/api/agent-runs/delegation")
+      .send({
+        task: "Create an independent Delegation before a normal wakeup",
+        targetAgentId,
+        idempotencyKey,
+      });
+    const ordinary = await request(app)
+      .post(`/api/agents/${targetAgentId}/wakeup`)
+      .set("x-test-actor", "board")
+      .send({ source: "on_demand", idempotencyKey });
+
+    expect(delegated.status).toBe(202);
+    expect(delegated.body).toMatchObject({ scene: "delegation", replayed: false });
+    expect(ordinary.status).toBe(202);
+    expect(ordinary.body).toMatchObject({ invocationSource: "on_demand" });
+    expect(ordinary.body.id).not.toBe(delegated.body.runId);
+
+    const requests = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.orgId, orgId));
+    expect(requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        idempotencyKey: null,
+        delegationIdempotencyKey: idempotencyKey,
+        source: "delegation",
+      }),
+      expect.objectContaining({
+        idempotencyKey,
+        delegationIdempotencyKey: null,
+        source: "on_demand",
+      }),
+    ]));
   });
 
   it("replays paused assignee mentions into the existing issue execution queue", async () => {

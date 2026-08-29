@@ -228,6 +228,57 @@ describe("agent-v1 MCP server", () => {
     }
   });
 
+  it("counts astral Unicode task characters consistently before direct runs.create dispatch", async () => {
+    const acceptedTask = "🙂".repeat(10_001);
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        task: acceptedTask,
+        idempotencyKey: "unicode-delegation",
+      });
+      return new Response(JSON.stringify({ admissionStatus: "queued" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+      RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+    });
+
+    const accepted = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 48,
+      method: "tools/call",
+      params: {
+        name: "rudder_runs_create",
+        arguments: { task: acceptedTask, idempotencyKey: "unicode-delegation" },
+      },
+    }, env);
+    const rejected = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 49,
+      method: "tools/call",
+      params: {
+        name: "rudder_runs_create",
+        arguments: { task: "🙂".repeat(20_001), idempotencyKey: "unicode-too-long" },
+      },
+    }, env);
+
+    expect(accepted?.result).toMatchObject({
+      isError: false,
+      structuredContent: { admissionStatus: "queued" },
+    });
+    expect(rejected?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_mcp_invalid_arguments" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("exposes Computer Use only on the enabled dedicated MCP surface", async () => {
     const disabled = await runAgentV1McpJsonRpcMessage({
       jsonrpc: "2.0",

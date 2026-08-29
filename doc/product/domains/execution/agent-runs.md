@@ -16,7 +16,6 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - server/src/services/runtime-kernel/model-fallback.ts
-  - server/src/services/delegation-runs.ts
   - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
 related_tests:
   - packages/shared/src/agent-run.test.ts
@@ -33,8 +32,6 @@ related_tests:
   - tests/e2e/agent-run-conversation-grouping.spec.ts
   - ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx
   - tests/e2e/run-transcript-detail.spec.ts
-  - server/src/services/delegation-runs.test.ts
-  - tests/e2e/agent-delegation-run.spec.ts
 related_plans:
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
   - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
@@ -66,8 +63,8 @@ Product model:
   `Run heartbeat` creates `scene=heartbeat`, `source=on_demand`, and
   `triggerDetail=manual`.
 - A Heartbeat Run is the specific Agent Run scene for timer/self-check work.
-  Issue Run, Review Run, Chat Run, Automation Run, and Delegation Run are Agent
-  Runs but are not Heartbeat Runs in the product model.
+  Issue Run, Review Run, Chat Run, and Automation Run are Agent Runs but are
+  not Heartbeat Runs in the product model.
 - `/agent-runs` and Agent Detail Runs surfaces expose Agent Run terminology even
   when underlying routes still use heartbeat-compatible names.
 
@@ -80,7 +77,6 @@ Scene taxonomy:
 | `review` | Review Run | Reviewer routing, changes-requested reviewer work, review follow-up after missing decision while issue remains `in_review` | Issue/review context | Not loaded |
 | `chat` | Chat Run | Runtime-backed chat conversation turn | Chat conversation/message | Not loaded |
 | `automation` | Automation Run | Schedule, manual/API/webhook automation trigger, automation dispatch | Automation run and optional linked issue/chat | Not loaded |
-| `delegation` | Delegation Run | An authenticated Agent creates an independent bounded task with `runs.create` | Target Agent plus source Run provenance | Not loaded |
 
 Compatibility mapping:
 
@@ -94,7 +90,6 @@ Compatibility mapping:
 | `invocationSource=review` | Review Run, even when the target is an issue. |
 | `invocationSource=chat` or `chatConversationId` | Chat Run. |
 | `invocationSource=automation` or `contextSnapshot.automationRunId` without issue-scene override | Automation Run. |
-| `invocationSource=delegation` or explicit `contextSnapshot.scene=delegation` | Delegation Run with allowlisted `sourceRunId` provenance. |
 | Historical `targetType=manual` | Legacy target compatibility only; it is not a scene and new no-target manual heartbeat runs should resolve to `wakeup_request`. |
 
 Scene derivation precedence:
@@ -130,8 +125,8 @@ snapshots independently.
 
 Flow:
 
-1. A timer/self-check, issue route, review route, chat turn, automation
-   dispatch, or governed Delegation request creates a run record.
+1. A timer/self-check, issue route, review route, chat turn, or automation
+   dispatch creates a run record.
 2. Execution stores scene and target context in the run snapshot.
 3. Shared conversion code maps the stored run to the Agent Run shape.
 4. Agent Detail and run filters present scene and target facts to the operator.
@@ -142,10 +137,6 @@ Flow:
 6. Transcript/result pages link back to the originating target where possible.
 7. Runtime instruction loading uses the derived scene: only `scene=heartbeat`
    receives `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`.
-8. A Delegation Run receives a fresh task scope and the target Agent's runtime,
-   workspace, instructions, and skills. Its `sourceRunId` is provenance only;
-   source transcript, session, workspace, credentials, environment, and
-   arbitrary paths are not inherited.
 
 Invariants:
 
@@ -157,9 +148,6 @@ Invariants:
   issue runs even when they enter through heartbeat-compatible wakeup code.
 - Review follow-up is reviewer-scoped review work, not issue implementation
   work.
-- Delegation provenance is not a parent/child lifecycle. Source completion,
-  cancel, or retry does not alter the Delegation Run; Delegation completion
-  does not automatically wake or callback the source Run.
 - Compatibility naming must not leak into product copy when the UI is describing
   the unified run model.
 - Conversation grouping is a navigation projection only. It must not merge run
@@ -167,14 +155,12 @@ Invariants:
   the members that match the current filters, including when a selected member
   is retained outside those filters.
 - Heartbeat-only instruction text must not be loaded into issue, review, chat,
-  automation, or Delegation runs.
+  or automation runs.
 
 Evidence:
 
 - Agent run list can filter/display scenes.
 - Run detail exposes linked target context.
-- Run summary, origin, intelligence, events, and existing Run APIs expose the
-  Delegation scene and allowlisted `sourceRunId` without exposing raw context.
 - Agent Detail shows one navigation entry per normalized conversation while
   `Chat Replies` continues to open each individual run.
 - Shared type conversion is the single place for facade semantics.
@@ -186,7 +172,6 @@ Related code:
 - `packages/shared/src/agent-run.ts`
 - `server/src/routes/agents.management-routes.ts`
 - `server/src/services/runtime-kernel/heartbeat.execute.ts`
-- `server/src/services/delegation-runs.ts`
 - `ui/src/pages/AgentDetail.runs.tsx`
 
 Related tests:
@@ -199,8 +184,6 @@ Related tests:
 - `ui/src/pages/AgentDetail.runs.test.ts`
 - `tests/e2e/agent-runs-filter-menu.spec.ts`
 - `tests/e2e/agent-run-conversation-grouping.spec.ts`
-- `server/src/services/delegation-runs.test.ts`
-- `tests/e2e/agent-delegation-run.spec.ts`
 
 ## RUN.CHAT.AGENT.001
 

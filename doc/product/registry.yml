@@ -110,13 +110,10 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.wakeup.ts
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
       - server/src/services/runtime-kernel/heartbeat.ts
-      - server/src/services/delegation-runs.ts
     related_tests:
       - packages/shared/src/agent-run.test.ts
       - server/src/__tests__/heartbeat-paused-wakeups.test.ts
       - server/src/__tests__/heartbeat-run-concurrency.test.ts
-      - server/src/services/delegation-runs.test.ts
-      - tests/e2e/agent-delegation-run.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
@@ -165,13 +162,11 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/services/runtime-kernel/heartbeat.sessions.ts
       - server/src/services/runtime-kernel/model-fallback.ts
-      - server/src/services/delegation-runs.ts
     related_tests:
       - server/src/__tests__/heartbeat-observability.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
       - server/src/__tests__/heartbeat-workspace-preflight.test.ts
       - tests/e2e/codex-model-order.spec.ts
-      - tests/e2e/agent-delegation-run.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-08-03-openclaw-hermes-runtime-compatibility-refresh.md
@@ -185,14 +180,10 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.wakeup.ts
       - server/src/services/runtime-kernel/heartbeat.release.ts
       - server/src/services/runtime-kernel/heartbeat.recovery.ts
-      - server/src/services/delegation-runs.ts
     related_tests:
       - server/src/__tests__/heartbeat-run-concurrency.test.ts
       - server/src/__tests__/heartbeat-passive-issue-closeout.test.ts
       - tests/e2e/issue-passive-followup.spec.ts
-      - server/src/services/delegation-runs.test.ts
-      - server/src/__tests__/heartbeat-paused-wakeups.test.ts
-      - tests/e2e/agent-delegation-run.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
@@ -340,8 +331,6 @@ contracts:
       - server/src/services/agent-startup-context.ts
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/services/workspace-runtime.helpers.ts
-      - packages/agent-runtime-utils/src/server-utils.prompts.ts
-      - packages/agent-runtimes/openclaw-gateway/src/server/execute.ts
     related_tests:
       - server/src/__tests__/heartbeat-workspace-preflight.test.ts
       - packages/agent-runtime-utils/src/server-utils.prompts.test.ts
@@ -356,10 +345,6 @@ contracts:
       - server/src/__tests__/gemini-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
-      - packages/agent-runtimes/openclaw-gateway/src/server/execute.test.ts
-      - server/src/agent-runtimes/http/execute.test.ts
-      - server/src/agent-runtimes/process/execute.test.ts
-      - tests/e2e/agent-delegation-run.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
@@ -441,7 +426,6 @@ contracts:
       - server/src/services/runtime-kernel/heartbeat.execute.ts
       - server/src/routes/agents.management-routes.ts
       - ui/src/pages/AgentDetail.runs.tsx
-      - server/src/services/delegation-runs.ts
     related_tests:
       - packages/shared/src/agent-run.test.ts
       - server/src/__tests__/messenger-service.test.ts
@@ -643,8 +627,6 @@ contracts:
       - desktop/src/system-permissions.test.ts
       - ui/src/pages/InstanceNotificationsSettings.test.tsx
       - desktop/scripts/smoke.mjs
-      - server/src/services/delegation-runs.test.ts
-      - tests/e2e/agent-delegation-run.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
       - doc/plans/2026-06-26-local-runtime-operator-home-default.md
@@ -666,8 +648,6 @@ contracts:
       - cli/src/program.ts
       - cli/src/commands/client/browser.ts
       - packages/agent-runtime-utils/src/rudder-mcp.ts
-      - cli/src/commands/client/runs.ts
-      - server/src/services/delegation-runs.ts
       - packages/agent-runtime-utils/src/rudder-mcp-contract.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
@@ -694,8 +674,6 @@ contracts:
       - cli/src/__tests__/agent-v1-registry.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
       - tests/e2e/agent-mcp-contract.spec.ts
-      - server/src/__tests__/delegation-run-routes.test.ts
-      - tests/e2e/agent-delegation-run.spec.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
@@ -2086,14 +2064,11 @@ contracts:
       - packages/db/src/schema/cost_events.ts
       - server/src/services/budgets.ts
       - server/src/services/costs.ts
-      - server/src/services/delegation-runs.ts
     related_tests:
       - server/src/__tests__/budgets-service.test.ts
       - server/src/__tests__/costs-service.test.ts
       - server/src/__tests__/costs-rollups-service.test.ts
       - tests/e2e/cost-trend.spec.ts
-      - server/src/services/delegation-runs.test.ts
-      - server/src/__tests__/heartbeat-paused-wakeups.test.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   ACTIVITY.AUDIT.001:
@@ -2107,15 +2082,12 @@ contracts:
       - server/src/services/run-intelligence.ts
       - server/src/services/runtime-kernel/heartbeat.ts
       - server/src/services/runtime-kernel/heartbeat.release.ts
-      - server/src/services/delegation-runs.ts
       - ui/src/lib/run-detail-events.ts
     related_tests:
       - server/src/__tests__/activity-service.test.ts
       - server/src/__tests__/heartbeat-process-recovery.test.ts
       - tests/e2e/issue-activity-chat-links.spec.ts
       - ui/src/lib/run-detail-events.test.ts
-      - server/src/services/delegation-runs.test.ts
-      - tests/e2e/agent-delegation-run.spec.ts
     related_plans:
       - doc/plans/2026-06-21-product-logic-registry.md
   RUN.INTELLIGENCE.001:

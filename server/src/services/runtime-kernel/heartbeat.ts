@@ -850,7 +850,18 @@ export function heartbeatService(
       .onConflictDoNothing()
       .returning()
       .then((rows: Array<typeof agentWakeupRequests.$inferSelect>) => rows[0] ?? null);
-    if (inserted || !values.idempotencyKey) return inserted;
+    if (inserted) return inserted;
+    if (values.delegationIdempotencyKey) {
+      return tx
+        .select()
+        .from(agentWakeupRequests)
+        .where(and(
+          eq(agentWakeupRequests.orgId, values.orgId),
+          eq(agentWakeupRequests.delegationIdempotencyKey, values.delegationIdempotencyKey),
+        ))
+        .then((rows: Array<typeof agentWakeupRequests.$inferSelect>) => rows[0] ?? null);
+    }
+    if (!values.idempotencyKey) return null;
     return tx
       .select()
       .from(agentWakeupRequests)

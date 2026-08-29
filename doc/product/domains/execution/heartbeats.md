@@ -10,13 +10,10 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.wakeup.ts
   - server/src/services/runtime-kernel/heartbeat.recovery.ts
   - server/src/services/runtime-kernel/heartbeat.ts
-  - server/src/services/delegation-runs.ts
 related_tests:
   - packages/shared/src/agent-run.test.ts
   - server/src/__tests__/heartbeat-paused-wakeups.test.ts
   - server/src/__tests__/heartbeat-run-concurrency.test.ts
-  - server/src/services/delegation-runs.test.ts
-  - tests/e2e/agent-delegation-run.spec.ts
 related_plans:
   - doc/plans/2026-07-24-status-independent-explicit-issue-work.md
 edit_policy: user_confirmed_only
@@ -29,8 +26,7 @@ edit_policy: user_confirmed_only
 Behavior:
 
 - `heartbeat.wakeup(agentId, opts)` is the historical compatibility admission
-  entrypoint for timer, assignment, review, on-demand, automation, and
-  Delegation wakes.
+  entrypoint for timer, assignment, review, on-demand, and automation wakes.
   It may admit any Agent Run scene; it does not make every admitted run a
   Heartbeat Run in the product model.
 - A Heartbeat Run is only `scene=heartbeat`: timer/self-check/periodic
@@ -49,10 +45,6 @@ Behavior:
   issue status. Automatic timer and inbox discovery remain status-sensitive.
 - Queued runs are started through `startNextQueuedRunForAgent`, respecting
   `maxConcurrentRuns`.
-- `rudder_runs_create` and `rudder runs create` enter this rail through the
-  dedicated Delegation service. The service derives the source Agent, source
-  Run, organization, and permission context from runtime authentication; task
-  arguments cannot select those identities or bypass admission.
 
 Invariant:
 
@@ -61,15 +53,13 @@ Invariant:
 - Wakeup admission must preserve the downstream Agent Run scene. Assignment,
   checkout, issue comment mention, and reopen wakes become Issue Runs; reviewer
   routing and review follow-up become Review Runs; automation dispatch becomes
-  Automation Runs unless the run is explicitly issue/chat-scoped; Delegation
-  admission becomes a Delegation Run; timer and manual `Run heartbeat` become
-  Heartbeat Runs.
+  Automation Runs unless the run is explicitly issue/chat-scoped; timer and
+  manual `Run heartbeat` become Heartbeat Runs.
 - Budget-blocked wakes must not start runs.
 - Pending deferred wakeups must not create duplicate runs for the same task
   scope.
 - Only Heartbeat Runs load `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`; issue, review,
-  chat, automation, and Delegation runs admitted through this compatibility
-  path do not.
+  chat, and automation runs admitted through this compatibility path do not.
 
 Rationale:
 
@@ -90,14 +80,12 @@ Scene outcomes:
 | Comment reopen wake | Issue Run with `issue_reopened_via_comment` | Do not load heartbeat instruction; reopen comment carries assignee wake mention when needed. |
 | Reviewer route or review follow-up | Review Run | Do not load heartbeat instruction. |
 | Automation dispatch | Automation Run unless issue/chat-scoped context overrides | Do not load heartbeat instruction. |
-| Agent `runs.create` | Delegation Run with `agent_run_created` trigger | Do not load heartbeat instruction; use the target Agent's independent task context. |
 
 Related code:
 
 - `server/src/services/runtime-kernel/heartbeat.wakeup.ts`
 - `server/src/services/runtime-kernel/heartbeat.recovery.ts`
 - `server/src/services/runtime-kernel/heartbeat.ts`
-- `server/src/services/delegation-runs.ts`
 - `packages/shared/src/agent-run.ts`
 
 Related tests:
@@ -105,5 +93,3 @@ Related tests:
 - `packages/shared/src/agent-run.test.ts`
 - `server/src/__tests__/heartbeat-paused-wakeups.test.ts`
 - `server/src/__tests__/heartbeat-run-concurrency.test.ts`
-- `server/src/services/delegation-runs.test.ts`
-- `tests/e2e/agent-delegation-run.spec.ts`

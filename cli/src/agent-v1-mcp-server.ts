@@ -1989,10 +1989,11 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
   }
 
   if (typeof value === "string") {
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+    const characterLength = Array.from(value).length;
+    if (typeof schema.minLength === "number" && characterLength < schema.minLength) {
       return `must contain at least ${schema.minLength} character(s)`;
     }
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+    if (typeof schema.maxLength === "number" && characterLength > schema.maxLength) {
       return `must contain at most ${schema.maxLength} characters`;
     }
     if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {

@@ -61,7 +61,7 @@ function wakeupRequest(task: string, status = "queued", agentId = targetAgentId)
     coalescedCount: 0,
     requestedByActorType: "agent",
     requestedByActorId: sourceAgentId,
-    idempotencyKey: "delegation-key-1",
+    idempotencyKey: null,
     delegationIdempotencyKey: "delegation-key-1",
     runId: targetRunId,
   };
@@ -140,7 +140,6 @@ describe("delegationRunService", () => {
       triggerDetail: "agent_run_created",
       reason: DELEGATION_RUN_TRIGGER_REASON,
       sourceRunId,
-      idempotencyKey: "delegation-key-1",
       delegationIdempotencyKey: "delegation-key-1",
       contextSnapshot: expect.objectContaining({
         scene: DELEGATION_RUN_SCENE,
@@ -154,6 +153,7 @@ describe("delegationRunService", () => {
         sourceRunId,
       }),
     }));
+    expect(wakeup.mock.calls[0]?.[1]).not.toHaveProperty("idempotencyKey");
     expect(result).toMatchObject({
       runId: targetRunId,
       wakeupRequestId,

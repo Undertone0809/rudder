@@ -9,7 +9,6 @@ contract_ids:
 related_code:
   - packages/agent-runtime-utils/src/server-utils.instructions.ts
   - packages/agent-runtime-utils/src/server-utils.prompts.ts
-  - packages/agent-runtimes/openclaw-gateway/src/server/execute.ts
   - packages/agent-runtimes/claude-local/src/server/execute.ts
   - packages/agent-runtimes/codex-local/src/server/execute.ts
   - packages/agent-runtimes/cursor-local/src/server/execute.ts
@@ -34,10 +33,6 @@ related_tests:
   - server/src/__tests__/gemini-local-execute.test.ts
   - server/src/__tests__/opencode-local-execute.test.ts
   - server/src/__tests__/pi-local-execute.test.ts
-  - packages/agent-runtimes/openclaw-gateway/src/server/execute.test.ts
-  - server/src/agent-runtimes/http/execute.test.ts
-  - server/src/agent-runtimes/process/execute.test.ts
-  - tests/e2e/agent-delegation-run.spec.ts
 related_plans:
   - doc/plans/2026-07-18-rudder-docs-skill-proposal.md
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
@@ -132,10 +127,6 @@ chat, review, heartbeat, or relationship-authorized explicit work.
 - Wake context: `wakeReason`, `wakeSource`, `issue`, `comment`,
   `wakeCommentId`, session handoff fields, and recovery/passive follow-up
   fields when present.
-- Delegation context: a bounded `delegationTask`, server-derived source and
-  target Agent identifiers, and `sourceRunId` provenance. The source Run is not
-  an instruction, transcript, session, workspace, credential, environment, or
-  path source.
 - Goal Runtime Context: for `goal_started`, `goal_feedback`,
   `goal_change_decided`, and `goal_continuation`, the accepted Contract,
   current persisted Plan, latest checkpoint facts, continuation, and
@@ -161,8 +152,6 @@ chat, review, heartbeat, or relationship-authorized explicit work.
   section.
 - `rudderScene` decides whether runtime heartbeat instructions are included:
   only `rudderScene = heartbeat` may include them.
-- `rudderScene = delegation` selects the independent Delegation prompt, forces
-  a fresh task scope, and uses the target Agent's own runtime materialization.
 - Assignee-capable issue prompt templates include the issue checkout conflict
   rail. Custom prompt bodies still win, but Rudder appends the platform-owned
   rail for assignee-capable issue scenes. Reviewer and reviewer-recovery,
@@ -252,27 +241,21 @@ chat, review, heartbeat, or relationship-authorized explicit work.
    it cannot acquire the assignee rail through `issue_passive_followup`,
    `issue_changes_requested`, assignment, or comment branches.
 
-9. A Delegation scene selects the bounded Delegation prompt before adapter
-   invocation. The prompt labels the source Run as provenance only, preserves
-   the full validated task body, and excludes heartbeat instructions and all
-   source-run session or workspace inheritance. Local shared preparation,
-   process, HTTP, and OpenClaw delivery preserve this same boundary.
-
-10. For a Goal Owner wake, Rudder routes `goal_started`, `goal_feedback`,
+9. For a Goal Owner wake, Rudder routes `goal_started`, `goal_feedback`,
    `goal_change_decided`, or `goal_continuation` to its matching Goal prompt.
    Each template receives the same runtime boundary and nine-phase advancement
    protocol, plus an entry rule specific to the wake reason. The protocol
    advances the Goal as far as authority, evidence, and available tools allow
    in the current bounded Run; it is not a persisted workflow state machine.
 
-11. Each adapter combines the loaded prefix with its runtime-specific prompt
+10. Each adapter combines the loaded prefix with its runtime-specific prompt
    delivery mechanism. Codex-style stdin prompts append bootstrap prompt,
    session handoff markdown, and the selected heartbeat/chat prompt after the
    instruction prefix. Claude writes the loaded prefix to an appended system
    prompt file. Cursor, Gemini, OpenCode, and Pi use the shared loaded prefix
    while preserving their adapter-specific command invocation.
 
-12. The adapter reports metadata before provider execution. Rudder persists or
+11. The adapter reports metadata before provider execution. Rudder persists or
    emits command notes, prompt metrics, loaded/realized skills, the sanitized
    prompt/model input, cwd, command, and selected runtime metadata through the
    adapter invocation event and run intelligence metadata.

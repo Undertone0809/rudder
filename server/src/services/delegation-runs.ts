@@ -264,7 +264,6 @@ export function delegationRunService(
         triggerDetail: "agent_run_created",
         reason: DELEGATION_RUN_TRIGGER_REASON,
         payload,
-        idempotencyKey: validated.idempotencyKey,
         delegationIdempotencyKey: validated.idempotencyKey,
         sourceRunId: input.sourceRunId,
         requestedByActorType: "agent",
