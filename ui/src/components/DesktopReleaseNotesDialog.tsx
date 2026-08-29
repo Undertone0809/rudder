@@ -7,6 +7,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useI18n } from "@/context/I18nContext";
+import { desktopReleaseNotesCopy, localizeDesktopReleaseNotes } from "@/i18n/releaseNotes";
 import { readDesktopShell, type DesktopReleaseNotes } from "@/lib/desktop-shell";
 import { RUDDER_DOCS_URL } from "@/lib/product-links";
 import { ExternalLink } from "lucide-react";
@@ -14,8 +16,11 @@ import { useEffect, useRef, useState } from "react";
 import { RudderLogo } from "./RudderLogo";
 
 export function DesktopReleaseNotesDialog() {
+  const { locale } = useI18n();
   const [notes, setNotes] = useState<DesktopReleaseNotes | null>(null);
   const notesRef = useRef<DesktopReleaseNotes | null>(null);
+  const copy = desktopReleaseNotesCopy(locale);
+  const localizedNotes = notes ? localizeDesktopReleaseNotes(notes, locale) : null;
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
@@ -66,16 +71,16 @@ export function DesktopReleaseNotesDialog() {
           </span>
           <DialogHeader className="min-w-0 gap-1 text-left">
             <DialogTitle className="text-base leading-6">
-              {notes?.title ?? "What's new in Rudder"}
+              {localizedNotes?.title ?? copy.defaultTitle}
             </DialogTitle>
             <DialogDescription className="text-sm leading-5">
-              Updates installed with this version.
+              {copy.description}
             </DialogDescription>
           </DialogHeader>
         </div>
         <div className="max-h-[min(62vh,34rem)] overflow-y-auto px-5 py-4">
           <div className="space-y-4">
-            {notes?.sections.map((section) => (
+            {localizedNotes?.sections.map((section) => (
               <section key={section.title} className="space-y-2">
                 <h2 className="text-sm font-semibold text-foreground">{section.title}</h2>
                 <ul className="space-y-1.5 text-sm leading-5 text-muted-foreground">
@@ -93,10 +98,10 @@ export function DesktopReleaseNotesDialog() {
         <DialogFooter className="border-t border-border/70 px-5 py-4 sm:justify-between">
           <Button type="button" variant="outline" onClick={() => void openDocs()}>
             <ExternalLink className="h-4 w-4" />
-            Docs
+            {copy.docs}
           </Button>
           <Button type="button" onClick={() => void close()}>
-            Continue
+            {copy.continue}
           </Button>
         </DialogFooter>
       </DialogContent>
