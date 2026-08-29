@@ -678,6 +678,7 @@ export function RunFiltersToolbar({
             <Button
               variant="ghost"
               size="sm"
+              aria-label={activeFilterCount > 0 ? `Filter runs: ${activeFilterCount} active` : "Filter runs"}
               className={cn("h-7 px-2 text-xs", activeFilterCount > 0 && "text-[color:var(--accent-strong)] bg-accent/30")}
             >
               <SlidersHorizontal className="h-3.5 w-3.5 sm:mr-1" />

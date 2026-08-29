@@ -521,6 +521,20 @@ describe("agent run filters", () => {
     }
   });
 
+  it("keeps the responsive filter trigger accessible when its text is hidden", () => {
+    const { container, root } = renderToolbar({
+      state: defaultFilterState({ scenes: ["delegation"] }),
+    });
+
+    try {
+      const filterButton = container.querySelector<HTMLButtonElement>('button[aria-label="Filter runs: 1 active"]');
+      expect(filterButton).not.toBeNull();
+      expect(filterButton?.textContent).toContain("Filter: 1");
+    } finally {
+      cleanupToolbar(root, container);
+    }
+  });
+
   it("applies consecutive filter toggles against the latest query state", () => {
     let searchParams = new URLSearchParams("runSort=duration_desc");
     const applyPatch = (patch: RunFilterParamPatch) => {
