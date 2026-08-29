@@ -46,6 +46,23 @@ const annotation: ChatInlineAnnotation = {
   attachmentIds: ["40000000-0000-4000-8000-000000000001"],
 };
 
+const workspaceFileAnnotation: ChatInlineAnnotation = {
+  id: "10000000-0000-4000-8000-000000000010",
+  selectedText: "The saved file excerpt remains useful after editing.",
+  comment: "Keep the saved snapshot visible.",
+  sourceConversationId: annotation.sourceConversationId,
+  surface: "workspace_file",
+  sourceFilePath: "notes/example.md",
+  sourceLibraryEntryId: "90000000-0000-4000-8000-000000000001",
+  sourceRenderMode: "markdown",
+  sourceHash: "c".repeat(64),
+  start: 0,
+  end: 48,
+  prefix: "",
+  suffix: "",
+  attachmentIds: [],
+};
+
 const attachment: ChatAttachment = {
   id: "40000000-0000-4000-8000-000000000001",
   orgId: "50000000-0000-4000-8000-000000000001",
@@ -86,6 +103,11 @@ beforeEach(() => {
     ...URL,
     createObjectURL: vi.fn(() => "blob:preview"),
     revokeObjectURL: vi.fn(),
+  });
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
   });
 });
 
@@ -141,6 +163,59 @@ describe("response annotation components", () => {
     click(marker);
     expect(onActivate).toHaveBeenCalledWith(marker);
     expect(marker.getAttribute("data-annotation-id")).toBe(annotation.id);
+  });
+
+  it("shows chat annotation details on marker hover", async () => {
+    render(
+      <ResponseAnnotationMarker
+        annotationId={annotation.id}
+        annotation={annotation}
+        ordinal={1}
+        excerpt={annotation.selectedText}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const marker = host.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-response-annotation-marker']",
+    )!;
+    act(() => {
+      marker.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    const tooltip = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    );
+    expect(tooltip).not.toBeNull();
+    expect(tooltip?.textContent).toContain(annotation.selectedText);
+    expect(tooltip?.textContent).toContain(annotation.comment);
+  });
+
+  it("shows chat annotation details when a marker receives keyboard focus", async () => {
+    render(
+      <ResponseAnnotationMarker
+        annotationId={annotation.id}
+        annotation={annotation}
+        ordinal={1}
+        excerpt={annotation.selectedText}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const marker = host.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-response-annotation-marker']",
+    )!;
+    act(() => marker.focus());
+
+    const tooltip = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    );
+    expect(document.activeElement).toBe(marker);
+    expect(tooltip?.textContent).toContain(annotation.selectedText);
+    expect(tooltip?.textContent).toContain(annotation.comment);
   });
 
   it("places a selection marker after the complete visual line instead of over following text", () => {
@@ -720,5 +795,35 @@ describe("response annotation components", () => {
     expect(document.body.querySelector("[data-testid='chat-response-annotation-unlocatable']")?.textContent)
       .toBe("Source is no longer available.");
     expect(document.body.textContent).toContain(annotation.selectedText);
+  });
+
+  it("keeps file annotations display-only without source actions or hover details", () => {
+    const onSelect = vi.fn();
+    render(
+      <SentResponseAnnotationsCard
+        annotations={[workspaceFileAnnotation]}
+        attachments={[]}
+        onSelect={onSelect}
+      />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 1 annotation']",
+    )!;
+    act(() => {
+      chip.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    expect(document.body.querySelector(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    )).toBeNull();
+
+    click(chip);
+    const entry = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-sent-card-entry']",
+    )!;
+    expect(entry.dataset.annotationSurface).toBe("workspace_file");
+    expect(entry.textContent).toContain(workspaceFileAnnotation.selectedText);
+    expect(entry.querySelector("button")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

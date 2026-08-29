@@ -824,6 +824,17 @@ test.describe("Chat response annotations", () => {
       .filter({ hasText: "1" });
     await expect(firstMarker).toHaveText("1");
     await expectMarkerNearSelection(firstMarker, finalSource, firstSelectionGeometry);
+    await composer(page).focus();
+    await expect(firstMarker).not.toBeFocused();
+    await firstMarker.hover();
+    const markerHoverDetails = page.getByTestId("chat-response-annotation-hover-tooltip");
+    await expect(markerHoverDetails).toBeVisible();
+    await expect(markerHoverDetails).toContainText("第一段包含");
+    await expect(markerHoverDetails).toContainText(
+      "Please verify this CJK and Markdown claim.",
+    );
+    await page.mouse.move(1, 1);
+    await expect(markerHoverDetails).toBeHidden();
     await selectVisibleText(
       page,
       finalSource,
@@ -846,10 +857,23 @@ test.describe("Chat response annotations", () => {
     expect(request.headers()["content-type"]).toContain("multipart/form-data");
 
     const sentTurn = page.getByTestId("chat-user-message-turn").last();
-    await expect(sentTurn.getByRole("button", { name: "Show 2 annotations" })).toBeVisible({
+    const sentChip = sentTurn.getByRole("button", { name: "Show 2 annotations" });
+    await expect(sentChip).toBeVisible({
       timeout: 15_000,
     });
     await expect(sentTurn.getByTestId("chat-user-message-bubble")).toHaveCount(0);
+    await sentChip.hover();
+    const sentHoverDetails = page.getByTestId("chat-response-annotation-hover-tooltip");
+    await expect(sentHoverDetails).toBeVisible();
+    await expect(sentHoverDetails).toContainText("第一段包含");
+    await expect(sentHoverDetails).toContainText(
+      "Please verify this CJK and Markdown claim.",
+    );
+    await expect(sentHoverDetails).toContainText(
+      "Second paragraph keeps the selection stable across Markdown blocks.",
+    );
+    await page.mouse.move(1, 1);
+    await expect(sentHoverDetails).toBeHidden();
     const sentCard = await expandSentAnnotations(page, sentTurn, 2);
     const sentEntries = sentCard.getByTestId("chat-response-annotation-sent-card-entry");
     await expect(sentEntries).toHaveCount(2);
@@ -860,7 +884,7 @@ test.describe("Chat response annotations", () => {
       .toHaveCount(0);
     await expect(
       page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }),
-    ).toBeVisible({ timeout: 20_000 });
+    ).toBeVisible({ timeout: 30_000 });
 
     const messagesRes = await page.request.get(
       `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,

@@ -1456,15 +1456,10 @@ test.describe("Chat Side Panel", () => {
     await restoredTurn.getByRole("button", { name: "Show 1 annotation" }).click();
     const sentCard = page.getByTestId("chat-response-annotation-sent-card");
     await expect(sentCard).toContainText("Confirm this code change.");
-    await sentCard.getByRole("button", { name: "Show source" }).click();
-    const reopenedEditor = page.getByTestId("library-live-surface-text-editor");
-    await expect(reopenedEditor).toBeVisible();
-    await expect(
-      reopenedEditor.getByTestId("library-live-surface-text-source-editor"),
-    ).toHaveAttribute("data-annotation-location-start", "0");
-    await expect.poll(
-      async () => page.evaluate(() => window.getSelection()?.toString() ?? ""),
-    ).toBe('export const sidePanelValue = "ready";');
+    const sentEntry = sentCard.getByTestId("chat-response-annotation-sent-card-entry");
+    await expect(sentEntry).toHaveAttribute("data-annotation-surface", "workspace_file");
+    await expect(sentEntry).toContainText('export const sidePanelValue = "ready";');
+    await expect(sentEntry.getByRole("button", { name: "Show source" })).toHaveCount(0);
 
     const externalChange = await page.request.patch(
       `/api/orgs/${organization.id}/workspace/file?path=${encodeURIComponent(filePath)}`,
@@ -1476,9 +1471,10 @@ test.describe("Chat Side Panel", () => {
       },
     );
     expect(externalChange.ok(), await externalChange.text()).toBe(true);
-    await sentCard.getByRole("button", { name: "Show source" }).click();
-    await expect(sentCard.getByTestId("chat-response-annotation-unlocatable"))
-      .toContainText("Source is no longer available.");
+    await expect(sentEntry).toContainText('export const sidePanelValue = "ready";');
+    await expect(sentEntry).toContainText("Confirm this code change.");
+    await expect(sentEntry).not.toContainText("changed elsewhere");
+    await expect(sentEntry.getByRole("button", { name: "Show source" })).toHaveCount(0);
 
     await page.screenshot({
       path: testInfo.outputPath("chat-side-panel-code-editor-annotation.png"),

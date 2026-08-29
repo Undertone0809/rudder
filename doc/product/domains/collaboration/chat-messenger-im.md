@@ -830,8 +830,9 @@ copying context into the composer or losing the relationship to its source.
   organization and conversation composer. Its markers are numbered by current
   order.
 - Sent annotation set: the immutable canonical snapshot on one user message.
-  Its count chip, quoted text, comments, files, source status, and source-jump
-  behavior remain inspectable after reload.
+  Its count chip, quoted text, comments, files, chat-source status, and
+  chat-source-jump behavior remain inspectable after reload. File annotations
+  remain display-only and do not expose a source-jump action.
 
 ## Entry Points / Inputs
 
@@ -889,13 +890,14 @@ copying context into the composer or losing the relationship to its source.
    `Selected excerpt` quote block and, when present, the operator-authored text
    into a labeled `Your comment` section. Annotation-owned files remain
    associated with their entry in a portal above the composer, without
-   increasing composer height. Details
-   appear only after explicit chip activation; creating or editing an
-   annotation does not automatically reveal the complete list. Draft rows
-   expose edit and delete actions. Collapsing the details keeps the draft
-   unchanged. Activating the chip's explicit Clear/X control clears all
-   annotations and their draft-only files but preserves the message body and
-   unrelated composer attachments.
+   increasing composer height. Chat annotations expose a bounded excerpt and
+   optional comment on marker/chip hover or keyboard focus; explicit chip
+   activation still opens the complete list, while creating or editing an
+   annotation does not automatically reveal that list. File annotations do
+   not enter the hover detail surface. Draft rows expose edit and delete
+   actions. Collapsing the details keeps the draft unchanged. Activating the
+   chip's explicit Clear/X control clears all annotations and their draft-only
+   files but preserves the message body and unrelated composer attachments.
 6. Marker or row-edit activation closes the complete-list surface and opens
    only that selected annotation in an anchored editor above the composer. In
    the main Chat draft, the exact source range remains highlighted, including
@@ -974,12 +976,14 @@ copying context into the composer or losing the relationship to its source.
    remapping attachment ids to the new user message; retry, queued delivery,
    and Steer reuse the same evidence.
 16. Expanding historical annotations temporarily restores their numbered source
-    markers. Selecting a card item reveals eligible collapsed Process details,
-    scrolls to the source, and briefly highlights it. If the immutable snapshot
-    remains readable but its source cannot be loaded or verified, the card says
-    it cannot be located and does not fabricate a marker. Selecting a
-    workspace- or local-file annotation opens or focuses its matching Side
-    Panel file target before attempting source location.
+    markers. Chat annotation cards expose bounded details on chip hover or
+    keyboard focus, while selecting a card item reveals eligible collapsed
+    Process details, scrolls to the source, and briefly highlights it. If the
+    immutable snapshot remains readable but its source cannot be loaded or
+    verified, the card says it cannot be located and does not fabricate a
+    marker. Workspace- and local-file annotations remain display-only in the
+    historical card: no source-jump action is rendered, so editing the file
+    cannot expose an obsolete source location.
 17. Fork copies annotation snapshots with copied user messages, remaps source
     message ids to the child copies, and creates child-owned annotation
     attachment rows. Side Chat validates the owning completed assistant anchor
@@ -995,7 +999,7 @@ copying context into the composer or losing the relationship to its source.
 | Visible Process selection | Loaded visible assistant/thinking prose; terminal generation; one provenance range | Add one process annotation with generation sequence identity | Use transcript index/timestamp, hidden reasoning, tool payload, stdout/stderr, or lifecycle events | Provenance, service, UI, and E2E tests |
 | Saved Side Panel file selection | Current Chat; saved eligible workspace or Desktop-local text file; one canonical range | Add one file annotation and open its comment editor; allow Side Chat through the current Chat's latest completed assistant lifecycle anchor | Annotate an unsaved/conflicted/truncated/binary file, protected Library path, foreign conversation, or grant the server arbitrary Desktop filesystem reads | Desktop bridge, service, UI, and E2E tests |
 | Comment and files | Draft annotation is editable and uploads satisfy Chat file policy | Save optional comment and annotation-owned images/files from the picker or pasted clipboard images | Attach a foreign asset, duplicate the file as a generic message tile, replace ordinary pasted text, or log file contents | Multipart, ownership, UI, and E2E tests |
-| Inspect or edit one draft | Operator adds an annotation, explicitly opens the count chip, or activates one marker/edit action | Open the new annotation editor directly, show the ordered list above the composer on request, or show only the activated annotation editor | Expand the complete list automatically, repeat selected text inside the editor, increase composer height, show unrelated annotations, or cover response text with a marker | UI and E2E tests |
+| Inspect or edit one draft | Operator adds an annotation, hovers/focuses a chat marker or count chip, explicitly opens the count chip, or activates one marker/edit action | Show bounded chat excerpt/comment details on hover/focus, open the new annotation editor directly, show the ordered list above the composer on request, or show only the activated annotation editor | Put file annotations in the hover detail surface, expand the complete list automatically, repeat selected text inside the editor, increase composer height, show unrelated annotations, or cover response text with a marker | UI and E2E tests |
 | Annotation-only Send | Existing Chat; body empty; at least one valid annotation | Persist and run one normal user turn | Reject solely for empty body or create an empty first Chat | Shared, route, and E2E tests |
 | Duplicate selection | Same source surface and canonical range already in draft | Keep one item and one marker | Add duplicate payloads or skip numbering | UI tests |
 | Send failure | Upload, validation, admission, or network failure | Preserve the complete draft and surface the failure | Clear comments/files or leave unowned staged assets | Route, UI, and E2E tests |
@@ -1028,16 +1032,20 @@ copying context into the composer or losing the relationship to its source.
 ## Operator-Visible Output
 
 - Draft source text shows a translucent exact-range highlight plus ordered
-  accent markers beside, never over, response text. The composer shows one
-  compact count chip and, only after explicit activation, a portaled
-  ordered-details surface above the composer without changing composer height.
+  accent markers beside, never over, response text. Chat markers and the
+  compact count chip expose bounded selected-text/comment details on hover or
+  keyboard focus. The chip's explicit activation still opens a portaled
+  ordered-details surface above the composer without changing composer height;
+  file annotations are excluded from hover details.
 - Adding an annotation or activating its marker/row edit shows only that
   annotation's anchored editor. The source highlight provides the selected-text
   context, so the editor contains no duplicate quote; other draft details remain
   hidden until the operator explicitly requests them.
 - Each detail shows Selected text, places the optional operator comment beneath
   it without a `User comment` label, and displays its own image/file attachments.
-- Sent user messages retain the read-only chip and card after reload. Annotation
+- Sent user messages retain the read-only chip and card after reload. Chat
+  annotations expose bounded details on chip hover or keyboard focus; file
+  annotations remain display-only and have no `Show source` action. Annotation
   attachments open through normal governed Chat image/file inspection.
 - Source navigation expands Process evidence when required, scrolls to the
   matching source, and uses a brief non-essential highlight.

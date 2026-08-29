@@ -4,6 +4,12 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
   restoreChatAnnotationRange,
 } from "@/lib/chat-response-annotation-selection";
@@ -38,6 +44,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type CSSProperties,
+  type ReactElement,
   type Ref,
   type RefObject,
 } from "react";
@@ -342,6 +349,77 @@ function countLabel(count: number, labels: ResponseAnnotationLabels) {
   return `${count} ${count === 1 ? labels.annotation : labels.annotations}`;
 }
 
+type ResponseAnnotation = ChatInlineAnnotation | ChatInlineAnnotationInput;
+
+function isFileAnnotation(annotation: ResponseAnnotation) {
+  return annotation.surface === "workspace_file" || annotation.surface === "local_file";
+}
+
+function AnnotationHoverDetails({
+  annotations,
+  labels,
+}: {
+  annotations: ResponseAnnotation[];
+  labels: ResponseAnnotationLabels;
+}) {
+  return (
+    <div
+      data-testid="chat-response-annotation-hover-details"
+      className="max-h-[min(18rem,calc(100vh-2rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain text-left"
+    >
+      {annotations.map((annotation, index) => (
+        <div
+          key={annotation.id}
+          className={cn(
+            "min-w-0 whitespace-normal break-words",
+            index > 0 && "mt-3 border-t border-[color:var(--border-soft)] pt-3",
+          )}
+        >
+          <AnnotationContent
+            annotation={annotation}
+            ordinal={index + 1}
+            attachments={[]}
+            labels={labels}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnnotationHoverTooltip({
+  annotations,
+  labels,
+  children,
+}: {
+  annotations: ResponseAnnotation[];
+  labels: ResponseAnnotationLabels;
+  children: ReactElement;
+}) {
+  const chatAnnotations = annotations.filter((annotation) => !isFileAnnotation(annotation));
+  if (chatAnnotations.length === 0) return children;
+  return (
+    <TooltipProvider
+      delayDuration={180}
+      skipDelayDuration={80}
+      disableHoverableContent
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent
+          side="top"
+          sideOffset={8}
+          collisionPadding={8}
+          data-testid="chat-response-annotation-hover-tooltip"
+          className="pointer-events-none z-[100] max-w-[calc(100vw-1rem)] overflow-hidden border border-[color:var(--border-soft)] bg-popover p-3 text-left text-popover-foreground whitespace-normal shadow-lg"
+        >
+          <AnnotationHoverDetails annotations={chatAnnotations} labels={labels} />
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export function ResponseAnnotationCountChip({
   count,
   expanded,
@@ -350,6 +428,7 @@ export function ResponseAnnotationCountChip({
   onClear,
   buttonRef,
   labels = DEFAULT_LABELS,
+  hoverAnnotations = [],
   className,
 }: {
   count: number;
@@ -359,9 +438,10 @@ export function ResponseAnnotationCountChip({
   onClear?: () => void;
   buttonRef?: Ref<HTMLButtonElement>;
   labels?: ResponseAnnotationLabels;
+  hoverAnnotations?: ResponseAnnotation[];
   className?: string;
 }) {
-  return (
+  const chip = (
     <div
       data-testid="chat-response-annotation-count"
       className={cn(
@@ -396,12 +476,19 @@ export function ResponseAnnotationCountChip({
       ) : null}
     </div>
   );
+  return (
+    <AnnotationHoverTooltip annotations={hoverAnnotations} labels={labels}>
+      {chip}
+    </AnnotationHoverTooltip>
+  );
 }
 
 export function ResponseAnnotationMarker({
   annotationId,
   ordinal,
   excerpt,
+  annotation,
+  labels = DEFAULT_LABELS,
   onActivate,
   className,
   style,
@@ -409,12 +496,14 @@ export function ResponseAnnotationMarker({
   annotationId?: string;
   ordinal: number;
   excerpt: string;
+  annotation?: ResponseAnnotation;
+  labels?: ResponseAnnotationLabels;
   onActivate: (anchor: HTMLButtonElement) => void;
   className?: string;
   style?: CSSProperties;
 }) {
   const boundedExcerpt = excerpt.replace(/\s+/gu, " ").trim().slice(0, 80);
-  return (
+  const marker = (
     <button
       type="button"
       data-testid="chat-response-annotation-marker"
@@ -433,6 +522,14 @@ export function ResponseAnnotationMarker({
       </span>
     </button>
   );
+  return (
+    <AnnotationHoverTooltip
+      annotations={annotation ? [annotation] : []}
+      labels={labels}
+    >
+      {marker}
+    </AnnotationHoverTooltip>
+  );
 }
 
 export function AnchoredResponseAnnotationMarkers({
@@ -440,11 +537,13 @@ export function AnchoredResponseAnnotationMarkers({
   source,
   annotations,
   onActivate,
+  labels = DEFAULT_LABELS,
 }: {
   sourceRootRef: RefObject<HTMLElement | null>;
   source: string;
   annotations: Array<ChatInlineAnnotationInput & { ordinal?: number }>;
   onActivate?: (annotationId: string, anchor: HTMLButtonElement) => void;
+  labels?: ResponseAnnotationLabels;
 }) {
   const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
   const [highlightRects, setHighlightRects] = useState<Record<
@@ -576,6 +675,8 @@ export function AnchoredResponseAnnotationMarkers({
             annotationId={annotation.id}
             ordinal={annotation.ordinal ?? index + 1}
             excerpt={annotation.selectedText}
+            annotation={annotation}
+            labels={labels}
             onActivate={(anchor) => onActivate?.(annotation.id, anchor)}
             className="absolute z-20"
             style={position}
@@ -1203,6 +1304,7 @@ export function DraftResponseAnnotationsPopover({
             expanded={open}
             controlsId={controlsId}
             buttonRef={setButtonRef}
+            hoverAnnotations={annotations}
             onToggle={() => {
               restoreFocusOnCloseRef.current = true;
               handleOpenChange(!open);
@@ -1379,6 +1481,7 @@ export function SentResponseAnnotationsCard({
           count={annotations.length}
           expanded={expanded}
           controlsId={annotationsListId}
+          hoverAnnotations={annotations}
           onToggle={() => {
             const next = !expandedRef.current;
             if (next) {
@@ -1412,6 +1515,7 @@ export function SentResponseAnnotationsCard({
               <li
                 key={annotation.id}
                 data-testid="chat-response-annotation-sent-card-entry"
+                data-annotation-surface={annotation.surface}
                 className="p-4"
               >
                 <div className="rounded-[var(--radius-md)]">
@@ -1429,7 +1533,7 @@ export function SentResponseAnnotationsCard({
                     ))}
                   </div>
                 ) : null}
-                {onSelect ? (
+                {onSelect && !isFileAnnotation(annotation) ? (
                   <button
                     type="button"
                     data-annotation-id={annotation.id}
