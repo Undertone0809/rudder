@@ -297,6 +297,121 @@ async function advanceTimersAndFlush(ms: number) {
 }
 
 describe("MarkdownBody", () => {
+  it("keeps a short selection exact while the rendered source receives more text", () => {
+    let updateSource: ((source: string) => void) | null = null;
+    function Harness() {
+      const [source, setSource] = useState("前文不应被选中，精确片段保持稳定。");
+      updateSource = setSource;
+      return (
+        <ThemeProvider>
+          <MarkdownBody>{source}</MarkdownBody>
+        </ThemeProvider>
+      );
+    }
+
+    const container = render(<Harness />);
+    const paragraph = container.querySelector("p")!;
+    const textNode = paragraph.firstChild!;
+    const selectedText = "精确片段";
+    const start = textNode.textContent!.indexOf(selectedText);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + selectedText.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+
+    act(() => updateSource?.("前文不应被选中，精确片段保持稳定。后续流式内容已经到达。"));
+
+    expect(selection.toString()).toBe(selectedText);
+    expect(paragraph.firstChild).toBe(textNode);
+    expect(container.textContent).not.toContain("后续流式内容已经到达");
+
+    act(() => {
+      selection.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(container.textContent).toContain("后续流式内容已经到达");
+  });
+
+  it("buffers source updates from pointerdown until the selection gesture finishes", async () => {
+    let updateSource: ((source: string) => void) | null = null;
+    function Harness() {
+      const [source, setSource] = useState("开始拖动精确片段。");
+      updateSource = setSource;
+      return (
+        <ThemeProvider>
+          <MarkdownBody>{source}</MarkdownBody>
+        </ThemeProvider>
+      );
+    }
+
+    const container = render(<Harness />);
+    const paragraph = container.querySelector("p")!;
+    paragraph.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+    act(() => updateSource?.("开始拖动精确片段。流式内容在拖动期间到达。"));
+    expect(container.textContent).not.toContain("流式内容在拖动期间到达");
+
+    document.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    expect(container.textContent).toContain("流式内容在拖动期间到达");
+  });
+
+  it("preserves a reverse cross-paragraph selection and adjusted endpoint across rerenders", () => {
+    let updateSource: ((source: string) => void) | null = null;
+    function Harness() {
+      const [source, setSource] = useState("第一段保留开头。\n\n第二段允许反向调整边界。");
+      updateSource = setSource;
+      return (
+        <ThemeProvider>
+          <MarkdownBody>{source}</MarkdownBody>
+        </ThemeProvider>
+      );
+    }
+
+    const container = render(<Harness />);
+    const paragraphs = container.querySelectorAll("p");
+    const firstText = paragraphs[0]!.firstChild!;
+    const secondText = paragraphs[1]!.firstChild!;
+    const selection = window.getSelection()!;
+    selection.setBaseAndExtent(
+      secondText,
+      secondText.textContent!.indexOf("边界") + "边界".length,
+      firstText,
+      firstText.textContent!.indexOf("保留"),
+    );
+    document.dispatchEvent(new Event("selectionchange"));
+
+    const originalAnchorNode = selection.anchorNode;
+    const originalFocusNode = selection.focusNode;
+    const originalText = selection.toString();
+    act(() => updateSource?.("第一段保留开头。\n\n第二段允许反向调整边界。第三段流式追加。"));
+
+    expect(selection.anchorNode).toBe(originalAnchorNode);
+    expect(selection.focusNode).toBe(originalFocusNode);
+    expect(selection.toString()).toBe(originalText);
+    expect(container.textContent).not.toContain("第三段流式追加");
+
+    act(() => {
+      selection.setBaseAndExtent(
+        secondText,
+        secondText.textContent!.indexOf("调整") + "调整".length,
+        firstText,
+        firstText.textContent!.indexOf("保留") + "保留".length,
+      );
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    const adjustedText = selection.toString();
+    act(() => updateSource?.("第一段保留开头。\n\n第二段允许反向调整边界。第三段继续追加。"));
+    expect(selection.toString()).toBe(adjustedText);
+    expect(selection.anchorNode).toBe(secondText);
+    expect(selection.focusNode).toBe(firstText);
+  });
+
   it("preserves rendered image nodes across unrelated parent rerenders", () => {
     function Harness() {
       const [renderCount, setRenderCount] = useState(0);

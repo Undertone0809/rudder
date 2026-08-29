@@ -1,6 +1,6 @@
 import { buildAgentMentionHref, resolveKnownWebsiteIcon } from "@rudderhq/shared";
 import { Check, Copy, File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText, Globe2 } from "lucide-react";
-import { isValidElement, memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
+import { isValidElement, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
@@ -310,6 +310,72 @@ function isBareMarkdownUrlLabel(label: string) {
 function isAbsoluteMarkdownHref(value: string | null | undefined) {
   const trimmed = value?.trim() ?? "";
   return trimmed.startsWith("//") || /^[a-z][a-z\d+.-]*:/iu.test(trimmed);
+}
+
+function selectionIntersectsElement(element: HTMLElement | null) {
+  if (!element || typeof window === "undefined") return false;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    try {
+      if (selection.getRangeAt(index).intersectsNode(element)) return true;
+    } catch {
+      // A detached browser range cannot protect this render.
+    }
+  }
+  return false;
+}
+
+function useSelectionStableMarkdownSource(source: string) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const latestSourceRef = useRef(source);
+  const selectionGestureRef = useRef(false);
+  const [renderedSource, setRenderedSource] = useState(source);
+  latestSourceRef.current = source;
+
+  const flushLatestSource = useCallback(() => {
+    if (selectionGestureRef.current || selectionIntersectsElement(rootRef.current)) return;
+    setRenderedSource((current) => (
+      current === latestSourceRef.current ? current : latestSourceRef.current
+    ));
+  }, []);
+
+  useLayoutEffect(() => {
+    flushLatestSource();
+  }, [flushLatestSource, source]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    let releaseFrame: number | null = null;
+    const beginSelectionGesture = () => {
+      selectionGestureRef.current = true;
+    };
+    const releaseSelectionGesture = () => {
+      selectionGestureRef.current = false;
+      if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame);
+      releaseFrame = window.requestAnimationFrame(() => {
+        releaseFrame = null;
+        flushLatestSource();
+      });
+    };
+
+    root.addEventListener("pointerdown", beginSelectionGesture, true);
+    root.addEventListener("selectstart", beginSelectionGesture, true);
+    document.addEventListener("pointerup", releaseSelectionGesture, true);
+    document.addEventListener("pointercancel", releaseSelectionGesture, true);
+    document.addEventListener("selectionchange", flushLatestSource);
+    return () => {
+      if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame);
+      root.removeEventListener("pointerdown", beginSelectionGesture, true);
+      root.removeEventListener("selectstart", beginSelectionGesture, true);
+      document.removeEventListener("pointerup", releaseSelectionGesture, true);
+      document.removeEventListener("pointercancel", releaseSelectionGesture, true);
+      document.removeEventListener("selectionchange", flushLatestSource);
+    };
+  }, [flushLatestSource]);
+
+  return { renderedSource, rootRef };
 }
 
 function localFileIconKind(filePath: string) {
@@ -932,6 +998,7 @@ export function MarkdownBody({
   enableCodeBlockCopy = false,
   sourceOffsetBase = 0,
 }: MarkdownBodyProps) {
+  const { renderedSource: selectionStableSource, rootRef } = useSelectionStableMarkdownSource(children);
   const { resolvedTheme } = useTheme();
   const { mentions } = useMarkdownMentions();
   const mentionLookups = useMemo(() => ({
@@ -1008,15 +1075,15 @@ export function MarkdownBody({
   }), [skillReferences]);
   const organizationPrefix = currentOrganizationPrefixFromLocation();
   const { normalizedChildren, sourceMap } = useMemo(() => {
-    const renderedSource = linkBareAgentMentions(
-      normalizeRenderedMarkdownSource(children),
+    const normalizedSource = linkBareAgentMentions(
+      normalizeRenderedMarkdownSource(selectionStableSource),
       agentMentions,
     );
     return {
-      normalizedChildren: renderedSource,
-      sourceMap: createMarkdownSourceBoundaryMap(children, renderedSource),
+      normalizedChildren: normalizedSource,
+      sourceMap: createMarkdownSourceBoundaryMap(selectionStableSource, normalizedSource),
     };
-  }, [agentMentions, children]);
+  }, [agentMentions, selectionStableSource]);
   const sourceAttributesForNode = useCallback(
     (node: unknown) => markdownSourceAttributes(node, sourceMap, sourceOffsetBase),
     [sourceMap, sourceOffsetBase],
@@ -1431,6 +1498,7 @@ export function MarkdownBody({
   return (
     <>
       <div
+        ref={rootRef}
         className={cn(
           "rudder-markdown prose prose-sm max-w-none break-words overflow-hidden",
           resolvedTheme === "dark" && "prose-invert",

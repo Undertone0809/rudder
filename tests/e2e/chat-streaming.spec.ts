@@ -725,6 +725,80 @@ test.describe("Chat streaming", () => {
     expect(requestFailures).toEqual([]);
   });
 
+  test("keeps an exact text selection stable while one streamed paragraph grows", async ({ page }) => {
+    test.setTimeout(120_000);
+    const organization = await createStreamingOrg(
+      page,
+      `Stable-Selection-${Date.now()}`,
+      {
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_APP_SERVER_STUB,
+          chatAppServerEnabled: true,
+        },
+      },
+    );
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 60_000 });
+    await composer.fill("Keep streaming text selection stable");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const transcript = page.getByTestId("chat-transcript-item").last();
+    const paragraph = transcript.locator(".rudder-markdown p", {
+      hasText: "用户只选择精确片段",
+    }).first();
+    await expect(paragraph).toBeVisible({ timeout: 30_000 });
+    const selectedText = "精确片段";
+    await paragraph.evaluate((element, needle) => {
+      const textNode = element.firstChild;
+      if (!(textNode instanceof Text)) throw new Error("Expected one streamed paragraph text node");
+      const start = textNode.data.indexOf(needle);
+      if (start < 0) throw new Error(`Could not find selection text: ${needle}`);
+      const range = document.createRange();
+      range.setStart(textNode, start);
+      range.setEnd(textNode, start + needle.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+      (window as typeof window & { __selectionTextNode?: Text }).__selectionTextNode = textNode;
+    }, selectedText);
+
+    await page.waitForTimeout(2_400);
+    const stableSelection = await paragraph.evaluate((element) => {
+      const selection = window.getSelection();
+      const tracked = (window as typeof window & { __selectionTextNode?: Text }).__selectionTextNode;
+      return {
+        text: selection?.toString() ?? "",
+        anchorNodeStable: selection?.anchorNode === tracked,
+        focusNodeStable: selection?.focusNode === tracked,
+        textNodeStable: element.firstChild === tracked,
+        renderedText: element.textContent ?? "",
+      };
+    });
+    expect(stableSelection).toEqual({
+      text: selectedText,
+      anchorNodeStable: true,
+      focusNodeStable: true,
+      textNodeStable: true,
+      renderedText: "前文不应被额外选中，用户只选择精确片段。",
+    });
+
+    await page.evaluate(() => {
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await expect(transcript).toContainText("最终内容完整到达", { timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0, { timeout: 15_000 });
+  });
+
   test("clears composer loading before slow message reconciliation completes", async ({ page }) => {
     const organization = await createStreamingOrg(
       page,

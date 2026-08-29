@@ -197,6 +197,43 @@ rl.on("line", (line) => {
       });
       setTimeout(() => finishStreamedMarkdown(body), 4_600);
     }
+    if (prompt.includes("Keep streaming text selection stable")) {
+      const fragments = [
+        "前文不应被额外选中，用户只选择精确片段。",
+        " 后续流式内容一继续到达。",
+        " 后续流式内容二继续到达。",
+        " 最终内容完整到达。",
+      ];
+      const body = fragments.join("");
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "agentMessage",
+            id: "streamed-selection-e2e",
+            text: "",
+            phase: null,
+            memoryCitation: null,
+          },
+        },
+      });
+      fragments.forEach((delta, index) => {
+        setTimeout(() => {
+          send({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId,
+              turnId,
+              itemId: "streamed-selection-e2e",
+              delta,
+            },
+          });
+        }, 250 + index * 700);
+      });
+      setTimeout(() => finishStreamedMarkdown(body), 3_600);
+    }
     if (
       prompt.includes("Keep commentary in Process")
       || prompt.includes("Complete fragmented commentary")
@@ -284,6 +321,7 @@ rl.on("line", (line) => {
       prompt.includes("Render dual reasoning streams")
         ? 1_000
         : prompt.includes("Keep streamed Markdown nodes stable")
+          || prompt.includes("Keep streaming text selection stable")
           ? 60_000
         : prompt.includes("Keep commentary in Process")
           ? 60_000
