@@ -63,6 +63,19 @@ test("Library preview reveals exact Markdown without moving surrounding source l
   await expect(paragraph).toContainText("Before bold and italic with OpenAI and Local.");
   await expect(paragraph).not.toContainText("**bold**");
   await expect(paragraph.locator("[data-markdown-website-icon='true']")).toBeVisible();
+  const unorderedMarkers = editor.locator(
+    ".rudder-cm-markdown-unordered-list-marker",
+  );
+  await expect(unorderedMarkers).toHaveCount(2);
+  await expect(unorderedMarkers.first()).toHaveText("\u2022");
+  await followingList.getByText("first item").click();
+  await expect(followingList).toHaveAttribute("data-markdown-preview-state", "source");
+  await expect(followingList.locator(
+    ".rudder-cm-markdown-unordered-list-marker",
+  )).toHaveText("\u2022");
+  await editor.locator(".cm-content").evaluate((element) => {
+    if (element instanceof HTMLElement) element.blur();
+  });
   const taskLine = editor.locator('[data-source-line-start="7"]');
   const taskCheckbox = taskLine.locator(
     "input.rudder-cm-markdown-task-checkbox",

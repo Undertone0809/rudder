@@ -47,5 +47,11 @@ describe("codeMirrorMarkdownThemeSpec", () => {
       fontSize: "1.75em",
       fontWeight: "700",
     });
+    expect(
+      codeMirrorMarkdownThemeSpec[".rudder-cm-markdown-unordered-list-marker"],
+    ).toMatchObject({
+      display: "inline-block",
+      width: "0.9em",
+    });
   });
 });

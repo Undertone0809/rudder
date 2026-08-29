@@ -183,6 +183,35 @@ describe("sourceDrivenMarkdownPreview", () => {
     expect(ranges.every((range) => Boolean(range.value.spec.widget))).toBe(true);
   });
 
+  it("renders ordinary unordered markers as bullets in preview and active source blocks", () => {
+    const source = "- first\n+ second\n* third\n1. ordered\n\nParagraph";
+    const blocks = getMarkdownPreviewBlocks(source);
+    const previewRanges = preview(source).decorations;
+    const activeRanges = preview(source, new Set([blocks[0]!.id])).decorations;
+    const unorderedMarkers = (ranges: typeof previewRanges) => ranges.filter((range) => (
+      /^[-+*]$/u.test(source.slice(range.from, range.to))
+      && Boolean(range.value.spec.widget)
+    ));
+
+    expect(unorderedMarkers(previewRanges)).toHaveLength(3);
+    expect(unorderedMarkers(activeRanges)).toHaveLength(3);
+    expect(previewRanges.some((range) => (
+      source.slice(range.from, range.to) === "1."
+      && Boolean(range.value.spec.widget)
+    ))).toBe(false);
+  });
+
+  it("leaves task-list bullets available to the existing checkbox source behavior", () => {
+    const source = "- [x] completed\n- [ ] pending";
+    const blocks = getMarkdownPreviewBlocks(source);
+    const ranges = preview(source, new Set([blocks[0]!.id])).decorations;
+
+    expect(ranges.some((range) => (
+      source.slice(range.from, range.to) === "-"
+      && Boolean(range.value.spec.widget)
+    ))).toBe(false);
+  });
+
   it("decorates a large selection-only document in one syntax-tree pass", () => {
     const source = Array.from(
       { length: 3_000 },

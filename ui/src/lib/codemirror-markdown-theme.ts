@@ -142,6 +142,14 @@ export const codeMirrorMarkdownThemeSpec: Parameters<typeof EditorView.theme>[0]
     verticalAlign: "-0.08em",
     width: "0.95em",
   },
+  ".rudder-cm-markdown-unordered-list-marker": {
+    color: "var(--muted-foreground)",
+    display: "inline-block",
+    fontWeight: "700",
+    marginLeft: "-0.08em",
+    textAlign: "center",
+    width: "0.9em",
+  },
   ".rudder-codemirror-markdown-preview": {
     display: "inline-block",
     verticalAlign: "top",

@@ -46,6 +46,20 @@ function hiddenSyntax(from: number, to: number) {
   }).range(from, to);
 }
 
+class UnorderedListMarkerWidget extends WidgetType {
+  eq(other: UnorderedListMarkerWidget) {
+    return other instanceof UnorderedListMarkerWidget;
+  }
+
+  toDOM() {
+    const marker = document.createElement("span");
+    marker.className = "rudder-cm-markdown-unordered-list-marker";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = "\u2022";
+    return marker;
+  }
+}
+
 class TaskMarkerWidget extends WidgetType {
   constructor(
     readonly from: number,
@@ -116,6 +130,7 @@ function containingPreviewBlock(
 function syntaxDecorationsForBlocks(
   state: EditorState,
   blocks: readonly MarkdownPreviewBlock[],
+  previewBlockIds: ReadonlySet<string>,
   references: readonly AtomicMarkdownReference[],
 ) {
   const decorations: Range<Decoration>[] = [];
@@ -127,7 +142,26 @@ function syntaxDecorationsForBlocks(
     from: blocks[0]!.from,
     to: blocks.at(-1)!.to,
     enter(node) {
-      if (!containingPreviewBlock(blocks, node.from, node.to)) return;
+      const block = containingPreviewBlock(blocks, node.from, node.to);
+      if (!block) return;
+
+      if (
+        node.name === "ListMark"
+        && block.kind === "list"
+        && /^[-+*]$/u.test(state.sliceDoc(node.from, node.to))
+      ) {
+        const line = state.doc.lineAt(node.from);
+        const afterMarker = state.sliceDoc(node.to, line.to);
+        if (!/^[ \t]+\[[ xX]\](?:[ \t]+|$)/u.test(afterMarker)) {
+          decorations.push(Decoration.replace({
+            widget: new UnorderedListMarkerWidget(),
+            inclusive: false,
+          }).range(node.from, node.to));
+        }
+        return;
+      }
+
+      if (!previewBlockIds.has(block.id)) return;
       if (containedByReference(node.from, node.to, references)) return false;
 
       if (
@@ -366,7 +400,12 @@ export function sourceDrivenMarkdownPreview(
   const inactiveBlocks = blocks.filter((block) => (
     !activeIds.has(block.id) && block.previewable
   ));
-  const result = syntaxDecorationsForBlocks(state, inactiveBlocks, references);
+  const result = syntaxDecorationsForBlocks(
+    state,
+    blocks,
+    new Set(inactiveBlocks.map((block) => block.id)),
+    references,
+  );
   decorations.push(...result.decorations);
   websiteLinks.push(...result.websiteLinks);
 

@@ -187,7 +187,7 @@ test("issue description stays Library-style source-backed and preserves exact li
   const issueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
     data: {
       title: "Description editing parity",
-      description: "Opening paragraph\n\n- alpha",
+      description: "Opening paragraph\n\n- alpha\n- beta\n\n1. numbered",
       status: "todo",
       priority: "medium",
     },
@@ -216,16 +216,35 @@ test("issue description stays Library-style source-backed and preserves exact li
   expect(verticalGap).toBeGreaterThanOrEqual(16);
   expect(verticalGap).toBeLessThanOrEqual(32);
 
+  const bulletMarkers = editor.locator(
+    ".rudder-cm-markdown-unordered-list-marker",
+  );
+  await expect(bulletMarkers).toHaveCount(2);
+  await expect(bulletMarkers.first()).toHaveText("\u2022");
+  await expect(editor.locator('[data-markdown-source-kind="list"]')
+    .filter({ hasText: "1. numbered" })).toBeVisible();
+
   const openingPreview = editor
     .locator('[data-markdown-preview-state="preview"]')
     .filter({ hasText: "Opening paragraph" });
   await expect(openingPreview).toBeVisible();
   await openingPreview.dispatchEvent("mousedown", { button: 0 });
   await expect(
-    editor.locator('[data-markdown-preview-state="source"]').first(),
+    editor
+      .locator('[data-markdown-preview-state="source"]')
+      .filter({ hasText: "Opening paragraph" }),
   ).toContainText("Opening paragraph");
 
-  const exactDescription = "\nOpening paragraph  \n\nInserted paragraph\n\n- alpha\n- beta\n";
+  const alphaLine = editor
+    .locator('[data-markdown-source-kind="list"]')
+    .filter({ hasText: "alpha" });
+  await alphaLine.getByText("alpha").click();
+  await expect(alphaLine).toHaveAttribute("data-markdown-preview-state", "source");
+  await expect(alphaLine.locator(
+    ".rudder-cm-markdown-unordered-list-marker",
+  )).toHaveText("\u2022");
+
+  const exactDescription = "\nOpening paragraph  \n\nInserted paragraph\n\n- alpha\n- beta\n\n1. numbered\n";
   const sourceEditor = editor.locator(".cm-content");
   await sourceEditor.click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
@@ -255,6 +274,11 @@ test("issue description stays Library-style source-backed and preserves exact li
       .locator('[data-markdown-preview-state="preview"]')
       .filter({ hasText: "beta" }),
   ).toBeVisible();
+  await expect(
+    page.locator(
+      ".rudder-issue-description-surface .rudder-cm-markdown-unordered-list-marker",
+    ),
+  ).toHaveCount(2);
   await page.screenshot({ path: "/tmp/rudder-issue-description-fixed.png", fullPage: false });
 });
 
