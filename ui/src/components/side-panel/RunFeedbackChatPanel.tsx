@@ -60,6 +60,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
@@ -68,6 +69,54 @@ type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>
 type RunDebugTarget = Extract<SidePanelTarget, { kind: "run_debug_chat" }>;
 type RunChatTarget = RunFeedbackTarget | RunDebugTarget;
 type RunDebugSession = { autoSendConsumed: true; conversationId: string | null };
+type RunDebugRuntimeState = {
+  sending: boolean;
+  stopping: boolean;
+  stopRequested: boolean;
+  stopAccepted: boolean;
+  conversationId: string | null;
+};
+type RunDebugRuntime = {
+  key: string;
+  state: RunDebugRuntimeState;
+  listeners: Set<() => void>;
+  abortController: AbortController | null;
+  streamFence: StreamFence;
+};
+
+const EMPTY_RUN_DEBUG_RUNTIME_STATE: RunDebugRuntimeState = {
+  sending: false,
+  stopping: false,
+  stopRequested: false,
+  stopAccepted: false,
+  conversationId: null,
+};
+const runDebugRuntimes = new Map<string, RunDebugRuntime>();
+
+function runDebugRuntimeKey(organizationId: string, clientMutationId: string) {
+  return `${organizationId}:${clientMutationId}`;
+}
+
+function getRunDebugRuntime(organizationId: string, clientMutationId: string) {
+  const key = runDebugRuntimeKey(organizationId, clientMutationId);
+  const existing = runDebugRuntimes.get(key);
+  if (existing) return existing;
+  const runtime: RunDebugRuntime = {
+    key,
+    state: EMPTY_RUN_DEBUG_RUNTIME_STATE,
+    listeners: new Set(),
+    abortController: null,
+    streamFence: newStreamFence(),
+  };
+  runDebugRuntimes.set(key, runtime);
+  return runtime;
+}
+
+function updateRunDebugRuntime(runtime: RunDebugRuntime | null, patch: Partial<RunDebugRuntimeState>) {
+  if (!runtime) return;
+  runtime.state = { ...runtime.state, ...patch };
+  for (const listener of runtime.listeners) listener();
+}
 
 function runDebugSessionQueryKey(organizationId: string, clientMutationId: string) {
   return ["run-debug-chat-session", organizationId, clientMutationId] as const;
@@ -165,13 +214,39 @@ export function RunFeedbackChatPanel({
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const navigate = useNavigate();
+  const isDebug = target.kind === "run_debug_chat";
+  const autoSend = target.kind === "run_debug_chat" && target.autoSend;
+  const debugRuntime = useMemo(
+    () => isDebug ? getRunDebugRuntime(organizationId, target.clientMutationId) : null,
+    [isDebug, organizationId, target.clientMutationId],
+  );
+  const debugRuntimeState = useSyncExternalStore(
+    (listener) => {
+      if (!debugRuntime) return () => undefined;
+      debugRuntime.listeners.add(listener);
+      return () => {
+        debugRuntime.listeners.delete(listener);
+        queueMicrotask(() => {
+          if (
+            debugRuntime.listeners.size === 0
+            && !debugRuntime.state.sending
+            && !debugRuntime.abortController
+          ) {
+            runDebugRuntimes.delete(debugRuntime.key);
+          }
+        });
+      };
+    },
+    () => debugRuntime?.state ?? EMPTY_RUN_DEBUG_RUNTIME_STATE,
+    () => debugRuntime?.state ?? EMPTY_RUN_DEBUG_RUNTIME_STATE,
+  );
   const [draft, setDraft] = useState(target.body ?? "");
   const [composerRevision, setComposerRevision] = useState(0);
   const [projectId, setProjectId] = useState<string | null>(target.projectId ?? null);
   const [composerMenu, setComposerMenu] = useState<"project" | "agent" | null>(null);
   const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null);
-  const [sending, setSending] = useState(false);
-  const [stopping, setStopping] = useState(false);
+  const [sending, setSending] = useState(debugRuntimeState.sending);
+  const [stopping, setStopping] = useState(debugRuntimeState.stopping);
   const [stopIndeterminate, setStopIndeterminate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -201,11 +276,19 @@ export function RunFeedbackChatPanel({
   const pendingStreamEventsRef = useRef<ChatStreamEvent[]>([]);
   const streamEventHandlerRef = useRef<((event: ChatStreamEvent) => Promise<void> | void) | null>(null);
   const sendInFlightRef = useRef(false);
+  const endRef = useRef<HTMLDivElement | null>(null);
   const renderedTargetRef = useRef<Pick<RunChatTarget, "conversationId" | "clientMutationId">>(target);
   targetRef.current = target;
   mutationKeyRef.current = target.clientMutationId || mutationKeyRef.current;
-  const isDebug = target.kind === "run_debug_chat";
-  const autoSend = target.kind === "run_debug_chat" && target.autoSend;
+
+  useEffect(() => {
+    if (!debugRuntime) return;
+    setSending(debugRuntimeState.sending);
+    setStopping(debugRuntimeState.stopping);
+    if (debugRuntimeState.conversationId) {
+      activeConversationIdRef.current = debugRuntimeState.conversationId;
+    }
+  }, [debugRuntime, debugRuntimeState]);
 
   useEffect(() => {
     const previousTarget = renderedTargetRef.current;
@@ -265,7 +348,7 @@ export function RunFeedbackChatPanel({
     queryFn: () => chatsApi.listMessages(organizationId, target.conversationId!, { includeTranscript: true }),
     enabled: Boolean(target.conversationId),
   });
-  useQuery({
+  const queueQuery = useQuery({
     queryKey: queryKeys.chats.queue(organizationId, target.conversationId ?? "__run-feedback-draft__"),
     queryFn: () => chatsApi.listQueue(target.conversationId!),
     enabled: Boolean(target.conversationId),
@@ -273,8 +356,32 @@ export function RunFeedbackChatPanel({
   });
 
   useEffect(() => {
+    if (target.kind !== "run_debug_chat" || !target.conversationId || !queueQuery.data) return;
+    const active = Boolean(
+      queueQuery.data.activeGenerationId
+      && queueQuery.data.activeGenerationStatus
+      && ACTIVE_GENERATION_STATUSES.has(queueQuery.data.activeGenerationStatus),
+    );
+    if (active) {
+      setSending(true);
+      updateRunDebugRuntime(debugRuntime, {
+        sending: true,
+        conversationId: target.conversationId,
+      });
+      return;
+    }
+    if (debugRuntimeState.sending) {
+      setSending(false);
+      updateRunDebugRuntime(debugRuntime, { sending: false, stopping: false });
+    }
+  }, [debugRuntime, debugRuntimeState.sending, queueQuery.data, target.conversationId, target.kind]);
+
+  useEffect(() => {
     if (messagesQuery.data) setMessages((current) => mergeChatMessages(current, messagesQuery.data));
   }, [messagesQuery.data]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, streamBody]);
   useEffect(() => {
     setDraft(target.body ?? "");
   }, [target.body]);
@@ -434,11 +541,20 @@ export function RunFeedbackChatPanel({
 
   const handleStop = useCallback(async () => {
     const streamTarget = streamTargetRef.current;
-    const conversationId = streamTarget?.conversationId ?? activeConversationIdRef.current;
-    if (!conversationId || !sending || stopping || !streamTargetMatchesCurrentTarget()) return;
+    const conversationId = streamTarget?.conversationId
+      ?? activeConversationIdRef.current
+      ?? debugRuntimeState.conversationId;
+    const recoveredDebugStream = Boolean(debugRuntime && debugRuntimeState.sending);
+    if (
+      !conversationId
+      || !sending
+      || stopping
+      || (!streamTargetMatchesCurrentTarget() && !recoveredDebugStream)
+    ) return;
     const controlActionId = makeId();
     stopRequestedRef.current = true;
     setStopping(true);
+    updateRunDebugRuntime(debugRuntime, { stopping: true, stopRequested: true, stopAccepted: false });
     setStopIndeterminate(false);
     setError(null);
     try {
@@ -448,7 +564,7 @@ export function RunFeedbackChatPanel({
         staleTime: 0,
       });
       queryClient.setQueryData(queryKeys.chats.queue(organizationId, conversationId), latestQueue);
-      const streamFence = streamFenceRef.current;
+      const streamFence = debugRuntime?.streamFence ?? streamFenceRef.current;
       const generationFence = latestQueue.activeGenerationId
         && latestQueue.activeAttemptEpoch !== null
         && latestQueue.activeAttemptEpoch !== undefined
@@ -482,17 +598,20 @@ export function RunFeedbackChatPanel({
       ].includes(result.disposition ?? "");
       if (cutoffAccepted) {
         stopCutoffAcceptedRef.current = true;
+        updateRunDebugRuntime(debugRuntime, { stopAccepted: true });
         pendingStreamEventsRef.current = [];
         setStreamBody("");
-        streamAbortControllerRef.current?.abort();
+        (debugRuntime?.abortController ?? streamAbortControllerRef.current)?.abort();
         const terminalEvidence = result.disposition === "stopped"
           || result.disposition === "interrupted_unverified"
           || await waitForTerminalStop(conversationId, result.generationId ?? generationFence?.generationId ?? null);
         if (terminalEvidence) {
           setStopping(false);
+          updateRunDebugRuntime(debugRuntime, { sending: false, stopping: false });
           setStopIndeterminate(false);
         } else {
           setStopping(false);
+          updateRunDebugRuntime(debugRuntime, { sending: false, stopping: false });
           setStopIndeterminate(true);
           setError("Stop was accepted, but the final runtime state could not be confirmed yet.");
         }
@@ -500,6 +619,7 @@ export function RunFeedbackChatPanel({
         stopRequestedRef.current = false;
         await replayPendingStreamEvents();
         setStopping(false);
+        updateRunDebugRuntime(debugRuntime, { stopping: false, stopRequested: false, stopAccepted: false });
       }
       await Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: queryKeys.chats.detail(organizationId, conversationId) }),
@@ -509,10 +629,11 @@ export function RunFeedbackChatPanel({
       stopRequestedRef.current = false;
       await replayPendingStreamEvents();
       setStopping(false);
+      updateRunDebugRuntime(debugRuntime, { stopping: false, stopRequested: false, stopAccepted: false });
       setStopIndeterminate(false);
       setError(stopError instanceof Error ? stopError.message : "Could not stop feedback.");
     }
-  }, [organizationId, queryClient, replayPendingStreamEvents, sending, stopping, streamTargetMatchesCurrentTarget, waitForTerminalStop]);
+  }, [debugRuntime, debugRuntimeState, organizationId, queryClient, replayPendingStreamEvents, sending, stopping, streamTargetMatchesCurrentTarget, waitForTerminalStop]);
 
   const handleProjectChange = (value: string) => {
     if (projectLocked) return;
@@ -590,6 +711,12 @@ export function RunFeedbackChatPanel({
       setDraft("");
     }
     setSending(true);
+    updateRunDebugRuntime(debugRuntime, {
+      sending: true,
+      stopping: false,
+      stopRequested: false,
+      stopAccepted: false,
+    });
     setStopping(false);
     setStopIndeterminate(false);
     stopRequestedRef.current = false;
@@ -606,6 +733,10 @@ export function RunFeedbackChatPanel({
     pendingStreamEventsRef.current = [];
     const streamAbortController = new AbortController();
     streamAbortControllerRef.current = streamAbortController;
+    if (debugRuntime) {
+      debugRuntime.abortController = streamAbortController;
+      debugRuntime.streamFence = streamFenceRef.current;
+    }
     const isCurrentStream = () => streamRunIdRef.current === streamRunId
       && streamTargetMatchesCurrentTarget();
     const applyStreamEvent = async (event: ChatStreamEvent) => {
@@ -613,6 +744,10 @@ export function RunFeedbackChatPanel({
       if (event.type === "ack") {
         recordStreamFence(streamFenceRef.current, event);
         activeConversationIdRef.current = event.userMessage.conversationId;
+        updateRunDebugRuntime(debugRuntime, {
+          conversationId: event.userMessage.conversationId,
+          sending: true,
+        });
         if (!sendTarget.conversationId && streamTargetRef.current) {
           streamTargetRef.current = {
             ...streamTargetRef.current,
@@ -725,7 +860,8 @@ export function RunFeedbackChatPanel({
       const isAbort = sendError instanceof DOMException
         ? sendError.name === "AbortError"
         : sendError instanceof Error && sendError.name === "AbortError";
-      if (!isAbort || !stopRequestedRef.current) {
+      const acceptedStop = stopCutoffAcceptedRef.current || debugRuntime?.state.stopAccepted;
+      if (!acceptedStop && (!isAbort || !stopRequestedRef.current)) {
         if (
           sendTarget.conversationId
           && hasApiStatus(sendError, 404)
@@ -742,6 +878,15 @@ export function RunFeedbackChatPanel({
       streamAbortControllerRef.current = null;
       sendInFlightRef.current = false;
       setSending(false);
+      updateRunDebugRuntime(debugRuntime, {
+        sending: false,
+        stopping: false,
+        stopRequested: false,
+        stopAccepted: false,
+      });
+      if (debugRuntime?.abortController === streamAbortController) {
+        debugRuntime.abortController = null;
+      }
       if (!stopCutoffPending && !stopRequestedRef.current) setStopping(false);
       if (!stopRequestedRef.current || stopCutoffPending) {
         streamEventHandlerRef.current = null;
@@ -753,7 +898,7 @@ export function RunFeedbackChatPanel({
         setError(sendFailureMessage);
         if (sendTarget.kind === "run_debug_chat") {
           setDraft(body);
-          updateTarget({ errorMessage: sendFailureMessage });
+          updateTarget({ autoSend: false, errorMessage: sendFailureMessage });
         }
       }
     }
@@ -805,9 +950,16 @@ export function RunFeedbackChatPanel({
   }, [agentsQuery.isPending, autoSend, selectedAgent, target.clientMutationId, target.kind]);
 
   const visibleMessages = messages;
+  const recoveredDebugStreamCanBeStopped = Boolean(
+    isDebug
+    && sending
+    && target.conversationId
+    && queueQuery.data?.activeGenerationStatus
+    && ACTIVE_GENERATION_STATUSES.has(queueQuery.data.activeGenerationStatus),
+  );
   const currentStreamCanBeStopped = sending
     && Boolean(activeConversationIdRef.current)
-    && streamTargetMatchesCurrentTarget();
+    && (streamTargetMatchesCurrentTarget() || recoveredDebugStreamCanBeStopped);
   const feedbackButtonMode = stopping || stopIndeterminate
     ? "stopping"
     : currentStreamCanBeStopped
@@ -822,8 +974,14 @@ export function RunFeedbackChatPanel({
     <div
       className="flex h-full min-h-0 flex-col"
       data-testid={isDebug ? "run-debug-chat-panel" : "run-feedback-chat-panel"}
+      data-debug-conversation-id={isDebug ? target.conversationId ?? "" : undefined}
+      data-debug-runtime-sending={isDebug ? String(debugRuntimeState.sending) : undefined}
+      data-debug-queue-status={isDebug ? queueQuery.data?.activeGenerationStatus ?? "" : undefined}
     >
-      <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div
+        className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4"
+        data-testid="run-chat-messages-scroll"
+      >
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <div className="flex items-center gap-2 border-b border-border/70 pb-3">
             <MessageSquare className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
@@ -894,6 +1052,7 @@ export function RunFeedbackChatPanel({
               <div className="max-w-3xl whitespace-pre-wrap break-words text-sm text-foreground">{streamBody}</div>
             </div>
           ) : null}
+          <div ref={endRef} data-testid="run-chat-message-end" />
         </div>
       </div>
       {error || (target.kind === "run_feedback_chat" ? target.recoveryNotice : target.errorMessage) || annotationValidationError ? (

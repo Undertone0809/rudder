@@ -105,6 +105,10 @@ const target: Extract<SidePanelTarget, { kind: "run_feedback_chat" }> = {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: vi.fn(),
+});
 
 const assistantMessage = {
   id: "assistant-1",

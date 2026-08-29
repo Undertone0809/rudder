@@ -1931,6 +1931,10 @@ export function ChatSidePanel({
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "side_chat" }> => candidate.kind === "side_chat"),
     [visibleTabs],
   );
+  const runDebugTargets = useMemo(
+    () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "run_debug_chat" }> => candidate.kind === "run_debug_chat"),
+    [visibleTabs],
+  );
   const browserTargets = useMemo(
     () => visibleTabs.filter((candidate): candidate is Extract<SidePanelTarget, { kind: "browser" }> => candidate.kind === "browser"),
     [visibleTabs],
@@ -2890,14 +2894,14 @@ export function ChatSidePanel({
   );
 
   if (isMobile) {
-    if (!sidePanel.open && !exiting && sideChatTargets.length === 0) return null;
+    if (!sidePanel.open && !exiting && sideChatTargets.length === 0 && runDebugTargets.length === 0) return null;
     return typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
   }
   if (sidePanel.open) {
     lastOpenDesktopPanelRef.current = panel;
     return panel;
   }
-  if (sideChatTargets.length > 0) return panel;
+  if (sideChatTargets.length > 0 || runDebugTargets.length > 0) return panel;
   if (
     !desktopExitComplete
     || liveSurfaceTargets.length > 0

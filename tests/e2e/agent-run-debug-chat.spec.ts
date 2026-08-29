@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatConversations,
@@ -11,6 +12,7 @@ import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+const E2E_SLOW_CODEX_STUB = path.resolve("tests/e2e/fixtures/codex-ignore-term");
 
 type Organization = { id: string; issuePrefix: string };
 type Agent = { id: string; name: string };
@@ -51,7 +53,12 @@ function recordBrowserErrors(page: Page) {
   return { consoleErrors, pageErrors, requestFailures };
 }
 
-async function createFailedRunFixture(page: Page, name: string, withFallback = false) {
+async function createFailedRunFixture(
+  page: Page,
+  name: string,
+  withFallback = false,
+  command = E2E_CODEX_STUB,
+) {
   const organizationResponse = await page.request.post("/api/orgs", { data: { name } });
   expect(organizationResponse.ok(), await organizationResponse.text()).toBe(true);
   const organization = await organizationResponse.json() as Organization;
@@ -59,7 +66,7 @@ async function createFailedRunFixture(page: Page, name: string, withFallback = f
     name: "Run Debug Primary",
     agentRuntimeConfig: {
       model: "gpt-5.4",
-      command: E2E_CODEX_STUB,
+      command,
       chatAppServerEnabled: false,
     },
   }) as Agent;
@@ -137,6 +144,21 @@ async function expectNoHorizontalOverflow(page: Page) {
   }))).toEqual({ clientWidth: 390, scrollWidth: 390 });
 }
 
+async function expectWithinScrollViewport(locator: Locator, scrollContainer: Locator) {
+  await expect.poll(async () => {
+    const [itemBox, scrollBox] = await Promise.all([
+      locator.boundingBox(),
+      scrollContainer.boundingBox(),
+    ]);
+    return Boolean(
+      itemBox
+      && scrollBox
+      && itemBox.y >= scrollBox.y
+      && itemBox.y + itemBox.height <= scrollBox.y + scrollBox.height,
+    );
+  }).toBe(true);
+}
+
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
 });
@@ -147,7 +169,12 @@ test.describe("failed Agent Run Debug Chat", () => {
     const browserErrors = recordBrowserErrors(page);
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1440, height: 960 });
-    const fixture = await createFailedRunFixture(page, `Run-Debug-Chat-${Date.now()}`);
+    const fixture = await createFailedRunFixture(
+      page,
+      `Run-Debug-Chat-${Date.now()}`,
+      false,
+      E2E_SLOW_CODEX_STUB,
+    );
     const streamRequests = recordStreamRequests(page);
     const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
     const { dialog, generatedSnapshot } = await openDebugDialogAndEditGitHubText(page, mainContent);
@@ -169,8 +196,42 @@ test.describe("failed Agent Run Debug Chat", () => {
     expect(streamRequests[0]?.body).not.toContain("Edited GitHub-only report");
     expect(streamRequests[0]?.body).not.toContain("run-secret-must-not-leak");
     await expect(debugPanel.getByTestId("run-feedback-chat-message").first()).toBeVisible({ timeout: 20_000 });
-    await expect(debugPanel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }))
-      .toBeVisible({ timeout: 60_000 });
+    await expect(debugPanel.getByRole("button", { name: "Stop feedback" })).toBeVisible();
+
+    await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+    await expect(sidePanel).toBeHidden();
+    await mainContent.getByTestId("run-report-issue").click();
+    await page.getByRole("dialog", { name: "Report this run failure" })
+      .getByRole("button", { name: "Ask agent" }).click();
+    await expect(debugPanel.getByRole("button", { name: "Stop feedback" })).toBeVisible();
+    expect(streamRequests).toHaveLength(1);
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-stream-desktop.png"), fullPage: true });
+
+    await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+    await expect(sidePanel).toBeHidden();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileUrl = page.url();
+    await mainContent.getByTestId("run-report-issue").click();
+    await page.getByRole("dialog", { name: "Report this run failure" })
+      .getByRole("button", { name: "Ask agent" }).click();
+    await expect(page).toHaveURL(mobileUrl);
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel).toHaveAttribute("role", "dialog");
+    await expect(sidePanel).toHaveClass(/fixed/);
+    await expect(debugPanel).toHaveAttribute("data-debug-conversation-id", /.+/);
+    await expect(debugPanel).toHaveAttribute(
+      "data-debug-queue-status",
+      /^(starting|active|running|tool_busy|closing|stop_requested|stopping|waiting_for_network)$/,
+    );
+    await expect(debugPanel.getByRole("button", { name: "Stop feedback" })).toBeVisible();
+    expect(streamRequests).toHaveLength(1);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-stream-mobile.png"), fullPage: true });
+
+    const assistantMessage = debugPanel.getByTestId("chat-assistant-message")
+      .filter({ hasText: "Streaming reply for chat." });
+    await expect(assistantMessage).toBeVisible({ timeout: 60_000 });
+    await expectWithinScrollViewport(assistantMessage, debugPanel.getByTestId("run-chat-messages-scroll"));
     await expect(debugPanel.getByTestId("run-feedback-composer").locator("[contenteditable='true']"))
       .toBeEmpty();
     await expect(debugPanel.getByTestId("run-feedback-composer"))
@@ -189,26 +250,6 @@ test.describe("failed Agent Run Debug Chat", () => {
     expect(messages.some((message) => message.body.includes(`Run ID: ${fixture.runId}`))).toBe(true);
     expect(messages.some((message) => message.body.includes("Edited GitHub-only report"))).toBe(false);
 
-    await mainContent.getByTestId("run-report-issue").click();
-    await page.getByRole("dialog", { name: "Report this run failure" })
-      .getByRole("button", { name: "Ask agent" }).click();
-    await page.waitForTimeout(500);
-    expect(streamRequests).toHaveLength(1);
-    await expect(debugPanel.getByTestId("run-feedback-composer"))
-      .not.toContainText("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
-    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-desktop.png"), fullPage: true });
-
-    await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
-    await expect(sidePanel).toBeHidden();
-    await page.setViewportSize({ width: 390, height: 844 });
-    const mobileUrl = page.url();
-    await mainContent.getByTestId("run-report-issue").click();
-    await page.getByRole("dialog", { name: "Report this run failure" })
-      .getByRole("button", { name: "Ask agent" }).click();
-    await expect(page).toHaveURL(mobileUrl);
-    await expect(sidePanel).toBeVisible();
-    await expect(sidePanel).toHaveAttribute("role", "dialog");
-    await expect(sidePanel).toHaveClass(/fixed/);
     await expect(debugPanel.getByTestId("run-feedback-chat-message")
       .filter({ hasText: `Run ID: ${fixture.runId}` })).toHaveCount(1);
     await expect(debugPanel.getByTestId("run-feedback-composer"))
@@ -216,6 +257,17 @@ test.describe("failed Agent Run Debug Chat", () => {
     expect(streamRequests).toHaveLength(1);
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath("run-debug-chat-mobile.png"), fullPage: true });
+
+    await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+    await expect(sidePanel).toBeHidden();
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await mainContent.getByTestId("run-report-issue").click();
+    await page.getByRole("dialog", { name: "Report this run failure" })
+      .getByRole("button", { name: "Ask agent" }).click();
+    await expect(sidePanel).toBeVisible();
+    await expectWithinScrollViewport(assistantMessage, debugPanel.getByTestId("run-chat-messages-scroll"));
+    expect(streamRequests).toHaveLength(1);
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-desktop.png"), fullPage: true });
     assertNoUnexpectedBrowserErrors(
       browserErrors.consoleErrors,
       browserErrors.pageErrors,
@@ -281,6 +333,51 @@ test.describe("failed Agent Run Debug Chat", () => {
       browserErrors.pageErrors,
       browserErrors.requestFailures,
       [EXPECTED_DIAGNOSTIC_METADATA_ERROR, EXPECTED_AGENT_UNAVAILABLE_ERROR],
+    );
+  });
+
+  test("stops the same active Debug Chat after reopening it on mobile", async ({ page }, testInfo: TestInfo) => {
+    test.setTimeout(120_000);
+    const browserErrors = recordBrowserErrors(page);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const fixture = await createFailedRunFixture(page, `Run-Debug-Stop-${Date.now()}`);
+    const streamRequests = recordStreamRequests(page);
+    const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
+    const { dialog } = await openDebugDialogAndEditGitHubText(page, mainContent);
+    await dialog.getByRole("button", { name: "Ask agent" }).click();
+
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const debugPanel = sidePanel.getByTestId("run-debug-chat-panel");
+    await expect(debugPanel.getByRole("button", { name: "Stop feedback" })).toBeVisible({ timeout: 20_000 });
+    await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+    await expect(sidePanel).toBeHidden();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mainContent.getByTestId("run-report-issue").click();
+    await page.getByRole("dialog", { name: "Report this run failure" })
+      .getByRole("button", { name: "Ask agent" }).click();
+    const stopButton = debugPanel.getByRole("button", { name: "Stop feedback" });
+    await expect(stopButton).toBeVisible();
+
+    const stopResponse = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().endsWith("/messages/stream/stop")
+    ));
+    await stopButton.click();
+    expect((await stopResponse).ok()).toBe(true);
+    await expect(stopButton).toHaveCount(0, { timeout: 20_000 });
+    await expect(debugPanel.getByRole("alert")).toHaveCount(0);
+    expect(streamRequests).toHaveLength(1);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-stopped-mobile.png"), fullPage: true });
+    expect(browserErrors.requestFailures).toEqual([
+      expect.stringMatching(/POST .*\/chats\/messages\/stream :: net::ERR_ABORTED/),
+    ]);
+    browserErrors.requestFailures.splice(0);
+    assertNoUnexpectedBrowserErrors(
+      browserErrors.consoleErrors,
+      browserErrors.pageErrors,
+      browserErrors.requestFailures,
+      [EXPECTED_DIAGNOSTIC_METADATA_ERROR],
     );
   });
 });
