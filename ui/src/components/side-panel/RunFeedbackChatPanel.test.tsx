@@ -296,6 +296,123 @@ describe("RunFeedbackChatPanel", () => {
     });
   });
 
+  it("automatically sends a new Debug Chat exactly once with the stable Run request", async () => {
+    const onReplaceTarget = vi.fn();
+    let currentTarget: Extract<SidePanelTarget, { kind: "run_debug_chat" }> = {
+      kind: "run_debug_chat",
+      organizationId: "org-1",
+      runId: "run-1",
+      agentId: "agent-1",
+      preferredAgentId: "agent-1",
+      conversationId: null,
+      clientMutationId: "run-debug:org-1:run-1",
+      projectId: null,
+      body: "Investigate Run ID: run-1",
+      autoSend: true,
+      errorMessage: null,
+      inlineAnnotations: [],
+      label: "Debug Run",
+    };
+    onReplaceTarget.mockImplementation((_key, nextTarget) => {
+      currentTarget = nextTarget as typeof currentTarget;
+    });
+    const renderTarget = () => root.render(
+      <QueryClientProvider client={queryClient}>
+        <RunFeedbackChatPanel
+          organizationId="org-1"
+          target={currentTarget}
+          onReplaceTarget={onReplaceTarget}
+        />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => renderTarget());
+    await act(async () => {
+      await vi.waitFor(() => expect(chatsApi.sendFirstMessageStream).toHaveBeenCalledTimes(1));
+    });
+    expect(currentTarget.autoSend).toBe(false);
+    expect(chatsApi.sendFirstMessageStream).toHaveBeenCalledWith(
+      "org-1",
+      "Investigate Run ID: run-1",
+      expect.objectContaining({
+        preferredAgentId: "agent-1",
+        planMode: false,
+        issueCreationMode: "manual_approval",
+        clientMutationId: "run-debug:org-1:run-1",
+        contextLinks: [],
+      }),
+    );
+    expect((host.querySelector('[aria-label="Feedback draft"]') as HTMLTextAreaElement).value).toBe("");
+
+    await act(async () => renderTarget());
+    currentTarget = { ...currentTarget, autoSend: true };
+    await act(async () => renderTarget());
+    expect(chatsApi.sendFirstMessageStream).toHaveBeenCalledTimes(1);
+    expect(currentTarget.autoSend).toBe(false);
+    await act(async () => {
+      releaseFirstStream?.();
+      await Promise.resolve();
+    });
+  });
+
+  it("keeps a failed Debug Chat request retryable without a conversation", async () => {
+    vi.mocked(chatsApi.sendFirstMessageStream).mockImplementationOnce(async () => {
+      await Promise.resolve();
+      throw new ApiError("Unavailable", 503, null);
+    });
+    let currentTarget: Extract<SidePanelTarget, { kind: "run_debug_chat" }> = {
+      kind: "run_debug_chat",
+      organizationId: "org-1",
+      runId: "run-1",
+      agentId: "agent-1",
+      preferredAgentId: "agent-1",
+      conversationId: null,
+      clientMutationId: "run-debug:org-1:run-1",
+      projectId: null,
+      body: "Investigate Run ID: run-1",
+      autoSend: true,
+      errorMessage: null,
+      inlineAnnotations: [],
+      label: "Debug Run",
+    };
+    const onReplaceTarget = vi.fn((_key, nextTarget) => {
+      currentTarget = nextTarget as typeof currentTarget;
+    });
+    const renderTarget = () => root.render(
+      <QueryClientProvider client={queryClient}>
+        <RunFeedbackChatPanel
+          organizationId="org-1"
+          target={currentTarget}
+          onReplaceTarget={onReplaceTarget}
+        />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => {
+      renderTarget();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(chatsApi.sendFirstMessageStream).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(currentTarget.errorMessage).toContain("Choose another agent or try again"));
+    });
+    await act(async () => {
+      renderTarget();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain("Choose another agent or try again"));
+    });
+
+    expect(currentTarget).toEqual(expect.objectContaining({
+      autoSend: false,
+      body: "Investigate Run ID: run-1",
+      clientMutationId: "run-debug:org-1:run-1",
+      conversationId: null,
+    }));
+    expect((host.querySelector('[aria-label="Feedback draft"]') as HTMLTextAreaElement).value)
+      .toBe("Investigate Run ID: run-1");
+    expect(chatsApi.get).not.toHaveBeenCalledWith(expect.stringContaining("run-debug"));
+  });
+
   it("shows the truthful bound Agent for an existing legacy feedback Chat", async () => {
     vi.mocked(chatsApi.get).mockResolvedValue({
       id: "chat-1",

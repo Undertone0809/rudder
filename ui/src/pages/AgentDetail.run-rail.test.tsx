@@ -12,7 +12,9 @@ import {
   RunListItem,
   RunRailList,
   RunsTab,
+  runDebugTargetForRun,
   runFeedbackTargetForContext,
+  type RunDebugTarget,
   type RunFeedbackTarget,
   type RunRailEntry,
 } from "./AgentDetail.runs";
@@ -229,6 +231,42 @@ describe("runFeedbackTargetForContext", () => {
       "org-1",
       "agent-a",
     )).toBe(latestAgentATarget);
+  });
+});
+
+describe("runDebugTargetForRun", () => {
+  const debugTarget: RunDebugTarget = {
+    kind: "run_debug_chat",
+    organizationId: "org-1",
+    runId: "run-1",
+    agentId: "agent-a",
+    preferredAgentId: "agent-a",
+    conversationId: null,
+    clientMutationId: "run-debug:org-1:run-1",
+    projectId: null,
+    body: "Investigate",
+    autoSend: false,
+    errorMessage: null,
+    inlineAnnotations: [],
+    label: "Debug Run",
+  };
+
+  it("does not share a Debug Chat between Runs", () => {
+    expect(runDebugTargetForRun(debugTarget, [], "org-1", "run-2")).toBeNull();
+  });
+
+  it("prefers the current Run tab over a stale cached target", () => {
+    const establishedTarget = {
+      ...debugTarget,
+      conversationId: "conversation-1",
+      body: "",
+    };
+    expect(runDebugTargetForRun(
+      debugTarget,
+      [establishedTarget],
+      "org-1",
+      "run-1",
+    )).toBe(establishedTarget);
   });
 });
 

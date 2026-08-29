@@ -198,6 +198,28 @@ describe("side panel targets", () => {
     expect(sidePanelTargetKey(persistedSideChat)).toBe("side-chat:side-chat-1");
     expect(sidePanelFullPageHref(persistedSideChat)).toBe("/messenger/chat/side-chat-1");
 
+    const runDebugDraft: SidePanelTarget = {
+      kind: "run_debug_chat",
+      organizationId: "org-1",
+      runId: "run-1",
+      agentId: "agent-1",
+      preferredAgentId: "agent-1",
+      conversationId: null,
+      clientMutationId: "run-debug:org-1:run-1",
+      projectId: null,
+      body: "Investigate",
+      autoSend: true,
+      errorMessage: null,
+      inlineAnnotations: [],
+      label: "Debug Run",
+    };
+    expect(sidePanelTargetKey(runDebugDraft)).toBe("run-debug-chat:org-1:run-1");
+    expect(sidePanelTargetKey({ ...runDebugDraft, runId: "run-2" }))
+      .toBe("run-debug-chat:org-1:run-2");
+    expect(sidePanelFullPageHref(runDebugDraft)).toBeNull();
+    expect(sidePanelFullPageHref({ ...runDebugDraft, conversationId: "debug-chat-1" }))
+      .toBe("/messenger/chat/debug-chat-1");
+
     const goalChatDraft = {
       kind: "goal_chat",
       organizationId: "org-1",

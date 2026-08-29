@@ -290,7 +290,9 @@ function ChatSidePanelTabIcon({
   if (tab.kind === "chat" || tab.kind === "side_chat" || tab.kind === "goal_chat") {
     return <MessageSquare aria-hidden className={iconClassName} />;
   }
-  if (tab.kind === "subagents" || tab.kind === "subagent") return <Bot aria-hidden className={iconClassName} />;
+  if (tab.kind === "subagents" || tab.kind === "subagent" || tab.kind === "run_debug_chat") {
+    return <Bot aria-hidden className={iconClassName} />;
+  }
   if (tab.kind === "library_directory") return <Folder aria-hidden className={iconClassName} />;
   if (tab.kind === "library_document") return <FileText aria-hidden className={iconClassName} />;
   if (tab.kind === "library_entry") {
@@ -2028,6 +2030,7 @@ export function ChatSidePanel({
   const chatTarget = activeTarget?.kind === "chat" ? activeTarget : null;
   const sideChatTarget = activeTarget?.kind === "side_chat" ? activeTarget : null;
   const runFeedbackTarget = activeTarget?.kind === "run_feedback_chat" ? activeTarget : null;
+  const runDebugTarget = activeTarget?.kind === "run_debug_chat" ? activeTarget : null;
   const goalChatTarget = activeTarget?.kind === "goal_chat" ? activeTarget : null;
   const subagentsTarget = activeTarget?.kind === "subagents" ? activeTarget : null;
   const subagentTarget = activeTarget?.kind === "subagent" ? activeTarget : null;
@@ -2639,7 +2642,7 @@ export function ChatSidePanel({
       )}>
         <div className={cn(
           "scrollbar-auto-hide min-h-0 min-w-0 max-w-full flex-1",
-          activeLiveSurfaceTarget || localAppsTarget || terminalTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || goalChatTarget || subagentsTarget || subagentTarget
+          activeLiveSurfaceTarget || localAppsTarget || terminalTarget || issueTarget || issueProposalTarget || localFileTarget || organizationSkillFileTarget || sideChatTarget || runFeedbackTarget || runDebugTarget || goalChatTarget || subagentsTarget || subagentTarget
             ? "flex h-full flex-col overflow-hidden"
             : "overflow-y-auto px-4 py-4",
           issueTarget && !browserTarget && "px-4 py-4",
@@ -2805,6 +2808,12 @@ export function ChatSidePanel({
             <RunFeedbackChatPanel
               organizationId={selectedOrganizationId}
               target={runFeedbackTarget}
+              onReplaceTarget={replaceSidePanelTarget}
+            />
+          ) : runDebugTarget && selectedOrganizationId ? (
+            <RunFeedbackChatPanel
+              organizationId={selectedOrganizationId}
+              target={runDebugTarget}
               onReplaceTarget={replaceSidePanelTarget}
             />
           ) : goalChatTarget ? (

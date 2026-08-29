@@ -43,7 +43,7 @@ import {
   ChatAgentSelectorButton,
   handleChatAgentMenuKeyDown,
 } from "@/pages/Chat.model-selector";
-import { composerMenuPositionForAnchor } from "@/pages/Chat.parts";
+import { composerMenuPositionForAnchor, mergeChatMessages } from "@/pages/Chat.parts";
 import type {
   ChatConversation,
   ChatInlineAnnotationInput,
@@ -65,6 +65,13 @@ import {
 import { createPortal } from "react-dom";
 
 type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
+type RunDebugTarget = Extract<SidePanelTarget, { kind: "run_debug_chat" }>;
+type RunChatTarget = RunFeedbackTarget | RunDebugTarget;
+type RunDebugSession = { autoSendConsumed: true; conversationId: string | null };
+
+function runDebugSessionQueryKey(organizationId: string, clientMutationId: string) {
+  return ["run-debug-chat-session", organizationId, clientMutationId] as const;
+}
 
 function makeId() {
   return globalThis.crypto?.randomUUID?.() ?? `annotation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -152,13 +159,14 @@ export function RunFeedbackChatPanel({
   onReplaceTarget,
 }: {
   organizationId: string;
-  target: RunFeedbackTarget;
+  target: RunChatTarget;
   onReplaceTarget: (key: string, target: SidePanelTarget) => void;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const navigate = useNavigate();
   const [draft, setDraft] = useState(target.body ?? "");
+  const [composerRevision, setComposerRevision] = useState(0);
   const [projectId, setProjectId] = useState<string | null>(target.projectId ?? null);
   const [composerMenu, setComposerMenu] = useState<"project" | "agent" | null>(null);
   const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null);
@@ -193,9 +201,11 @@ export function RunFeedbackChatPanel({
   const pendingStreamEventsRef = useRef<ChatStreamEvent[]>([]);
   const streamEventHandlerRef = useRef<((event: ChatStreamEvent) => Promise<void> | void) | null>(null);
   const sendInFlightRef = useRef(false);
-  const renderedTargetRef = useRef<Pick<RunFeedbackTarget, "conversationId" | "clientMutationId">>(target);
+  const renderedTargetRef = useRef<Pick<RunChatTarget, "conversationId" | "clientMutationId">>(target);
   targetRef.current = target;
   mutationKeyRef.current = target.clientMutationId || mutationKeyRef.current;
+  const isDebug = target.kind === "run_debug_chat";
+  const autoSend = target.kind === "run_debug_chat" && target.autoSend;
 
   useEffect(() => {
     const previousTarget = renderedTargetRef.current;
@@ -220,6 +230,7 @@ export function RunFeedbackChatPanel({
     activeConversationIdRef.current = target.conversationId ?? null;
   }, [sending, target.conversationId]);
   useEffect(() => {
+    if (target.kind !== "run_feedback_chat") return;
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
@@ -262,7 +273,7 @@ export function RunFeedbackChatPanel({
   });
 
   useEffect(() => {
-    if (messagesQuery.data) setMessages(messagesQuery.data);
+    if (messagesQuery.data) setMessages((current) => mergeChatMessages(current, messagesQuery.data));
   }, [messagesQuery.data]);
   useEffect(() => {
     setDraft(target.body ?? "");
@@ -307,7 +318,9 @@ export function RunFeedbackChatPanel({
   );
   const activeAgentId = target.conversationId
     ? conversation?.preferredAgentId ?? target.agentId
-    : target.agentId;
+    : target.kind === "run_debug_chat"
+      ? target.preferredAgentId
+      : target.agentId;
   const selectedAgent = useMemo(
     () => liveAgents.find((agent) => agent.id === activeAgentId) ?? null,
     [activeAgentId, liveAgents],
@@ -316,14 +329,17 @@ export function RunFeedbackChatPanel({
     () => (projectsQuery.data ?? []).find((project) => project.id === projectId) ?? null,
     [projectId, projectsQuery.data],
   );
-  const projectLocked = Boolean(
+  const projectLocked = target.kind === "run_debug_chat" || Boolean(
     sending
-    ||
-    target.projectLocked
+    || target.projectLocked
     || target.conversationId
     || messages.some((message) => message.role === "user"),
   );
-  const agentLocked = true;
+  const agentLocked = target.kind === "run_feedback_chat" || Boolean(
+    sending
+    || target.conversationId
+    || messages.some((message) => message.role === "user"),
+  );
   const annotationCount = annotationState.annotations.length;
   const annotationValidationError = validateChatResponseAnnotationState(
     annotationState.annotations,
@@ -332,22 +348,29 @@ export function RunFeedbackChatPanel({
   const hasPendingAnnotation = annotationState.annotations.some((annotation) => annotation.sourceHash === "pending");
   const canSend = !hasPendingAnnotation && !annotationValidationError && canSubmitChatResponseAnnotations(draft, annotationState);
 
-  const updateTarget = useCallback((patch: Partial<RunFeedbackTarget>) => {
+  const updateTarget = useCallback((patch: Partial<RunChatTarget>) => {
     const current = targetRef.current;
-    const next = { ...current, ...patch, preferredAgentId: current.agentId } satisfies RunFeedbackTarget;
+    const next = current.kind === "run_feedback_chat"
+      ? { ...current, ...patch, preferredAgentId: current.agentId } as RunFeedbackTarget
+      : { ...current, ...patch } as RunDebugTarget;
     targetRef.current = next;
     onReplaceTarget(sidePanelTargetKey(current), next);
   }, [onReplaceTarget]);
 
   useEffect(() => {
+    if (target.kind !== "run_feedback_chat") return;
     if (target.preferredAgentId && target.preferredAgentId !== target.agentId) {
       updateTarget({ preferredAgentId: target.agentId });
     }
-  }, [target.agentId, target.preferredAgentId, updateTarget]);
+  }, [target.agentId, target.kind, target.preferredAgentId, updateTarget]);
 
   const recoverUnavailableConversation = useCallback((conversationId: string) => {
     const current = targetRef.current;
     if (current.conversationId !== conversationId) return false;
+    if (current.kind === "run_debug_chat") {
+      setError("This Debug Chat is no longer available. Open Ask agent again to retry.");
+      return false;
+    }
     const clientMutationId = makeId();
     mutationKeyRef.current = clientMutationId;
     activeConversationIdRef.current = null;
@@ -557,7 +580,15 @@ export function RunFeedbackChatPanel({
       pushToast,
     })) return;
     sendInFlightRef.current = true;
-    if (sendTarget.recoveryNotice) updateTarget({ recoveryNotice: null });
+    if (sendTarget.kind === "run_feedback_chat" && sendTarget.recoveryNotice) {
+      updateTarget({ recoveryNotice: null });
+    }
+    if (sendTarget.kind === "run_debug_chat" && sendTarget.errorMessage) {
+      updateTarget({ errorMessage: null });
+    }
+    if (sendTarget.kind === "run_debug_chat") {
+      setDraft("");
+    }
     setSending(true);
     setStopping(false);
     setStopIndeterminate(false);
@@ -588,29 +619,42 @@ export function RunFeedbackChatPanel({
             conversationId: event.userMessage.conversationId,
           };
         }
-        setMessages((current) => [...current, event.userMessage]);
+        setMessages((current) => mergeChatMessages(current, [event.userMessage]));
         for (const annotationId of sentAnnotationIds) {
           dispatchAnnotation({ type: "delete", id: annotationId });
         }
         const current = targetRef.current;
         const remainingAnnotations = current.inlineAnnotations.filter((annotation) => !sentAnnotationIds.has(annotation.id));
-        const nextTarget = sendTarget.conversationId
+        const nextTarget: RunChatTarget = sendTarget.conversationId
           ? {
               ...current,
               body: current.body === body ? "" : current.body,
               inlineAnnotations: remainingAnnotations,
             }
-          : {
+          : current.kind === "run_feedback_chat" ? {
               ...current,
               conversationId: event.userMessage.conversationId,
               projectLocked: true,
               projectId: sendTarget.projectId,
               body: current.body === body ? "" : current.body,
               inlineAnnotations: remainingAnnotations,
+            } : {
+              ...current,
+              conversationId: event.userMessage.conversationId,
+              body: current.body === body ? "" : current.body,
+              inlineAnnotations: remainingAnnotations,
             };
         updateTarget(nextTarget);
+        if (sendTarget.kind === "run_debug_chat") {
+          queryClient.setQueryData<RunDebugSession>(
+            runDebugSessionQueryKey(organizationId, sendTarget.clientMutationId),
+            { autoSendConsumed: true, conversationId: event.userMessage.conversationId },
+          );
+          setDraft("");
+          setComposerRevision((current) => current + 1);
+        }
         setAnnotationsExpanded(remainingAnnotations.length > 0);
-        if (!sendTarget.conversationId) {
+        if (!sendTarget.conversationId && sendTarget.kind === "run_feedback_chat") {
           try {
             window.localStorage.setItem(
               `rudder.run-feedback-draft:${organizationId}:${sendTarget.agentId}`,
@@ -630,7 +674,7 @@ export function RunFeedbackChatPanel({
       }
       if (event.type === "final") {
         setStreamBody("");
-        setMessages((current) => [...current, ...event.messages]);
+        setMessages((current) => mergeChatMessages(current, event.messages));
       }
       if (event.type === "error") throw new Error(event.error);
     };
@@ -643,6 +687,7 @@ export function RunFeedbackChatPanel({
       }
       await applyStreamEvent(event);
     };
+    let sendFailureMessage: string | null = null;
     try {
       if (sendTarget.conversationId) {
         await chatsApi.sendMessageStream(sendTarget.conversationId, body, {
@@ -654,7 +699,9 @@ export function RunFeedbackChatPanel({
       } else {
         await chatsApi.sendFirstMessageStream(organizationId, body, {
           signal: streamAbortController.signal,
-          preferredAgentId: sendTarget.agentId,
+          preferredAgentId: sendTarget.kind === "run_debug_chat"
+            ? sendTarget.preferredAgentId
+            : sendTarget.agentId,
           issueCreationMode: "manual_approval",
           planMode: false,
           modelOverride: null,
@@ -685,7 +732,9 @@ export function RunFeedbackChatPanel({
         ) {
           recoverUnavailableConversation(sendTarget.conversationId);
         } else {
-          setError(chatErrorMessage(sendError, "feedback"));
+          sendFailureMessage = sendTarget.kind === "run_debug_chat"
+            ? `${chatErrorMessage(sendError)} Choose another agent or try again.`
+            : chatErrorMessage(sendError, "feedback");
         }
       }
     } finally {
@@ -700,8 +749,60 @@ export function RunFeedbackChatPanel({
         pendingStreamEventsRef.current = [];
         stopRequestedRef.current = false;
       }
+      if (sendFailureMessage) {
+        setError(sendFailureMessage);
+        if (sendTarget.kind === "run_debug_chat") {
+          setDraft(body);
+          updateTarget({ errorMessage: sendFailureMessage });
+        }
+      }
     }
   };
+
+  useEffect(() => {
+    if (target.kind !== "run_debug_chat") return;
+    const session = queryClient.getQueryData<RunDebugSession>(
+      runDebugSessionQueryKey(organizationId, target.clientMutationId),
+    );
+    if (
+      !session?.conversationId
+      || (target.conversationId === session.conversationId && !target.body && !target.autoSend)
+    ) return;
+    setDraft("");
+    setComposerRevision((current) => current + 1);
+    updateTarget({
+      conversationId: session.conversationId,
+      body: "",
+      autoSend: false,
+    });
+  }, [autoSend, organizationId, queryClient, target.body, target.clientMutationId, target.conversationId, target.kind, updateTarget]);
+
+  useEffect(() => {
+    if (target.kind !== "run_debug_chat" || !autoSend || agentsQuery.isPending) return;
+    const sessionKey = runDebugSessionQueryKey(organizationId, target.clientMutationId);
+    const session = queryClient.getQueryData<RunDebugSession>(sessionKey);
+    if (session?.autoSendConsumed) {
+      const conversationId = session.conversationId ?? activeConversationIdRef.current;
+      updateTarget({
+        autoSend: false,
+        conversationId: conversationId ?? target.conversationId,
+        body: conversationId ? "" : target.body,
+      });
+      return;
+    }
+    queryClient.setQueryData<RunDebugSession>(sessionKey, {
+      autoSendConsumed: true,
+      conversationId: null,
+    });
+    updateTarget({ autoSend: false });
+    if (!selectedAgent) {
+      const unavailableMessage = "The Run agent is unavailable. Choose another agent or try again.";
+      setError(unavailableMessage);
+      updateTarget({ autoSend: false, errorMessage: unavailableMessage });
+      return;
+    }
+    void handleSend();
+  }, [agentsQuery.isPending, autoSend, selectedAgent, target.clientMutationId, target.kind]);
 
   const visibleMessages = messages;
   const currentStreamCanBeStopped = sending
@@ -718,17 +819,28 @@ export function RunFeedbackChatPanel({
     || (!sending && !canSend)
     || (sending && !currentStreamCanBeStopped);
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="run-feedback-chat-panel">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      data-testid={isDebug ? "run-debug-chat-panel" : "run-feedback-chat-panel"}
+    >
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <div className="flex items-center gap-2 border-b border-border/70 pb-3">
             <MessageSquare className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium">Run feedback</div>
+              <div className="truncate text-sm font-medium">{isDebug ? "Debug Run" : "Run feedback"}</div>
               <div className="truncate text-xs text-muted-foreground">{selectedAgent?.name ?? target.agentId}</div>
             </div>
           </div>
           {conversation ? <div className="text-xs text-muted-foreground">{conversation.title}</div> : null}
+          {isDebug && sending && !target.conversationId && target.body.trim() && !messages.some((message) => message.role === "user") ? (
+            <div
+              className="ml-6 rounded-lg border bg-muted/30 px-3 py-2 text-sm"
+              data-testid="run-chat-pending-message"
+            >
+              <div className="whitespace-pre-wrap break-words">{target.body}</div>
+            </div>
+          ) : null}
           {conversation ? visibleMessages.map((message) => {
             const transcript = transcriptEntries(message);
             return (
@@ -784,9 +896,9 @@ export function RunFeedbackChatPanel({
           ) : null}
         </div>
       </div>
-      {error || target.recoveryNotice || annotationValidationError ? (
+      {error || (target.kind === "run_feedback_chat" ? target.recoveryNotice : target.errorMessage) || annotationValidationError ? (
         <div role="alert" className="px-4 pb-2 text-sm text-destructive">
-          {error ?? target.recoveryNotice ?? annotationValidationError}
+          {error ?? (target.kind === "run_feedback_chat" ? target.recoveryNotice : target.errorMessage) ?? annotationValidationError}
         </div>
       ) : null}
       <div className="shrink-0 px-4 pb-4">
@@ -858,13 +970,14 @@ export function RunFeedbackChatPanel({
             </div>
           ) : null}
           <ChatComposerEditor
+            key={isDebug ? composerRevision : undefined}
             value={draft}
             onChange={(value) => {
               if (sending || stopping || stopIndeterminate) return;
               setDraft(value);
               updateTarget({ body: value });
             }}
-            placeholder="Add context for this feedback…"
+            placeholder={isDebug ? "Ask a follow-up…" : "Add context for this feedback…"}
             onSubmit={() => void handleSend()}
           />
           <ChatComposerToolbar
@@ -884,7 +997,7 @@ export function RunFeedbackChatPanel({
               />
             )}
           >
-            <ChatProjectSelectorButton
+            {!isDebug ? <ChatProjectSelectorButton
               project={selectedProject}
               label={selectedProject?.name ?? "No project"}
               expanded={composerMenu === "project"}
@@ -898,7 +1011,7 @@ export function RunFeedbackChatPanel({
                 else openComposerMenu("project");
               }}
               onClear={() => handleProjectChange("")}
-            />
+            /> : null}
             <ChatAgentSelectorButton
               buttonRef={agentSelectorRef}
               agent={selectedAgent}

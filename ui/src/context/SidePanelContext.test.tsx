@@ -82,6 +82,21 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
         body: "",
         label: "Ship Goal v2",
       })}>Open Goal Chat</button>
+      <button type="button" onClick={() => sidePanel.openTarget({
+        kind: "run_debug_chat",
+        organizationId: "org-a",
+        runId: "run-1",
+        agentId: "agent-1",
+        preferredAgentId: "agent-1",
+        conversationId: null,
+        clientMutationId: "run-debug:org-a:run-1",
+        projectId: null,
+        body: "Investigate",
+        autoSend: true,
+        errorMessage: null,
+        inlineAnnotations: [],
+        label: "Debug Run",
+      })}>Open Debug Chat</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "library_file", filePath: "docs/spec.md", label: "Spec" })}>Open file</button>
       <button type="button" onClick={() => sidePanel.openTargetInNewTab({ kind: "library_file", filePath: "docs/spec.md", label: "Spec copy" })}>Open file in new tab</button>
       <button type="button" onClick={() => sidePanel.openTarget({
@@ -199,6 +214,19 @@ describe("SidePanelProvider context visibility", () => {
     expect(window.location.pathname).toBe("/rudder-studio/issues/issue-1");
     expect(text(container, "open")).toBe("true");
     expect(text(container, "active-key")).toBe("goal-chat:org-a:goal-1");
+    expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("keeps a Run Debug Chat in the mobile Side Panel without changing routes", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.history.replaceState({}, "", "/rudder-studio/agents/agent-1/runs/run-1");
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Open Debug Chat");
+
+    expect(window.location.pathname).toBe("/rudder-studio/agents/agent-1/runs/run-1");
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("run-debug-chat:org-a:run-1");
     expect(text(container, "tab-count")).toBe("1");
   });
 

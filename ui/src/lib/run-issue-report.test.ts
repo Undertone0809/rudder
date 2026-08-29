@@ -1,6 +1,7 @@
 import type { HeartbeatRun } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
+  buildRunDebugChatMessage,
   buildRunIssueDiagnostics,
   createRunIssueReportUrl,
 } from "./run-issue-report";
@@ -117,5 +118,23 @@ describe("run issue report", () => {
     expect(url.searchParams.get("evidence")).toContain("[REDACTED_ID]");
     expect(url.searchParams.get("evidence")).not.toContain("edited-secret");
     expect(url.searchParams.get("evidence")).not.toContain("org-private");
+  });
+
+  it("builds a Debug Chat request with bounded diagnostics in an untrusted evidence boundary", () => {
+    const run = failedRun();
+    const diagnostics = buildRunIssueDiagnostics(run, {
+      version: "0.6.2",
+      environment: "dev / desktop",
+    });
+    const message = buildRunDebugChatMessage(run, diagnostics);
+
+    expect(message).toContain(`Run ID: ${run.id}`);
+    expect(message).toContain("Explain the likely root cause");
+    expect(message).toContain("cite the evidence");
+    expect(message).toContain("validation and repair steps");
+    expect(message).toContain("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    expect(message).toContain("END UNTRUSTED DIAGNOSTIC EVIDENCE");
+    expect(message).toContain("API_KEY=[REDACTED]");
+    expect(message).not.toContain("top-secret");
   });
 });

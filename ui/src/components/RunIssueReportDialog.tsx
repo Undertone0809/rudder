@@ -15,7 +15,7 @@ import {
   createRunIssueReportUrl,
 } from "@/lib/run-issue-report";
 import type { HeartbeatRun } from "@rudderhq/shared";
-import { ExternalLink } from "lucide-react";
+import { Bot, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 
 function browserPlatform(): string {
@@ -33,20 +33,25 @@ export function RunIssueReportDialog({
   environment,
   open,
   onOpenChange,
+  onAskAgent,
 }: {
   run: HeartbeatRun;
   version: string;
   environment: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onAskAgent: (diagnostics: string) => void;
 }) {
+  const [generatedDiagnostics, setGeneratedDiagnostics] = useState("");
   const [diagnostics, setDiagnostics] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
   const diagnosticsScrollRef = useScrollbarActivityRef();
 
   useEffect(() => {
     if (!open) return;
-    setDiagnostics(buildRunIssueDiagnostics(run, { version, environment }));
+    const generated = buildRunIssueDiagnostics(run, { version, environment });
+    setGeneratedDiagnostics(generated);
+    setDiagnostics(generated);
     setOpenError(null);
   }, [environment, open, run, version]);
 
@@ -68,6 +73,12 @@ export function RunIssueReportDialog({
     } catch (error) {
       setOpenError(error instanceof Error ? error.message : "Could not open GitHub.");
     }
+  }
+
+  function askAgent() {
+    if (!generatedDiagnostics.trim()) return;
+    onAskAgent(generatedDiagnostics);
+    onOpenChange(false);
   }
 
   return (
@@ -105,6 +116,10 @@ export function RunIssueReportDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
+          </Button>
+          <Button variant="outline" onClick={askAgent} disabled={!generatedDiagnostics.trim()}>
+            <Bot className="mr-1.5 h-3.5 w-3.5" />
+            Ask agent
           </Button>
           <Button onClick={() => void openGitHubIssue()} disabled={!diagnostics.trim()}>
             <ExternalLink className="mr-1.5 h-3.5 w-3.5" />

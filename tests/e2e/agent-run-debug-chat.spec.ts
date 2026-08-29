@@ -1,0 +1,286 @@
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import {
+  chatConversations,
+  chatMessages,
+  createDb,
+  heartbeatRuns,
+} from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
+
+const e2eDb = createDb(E2E_DATABASE_URL);
+
+type Organization = { id: string; issuePrefix: string };
+type Agent = { id: string; name: string };
+type StreamRequest = {
+  body?: string;
+  preferredAgentId?: string;
+  planMode?: boolean;
+  issueCreationMode?: string;
+  contextLinks?: unknown[];
+  clientMutationId?: string;
+};
+
+const EXPECTED_DIAGNOSTIC_METADATA_ERROR = "Failed to load resource: the server responded with a status of 400 (Bad Request)";
+const EXPECTED_AGENT_UNAVAILABLE_ERROR = "Failed to load resource: the server responded with a status of 503 (Service Unavailable)";
+
+function assertNoUnexpectedBrowserErrors(
+  consoleErrors: string[],
+  pageErrors: string[],
+  requestFailures: string[],
+  expectedConsoleErrors: string[],
+) {
+  expect(consoleErrors.filter((error) => !expectedConsoleErrors.includes(error))).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+}
+
+function recordBrowserErrors(page: Page) {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
+  });
+  return { consoleErrors, pageErrors, requestFailures };
+}
+
+async function createFailedRunFixture(page: Page, name: string, withFallback = false) {
+  const organizationResponse = await page.request.post("/api/orgs", { data: { name } });
+  expect(organizationResponse.ok(), await organizationResponse.text()).toBe(true);
+  const organization = await organizationResponse.json() as Organization;
+  const primaryAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Run Debug Primary",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_STUB,
+      chatAppServerEnabled: false,
+    },
+  }) as Agent;
+  const fallbackAgent = withFallback
+    ? await createE2EChatAgent(page.request, organization.id, {
+      name: "Run Debug Fallback",
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: E2E_CODEX_STUB,
+        chatAppServerEnabled: false,
+      },
+    }) as Agent
+    : null;
+  const runId = randomUUID();
+  await e2eDb.insert(heartbeatRuns).values({
+    id: runId,
+    orgId: organization.id,
+    agentId: primaryAgent.id,
+    invocationSource: "assignment",
+    triggerDetail: "system",
+    status: "failed",
+    startedAt: new Date("2026-05-23T09:00:00.000Z"),
+    finishedAt: new Date("2026-05-23T09:45:00.000Z"),
+    error: "Process lost\nAPI_KEY=run-secret-must-not-leak",
+    errorCode: "process_lost",
+    stdoutExcerpt: "request https://private.example.test/run?token=private-token",
+    stderrExcerpt: "Authorization: Bearer private-bearer\nconfig /Users/e2e/private/.env",
+    usageJson: { inputTokens: 450_000, cachedInputTokens: 75_000, outputTokens: 30_000 },
+    resultJson: { summary: "Process lost on launch" },
+    contextSnapshot: { recovery: { failureKind: "process_lost" } },
+    createdAt: new Date("2026-05-23T09:00:00.000Z"),
+    updatedAt: new Date("2026-05-23T09:45:00.000Z"),
+  });
+  return { organization, primaryAgent, fallbackAgent, runId };
+}
+
+function recordStreamRequests(page: Page) {
+  const requests: StreamRequest[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() !== "POST"
+      || !request.url().includes("/api/orgs/")
+      || !request.url().endsWith("/chats/messages/stream")
+    ) return;
+    requests.push(JSON.parse(request.postData() ?? "{}") as StreamRequest);
+  });
+  return requests;
+}
+
+async function openRunDetail(page: Page, organization: Organization, runId: string, agentId: string) {
+  await page.addInitScript((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/agents/${agentId}/runs/${runId}`, { waitUntil: "domcontentloaded" });
+  const mainContent = page.locator("#main-content");
+  await expect(mainContent.getByTestId("agent-runs-detail-pane")).toBeVisible({ timeout: 15_000 });
+  await expect(mainContent.getByTestId("run-summary-card")).toContainText("Run failed", { timeout: 15_000 });
+  return mainContent;
+}
+
+async function openDebugDialogAndEditGitHubText(page: Page, mainContent: Locator) {
+  await mainContent.getByTestId("run-report-issue").click();
+  const dialog = page.getByRole("dialog", { name: "Report this run failure" });
+  const diagnostics = dialog.getByTestId("run-issue-diagnostics");
+  await expect(diagnostics).toBeVisible();
+  const generatedSnapshot = await diagnostics.inputValue();
+  await diagnostics.fill("Edited GitHub-only report");
+  return { dialog, generatedSnapshot };
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  await expect.poll(() => page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))).toEqual({ clientWidth: 390, scrollWidth: 390 });
+}
+
+test.afterAll(async () => {
+  await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
+});
+
+test.describe("failed Agent Run Debug Chat", () => {
+  test("isolates generated evidence, sends once, and stays in the mobile Side Panel", async ({ page }, testInfo: TestInfo) => {
+    test.setTimeout(120_000);
+    const browserErrors = recordBrowserErrors(page);
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const fixture = await createFailedRunFixture(page, `Run-Debug-Chat-${Date.now()}`);
+    const streamRequests = recordStreamRequests(page);
+    const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
+    const { dialog, generatedSnapshot } = await openDebugDialogAndEditGitHubText(page, mainContent);
+
+    await dialog.getByRole("button", { name: "Ask agent" }).click();
+    const sidePanel = page.getByTestId("chat-side-panel");
+    const debugPanel = sidePanel.getByTestId("run-debug-chat-panel");
+    await expect(debugPanel).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => streamRequests.length).toBe(1);
+    expect(streamRequests[0]).toMatchObject({
+      preferredAgentId: fixture.primaryAgent.id,
+      planMode: false,
+      issueCreationMode: "manual_approval",
+      contextLinks: [],
+      clientMutationId: `run-debug:${fixture.organization.id}:${fixture.runId}`,
+    });
+    expect(streamRequests[0]?.body).toContain("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    expect(streamRequests[0]?.body).toContain(generatedSnapshot);
+    expect(streamRequests[0]?.body).not.toContain("Edited GitHub-only report");
+    expect(streamRequests[0]?.body).not.toContain("run-secret-must-not-leak");
+    await expect(debugPanel.getByTestId("run-feedback-chat-message").first()).toBeVisible({ timeout: 20_000 });
+    await expect(debugPanel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }))
+      .toBeVisible({ timeout: 60_000 });
+    await expect(debugPanel.getByTestId("run-feedback-composer").locator("[contenteditable='true']"))
+      .toBeEmpty();
+    await expect(debugPanel.getByTestId("run-feedback-composer"))
+      .not.toContainText("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    await expect(debugPanel.getByTestId("run-chat-pending-message")).toHaveCount(0);
+
+    await expect.poll(async () => {
+      const rows = await e2eDb.select().from(chatConversations)
+        .where(eq(chatConversations.orgId, fixture.organization.id));
+      return rows.length;
+    }).toBe(1);
+    const [conversation] = await e2eDb.select().from(chatConversations)
+      .where(eq(chatConversations.orgId, fixture.organization.id));
+    const messages = await e2eDb.select().from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversation!.id));
+    expect(messages.some((message) => message.body.includes(`Run ID: ${fixture.runId}`))).toBe(true);
+    expect(messages.some((message) => message.body.includes("Edited GitHub-only report"))).toBe(false);
+
+    await mainContent.getByTestId("run-report-issue").click();
+    await page.getByRole("dialog", { name: "Report this run failure" })
+      .getByRole("button", { name: "Ask agent" }).click();
+    await page.waitForTimeout(500);
+    expect(streamRequests).toHaveLength(1);
+    await expect(debugPanel.getByTestId("run-feedback-composer"))
+      .not.toContainText("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-desktop.png"), fullPage: true });
+
+    await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+    await expect(sidePanel).toBeHidden();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileUrl = page.url();
+    await mainContent.getByTestId("run-report-issue").click();
+    await page.getByRole("dialog", { name: "Report this run failure" })
+      .getByRole("button", { name: "Ask agent" }).click();
+    await expect(page).toHaveURL(mobileUrl);
+    await expect(sidePanel).toBeVisible();
+    await expect(sidePanel).toHaveAttribute("role", "dialog");
+    await expect(sidePanel).toHaveClass(/fixed/);
+    await expect(debugPanel.getByTestId("run-feedback-chat-message")
+      .filter({ hasText: `Run ID: ${fixture.runId}` })).toHaveCount(1);
+    await expect(debugPanel.getByTestId("run-feedback-composer"))
+      .not.toContainText("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    expect(streamRequests).toHaveLength(1);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-mobile.png"), fullPage: true });
+    assertNoUnexpectedBrowserErrors(
+      browserErrors.consoleErrors,
+      browserErrors.pageErrors,
+      browserErrors.requestFailures,
+      [EXPECTED_DIAGNOSTIC_METADATA_ERROR],
+    );
+  });
+
+  test("keeps a failed first request retryable without creating an empty Chat", async ({ page }, testInfo: TestInfo) => {
+    test.setTimeout(120_000);
+    const browserErrors = recordBrowserErrors(page);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const fixture = await createFailedRunFixture(page, `Run-Debug-Retry-${Date.now()}`, true);
+    const streamRequests = recordStreamRequests(page);
+    let failFirstRequest = true;
+    await page.route(`**/api/orgs/${fixture.organization.id}/chats/messages/stream`, async (route) => {
+      if (!failFirstRequest) return route.continue();
+      failFirstRequest = false;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "The selected Agent is unavailable." }),
+      });
+    });
+
+    const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
+    const { dialog } = await openDebugDialogAndEditGitHubText(page, mainContent);
+    await dialog.getByRole("button", { name: "Ask agent" }).click();
+    const debugPanel = page.getByTestId("run-debug-chat-panel");
+    await expect(debugPanel.getByRole("alert")).toContainText("Choose another agent or try again", { timeout: 15_000 });
+    await expect(debugPanel.getByTestId("run-feedback-composer").locator("[contenteditable='true']"))
+      .toContainText("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    await expect.poll(async () => {
+      const rows = await e2eDb.select().from(chatConversations)
+        .where(eq(chatConversations.orgId, fixture.organization.id));
+      return rows.length;
+    }).toBe(0);
+
+    await debugPanel.getByTestId("chat-agent-selector").click();
+    const agentMenu = page.getByTestId("run-feedback-agent-menu");
+    await agentMenu.getByTestId(`chat-agent-option-${fixture.fallbackAgent!.id}`)
+      .getByRole("menuitemradio").click();
+    await debugPanel.getByRole("button", { name: "Send feedback" }).click();
+    await expect.poll(() => streamRequests.length).toBe(2);
+    expect(streamRequests[1]).toMatchObject({
+      preferredAgentId: fixture.fallbackAgent!.id,
+      planMode: false,
+      issueCreationMode: "manual_approval",
+      clientMutationId: `run-debug:${fixture.organization.id}:${fixture.runId}`,
+    });
+    await expect(debugPanel.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." }))
+      .toBeVisible({ timeout: 60_000 });
+    await expect(debugPanel.getByTestId("run-feedback-composer").locator("[contenteditable='true']"))
+      .toBeEmpty();
+    await expect(debugPanel.getByTestId("run-feedback-composer"))
+      .not.toContainText("BEGIN UNTRUSTED DIAGNOSTIC EVIDENCE");
+    await expect(debugPanel.getByTestId("run-chat-pending-message")).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath("run-debug-chat-retry-mobile.png"), fullPage: true });
+    assertNoUnexpectedBrowserErrors(
+      browserErrors.consoleErrors,
+      browserErrors.pageErrors,
+      browserErrors.requestFailures,
+      [EXPECTED_DIAGNOSTIC_METADATA_ERROR, EXPECTED_AGENT_UNAVAILABLE_ERROR],
+    );
+  });
+});

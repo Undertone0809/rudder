@@ -58,8 +58,9 @@ import {
 } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { stageRunFeedbackPendingFiles } from "../lib/run-feedback-pending-files";
+import { buildRunDebugChatMessage } from "../lib/run-issue-report";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { type SidePanelTarget } from "../lib/side-panel-targets";
+import { sidePanelTargetKey, type SidePanelTarget } from "../lib/side-panel-targets";
 import { resolveSourceBadge } from "../lib/source-badge";
 import { cn, formatTokens, relativeTime } from "../lib/utils";
 import { RunChatContextCard } from "./AgentDetail.chat-context";
@@ -77,6 +78,7 @@ import {
 import { LogViewer } from "./AgentDetail.run-log";
 
 export type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
+export type RunDebugTarget = Extract<SidePanelTarget, { kind: "run_debug_chat" }>;
 
 export function runFeedbackTargetForContext(
   cached: RunFeedbackTarget | null,
@@ -91,6 +93,21 @@ export function runFeedbackTargetForContext(
   ));
   if (currentTab) return currentTab;
   return cached?.agentId === agentId && cached.organizationId === organizationId ? cached : null;
+}
+
+export function runDebugTargetForRun(
+  cached: RunDebugTarget | null,
+  tabs: readonly SidePanelTarget[],
+  organizationId: string,
+  runId: string,
+): RunDebugTarget | null {
+  const currentTab = tabs.find((candidate): candidate is RunDebugTarget => (
+    candidate.kind === "run_debug_chat"
+    && candidate.organizationId === organizationId
+    && candidate.runId === runId
+  ));
+  if (currentTab) return currentTab;
+  return cached?.organizationId === organizationId && cached.runId === runId ? cached : null;
 }
 
 export function getRunListSummary(run: HeartbeatRun): string {
@@ -534,6 +551,7 @@ export function RunsTab({
   const sidePanel = useSidePanel();
   const { pushToast } = useToast();
   const feedbackTargetRef = useRef<RunFeedbackTarget | null>(null);
+  const debugTargetsRef = useRef(new Map<string, RunDebugTarget>());
   const restoredFeedbackContextRef = useRef<string | null>(null);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -588,6 +606,55 @@ export function RunsTab({
       agentId,
     );
   }, [agentId, orgId, sidePanel.tabs]);
+  useEffect(() => {
+    for (const target of sidePanel.tabs) {
+      if (target.kind === "run_debug_chat" && target.organizationId === orgId) {
+        debugTargetsRef.current.set(target.runId, target);
+      }
+    }
+  }, [orgId, sidePanel.tabs]);
+
+  const askAgentAboutRun = useCallback((run: HeartbeatRun, diagnostics: string) => {
+    const existing = runDebugTargetForRun(
+      debugTargetsRef.current.get(run.id) ?? null,
+      sidePanel.tabs,
+      orgId,
+      run.id,
+    );
+    if (existing) {
+      debugTargetsRef.current.set(run.id, existing);
+      if (sidePanel.tabs.includes(existing)) {
+        sidePanel.setActiveKey(sidePanelTargetKey(existing));
+        sidePanel.showPanel();
+      } else {
+        const restored = existing.conversationId
+          ? { ...existing, body: "", autoSend: false }
+          : existing;
+        debugTargetsRef.current.set(run.id, restored);
+        sidePanel.openTargetForContext(contextKey, restored);
+      }
+      setSidebarOpen(false);
+      return;
+    }
+    const target: RunDebugTarget = {
+      kind: "run_debug_chat",
+      organizationId: orgId,
+      runId: run.id,
+      agentId: run.agentId,
+      preferredAgentId: run.agentId,
+      conversationId: null,
+      clientMutationId: `run-debug:${orgId}:${run.id}`,
+      projectId: null,
+      body: buildRunDebugChatMessage(run, diagnostics),
+      autoSend: true,
+      errorMessage: null,
+      inlineAnnotations: [],
+      label: "Debug Run",
+    };
+    debugTargetsRef.current.set(run.id, target);
+    sidePanel.openTargetForContext(contextKey, target);
+    setSidebarOpen(false);
+  }, [contextKey, orgId, setSidebarOpen, sidePanel]);
 
   const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
     if (!input.text.trim()) return;
@@ -736,7 +803,14 @@ export function RunsTab({
       )}
       <div className="agent-runs-desktop-split agent-runs-layout flex min-w-0 items-start gap-4">
         <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
-          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} onAnnotate={annotateRun} />
+          <RunDetail
+            key={selectedRun.id}
+            run={selectedRun}
+            agentRouteId={agentRouteId}
+            agentRuntimeType={agentRuntimeType}
+            onAnnotate={annotateRun}
+            onAskAgent={(diagnostics) => askAgentAboutRun(selectedRun, diagnostics)}
+          />
         </div>
 
         <div
@@ -851,11 +925,13 @@ export function RunDetail({
   agentRouteId,
   agentRuntimeType,
   onAnnotate,
+  onAskAgent,
 }: {
   run: HeartbeatRun;
   agentRouteId: string;
   agentRuntimeType: string;
   onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
+  onAskAgent: (diagnostics: string) => void;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -1314,6 +1390,7 @@ export function RunDetail({
         ].join(" / ")}
         open={issueReportOpen}
         onOpenChange={setIssueReportOpen}
+        onAskAgent={onAskAgent}
       />
 
       <RunChatContextCard run={run} agentRouteId={agentRouteId} />

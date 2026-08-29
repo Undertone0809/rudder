@@ -75,6 +75,21 @@ export type SidePanelTarget =
       label: string;
     }
   | {
+      kind: "run_debug_chat";
+      organizationId: string;
+      runId: string;
+      agentId: string;
+      preferredAgentId: string;
+      conversationId: string | null;
+      clientMutationId: string;
+      projectId: null;
+      body: string;
+      autoSend: boolean;
+      errorMessage: string | null;
+      inlineAnnotations: ChatInlineAnnotationInput[];
+      label: string;
+    }
+  | {
       kind: "goal_chat";
       goalId: string;
       organizationId: string;
@@ -209,6 +224,9 @@ export function sidePanelCanonicalTargetKey(target: SidePanelTarget) {
   if (target.kind === "run_feedback_chat") {
     return `run-feedback-chat:${target.organizationId}:${target.agentId}`;
   }
+  if (target.kind === "run_debug_chat") {
+    return `run-debug-chat:${target.organizationId}:${target.runId}`;
+  }
   if (target.kind === "goal_chat") {
     return `goal-chat:${target.organizationId}:${target.goalId}`;
   }
@@ -298,6 +316,9 @@ export function sidePanelFullPageHref(target: SidePanelTarget): string | null {
     return target.sourceMessageId ? `${base}?messageId=${encodeURIComponent(target.sourceMessageId)}` : base;
   }
   if (target.kind === "goal_chat") {
+    return target.conversationId ? `/messenger/chat/${target.conversationId}` : null;
+  }
+  if (target.kind === "run_debug_chat") {
     return target.conversationId ? `/messenger/chat/${target.conversationId}` : null;
   }
   if (target.kind === "library_document") return `/library?document=${encodeURIComponent(target.documentId)}`;
