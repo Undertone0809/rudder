@@ -417,6 +417,73 @@ describe("RunFeedbackChatPanel", () => {
     expect(chatsApi.get).not.toHaveBeenCalledWith(expect.stringContaining("run-debug"));
   });
 
+  it("keeps a recovered network-waiting Debug Chat sending and stoppable", async () => {
+    vi.mocked(chatsApi.listQueue).mockImplementation(async () => ({
+      activeGenerationId: queueTerminal ? null : "generation-1",
+      activeAttemptEpoch: queueTerminal ? null : 4,
+      activeControlVersion: queueTerminal ? null : 9,
+      activeGenerationStatus: queueTerminal ? null : "waiting_for_network",
+      items: [],
+    }));
+    const debugTarget: Extract<SidePanelTarget, { kind: "run_debug_chat" }> = {
+      kind: "run_debug_chat",
+      organizationId: "org-1",
+      runId: "run-network-wait",
+      agentId: "agent-1",
+      preferredAgentId: "agent-1",
+      conversationId: "chat-1",
+      clientMutationId: "run-debug:org-1:run-network-wait",
+      projectId: null,
+      body: "",
+      autoSend: false,
+      errorMessage: null,
+      inlineAnnotations: [],
+      label: "Debug Run",
+    };
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel
+            organizationId="org-1"
+            target={debugTarget}
+            onReplaceTarget={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-debug-queue-status="waiting_for_network"]')).not.toBeNull();
+    act(() => root.unmount());
+    root = createRoot(host);
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <RunFeedbackChatPanel
+            organizationId="org-1"
+            target={debugTarget}
+            onReplaceTarget={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-debug-queue-status="waiting_for_network"]')).not.toBeNull();
+    await act(async () => {
+      (host.querySelector('[aria-label="Stop feedback"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(chatsApi.stopMessageStream).toHaveBeenCalledWith(
+        "chat-1",
+        expect.objectContaining({ expectedGenerationId: "generation-1" }),
+      ));
+      await vi.waitFor(() => expect(host.querySelector('[aria-label="Stop feedback"]')).toBeNull());
+    });
+  });
+
   it("shows the truthful bound Agent for an existing legacy feedback Chat", async () => {
     vi.mocked(chatsApi.get).mockResolvedValue({
       id: "chat-1",

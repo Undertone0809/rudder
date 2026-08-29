@@ -44,6 +44,7 @@ import {
   handleChatAgentMenuKeyDown,
 } from "@/pages/Chat.model-selector";
 import { composerMenuPositionForAnchor, mergeChatMessages } from "@/pages/Chat.parts";
+import { activeGenerationIdFromSnapshot } from "@/pages/Chat.workspace-helpers";
 import type {
   ChatConversation,
   ChatInlineAnnotationInput,
@@ -149,16 +150,6 @@ function hasApiStatus(error: unknown, status: number) {
 const EMPTY_CHAT_BODY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const STOP_TERMINAL_POLL_INTERVAL_MS = 250;
 const STOP_TERMINAL_TIMEOUT_MS = 10_000;
-const ACTIVE_GENERATION_STATUSES = new Set([
-  "starting",
-  "active",
-  "running",
-  "tool_busy",
-  "closing",
-  "stop_requested",
-  "stopping",
-]);
-
 type StreamFence = {
   generationId: string | null;
   attemptEpoch: number | null;
@@ -196,10 +187,9 @@ function stopQueueSnapshotIsTerminal(
   snapshot: Awaited<ReturnType<typeof chatsApi.listQueue>>,
   generationId: string | null,
 ) {
-  if (!generationId) return snapshot.activeGenerationId === null;
-  if (snapshot.activeGenerationId !== generationId) return true;
-  return snapshot.activeGenerationStatus !== null
-    && !ACTIVE_GENERATION_STATUSES.has(snapshot.activeGenerationStatus);
+  const activeGenerationId = activeGenerationIdFromSnapshot(snapshot);
+  if (!generationId) return activeGenerationId === null;
+  return activeGenerationId !== generationId;
 }
 
 export function RunFeedbackChatPanel({
@@ -357,11 +347,7 @@ export function RunFeedbackChatPanel({
 
   useEffect(() => {
     if (target.kind !== "run_debug_chat" || !target.conversationId || !queueQuery.data) return;
-    const active = Boolean(
-      queueQuery.data.activeGenerationId
-      && queueQuery.data.activeGenerationStatus
-      && ACTIVE_GENERATION_STATUSES.has(queueQuery.data.activeGenerationStatus),
-    );
+    const active = activeGenerationIdFromSnapshot(queueQuery.data) !== null;
     if (active) {
       setSending(true);
       updateRunDebugRuntime(debugRuntime, {
@@ -954,8 +940,7 @@ export function RunFeedbackChatPanel({
     isDebug
     && sending
     && target.conversationId
-    && queueQuery.data?.activeGenerationStatus
-    && ACTIVE_GENERATION_STATUSES.has(queueQuery.data.activeGenerationStatus),
+    && activeGenerationIdFromSnapshot(queueQuery.data),
   );
   const currentStreamCanBeStopped = sending
     && Boolean(activeConversationIdRef.current)
