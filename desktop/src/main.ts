@@ -103,6 +103,7 @@ import {
 } from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
 import { resolveDesktopUpdateTrustKeys } from "./desktop-update-trust.js";
+import { resolveMacWindowMode as resolveMacWindowModeSetting, type MacWindowMode } from "./desktop-window-mode.js";
 import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
@@ -324,8 +325,6 @@ type ActiveRunSummary = {
     runs: DesktopLiveRun[];
   }>;
 };
-
-type MacWindowMode = "opaque" | "transparent" | "transparent_vibrant";
 
 type OpenNotificationSettingsResult = {
   opened: boolean;
@@ -861,11 +860,7 @@ function resolveTransparentWindowBackgroundColor(appearance: DesktopAppearance =
 }
 
 function resolveMacWindowMode(): MacWindowMode {
-  const value = process.env.RUDDER_DESKTOP_MAC_WINDOW_MODE?.trim().toLowerCase();
-  if (value === "opaque") return "opaque";
-  if (value === "transparent") return "transparent";
-  if (value === "transparent_vibrant" || value === "transparent-vibrant") return "transparent_vibrant";
-  return process.platform === "darwin" ? "transparent_vibrant" : "opaque";
+  return resolveMacWindowModeSetting(process.env.RUDDER_DESKTOP_MAC_WINDOW_MODE);
 }
 
 function resolveMacWindowEffects(): Pick<BrowserWindowConstructorOptions,
