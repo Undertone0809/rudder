@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Rudder 系统架构",
+    "locale": "zh-CN",
+    "output": "rudder-system-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Undertone0809/rudder.git",
+      "revision": "1f144a5dc882b4b2ee09b3579c1edcefd7296bf9"
+    },
+    "views": [
+      {
+        "id": "work-loop",
+        "label": "Agent 工作闭环",
+        "focus": ["operator", "board", "server", "services", "runtime", "agents", "mcpBridge"],
+        "note": "目标经 Chat 或 Issue 进入执行；控制、结果和证据回到 Board 审阅与学习。"
+      },
+      {
+        "id": "agent-control",
+        "label": "Agent 控制回路",
+        "focus": ["server", "runtime", "agents", "mcpBridge", "externalTools"],
+        "note": "运行时启动 Agent；Agent 通过 Rudder MCP 回调 Server，并按策略使用外部工具。"
+      },
+      {
+        "id": "state-boundary",
+        "label": "状态与数据边界",
+        "focus": ["identity", "server", "services", "state"],
+        "note": "托管身份位于实例外；实例内授权、事务和本地工作数据保持独立。"
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [44, 84],
+    "cols": 4,
+    "gapX": 88,
+    "gapY": 48,
+    "cellW": 166,
+    "cellH": 76
+  },
+  "components": [
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "用户 / 操作者",
+      "sublabel": "设定目标、分派、审阅与干预",
+      "row": 1,
+      "col": 0,
+      "size": [166, 76]
+    },
+    {
+      "id": "board",
+      "type": "frontend",
+      "label": "Rudder 控制面",
+      "sublabel": "React Web / Electron Desktop / CLI",
+      "tag": "local_trusted / authenticated",
+      "row": 1,
+      "col": 1,
+      "size": [166, 76],
+      "sources": [
+        { "path": "ui/src/main.tsx", "label": "Web 入口" },
+        { "path": "desktop/src/main.ts", "label": "Desktop 主进程" },
+        { "path": "cli/src/index.ts", "label": "CLI 入口" }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "Rudder Server / API",
+      "sublabel": "Express · REST · WebSocket",
+      "tag": "Board session + Agent API keys",
+      "row": 1,
+      "col": 2,
+      "size": [166, 76],
+      "sources": [
+        { "path": "server/src/index.ts", "label": "服务入口" },
+        { "path": "packages/shared/src/api.ts", "label": "API 前缀" }
+      ]
+    },
+    {
+      "id": "services",
+      "type": "backend",
+      "label": "产品与应用服务",
+      "sublabel": "Goals · Chat / Issues · Review",
+      "tag": "Feedback · Learning · Governance",
+      "row": 1,
+      "col": 3,
+      "size": [166, 76],
+      "sources": [
+        { "path": "server/src/services/issues.ts", "label": "任务服务" },
+        { "path": "server/src/routes/chats.ts", "label": "Chat 路由" },
+        { "path": "server/src/services/approvals.ts", "label": "审批服务" }
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "运行时编排",
+      "sublabel": "Heartbeat · lease · session · recovery",
+      "tag": "Process / HTTP adapters",
+      "row": 2,
+      "col": 3,
+      "size": [166, 76],
+      "sources": [
+        { "path": "server/src/services/runtime-kernel/heartbeat.ts", "label": "Runtime Kernel" },
+        { "path": "server/src/agent-runtimes/index.ts", "label": "执行适配器" }
+      ]
+    },
+    {
+      "id": "agents",
+      "type": "external",
+      "label": "Agent 运行时",
+      "sublabel": "Codex · Claude Code · Cursor · Pi",
+      "tag": "本地进程或远程 HTTP",
+      "row": 3,
+      "col": 3,
+      "size": [166, 76],
+      "sources": [
+        { "path": "packages/agent-runtimes/codex-local/src/index.ts", "label": "Codex Runtime" },
+        { "path": "packages/agent-runtimes/claude-local/src/index.ts", "label": "Claude Runtime" }
+      ]
+    },
+    {
+      "id": "identity",
+      "type": "security",
+      "label": "Rudder Identity / Auth",
+      "sublabel": "authenticated · Hosted Auth",
+      "tag": "不接收本地工作数据",
+      "row": 0,
+      "col": 0,
+      "size": [166, 76],
+      "sources": [
+        { "path": "identity/src/handler.ts", "label": "Identity 服务" },
+        { "path": "identity/src/root-identity-adapter.ts", "label": "身份适配器" }
+      ]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "持久状态与工作区",
+      "sublabel": "PostgreSQL · 组织文件 · 附件与产物",
+      "tag": "本地优先 · 外部 PostgreSQL 可选",
+      "row": 0,
+      "col": 3,
+      "size": [166, 76],
+      "sources": [
+        { "path": "packages/db/src/schema/index.ts", "label": "数据模型" },
+        { "path": "server/src/services/organization-workspace.ts", "label": "组织工作区" },
+        { "path": "server/src/storage/service.ts", "label": "文件存储" }
+      ]
+    },
+    {
+      "id": "mcpBridge",
+      "type": "security",
+      "label": "Rudder MCP / CLI 桥",
+      "sublabel": "Agent tools · Bearer API calls",
+      "tag": "实例内受控入口",
+      "row": 2,
+      "col": 2,
+      "size": [166, 76],
+      "sources": [
+        { "path": "cli/src/agent-v1-mcp-server.ts", "label": "Rudder MCP Server" },
+        { "path": "contracts/rudder-agent-contract/v1.json", "label": "Agent Contract" },
+        { "path": "server/src/services/mcp/managed-runtime.ts", "label": "Managed MCP Runtime" }
+      ]
+    },
+    {
+      "id": "externalTools",
+      "type": "external",
+      "label": "托管 MCP 与外部工具",
+      "sublabel": "GitHub · Linear · Notion · Local Apps",
+      "tag": "权限与连接策略",
+      "row": 3,
+      "col": 1,
+      "size": [166, 76],
+      "sources": [
+        { "path": "packages/shared/src/validators/mcp.ts", "label": "MCP 合约" },
+        { "path": "server/src/services/mcp/managed-connections.ts", "label": "连接服务" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Rudder 实例 · 实例内授权、组织与治理",
+      "wraps": ["board", "server", "services", "runtime", "state", "mcpBridge"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "operator-board",
+      "from": "operator",
+      "to": "board",
+      "label": "设定与审阅",
+      "variant": "emphasis"
+    },
+    {
+      "id": "board-server",
+      "from": "board",
+      "to": "server",
+      "label": "REST / WS 请求",
+      "variant": "emphasis",
+      "labelAt": [508, 298]
+    },
+    {
+      "id": "server-board-updates",
+      "from": "server",
+      "to": "board",
+      "label": "状态与证据回传",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "labelAt": [420, 174]
+    },
+    {
+      "id": "server-services",
+      "from": "server",
+      "to": "services",
+      "label": "命令与查询",
+      "variant": "emphasis"
+    },
+    {
+      "id": "services-runtime",
+      "from": "services",
+      "to": "runtime",
+      "label": "admit / wake / steer",
+      "variant": "emphasis",
+      "labelAt": [820, 330]
+    },
+    {
+      "id": "runtime-agents",
+      "from": "runtime",
+      "to": "agents",
+      "label": "启动 / 双向事件流",
+      "variant": "emphasis",
+      "labelAt": [835, 452]
+    },
+    {
+      "id": "identity-server",
+      "from": "identity",
+      "to": "server",
+      "label": "身份断言 / Device auth",
+      "variant": "security"
+    },
+    {
+      "id": "services-state",
+      "from": "services",
+      "to": "state",
+      "label": "事务、活动与工作数据",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "agents-bridge",
+      "from": "agents",
+      "to": "mcpBridge",
+      "label": "Rudder MCP 工具调用"
+    },
+    {
+      "id": "bridge-server",
+      "from": "mcpBridge",
+      "to": "server",
+      "label": "checkout / 控制 / 证据",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "bridge-tools",
+      "from": "mcpBridge",
+      "to": "externalTools",
+      "label": "Managed MCP"
+    }
+  ]
+}
