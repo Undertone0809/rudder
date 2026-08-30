@@ -2552,6 +2552,9 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
       '[data-testid="markdown-block-menu"]',
     );
     expect(menu).toBeTruthy();
+    expect(menu?.style.position).toBe("absolute");
+    expect(menu?.style.top).toBe("32px");
+    expect(menu?.style.left).toBe("32px");
     expect(menu?.querySelectorAll("[role='menuitem']")).toHaveLength(8);
     expect(menu?.querySelector<HTMLButtonElement>(
       '[data-markdown-block-action="headline"]',

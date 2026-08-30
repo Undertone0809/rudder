@@ -205,6 +205,20 @@ test("Library Markdown restores the line hover block menu and formats its source
 
   const menu = page.getByTestId("markdown-block-menu");
   await expect(menu).toBeVisible();
+  const triggerBox = await trigger.boundingBox();
+  const menuBox = await menu.boundingBox();
+  expect(triggerBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  expect(Math.min(
+    Math.abs(menuBox!.x - (triggerBox!.x + triggerBox!.width)),
+    Math.abs((menuBox!.x + menuBox!.width) - triggerBox!.x),
+  )).toBeLessThanOrEqual(12);
+  expect(Math.min(
+    Math.abs(menuBox!.y - (triggerBox!.y + triggerBox!.height)),
+    Math.abs((menuBox!.y + menuBox!.height) - triggerBox!.y),
+  )).toBeLessThanOrEqual(12);
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(1360);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(900);
   await expect(menu).toContainText("Display");
   await expect(menu).toContainText("Number list");
   await menu.hover();
@@ -224,6 +238,108 @@ test("Library Markdown restores the line hover block menu and formats its source
     expect(saved.ok(), await saved.text()).toBe(true);
     return (await saved.json() as { content: string }).content;
   }).toContain(markdown.replace("Paragraph to format.", "## Paragraph to format."));
+});
+
+test("Library Markdown keeps the line hover block menu adjacent in a constrained viewport", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 760, height: 1000 });
+  const organization = await createOrganization(request);
+  const filePath = "docs/constrained-hover-block-menu.md";
+  const markdown = [
+    "# Stable heading",
+    "",
+    "Paragraph to format.",
+    "",
+    "- first item",
+    "",
+    "```ts",
+    "const answer = 42;",
+    "```",
+  ].join("\n");
+  const createFile = await request.post(
+    `${E2E_BASE_URL}/api/orgs/${organization.id}/workspace/file`,
+    { data: { filePath, content: markdown } },
+  );
+  expect(createFile.ok(), await createFile.text()).toBe(true);
+  await selectOrganization(page, organization.id);
+  await page.goto(
+    `${E2E_BASE_URL}/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`,
+  );
+
+  const editor = page
+    .getByTestId("org-workspaces-markdown-editor")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const paragraph = editor.locator('[data-source-line-start="3"]');
+  await expect(paragraph).toContainText("Paragraph to format.");
+  await paragraph.hover();
+  const trigger = page.getByTestId("markdown-block-menu-trigger");
+  await trigger.click();
+
+  const triggerBox = await trigger.boundingBox();
+  const menu = page.getByTestId("markdown-block-menu");
+  const menuBox = await menu.boundingBox();
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  expect(triggerBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  expect(Math.min(
+    Math.abs(menuBox!.x - (triggerBox!.x + triggerBox!.width)),
+    Math.abs((menuBox!.x + menuBox!.width) - triggerBox!.x),
+  )).toBeLessThanOrEqual(12);
+  expect(Math.min(
+    Math.abs(menuBox!.y - (triggerBox!.y + triggerBox!.height)),
+    Math.abs((menuBox!.y + menuBox!.height) - triggerBox!.y),
+  )).toBeLessThanOrEqual(12);
+  expect(menuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.y).toBeGreaterThanOrEqual(0);
+  expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(viewport.width);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(viewport.height);
+
+  await page.setViewportSize({ width: 760, height: 700 });
+  await expect.poll(async () => {
+    const resizedTriggerBox = await trigger.boundingBox();
+    const resizedMenuBox = await menu.boundingBox();
+    const resizedViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    if (!resizedTriggerBox || !resizedMenuBox) return false;
+    return resizedMenuBox.x >= 0
+      && resizedMenuBox.y >= 0
+      && resizedMenuBox.x + resizedMenuBox.width <= resizedViewport.width
+      && resizedMenuBox.y + resizedMenuBox.height <= resizedViewport.height
+      && Math.min(
+        Math.abs(resizedMenuBox.x - (resizedTriggerBox.x + resizedTriggerBox.width)),
+        Math.abs((resizedMenuBox.x + resizedMenuBox.width) - resizedTriggerBox.x),
+      ) <= 12
+      && Math.min(
+        Math.abs(resizedMenuBox.y - (resizedTriggerBox.y + resizedTriggerBox.height)),
+        Math.abs((resizedMenuBox.y + resizedMenuBox.height) - resizedTriggerBox.y),
+      ) <= 12;
+  }).toBe(true);
+  const resizedTriggerBox = await trigger.boundingBox();
+  const resizedMenuBox = await menu.boundingBox();
+  expect(resizedTriggerBox).not.toBeNull();
+  expect(resizedMenuBox).not.toBeNull();
+  expect(resizedMenuBox!.y + resizedMenuBox!.height).toBeLessThanOrEqual(700);
+  expect(resizedMenuBox!.y + resizedMenuBox!.height).toBeLessThan(resizedTriggerBox!.y);
+
+  await page.setViewportSize({ width: 760, height: 1000 });
+
+  await menu.getByRole("menuitem", { name: /Headline/iu }).click();
+  await expect(page.getByTestId("markdown-block-menu")).toHaveCount(0);
+  await expect(editor.locator('[data-source-line-start="3"]')).toContainText("## Paragraph to format.");
+
+  await editor.locator('[data-source-line-start="8"]').hover();
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  const bottomTriggerBox = await trigger.boundingBox();
+  const bottomMenuBox = await menu.boundingBox();
+  expect(bottomTriggerBox).not.toBeNull();
+  expect(bottomMenuBox).not.toBeNull();
+  expect(bottomMenuBox!.y + bottomMenuBox!.height).toBeLessThan(bottomTriggerBox!.y);
+  expect(bottomMenuBox!.y + bottomMenuBox!.height).toBeLessThanOrEqual(1000);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
 });
 
 test("Library preview keeps hidden heading syntax out of pointer selections", async ({

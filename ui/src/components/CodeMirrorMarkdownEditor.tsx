@@ -56,6 +56,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { sourceDrivenMarkdownPreview } from "../lib/codemirror-markdown-live-preview";
 import {
   focusAdjacentEditorControl,
@@ -139,6 +140,42 @@ interface MarkdownBlockHoverState {
   left: number;
 }
 
+const markdownBlockMenuGap = 8;
+const markdownBlockMenuTriggerSize = 32;
+const markdownBlockMenuMaxWidth = 352;
+const markdownBlockMenuMaxHeight = 430;
+
+function markdownBlockMenuOffset(
+  anchor: Pick<MarkdownBlockHoverState, "top" | "left">,
+  viewportWidth: number,
+  viewportHeight: number,
+  measuredSize?: Pick<DOMRect, "width" | "height">,
+) {
+  const menuWidth = Math.min(
+    measuredSize?.width || markdownBlockMenuMaxWidth,
+    Math.max(0, viewportWidth - 16),
+  );
+  const menuHeight = Math.min(
+    measuredSize?.height || markdownBlockMenuMaxHeight,
+    Math.max(0, viewportHeight - 16),
+  );
+  const rightOffset = markdownBlockMenuTriggerSize;
+  const leftOffset = -(menuWidth + markdownBlockMenuGap);
+  const topOffset = markdownBlockMenuTriggerSize;
+  const bottomOffset = -(menuHeight + markdownBlockMenuGap);
+  const left = anchor.left + rightOffset + menuWidth <= viewportWidth - markdownBlockMenuGap
+    ? rightOffset
+    : anchor.left + leftOffset >= markdownBlockMenuGap
+      ? leftOffset
+      : markdownBlockMenuGap - anchor.left;
+  const top = anchor.top + topOffset + menuHeight <= viewportHeight - markdownBlockMenuGap
+    ? topOffset
+    : anchor.top + bottomOffset >= markdownBlockMenuGap
+      ? bottomOffset
+      : markdownBlockMenuGap - anchor.top;
+  return { left, top };
+}
+
 function MarkdownBlockHoverMenu({
   anchor,
   block,
@@ -161,6 +198,7 @@ function MarkdownBlockHoverMenu({
   overlayRef: MutableRefObject<HTMLDivElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuScrollRef = useScrollbarActivityRef();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuId = `markdown-block-menu-${useId().replace(/[^a-zA-Z0-9_-]/gu, "")}`;
 
@@ -207,15 +245,20 @@ function MarkdownBlockHoverMenu({
 
   const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
   const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
-  const menuTop = Math.min(Math.max(8, anchor.top + 32), Math.max(8, viewportHeight - 430));
-  const menuLeft = Math.min(Math.max(8, anchor.left + 32), Math.max(8, viewportWidth - 372));
+  const [menuOffset, setMenuOffset] = useState(() => (
+    markdownBlockMenuOffset(anchor, viewportWidth, viewportHeight)
+  ));
+
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current) return;
+    const measuredSize = menuRef.current.getBoundingClientRect();
+    if (measuredSize.width <= 0 || measuredSize.height <= 0) return;
+    setMenuOffset(markdownBlockMenuOffset(anchor, viewportWidth, viewportHeight, measuredSize));
+  }, [anchor, open, viewportHeight, viewportWidth]);
 
   return createPortal(
     <div
-      ref={(node) => {
-        menuRef.current = node;
-        overlayRef.current = node;
-      }}
+      ref={overlayRef}
       data-markdown-block-hover-overlay="true"
       data-open={open ? "true" : "false"}
       className="motion-markdown-block-hover"
@@ -251,14 +294,20 @@ function MarkdownBlockHoverMenu({
       {open ? (
         <div
           id={menuId}
+          ref={(node) => {
+            menuRef.current = node;
+            menuScrollRef(node);
+          }}
           role="menu"
           aria-label={`Block actions for line ${anchor.line}`}
           data-testid="markdown-block-menu"
-          className="w-[min(22rem,calc(100vw-1rem))] rounded-xl border border-border/60 bg-popover p-2 text-popover-foreground shadow-xl"
+          className="scrollbar-auto-hide w-[min(22rem,calc(100vw-1rem))] rounded-xl border border-border/60 bg-popover p-2 text-popover-foreground shadow-xl"
           style={{
-            position: "fixed",
-            top: menuTop,
-            left: menuLeft,
+            position: "absolute",
+            top: menuOffset.top,
+            left: menuOffset.left,
+            maxHeight: "calc(100vh - 1rem)",
+            overflowY: "auto",
           }}
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -1084,6 +1133,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   const markdownBlockHoverRef = useRef<MarkdownBlockHoverState | null>(null);
   const markdownBlockHoverElementRef = useRef<HTMLElement | null>(null);
   const markdownBlockHoverOverlayRef = useRef<HTMLDivElement | null>(null);
+  const markdownBlockActionDismissedSourceRef = useRef<number | null>(null);
   const markdownBlockRefreshFrameRef = useRef<number | null>(null);
   const markdownBlockCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [portals, setPortals] = useState<PortalDescriptor[]>([]);
@@ -1127,6 +1177,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   }, [clearMarkdownBlockCloseTimeout]);
 
   const scheduleMarkdownBlockClose = useCallback(() => {
+    markdownBlockActionDismissedSourceRef.current = null;
     clearMarkdownBlockCloseTimeout();
     markdownBlockCloseTimeoutRef.current = setTimeout(() => {
       markdownBlockCloseTimeoutRef.current = null;
@@ -1144,6 +1195,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
   }, [clearMarkdownBlockCloseTimeout]);
 
   const updateMarkdownBlockHover = useCallback((element: HTMLElement, lineNumber: number, sourceFrom: number) => {
+    if (markdownBlockActionDismissedSourceRef.current === sourceFrom) return;
+    markdownBlockActionDismissedSourceRef.current = null;
     const rect = element.getBoundingClientRect();
     const anchorOffset = Math.min(16, Math.max(0, (Math.min(rect.height, 64) - 32) / 2));
     const nextHover = {
@@ -1165,6 +1218,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           "transform",
           `translate3d(${nextHover.left}px, ${nextHover.top}px, 0)`,
         );
+        setMarkdownBlockHover(nextHover);
       }
       return;
     }
@@ -1229,6 +1283,7 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     markdownBlockRefreshFrameRef.current = requestAnimationFrame(() => {
       markdownBlockRefreshFrameRef.current = null;
       refreshMarkdownBlockHover();
+      setMarkdownBlockHover((current) => (current ? { ...current } : current));
     });
   }, [refreshMarkdownBlockHover]);
 
@@ -1263,6 +1318,8 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     if (!block || markdownBlockActionDisabled(block.markdown, action, block.kind)) return;
     const replacement = applyMarkdownBlockAction(block.markdown, action, block.kind);
     if (replacement === block.markdown) return;
+    markdownBlockActionDismissedSourceRef.current = hover.sourceFrom;
+    closeMarkdownBlockHover();
     view.dispatch({
       changes: { from: block.from, to: block.to, insert: replacement },
       selection: { anchor: block.from + replacement.length },
@@ -1270,7 +1327,6 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
     });
     view.focus();
     setPreviewFocusRef.current?.(view, true);
-    closeMarkdownBlockHover();
   }, [closeMarkdownBlockHover]);
 
   const readSourceRange = useCallback((from: number, to: number) => {
