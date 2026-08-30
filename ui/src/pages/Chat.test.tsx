@@ -65,6 +65,7 @@ import {
   issueProposalWithPriority,
   issueProposalWithStatus,
   latestContinuableInterruptedChatMessage,
+  latestEditableChatUserMessageId,
   parseAskUserAnswerMessage,
   rememberChatProjectId,
   rememberChatProjectIdForAgent,
@@ -2138,6 +2139,69 @@ describe("computeDisplayedChatMessages", () => {
 
     expect(computeDisplayedChatMessages(messages, { chatTurnId: "turn-1", turnVariant: 0 }).map((row) => row.id))
       .toEqual(["user-v0", "assistant-v0", "context-after"]);
+  });
+});
+
+describe("latestEditableChatUserMessageId", () => {
+  it("selects the latest user-authored message without depending on assistant updates", () => {
+    const firstUserMessage = message({
+      id: "user-1",
+      role: "user",
+      body: "First request",
+      createdAt: new Date("2026-05-07T00:00:01.000Z"),
+    });
+    const assistantUpdate = message({
+      id: "assistant-1",
+      role: "assistant",
+      body: "Updated response",
+      createdAt: new Date("2026-05-07T00:00:02.000Z"),
+    });
+    const latestUserMessage = message({
+      id: "user-2",
+      role: "user",
+      body: "Follow-up request",
+      createdAt: new Date("2026-05-07T00:00:03.000Z"),
+    });
+
+    expect(latestEditableChatUserMessageId([
+      firstUserMessage,
+      assistantUpdate,
+      latestUserMessage,
+    ])).toBe("user-2");
+  });
+
+  it("ignores superseded user branches and assistant messages", () => {
+    const supersededUserMessage = message({
+      id: "user-old",
+      role: "user",
+      body: "Old branch",
+      supersededAt: new Date("2026-05-07T00:00:04.000Z"),
+      createdAt: new Date("2026-05-07T00:00:05.000Z"),
+    });
+    const assistantMessage = message({
+      id: "assistant-latest",
+      role: "assistant",
+      body: "Assistant update",
+      createdAt: new Date("2026-05-07T00:00:06.000Z"),
+    });
+    const currentUserMessage = message({
+      id: "user-current",
+      role: "user",
+      body: "Current branch",
+      createdAt: new Date("2026-05-07T00:00:03.000Z"),
+    });
+
+    expect(latestEditableChatUserMessageId([
+      supersededUserMessage,
+      assistantMessage,
+      currentUserMessage,
+    ])).toBe("user-current");
+  });
+
+  it("returns null when a conversation has no user-authored messages", () => {
+    expect(latestEditableChatUserMessageId([
+      message({ role: "assistant", body: "Assistant only" }),
+    ])).toBeNull();
   });
 });
 

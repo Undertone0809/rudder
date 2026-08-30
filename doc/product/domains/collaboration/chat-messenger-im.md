@@ -321,10 +321,13 @@ Product model:
 - When a user sends a local chat follow-up while that conversation already has
   an active assistant generation, Rudder parks the follow-up in a visible
   running queue instead of starting a second concurrent reply in the same chat.
-- Editing or retrying a historical user message is not a queued follow-up. If
-  the conversation still has an active assistant generation, the operator must
-  Stop that response first; the edit or retry must never be converted into a
-  Queue row or presented as Steer feedback.
+- Only the latest non-superseded user-authored message in a conversation may be
+  edited. Earlier user messages remain read-only, including across reloads,
+  streaming updates, and historical branch previews. Retrying a historical
+  user message is not a queued follow-up. If the conversation still has an
+  active assistant generation, the operator must Stop that response first; an
+  edit or retry must never be converted into a Queue row or presented as Steer
+  feedback.
 - Queued follow-ups preserve the queued body and composer context until they are
   delivered, including response annotations and their annotation-owned files.
   Operators can edit or delete ordinary queued follow-ups while they remain
@@ -969,10 +972,11 @@ copying context into the composer or losing the relationship to its source.
    message. Each card uses the same distinct `Selected excerpt` quote block and
    optional `Your comment` section as the draft list, and shows
    annotation-owned files without edit/delete controls or duplicate generic
-   attachment tiles. Editing that historical user message creates a new turn
-   variant carrying the annotation semantic snapshots unchanged while
-   remapping attachment ids to the new user message; retry, queued delivery,
-   and Steer reuse the same evidence.
+   attachment tiles. Editing the latest user message creates a new turn variant
+   carrying the annotation semantic snapshots unchanged while remapping
+   attachment ids to the new user message; retry, queued delivery, and Steer
+   reuse the same evidence. Earlier user messages retain their immutable
+   evidence but expose no edit control.
 16. Expanding historical annotations temporarily restores their numbered source
     markers. Selecting a card item reveals eligible collapsed Process details,
     scrolls to the source, and briefly highlights it. If the immutable snapshot
@@ -1001,7 +1005,7 @@ copying context into the composer or losing the relationship to its source.
 | Send failure | Upload, validation, admission, or network failure | Preserve the complete draft and surface the failure | Clear comments/files or leave unowned staged assets | Route, UI, and E2E tests |
 | Queue or Steer | Active generation; valid annotated follow-up/control message | Preserve annotations/files through materialization and exactly one visible user message | Lose evidence, expose staged ids, or duplicate a Steer message | Queue/Steer service and E2E tests |
 | Run annotation feedback Stop | Annotated feedback turn is streaming from an Agent Run Side Panel | Fence Stop to the observed generation/attempt/control checkpoint, freeze the accepted visible prefix, suppress late events, and wait for terminal readback | Stop a newer target, admit staged/late output after acceptance, or report terminal completion without evidence | Side Panel UI and Run Transcript Detail E2E tests |
-| Historical edit/retry | Sent annotated user message | Carry immutable annotations and remapped attachments into the new turn variant/retry | Mutate the old snapshot or silently drop a file | Service, UI, and E2E tests |
+| Latest-message edit / historical retry | Latest non-superseded sent user message for edit; sent user message for retry | Expose edit only on the latest user message; carry immutable annotations and remapped attachments into the new turn variant/retry | Offer edit on an earlier message, mutate the old snapshot, or silently drop a file | Service, UI, and E2E tests |
 | Fork | Copied range includes source and owning user message | Remap source-message and attachment ids to child-owned copies | Retain foreign mutable attachment ownership or claim copied Run/output ownership | Fork service and E2E tests |
 | Side Chat | Exact selection belongs to the validated completed assistant anchor | Stage client-only; persist once on first Send with exact quote/files | Mutate the parent draft or create a Side Chat merely by selecting | Side Chat service, UI, and E2E tests |
 | Historical source unavailable | Snapshot is valid but source is absent, collapsed evidence cannot load, or variant differs | Show immutable snapshot with cannot-locate state | Re-anchor to a different answer variant or invent source text | UI and E2E tests |
