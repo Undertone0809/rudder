@@ -617,7 +617,7 @@ test.describe("Workspace shell", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
@@ -633,9 +633,29 @@ test.describe("Workspace shell", () => {
     await page.getByRole("tab", { name: "Issues" }).click();
 
     await expect(page).toHaveURL(
-      new RegExp(`/${organization.issuePrefix}/issues\\?projectId=${project.id.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`),
+      new RegExp(`/${organization.urlKey}/issues\\?projectId=${project.id.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}$`),
     );
-    await expect(page.getByTestId("workspace-main-header").getByRole("heading", { name: "Issue Tracker", exact: true })).toBeVisible();
+    const mainHeader = page.getByTestId("workspace-main-header");
+    await expect(mainHeader.getByRole("heading", { name: "Issue Tracker", exact: true })).toBeVisible();
+
+    const headerActions = mainHeader.getByTestId("issues-header-actions");
+    const searchInput = headerActions.getByRole("textbox", { name: "Search issues" });
+    const createIssueButton = headerActions.getByRole("button", { name: "Create Issue" });
+    await expect(headerActions).toHaveCSS("justify-content", "flex-end");
+    await expect(searchInput).toBeVisible();
+    await expect(createIssueButton).toBeVisible();
+    await expect.poll(async () => {
+      const [actionsBox, searchBox, buttonBox] = await Promise.all([
+        headerActions.boundingBox(),
+        searchInput.boundingBox(),
+        createIssueButton.boundingBox(),
+      ]);
+      if (!actionsBox || !searchBox || !buttonBox) return null;
+      return {
+        buttonFollowsSearch: buttonBox.x >= searchBox.x + searchBox.width,
+        rightGap: Math.round(actionsBox.x + actionsBox.width - buttonBox.x - buttonBox.width),
+      };
+    }).toEqual({ buttonFollowsSearch: true, rightGap: 0 });
 
     await page.screenshot({
       path: testInfo.outputPath("workspace-shell-project-issues-tab.png"),
