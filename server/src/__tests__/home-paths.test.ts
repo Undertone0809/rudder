@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -68,6 +70,7 @@ describe("home paths", () => {
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
     process.env.RUDDER_INSTANCE_ID = "test-instance";
+    delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
 
     const organization = await ensureOrganizationWorkspaceLayout(orgId);
     const agentWorkspace = await ensureAgentWorkspaceLayout(agent);
@@ -151,9 +154,42 @@ describe("home paths", () => {
       mergedIntoExistingTarget: false,
       skippedBecauseTargetExists: false,
     });
-    await expect(fs.stat(legacyWorkspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.lstat(legacyWorkspaceRoot)).isSymbolicLink()).toBe(true);
+    await expect(fs.realpath(legacyWorkspaceRoot)).resolves.toBe(
+      await fs.realpath(resolveOrganizationWorkspaceRoot(orgId)),
+    );
     await expect(fs.readFile(path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "demo", "README.md"), "utf8"))
       .resolves.toBe("# Demo\n");
+  });
+
+  it("keeps an active process cwd valid while migrating its organization workspace", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-active-cwd-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-active-cwd-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const legacyRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(legacyRoot, { recursive: true });
+    const child = spawn(process.execPath, [
+      "-e",
+      "process.stdout.write(process.cwd() + '\\n'); process.stdin.once('data', () => { process.stdout.write(process.cwd() + '\\n'); });",
+    ], { cwd: legacyRoot, stdio: ["pipe", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    await once(child.stdout, "data");
+
+    await migrateOrganizationWorkspaceRoot(orgId);
+    child.stdin.write("continue\n");
+    child.stdin.end();
+    const [exitCode] = await once(child, "exit");
+
+    expect(exitCode).toBe(0);
+    const cwdLines = Buffer.concat(stdout).toString("utf8").trim().split("\n");
+    expect(cwdLines).toHaveLength(2);
+    expect(await fs.realpath(cwdLines[1]!)).toBe(await fs.realpath(resolveOrganizationWorkspaceRoot(orgId)));
   });
 
   it("allocates friendly organization workspace folders under the configured user workspace home", async () => {
@@ -244,7 +280,10 @@ describe("home paths", () => {
       legacyRootPath: previousRoot,
       migrated: true,
     });
-    await expect(fs.stat(previousRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.lstat(previousRoot)).isSymbolicLink()).toBe(true);
+    await expect(fs.realpath(previousRoot)).resolves.toBe(
+      await fs.realpath(resolveOrganizationWorkspaceRoot(orgId)),
+    );
     await expect(fs.readFile(path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "demo", "README.md"), "utf8"))
       .resolves.toBe("# Previous\n");
   });
@@ -285,7 +324,8 @@ describe("home paths", () => {
       mergedIntoExistingTarget: true,
       skippedBecauseTargetExists: false,
     });
-    await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await fs.lstat(legacyRoot)).isSymbolicLink()).toBe(true);
+    await expect(fs.realpath(legacyRoot)).resolves.toBe(await fs.realpath(layout.root));
     await expect(fs.readFile(canonicalSharedPath, "utf8")).resolves.toBe("# Shared memory\n");
     await expect(fs.readFile(path.join(layout.root, "projects", "legacy", "README.md"), "utf8"))
       .resolves.toBe("# Legacy project\n");
@@ -444,7 +484,7 @@ describe("home paths", () => {
     }
   });
 
-  it("reclaims an existing friendly folder when the mapping file is missing", async () => {
+  it("reclaims an identified friendly folder when the mapping file is missing", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-reclaim-friendly-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-reclaim-friendly-");
     cleanupDirs.add(rudderHome);
@@ -457,6 +497,11 @@ describe("home paths", () => {
     const existingFile = path.join(existingRoot, "projects", "demo", "README.md");
     await fs.mkdir(path.dirname(existingFile), { recursive: true });
     await fs.writeFile(existingFile, "# Reclaim\n", "utf8");
+    await fs.writeFile(
+      path.join(existingRoot, ".rudder-workspace.json"),
+      `${JSON.stringify({ version: 1, orgId }, null, 2)}\n`,
+      "utf8",
+    );
 
     const layout = await ensureOrganizationWorkspaceLayout({
       id: orgId,
@@ -469,6 +514,30 @@ describe("home paths", () => {
     await expect(fs.readFile(resolveOrganizationWorkspaceMapPath(), "utf8")).resolves.toContain(
       "\"folderName\": \"reclaim-org\"",
     );
+  });
+
+  it("does not claim an unmarked friendly folder when the mapping file is missing", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-unmarked-friendly-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-unmarked-friendly-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const existingRoot = path.join(workspaceHome, "reclaim-org");
+    const existingFile = path.join(existingRoot, "agents", "agent-1", "memory", "2026-08-30.md");
+    await fs.mkdir(path.dirname(existingFile), { recursive: true });
+    await fs.writeFile(existingFile, "preserve me\n", "utf8");
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Reclaim Org",
+      urlKey: "reclaim-org",
+    });
+
+    expect(layout.root).toBe(path.join(workspaceHome, "reclaim-org-2"));
+    await expect(fs.readFile(existingFile, "utf8")).resolves.toBe("preserve me\n");
   });
 
   it("fails instead of resetting a corrupt organization workspace mapping file", async () => {
@@ -496,6 +565,7 @@ describe("home paths", () => {
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
     process.env.RUDDER_INSTANCE_ID = "test-instance";
+    delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
 
     const organization = await ensureOrganizationWorkspaceLayout(uuidOrgId);
 

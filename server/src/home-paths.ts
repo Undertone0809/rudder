@@ -19,6 +19,10 @@ const EXECUTABLE_MODE_BITS = 0o111;
 const MIGRATION_BACKUP_DIR_NAME = ".rudder-migration-backups";
 const WORKSPACE_PERMISSION_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
+const ORGANIZATION_WORKSPACE_MAP_LOCK = ".rudder-organizations.lock";
+const ORGANIZATION_WORKSPACE_IDENTITY_FILE = ".rudder-workspace.json";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS = 10_000;
+const ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS = 60_000;
 const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
   ORGANIZATION_WORKSPACE_MAP_FILE,
   ".rudder",
@@ -302,6 +306,7 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
       fs.mkdir(skillsDir, { recursive: true }),
       fs.mkdir(projectsDir, { recursive: true }),
     ]);
+    await ensureOrganizationWorkspaceIdentity(root, orgId);
   } catch (error) {
     if (isPermissionError(error)) {
       throw new Error(formatOrganizationWorkspacePermissionMessage({
@@ -359,9 +364,44 @@ async function ensureOrganizationWorkspaceMapping(org: OrganizationWorkspaceLoca
 
 async function updateOrganizationWorkspaceMap<T>(fn: () => Promise<T>): Promise<T> {
   const previous = organizationWorkspaceMapUpdateQueue.catch(() => {});
-  const current = previous.then(fn, fn);
+  const current = previous.then(
+    () => withOrganizationWorkspaceMapLock(fn),
+    () => withOrganizationWorkspaceMapLock(fn),
+  );
   organizationWorkspaceMapUpdateQueue = current.catch(() => {});
   return await current;
+}
+
+async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lockPath = path.resolve(resolveOrganizationWorkspaceHomeDir(), ORGANIZATION_WORKSPACE_MAP_LOCK);
+  const startedAt = Date.now();
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+
+  while (true) {
+    try {
+      await fs.mkdir(lockPath, { mode: 0o700 });
+      break;
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+      const stat = await lstatIfExists(lockPath);
+      if (stat && Date.now() - stat.mtimeMs > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS) {
+        await fs.rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() - startedAt >= ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
+        throw Object.assign(new Error(
+          `Timed out waiting for the organization workspace mapping lock at ${lockPath}.`,
+        ), { code: "RUDDER_WORKSPACE_MAP_LOCK_TIMEOUT" });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await fs.rm(lockPath, { recursive: true, force: true });
+  }
 }
 
 export async function migrateOrganizationStorageRoot(orgId: string): Promise<{
@@ -481,14 +521,14 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
     firstLegacyRootPath = firstLegacyRootPath || candidateLegacyRootPath;
     const legacyExists = await directoryExists(candidateLegacyRootPath);
     if (!legacyExists) continue;
+    if (await pathsReferenceSameDirectory(candidateLegacyRootPath, canonicalRootPath)) continue;
 
     const canonicalExists = await directoryExists(canonicalRootPath);
     try {
       if (canonicalExists) {
         await assertCanMergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
         const retainedDuplicates = await mergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
-        if (retainedDuplicates) await archiveRetainedMigrationSource(candidateLegacyRootPath);
-        else await fs.rmdir(candidateLegacyRootPath);
+        await preserveWorkspaceCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath, retainedDuplicates);
         migrated = true;
         migratedFromRootPath = candidateLegacyRootPath;
         mergedIntoExistingTarget = true;
@@ -496,7 +536,7 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
       }
 
       await fs.mkdir(path.dirname(canonicalRootPath), { recursive: true });
-      await movePath(candidateLegacyRootPath, canonicalRootPath);
+      await moveWorkspacePathWithCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath);
       migrated = true;
       migratedFromRootPath = candidateLegacyRootPath;
     } catch (error) {
@@ -763,8 +803,49 @@ async function writeOrganizationWorkspaceMapFile(
 ): Promise<void> {
   const tempPath = `${mapPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await fs.mkdir(path.dirname(mapPath), { recursive: true });
-  await fs.writeFile(tempPath, `${JSON.stringify(map, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  const handle = await fs.open(tempPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(map, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   await fs.rename(tempPath, mapPath);
+  await syncDirectory(path.dirname(mapPath));
+}
+
+async function ensureOrganizationWorkspaceIdentity(root: string, orgId: string): Promise<void> {
+  const identityPath = path.join(root, ORGANIZATION_WORKSPACE_IDENTITY_FILE);
+  const expectedOrgId = validatePathSegment(orgId, "org id");
+  try {
+    const existing = JSON.parse(await fs.readFile(identityPath, "utf8")) as { orgId?: unknown };
+    if (existing.orgId !== expectedOrgId) {
+      throw new Error(`Organization workspace identity mismatch at ${identityPath}.`);
+    }
+    return;
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  }
+  await fs.writeFile(
+    identityPath,
+    `${JSON.stringify({ version: 1, orgId: expectedOrgId }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600, flag: "wx" },
+  ).catch(async (error) => {
+    if (errorCode(error) !== "EEXIST" || !(await workspaceIdentityMatches(root, expectedOrgId))) {
+      throw error;
+    }
+  });
+}
+
+async function workspaceIdentityMatches(root: string, orgId: string): Promise<boolean> {
+  try {
+    const identity = JSON.parse(
+      await fs.readFile(path.join(root, ORGANIZATION_WORKSPACE_IDENTITY_FILE), "utf8"),
+    ) as { orgId?: unknown };
+    return identity.orgId === validatePathSegment(orgId, "org id");
+  } catch {
+    return false;
+  }
 }
 
 async function allocateOrganizationWorkspaceFolderName(input: {
@@ -787,7 +868,12 @@ async function allocateOrganizationWorkspaceFolderName(input: {
     if (usedFolders.has(folderName)) continue;
     const existing = await pathExists(path.resolve(input.homeDir, folderName));
     if (existing && !existing.isDirectory()) continue;
-    if (existing && input.allowExistingBaseDirectory && folderName === base) return folderName;
+    if (
+      existing
+      && input.allowExistingBaseDirectory
+      && folderName === base
+      && await workspaceIdentityMatches(path.resolve(input.homeDir, folderName), input.orgId)
+    ) return folderName;
     if (existing) {
       const owned = input.map.organizations.some((entry) =>
         entry.instanceId === resolveRudderInstanceId()
@@ -925,6 +1011,78 @@ async function movePath(sourcePath: string, targetPath: string): Promise<void> {
     preserveTimestamps: true,
   });
   await fs.rm(sourcePath, { recursive: true, force: false });
+}
+
+async function pathsReferenceSameDirectory(first: string, second: string): Promise<boolean> {
+  try {
+    const [firstRealPath, secondRealPath] = await Promise.all([fs.realpath(first), fs.realpath(second)]);
+    return firstRealPath === secondRealPath;
+  } catch {
+    return false;
+  }
+}
+
+async function createDirectoryCompatibilityAlias(aliasPath: string, targetPath: string): Promise<void> {
+  await fs.symlink(targetPath, aliasPath, process.platform === "win32" ? "junction" : "dir");
+  await syncDirectory(path.dirname(aliasPath));
+}
+
+async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.rename(sourcePath, targetPath);
+  } catch (error) {
+    if (errorCode(error) === "EXDEV") {
+      throw Object.assign(new Error(
+        `Cannot atomically migrate organization workspace across filesystems from ${sourcePath} to ${targetPath}.`,
+      ), { code: "RUDDER_WORKSPACE_CROSS_DEVICE_MIGRATION" });
+    }
+    throw error;
+  }
+  try {
+    await createDirectoryCompatibilityAlias(sourcePath, targetPath);
+  } catch (error) {
+    await fs.rename(targetPath, sourcePath).catch(() => {});
+    throw error;
+  }
+}
+
+async function preserveWorkspaceCompatibilityAlias(
+  sourcePath: string,
+  targetPath: string,
+  retainedDuplicates: boolean,
+): Promise<void> {
+  const archivedPath = await archiveRetainedMigrationSource(sourcePath);
+  try {
+    await createDirectoryCompatibilityAlias(sourcePath, targetPath);
+  } catch (error) {
+    await fs.rename(archivedPath, sourcePath).catch(() => {});
+    throw error;
+  }
+  if (!retainedDuplicates) {
+    // Keep the renamed directory inode for active processes whose cwd was the legacy root.
+    await fs.writeFile(
+      path.join(archivedPath, ".rudder-migrated-workspace"),
+      `${JSON.stringify({ targetPath }, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600, flag: "wx" },
+    );
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(directory, "r");
+  } catch (error) {
+    if (["EISDIR", "EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) return;
+    throw error;
+  }
+  try {
+    await handle.sync().catch((error) => {
+      if (!["EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) throw error;
+    });
+  } finally {
+    await handle.close();
+  }
 }
 
 async function regularFilesHaveIdenticalContents(sourcePath: string, targetPath: string): Promise<boolean> {
