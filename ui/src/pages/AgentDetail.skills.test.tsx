@@ -96,6 +96,12 @@ let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  }) as typeof globalThis.requestAnimationFrame;
+  globalThis.cancelAnimationFrame = vi.fn();
+  Element.prototype.scrollIntoView = vi.fn();
   Object.defineProperty(window, "sessionStorage", {
     configurable: true,
     value: {
@@ -239,6 +245,29 @@ async function flushQueries() {
 }
 
 describe("AgentDetail skills tab", () => {
+  it("opens scoped page find from Command+F and highlights loaded tab content", async () => {
+    await renderAgentDetail();
+    await flushQueries();
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const input = document.querySelector<HTMLInputElement>("input[aria-label='Find in agent']");
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(input, "Bundled Rudder skill.");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("1 of 1");
+    expect(document.querySelectorAll("mark[data-issue-find-highlight='true']")).toHaveLength(1);
+  });
+
   it("presents Tools inside Skills and offers Hub, Chat, or upload for adding a Skill", async () => {
     const container = await renderAgentDetail();
     await flushQueries();
