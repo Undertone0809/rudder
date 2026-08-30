@@ -42,6 +42,8 @@ import {
 } from "@rudderhq/agent-runtime-hermes-gateway";
 import {
   execute as hermesGatewayExecute,
+  listHermesGatewaySkills,
+  syncHermesGatewaySkills,
   testEnvironment as hermesGatewayTestEnvironment,
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
 import {
@@ -213,6 +215,8 @@ const hermesGatewayAdapter: ServerAgentRuntimeModule = {
   type: "hermes_gateway",
   execute: hermesGatewayExecute,
   testEnvironment: hermesGatewayTestEnvironment,
+  listSkills: listHermesGatewaySkills,
+  syncSkills: syncHermesGatewaySkills,
   models: hermesGatewayModels,
   supportsLocalAgentJwt: false,
   agentConfigurationDoc: hermesGatewayAgentConfigurationDoc,

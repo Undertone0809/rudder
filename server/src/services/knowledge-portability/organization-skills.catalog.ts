@@ -139,7 +139,7 @@ export type AdapterSkillHomeDefinition = {
   mode: AgentSkillSyncMode;
   label: string;
   locationLabel: string;
-  resolveRoot: (config: Record<string, unknown>) => string;
+  resolveRoot?: (config: Record<string, unknown>) => string;
 };
 
 export type CommunityPresetDefinition =
@@ -210,6 +210,11 @@ export const ADAPTER_SKILL_HOME_DEFINITIONS: Record<string, AdapterSkillHomeDefi
     label: "Adapter skill",
     locationLabel: "~/.pi/agent/skills",
     resolveRoot: (config) => path.join(resolveConfiguredHomeDir(config), ".pi", "agent", "skills"),
+  },
+  hermes_gateway: {
+    mode: "ephemeral",
+    label: "Rudder runtime skill",
+    locationLabel: "Per-run Hermes prompt",
   },
 };
 
@@ -564,6 +569,7 @@ export async function readAdapterSkillCatalogEntries(
   const seenAdapterSelectionKeys = new Set<string>();
 
   for (const [adapterRuntimeType, adapterHome] of Object.entries(ADAPTER_SKILL_HOME_DEFINITIONS)) {
+    if (!adapterHome.resolveRoot) continue;
     const discovered = await readDiscoveredSkillEntries(
       orgId,
       adapterHome.resolveRoot(runtimeConfig),

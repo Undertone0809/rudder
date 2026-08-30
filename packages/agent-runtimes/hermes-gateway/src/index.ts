@@ -19,4 +19,9 @@ Core fields:
 
 Hermes tool and approval events are projected into Rudder as bounded
 synthetic_tool_continuity evidence. They are never labeled native or lossless.
+
+Hermes API Server does not expose a governed per-run skill-directory allowlist.
+Rudder therefore injects only the Agent's current Rudder-enabled SKILL.md files
+into each Run prompt. It does not read or modify the operator-owned Hermes skill
+home, and a missing or unreadable selected skill fails before upstream Run creation.
 `;

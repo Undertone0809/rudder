@@ -1,6 +1,21 @@
-import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
-import { asNumber, asString, parseObject } from "@rudderhq/agent-runtime-utils/server-utils";
+import type {
+  AgentRuntimeExecutionContext,
+  AgentRuntimeExecutionResult,
+  AgentRuntimeLoadedSkillMeta,
+} from "@rudderhq/agent-runtime-utils";
+import {
+  asNumber,
+  asString,
+  parseObject,
+  readRudderRuntimeSkillEntries,
+  resolveRudderDesiredSkillNames,
+  RUDDER_PROMPT_SECTION_TAGS,
+  wrapPromptSection,
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { asRecord, baseUrl, endpoint, hasBearerAuth, positiveMs, preflightBaseUrl, requestHeaders, requestJson, textFrom } from "./http.js";
 
 const MAX_PROJECTED_EVENTS = 200;
@@ -9,6 +24,9 @@ const MAX_PROJECTED_CONTEXT_BYTES = 512 * 1024;
 const MAX_PROJECTED_TOKENS = 32_000;
 const MAX_SAFE_EVENT_TEXT = MAX_PROJECTED_EVENT_BYTES;
 const STOP_RECONCILIATION_MS = 1_500;
+const MAX_SKILL_BYTES = 128 * 1024;
+const MAX_SKILL_PROJECTION_BYTES = 512 * 1024;
+const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 type RunEvent = Record<string, unknown>;
 
@@ -176,20 +194,81 @@ function buildToolContextProjection(ctx: AgentRuntimeExecutionContext, sessionId
   };
 }
 
-function runMessage(ctx: AgentRuntimeExecutionContext, toolContext: string): string {
+type HermesSkillProjection = {
+  prompt: string;
+  skills: AgentRuntimeLoadedSkillMeta[];
+  bytes: number;
+};
+
+async function buildHermesSkillProjection(
+  config: Record<string, unknown>,
+): Promise<HermesSkillProjection> {
+  const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
+  const availableByKey = new Map(availableEntries.map((entry) => [entry.key, entry]));
+  const desiredSkills = resolveRudderDesiredSkillNames(config, availableEntries);
+  const missing = desiredSkills.filter((key) => !availableByKey.has(key));
+  if (missing.length > 0) {
+    throw new Error(`Rudder could not resolve selected Hermes skills: ${missing.join(", ")}.`);
+  }
+
+  const sections: string[] = [];
+  const skills: AgentRuntimeLoadedSkillMeta[] = [];
+  let bytes = 0;
+  for (const key of desiredSkills) {
+    const entry = availableByKey.get(key)!;
+    const skillPath = path.join(entry.source, "SKILL.md");
+    const content = await fs.readFile(skillPath, "utf8").catch(() => null);
+    if (!content?.trim()) {
+      throw new Error(`Selected Hermes skill "${key}" has no readable SKILL.md.`);
+    }
+    const contentBytes = Buffer.byteLength(content, "utf8");
+    if (contentBytes > MAX_SKILL_BYTES) {
+      throw new Error(`Selected Hermes skill "${key}" exceeds the 128 KiB per-skill limit.`);
+    }
+    bytes += contentBytes;
+    if (bytes > MAX_SKILL_PROJECTION_BYTES) {
+      throw new Error("Selected Hermes skills exceed the 512 KiB aggregate limit.");
+    }
+    sections.push(`## Skill: ${key}\n\n${content.trim()}`);
+    skills.push({
+      key: entry.key,
+      runtimeName: entry.runtimeName,
+      name: entry.name ?? null,
+    });
+  }
+
+  if (sections.length === 0) return { prompt: "", skills, bytes };
+  return {
+    prompt: wrapPromptSection(RUDDER_PROMPT_SECTION_TAGS.enabledSkills, [
+      "Rudder is the source of truth for runtime skill enablement.",
+      "Only skills listed in this section are enabled by Rudder for this run. Hermes provider-native, operator-home, project, global, or session skills are outside this Rudder projection and must not be described as Rudder-enabled skills.",
+      "When asked which Rudder skills are enabled, answer from this section only.",
+      "",
+      sections.join("\n\n"),
+    ].join("\n")),
+    skills,
+    bytes,
+  };
+}
+
+function runMessage(
+  ctx: AgentRuntimeExecutionContext,
+  skillPrompt: string,
+  toolContext: string,
+): string {
   const context = ctx.context;
   const chatPrompt = context.chatMode === true ? asString(context.chatPrompt, "").trim() : "";
-  if (chatPrompt) return `${chatPrompt}${toolContext}`;
-  const reason = asString(context.wakeReason, "manual");
-  const issueId = asString(context.issueId ?? context.taskId, "");
-  return [
+  const basePrompt = chatPrompt || [
     "Rudder wake event for Hermes API Server.",
     `run_id=${ctx.runId}`,
     `agent_id=${ctx.agent.id}`,
-    `wake_reason=${reason}`,
-    issueId ? `issue_id=${issueId}` : null,
+    `wake_reason=${asString(context.wakeReason, "manual")}`,
+    asString(context.issueId ?? context.taskId, "")
+      ? `issue_id=${asString(context.issueId ?? context.taskId, "")}`
+      : null,
     "Use the authenticated Rudder context for this run and return a concise result.",
-  ].filter(Boolean).join("\n") + toolContext;
+  ].filter(Boolean).join("\n");
+  return [basePrompt, skillPrompt, toolContext].filter(Boolean).join("\n\n");
 }
 
 function terminalStatus(status: string): boolean {
@@ -272,6 +351,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (!endpointPreflight.ok) return { exitCode: 1, signal: null, timedOut: false, errorMessage: endpointPreflight.reason, errorCode: "hermes_gateway_endpoint_rejected" };
   if (!hasBearerAuth(config)) return { exitCode: 1, signal: null, timedOut: false, errorMessage: "Hermes API Server requires an explicit Bearer API key.", errorCode: "hermes_gateway_bearer_missing" };
 
+  let skillProjection: HermesSkillProjection;
+  try {
+    skillProjection = await buildHermesSkillProjection(config);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: error instanceof Error ? error.message : "Hermes skill projection failed.",
+      errorCode: "hermes_gateway_skill_projection_failed",
+    };
+  }
+
   const timeoutMs = positiveMs(config.timeoutMs ?? (asNumber(config.timeoutSec, 120) * 1000), 120_000);
   const requestTimeout = Math.min(timeoutMs, 15_000);
   const template = parseObject(config.payloadTemplate);
@@ -335,7 +427,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
     };
   }
-  const input = runMessage(ctx, toolContext.text);
+  const input = runMessage(ctx, skillProjection.prompt, toolContext.text);
   const body: Record<string, unknown> = {
     ...template,
     input,
@@ -346,7 +438,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   delete body.message;
 
   if (ctx.onMeta) {
-    await ctx.onMeta({ agentRuntimeType: "hermes_gateway", command: "hermes-api", commandArgs: ["POST", endpoint(base, "/v1/runs").toString()], context: ctx.context });
+    await ctx.onMeta({
+      agentRuntimeType: "hermes_gateway",
+      command: "hermes-api",
+      commandArgs: ["POST", endpoint(base, "/v1/runs").toString()],
+      loadedSkills: skillProjection.skills,
+      desiredSkills: skillProjection.skills,
+      promptInjectedSkills: skillProjection.skills,
+      promptMetrics: {
+        promptChars: input.length,
+        skillCount: skillProjection.skills.length,
+        skillBytes: skillProjection.bytes,
+      },
+      context: ctx.context,
+    });
   }
   await ctx.onLog("stdout", `[hermes-gateway] submitting run upstream=hermes-api base=${base.origin}\n`);
 

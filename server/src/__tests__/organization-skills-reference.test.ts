@@ -113,6 +113,44 @@ describe("organization skill references", () => {
     }
   });
 
+  it("exposes Hermes Gateway skills as an ephemeral supported surface", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Hermes Org",
+      urlKey: `hermes-${orgId.slice(0, 8)}`,
+      issuePrefix: "HRM",
+      status: "active",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Hermes Agent",
+      workspaceKey: "hermes-agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "hermes_gateway",
+      agentRuntimeConfig: {},
+    });
+
+    const snapshot = await skillSvc.buildAgentSkillSnapshot({
+      id: agentId,
+      orgId,
+      agentRuntimeType: "hermes_gateway",
+      agentRuntimeConfig: {},
+    }, {});
+
+    expect(snapshot).toMatchObject({
+      agentRuntimeType: "hermes_gateway",
+      supported: true,
+      mode: "ephemeral",
+      warnings: [],
+    });
+    expect(snapshot.entries.some((entry) => entry.alwaysEnabled && entry.desired)).toBe(true);
+  });
+
   it("canonicalizes public skill refs back to the current internal key", { timeout: 30000 }, async () => {
     const orgId = randomUUID();
     const orgUrlKey = "acme";

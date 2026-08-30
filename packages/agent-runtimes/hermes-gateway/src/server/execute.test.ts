@@ -1,10 +1,27 @@
 import type { AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execute } from "./execute.js";
 import { testEnvironment } from "./test.js";
 
 const servers: Server[] = [];
+const cleanupDirs = new Set<string>();
+
+async function createSkill(slug: string, content: string): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), `rudder-hermes-${slug}-`));
+  cleanupDirs.add(root);
+  await fs.writeFile(path.join(root, "SKILL.md"), content, "utf8");
+  return root;
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+}
 
 function context(config: Record<string, unknown>, overrides: Partial<AgentRuntimeExecutionContext> = {}): AgentRuntimeExecutionContext {
   return {
@@ -63,13 +80,185 @@ async function listen(handler: (req: IncomingMessage, res: ServerResponse) => vo
 }
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
-    if (!server.listening) return resolve();
-    server.close(() => resolve());
-  })));
+  await Promise.all([
+    ...servers.splice(0).map((server) => new Promise<void>((resolve) => {
+      if (!server.listening) return resolve();
+      server.close(() => resolve());
+    })),
+    ...Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+  ]);
+  cleanupDirs.clear();
 });
 
 describe("Hermes gateway execution", () => {
+  it("injects only the selected Rudder skills and records name-only projection evidence", async () => {
+    const selectedMarker = "R6Z182_SELECTED_MARKER";
+    const unselectedMarker = "R6Z182_UNSELECTED_MARKER";
+    const selected = await createSkill("selected", `# Selected\n\n${selectedMarker}\n`);
+    const unselected = await createSkill("unselected", `# Unselected\n\n${unselectedMarker}\n`);
+    const submittedInputs: string[] = [];
+    const metas: unknown[] = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        submittedInputs.push(String(body.input ?? ""));
+        return json(res, 202, { run_id: "hermes-run-skills", status: "started" });
+      }
+      if (req.url === "/v1/runs/hermes-run-skills/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+        return;
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({
+      url: server.url,
+      timeoutMs: 1_000,
+      rudderRuntimeSkills: [
+        { key: "org:org-hermes-1/selected", runtimeName: "selected", source: selected, description: selectedMarker },
+        { key: "org:org-hermes-1/unselected", runtimeName: "unselected", source: unselected },
+      ],
+      rudderSkillSync: { desiredSkills: ["org:org-hermes-1/selected"] },
+    }, { onMeta: async (meta) => { metas.push(meta); } }));
+
+    expect(result.exitCode).toBe(0);
+    expect(submittedInputs).toHaveLength(1);
+    expect(submittedInputs[0]).toContain(selectedMarker);
+    expect(submittedInputs[0]).not.toContain(unselectedMarker);
+    expect(submittedInputs[0]).toContain("Only skills listed in this section are enabled by Rudder");
+    expect(metas).toHaveLength(1);
+    expect(metas[0]).toMatchObject({
+      loadedSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
+      desiredSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
+      promptInjectedSkills: [{ key: "org:org-hermes-1/selected", runtimeName: "selected" }],
+      promptMetrics: { skillCount: 1 },
+    });
+    expect(JSON.stringify(metas)).not.toContain(selectedMarker);
+    expect(JSON.stringify(metas)).not.toContain("# Selected");
+  });
+
+  it("uses the latest full skill selection on every run without stale material", async () => {
+    const marker = "R6Z182_DISABLE_MARKER";
+    const selected = await createSkill("toggle", `# Toggle\n\n${marker}\n`);
+    const submittedInputs: string[] = [];
+    let runCounter = 0;
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        submittedInputs.push(String((await readJsonBody(req)).input ?? ""));
+        runCounter += 1;
+        return json(res, 202, { run_id: `hermes-run-toggle-${runCounter}`, status: "started" });
+      }
+      if (req.url?.startsWith("/v1/runs/hermes-run-toggle-") && req.url.endsWith("/events")) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+        return;
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+    const baseConfig = {
+      url: server.url,
+      timeoutMs: 1_000,
+      rudderRuntimeSkills: [{ key: "org:org-hermes-1/toggle", runtimeName: "toggle", source: selected }],
+    };
+
+    const enabled = await execute(context({ ...baseConfig, rudderSkillSync: { desiredSkills: ["org:org-hermes-1/toggle"] } }));
+    const disabled = await execute(context({ ...baseConfig, rudderSkillSync: { desiredSkills: [] } }));
+
+    expect(enabled.exitCode).toBe(0);
+    expect(disabled.exitCode).toBe(0);
+    expect(submittedInputs[0]).toContain(marker);
+    expect(submittedInputs[1]).not.toContain(marker);
+  });
+
+  it.each([
+    ["missing", null],
+    ["empty", "   \n"],
+    ["oversized", "x".repeat((128 * 1024) + 1)],
+  ])("fails closed for a %s selected skill before creating a Hermes session", async (scenario, content) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), `rudder-hermes-${scenario}-`));
+    cleanupDirs.add(root);
+    if (content !== null) await fs.writeFile(path.join(root, "SKILL.md"), content, "utf8");
+    const server = await listen((_req, res) => json(res, 500, { error: "must not be called" }));
+
+    const result = await execute(context({
+      url: server.url,
+      rudderRuntimeSkills: [{ key: `org:org-hermes-1/${scenario}`, runtimeName: scenario, source: root }],
+      rudderSkillSync: { desiredSkills: [`org:org-hermes-1/${scenario}`] },
+    }));
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_skill_projection_failed" });
+    expect(server.requests).toEqual([]);
+  });
+
+  it("fails closed when the selected skill projection exceeds the aggregate limit", async () => {
+    const runtimeSkills = [];
+    const desiredSkills: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const runtimeName = `aggregate-${index}`;
+      const key = `org:org-hermes-1/${runtimeName}`;
+      runtimeSkills.push({
+        key,
+        runtimeName,
+        source: await createSkill(runtimeName, "x".repeat(110 * 1024)),
+      });
+      desiredSkills.push(key);
+    }
+    const server = await listen((_req, res) => json(res, 500, { error: "must not be called" }));
+
+    const result = await execute(context({
+      url: server.url,
+      rudderRuntimeSkills: runtimeSkills,
+      rudderSkillSync: { desiredSkills },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_gateway_skill_projection_failed",
+      errorMessage: "Selected Hermes skills exceed the 512 KiB aggregate limit.",
+    });
+    expect(server.requests).toEqual([]);
+  });
+
+  it("keeps skill projections isolated to the current Agent configuration", async () => {
+    const alphaMarker = "R6Z182_ORG_ALPHA";
+    const betaMarker = "R6Z182_ORG_BETA";
+    const alpha = await createSkill("org-alpha", `# Alpha\n\n${alphaMarker}\n`);
+    const beta = await createSkill("org-beta", `# Beta\n\n${betaMarker}\n`);
+    const submittedInputs: string[] = [];
+    let runCounter = 0;
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        submittedInputs.push(String((await readJsonBody(req)).input ?? ""));
+        runCounter += 1;
+        return json(res, 202, { run_id: `hermes-run-org-${runCounter}`, status: "started" });
+      }
+      if (req.url?.startsWith("/v1/runs/hermes-run-org-") && req.url.endsWith("/events")) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+        return;
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    for (const [orgId, source, marker] of [["org-alpha", alpha, "alpha"], ["org-beta", beta, "beta"]] as const) {
+      await execute(context({
+        url: server.url,
+        timeoutMs: 1_000,
+        rudderRuntimeSkills: [{ key: `org:${orgId}/${marker}`, runtimeName: marker, source }],
+        rudderSkillSync: { desiredSkills: [`org:${orgId}/${marker}`] },
+      }, { agent: { id: `agent-${marker}`, orgId, name: marker, agentRuntimeType: "hermes_gateway", agentRuntimeConfig: {} } }));
+    }
+
+    expect(submittedInputs[0]).toContain(alphaMarker);
+    expect(submittedInputs[0]).not.toContain(betaMarker);
+    expect(submittedInputs[1]).toContain(betaMarker);
+    expect(submittedInputs[1]).not.toContain(alphaMarker);
+  });
+
   it("maps an SSE terminal completion without polling into a timeout", async () => {
     const server = await listen((req, res) => {
       if (sessionRoute(req, res)) return;
