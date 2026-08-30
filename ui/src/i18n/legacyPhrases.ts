@@ -1083,7 +1083,7 @@ const zhExactPhrases: Record<string, string> = {
   "Test now": "立即测试",
   "Testing": "测试中",
   "Testing env": "正在测试环境",
-  "Thinking": "推理",
+  "Thinking": "思考中",
   "Ultra": "极高",
   "Stored as a Rudder secret and referenced by this agent runtime for Test now and future runs.": "将作为 Rudder 密钥存储，并供此智能体运行时用于“立即测试”和后续运行。",
   "Cursor CLI execution mode passed through --mode. Plan is read-only planning; Ask is read-only Q&A. Leave on the runtime default for normal autonomous runs.": "Cursor CLI 执行模式会通过 --mode 传入。规划模式只进行规划，询问模式只进行问答。日常自主运行请保持运行时默认值。",

@@ -198,7 +198,7 @@ describe("translateMessage", () => {
 
   it("translates reasoning controls and dynamic runtime labels for zh-CN", () => {
     expect(translateLegacyString("zh-CN", "Thinking effort")).toBe("推理程度");
-    expect(translateLegacyString("zh-CN", "Thinking")).toBe("推理");
+    expect(translateLegacyString("zh-CN", "Thinking")).toBe("思考中");
     expect(translateLegacyString("zh-CN", "Extra High")).toBe("超高");
     expect(translateLegacyString("zh-CN", "Max")).toBe("最大");
     expect(translateLegacyString("zh-CN", "Minimal")).toBe("最低");
