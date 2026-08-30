@@ -13,7 +13,7 @@ const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
   "0.7.15": {
-    candidateFingerprint: "3152669d55bd95e21d1aee03f0dada1d433ad28c4004ecd9c68030e4da72d2b5",
+    candidateFingerprint: "c490a6ffe6574eb07b05f42632b442860fc751c5cb3582326f2d3dde63d2abe3",
     fixtures: [
       {
         version: "0.7.14",
@@ -63,7 +63,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.14": {
-    candidateFingerprint: "3152669d55bd95e21d1aee03f0dada1d433ad28c4004ecd9c68030e4da72d2b5",
+    candidateFingerprint: "c490a6ffe6574eb07b05f42632b442860fc751c5cb3582326f2d3dde63d2abe3",
     fixtures: [
       {
         version: "0.7.13",
@@ -108,7 +108,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.13": {
-    candidateFingerprint: "3152669d55bd95e21d1aee03f0dada1d433ad28c4004ecd9c68030e4da72d2b5",
+    candidateFingerprint: "c490a6ffe6574eb07b05f42632b442860fc751c5cb3582326f2d3dde63d2abe3",
     fixtures: [
       {
         version: "0.7.12",
