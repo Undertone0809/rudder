@@ -22,6 +22,6 @@ fn reports_binary_identity_and_contract_manifest() {
     assert_eq!(manifest["schema"], "rudder.agent-capabilities/v1");
     assert_eq!(manifest["contract"], "agent-v1");
     assert_eq!(manifest["defaults"]["orgIdEnvVar"], "RUDDER_ORG_ID");
-    assert_eq!(manifest["capabilities"].as_array().unwrap().len(), 106);
-    assert_eq!(manifest["mcp"]["tools"].as_array().unwrap().len(), 81);
+    assert_eq!(manifest["capabilities"].as_array().unwrap().len(), 107);
+    assert_eq!(manifest["mcp"]["tools"].as_array().unwrap().len(), 82);
 }

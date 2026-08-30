@@ -1689,14 +1689,14 @@ mod tests {
 
     #[test]
     fn generated_manifests_preserve_contract_parity() {
-        assert_eq!(tools_manifest(Surface::Core).len(), 81);
+        assert_eq!(tools_manifest(Surface::Core).len(), 82);
         assert_eq!(tools_manifest(Surface::Browser).len(), 25);
         assert_eq!(
             capabilities_manifest()["capabilities"]
                 .as_array()
                 .unwrap()
                 .len(),
-            106
+            107
         );
         assert_eq!(
             capabilities_manifest()["schema"],
@@ -1708,7 +1708,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            81
+            82
         );
         assert_eq!(
             binary_identity("rudder-mcp-foundation")["manifestHash"]
@@ -1719,7 +1719,7 @@ mod tests {
         );
         assert_eq!(
             contract_hash(Surface::Core),
-            "db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24"
+            "457869e72e5cd04a54f036324e167365ff4c13aa396a74ec3ed11676f7c70e67"
         );
         assert_eq!(
             contract_hash(Surface::Browser),
@@ -1800,7 +1800,7 @@ mod tests {
             &mut dispatcher,
         )
         .unwrap();
-        assert_eq!(response["result"]["tools"].as_array().unwrap().len(), 31);
+        assert_eq!(response["result"]["tools"].as_array().unwrap().len(), 32);
         assert!(response["result"].get("nextCursor").is_none());
     }
 

@@ -148,7 +148,7 @@ fn serves_initialize_and_tool_manifest_over_stdio() {
     );
 
     let tools = request("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 81);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 82);
 }
 
 #[test]
