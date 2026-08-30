@@ -463,6 +463,41 @@ fn rejects_empty_object_for_live_min_properties_constraint() {
 }
 
 #[test]
+fn node_and_rust_count_astral_unicode_schema_lengths_equally() {
+    let issue = "\u{1f642}".repeat(101);
+    let message = format!(
+        "{}\n",
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 32,
+            "method": "tools/call",
+            "params": {
+                "name": "rudder_issue_get",
+                "arguments": { "issue": issue }
+            }
+        })
+    );
+    let empty_env = BTreeMap::new();
+    let node = collect_lines(node_command(), &message, &empty_env);
+    let rust = collect_lines(
+        Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+        &message,
+        &empty_env,
+    );
+
+    assert_eq!(node.len(), 1);
+    assert_eq!(rust.len(), 1);
+    assert_eq!(
+        validation_projection(&rust[0]),
+        validation_projection(&node[0])
+    );
+    assert_eq!(
+        rust[0]["result"]["structuredContent"]["code"],
+        "rudder_mcp_missing_runtime_context"
+    );
+}
+
+#[test]
 fn oversized_whitespace_prefix_fails_at_the_process_boundary() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation"))
         .stdin(Stdio::piped())
