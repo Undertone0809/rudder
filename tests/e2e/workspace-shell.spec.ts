@@ -1745,6 +1745,47 @@ test.describe("Workspace shell", () => {
     });
   });
 
+  test("localizes issue board statuses in zh-CN", async ({ page }, testInfo) => {
+    await page.route("**/api/health", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, uiLocale: "zh-CN" } });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Workspace-Shell-Issue-Board-ZH-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const backlogRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Localized backlog issue",
+        status: "backlog",
+        priority: "medium",
+      },
+    });
+    expect(backlogRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/issues");
+    await page.getByTitle("看板视图").click();
+
+    await expect(page.getByText("Localized backlog issue", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建积压任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建待办任务" })).toBeVisible();
+    await expect(page.getByTestId("kanban-hidden-columns").getByText("隐藏列", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建进行中任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建评审中任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建已完成任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建已取消任务" })).toBeVisible();
+
+    await page.screenshot({
+      path: testInfo.outputPath("workspace-shell-issues-board-zh-CN.png"),
+      fullPage: true,
+    });
+  });
+
   test("renders desktop settings as a centered modal shell and applies locale changes immediately", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

@@ -7,7 +7,7 @@ export const zhCN: Messages = {
   "common.workspace": "工作区",
   "common.skipToMainContent": "跳转到主要内容",
   "common.systemSettings": "系统设置",
-  "common.backToWorkspace": "返回工作台",
+  "common.backToWorkspace": "返回工作区",
   "common.openSidebar": "打开侧边栏",
   "common.closeSidebar": "关闭侧边栏",
   "common.closeSettings": "关闭设置",

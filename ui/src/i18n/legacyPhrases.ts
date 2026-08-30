@@ -285,7 +285,7 @@ const zhExactPhrases: Record<string, string> = {
   "Not available for this time window": "当前时间窗口暂无可用数据",
   "Select a start and end date": "请选择开始和结束日期",
   "One-time claim secret (save now)": "一次性认领密钥（请立即保存）",
-  "Open board": "打开工作台",
+  "Open board": "打开工作区",
   "Open dashboard": "打开总览",
   "Open issue": "打开任务",
   "Open run": "打开运行详情",
