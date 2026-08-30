@@ -35,6 +35,7 @@ export type AddUserChatMessageOptions = {
   }>;
   attachmentFileIndexesByAnnotationId?: Map<string, number[]>;
   clientMutationId?: string | null;
+  clientMutationFingerprint?: string | null;
   onIdempotentReplay?: (messageId: string) => void;
   onTransactionCommitted?: (messageId: string) => void;
 };
@@ -121,7 +122,11 @@ export function createChatAnnotationMessagePersistence(
 
       if (options.clientMutationId) {
         const existing = await tx
-          .select({ id: chatMessages.id, body: chatMessages.body })
+          .select({
+            id: chatMessages.id,
+            body: chatMessages.body,
+            fingerprint: chatMessages.clientMutationFingerprint,
+          })
           .from(chatMessages)
           .where(and(
             eq(chatMessages.orgId, orgId),
@@ -131,7 +136,13 @@ export function createChatAnnotationMessagePersistence(
           .limit(1)
           .then((rows) => rows[0] ?? null);
         if (existing) {
-          if (existing.body !== body) {
+          if (
+            existing.body !== body
+            || (
+              existing.fingerprint !== null
+              && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
+            )
+          ) {
             throw conflict("Chat mutation key was already used for different content");
           }
           return { messageId: existing.id, replayed: true };
@@ -243,6 +254,7 @@ export function createChatAnnotationMessagePersistence(
           body,
           structuredPayload: stripChatMetadataFromPayload(sanitizeChatStructuredPayload(messageStructuredPayload)),
           clientMutationId: options.clientMutationId ?? null,
+          clientMutationFingerprint: options.clientMutationFingerprint ?? null,
           chatTurnId: turnId,
           turnVariant,
         })
@@ -347,7 +359,11 @@ export function createChatAnnotationMessagePersistence(
     } catch (error) {
       if (!options.clientMutationId || postgresErrorCode(error) !== "23505") throw error;
       const existing = await db
-        .select({ id: chatMessages.id, body: chatMessages.body })
+        .select({
+          id: chatMessages.id,
+          body: chatMessages.body,
+          fingerprint: chatMessages.clientMutationFingerprint,
+        })
         .from(chatMessages)
         .where(and(
           eq(chatMessages.orgId, orgId),
@@ -357,7 +373,13 @@ export function createChatAnnotationMessagePersistence(
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!existing) throw error;
-      if (existing.body !== body) {
+      if (
+        existing.body !== body
+        || (
+          existing.fingerprint !== null
+          && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
+        )
+      ) {
         throw conflict("Chat mutation key was already used for different content");
       }
       persisted = { messageId: existing.id, replayed: true };

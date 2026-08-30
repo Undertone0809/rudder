@@ -47,6 +47,7 @@ const mockChatService = vi.hoisted(() => ({
   getMessageTranscript: vi.fn(),
   getMessage: vi.fn(),
   getUserMessageByClientMutationId: vi.fn(),
+  getUserMessageMutationByClientMutationId: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
   updateMessageStructuredPayload: vi.fn(),
@@ -626,6 +627,7 @@ describe("chat routes", { retry: 2 }, () => {
     });
     mockChatService.getQueuedMessageReplay.mockResolvedValue(null);
     mockChatService.getUserMessageByClientMutationId.mockResolvedValue(null);
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValue(null);
     mockChatService.createQueuedMessage.mockImplementation(async (input: Record<string, unknown>) => ({
       id: "queued-1",
       orgId: input.orgId,
@@ -2528,7 +2530,10 @@ describe("chat routes", { retry: 2 }, () => {
       "Send exactly once",
     );
     mockChatService.getById.mockResolvedValue(conversation);
-    mockChatService.getUserMessageByClientMutationId.mockResolvedValue(userMessage);
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValue({
+      message: userMessage,
+      fingerprint: null,
+    });
     mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
       available: false,
       error: "Runtime temporarily unavailable",
@@ -2559,7 +2564,7 @@ describe("chat routes", { retry: 2 }, () => {
       }),
       { type: "final", messages: [] },
     ]);
-    expect(mockChatService.getUserMessageByClientMutationId).toHaveBeenCalledWith(
+    expect(mockChatService.getUserMessageMutationByClientMutationId).toHaveBeenCalledWith(
       conversation.orgId,
       conversation.id,
       "send-mutation-1",
@@ -2568,6 +2573,78 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
     expect(mockChatAssistantService.getChatAssistantAvailability).not.toHaveBeenCalled();
     expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replay key when annotations, files, edit target, or runtime payload changed", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage(
+      "message-idempotent-user",
+      "user",
+      "message",
+      "Same body",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValue({
+      message: userMessage,
+      fingerprint: "stored-full-payload-fingerprint",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: "Same body",
+        clientMutationId: "send-mutation-full-payload",
+        modelOverride: "different-model",
+        inlineAnnotations: [],
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("different content");
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("stops a concurrent database replay before generation and cleans loser files", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage(
+      "message-concurrent-winner",
+      "user",
+      "message",
+      "Exactly once across servers",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockImplementationOnce(async (
+      _conversationId: string,
+      _orgId: string,
+      _body: string,
+      _editUserMessageId: string | null,
+      options: { onIdempotentReplay?: (messageId: string) => void },
+    ) => {
+      options.onIdempotentReplay?.(userMessage.id);
+      return userMessage;
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .field("body", userMessage.body)
+      .field("clientMutationId", "send-mutation-concurrent")
+      .attach("files", Buffer.from("loser file"), {
+        filename: "loser.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "chat.message_added" }),
+    );
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      conversation.orgId,
+      "chats/chat-1/image.png",
+    );
   });
 
   it("does not queue a concurrent retry with the active send mutation", async () => {

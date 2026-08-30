@@ -2219,6 +2219,11 @@ Invariants:
 - Atomic document tokens must not flash or expand into raw link syntax when
   their block becomes active. This direct-click rule does not change Chat,
   Side Chat, decision-note, message-edit, or Issue comment composer behavior.
+- Composer reference tokens are atomic caret boundaries. Pointer placement and
+  browser-recovered selections must never leave the caret between a token's
+  leading icon and label or inside its rendered structure. Left/right keyboard
+  navigation skips the entire token, and a direct pointer placement on the
+  token resolves to the boundary before its leading icon.
 
 Evidence:
 

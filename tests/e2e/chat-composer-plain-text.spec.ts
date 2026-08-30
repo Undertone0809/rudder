@@ -76,7 +76,7 @@ test("chat composer keeps normal Markdown literal while tokenizing Rudder refere
   expect(userMessage?.body).toBe(draft);
 });
 
-test("chat composer keeps the caret outside Rudder reference tokens", async ({ page }) => {
+test("chat composer treats Rudder references as atomic caret boundaries", async ({ page }) => {
   const organization = await createOrganization(page, "Chat-Reference-Caret");
   const agent = await createChatAgent(page, organization.id, "原则");
 
@@ -101,12 +101,15 @@ test("chat composer keeps the caret outside Rudder reference tokens", async ({ p
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
   const canonicalReference = `[${agent.name}](agent://${agent.id})`;
-  await composer.fill(`请参考 ${canonicalReference} 后续计划`);
+  const canonicalSkillReference = "[visualize](skill://org/e2e-visualize?ref=visualize)";
+  await composer.fill(`请参考 ${canonicalReference} 与 ${canonicalSkillReference} 后续计划`);
 
-  const token = composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name }).first();
-  await expect(token).toBeVisible({ timeout: 15_000 });
+  const agentToken = composer.locator("[data-mention-kind='agent']").filter({ hasText: agent.name }).first();
+  const skillToken = composer.locator("[data-skill-token='true']").filter({ hasText: "visualize" }).first();
+  await expect(agentToken).toBeVisible({ timeout: 15_000 });
+  await expect(skillToken).toBeVisible({ timeout: 15_000 });
 
-  const selectionState = await token.evaluate((element) => {
+  const selectionState = await agentToken.evaluate((element) => {
     const textNode = Array.from(element.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
     if (!textNode) return { ok: false, reason: "missing token text" };
 
@@ -121,7 +124,7 @@ test("chat composer keeps the caret outside Rudder reference tokens", async ({ p
     const parent = element.parentNode;
     const tokenIndex = parent ? Array.prototype.indexOf.call(parent.childNodes, element) : -1;
     return {
-      ok: selection?.anchorNode === parent && selection.anchorOffset === tokenIndex + 1,
+      ok: selection?.anchorNode === parent && selection.anchorOffset === tokenIndex,
       anchorInsideToken: selection?.anchorNode ? element.contains(selection.anchorNode) : null,
       anchorOffset: selection?.anchorOffset ?? null,
       tokenIndex,
@@ -132,6 +135,116 @@ test("chat composer keeps the caret outside Rudder reference tokens", async ({ p
     ok: true,
     anchorInsideToken: false,
   });
+
+  const setTokenBoundary = async (token: typeof agentToken, edge: "before" | "after") => token.evaluate((element, requestedEdge) => {
+    const parent = element.parentNode;
+    if (!parent) throw new Error("missing token parent");
+    const tokenIndex = Array.prototype.indexOf.call(parent.childNodes, element);
+    const range = document.createRange();
+    range.setStart(parent, requestedEdge === "before" ? tokenIndex : tokenIndex + 1);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, edge);
+  const readTokenSelection = async (token: typeof agentToken) => token.evaluate((element) => {
+    const selection = window.getSelection();
+    const parent = element.parentNode;
+    const tokenIndex = parent ? Array.prototype.indexOf.call(parent.childNodes, element) : -1;
+    const boundary = (node: Node | null, offset: number) => {
+      if (node !== parent) return "other";
+      if (offset === tokenIndex) return "before";
+      if (offset === tokenIndex + 1) return "after";
+      return "other";
+    };
+    const semanticBoundary = (node: Node | null, offset: number) => {
+      const exact = boundary(node, offset);
+      if (exact !== "other" || !node) return exact;
+      const tokenRange = document.createRange();
+      tokenRange.selectNode(element);
+      const relation = tokenRange.comparePoint(node, offset);
+      if (relation < 0) return "before";
+      if (relation > 0) return "after";
+      return "other";
+    };
+    return {
+      anchor: semanticBoundary(selection?.anchorNode ?? null, selection?.anchorOffset ?? -1),
+      focus: semanticBoundary(selection?.focusNode ?? null, selection?.focusOffset ?? -1),
+      anchorInside: selection?.anchorNode ? element.contains(selection.anchorNode) : false,
+      focusInside: selection?.focusNode ? element.contains(selection.focusNode) : false,
+    };
+  });
+
+  await setTokenBoundary(agentToken, "after");
+  await page.keyboard.press("ArrowLeft");
+  expect(await readTokenSelection(agentToken)).toMatchObject({ anchor: "before", focus: "before" });
+
+  await page.keyboard.press("ArrowRight");
+  expect(await readTokenSelection(agentToken)).toMatchObject({ anchor: "after", focus: "after" });
+
+  await agentToken.click({ position: { x: 2, y: 2 } });
+  expect(await readTokenSelection(agentToken)).toMatchObject({ anchor: "before", focus: "before" });
+
+  for (const token of [agentToken, skillToken]) {
+    const normalizedSelections = await token.evaluate((element) => {
+      const tokenText = element.querySelector(".rudder-inline-token-label")?.firstChild
+        ?? Array.from(element.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+      const tokenHost = element.parentElement?.classList.contains("rudder-skill-token-wrap")
+        ? element.parentElement
+        : element;
+      const leadingText = tokenHost.previousSibling;
+      const trailingText = tokenHost.nextSibling;
+      const parent = element.parentNode;
+      if (!tokenText || !leadingText || !trailingText || !parent) {
+        throw new Error("missing token selection fixture nodes");
+      }
+      const tokenIndex = Array.prototype.indexOf.call(parent.childNodes, element);
+      const selection = window.getSelection();
+      const snapshot = () => ({
+        anchorInside: selection?.anchorNode ? element.contains(selection.anchorNode) : false,
+        focusInside: selection?.focusNode ? element.contains(selection.focusNode) : false,
+        anchorAt: selection?.anchorNode === parent ? selection.anchorOffset : null,
+        focusAt: selection?.focusNode === parent ? selection.focusOffset : null,
+      });
+
+      selection?.setBaseAndExtent(leadingText, 1, tokenText, 1);
+      document.dispatchEvent(new Event("selectionchange"));
+      const forward = snapshot();
+      selection?.setBaseAndExtent(trailingText, 1, tokenText, 1);
+      document.dispatchEvent(new Event("selectionchange"));
+      const reverse = snapshot();
+      return { forward, reverse, tokenIndex };
+    });
+
+    expect(normalizedSelections.forward).toMatchObject({
+      anchorInside: false,
+      focusInside: false,
+      focusAt: normalizedSelections.tokenIndex + 1,
+    });
+    expect(normalizedSelections.reverse).toMatchObject({
+      anchorInside: false,
+      focusInside: false,
+      focusAt: normalizedSelections.tokenIndex,
+    });
+
+    await setTokenBoundary(token, "after");
+    await page.keyboard.press("Shift+ArrowLeft");
+    expect(await readTokenSelection(token)).toMatchObject({
+      anchor: "after",
+      focus: "before",
+      anchorInside: false,
+      focusInside: false,
+    });
+
+    await setTokenBoundary(token, "before");
+    await page.keyboard.press("Shift+ArrowRight");
+    expect(await readTokenSelection(token)).toMatchObject({
+      anchor: "before",
+      focus: "after",
+      anchorInside: false,
+      focusInside: false,
+    });
+  }
 });
 
 test("chat composer keeps the caret in place while editing markdown-like text after references", async ({ page }) => {
