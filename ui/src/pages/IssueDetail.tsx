@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
@@ -2101,7 +2102,8 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           onSave={(description) => updateIssue.mutateAsync({ description: description.trim() ? description : null })}
           as="p"
           className="text-[15px] leading-7 text-foreground"
-          placeholder="Add a description..."
+          placeholder={translateLegacyString(locale, "Add a description...")}
+          ariaLabel={translateLegacyString(locale, "Add a description... Markdown editor")}
           multiline
           editorEngine="codemirror" documentIdentity={`issue:${issue.id}`}
           alwaysEdit

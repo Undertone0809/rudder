@@ -13,7 +13,7 @@ describe("translateMessage", () => {
   it("localizes the unmentioned Agent comment confirmation", () => {
     expect(translateMessage("en", "comments.unmentionedConfirm.title")).toBe("No Agent mentioned");
     expect(translateMessage("en", "comments.unmentionedConfirm.confirm")).toBe("Send anyway");
-    expect(translateMessage("zh-CN", "comments.unmentionedConfirm.title")).toBe("未 @ 任何 Agent");
+    expect(translateMessage("zh-CN", "comments.unmentionedConfirm.title")).toBe("未 @ 任何智能体");
     expect(translateMessage("zh-CN", "comments.unmentionedConfirm.confirm")).toBe("直接发送");
   });
 
@@ -22,7 +22,7 @@ describe("translateMessage", () => {
       "Sent to Agent. You'll be notified in Inbox when it's done.",
     );
     expect(translateMessage("zh-CN", "newIssue.agentRequest.accepted")).toBe(
-      "已发送给 Agent，完成后会在 Inbox 通知你",
+      "已发送给智能体，完成后会在收件箱通知你",
     );
   });
 
@@ -66,6 +66,38 @@ describe("translateMessage", () => {
 
   it("translates legacy hard-coded strings for zh-CN", () => {
     expect(translateLegacyString("zh-CN", "Filters")).toBe("筛选");
+    expect(translateLegacyString("zh-CN", "Backlog")).toBe("积压");
+    expect(translateLegacyString("zh-CN", "Issue status: Backlog")).toBe("任务状态：积压");
+    expect(translateLegacyString("zh-CN", "backlog · medium · assigned to me")).toBe(
+      "积压 · 中 · 指派给我",
+    );
+    expect(translateLegacyString("zh-CN", "Run")).toBe("运行");
+    expect(translateLegacyString("zh-CN", "Review")).toBe("评审");
+    expect(translateLegacyString("zh-CN", "Reviewer")).toBe("评审人");
+    expect(translateLegacyString("zh-CN", "Workspace")).toBe("工作区");
+    expect(translateLegacyString("zh-CN", "Cancelled")).toBe("已取消");
+    expect(translateLegacyString("zh-CN", "Hidden columns")).toBe("隐藏列");
+    expect(translateLegacyString("zh-CN", "0 issues working in current view")).toBe(
+      "当前视图中有 0 个任务正在执行",
+    );
+    expect(translateLegacyString("zh-CN", "Create Backlog issue")).toBe("创建积压任务");
+    expect(translateLegacyString("zh-CN", "Collapse Pinned (1)")).toBe("收起已置顶任务（1）");
+    expect(translateLegacyString("zh-CN", "Unpin issue R6Z-1")).toBe("取消置顶任务 R6Z-1");
+    expect(translateLegacyString("zh-CN", "Issue creation mode")).toBe("任务创建方式");
+    expect(translateLegacyString("zh-CN", "No reviewer")).toBe("无评审人");
+    expect(translateLegacyString("zh-CN", "No reviewers found.")).toBe("未找到评审人。");
+    expect(translateLegacyString("zh-CN", "Parent issue")).toBe("父任务");
+    expect(translateLegacyString("zh-CN", "No parent")).toBe("无上级");
+    expect(translateLegacyString("zh-CN", "Collapse Recently Viewed (1)")).toBe(
+      "收起最近查看的任务（1）",
+    );
+    expect(translateLegacyString("zh-CN", "Edit priority, current priority Medium")).toBe(
+      "编辑优先级，当前优先级为中",
+    );
+    expect(translateLegacyString("zh-CN", "Change project: No project")).toBe("更改项目：无项目");
+    expect(translateLegacyString("zh-CN", "Add a description... Markdown editor")).toBe(
+      "添加描述... Markdown 编辑器",
+    );
     expect(translateLegacyString("zh-CN", "These preferences apply across the board UI.")).toBe(
       "These preferences apply across the 控制台界面.",
     );
