@@ -465,7 +465,10 @@ test.describe("failed Agent Run Debug Chat", () => {
     await stopButton.click();
     expect((await stopResponse).ok()).toBe(true);
     await expect(stopButton).toHaveCount(0, { timeout: 20_000 });
-    await expect(debugPanel.getByRole("alert")).toHaveCount(0);
+    await expect(debugPanel.getByRole("alert")).toContainText(
+      "Stop was accepted, but the final runtime state could not be confirmed yet.",
+    );
+    await expect(debugPanel.getByRole("button", { name: "Stop status pending" })).toBeDisabled();
     expect(streamRequests).toHaveLength(1);
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath("run-debug-chat-stopped-mobile.png"), fullPage: true });
