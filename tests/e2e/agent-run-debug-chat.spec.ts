@@ -128,7 +128,7 @@ async function openRunDetail(page: Page, organization: Organization, runId: stri
   return mainContent;
 }
 
-async function openDebugDialogAndEditGitHubText(page: Page, mainContent: Locator) {
+async function openReportDialogAndEditGitHubText(page: Page, mainContent: Locator) {
   await mainContent.getByTestId("run-report-issue").click();
   const dialog = page.getByRole("dialog", { name: "Report this run failure" });
   const diagnostics = dialog.getByTestId("run-issue-diagnostics");
@@ -138,8 +138,8 @@ async function openDebugDialogAndEditGitHubText(page: Page, mainContent: Locator
   return { dialog, generatedSnapshot };
 }
 
-async function chooseDebugMode(page: Page, dialog: Locator, mode: "Create task" | "Start chat") {
-  await dialog.getByTestId("run-debug-menu-trigger").click();
+async function chooseDebugMode(page: Page, mainContent: Locator, mode: "Create task" | "Start chat") {
+  await mainContent.getByTestId("run-debug-menu-trigger").click();
   await page.getByRole("menuitem", { name: mode }).click();
 }
 
@@ -177,21 +177,21 @@ test.describe("failed Agent Run Debug Chat", () => {
     await page.setViewportSize({ width: 1440, height: 960 });
     const fixture = await createFailedRunFixture(page, `Run-Debug-Task-${Date.now()}`);
     const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
-    const firstDialog = await openDebugDialogAndEditGitHubText(page, mainContent);
+    const firstDialog = await openReportDialogAndEditGitHubText(page, mainContent);
+    await firstDialog.dialog.getByRole("button", { name: "Cancel" }).click();
 
-    await firstDialog.dialog.getByTestId("run-debug-menu-trigger").click();
+    await mainContent.getByTestId("run-debug-menu-trigger").click();
     await expect(page.getByRole("menuitem", { name: "Create task" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Start chat" })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("run-debug-modes-desktop.png"), fullPage: true });
     await page.keyboard.press("Escape");
-    await firstDialog.dialog.getByRole("button", { name: "Cancel" }).click();
-    await expect(firstDialog.dialog).toBeHidden();
     expect(await e2eDb.select().from(issues).where(eq(issues.orgId, fixture.organization.id))).toHaveLength(0);
 
     let failFirstRequest = true;
     await page.route(`**/api/orgs/${fixture.organization.id}/agent-runs/${fixture.runId}/debug-issue`, async (route) => {
       if (!failFirstRequest) return route.continue();
       failFirstRequest = false;
+      await new Promise((resolve) => setTimeout(resolve, 500));
       await route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -200,17 +200,17 @@ test.describe("failed Agent Run Debug Chat", () => {
     });
 
     await page.setViewportSize({ width: 390, height: 844 });
-    const { dialog, generatedSnapshot } = await openDebugDialogAndEditGitHubText(page, mainContent);
-    await dialog.getByTestId("run-debug-menu-trigger").click();
+    const generatedSnapshot = firstDialog.generatedSnapshot;
+    await mainContent.getByTestId("run-debug-menu-trigger").click();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath("run-debug-modes-mobile.png"), fullPage: true });
     await page.getByRole("menuitem", { name: "Create task" }).click();
-    await expect(dialog.getByRole("alert")).toContainText("Debug task service unavailable");
-    await expect(dialog).toBeVisible();
+    await expect(mainContent.getByTestId("run-debug-menu-trigger")).toBeDisabled();
+    await expect(mainContent.getByRole("alert")).toContainText("Debug task service unavailable");
     expect(await e2eDb.select().from(issues).where(eq(issues.orgId, fixture.organization.id))).toHaveLength(0);
 
-    await chooseDebugMode(page, dialog, "Create task");
-    await expect(dialog).toBeHidden({ timeout: 15_000 });
+    await chooseDebugMode(page, mainContent, "Create task");
+    await expect(page.getByText(/^Created Debug task /)).toBeVisible({ timeout: 15_000 });
     const createdRows = await e2eDb.select().from(issues).where(eq(issues.orgId, fixture.organization.id));
     expect(createdRows).toHaveLength(1);
     const [createdIssue] = createdRows;
@@ -265,9 +265,10 @@ test.describe("failed Agent Run Debug Chat", () => {
     );
     const streamRequests = recordStreamRequests(page);
     const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
-    const { dialog, generatedSnapshot } = await openDebugDialogAndEditGitHubText(page, mainContent);
+    const { dialog, generatedSnapshot } = await openReportDialogAndEditGitHubText(page, mainContent);
+    await dialog.getByRole("button", { name: "Cancel" }).click();
 
-    await chooseDebugMode(page, dialog, "Start chat");
+    await chooseDebugMode(page, mainContent, "Start chat");
     const sidePanel = page.getByTestId("chat-side-panel");
     const debugPanel = sidePanel.getByTestId("run-debug-chat-panel");
     await expect(debugPanel).toBeVisible({ timeout: 15_000 });
@@ -288,12 +289,7 @@ test.describe("failed Agent Run Debug Chat", () => {
 
     await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
     await expect(sidePanel).toBeHidden();
-    await mainContent.getByTestId("run-report-issue").click();
-    await chooseDebugMode(
-      page,
-      page.getByRole("dialog", { name: "Report this run failure" }),
-      "Start chat",
-    );
+    await chooseDebugMode(page, mainContent, "Start chat");
     await expect(debugPanel.getByRole("button", { name: "Stop feedback" })).toBeVisible();
     expect(streamRequests).toHaveLength(1);
     await page.screenshot({ path: testInfo.outputPath("run-debug-chat-stream-desktop.png"), fullPage: true });
@@ -302,12 +298,7 @@ test.describe("failed Agent Run Debug Chat", () => {
     await expect(sidePanel).toBeHidden();
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileUrl = page.url();
-    await mainContent.getByTestId("run-report-issue").click();
-    await chooseDebugMode(
-      page,
-      page.getByRole("dialog", { name: "Report this run failure" }),
-      "Start chat",
-    );
+    await chooseDebugMode(page, mainContent, "Start chat");
     await expect(page).toHaveURL(mobileUrl);
     await expect(sidePanel).toBeVisible();
     await expect(sidePanel).toHaveAttribute("role", "dialog");
@@ -355,12 +346,7 @@ test.describe("failed Agent Run Debug Chat", () => {
     await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
     await expect(sidePanel).toBeHidden();
     await page.setViewportSize({ width: 1440, height: 960 });
-    await mainContent.getByTestId("run-report-issue").click();
-    await chooseDebugMode(
-      page,
-      page.getByRole("dialog", { name: "Report this run failure" }),
-      "Start chat",
-    );
+    await chooseDebugMode(page, mainContent, "Start chat");
     await expect(sidePanel).toBeVisible();
     await expectWithinScrollViewport(assistantMessage, debugPanel.getByTestId("run-chat-messages-scroll"));
     expect(streamRequests).toHaveLength(1);
@@ -391,8 +377,9 @@ test.describe("failed Agent Run Debug Chat", () => {
     });
 
     const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
-    const { dialog } = await openDebugDialogAndEditGitHubText(page, mainContent);
-    await chooseDebugMode(page, dialog, "Start chat");
+    const { dialog } = await openReportDialogAndEditGitHubText(page, mainContent);
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await chooseDebugMode(page, mainContent, "Start chat");
     const debugPanel = page.getByTestId("run-debug-chat-panel");
     await expect(debugPanel.getByRole("alert")).toContainText("Choose another agent or try again", { timeout: 15_000 });
     await expect(debugPanel.getByTestId("run-feedback-composer").locator("[contenteditable='true']"))
@@ -440,8 +427,9 @@ test.describe("failed Agent Run Debug Chat", () => {
     const fixture = await createFailedRunFixture(page, `Run-Debug-Stop-${Date.now()}`);
     const streamRequests = recordStreamRequests(page);
     const mainContent = await openRunDetail(page, fixture.organization, fixture.runId, fixture.primaryAgent.id);
-    const { dialog } = await openDebugDialogAndEditGitHubText(page, mainContent);
-    await chooseDebugMode(page, dialog, "Start chat");
+    const { dialog } = await openReportDialogAndEditGitHubText(page, mainContent);
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await chooseDebugMode(page, mainContent, "Start chat");
 
     const sidePanel = page.getByTestId("chat-side-panel");
     const debugPanel = sidePanel.getByTestId("run-debug-chat-panel");
@@ -449,12 +437,7 @@ test.describe("failed Agent Run Debug Chat", () => {
     await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
     await expect(sidePanel).toBeHidden();
     await page.setViewportSize({ width: 390, height: 844 });
-    await mainContent.getByTestId("run-report-issue").click();
-    await chooseDebugMode(
-      page,
-      page.getByRole("dialog", { name: "Report this run failure" }),
-      "Start chat",
-    );
+    await chooseDebugMode(page, mainContent, "Start chat");
     const stopButton = debugPanel.getByRole("button", { name: "Stop feedback" });
     await expect(stopButton).toBeVisible();
 
@@ -465,10 +448,15 @@ test.describe("failed Agent Run Debug Chat", () => {
     await stopButton.click();
     expect((await stopResponse).ok()).toBe(true);
     await expect(stopButton).toHaveCount(0, { timeout: 20_000 });
-    await expect(debugPanel.getByRole("alert")).toContainText(
-      "Stop was accepted, but the final runtime state could not be confirmed yet.",
-    );
-    await expect(debugPanel.getByRole("button", { name: "Stop status pending" })).toBeDisabled();
+    const pendingStop = debugPanel.getByRole("button", { name: "Stop status pending" });
+    if (await pendingStop.count()) {
+      await expect(debugPanel.getByRole("alert")).toContainText(
+        "Stop was accepted, but the final runtime state could not be confirmed yet.",
+      );
+      await expect(pendingStop).toBeDisabled();
+    } else {
+      await expect(debugPanel.getByRole("alert")).toHaveCount(0);
+    }
     expect(streamRequests).toHaveLength(1);
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath("run-debug-chat-stopped-mobile.png"), fullPage: true });

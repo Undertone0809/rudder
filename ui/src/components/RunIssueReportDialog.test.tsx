@@ -23,15 +23,6 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
 }));
 
-vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div role="menu">{children}</div>,
-  DropdownMenuItem: ({ children, onSelect }: { children: ReactNode; onSelect?: () => void }) => (
-    <button type="button" role="menuitem" onClick={() => onSelect?.()}>{children}</button>
-  ),
-  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => children,
-}));
-
 vi.mock("@/lib/desktop-shell", () => ({
   readDesktopShell: () => null,
 }));
@@ -102,8 +93,6 @@ describe("RunIssueReportDialog", () => {
           environment="test"
           open
           onOpenChange={() => undefined}
-          onAskAgent={() => undefined}
-          onCreateTask={async () => undefined}
         />,
       );
     });
@@ -124,90 +113,4 @@ describe("RunIssueReportDialog", () => {
     expect(diagnostics?.className).not.toContain("field-sizing-content");
   });
 
-  it("offers explicit Debug modes and sends the generated snapshot to Chat", async () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    const onAskAgent = vi.fn();
-    const onCreateTask = vi.fn(async () => undefined);
-
-    await act(async () => {
-      root?.render(
-        <RunIssueReportDialog
-          run={createRun()}
-          version="0.7.2"
-          environment="test"
-          open
-          onOpenChange={() => undefined}
-          onAskAgent={onAskAgent}
-          onCreateTask={onCreateTask}
-        />,
-      );
-    });
-
-    const diagnostics = container.querySelector<HTMLTextAreaElement>("#run-issue-diagnostics")!;
-    const generatedSnapshot = diagnostics.value;
-    await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-      valueSetter?.call(diagnostics, "Edited GitHub-only report");
-      diagnostics.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => {
-      Array.from(container!.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Start chat"))
-        ?.click();
-    });
-
-    expect(onAskAgent).toHaveBeenCalledOnce();
-    expect(onAskAgent).toHaveBeenCalledWith(generatedSnapshot);
-    expect(onAskAgent).not.toHaveBeenCalledWith("Edited GitHub-only report");
-    expect(onCreateTask).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Create task");
-    expect(container.textContent).toContain("Start chat");
-  });
-
-  it("locks task creation while pending and reports a recoverable failure", async () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    let rejectFirst!: (error: Error) => void;
-    const firstAttempt = new Promise<void>((_resolve, reject) => {
-      rejectFirst = reject;
-    });
-    const onCreateTask = vi.fn()
-      .mockImplementationOnce(() => firstAttempt)
-      .mockResolvedValueOnce(undefined);
-    const onOpenChange = vi.fn();
-
-    await act(async () => {
-      root?.render(
-        <RunIssueReportDialog
-          run={createRun()}
-          version="0.7.2"
-          environment="test"
-          open
-          onOpenChange={onOpenChange}
-          onAskAgent={() => undefined}
-          onCreateTask={onCreateTask}
-        />,
-      );
-    });
-
-    const createTask = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Create task"))!;
-    await act(async () => {
-      createTask.click();
-      createTask.click();
-    });
-    expect(onCreateTask).toHaveBeenCalledOnce();
-    expect(container.textContent).toContain("Creating task");
-
-    await act(async () => rejectFirst(new Error("Task service unavailable")));
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Task service unavailable");
-    expect(onOpenChange).not.toHaveBeenCalledWith(false);
-
-    await act(async () => createTask.click());
-    expect(onCreateTask).toHaveBeenCalledTimes(2);
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
 });

@@ -7,12 +7,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { readDesktopShell } from "@/lib/desktop-shell";
@@ -21,7 +15,7 @@ import {
   createRunIssueReportUrl,
 } from "@/lib/run-issue-report";
 import type { HeartbeatRun } from "@rudderhq/shared";
-import { ChevronDown, ExternalLink, ListTodo, Loader2, MessageCircle, Wrench } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 function browserPlatform(): string {
@@ -39,44 +33,38 @@ export function RunIssueReportDialog({
   environment,
   open,
   onOpenChange,
-  onAskAgent,
-  onCreateTask,
 }: {
   run: HeartbeatRun;
   version: string;
   environment: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAskAgent: (diagnostics: string) => void;
-  onCreateTask: (diagnostics: string) => Promise<void>;
 }) {
-  const [generatedDiagnostics, setGeneratedDiagnostics] = useState("");
   const [diagnostics, setDiagnostics] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<"task" | "github" | null>(null);
-  const pendingActionRef = useRef<"task" | "github" | null>(null);
+  const [openingGitHub, setOpeningGitHub] = useState(false);
+  const openingGitHubRef = useRef(false);
   const diagnosticsScrollRef = useScrollbarActivityRef();
 
   useEffect(() => {
     if (!open) return;
     const generated = buildRunIssueDiagnostics(run, { version, environment });
-    setGeneratedDiagnostics(generated);
     setDiagnostics(generated);
     setOpenError(null);
-    setPendingAction(null);
-    pendingActionRef.current = null;
+    setOpeningGitHub(false);
+    openingGitHubRef.current = false;
   }, [environment, open, run, version]);
 
   async function openGitHubIssue() {
-    if (pendingActionRef.current) return;
+    if (openingGitHubRef.current) return;
     const target = createRunIssueReportUrl(run, {
       diagnostics,
       version,
       environment,
       platform: browserPlatform(),
     });
-    pendingActionRef.current = "github";
-    setPendingAction("github");
+    openingGitHubRef.current = true;
+    setOpeningGitHub(true);
     setOpenError(null);
     try {
       const desktopShell = readDesktopShell();
@@ -89,34 +77,10 @@ export function RunIssueReportDialog({
     } catch (error) {
       setOpenError(error instanceof Error ? error.message : "Could not open GitHub.");
     } finally {
-      pendingActionRef.current = null;
-      setPendingAction(null);
+      openingGitHubRef.current = false;
+      setOpeningGitHub(false);
     }
   }
-
-  function askAgent() {
-    if (!generatedDiagnostics.trim()) return;
-    onAskAgent(generatedDiagnostics);
-    onOpenChange(false);
-  }
-
-  async function createTask() {
-    if (!generatedDiagnostics.trim() || pendingActionRef.current) return;
-    pendingActionRef.current = "task";
-    setPendingAction("task");
-    setOpenError(null);
-    try {
-      await onCreateTask(generatedDiagnostics);
-      onOpenChange(false);
-    } catch (error) {
-      setOpenError(error instanceof Error ? error.message : "Could not create the Debug task.");
-    } finally {
-      pendingActionRef.current = null;
-      setPendingAction(null);
-    }
-  }
-
-  const actionPending = pendingAction !== null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -124,8 +88,8 @@ export function RunIssueReportDialog({
         <DialogHeader>
           <DialogTitle>Report this run failure</DialogTitle>
           <DialogDescription>
-            Rudder prepared bounded, redacted run diagnostics. Open a public GitHub report or
-            choose a private Debug path in this organization.
+            Rudder prepared a GitHub issue with bounded, redacted run diagnostics. Review the
+            text before opening GitHub; the issue is not submitted automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -144,50 +108,23 @@ export function RunIssueReportDialog({
           />
           <p className="text-xs text-muted-foreground">
             Known identifiers and common credential patterns are redacted automatically. Log
-            excerpts can still contain private user content. Edits here apply only to the GitHub
-            report; Debug uses the original safe snapshot.
+            excerpts can still contain private user content, so remove anything you do not want
+            to publish.
           </p>
           {openError ? <p role="alert" className="text-xs text-destructive">{openError}</p> : null}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={actionPending}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={openingGitHub}>
             Cancel
           </Button>
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                disabled={!generatedDiagnostics.trim() || actionPending}
-                data-testid="run-debug-menu-trigger"
-              >
-                {pendingAction === "task" ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Wrench className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                {pendingAction === "task" ? "Creating task" : "Debug"}
-                {pendingAction !== "task" ? <ChevronDown className="ml-1 h-3.5 w-3.5" /> : null}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" className="w-48">
-              <DropdownMenuItem onSelect={() => void createTask()}>
-                <ListTodo />
-                Create task
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={askAgent}>
-                <MessageCircle />
-                Start chat
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button onClick={() => void openGitHubIssue()} disabled={!diagnostics.trim() || actionPending}>
-            {pendingAction === "github" ? (
+          <Button onClick={() => void openGitHubIssue()} disabled={!diagnostics.trim() || openingGitHub}>
+            {openingGitHub ? (
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
             ) : (
               <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
             )}
-            {pendingAction === "github" ? "Opening GitHub" : "Open GitHub issue"}
+            {openingGitHub ? "Opening GitHub" : "Open GitHub issue"}
           </Button>
         </DialogFooter>
       </DialogContent>
