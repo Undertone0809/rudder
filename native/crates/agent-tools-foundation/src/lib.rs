@@ -1636,28 +1636,43 @@ mod tests {
         .unwrap()
     }
 
-    fn collect_schema_keywords(schema: &Value, keywords: &mut BTreeSet<String>) {
+    fn collect_schema_coverage(
+        schema: &Value,
+        keywords: &mut BTreeSet<String>,
+        value_types: &mut BTreeSet<String>,
+    ) {
         let Some(schema) = schema.as_object() else {
             return;
         };
         keywords.extend(schema.keys().cloned());
+        if let Some(schema_types) = schema.get("type") {
+            for schema_type in schema_types
+                .as_array()
+                .into_iter()
+                .flatten()
+                .chain(std::iter::once(schema_types))
+                .filter_map(Value::as_str)
+            {
+                value_types.insert(schema_type.to_owned());
+            }
+        }
         for child in schema
             .get("properties")
             .and_then(Value::as_object)
             .into_iter()
             .flat_map(|properties| properties.values())
         {
-            collect_schema_keywords(child, keywords);
+            collect_schema_coverage(child, keywords, value_types);
         }
         if let Some(items) = schema.get("items") {
-            collect_schema_keywords(items, keywords);
+            collect_schema_coverage(items, keywords, value_types);
         }
         for child in ["oneOf", "anyOf"]
             .into_iter()
             .flat_map(|key| schema.get(key).and_then(Value::as_array))
             .flatten()
         {
-            collect_schema_keywords(child, keywords);
+            collect_schema_coverage(child, keywords, value_types);
         }
     }
 
@@ -1873,11 +1888,16 @@ mod tests {
     #[test]
     fn generated_input_schemas_use_only_covered_keywords() {
         let mut actual = BTreeSet::new();
+        let mut actual_types = BTreeSet::new();
         for capability in capabilities(Surface::Core)
             .into_iter()
             .chain(capabilities(Surface::Browser))
         {
-            collect_schema_keywords(&capability["mcp"]["inputSchema"], &mut actual);
+            collect_schema_coverage(
+                &capability["mcp"]["inputSchema"],
+                &mut actual,
+                &mut actual_types,
+            );
         }
         let covered = BTreeSet::from_iter(
             [
@@ -1903,6 +1923,14 @@ mod tests {
             .map(str::to_owned),
         );
         assert_eq!(actual, covered);
+        assert_eq!(
+            actual_types,
+            BTreeSet::from_iter(
+                ["array", "boolean", "null", "number", "object", "string"]
+                    .into_iter()
+                    .map(str::to_owned),
+            )
+        );
     }
 
     #[test]

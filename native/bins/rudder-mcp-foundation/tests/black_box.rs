@@ -326,10 +326,12 @@ fn node_and_rust_processes_match_protocol_and_validation_envelopes() {
             index + 1
         );
     }
-
     let missing_messages = [
         serde_json::json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"rudder_issue_get","arguments":{"issue":"R6Z-1"}}}),
         serde_json::json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"rudder_issue_get","arguments":{"issue":123}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"rudder_goal_checkpoint","arguments":{"goal":"gol_1","summary":"checkpoint","evidenceRefs":["artifact://checkpoint"],"expectedPlanRevision":1,"continuation":{"kind":"wait","summary":"wait","wakeCondition":null},"idempotencyKey":"key"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"rudder_goal_change_propose","arguments":{"goal":"gol_1","contractRevision":1,"afterContract":{"actionDeadline":null},"rationale":"clear action deadline","idempotencyKey":"key"}}}),
+        serde_json::json!({"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"rudder_goal_change_propose","arguments":{"goal":"gol_1","contractRevision":1,"afterContract":{"evaluationDeadline":null},"rationale":"clear evaluation deadline","idempotencyKey":"key"}}}),
     ];
     let missing_stream = missing_messages
         .iter()
@@ -360,6 +362,20 @@ fn node_and_rust_processes_match_protocol_and_validation_envelopes() {
         rust[1]["result"]["structuredContent"]["code"],
         "rudder_mcp_invalid_arguments"
     );
+    for index in 2..missing_messages.len() {
+        assert_eq!(
+            validation_projection(&rust[index]),
+            validation_projection(&node[index]),
+            "nullable message {}",
+            index + 1
+        );
+        assert_eq!(
+            rust[index]["result"]["structuredContent"]["code"],
+            "rudder_mcp_missing_runtime_context",
+            "nullable message {}",
+            index + 1
+        );
+    }
 }
 
 #[test]

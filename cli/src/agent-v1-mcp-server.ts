@@ -1972,7 +1972,8 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
           : type === "boolean" ? typeof value === "boolean"
             : type === "array" ? Array.isArray(value)
               : type === "object" ? isRecord(value)
-                : false
+                : type === "null" ? value === null
+                  : false
     ));
     if (!validType) return `must be ${types.join(" or ")}`;
   }
