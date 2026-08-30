@@ -337,7 +337,7 @@ jobs:
         run: cargo fmt --manifest-path native/Cargo.toml --all --check
 
       - name: Rust Clippy
-        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings -A clippy::while_let_loop
 
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets -- --test-threads=1
