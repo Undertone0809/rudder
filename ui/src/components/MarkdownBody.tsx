@@ -21,11 +21,6 @@ import {
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import {
-  __clearWebsiteIconFailureCacheForTests,
-  isWebsiteIconUrlKnownFailed,
-  markWebsiteIconUrlFailed,
-} from "../lib/website-icon-cache";
-import {
   __clearWebsiteMetadataCacheForTests,
   getWebsiteMetadata,
 } from "../lib/website-metadata-cache";
@@ -588,10 +583,10 @@ export function resolvedWebsiteIconUrl(value: string | URL) {
   }
 
   const knownIcon = resolveKnownWebsiteIcon(url);
-  if (knownIcon && !isWebsiteIconUrlKnownFailed(knownIcon.iconDataUrl)) return knownIcon.iconDataUrl;
+  if (knownIcon) return knownIcon.iconDataUrl;
 
   const cached = readWebsiteMetadataIconCache(url.href);
-  return cached?.status === "ready" && !isWebsiteIconUrlKnownFailed(cached.iconUrl)
+  return cached?.status === "ready"
     ? cached.iconUrl
     : null;
 }
@@ -663,7 +658,6 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
   const resolvedIconUrl = metadataIcon.status === "ready" ? metadataIcon.iconUrl : null;
   const iconUrl = resolvedIconUrl
     && !failedIconUrls.has(resolvedIconUrl)
-    && !isWebsiteIconUrlKnownFailed(resolvedIconUrl)
     ? resolvedIconUrl
     : null;
 
@@ -687,7 +681,6 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
           style={iconLoaded ? undefined : { visibility: "hidden" }}
           onLoad={() => setLoadedIconUrls((current) => new Set(current).add(iconUrl))}
           onError={() => {
-            markWebsiteIconUrlFailed(iconUrl);
             setFailedIconUrls((current) => new Set(current).add(iconUrl));
           }}
         />
@@ -704,7 +697,6 @@ export function WebsiteLinkIcon({ url }: { url: URL }) {
 
 export function __clearWebsiteMetadataIconCacheForTests() {
   websiteMetadataIconCache.clear();
-  __clearWebsiteIconFailureCacheForTests();
   __clearWebsiteMetadataCacheForTests();
 }
 

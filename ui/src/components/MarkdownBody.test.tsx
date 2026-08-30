@@ -2954,7 +2954,7 @@ describe("MarkdownBody", () => {
     expect(link?.querySelector("[data-website-icon='generic']")).toBeTruthy();
   });
 
-  it("falls back directly to the generic icon when a fetched metadata icon fails to load", async () => {
+  it("falls back without retrying in place and retries after the icon is remounted", async () => {
     const url = "https://broken-icon.example.org/post/";
     entityPreviewApiMocks.getWebsiteMetadata.mockResolvedValue({
       url,
@@ -2999,9 +2999,18 @@ describe("MarkdownBody", () => {
         </MarkdownBody>
       </ThemeProvider>,
     );
-    expect(remounted.querySelector("img.rudder-website-link-logo")).toBeNull();
+    const retriedLogo = remounted.querySelector("img.rudder-website-link-logo");
+    expect(retriedLogo?.getAttribute("src")).toBe(
+      "/api/website-metadata/icon?url=https%3A%2F%2Fbroken-icon.example.org%2Fbroken.ico",
+    );
     expect(remounted.querySelector("[data-website-icon='generic']")).toBeTruthy();
     expect(entityPreviewApiMocks.getWebsiteMetadata).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      retriedLogo?.dispatchEvent(new Event("load", { bubbles: false }));
+    });
+    expect(remounted.querySelector("[data-website-icon='generic']")).toBeNull();
+    expect(remounted.querySelector("img.rudder-website-link-logo")).toBeTruthy();
   });
 
   it("keeps same-origin absolute markdown links in the current window", () => {

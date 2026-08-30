@@ -180,6 +180,97 @@ test("renders known website icons without fetching metadata", async ({ page }) =
   expect(requestedUrls.some((requestUrl) => requestUrl.startsWith("https://icons.duckduckgo.com/"))).toBe(false);
 });
 
+test("retries transient website icon failures after leaving and reopening the page", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Markdown-Website-Icon-Recovery-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const urls = [
+    "https://alpha.example.org/recovery",
+    "https://beta.example.net/recovery",
+    "https://gamma.example.com/recovery",
+  ];
+  const iconUrls = new Map(urls.map((url, index) => [
+    url,
+    `/api/website-metadata/icon?url=${encodeURIComponent(`${new URL(url).origin}/favicon-${index}.svg`)}`,
+  ]));
+  const iconAttempts = new Map<string, number>();
+
+  await page.route("**/api/website-metadata?**", async (route) => {
+    const url = new URL(route.request().url()).searchParams.get("url") ?? "";
+    const iconUrl = iconUrls.get(url);
+    if (!iconUrl) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ url, siteName: new URL(url).hostname, pageTitle: null, iconUrl }),
+    });
+  });
+  await page.route("**/api/website-metadata/icon?**", async (route) => {
+    const requestPath = new URL(route.request().url()).pathname + new URL(route.request().url()).search;
+    const attempt = (iconAttempts.get(requestPath) ?? 0) + 1;
+    iconAttempts.set(requestPath, attempt);
+    if (attempt === 1) {
+      await route.fulfill({ status: 503, contentType: "text/plain", body: "transient icon failure" });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "image/svg+xml",
+      body: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"#16a34a\"/></svg>",
+    });
+  });
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Transient website icon recovery",
+      description: urls.map((url, index) => `Recovery [source ${index + 1}](${url})`).join("\n\n"),
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier?: string | null };
+  const issuePath = `/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`;
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(issuePath);
+
+  const icons = page.locator(
+    ".rudder-codemirror-markdown-website .rudder-website-link-icon",
+  );
+  await expect(icons).toHaveCount(urls.length);
+  for (let index = 0; index < urls.length; index += 1) {
+    await expect(icons.nth(index)).toHaveAttribute("data-website-icon", "generic");
+    await expect(icons.nth(index).locator("img.rudder-website-link-logo")).not.toBeVisible();
+  }
+  await expect.poll(() => Array.from(iconAttempts.values())).toEqual([1, 1, 1]);
+
+  await page.goto(`/${organization.issuePrefix}/issues`);
+  await page.goto(issuePath);
+  await expect(icons).toHaveCount(urls.length);
+  for (let index = 0; index < urls.length; index += 1) {
+    await expect(icons.nth(index)).toHaveAttribute("data-website-icon", "metadata");
+    await expect(icons.nth(index).locator("img.rudder-website-link-logo")).toBeVisible();
+  }
+  await expect.poll(() => Array.from(iconAttempts.values())).toEqual([2, 2, 2]);
+
+  await page.reload();
+  await expect(icons).toHaveCount(urls.length);
+  for (let index = 0; index < urls.length; index += 1) {
+    await expect(icons.nth(index)).toHaveAttribute("data-website-icon", "metadata");
+    await expect(icons.nth(index).locator("img.rudder-website-link-logo")).toBeVisible();
+  }
+});
+
 test("does not fetch provider or origin favicons for internal website markdown links", async ({ page }) => {
   const requestedUrls: string[] = [];
   page.on("request", (request) => {

@@ -14,7 +14,6 @@ import {
 } from "@rudderhq/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeRelaxedMarkdownSyntax } from "../lib/markdown-normalize";
-import { __clearWebsiteIconFailureCacheForTests } from "../lib/website-icon-cache";
 import { __clearWebsiteMetadataCacheForTests } from "../lib/website-metadata-cache";
 import type { MentionOption } from "./MarkdownEditor";
 import {
@@ -54,12 +53,10 @@ vi.mock("../api/websiteMetadata", () => ({
 
 beforeEach(() => {
   websiteMetadataMocks.get.mockReset();
-  __clearWebsiteIconFailureCacheForTests();
   __clearWebsiteMetadataCacheForTests();
 });
 
 afterEach(() => {
-  __clearWebsiteIconFailureCacheForTests();
   __clearWebsiteMetadataCacheForTests();
 });
 
@@ -125,7 +122,7 @@ describe("Milkdown website link icons", () => {
     expect(image?.style.visibility).toBe("visible");
   });
 
-  it("falls back to the generic icon and avoids retrying a failed metadata icon", async () => {
+  it("falls back in place and retries a failed metadata icon in a new host", async () => {
     const href = "https://metadata.example.test/article";
     const iconUrl = "/api/website-metadata/icon?url=https%3A%2F%2Fmetadata.example.test%2Ffavicon.ico";
     websiteMetadataMocks.get.mockResolvedValue({
@@ -147,9 +144,13 @@ describe("Milkdown website link icons", () => {
     expect(firstImage?.getAttribute("src")).toBeNull();
 
     const secondHost = createMilkdownWebsiteIconElement(href);
-    await Promise.resolve();
-    expect(secondHost.querySelector("img")?.getAttribute("src")).toBeNull();
+    await vi.waitFor(() => {
+      expect(secondHost.querySelector("img")?.getAttribute("src")).toBe(iconUrl);
+    });
     expect(websiteMetadataMocks.get).toHaveBeenCalledTimes(1);
+
+    secondHost.querySelector("img")?.dispatchEvent(new Event("load"));
+    expect(secondHost.dataset.websiteIcon).toBe("metadata");
   });
 });
 
