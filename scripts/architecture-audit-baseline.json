@@ -386,6 +386,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/components/MarkdownBody.tsx",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "MarkdownBody still coordinates rich entity links, website metadata, media rendering, and interaction behavior while focused renderers are extracted.",
+      "target": "Extract website and media renderers and reduce the component below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "server/src/services/runtime-kernel/heartbeat.execute.ts",
       "lines": 1501,
       "owner": "runtime-server",
