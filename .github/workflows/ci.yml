@@ -59,7 +59,14 @@ jobs:
           compare_ref=""
           case "$EVENT_NAME" in
             pull_request)
-              compare_ref="$PR_BASE_SHA"
+              # The pull_request checkout is a synthetic merge commit. Compare
+              # against its first parent so changes already present on the
+              # updated base branch are not attributed to the PR.
+              if git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+                compare_ref="$(git rev-parse HEAD^1)"
+              else
+                compare_ref="$PR_BASE_SHA"
+              fi
               ;;
             push)
               if [[ -n "$PUSH_BEFORE_SHA" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
