@@ -1,0 +1,13 @@
+[package]
+name = "rudder-agent-tools-foundation"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-agent-contract-core = { path = "../agent-contract-core" }
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"

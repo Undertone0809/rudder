@@ -1999,7 +1999,8 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
           : type === "boolean" ? typeof value === "boolean"
             : type === "array" ? Array.isArray(value)
               : type === "object" ? isRecord(value)
-                : false
+                : type === "null" ? value === null
+                  : false
     ));
     if (!validType) return `must be ${types.join(" or ")}`;
   }
@@ -2039,6 +2040,9 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
     }
   }
   if (isRecord(value) && schema.type === "object") {
+    if (typeof schema.minProperties === "number" && Object.keys(value).length < schema.minProperties) {
+      return `must contain at least ${schema.minProperties} properties`;
+    }
     const properties = isRecord(schema.properties) ? schema.properties : {};
     const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
     for (const key of required) {
