@@ -434,6 +434,36 @@ Behavior:
   settings remain available to the adapter.
 - The adapter is invoked through model fallback support so configured fallback
   runtimes/models can attempt execution.
+- Assignment and automation Runs share a bounded tool-failure guardrail. A Run
+  checkpoints after three identical failures, 25 unresolved tool operations,
+  or 100 total tool failures. A successful result resolves only the matching
+  tool operation; unrelated successful reads do not erase prior failures.
+- A guardrail checkpoint may request one Agent-guided continuation after a
+  one-second backoff. Rudder never blindly replays the failed tool call. A
+  context-drift failure is eligible only when the failed patch reports an
+  explicit context-mismatch signature. A transient failure is eligible only
+  when the canonical tool contract proves the tool read-only. Invalid requests,
+  command failures, unclassified failures, canonical mutations, and unknown
+  tools fail closed because recovery or side effects may be indeterminate.
+- Rudder actively schedules an eligible continuation after its backoff, with
+  the periodic recovery loop retained as a crash fallback. Until the recovery
+  request is durably queued, terminal text describes only eligibility. A failed
+  enqueue records a request-failed event and leaves the original terminal
+  output path intact. Queueing the recovery Run and suppressing the source
+  automation output commit atomically, so a process exit cannot lose both.
+- An existing retry can satisfy the handoff only when its persisted context
+  proves that it is the same bounded recovery attempt. An unrelated retry is
+  rejected and cannot suppress the source output.
+- When an automation continuation is queued, the source Run does not publish
+  its recoverable failure to Chat. The linked recovery Run publishes the single
+  final outcome, preventing premature failure and duplicate automation output.
+- Guardrail events record the failure class and counts, the single recovery
+  request with its backoff and linked Run, and the recovery Run's terminal
+  result. Exhausted or unsafe recovery leaves actionable error text naming the
+  failure class, attempted recovery, and next operator action.
+- Recovery-result recording is an idempotent terminal effect, so succeeded,
+  failed, cancelled, and timed-out continuations all update the source Run even
+  when the recovery never enters adapter execution.
 - Final outcome is derived from cancellation, timeout, adapter result, and
   forbidden runtime skill marker detection.
 - Operator cancellation is scoped to the exact Agent Run ID supplied by the
@@ -481,6 +511,10 @@ Invariant:
   another Agent or organization are rejected.
 - A lost provider submission response is never converted into a duplicate
   upstream Run by an automatic retry.
+- Tool-failure recovery remains finite across assignment and automation: the
+  lifetime cap cannot be reset, only one continuation is allowed, and an
+  indeterminate mutation or unclassified tool failure cannot authorize that
+  continuation.
 - A caller must not present an unchanged succeeded, failed, or timed-out Run as
   successfully cancelled. Recovery UI may restore its prior input only after
   the exact target Run returns `cancelled`.
@@ -514,6 +548,7 @@ Related tests:
 - `server/src/__tests__/heartbeat-observability.test.ts`
 - `server/src/__tests__/heartbeat-process-recovery.test.ts`
 - `server/src/__tests__/heartbeat-workspace-preflight.test.ts`
+- `server/src/services/runtime-kernel/assignment-run-guardrail.test.ts`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/agent-run-cancel.spec.ts`
 - `tests/e2e/new-issue-agent-creation.spec.ts`

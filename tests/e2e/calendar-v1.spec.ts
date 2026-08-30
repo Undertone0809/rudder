@@ -543,4 +543,69 @@ test.describe("Calendar V1", () => {
     });
     expect(new Date(humanEvent.endAt).getTime() - new Date(humanEvent.startAt).getTime()).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000);
   });
+
+  test("requires explicit confirmation before deleting a calendar event", async ({ page }) => {
+    await page.setViewportSize({ width: 1_440, height: 960 });
+    const organization = await createCalendarOrg(page, `Calendar-Delete-Confirm-${Date.now()}`);
+    const todayKey = localDateKey(new Date());
+    const event = await createHumanEvent(
+      page,
+      organization.id,
+      "Delete confirmation review",
+      localIso(todayKey, 10),
+      localIso(todayKey, 11),
+    );
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/dashboard/calendar");
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId(`calendar-event-${event.id}`).click();
+
+    const eventDrawer = page.getByRole("dialog", { name: "Delete confirmation review" });
+    const deleteButton = eventDrawer.getByRole("button", { name: "Delete", exact: true });
+    await expect(deleteButton).toBeVisible();
+
+    let deleteRequests = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "DELETE"
+        && request.url().endsWith(`/api/orgs/${organization.id}/calendar/events/${event.id}`)
+      ) {
+        deleteRequests += 1;
+      }
+    });
+
+    await deleteButton.click();
+    let deleteDialog = page.getByRole("dialog").filter({
+      has: page.getByRole("heading", { name: 'Delete "Delete confirmation review"?' }),
+    });
+    await expect(deleteDialog).toContainText("This cannot be undone.");
+    await deleteDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(eventDrawer).toBeVisible();
+    expect(deleteRequests).toBe(0);
+
+    await deleteButton.click();
+    deleteDialog = page.getByRole("dialog").filter({
+      has: page.getByRole("heading", { name: 'Delete "Delete confirmation review"?' }),
+    });
+    await page.keyboard.press("Escape");
+    await expect(deleteDialog).toHaveCount(0);
+    await expect(eventDrawer).toBeVisible();
+    expect(deleteRequests).toBe(0);
+
+    await deleteButton.click();
+    deleteDialog = page.getByRole("dialog").filter({
+      has: page.getByRole("heading", { name: 'Delete "Delete confirmation review"?' }),
+    });
+    const deleteResponse = page.waitForResponse((response) =>
+      response.request().method() === "DELETE"
+      && response.url().endsWith(`/api/orgs/${organization.id}/calendar/events/${event.id}`)
+      && response.ok(),
+    );
+    await deleteDialog.getByRole("button", { name: "Delete event" }).click({ clickCount: 2 });
+    await deleteResponse;
+    await expect(page.getByText("Calendar block deleted")).toBeVisible();
+    await expect(page.getByTestId(`calendar-event-${event.id}`)).toHaveCount(0);
+    expect(deleteRequests).toBe(1);
+  });
 });

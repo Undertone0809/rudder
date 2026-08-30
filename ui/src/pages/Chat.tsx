@@ -311,6 +311,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const [, refreshPendingFiles] = useState(0);
   const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, boolean>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
+  const [deletingQueuedItemIds, setDeletingQueuedItemIds] = useState<Set<string>>(() => new Set());
+  const deletingQueuedItemIdsRef = useRef(new Set<string>());
   const [pendingFirstTurn, setPendingFirstTurn] = useState<{
     body: string;
     files: File[];
@@ -3306,14 +3308,31 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({ title: "Failed to edit queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
     });
   };
-  const deleteQueuedMessage = (itemId: string) => {
-    if (!selectedConversation) return;
+  const deleteQueuedMessage = async (itemId: string) => {
+    if (!selectedConversation || deletingQueuedItemIdsRef.current.has(itemId)) return;
+    const confirmed = await confirm({
+      title: "Delete queued message?",
+      description: "This permanently removes the queued message before it is sent. This cannot be undone.",
+      confirmLabel: "Delete message",
+      tone: "destructive",
+    });
+    if (!confirmed || deletingQueuedItemIdsRef.current.has(itemId)) return;
     const chatId = selectedConversation.id;
-    void chatsApi.cancelQueuedMessage(chatId, itemId)
-      .then(() => refreshQueue(chatId))
-      .catch((error) => {
-        pushToast({ title: "Failed to delete queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
+    deletingQueuedItemIdsRef.current.add(itemId);
+    setDeletingQueuedItemIds((current) => new Set(current).add(itemId));
+    try {
+      await chatsApi.cancelQueuedMessage(chatId, itemId);
+      refreshQueue(chatId);
+    } catch (error) {
+      pushToast({ title: "Failed to delete queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
+    } finally {
+      deletingQueuedItemIdsRef.current.delete(itemId);
+      setDeletingQueuedItemIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
       });
+    }
   }; const renderComposer = (centered: boolean) => {
     if (selectedConversationExternalBound && selectedConversation) {
       return (
@@ -3395,7 +3414,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Steer</button>
                           ) : null}
                           <button type="button" aria-label="Edit queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => editQueuedMessage(item.id, item.payload.body)}><Pencil className="h-3.5 w-3.5" /></button>
-                          <button type="button" aria-label="Delete queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => deleteQueuedMessage(item.id)}><Trash2 className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label="Delete queued message" aria-busy={deletingQueuedItemIds.has(item.id)} disabled={deletingQueuedItemIds.has(item.id)} className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50" onClick={() => void deleteQueuedMessage(item.id)}><Trash2 className="h-3.5 w-3.5" /></button>
                         </>
                       ) : itemRetryable ? (
                         <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Retry</button>

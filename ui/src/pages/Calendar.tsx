@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
+import { useDialog } from "@/context/DialogContext";
 import { useToast } from "@/context/ToastContext";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
@@ -48,6 +49,7 @@ import { AgendaView, CalendarAgentMarker, CalendarAgentStack, CalendarDetailLink
 export function Calendar() {
   const { viewedOrganizationId } = useViewedOrganization();
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
+  const { confirm } = useDialog();
   const {
     cursor,
     setCursor,
@@ -256,6 +258,15 @@ export function Calendar() {
     },
     onError: (error) => pushToast({ title: "Failed to delete calendar block", body: error instanceof Error ? error.message : undefined, tone: "error" }),
   });
+  const confirmAndDeleteEvent = async (event: CalendarEvent) => {
+    const confirmed = await confirm({
+      title: `Delete "${visibleEventTitle(event)}"?`,
+      description: "This permanently deletes the calendar event. This cannot be undone.",
+      confirmLabel: "Delete event",
+      tone: "destructive",
+    });
+    if (confirmed) deleteEventMutation.mutate(event);
+  };
   const updateSourceMutation = useMutation({
     mutationFn: async ({
       sourceId,
@@ -1041,7 +1052,7 @@ export function Calendar() {
                     type="button"
                     size="sm"
                     variant="destructive"
-                    onClick={() => deleteEventMutation.mutate(selectedEvent)}
+                    onClick={() => void confirmAndDeleteEvent(selectedEvent)}
                     disabled={deleteEventMutation.isPending}
                   >
                     <Trash2 className="mr-1.5 h-3.5 w-3.5" />

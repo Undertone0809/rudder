@@ -397,7 +397,7 @@ describe("RunsTab shared rail branches", () => {
       inlineAnnotations: [],
     }));
 
-    await act(async () => {
+    act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <SidePanelProvider>
@@ -418,6 +418,72 @@ describe("RunsTab shared rail branches", () => {
     const probe = container.querySelector<HTMLOutputElement>("[data-testid='side-panel-state']");
     expect(probe?.dataset.open).toBe("false");
     expect(probe?.dataset.tabCount).toBe("0");
+  });
+
+  it("restores recovered feedback after the user opens the panel", async () => {
+    const feedbackTarget: RunFeedbackTarget = {
+      kind: "run_feedback_chat",
+      agentId: "agent-1",
+      organizationId: "org-1",
+      conversationId: "conversation-1",
+      projectLocked: true,
+      clientMutationId: "mutation-1",
+      projectId: "project-1",
+      preferredAgentId: "agent-1",
+      body: "",
+      inlineAnnotations: [{
+        id: "annotation-1",
+        selectedText: "Persisted reasoning",
+        comment: "Review persisted reasoning.",
+        sourceHash: "hash-1",
+        surface: "agent_run_transcript",
+        sourceRunId: "run-1",
+        sourceAgentId: "agent-1",
+        anchorKind: "text",
+        sourceEntryId: "entry-1",
+        sourceMemberIds: ["entry-1"],
+        attachmentIds: [],
+        attachmentFileIndexes: [],
+      }],
+      label: "Run feedback",
+    };
+    localStorage.setItem("rudder.run-feedback-draft:org-1:agent-1", JSON.stringify(feedbackTarget));
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <SidePanelStateProbe />
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={null}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(sidePanelControls?.contextKey).toBe("agent-runs:agent-route"));
+    });
+
+    expect(sidePanelControls?.open).toBe(false);
+    expect(sidePanelControls?.tabs).toHaveLength(0);
+    act(() => {
+      sidePanelControls?.showPanel();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(sidePanelControls?.tabs).toHaveLength(1));
+    });
+    expect(sidePanelControls?.open).toBe(true);
+    expect(sidePanelControls?.tabs[0]).toMatchObject({
+      kind: "run_feedback_chat",
+      conversationId: "conversation-1",
+      inlineAnnotations: [expect.objectContaining({ id: "annotation-1" })],
+    });
   });
 
   it("does not restore a feedback tab after the user closes it while another tab remains open", async () => {

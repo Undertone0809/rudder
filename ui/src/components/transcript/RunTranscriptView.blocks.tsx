@@ -230,9 +230,12 @@ export function TranscriptRunAnnotationBlock({
     ?? transcriptBlockIdentity(block);
   const itemInteractionId = interactionId ?? blockId;
   const annotationText = transcriptBlockAnnotationText(block);
+  // Reasoning and tool evidence remains commentable when provider completion
+  // markers are missing. Other projections still wait until their text is stable.
+  const admitsIncompleteProviderState = block.type === "thinking" || block.type === "tool";
   const canAnnotate = presentation === "detail"
     && !streaming
-    && stable
+    && (stable || admitsIncompleteProviderState)
     && Boolean(context)
     && (block.sourceEntryIds?.length ?? 0) > 0
     && Boolean(annotationText.trim());
@@ -395,7 +398,6 @@ export function TranscriptRunAnnotationBlock({
       data-run-transcript-block-stable={stable ? "true" : undefined}
       className={cn("group/run-transcript-block relative", canAnnotate && "pr-8")}
       onFocusCapture={() => context.onAnnotationFocus?.(itemInteractionId)}
-      onMouseEnter={() => context.onAnnotationFocus?.(itemInteractionId)}
     >
       {children}
       {canAnnotate ? (

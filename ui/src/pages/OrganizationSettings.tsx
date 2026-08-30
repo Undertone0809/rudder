@@ -441,6 +441,17 @@ export function OrganizationSettings() {
     deleteArchivedChatMutation.mutate(chatId);
   }
 
+  async function handleDeleteLabel(label: { id: string; name: string }) {
+    const confirmed = await confirm({
+      title: `Delete label "${label.name}"?`,
+      description: "This permanently removes the label from the organization and from any issues that use it. This cannot be undone.",
+      confirmLabel: "Delete label",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    deleteLabelMutation.mutate(label.id);
+  }
+
   async function handleArchiveOrganization() {
     if (!viewedOrganization || !viewedOrganizationId) return;
 
@@ -764,7 +775,7 @@ export function OrganizationSettings() {
                             aria-label={`Delete label ${label.name}`}
                             className="text-muted-foreground hover:text-destructive"
                             disabled={deleting}
-                            onClick={() => deleteLabelMutation.mutate(label.id)}
+                            onClick={() => void handleDeleteLabel(label)}
                           >
                             <Trash2 />
                             <span className="sr-only">

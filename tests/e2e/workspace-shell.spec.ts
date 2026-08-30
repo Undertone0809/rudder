@@ -984,6 +984,15 @@ test.describe("Workspace shell", () => {
     await expect(resourceMenu.getByRole("menuitem", { name: "Open resource" })).toBeVisible();
     await expect(resourceMenu.getByRole("menuitem", { name: "Copy locator" })).toBeVisible();
     await resourceMenu.getByRole("menuitem", { name: "Unlink resource" }).click();
+    const unlinkDialog = page.getByRole("dialog", { name: `Remove "New Zealand codebase" from this project?` });
+    await expect(unlinkDialog).toContainText("underlying resource and its files are not deleted");
+    const unlinkResponse = page.waitForResponse((response) =>
+      response.request().method() === "DELETE"
+      && response.url().includes(`/api/projects/${project.id}/resources/${attachment.id}`)
+      && response.ok(),
+    );
+    await unlinkDialog.getByRole("button", { name: "Remove source" }).click();
+    await unlinkResponse;
     await expect(page.getByText("Resource unlinked")).toBeVisible();
     await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toHaveCount(0);
     await expect.poll(async () => {
@@ -1741,6 +1750,47 @@ test.describe("Workspace shell", () => {
 
     await page.screenshot({
       path: testInfo.outputPath("workspace-shell-issues-board.png"),
+      fullPage: true,
+    });
+  });
+
+  test("localizes issue board statuses in zh-CN", async ({ page }, testInfo) => {
+    await page.route("**/api/health", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, uiLocale: "zh-CN" } });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Workspace-Shell-Issue-Board-ZH-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const backlogRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Localized backlog issue",
+        status: "backlog",
+        priority: "medium",
+      },
+    });
+    expect(backlogRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/issues");
+    await page.getByTitle("看板视图").click();
+
+    await expect(page.getByText("Localized backlog issue", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建积压任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建待办任务" })).toBeVisible();
+    await expect(page.getByTestId("kanban-hidden-columns").getByText("隐藏列", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建进行中任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建评审中任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建已完成任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建已取消任务" })).toBeVisible();
+
+    await page.screenshot({
+      path: testInfo.outputPath("workspace-shell-issues-board-zh-CN.png"),
       fullPage: true,
     });
   });
