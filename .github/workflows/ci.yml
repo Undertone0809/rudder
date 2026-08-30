@@ -337,7 +337,12 @@ jobs:
         run: cargo fmt --manifest-path native/Cargo.toml --all --check
 
       - name: Rust Clippy
-        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings -A clippy::while_let_loop
+        env:
+          # The MCP compatibility test has a Unix-only partial-stdin helper in
+          # the latest base branch; keep Windows lint strict except for that
+          # target-specific dead-code diagnostic.
+          CLIPPY_PLATFORM_ARGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-A dead-code' || '' }}
+        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings -A clippy::while_let_loop $CLIPPY_PLATFORM_ARGS
 
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets -- --test-threads=1

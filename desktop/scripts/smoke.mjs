@@ -6675,7 +6675,7 @@ async function cleanupLocalAppScenario(input) {
 
 async function waitForLocalAppWebview(page, definition, expectedAttestation, expectedBodyText) {
   const { expectedPartition, expectedUrl } = expectedAttestation;
-  await page.waitForFunction(async ({ bindingId, expectedBodyText: bodyText, expectedPartition, expectedUrl: url }) => {
+  const evidenceHandle = await page.waitForFunction(async ({ bindingId, expectedBodyText: bodyText, expectedPartition, expectedUrl: url }) => {
     const webview = Array.from(document.querySelectorAll("[data-testid='local-app-webview']"))
       .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
         && candidate.getAttribute("data-active") === "true");
@@ -6685,6 +6685,7 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
       || typeof webview.executeJavaScript !== "function"
       || webview.getURL() !== url) return false;
     try {
+      const currentUrl = webview.getURL();
       const evidence = await webview.executeJavaScript(`(async () => {
         const response = await fetch(window.location.href, { cache: "no-store", credentials: "same-origin" });
         return {
@@ -6696,13 +6697,20 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
           title: document.title,
         };
       })()`);
-      return evidence.pathname === new URL(url).pathname
+      return currentUrl === url
+        && evidence.pathname === new URL(url).pathname
         && evidence.fetchOk === true
         && evidence.fetchStatus >= 200
         && evidence.fetchStatus < 300
         && evidence.fetchUrl === url
         && evidence.bodyText.length > 0
-        && (!bodyText || evidence.bodyText.includes(bodyText));
+        && (!bodyText || evidence.bodyText.includes(bodyText))
+        ? {
+            partition: webview.getAttribute("partition"),
+            url: currentUrl,
+            ...evidence,
+          }
+        : false;
     } catch {
       return false;
     }
@@ -6712,30 +6720,9 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
     expectedPartition,
     expectedUrl,
   }, { timeout: 45_000 });
-  return page.evaluate(async ({ bindingId, expectedUrl: url }) => {
-    const webview = Array.from(document.querySelectorAll("[data-testid='local-app-webview']"))
-      .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
-        && candidate.getAttribute("data-active") === "true");
-    if (!webview || typeof webview.executeJavaScript !== "function") {
-      throw new Error("Local App webview was not available after load");
-    }
-    return {
-      partition: webview.getAttribute("partition"),
-      url: typeof webview.getURL === "function" ? webview.getURL() : null,
-      ...(await webview.executeJavaScript(`(async () => {
-        const response = await fetch(window.location.href, { cache: "no-store", credentials: "same-origin" });
-        return {
-          bodyText: document.body?.innerText?.trim() ?? "",
-          fetchOk: response.ok,
-          fetchStatus: response.status,
-          fetchUrl: response.url,
-          pathname: window.location.pathname,
-          title: document.title,
-        };
-      })()`)),
-      expectedUrl: url,
-    };
-  }, { bindingId: definition.localBindingId, expectedUrl });
+  const evidence = await evidenceHandle.jsonValue();
+  await evidenceHandle.dispose();
+  return { ...evidence, expectedUrl };
 }
 
 async function readActiveLocalAppGuestIdentity(page, definition, marker = null) {
