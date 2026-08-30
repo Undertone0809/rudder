@@ -3,6 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import {
@@ -44,6 +45,7 @@ const agentId = "11111111-1111-4111-8111-111111111111";
 const agentName = "Agent One";
 const workspaceKey = buildAgentWorkspaceKey(agentName, agentId);
 const agent = { id: agentId, orgId, name: agentName, workspaceKey };
+const serverPackageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("home paths", () => {
   const originalRudderHome = process.env.RUDDER_HOME;
@@ -493,7 +495,7 @@ describe("home paths", () => {
         id,
         name,
       ], {
-        cwd: path.resolve(process.cwd()),
+        cwd: serverPackageRoot,
         env: {
           ...process.env,
           RUDDER_HOME: rudderHome,
