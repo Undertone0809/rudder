@@ -1,6 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
-import { PluginIcon, themedPluginIconUrl } from "@/components/PluginIcon";
+import { PluginIcon, PluginIconFrame, themedPluginIconUrl } from "@/components/PluginIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -484,7 +484,7 @@ export function PluginDetail() {
 
         <header className="mt-8 flex flex-col gap-5 border-b border-[color:var(--border-soft)] pb-8 sm:flex-row sm:items-start">
           <div className="flex min-w-0 flex-1 items-start gap-4 sm:gap-5">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-sm">
+            <PluginIconFrame className="h-16 w-16 bg-[color:var(--surface-elevated)] shadow-sm">
               <PluginIcon
                 src={themedIconUrl}
                 fallback={Package}
@@ -492,7 +492,7 @@ export function PluginDetail() {
                 fallbackClassName="h-7 w-7 text-muted-foreground"
                 testId="plugin-detail-icon"
               />
-            </div>
+            </PluginIconFrame>
             <div className="min-w-0 pt-0.5">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="break-words text-2xl font-semibold leading-tight">{detail.displayName}</h1>
