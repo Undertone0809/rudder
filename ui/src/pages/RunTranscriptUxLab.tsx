@@ -91,6 +91,8 @@ const semanticCardAgents: TranscriptAgentDirectoryEntry[] = [
     name: "Mira Chen",
     icon: null,
     role: "engineer",
+    agentRuntimeType: "codex_local",
+    agentRuntimeConfig: { model: "gpt-5.4" },
   },
 ];
 

@@ -159,13 +159,34 @@ describe("Rudder MCP semantic cards", () => {
       id: "issue-1",
       identifier: "RUD-42",
       title: "Investigate transcript cards",
+      status: "in_progress",
       assigneeAgentId: "agent-1",
-    }]), [{ id: "agent-1", name: "Ada", icon: null, role: "engineer" }]);
+    }]), [{
+      id: "agent-1",
+      name: "Ada",
+      icon: null,
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    }]);
     expect(html).toContain('href="/issues/RUD-42"');
     expect(html).toContain("Ada");
-    expect(html).not.toContain("Open");
+    expect(html).toContain('data-slot="issue-status-icon"');
+    expect(html).toContain('data-status="in_progress"');
+    expect(html).toContain("OpenAI · gpt-5.4 · Codex (local)");
+    expect(html).not.toContain(">Open<");
     expect(html).toContain('data-rudder-semantic-card-surface="true"');
-    expect(html).toContain("shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.32)]");
+    expect(html).toContain("w-[22rem]");
+  });
+
+  it("uses the product Automation icon in semantic Automation cards", () => {
+    const html = renderPresenter(block("rudder_automation_list", [{
+      id: "automation-1",
+      title: "Daily digest",
+      status: "active",
+    }]));
+    expect(html).toContain("lucide-repeat");
+    expect(html).not.toContain("lucide-zap");
   });
 
   it("shows the structured comment body in Issue and Approval receipts", () => {

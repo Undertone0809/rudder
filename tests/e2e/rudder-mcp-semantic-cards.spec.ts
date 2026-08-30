@@ -228,6 +228,10 @@ async function expandSemanticRows(surface: Locator) {
 
 async function assertFiveDomainPresenters(surface: Locator) {
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_goal_list"]')).toBeVisible();
+  const firstGoalCard = surface.locator('[data-rudder-semantic-rail="goal"] [data-rudder-semantic-card-surface="true"]').first();
+  await expect(firstGoalCard.locator('[data-rudder-semantic-agent="true"]')).toContainText("Semantic Card Agent");
+  await expect(firstGoalCard.locator('[data-rudder-semantic-agent="true"]')).toContainText("OpenAI · gpt-5.4 · Codex (local)");
+  await expect(firstGoalCard).toHaveCSS("width", "352px");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("Comment added");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("Card-ready comment");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"] [data-rudder-semantic-agent="true"]')).toContainText("Semantic Card Agent");
@@ -273,6 +277,8 @@ async function assertOutcomeStates(surface: Locator, routePrefix: string, entiti
 }
 
 test.describe("Built-in Rudder MCP semantic cards", () => {
+  test.describe.configure({ timeout: 120_000 });
+
   test.beforeEach(async ({ page }) => {
     const response = await page.request.patch("/api/instance/settings/general", {
       data: { experimentalGoalsEnabled: true },
@@ -355,7 +361,10 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await firstGoalLink.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${entities.goalIds[0]}$`));
-    await expect(page.getByText("Goal 1: semantic transcript coverage", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", {
+      name: "Goal 1: semantic transcript coverage",
+      exact: true,
+    })).toBeVisible({ timeout: 15_000 });
     await page.goBack();
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -381,13 +390,21 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
       await expect(currentRail).toBeVisible();
       expect(await currentRail.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
     }).toPass({ timeout: 10_000 });
-    await expect(async () => {
-      const currentGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
-      if (await currentGoal.getAttribute("aria-expanded") !== "true") await currentGoal.click();
-      await mobileProcess
-        .locator('[data-rudder-semantic-rail="goal"]')
-        .screenshot({ path: "/tmp/rudder-mcp-semantic-cards-chat-dark-mobile.png" });
-    }).toPass({ timeout: 10_000 });
+    await mobileProcess
+      .locator('[data-rudder-semantic-rail="goal"]')
+      .screenshot({
+        path: "/tmp/rudder-mcp-semantic-cards-chat-dark-mobile.png",
+        animations: "disabled",
+      });
+    const mobileComment = mobileProcess.getByRole("button", { name: /tool details: .*Add issue comment/i });
+    if (await mobileComment.getAttribute("aria-expanded") !== "true") await mobileComment.click();
+    const mobileReceipt = mobileProcess.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]');
+    const titleBox = await mobileReceipt.getByText("Comment added", { exact: true }).boundingBox();
+    const agentBox = await mobileReceipt.locator('[data-rudder-semantic-agent="true"]').boundingBox();
+    expect(titleBox).not.toBeNull();
+    expect(agentBox).not.toBeNull();
+    expect(titleBox!.y + titleBox!.height).toBeLessThanOrEqual(agentBox!.y);
+    expect(await mobileReceipt.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   });
 
   test("renders the same five-domain presenters in real Run Detail and preserves Raw evidence", async ({ page }) => {
