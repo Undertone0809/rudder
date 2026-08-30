@@ -2,6 +2,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { ThemeProvider } from "../../context/ThemeContext";
 import { TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import type { TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
@@ -16,6 +17,10 @@ import {
 } from "./RunTranscriptView.rudder-mcp";
 
 const toolFixtures = {
+  rudder_agent_me: {
+    result: { id: "agent-1", shortRef: "agt_ada", urlKey: "ada", name: "Ada", title: "Runtime engineer", status: "active", agentRuntimeType: "codex_local", agentRuntimeConfig: { model: "gpt-5.4" } },
+    expected: "Runtime engineer",
+  },
   rudder_goal_list: { result: [{ id: "goal-1", title: "Launch", lifecycle: "active" }], expected: "Launch" },
   rudder_goal_context: { result: { id: "goal-1", title: "Launch", lifecycle: "active" }, expected: "Launch" },
   rudder_goal_progress: { result: { id: "activity-1", goalId: "goal-1", summary: "Validated demand" }, expected: "Progress recorded" },
@@ -85,20 +90,22 @@ function renderPresenter(
   triggerAutomationParents: ReadonlyMap<string, string> = new Map(),
 ) {
   return renderToStaticMarkup(
-    <RudderMcpPresenterProvider agents={agents} triggerAutomationParents={triggerAutomationParents}>
-      <RudderMcpSemanticPresenter block={entry} />
-    </RudderMcpPresenterProvider>,
+    <ThemeProvider>
+      <RudderMcpPresenterProvider agents={agents} triggerAutomationParents={triggerAutomationParents}>
+        <RudderMcpSemanticPresenter block={entry} />
+      </RudderMcpPresenterProvider>
+    </ThemeProvider>,
   );
 }
 
 describe("Rudder MCP semantic presenter registry", () => {
-  it("maps the exact first-batch 40 tools to one of three shared presenter families", () => {
+  it("maps the exact covered tools to one of three shared presenter families", () => {
     const entries = Object.entries(RUDDER_MCP_PRESENTER_REGISTRY);
-    expect(entries).toHaveLength(40);
+    expect(entries).toHaveLength(41);
     expect(entries.filter(([, item]) => item.kind === "rail")).toHaveLength(9);
-    expect(entries.filter(([, item]) => item.kind === "summary")).toHaveLength(7);
+    expect(entries.filter(([, item]) => item.kind === "summary")).toHaveLength(8);
     expect(entries.filter(([, item]) => item.kind === "receipt")).toHaveLength(24);
-    expect(new Set(entries.map(([name]) => name)).size).toBe(40);
+    expect(new Set(entries.map(([name]) => name)).size).toBe(41);
     for (const [name, definition] of entries) {
       expect(getRudderMcpPresenterDefinition(name)).toEqual({ toolName: name, ...definition });
       expect(getRudderMcpPresenterDefinition(`mcp__rudder-tools__${name}`, {})).toEqual({ toolName: name, ...definition });
@@ -177,6 +184,8 @@ describe("Rudder MCP semantic cards", () => {
     expect(html).not.toContain(">Open<");
     expect(html).toContain('data-rudder-semantic-card-surface="true"');
     expect(html).toContain("w-[22rem]");
+    expect(html).toContain("hover:border-primary/70");
+    expect(html).not.toContain("hover:bg-card");
   });
 
   it("uses the product Automation icon in semantic Automation cards", () => {
@@ -187,6 +196,25 @@ describe("Rudder MCP semantic cards", () => {
     }]));
     expect(html).toContain("lucide-repeat");
     expect(html).not.toContain("lucide-zap");
+  });
+
+  it("renders the structured Agent identity, role, provider, model, and runtime", () => {
+    const html = renderPresenter(block("rudder_agent_me", {
+      id: "agent-1",
+      shortRef: "agt_ada",
+      urlKey: "ada",
+      name: "Ada",
+      role: "engineer",
+      title: "Runtime engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    }));
+    expect(html).toContain('href="/agents/ada"');
+    expect(html).toContain("Agent · @agt_ada");
+    expect(html).toContain("Ada");
+    expect(html).toContain("Runtime engineer");
+    expect(html).toContain("OpenAI · gpt-5.4 · Codex (local)");
   });
 
   it("shows the structured comment body in Issue and Approval receipts", () => {
@@ -201,6 +229,8 @@ describe("Rudder MCP semantic cards", () => {
     expect(issueComment).toContain('data-rudder-semantic-comment-body="true"');
     expect(issueComment).toContain('data-rudder-semantic-agent="true"');
     expect(issueComment).toContain("Ada");
+    expect(issueComment).toContain("hover:border-primary/70");
+    expect(issueComment).not.toContain("hover:bg-card");
 
     const approvalComment = renderPresenter(block("rudder_approval_comment", {
       id: "comment-2",
@@ -213,13 +243,15 @@ describe("Rudder MCP semantic cards", () => {
     expect(approvalComment).toContain("agt_unknown");
   });
 
-  it("renders comment content as escaped plain text", () => {
+  it("renders comment Markdown while keeping raw HTML escaped", () => {
     const html = renderPresenter(block("rudder_issue_comment", {
       id: "comment-1",
       issueId: "RUD-1",
-      body: "First line\n<script>not markup</script>",
+      body: "**First line**\n\n- rendered item\n\n<script>not markup</script>",
     }));
-    expect(html).toContain("First line\n&lt;script&gt;not markup&lt;/script&gt;");
+    expect(html).toContain(">First line</strong>");
+    expect(html).toContain(">rendered item</li>");
+    expect(html).toContain("&lt;script&gt;not markup&lt;/script&gt;");
     expect(html).not.toContain("<script>not markup</script>");
   });
 
@@ -320,7 +352,7 @@ describe("Rudder MCP semantic cards", () => {
 
     const resolved = renderPresenter(entry, [], new Map([["trigger-1", "automation-1"]]));
     expect(resolved).toContain('href="/automations/automation-1"');
-    expect(resolved).toContain("cursor-pointer");
+    expect(resolved).toContain('data-rudder-semantic-receipt-link="true"');
   });
 
   it("builds a trustworthy trigger-parent directory from structured transcript evidence", () => {
