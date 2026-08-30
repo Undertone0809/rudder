@@ -9,6 +9,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { ThemeProvider } from "../context/ThemeContext";
+import { renderedMarkdownSelectionText } from "../../../server/src/services/chat-inline-annotation-rendering";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
@@ -501,6 +502,49 @@ describe("MarkdownBody", () => {
     expect(restored?.startOffset).toBe(taskText.textContent!.indexOf("任务"));
     expect(restored?.endContainer).toBe(doneText);
     expect(restored?.endOffset).toBe("Done".length);
+  });
+
+  it("keeps a bold proposal heading and its list selection aligned with server rendering", () => {
+    const source = [
+      "**对应解决方案 proposal：共享 5xx 指纹与 fallback budget**",
+      "",
+      "- 立即止损：同一服务失败不再跨 transport 反复调用。",
+      "- 持久候选：记录失败指纹并限制 fallback budget。",
+      "- Owner/依赖：消息发送链路。",
+      "- 验收：确定性错误只提交一次。",
+      "- 风险/回滚：保留原始草稿。",
+      "- Confidence：high。",
+    ].join("\n");
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const sourceRoot = container.querySelector<HTMLElement>(".rudder-markdown")!;
+    sourceRoot.setAttribute(CHAT_ANNOTATION_SOURCE_ATTRIBUTE, "assistant:proposal");
+    sourceRoot.setAttribute(CHAT_ANNOTATION_BLOCK_ATTRIBUTE, "proposal");
+    const headingText = sourceRoot.querySelector("strong")!.firstChild!;
+    const finalItemText = sourceRoot.querySelectorAll("li").item(5).firstChild!;
+    const range = document.createRange();
+    range.setStart(headingText, 0);
+    range.setEnd(finalItemText, finalItemText.textContent!.length);
+
+    const result = resolveChatAnnotationRange({
+      range,
+      sourceRoot,
+      source,
+      sourceHash: "b".repeat(64),
+      sourceConversationId: "10000000-0000-4000-8000-000000000001",
+      sourceMessageId: "20000000-0000-4000-8000-000000000001",
+      surface: "assistant_body",
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.selectedText).toBe(renderedMarkdownSelectionText(
+      source,
+      result!.start,
+      result!.end,
+    ));
   });
 
   it("maps generated bare-agent mention Markdown back to the original mention text", () => {

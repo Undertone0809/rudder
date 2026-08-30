@@ -123,6 +123,28 @@ const SEMANTIC_LINE_BREAK_ELEMENTS = new Set([
   "TR",
 ]);
 
+const STRUCTURAL_MARKDOWN_ELEMENTS = new Set([
+  ...SEMANTIC_LINE_BREAK_ELEMENTS,
+  "OL",
+  "TABLE",
+  "TBODY",
+  "THEAD",
+  "UL",
+]);
+
+function isInterBlockFormattingWhitespace(node: Node, text: string) {
+  if (!/^\s+$/u.test(text)) return false;
+  const previous = node.previousSibling;
+  const next = node.nextSibling;
+  return (
+    previous instanceof HTMLElement
+    && STRUCTURAL_MARKDOWN_ELEMENTS.has(previous.tagName)
+  ) || (
+    next instanceof HTMLElement
+    && STRUCTURAL_MARKDOWN_ELEMENTS.has(next.tagName)
+  );
+}
+
 export type ChatAnnotationSemanticTextSpan = {
   node: Text;
   start: number;
@@ -145,6 +167,10 @@ function semanticVisibleText(
   }
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
+    // react-markdown may leave indentation text nodes between block elements.
+    // They are not part of Markdown's rendered text and must not enter the
+    // signed annotation selection sent to the server.
+    if (isInterBlockFormattingWhitespace(node, text)) return "";
     if (text && spans) {
       spans.push({
         node: node as Text,

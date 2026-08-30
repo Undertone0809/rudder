@@ -16,6 +16,7 @@ type ChatService = ReturnType<typeof chatService>;
 type ActorInfo = ReturnType<typeof getActorInfo>;
 
 export type ChatAnnotationRouteInput = {
+  clientMutationId?: string | null;
   provided: boolean;
   prepared: PreparedChatInlineAnnotations | null;
   storedAttachments?: Array<{
@@ -86,6 +87,9 @@ export function createChatAnnotationRouteHelpers(input: {
           }
           : {}),
         ...transactionCommitOptions,
+        ...(annotationInput.clientMutationId
+          ? { clientMutationId: annotationInput.clientMutationId }
+          : {}),
       }
       : annotationInput?.storedAttachments?.length
         ? {
@@ -95,9 +99,17 @@ export function createChatAnnotationRouteHelpers(input: {
             createdByUserId: actor.actorType === "user" ? actor.actorId : null,
           })),
           ...transactionCommitOptions,
+          ...(annotationInput.clientMutationId
+            ? { clientMutationId: annotationInput.clientMutationId }
+            : {}),
         }
-        : annotationInput?.onPersisted
-          ? transactionCommitOptions
+        : annotationInput?.onPersisted || annotationInput?.clientMutationId
+          ? {
+            ...transactionCommitOptions,
+            ...(annotationInput.clientMutationId
+              ? { clientMutationId: annotationInput.clientMutationId }
+              : {}),
+          }
           : undefined;
     const userMessage = messageOptions
       ? await input.chats.addUserChatMessage(

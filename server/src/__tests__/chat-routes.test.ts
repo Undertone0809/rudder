@@ -46,6 +46,7 @@ const mockChatService = vi.hoisted(() => ({
   listRecentUserMessages: vi.fn(),
   getMessageTranscript: vi.fn(),
   getMessage: vi.fn(),
+  getUserMessageByClientMutationId: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
   updateMessageStructuredPayload: vi.fn(),
@@ -624,6 +625,7 @@ describe("chat routes", { retry: 2 }, () => {
       items: [],
     });
     mockChatService.getQueuedMessageReplay.mockResolvedValue(null);
+    mockChatService.getUserMessageByClientMutationId.mockResolvedValue(null);
     mockChatService.createQueuedMessage.mockImplementation(async (input: Record<string, unknown>) => ({
       id: "queued-1",
       orgId: input.orgId,
@@ -2515,6 +2517,89 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
     expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
     expect(hasActiveChatGeneration("chat-1")).toBe(false);
+  });
+
+  it("replays the accepted user-message acknowledgement for a repeated send mutation", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage(
+      "message-idempotent-user",
+      "user",
+      "message",
+      "Send exactly once",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getUserMessageByClientMutationId.mockResolvedValue(userMessage);
+    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
+      available: false,
+      error: "Runtime temporarily unavailable",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: "Send exactly once",
+        clientMutationId: "send-mutation-1",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(200);
+    expect(String(res.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        type: "ack",
+        userMessage: expect.objectContaining({
+          id: userMessage.id,
+          body: userMessage.body,
+        }),
+      }),
+      { type: "final", messages: [] },
+    ]);
+    expect(mockChatService.getUserMessageByClientMutationId).toHaveBeenCalledWith(
+      conversation.orgId,
+      conversation.id,
+      "send-mutation-1",
+    );
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.getChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("does not queue a concurrent retry with the active send mutation", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    const releaseGeneration = claimChatGeneration(
+      conversation.id,
+      new AbortController(),
+      null,
+      "send-mutation-active",
+    );
+
+    try {
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/messages/stream")
+        .send({
+          body: "Send exactly once",
+          clientMutationId: "send-mutation-active",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        error: "This message is already being sent. Try again shortly.",
+        details: {
+          code: "chat_send_in_progress",
+          phase: "message_acceptance",
+        },
+      });
+      expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+    } finally {
+      releaseGeneration?.();
+    }
   });
 
   it("rejects agent-authenticated streaming chat edits before assistant generation", async () => {

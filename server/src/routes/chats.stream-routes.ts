@@ -176,6 +176,30 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       });
       return;
     }
+    const clientMutationId = parsedBody.data.clientMutationId ?? null;
+    if (!atomicFirstTurn && clientMutationId) {
+      const replayedUserMessage = await svc.getUserMessageByClientMutationId(
+        conversation.orgId,
+        conversation.id,
+        clientMutationId,
+      );
+      if (replayedUserMessage) {
+        if (replayedUserMessage.body !== parsedBody.data.body) {
+          throw conflict("Chat mutation key was already used for different content");
+        }
+        res.status(200);
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+        writeStreamEvent(res, {
+          type: "ack",
+          userMessage: replayedUserMessage,
+        });
+        writeStreamEvent(res, { type: "final", messages: [] });
+        res.end();
+        return;
+      }
+    }
     const preparedAnnotations = !atomicFirstTurn && inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
@@ -208,7 +232,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
     const abortController = new AbortController();
-    const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
+    const releaseGeneration = claimChatGeneration(
+      conversation.id,
+      abortController,
+      null,
+      clientMutationId,
+    );
     if (!releaseGeneration) {
       if (parsedBody.data.editUserMessageId) {
         res.status(409).json({ error: "Stop the current response before editing this message" });
@@ -218,7 +247,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
         return;
       }
-      const clientMutationId = `stream:${randomUUID()}`;
+      const activeGeneration = getActiveChatGeneration(conversation.id);
+      if (clientMutationId && activeGeneration?.clientMutationId === clientMutationId) {
+        throw conflict("This message is already being sent. Try again shortly.", {
+          code: "chat_send_in_progress",
+          phase: "message_acceptance",
+        });
+      }
+      const queueClientMutationId = clientMutationId ?? `stream:${randomUUID()}`;
       const storedQueueFiles = await storeQueuedAnnotationFiles(
         conversation as ChatConversation,
         messageFiles,
@@ -228,7 +264,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         queuedResult = await svc.createQueuedMessageWithStagedAttachments({
           orgId: conversation.orgId,
           conversationId: conversation.id,
-          clientMutationId,
+          clientMutationId: queueClientMutationId,
           runtimeSnapshotVersion: 1,
           expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
           requestActor: queueRequestActor(req),
@@ -258,14 +294,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       } catch (error) {
         await cleanupUncommittedQueuedAnnotationFiles(
           conversation.orgId,
-          clientMutationId,
+          queueClientMutationId,
           storedQueueFiles,
         );
         throw error;
       }
       await cleanupUncommittedQueuedAnnotationFiles(
         conversation.orgId,
-        clientMutationId,
+        queueClientMutationId,
         queuedResult.cleanupAttachments,
       );
       const item = queuedResult.item;
@@ -526,6 +562,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
             committedUserMessageId = messageId;
             stagedMessageFiles.markCommitted();
           },
+          clientMutationId,
         },
       );
       userMessagePersisted = true;

@@ -11,7 +11,8 @@ export type ChatServerQueueClaim = {
   leaseEpoch: number;
 };
 
-export type MessageHydrationRow = MessageRow & {
+export type MessageHydrationRow = Omit<MessageRow, "clientMutationId"> & {
+  clientMutationId?: string | null;
   transcriptSummary?: {
     entryCount: number;
     startedAt: string | null;
