@@ -6775,6 +6775,13 @@ async function runLocalAppsScenario(mode) {
     registryPath,
   } = await seedApprovedLocalAppDefinition(scenarioRoot, project);
   const failingLocalApp = await seedFailingLocalAppDefinition(registry, scenarioRoot);
+  await registry.recordRuntimeDescriptor(definition.id, {
+    status: "orphaned_unverified",
+    pid: 991_101,
+    pgid: 991_101,
+    port: 31_911,
+    generation: "dead-orphan-smoke-generation",
+  });
   const preservedProjectSource = project.external
     ? null
     : {
@@ -6791,17 +6798,18 @@ async function runLocalAppsScenario(mode) {
   const packagedSmokeExecutable = mode === "packaged"
     ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
     : null;
-  const run = await launchDesktop(
+  const launchEnv = {
+    ...project.launchEnv,
+    ...(mode === "packaged" && process.platform === "darwin" && process.env.HOME
+      ? { HOME: process.env.HOME }
+      : {}),
+    ...(packagedSmokeExecutable ? { RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1" } : {}),
+  };
+  let run = await launchDesktop(
     scenarioRoot,
     mode,
     ports,
-    {
-      ...project.launchEnv,
-      ...(mode === "packaged" && process.platform === "darwin" && process.env.HOME
-        ? { HOME: process.env.HOME }
-        : {}),
-      ...(packagedSmokeExecutable ? { RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1" } : {}),
-    },
+    launchEnv,
     packagedSmokeExecutable,
   );
   let runningDescriptor = null;
@@ -6809,6 +6817,16 @@ async function runLocalAppsScenario(mode) {
   let scenarioError = null;
   let cleanupError = null;
   try {
+    const recovered = await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.status(definitionId),
+      definition.id,
+    );
+    assert.equal(recovered.status, "stopped", "Desktop restart should reconcile a provably dead Local App orphan");
+    assert.equal(
+      await readLocalAppRuntimeDescriptor(registryPath, definition.id),
+      null,
+      "provably dead Local App ownership should be removed from the registry",
+    );
     const company = await createCompany(run.baseUrl, "LAP");
     const companyRouteKey = company.urlKey ?? company.issuePrefix;
     await createCeo(run.baseUrl, company.id);
@@ -7229,6 +7247,18 @@ async function runLocalAppsScenario(mode) {
       return text && text !== "No runtime logs yet." && text !== "Loading logs…" ? text : null;
     });
     if (!project.external) assert.match(logText, /Rudder Local Apps smoke fixture listening/);
+    const logsBeforeRestart = await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.logs(definitionId),
+      definition.id,
+    );
+    assert.ok(logsBeforeRestart.length > 0, "Local App logs should be available before Desktop restart");
+    await closeDesktop(run.electronApp);
+    run = await launchDesktop(scenarioRoot, mode, ports, launchEnv, packagedSmokeExecutable);
+    const logsAfterRestart = await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.logs(definitionId),
+      definition.id,
+    );
+    assert.deepEqual(logsAfterRestart, logsBeforeRestart, "Local App logs should survive a full Desktop restart");
 
     const appsHomeUrl = new URL(`/${companyRouteKey}/apps`, run.baseUrl).href;
     await run.page.goto(appsHomeUrl);

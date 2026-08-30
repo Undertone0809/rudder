@@ -10,7 +10,7 @@ import type { LocalAppRuntimeManager, LocalAppRuntimeView } from "./local-apps-r
 type RuntimeController = Pick<
   LocalAppRuntimeManager,
   "start" | "stop" | "status" | "logs" | "attestedTarget" | "shutdown"
->;
+> & Partial<Pick<LocalAppRuntimeManager, "discardPersistedState">>;
 
 type ConfirmationAction = "create" | "update" | "start";
 
@@ -87,7 +87,29 @@ export class LocalAppsController {
   }
 
   async listDefinitions(): Promise<LocalAppDefinition[]> {
-    return this.registry.listDefinitions();
+    const definitions = await this.registry.listDefinitions();
+    const groups = new Map<string, LocalAppDefinition[]>();
+    for (const definition of definitions) {
+      const group = groups.get(definition.cwd) ?? [];
+      group.push(definition);
+      groups.set(definition.cwd, group);
+    }
+    const visible: LocalAppDefinition[] = [];
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        visible.push(group[0]!);
+        continue;
+      }
+      const candidates = await Promise.all(group.map(async (definition) => ({
+        definition,
+        status: await this.runtime.status(definition.id).then((view) => view.status).catch(() => null),
+      })));
+      const guarded = candidates.filter(({ status }) => status === null || !["stopped", "failed"].includes(status));
+      const selectable = guarded.length > 0 ? guarded : candidates;
+      selectable.sort((left, right) => right.definition.updatedAt.localeCompare(left.definition.updatedAt));
+      visible.push(selectable[0]!.definition);
+    }
+    return visible;
   }
 
   async pickAndDiscover(): Promise<{ canceled: true } | { canceled: false; draft: PreparedLocalAppDefinition }> {
@@ -171,6 +193,19 @@ export class LocalAppsController {
     return this.withAdmittedOperation(async () => {
       this.ensureFeatureEnabled();
       const prepared = await this.registry.prepareDefinition(rendererDraft(input));
+      const existing = await this.registry.findDefinitionByCwd(prepared.cwd);
+      if (existing) {
+        return this.withBindingOperation(existing.id, async () => {
+          ensureInactive((await this.runtime.status(existing.id)).status, "update");
+          this.ensureAcceptingOperations();
+          this.ensureFeatureEnabled();
+          await this.requireNativeConfirmation(prepared, "create");
+          this.ensureAcceptingOperations();
+          this.ensureFeatureEnabled();
+          const updated = await this.registry.updateDefinition(existing.id, prepared);
+          return this.registry.approveDefinition(updated.id, updated.trustFingerprint);
+        });
+      }
       this.ensureAcceptingOperations();
       this.ensureFeatureEnabled();
       await this.requireNativeConfirmation(prepared, "create");
@@ -212,6 +247,7 @@ export class LocalAppsController {
         ensureInactive((await this.runtime.status(id)).status, "delete");
         this.ensureAcceptingOperations();
         await this.registry.deleteDefinition(id);
+        await this.runtime.discardPersistedState?.(id);
       }));
   }
 
