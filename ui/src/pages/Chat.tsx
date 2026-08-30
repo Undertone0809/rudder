@@ -125,6 +125,11 @@ import {
 } from "@/lib/chat-response-annotations";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import {
+  clearPendingChatSendMutation,
+  readPendingChatSendMutation,
+  savePendingChatSendMutation,
+} from "@/lib/chat-send-mutation-storage";
+import {
   buildChatSkillOptions,
   buildChatSkillReferenceOptions,
   filterChatSkillOptions,
@@ -1630,7 +1635,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         modelOverride: activeRuntimeOverrides.modelOverride,
         effortOverride: activeRuntimeOverrides.effortOverride,
       });
-      const retainedMutation = pendingSendMutationsRef.current[mutationScopeKey];
+      const retainedMutation = pendingSendMutationsRef.current[mutationScopeKey]
+        ?? readPendingChatSendMutation(selectedOrganizationId, chatId, editUserMessageId);
       const clientMutationId = retainedMutation?.fingerprint === mutationFingerprint
         ? retainedMutation.id
         : globalThis.crypto.randomUUID();
@@ -1638,10 +1644,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         fingerprint: mutationFingerprint,
         id: clientMutationId,
       };
+      savePendingChatSendMutation(
+        selectedOrganizationId,
+        chatId,
+        editUserMessageId,
+        { fingerprint: mutationFingerprint, id: clientMutationId },
+      );
       const settleClientMutation = () => {
         if (pendingSendMutationsRef.current[mutationScopeKey]?.id === clientMutationId) {
           delete pendingSendMutationsRef.current[mutationScopeKey];
         }
+        clearPendingChatSendMutation(
+          selectedOrganizationId,
+          chatId,
+          editUserMessageId,
+          clientMutationId,
+        );
       };
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,

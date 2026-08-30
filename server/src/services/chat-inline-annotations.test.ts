@@ -594,22 +594,29 @@ describe("chatInlineAnnotationService", () => {
     const chats = chatService(db);
     const persist = createChatAnnotationMessagePersistence(db, chats.getMessage);
     const clientMutationId = `send:${randomUUID()}`;
+    const clientMutationFingerprint = "a".repeat(64);
     const replayed = vi.fn();
+    const accepted = vi.fn();
 
     const [first, retry] = await Promise.all([
       persist(source.conversationId, source.orgId, "Send exactly once", null, {
         clientMutationId,
+        clientMutationFingerprint,
         onIdempotentReplay: replayed,
+        onTransactionCommitted: accepted,
       }),
       persist(source.conversationId, source.orgId, "Send exactly once", null, {
         clientMutationId,
+        clientMutationFingerprint,
         onIdempotentReplay: replayed,
+        onTransactionCommitted: accepted,
       }),
     ]);
 
     expect(retry.id).toBe(first.id);
     expect(first).not.toHaveProperty("clientMutationId");
     expect(replayed).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
     expect(await db
       .select()
       .from(chatMessages)
@@ -620,7 +627,7 @@ describe("chatInlineAnnotationService", () => {
       source.orgId,
       "Different content",
       null,
-      { clientMutationId },
+      { clientMutationId, clientMutationFingerprint: "b".repeat(64) },
     )).rejects.toMatchObject({ status: 409 });
   });
 
