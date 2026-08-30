@@ -411,6 +411,119 @@ describe("home paths", () => {
     }
   });
 
+  it("recovers an abandoned stale-lock reclaim claim on restart", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-abandoned-reclaim-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-abandoned-reclaim-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const lockPath = path.join(workspaceHome, ".rudder-organizations.lock");
+    const ownerToken = "stale-owner";
+    const abandonedToken = "abandoned-reclaimer";
+    await fs.mkdir(lockPath);
+    await fs.writeFile(
+      path.join(lockPath, `.rudder-lock-owner-${ownerToken}.json`),
+      `${JSON.stringify({
+        kind: "rudder-organization-workspace-map-lock",
+        version: 1,
+        token: ownerToken,
+        pid: 2_000_000_000,
+        hostname: os.hostname(),
+        createdAt: "2000-01-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(lockPath, `.rudder-lock-reclaim-${abandonedToken}.json`),
+      `${JSON.stringify({
+        version: 1,
+        token: abandonedToken,
+        ownerToken,
+        pid: 2_000_000_000,
+        hostname: os.hostname(),
+        createdAt: "2000-01-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Restart Recovery Org",
+      urlKey: "restart-recovery-org",
+    })).resolves.toMatchObject({ root: path.join(workspaceHome, "restart-recovery-org") });
+  });
+
+  it("serializes two process-level stale-lock reclaimers without losing either map update", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-two-reclaimers-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-two-reclaimers-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+
+    const lockPath = path.join(workspaceHome, ".rudder-organizations.lock");
+    const ownerToken = "stale-owner";
+    await fs.mkdir(lockPath);
+    await fs.writeFile(
+      path.join(lockPath, `.rudder-lock-owner-${ownerToken}.json`),
+      `${JSON.stringify({
+        kind: "rudder-organization-workspace-map-lock",
+        version: 1,
+        token: ownerToken,
+        pid: 2_000_000_000,
+        hostname: os.hostname(),
+        createdAt: "2000-01-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    const script = [
+      "import { ensureOrganizationWorkspaceLayout } from './src/home-paths.ts';",
+      "const [id, name] = process.argv.slice(1);",
+      "await ensureOrganizationWorkspaceLayout({ id, name, urlKey: name });",
+    ].join("\n");
+    const runChild = (id: string, name: string) => new Promise<void>((resolve, reject) => {
+      const child = spawn(process.execPath, [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        script,
+        id,
+        name,
+      ], {
+        cwd: path.resolve(process.cwd()),
+        env: {
+          ...process.env,
+          RUDDER_HOME: rudderHome,
+          RUDDER_INSTANCE_ID: "test-instance",
+          RUDDER_ORGANIZATION_WORKSPACE_HOME: workspaceHome,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stderr: Buffer[] = [];
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.once("error", reject);
+      child.once("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(Buffer.concat(stderr).toString("utf8") || `child exited ${code}`));
+      });
+    });
+
+    await Promise.all([
+      runChild("organization-a", "reclaimer-a"),
+      runChild("organization-b", "reclaimer-b"),
+    ]);
+    const map = JSON.parse(await fs.readFile(path.join(workspaceHome, ".rudder-organizations.json"), "utf8")) as {
+      organizations: Array<{ orgId: string }>;
+    };
+    expect(map.organizations.map((entry) => entry.orgId).sort()).toEqual([
+      "organization-a",
+      "organization-b",
+    ]);
+  });
+
   it("migrates the previous Documents instance workspace root into the friendly folder", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-documents-migration-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-documents-migration-");

@@ -22,7 +22,7 @@ const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
 const ORGANIZATION_WORKSPACE_MAP_LOCK = ".rudder-organizations.lock";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX = ".rudder-lock-owner-";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_KIND = "rudder-organization-workspace-map-lock";
-const ORGANIZATION_WORKSPACE_MAP_RECLAIM_FILE = ".rudder-lock-reclaim.json";
+const ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX = ".rudder-lock-reclaim-";
 const ORGANIZATION_WORKSPACE_IDENTITY_FILE = ".rudder-workspace.json";
 const ORGANIZATION_WORKSPACE_MIGRATION_FILE = ".rudder-workspace-migrations.json";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS = 10_000;
@@ -87,6 +87,15 @@ type OrganizationWorkspaceMapLockOwner = {
 type OrganizationWorkspaceMigrationFile = {
   version: 1;
   compatibilityAliases: string[];
+};
+
+type OrganizationWorkspaceMapReclaimClaim = {
+  version: 1;
+  token: string;
+  ownerToken: string;
+  pid: number;
+  hostname: string;
+  createdAt: string;
 };
 
 function expandHomePrefix(value: string): string {
@@ -401,6 +410,11 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
 
   while (true) {
+    if (Date.now() - startedAt >= ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
+      throw Object.assign(new Error(
+        `Timed out waiting for the organization workspace mapping lock at ${lockPath}.`,
+      ), { code: "RUDDER_WORKSPACE_MAP_LOCK_TIMEOUT" });
+    }
     try {
       await fs.mkdir(lockPath, { mode: 0o700 });
       const owner: OrganizationWorkspaceMapLockOwner = {
@@ -443,11 +457,6 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
         await reclaimStaleOrganizationWorkspaceMapLock(lockPath, existingOwner);
         continue;
       }
-      if (Date.now() - startedAt >= ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
-        throw Object.assign(new Error(
-          `Timed out waiting for the organization workspace mapping lock at ${lockPath}.`,
-        ), { code: "RUDDER_WORKSPACE_MAP_LOCK_TIMEOUT" });
-      }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
@@ -470,19 +479,50 @@ async function reclaimStaleOrganizationWorkspaceMapLock(
   lockPath: string,
   observedOwner: OrganizationWorkspaceMapLockOwner,
 ): Promise<void> {
-  const reclaimPath = path.join(lockPath, ORGANIZATION_WORKSPACE_MAP_RECLAIM_FILE);
-  let reclaimHandle: Awaited<ReturnType<typeof fs.open>>;
+  const claim: OrganizationWorkspaceMapReclaimClaim = {
+    version: 1,
+    token: randomUUID(),
+    ownerToken: observedOwner.token,
+    pid: process.pid,
+    hostname: os.hostname(),
+    createdAt: new Date().toISOString(),
+  };
+  const reclaimPath = path.join(
+    lockPath,
+    `${ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX}${claim.token}.json`,
+  );
+  let handle: Awaited<ReturnType<typeof fs.open>>;
   try {
-    reclaimHandle = await fs.open(reclaimPath, "wx", 0o600);
+    handle = await fs.open(reclaimPath, "wx", 0o600);
   } catch (error) {
-    if (["EEXIST", "ENOENT"].includes(errorCode(error) ?? "")) return;
+    if (errorCode(error) === "ENOENT") return;
     throw error;
   }
   try {
-    await reclaimHandle.writeFile(`${JSON.stringify({ token: observedOwner.token })}\n`, "utf8");
-    await reclaimHandle.sync();
+    await handle.writeFile(`${JSON.stringify(claim)}\n`, "utf8");
+    await handle.sync();
   } finally {
-    await reclaimHandle.close();
+    await handle.close();
+  }
+
+  // Let concurrently-starting reclaimers publish before electing the oldest live claim.
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const claims = await readOrganizationWorkspaceMapReclaimClaims(lockPath);
+  await Promise.all(claims.map(async (candidate) => {
+    if (
+      candidate.hostname === os.hostname()
+      && Date.now() - Date.parse(candidate.createdAt) > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+      && !isProcessAlive(candidate.pid)
+    ) {
+      await fs.rm(candidate.path, { force: true });
+    }
+  }));
+  const liveClaims = (await readOrganizationWorkspaceMapReclaimClaims(lockPath))
+    .filter((candidate) => candidate.ownerToken === observedOwner.token)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.token.localeCompare(right.token));
+  if (liveClaims[0]?.token !== claim.token) {
+    await fs.rm(reclaimPath, { force: true });
+    return;
   }
 
   const currentOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
@@ -504,6 +544,50 @@ async function reclaimStaleOrganizationWorkspaceMapLock(
   }
   // Only the positively identified directory captured by the atomic rename is removed.
   await fs.rm(tombstonePath, { recursive: true, force: true });
+}
+
+async function readOrganizationWorkspaceMapReclaimClaims(
+  lockPath: string,
+): Promise<Array<OrganizationWorkspaceMapReclaimClaim & { path: string }>> {
+  try {
+    const entries = await fs.readdir(lockPath, { withFileTypes: true });
+    const claims = await Promise.all(entries.flatMap((entry) =>
+      entry.isFile()
+        && entry.name.startsWith(ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX)
+        && entry.name.endsWith(".json")
+        ? [readOrganizationWorkspaceMapReclaimClaim(path.join(lockPath, entry.name), entry.name)]
+        : []
+    ));
+    return claims.flatMap((claim) => claim ? [claim] : []);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function readOrganizationWorkspaceMapReclaimClaim(
+  claimPath: string,
+  fileName: string,
+): Promise<(OrganizationWorkspaceMapReclaimClaim & { path: string }) | null> {
+  try {
+    const claim = JSON.parse(await fs.readFile(claimPath, "utf8")) as Partial<
+      OrganizationWorkspaceMapReclaimClaim
+    >;
+    if (
+      claim.version !== 1
+      || typeof claim.token !== "string"
+      || fileName !== `${ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX}${claim.token}.json`
+      || typeof claim.ownerToken !== "string"
+      || !Number.isSafeInteger(claim.pid)
+      || (claim.pid ?? 0) <= 0
+      || typeof claim.hostname !== "string"
+      || typeof claim.createdAt !== "string"
+      || !Number.isFinite(Date.parse(claim.createdAt))
+    ) return null;
+    return { ...(claim as OrganizationWorkspaceMapReclaimClaim), path: claimPath };
+  } catch {
+    return null;
+  }
 }
 
 async function releaseOrganizationWorkspaceMapLock(lockPath: string, token: string): Promise<void> {
@@ -531,7 +615,10 @@ async function readOrganizationWorkspaceMapLockOwner(
     );
     if (ownerEntries.length !== 1) return null;
     if (entries.some((entry) =>
-      entry.name !== ownerEntries[0]!.name && entry.name !== ORGANIZATION_WORKSPACE_MAP_RECLAIM_FILE
+      entry.name !== ownerEntries[0]!.name
+      && !(entry.isFile()
+        && entry.name.startsWith(ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX)
+        && entry.name.endsWith(".json"))
     )) return null;
     const fileName = ownerEntries[0]!.name;
     if (!fileName.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX) || !fileName.endsWith(".json")) {
