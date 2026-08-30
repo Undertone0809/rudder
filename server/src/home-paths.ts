@@ -22,6 +22,7 @@ const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
 const ORGANIZATION_WORKSPACE_MAP_LOCK = ".rudder-organizations.lock";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX = ".rudder-lock-owner-";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_KIND = "rudder-organization-workspace-map-lock";
+const ORGANIZATION_WORKSPACE_MAP_RECLAIM_FILE = ".rudder-lock-reclaim.json";
 const ORGANIZATION_WORKSPACE_IDENTITY_FILE = ".rudder-workspace.json";
 const ORGANIZATION_WORKSPACE_MIGRATION_FILE = ".rudder-workspace-migrations.json";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS = 10_000;
@@ -426,10 +427,12 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
       }
       const existingOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
       if (!existingOwner) {
-        throw Object.assign(new Error(
-          `Refusing to replace the unrecognized organization workspace mapping lock path at ${lockPath}. `
-            + "Rename or restore that directory before starting Rudder.",
-        ), { code: "RUDDER_WORKSPACE_MAP_LOCK_COLLISION" });
+        const entries = await fs.readdir(lockPath).catch(() => []);
+        if (entries.length === 0 && Date.now() - startedAt < ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          continue;
+        }
+        throw organizationWorkspaceMapLockCollision(lockPath);
       }
       const ownerAgeMs = Date.now() - Date.parse(existingOwner.createdAt);
       if (
@@ -437,14 +440,7 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
         && ownerAgeMs > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
         && !isProcessAlive(existingOwner.pid)
       ) {
-        const staleOwnerPath = path.join(
-          lockPath,
-          `${ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX}${existingOwner.token}.json`,
-        );
-        await fs.rm(staleOwnerPath, { force: true });
-        await fs.rmdir(lockPath).catch((cleanupError) => {
-          if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(errorCode(cleanupError) ?? "")) throw cleanupError;
-        });
+        await reclaimStaleOrganizationWorkspaceMapLock(lockPath, existingOwner);
         continue;
       }
       if (Date.now() - startedAt >= ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
@@ -459,12 +455,68 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
   try {
     return await fn();
   } finally {
-    // The token-specific file prevents an expired owner from deleting a successor's lock.
-    await fs.rm(ownerPath, { force: true });
-    await fs.rmdir(lockPath).catch((error) => {
-      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(errorCode(error) ?? "")) throw error;
-    });
+    await releaseOrganizationWorkspaceMapLock(lockPath, token);
   }
+}
+
+function organizationWorkspaceMapLockCollision(lockPath: string): Error {
+  return Object.assign(new Error(
+    `Refusing to replace the unrecognized organization workspace mapping lock path at ${lockPath}. `
+      + "Rename or restore that directory before starting Rudder.",
+  ), { code: "RUDDER_WORKSPACE_MAP_LOCK_COLLISION" });
+}
+
+async function reclaimStaleOrganizationWorkspaceMapLock(
+  lockPath: string,
+  observedOwner: OrganizationWorkspaceMapLockOwner,
+): Promise<void> {
+  const reclaimPath = path.join(lockPath, ORGANIZATION_WORKSPACE_MAP_RECLAIM_FILE);
+  let reclaimHandle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    reclaimHandle = await fs.open(reclaimPath, "wx", 0o600);
+  } catch (error) {
+    if (["EEXIST", "ENOENT"].includes(errorCode(error) ?? "")) return;
+    throw error;
+  }
+  try {
+    await reclaimHandle.writeFile(`${JSON.stringify({ token: observedOwner.token })}\n`, "utf8");
+    await reclaimHandle.sync();
+  } finally {
+    await reclaimHandle.close();
+  }
+
+  const currentOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
+  const stillStale = currentOwner?.token === observedOwner.token
+    && currentOwner.hostname === os.hostname()
+    && Date.now() - Date.parse(currentOwner.createdAt) > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+    && !isProcessAlive(currentOwner.pid);
+  if (!stillStale) {
+    await fs.rm(reclaimPath, { force: true });
+    return;
+  }
+
+  const tombstonePath = `${lockPath}.reclaimed-${observedOwner.token}-${randomUUID()}`;
+  try {
+    await fs.rename(lockPath, tombstonePath);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+    return;
+  }
+  // Only the positively identified directory captured by the atomic rename is removed.
+  await fs.rm(tombstonePath, { recursive: true, force: true });
+}
+
+async function releaseOrganizationWorkspaceMapLock(lockPath: string, token: string): Promise<void> {
+  const currentOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
+  if (currentOwner?.token !== token) return;
+  const tombstonePath = `${lockPath}.released-${token}-${randomUUID()}`;
+  try {
+    await fs.rename(lockPath, tombstonePath);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+    return;
+  }
+  await fs.rm(tombstonePath, { recursive: true, force: true });
 }
 
 async function readOrganizationWorkspaceMapLockOwner(
@@ -472,8 +524,16 @@ async function readOrganizationWorkspaceMapLockOwner(
 ): Promise<OrganizationWorkspaceMapLockOwner | null> {
   try {
     const entries = await fs.readdir(lockPath, { withFileTypes: true });
-    if (entries.length !== 1 || !entries[0]?.isFile()) return null;
-    const fileName = entries[0].name;
+    const ownerEntries = entries.filter((entry) =>
+      entry.isFile()
+      && entry.name.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX)
+      && entry.name.endsWith(".json")
+    );
+    if (ownerEntries.length !== 1) return null;
+    if (entries.some((entry) =>
+      entry.name !== ownerEntries[0]!.name && entry.name !== ORGANIZATION_WORKSPACE_MAP_RECLAIM_FILE
+    )) return null;
+    const fileName = ownerEntries[0]!.name;
     if (!fileName.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX) || !fileName.endsWith(".json")) {
       return null;
     }

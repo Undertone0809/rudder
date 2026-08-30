@@ -309,6 +309,108 @@ describe("home paths", () => {
     }
   });
 
+  it("waits for a transient empty acquisition directory instead of treating it as user data", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-acquiring-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-acquiring-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const lockPath = path.join(workspaceHome, ".rudder-organizations.lock");
+    await fs.mkdir(lockPath);
+    const layoutPromise = ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Acquiring Lock Org",
+      urlKey: "acquiring-lock-org",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await fs.rmdir(lockPath);
+
+    await expect(layoutPromise).resolves.toMatchObject({
+      root: path.join(workspaceHome, "acquiring-lock-org"),
+    });
+  });
+
+  it("removes only a captured stale lock tombstone when a successor appears", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-reclaim-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-reclaim-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const lockPath = path.join(workspaceHome, ".rudder-organizations.lock");
+    const staleToken = "stale-owner";
+    await fs.mkdir(lockPath);
+    await fs.writeFile(
+      path.join(lockPath, `.rudder-lock-owner-${staleToken}.json`),
+      `${JSON.stringify({
+        kind: "rudder-organization-workspace-map-lock",
+        version: 1,
+        token: staleToken,
+        pid: 2_000_000_000,
+        hostname: os.hostname(),
+        createdAt: "2000-01-01T00:00:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    const successorPath = `${lockPath}.successor`;
+    const successorSentinel = path.join(lockPath, "sentinel.txt");
+    const originalRename = fs.rename;
+    let injectedSuccessor = false;
+    let markSuccessorCreated!: () => void;
+    const successorCreated = new Promise<void>((resolve) => {
+      markSuccessorCreated = resolve;
+    });
+    fs.rename = vi.fn(async (sourcePath, targetPath) => {
+      const result = await originalRename.call(fs, sourcePath, targetPath);
+      if (
+        !injectedSuccessor
+        && path.resolve(String(sourcePath)) === lockPath
+        && String(targetPath).includes(".reclaimed-")
+      ) {
+        injectedSuccessor = true;
+        await fs.mkdir(lockPath);
+        const successorToken = "successor-owner";
+        await fs.writeFile(
+          path.join(lockPath, `.rudder-lock-owner-${successorToken}.json`),
+          `${JSON.stringify({
+            kind: "rudder-organization-workspace-map-lock",
+            version: 1,
+            token: successorToken,
+            pid: process.pid,
+            hostname: os.hostname(),
+            createdAt: new Date().toISOString(),
+          })}\n`,
+          "utf8",
+        );
+        await fs.writeFile(successorSentinel, "successor survives\n", "utf8");
+        markSuccessorCreated();
+      }
+      return result;
+    }) as typeof fs.rename;
+
+    try {
+      const layoutPromise = ensureOrganizationWorkspaceLayout({
+        id: orgId,
+        name: "Reclaimed Lock Org",
+        urlKey: "reclaimed-lock-org",
+      });
+      await successorCreated;
+      await expect(fs.readFile(successorSentinel, "utf8")).resolves.toBe("successor survives\n");
+      await originalRename.call(fs, lockPath, successorPath);
+      await expect(layoutPromise).resolves.toMatchObject({
+        root: path.join(workspaceHome, "reclaimed-lock-org"),
+      });
+    } finally {
+      fs.rename = originalRename;
+    }
+  });
+
   it("migrates the previous Documents instance workspace root into the friendly folder", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-documents-migration-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-documents-migration-");
