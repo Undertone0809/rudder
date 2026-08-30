@@ -203,23 +203,25 @@ Why:
 
 Flow:
 
-1. The operator opens `Report this run failure` from a failed or timed-out Run.
-2. Rudder prepares one bounded, redacted diagnostic snapshot. Textarea edits
-   apply only to the public GitHub report; private Debug handoffs retain the
-   original snapshot so context cannot be silently dropped or expanded.
-3. `Debug` presents two peer choices: `Create task` and `Start chat`. Opening or
-   dismissing the menu, cancelling the dialog, or closing it creates nothing.
+1. A failed or timed-out Run presents `Debug` directly in its action row, beside
+   the separate `Report issue` action.
+2. `Debug` presents two peer choices: `Create task` and `Start chat`. Opening the
+   menu creates nothing; dismissing it with Escape, an outside click, or focus
+   navigation also creates nothing and persists no menu draft.
+3. Rudder prepares one bounded, redacted diagnostic snapshot only after the
+   operator chooses a handoff mode. Public GitHub report edits remain isolated
+   from private Debug handoffs so context cannot be silently dropped or expanded.
 4. `Create task` creates or reuses one organization-private Issue for the source
    Run, assigns it to that Run's Agent, carries the source Run link and available
    Issue/project/Goal context, and marks the diagnostic block as untrusted log
    evidence.
 5. `Start chat` creates or reuses one Run Debug Chat keyed by organization and
    Run, opens it in the Side Panel, and sends the same diagnostic snapshot once.
-6. While a handoff request is pending, the dialog disables competing actions
-   and rejects same-render duplicate submission.
-7. Issue success closes the dialog and presents a direct Issue link. Chat
-   success enters the Side Panel conversation. A real failure preserves the
-   request, reports the error, and permits retry.
+6. While task creation is pending, the action row shows its inline pending state,
+   disables another Debug submission, and rejects same-render duplicates.
+7. Issue success presents a success toast with a direct Issue link. Chat success
+   enters the Side Panel conversation. A real task failure remains inline beside
+   the actions, reports the server error, and permits retry.
 
 Invariants:
 
@@ -244,7 +246,9 @@ Related code:
 - `packages/shared/src/validators/issue.ts`
 - `server/src/routes/issues.mutations.ts`
 - `server/src/services/issues.ts`
+- `ui/src/api/issues.ts`
 - `ui/src/components/RunIssueReportDialog.tsx`
+- `ui/src/lib/run-issue-report.ts`
 - `ui/src/pages/AgentDetail.runs.tsx`
 
 Related tests:

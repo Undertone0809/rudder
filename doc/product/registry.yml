@@ -452,7 +452,9 @@ contracts:
       - packages/shared/src/validators/issue.ts
       - server/src/routes/issues.mutations.ts
       - server/src/services/issues.ts
+      - ui/src/api/issues.ts
       - ui/src/components/RunIssueReportDialog.tsx
+      - ui/src/lib/run-issue-report.ts
       - ui/src/pages/AgentDetail.runs.tsx
     related_tests:
       - server/src/__tests__/issue-lifecycle-routes.test.ts
