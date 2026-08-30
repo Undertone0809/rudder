@@ -20,11 +20,16 @@ const MIGRATION_BACKUP_DIR_NAME = ".rudder-migration-backups";
 const WORKSPACE_PERMISSION_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
 const ORGANIZATION_WORKSPACE_MAP_LOCK = ".rudder-organizations.lock";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX = ".rudder-lock-owner-";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_KIND = "rudder-organization-workspace-map-lock";
 const ORGANIZATION_WORKSPACE_IDENTITY_FILE = ".rudder-workspace.json";
+const ORGANIZATION_WORKSPACE_MIGRATION_FILE = ".rudder-workspace-migrations.json";
 const ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS = 10_000;
 const ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS = 60_000;
 const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
   ORGANIZATION_WORKSPACE_MAP_FILE,
+  ORGANIZATION_WORKSPACE_MAP_LOCK,
+  MIGRATION_BACKUP_DIR_NAME,
   ".rudder",
   "backups",
   "data",
@@ -67,6 +72,20 @@ type OrganizationWorkspacePermissionFailure = {
   orgId: string;
   code: string | null;
   message: string;
+};
+
+type OrganizationWorkspaceMapLockOwner = {
+  kind: typeof ORGANIZATION_WORKSPACE_MAP_LOCK_KIND;
+  version: 1;
+  token: string;
+  pid: number;
+  hostname: string;
+  createdAt: string;
+};
+
+type OrganizationWorkspaceMigrationFile = {
+  version: 1;
+  compatibilityAliases: string[];
 };
 
 function expandHomePrefix(value: string): string {
@@ -375,17 +394,57 @@ async function updateOrganizationWorkspaceMap<T>(fn: () => Promise<T>): Promise<
 async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promise<T> {
   const lockPath = path.resolve(resolveOrganizationWorkspaceHomeDir(), ORGANIZATION_WORKSPACE_MAP_LOCK);
   const startedAt = Date.now();
+  const token = randomUUID();
+  const ownerFileName = `${ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX}${token}.json`;
+  const ownerPath = path.join(lockPath, ownerFileName);
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
 
   while (true) {
     try {
       await fs.mkdir(lockPath, { mode: 0o700 });
+      const owner: OrganizationWorkspaceMapLockOwner = {
+        kind: ORGANIZATION_WORKSPACE_MAP_LOCK_KIND,
+        version: 1,
+        token,
+        pid: process.pid,
+        hostname: os.hostname(),
+        createdAt: new Date().toISOString(),
+      };
+      const handle = await fs.open(ownerPath, "wx", 0o600);
+      try {
+        await handle.writeFile(`${JSON.stringify(owner, null, 2)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await syncDirectory(lockPath);
       break;
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-      const stat = await lstatIfExists(lockPath);
-      if (stat && Date.now() - stat.mtimeMs > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS) {
-        await fs.rm(lockPath, { recursive: true, force: true });
+      if (errorCode(error) !== "EEXIST") {
+        await fs.rmdir(lockPath).catch(() => {});
+        throw error;
+      }
+      const existingOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
+      if (!existingOwner) {
+        throw Object.assign(new Error(
+          `Refusing to replace the unrecognized organization workspace mapping lock path at ${lockPath}. `
+            + "Rename or restore that directory before starting Rudder.",
+        ), { code: "RUDDER_WORKSPACE_MAP_LOCK_COLLISION" });
+      }
+      const ownerAgeMs = Date.now() - Date.parse(existingOwner.createdAt);
+      if (
+        existingOwner.hostname === os.hostname()
+        && ownerAgeMs > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+        && !isProcessAlive(existingOwner.pid)
+      ) {
+        const staleOwnerPath = path.join(
+          lockPath,
+          `${ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX}${existingOwner.token}.json`,
+        );
+        await fs.rm(staleOwnerPath, { force: true });
+        await fs.rmdir(lockPath).catch((cleanupError) => {
+          if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(errorCode(cleanupError) ?? "")) throw cleanupError;
+        });
         continue;
       }
       if (Date.now() - startedAt >= ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
@@ -400,7 +459,50 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
   try {
     return await fn();
   } finally {
-    await fs.rm(lockPath, { recursive: true, force: true });
+    // The token-specific file prevents an expired owner from deleting a successor's lock.
+    await fs.rm(ownerPath, { force: true });
+    await fs.rmdir(lockPath).catch((error) => {
+      if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(errorCode(error) ?? "")) throw error;
+    });
+  }
+}
+
+async function readOrganizationWorkspaceMapLockOwner(
+  lockPath: string,
+): Promise<OrganizationWorkspaceMapLockOwner | null> {
+  try {
+    const entries = await fs.readdir(lockPath, { withFileTypes: true });
+    if (entries.length !== 1 || !entries[0]?.isFile()) return null;
+    const fileName = entries[0].name;
+    if (!fileName.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX) || !fileName.endsWith(".json")) {
+      return null;
+    }
+    const owner = JSON.parse(await fs.readFile(path.join(lockPath, fileName), "utf8")) as Partial<
+      OrganizationWorkspaceMapLockOwner
+    >;
+    if (
+      owner.kind !== ORGANIZATION_WORKSPACE_MAP_LOCK_KIND
+      || owner.version !== 1
+      || typeof owner.token !== "string"
+      || fileName !== `${ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX}${owner.token}.json`
+      || !Number.isSafeInteger(owner.pid)
+      || (owner.pid ?? 0) <= 0
+      || typeof owner.hostname !== "string"
+      || typeof owner.createdAt !== "string"
+      || !Number.isFinite(Date.parse(owner.createdAt))
+    ) return null;
+    return owner as OrganizationWorkspaceMapLockOwner;
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCode(error) !== "ESRCH";
   }
 }
 
@@ -520,12 +622,27 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
   for (const candidateLegacyRootPath of legacyRootPaths) {
     firstLegacyRootPath = firstLegacyRootPath || candidateLegacyRootPath;
     const legacyExists = await directoryExists(candidateLegacyRootPath);
-    if (!legacyExists) continue;
+    if (!legacyExists) {
+      if (
+        await directoryExists(canonicalRootPath)
+        && await workspaceIdentityMatches(canonicalRootPath, orgId)
+        && await workspaceMigrationIncludesAlias(canonicalRootPath, candidateLegacyRootPath)
+      ) {
+        await fs.mkdir(path.dirname(candidateLegacyRootPath), { recursive: true });
+        await createDirectoryCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath);
+        migrated = true;
+        migratedFromRootPath = candidateLegacyRootPath;
+      }
+      continue;
+    }
     if (await pathsReferenceSameDirectory(candidateLegacyRootPath, canonicalRootPath)) continue;
 
     const canonicalExists = await directoryExists(canonicalRootPath);
     try {
       if (canonicalExists) {
+        await ensureOrganizationWorkspaceIdentity(canonicalRootPath, orgId);
+        await ensureOrganizationWorkspaceIdentity(candidateLegacyRootPath, orgId);
+        await recordWorkspaceCompatibilityAlias(canonicalRootPath, candidateLegacyRootPath);
         await assertCanMergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
         const retainedDuplicates = await mergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
         await preserveWorkspaceCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath, retainedDuplicates);
@@ -536,6 +653,9 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
       }
 
       await fs.mkdir(path.dirname(canonicalRootPath), { recursive: true });
+      // The identity moves with the directory and makes a post-rename crash repairable.
+      await ensureOrganizationWorkspaceIdentity(candidateLegacyRootPath, orgId);
+      await recordWorkspaceCompatibilityAlias(candidateLegacyRootPath, candidateLegacyRootPath);
       await moveWorkspacePathWithCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath);
       migrated = true;
       migratedFromRootPath = candidateLegacyRootPath;
@@ -843,6 +963,53 @@ async function workspaceIdentityMatches(root: string, orgId: string): Promise<bo
       await fs.readFile(path.join(root, ORGANIZATION_WORKSPACE_IDENTITY_FILE), "utf8"),
     ) as { orgId?: unknown };
     return identity.orgId === validatePathSegment(orgId, "org id");
+  } catch {
+    return false;
+  }
+}
+
+async function recordWorkspaceCompatibilityAlias(root: string, aliasPath: string): Promise<void> {
+  const migrationPath = path.join(root, ORGANIZATION_WORKSPACE_MIGRATION_FILE);
+  let state: OrganizationWorkspaceMigrationFile = { version: 1, compatibilityAliases: [] };
+  try {
+    const parsed = JSON.parse(await fs.readFile(migrationPath, "utf8")) as Partial<
+      OrganizationWorkspaceMigrationFile
+    >;
+    if (parsed.version !== 1 || !Array.isArray(parsed.compatibilityAliases)) {
+      throw new Error(`Invalid organization workspace migration state at ${migrationPath}.`);
+    }
+    state = {
+      version: 1,
+      compatibilityAliases: parsed.compatibilityAliases.filter((entry): entry is string => typeof entry === "string"),
+    };
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+  }
+  const normalizedAliasPath = path.resolve(aliasPath);
+  if (state.compatibilityAliases.includes(normalizedAliasPath)) return;
+  state.compatibilityAliases.push(normalizedAliasPath);
+  state.compatibilityAliases.sort();
+
+  const tempPath = `${migrationPath}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await fs.open(tempPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(tempPath, migrationPath);
+  await syncDirectory(root);
+}
+
+async function workspaceMigrationIncludesAlias(root: string, aliasPath: string): Promise<boolean> {
+  try {
+    const state = JSON.parse(
+      await fs.readFile(path.join(root, ORGANIZATION_WORKSPACE_MIGRATION_FILE), "utf8"),
+    ) as Partial<OrganizationWorkspaceMigrationFile>;
+    return state.version === 1
+      && Array.isArray(state.compatibilityAliases)
+      && state.compatibilityAliases.includes(path.resolve(aliasPath));
   } catch {
     return false;
   }

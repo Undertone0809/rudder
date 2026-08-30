@@ -252,6 +252,63 @@ describe("home paths", () => {
     );
   });
 
+  it("never deletes a pre-existing workspace that collides with the mapping lock path", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-collision-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-collision-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const collidingRoot = path.join(workspaceHome, ".rudder-organizations.lock");
+    const sentinel = path.join(collidingRoot, "agents", "noah", "memory", "2026-08-30.md");
+    await fs.mkdir(path.dirname(sentinel), { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+
+    await expect(ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: ".rudder-organizations.lock",
+      urlKey: "legacy-lock-name",
+    })).rejects.toMatchObject({ code: "RUDDER_WORKSPACE_MAP_LOCK_COLLISION" });
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
+  });
+
+  it("does not let an expired lock owner remove a successor lock during release", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-lock-successor-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-lock-successor-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const lockPath = path.join(workspaceHome, ".rudder-organizations.lock");
+    const successorToken = "successor-owner";
+    const successorOwnerPath = path.join(lockPath, `.rudder-lock-owner-${successorToken}.json`);
+    const mapPath = resolveOrganizationWorkspaceMapPath();
+    const originalRename = fs.rename;
+    fs.rename = vi.fn(async (sourcePath, targetPath) => {
+      if (path.resolve(String(targetPath)) === mapPath) {
+        const ownerFiles = await fs.readdir(lockPath);
+        await fs.rm(path.join(lockPath, ownerFiles[0]!), { force: true });
+        await fs.writeFile(successorOwnerPath, "successor\n", "utf8");
+      }
+      return await originalRename.call(fs, sourcePath, targetPath);
+    }) as typeof fs.rename;
+
+    try {
+      await ensureOrganizationWorkspaceLayout({
+        id: orgId,
+        name: "Successor Lock Org",
+        urlKey: "successor-lock-org",
+      });
+      await expect(fs.readFile(successorOwnerPath, "utf8")).resolves.toBe("successor\n");
+    } finally {
+      fs.rename = originalRename;
+    }
+  });
+
   it("migrates the previous Documents instance workspace root into the friendly folder", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-documents-migration-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-documents-migration-");
@@ -286,6 +343,27 @@ describe("home paths", () => {
     );
     await expect(fs.readFile(path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "demo", "README.md"), "utf8"))
       .resolves.toBe("# Previous\n");
+  });
+
+  it("repairs the compatibility alias after a crash following an atomic workspace move", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-move-recovery-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-move-recovery-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const legacyRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    const memoryFile = path.join(legacyRoot, "agents", "noah", "memory", "2026-08-30.md");
+    await fs.mkdir(path.dirname(memoryFile), { recursive: true });
+    await fs.writeFile(memoryFile, "move recovery\n", "utf8");
+    await migrateOrganizationWorkspaceRoot(orgId);
+    await fs.rm(legacyRoot, { force: true });
+
+    await expect(migrateOrganizationWorkspaceRoot(orgId)).resolves.toMatchObject({ migrated: true });
+    expect((await fs.lstat(legacyRoot)).isSymbolicLink()).toBe(true);
+    await expect(fs.readFile(memoryFile, "utf8")).resolves.toBe("move recovery\n");
   });
 
   it("archives identical files while merging a legacy workspace into the friendly folder", async () => {
@@ -335,6 +413,35 @@ describe("home paths", () => {
     expect(backupDirs).toHaveLength(1);
     await expect(fs.readFile(path.join(backupHome, backupDirs[0]!, relativeSharedPath), "utf8"))
       .resolves.toBe("# Shared memory\n");
+  });
+
+  it("repairs the compatibility alias after a crash following a workspace merge archive", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-merge-recovery-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-merge-recovery-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Merge Recovery Org",
+      urlKey: "merge-recovery-org",
+    });
+    const legacyRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    const sharedRelativePath = path.join("agents", "noah", "memory", "2026-08-30.md");
+    await fs.mkdir(path.dirname(path.join(layout.root, sharedRelativePath)), { recursive: true });
+    await fs.mkdir(path.dirname(path.join(legacyRoot, sharedRelativePath)), { recursive: true });
+    await fs.writeFile(path.join(layout.root, sharedRelativePath), "merge recovery\n", "utf8");
+    await fs.writeFile(path.join(legacyRoot, sharedRelativePath), "merge recovery\n", "utf8");
+    await migrateOrganizationWorkspaceRoot(orgId);
+    await fs.rm(legacyRoot, { force: true });
+
+    await expect(migrateOrganizationWorkspaceRoot(orgId)).resolves.toMatchObject({ migrated: true });
+    expect((await fs.lstat(legacyRoot)).isSymbolicLink()).toBe(true);
+    await expect(fs.readFile(path.join(legacyRoot, sharedRelativePath), "utf8"))
+      .resolves.toBe("merge recovery\n");
   });
 
   it("fails instead of recreating an empty folder when a mapped organization folder is missing", async () => {
