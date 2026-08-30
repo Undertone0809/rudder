@@ -53,7 +53,7 @@ mod tests {
         let source = contract();
         assert_eq!(source["contractVersion"], "rudder.agent-contract/v1");
         assert_eq!(artifact_hash().len(), 64);
-        assert_eq!(source["capabilities"].as_array().map(Vec::len), Some(117));
+        assert_eq!(source["capabilities"].as_array().map(Vec::len), Some(118));
     }
 
     #[test]
