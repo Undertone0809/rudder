@@ -214,6 +214,61 @@ test.describe("Workspace shell", () => {
     expect(copyItemMetrics.scrollWidth).toBeLessThanOrEqual(copyItemMetrics.clientWidth + 1);
   });
 
+  test("highlights only the open Library file across refresh, keyboard folding, and narrow viewports", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-File-Selection-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const workspaceRoot = resolveE2EOrganizationWorkspaceRoot(organization.id);
+    const instructionsPath = path.join(workspaceRoot, "agents", "selection-agent", "instructions");
+    await fs.mkdir(instructionsPath, { recursive: true });
+    await fs.writeFile(path.join(instructionsPath, "MEMORY.md"), "# Memory\n", "utf8");
+    await fs.writeFile(path.join(instructionsPath, "SOUL.md"), "# Soul\n", "utf8");
+
+    await gotoOrganizationPath(
+      page,
+      organization,
+      "/library?path=agents%2Fselection-agent%2Finstructions%2FMEMORY.md",
+    );
+
+    const instructionsRow = page.locator(
+      '[data-workspace-entry-path="agents/selection-agent/instructions"]',
+    );
+    const memoryRow = page.locator(
+      '[data-workspace-entry-path="agents/selection-agent/instructions/MEMORY.md"]',
+    );
+    const soulRow = page.locator(
+      '[data-workspace-entry-path="agents/selection-agent/instructions/SOUL.md"]',
+    );
+    const expectOnlyFileSelected = async (selectedRow: typeof memoryRow) => {
+      await expect(instructionsRow.locator("button").first()).toHaveAttribute("aria-selected", "false");
+      expect(await instructionsRow.evaluate((element) => element.classList.contains("bg-accent"))).toBe(false);
+      await expect(selectedRow.locator("button").first()).toHaveAttribute("aria-selected", "true");
+      expect(await selectedRow.getAttribute("class")).toContain("bg-accent");
+    };
+
+    await expectOnlyFileSelected(memoryRow);
+    await soulRow.locator("button").first().click();
+    await expectOnlyFileSelected(soulRow);
+    await expect(memoryRow.locator("button").first()).toHaveAttribute("aria-selected", "false");
+
+    await page.reload();
+    await expectOnlyFileSelected(soulRow);
+
+    const instructionsButton = instructionsRow.locator("button").first();
+    await instructionsButton.focus();
+    await instructionsButton.press("ArrowLeft");
+    await expect(soulRow).toHaveCount(0);
+    await instructionsButton.press("ArrowRight");
+    await expectOnlyFileSelected(soulRow);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectOnlyFileSelected(soulRow);
+  });
+
   test("keeps the shared desktop wrapper visually neutral", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
