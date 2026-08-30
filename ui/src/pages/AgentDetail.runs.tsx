@@ -564,10 +564,10 @@ export function RunsTab({
     if (sidePanel.contextKey !== contextKey) return;
     const restoreKey = `${contextKey}:${orgId}:${agentId}`;
     if (restoredFeedbackContextRef.current === restoreKey) return;
-    restoredFeedbackContextRef.current = restoreKey;
     const existing = runFeedbackTargetForContext(null, sidePanel.tabs, orgId, agentId);
     feedbackTargetRef.current = existing;
     if (existing) {
+      restoredFeedbackContextRef.current = restoreKey;
       return;
     }
     if (typeof window === "undefined") return;
@@ -593,6 +593,7 @@ export function RunsTab({
       };
       feedbackTargetRef.current = restoredTarget;
       if (sidePanel.open) {
+        restoredFeedbackContextRef.current = restoreKey;
         sidePanel.openTargetForContext(contextKey, restoredTarget);
       }
     } catch {
