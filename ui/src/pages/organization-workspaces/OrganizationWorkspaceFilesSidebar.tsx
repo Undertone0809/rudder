@@ -19,6 +19,7 @@ import { organizationSkillsApi } from "../../api/organizationSkills";
 import { organizationsApi } from "../../api/orgs";
 import { projectsApi } from "../../api/projects";
 import { WorkspaceLaunchMenu } from "../../components/workspaces/WorkspaceLaunchControls";
+import { useDialog } from "../../context/DialogContext";
 import { useI18n } from "../../context/I18nContext";
 import { useToast } from "../../context/ToastContext";
 import { useScrollbarActivityRef } from "../../hooks/useScrollbarActivityRef";
@@ -74,6 +75,7 @@ import {
 export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCollapseSidebar?: () => void } = {}) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { confirm } = useDialog();
   const { pushToast } = useToast();
   const { locale } = useI18n();
   const { viewedOrganizationId } = useViewedOrganization();
@@ -244,6 +246,19 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
       });
     },
   });
+
+  const confirmAndRemoveProjectResourceAttachment = async (
+    project: Project,
+    attachment: ProjectResourceAttachment,
+  ) => {
+    const confirmed = await confirm({
+      title: `Remove "${attachment.resource.name}" from this project?`,
+      description: "This removes the source from the project. The underlying resource and its files are not deleted.",
+      confirmLabel: "Remove source",
+      tone: "destructive",
+    });
+    if (confirmed) removeProjectResourceAttachment.mutate({ project, attachment });
+  };
 
   const createWorkspaceEntry = useMutation({
     mutationFn: async (payload: {
@@ -900,7 +915,9 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
                       onAddResources={handleAddProjectResources}
                       onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                       onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
-                      onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
+                      onUnlinkResource={(project, attachment) => {
+                        void confirmAndRemoveProjectResourceAttachment(project, attachment);
+                      }}
                       onOpenSkillAddDialog={() => navigate("/hub?tab=skills")}
                       unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                       expandedDirectories={expandedDirectories}

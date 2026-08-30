@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useDialog } from "@/context/DialogContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -84,6 +85,7 @@ function createResourceEditDraft(attachment: ProjectResourceAttachment): Project
 }
 
 export function ProjectResourcesPanel({ project }: { project: Project }) {
+  const { confirm } = useDialog();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [addSourcesOpen, setAddSourcesOpen] = useState(false);
@@ -221,6 +223,16 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       });
     },
   });
+
+  const confirmAndRemoveAttachment = async (attachment: ProjectResourceAttachment) => {
+    const confirmed = await confirm({
+      title: `Remove "${attachment.resource.name}" from this project?`,
+      description: "This removes the source from the project. The underlying resource and its files are not deleted.",
+      confirmLabel: "Remove source",
+      tone: "destructive",
+    });
+    if (confirmed) removeAttachment.mutate(attachment.id);
+  };
 
   const createAndAttachResource = useMutation({
     mutationFn: async () => {
@@ -427,7 +439,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
                           size="icon-xs"
                           className="text-muted-foreground"
                           aria-label={`Remove ${attachment.resource.name}`}
-                          onClick={() => removeAttachment.mutate(attachment.id)}
+                          onClick={() => void confirmAndRemoveAttachment(attachment)}
                           disabled={removeAttachment.isPending || updateResourceDetails.isPending}
                         >
                           <Trash2 className="h-3.5 w-3.5" />

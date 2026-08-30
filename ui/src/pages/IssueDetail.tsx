@@ -1604,7 +1604,13 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       queryClient.setQueryData(queryKeys.issues.comment(issueId!, comment.id), comment);
       invalidateIssue();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
+      pushToast({ title: "Comment deleted", tone: "success" });
     },
+    onError: (error) => pushToast({
+      title: "Failed to delete comment",
+      body: error instanceof Error ? error.message : "Try again.",
+      tone: "error",
+    }),
   });
 
   const uploadAttachment = useMutation({
@@ -1659,6 +1665,17 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       setAttachmentError(err instanceof Error ? err.message : "Delete failed");
     },
   });
+
+  const confirmAndDeleteAttachment = async (attachment: IssueAttachment) => {
+    const attachmentName = attachment.originalFilename ?? attachment.id;
+    const confirmed = await confirm({
+      title: `Delete "${attachmentName}"?`,
+      description: "This permanently removes the attachment from the issue. This cannot be undone.",
+      confirmLabel: "Delete attachment",
+      tone: "destructive",
+    });
+    if (confirmed) deleteAttachment.mutate(attachment.id);
+  };
 
   const openInChat = useCallback(() => {
     if (!issue) {
@@ -2446,7 +2463,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteAttachment.mutate(attachment.id)}
+                    onClick={() => void confirmAndDeleteAttachment(attachment)}
                     disabled={deleteAttachment.isPending}
                     title="Delete attachment"
                   >

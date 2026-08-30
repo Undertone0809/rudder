@@ -984,6 +984,15 @@ test.describe("Workspace shell", () => {
     await expect(resourceMenu.getByRole("menuitem", { name: "Open resource" })).toBeVisible();
     await expect(resourceMenu.getByRole("menuitem", { name: "Copy locator" })).toBeVisible();
     await resourceMenu.getByRole("menuitem", { name: "Unlink resource" }).click();
+    const unlinkDialog = page.getByRole("dialog", { name: `Remove "New Zealand codebase" from this project?` });
+    await expect(unlinkDialog).toContainText("underlying resource and its files are not deleted");
+    const unlinkResponse = page.waitForResponse((response) =>
+      response.request().method() === "DELETE"
+      && response.url().includes(`/api/projects/${project.id}/resources/${attachment.id}`)
+      && response.ok(),
+    );
+    await unlinkDialog.getByRole("button", { name: "Remove source" }).click();
+    await unlinkResponse;
     await expect(page.getByText("Resource unlinked")).toBeVisible();
     await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toHaveCount(0);
     await expect.poll(async () => {

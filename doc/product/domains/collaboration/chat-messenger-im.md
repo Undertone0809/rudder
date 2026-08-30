@@ -331,7 +331,10 @@ Product model:
 - Queued follow-ups preserve the queued body and composer context until they are
   delivered, including response annotations and their annotation-owned files.
   Operators can edit or delete ordinary queued follow-ups while they remain
-  queued. Admission snapshots the effective Agent, primary model, and thinking
+  queued. Deleting one requires an explicit confirmation that explains the
+  message will be removed before delivery; cancel, close, or Escape sends no
+  request, while confirmation sends at most one request. Admission snapshots
+  the effective Agent, primary model, and thinking
   effort so later conversation-runtime changes or Agent availability changes
   do not retarget queued work. The
   server, rather than the open browser, owns claiming and delivering eligible
@@ -3275,6 +3278,9 @@ Invariants:
   later unbinds durable placement without closing its open Main tab. Saved View
   lifecycle and directory placement remain owned by
   `MESSENGER.SAVED.VIEWS.001`.
+- Removing a Saved View from Messenger requires an explicit confirmation that
+  names the Saved View, explains that durable placement is deleted while an
+  open Main tab remains, and sends no request on cancel, close, or Escape.
 
 Evidence:
 

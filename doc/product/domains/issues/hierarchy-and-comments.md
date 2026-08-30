@@ -104,6 +104,8 @@ Why:
 Product model:
 
 - A comment belongs to exactly one issue and organization.
+- Issue attachments are persisted issue evidence and may be removed from Issue
+  Detail by an authorized operator.
 - The author is either a board/user actor or an agent actor.
 - Comment bodies may contain readable references such as issue, chat, document,
   or Library links; rendering belongs to collaboration contracts.
@@ -166,6 +168,14 @@ Invariants:
 - Timeline disclosure must not make collaboration evidence unreachable. An
   initial timeline-source error fails open, and a successful retry cannot hide
   comments already shown during that Issue mount.
+- Deleting a persisted issue attachment requires an explicit confirmation that
+  names the attachment and states that removal cannot be undone. Cancel, close,
+  or Escape sends no delete request; confirmation sends at most one request and
+  leaves visible success or failure state.
+- Deleting a persisted issue comment requires an explicit confirmation that
+  identifies the comment and states that removal cannot be undone. Cancel,
+  close, or Escape sends no delete request; confirmation sends at most one
+  request and leaves visible success or failure state.
 
 Evidence:
 

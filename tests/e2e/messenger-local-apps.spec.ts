@@ -711,6 +711,26 @@ test.describe("Messenger Local Apps", () => {
     await page.getByRole("menuitem", {
       name: "Remove from Messenger",
     }).click();
+    let removeDialog = page.getByRole("dialog", { name: 'Remove "MKT dashboard local" from Messenger?' });
+    await expect(removeDialog).toContainText("durable placement");
+    await removeDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(savedRow).toBeVisible();
+
+    await savedRowContainer.getByRole("button", {
+      name: "Saved View actions for MKT dashboard local",
+    }).click();
+    await page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
+    removeDialog = page.getByRole("dialog", { name: 'Remove "MKT dashboard local" from Messenger?' });
+    await page.keyboard.press("Escape");
+    await expect(removeDialog).toHaveCount(0);
+    await expect(savedRow).toBeVisible();
+
+    await savedRowContainer.getByRole("button", {
+      name: "Saved View actions for MKT dashboard local",
+    }).click();
+    await page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
+    removeDialog = page.getByRole("dialog", { name: 'Remove "MKT dashboard local" from Messenger?' });
+    await removeDialog.getByRole("button", { name: "Remove Saved View" }).click({ clickCount: 2 });
     await expect(page).toHaveURL(/\/messenger\/workbench$/);
     await expect(main.locator(
       `[role="tab"][data-view-instance-id="${movedInstanceId}"][aria-selected="true"]`,

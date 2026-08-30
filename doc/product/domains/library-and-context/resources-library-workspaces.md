@@ -86,6 +86,8 @@ Product model:
 - Organization resources have kind, source type, locator, title, metadata, and
   organization scope.
 - A project attaches resources with role, note, and ordering.
+- Removing a Project Source deletes only that attachment; it does not delete the
+  reusable organization resource or any referenced files.
 - Library-backed resources use normalized project/library locators so the same
   durable file can be reused without duplicate catalog entries.
 - Agent run context injects attached project resources only when the run has
@@ -122,6 +124,9 @@ Invariants:
 - The Local source step must keep `Choose file` outside the scrolling recent
   source list so dense histories do not hide or move the primary action.
 - URL sources must use an `http://` or `https://` locator.
+- Every Project Source removal entry point must show the source name and the
+  attachment-only consequence in an explicit confirmation dialog. Cancel,
+  close, or Escape must leave the attachment unchanged.
 - A Chat Work manifest Reference is not a Project Source. It becomes
   eligible run context only after an operator explicitly creates/selects the
   resource and attaches it to the Project through this contract's flow.
@@ -134,7 +139,8 @@ Evidence:
   URL steps, local multi-select, and URL validation.
 - `tests/e2e/new-project-sources-dialog.spec.ts` verifies dense recent-local
   selection, fixed file selection, project creation, persisted source readback,
-  and HTTP(S) URL handling through the real UI and API.
+  HTTP(S) URL handling, and confirmation-gated removal through the real UI and
+  API.
 - Agent run context tests assert resource prompt content.
 
 ## LIBRARY.FILES.001

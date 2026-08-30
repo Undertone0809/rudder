@@ -2258,15 +2258,32 @@ export function MessengerContextSidebar() {
       });
     },
   });
-  const requestRemoveSavedView = useCallback((savedViewId: string) => {
+  const requestRemoveSavedView = useCallback(async (savedViewId: string) => {
     const organizationId = model.selectedOrganizationId;
     if (!organizationId) return;
+    const savedView = loadedSavedViews.find((candidate) => candidate.id === savedViewId)
+      ?? customGroups
+        .flatMap((group) => group.entries)
+        .filter(isSavedViewCustomGroupEntry)
+        .find((entry) => entry.item.savedView.id === savedViewId)
+        ?.item.savedView;
+    const title = savedView ? savedViewDisplayTitle(savedView) : "this Saved View";
+    const confirmed = await confirm({
+      title: `Remove "${title}" from Messenger?`,
+      description: "This deletes the Saved View's durable placement. Any open Main tab stays open, but this cannot be undone.",
+      confirmLabel: "Remove Saved View",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
     removeSavedViewMutation.mutate({
       focusItemKey: rememberAdjacentSavedViewFocus(savedViewId),
       organizationId,
       savedViewId,
     });
   }, [
+    confirm,
+    customGroups,
+    loadedSavedViews,
     model.selectedOrganizationId,
     rememberAdjacentSavedViewFocus,
     removeSavedViewMutation,

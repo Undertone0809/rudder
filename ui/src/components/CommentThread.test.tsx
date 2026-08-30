@@ -1484,8 +1484,8 @@ describe("CommentThread", () => {
     await vi.waitFor(() => expect(onDelete).toHaveBeenCalledWith("comment-1"));
     expect(mockConfirm).toHaveBeenCalledWith({
       title: "Delete this comment?",
-      description: "The original text will no longer be visible.",
-      confirmLabel: "Delete",
+      description: "This permanently removes the comment from the issue. This cannot be undone.",
+      confirmLabel: "Delete comment",
       tone: "destructive",
     });
   });

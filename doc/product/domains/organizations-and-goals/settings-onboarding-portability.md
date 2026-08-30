@@ -282,6 +282,10 @@ Flow:
 Invariants:
 
 - Settings must not silently cross organization or user boundaries.
+- Deleting an organization label requires an explicit confirmation that names
+  the label and explains that it will be removed from every issue that uses it.
+  Cancel, close, or Escape sends no delete request; confirmation sends at most
+  one request and leaves visible success or failure state.
 - Settings navigation must keep personal, instance/Desktop, runtime,
   integration, and organization scopes visibly distinct. Viewing another
   organization's settings must not implicitly switch the operator's active
