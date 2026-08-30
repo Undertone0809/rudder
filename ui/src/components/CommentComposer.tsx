@@ -243,55 +243,13 @@ export function CommentComposer({
           />
         </div>
       </div>
-      {mentionedAgents.length > 0 ? (
-        <div
-          data-testid="comment-agent-wake-status"
-          className="col-span-3 row-start-2 mt-2 flex min-w-0 flex-wrap items-center gap-2"
-        >
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="status" aria-live="polite">
-            {mentionedAgents.map(({ mention, waking }) => {
-              const agentId = mention.agentId!;
-              const actionLabel = waking
-                ? `Cancel starting ${mention.name} when this comment is sent`
-                : `Start ${mention.name} when this comment is sent`;
-              return (
-                <button
-                  key={agentId}
-                  type="button"
-                  data-testid={`comment-agent-wake-status-${agentId}`}
-                  data-wake-state={waking ? "pending" : "skipped"}
-                  aria-label={actionLabel}
-                  title={actionLabel}
-                  className="control-hover inline-flex min-h-8 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)] px-2 py-1 text-xs text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={() => {
-                    onBodyChange(setAgentMentionIntent(body, agentId, waking ? "reference" : "wake"));
-                    requestAnimationFrame(() => activeEditorRef.current?.focus());
-                  }}
-                >
-                  <AgentIdentity
-                    name={mention.name}
-                    icon={mention.agentIcon}
-                    role={mention.agentRole}
-                    size="sm"
-                    className="min-w-0 max-w-[10rem]"
-                  />
-                  <span className="shrink-0 text-muted-foreground">
-                    {waking ? "will start when sent" : "won't start this time"}
-                  </span>
-                  {waking
-                    ? <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    : <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
-                </button>
-              );
-            })}
-          </div>
-          {beforeSubmit ? <div className="ml-auto flex shrink-0 items-center">{beforeSubmit}</div> : null}
-        </div>
-      ) : null}
       {attachmentStatus ? <div className="col-span-3 mt-2 md:mt-2">{attachmentStatus}</div> : null}
-      <div className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3">
+      <div
+        data-testid="issue-comment-composer-toolbar"
+        className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3"
+      >
         {(imageUploadHandler || onAttachFile) ? (
-          <div className="col-start-1 row-start-1 flex items-center self-end md:mr-auto md:gap-3">
+          <div className={`col-start-1 row-start-1 flex items-center self-end md:gap-3 ${mentionedAgents.length === 0 ? "md:mr-auto" : ""}`}>
             <input
               ref={attachInputRef}
               type="file"
@@ -313,7 +271,51 @@ export function CommentComposer({
             </Button>
           </div>
         ) : null}
-        {mentionedAgents.length === 0 && beforeSubmit ? (
+        {mentionedAgents.length > 0 ? (
+          <div
+            data-testid="comment-agent-wake-status"
+            className="col-span-3 row-start-2 mt-2 flex min-w-0 flex-wrap items-center gap-2 md:mt-0 md:flex-1"
+          >
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="status" aria-live="polite">
+              {mentionedAgents.map(({ mention, waking }) => {
+                const agentId = mention.agentId!;
+                const actionLabel = waking
+                  ? `Cancel starting ${mention.name} when this comment is sent`
+                  : `Start ${mention.name} when this comment is sent`;
+                return (
+                  <button
+                    key={agentId}
+                    type="button"
+                    data-testid={`comment-agent-wake-status-${agentId}`}
+                    data-wake-state={waking ? "pending" : "skipped"}
+                    aria-label={actionLabel}
+                    title={actionLabel}
+                    className="control-hover inline-flex min-h-8 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)] px-2 py-1 text-xs text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+                    onClick={() => {
+                      onBodyChange(setAgentMentionIntent(body, agentId, waking ? "reference" : "wake"));
+                      requestAnimationFrame(() => activeEditorRef.current?.focus());
+                    }}
+                  >
+                    <AgentIdentity
+                      name={mention.name}
+                      icon={mention.agentIcon}
+                      role={mention.agentRole}
+                      size="sm"
+                      className="min-w-0 max-w-[10rem]"
+                    />
+                    <span className="shrink-0 text-muted-foreground">
+                      {waking ? "will start when sent" : "won't start this time"}
+                    </span>
+                    {waking
+                      ? <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      : <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
+            {beforeSubmit ? <div className="ml-auto flex shrink-0 items-center">{beforeSubmit}</div> : null}
+          </div>
+        ) : beforeSubmit ? (
           <div className="col-span-3 row-start-2 mt-2 flex justify-end md:contents">
             {beforeSubmit}
           </div>

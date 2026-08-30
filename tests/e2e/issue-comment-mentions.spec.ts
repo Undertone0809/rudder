@@ -248,6 +248,24 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(agentChipLink).toContainText("Dylan");
   await expect(composer).toContainText(/before Dylan.*next\s+after/);
 
+  const composerToolbar = page.getByTestId("issue-comment-composer-toolbar").last();
+  const wakeStatus = composerToolbar.getByTestId("comment-agent-wake-status");
+  const wakeStatusButton = wakeStatus.getByRole("button");
+  const attachmentButton = composerToolbar.getByTitle("Attach file");
+  await expect(wakeStatusButton).toContainText("will start when sent");
+  const [attachmentBox, wakeStatusBox] = await Promise.all([
+    attachmentButton.boundingBox(),
+    wakeStatusButton.boundingBox(),
+  ]);
+  expect(attachmentBox).not.toBeNull();
+  expect(wakeStatusBox).not.toBeNull();
+  expect(Math.abs(
+    attachmentBox!.y + attachmentBox!.height / 2
+    - (wakeStatusBox!.y + wakeStatusBox!.height / 2),
+  )).toBeLessThanOrEqual(1);
+  await wakeStatusButton.click();
+  await expect(wakeStatusButton).toContainText("won't start this time");
+
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);
 
