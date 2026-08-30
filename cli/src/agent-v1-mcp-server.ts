@@ -30,7 +30,7 @@ import {
   createIssueSchema,
 } from "@rudderhq/shared";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -2133,14 +2133,42 @@ function renderCsv(value: unknown): unknown {
 
 function runRudderCli(args: string[], env: McpServerEnv): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   const invocation = resolveRudderCliInvocation(args, env);
+  const cwd = resolveRudderMcpCliCwd(env);
   return new Promise((resolve) => {
-    const child = spawn(invocation.command, invocation.args, { env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(invocation.command, invocation.args, {
+      cwd,
+      env: env as NodeJS.ProcessEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
     child.on("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
     child.on("error", (err) => resolve({ exitCode: 1, stdout, stderr: err.message }));
+  });
+}
+
+export function resolveRudderMcpCliCwd(env: McpServerEnv): string {
+  const candidates = [
+    env.RUDDER_PROJECT_LIBRARY_ROOT,
+    env.AGENT_HOME,
+    env.RUDDER_ORG_WORKSPACE_ROOT,
+    env.RUDDER_RUNTIME_TMPDIR,
+    os.tmpdir(),
+    os.homedir(),
+    path.parse(process.execPath).root,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate?.trim()) continue;
+    try {
+      if (statSync(candidate).isDirectory()) return path.resolve(candidate);
+    } catch {
+      // Continue to the next stable runtime-owned directory.
+    }
+  }
+  throw Object.assign(new Error("Rudder MCP could not find a stable working directory for the CLI process."), {
+    code: "rudder_mcp_stable_cwd_unavailable",
   });
 }
 
@@ -2169,6 +2197,7 @@ export function resolveRudderCliInvocation(
 
 function hasRunnableRudderOnPath(env: McpServerEnv): boolean {
   const probe = spawnSync("rudder", ["--version"], {
+    cwd: resolveRudderMcpCliCwd(env),
     env: env as NodeJS.ProcessEnv,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

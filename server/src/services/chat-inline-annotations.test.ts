@@ -110,15 +110,14 @@ describe("chatInlineAnnotationService", () => {
   let service!: ReturnType<typeof chatInlineAnnotationService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let workspaceHome = "";
   let originalWorkspaceHome: string | undefined;
 
   beforeAll(async () => {
-    const started = await startTempDatabase();
     originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = path.join(
-      started.dataDir || os.tmpdir(),
-      `rudder-annotation-workspaces-${randomUUID()}`,
-    );
+    workspaceHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-annotation-workspaces-"));
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+    const started = await startTempDatabase();
     db = createDb(started.connectionString);
     service = chatInlineAnnotationService(db);
     instance = started.instance;
@@ -142,16 +141,16 @@ describe("chatInlineAnnotationService", () => {
 
   afterAll(async () => {
     await instance?.stop();
-    if (process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME) {
-      fs.rmSync(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME, {
+    if (workspaceHome) {
+      fs.rmSync(workspaceHome, {
         recursive: true,
         force: true,
       });
-      if (originalWorkspaceHome === undefined) {
-        delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-      } else {
-        process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
-      }
+    }
+    if (originalWorkspaceHome === undefined) {
+      delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+    } else {
+      process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
     }
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
