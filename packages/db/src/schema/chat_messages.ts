@@ -1,4 +1,5 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { approvals } from "./approvals.js";
 import { chatConversations } from "./chat_conversations.js";
@@ -19,6 +20,7 @@ export const chatMessages = pgTable(
     approvalId: uuid("approval_id").references(() => approvals.id, { onDelete: "set null" }),
     runId: uuid("run_id").references(() => heartbeatRuns.id, { onDelete: "set null" }),
     replyingAgentId: uuid("replying_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    clientMutationId: text("client_mutation_id"),
     /** User+assistant pairs that share a logical "turn" (for edit/regenerate variants). */
     chatTurnId: uuid("chat_turn_id"),
     turnVariant: integer("turn_variant").notNull().default(0),
@@ -38,5 +40,8 @@ export const chatMessages = pgTable(
     ),
     approvalIdx: index("chat_messages_approval_idx").on(table.approvalId),
     runIdx: index("chat_messages_run_idx").on(table.runId),
+    conversationMutationIdx: uniqueIndex("chat_messages_conversation_mutation_uq")
+      .on(table.conversationId, table.clientMutationId)
+      .where(sql`${table.clientMutationId} is not null`),
   }),
 );

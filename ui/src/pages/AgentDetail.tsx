@@ -94,6 +94,7 @@ import { AgentSkillsOnboarding } from "../components/AgentSkillsOnboarding";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { EntityRow } from "../components/EntityRow";
+import { IssueDetailFind } from "../components/IssueDetailFind";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
@@ -186,6 +187,7 @@ export function AgentDetail() {
   const [customTo, setCustomTo] = useState("");
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+  const agentDetailRootRef = useRef<HTMLDivElement | null>(null);
   const saveConfigActionRef = useRef<(() => void) | null>(null);
   const cancelConfigActionRef = useRef<(() => void) | null>(null);
   const { isMobile } = useSidebar();
@@ -593,6 +595,14 @@ export function AgentDetail() {
     || isIssuesLoading
   );
   const isRunsContentLoading = needsRunData && isHeartbeatsLoading;
+  const agentFindRefreshKey = [
+    activeView,
+    urlRunId ?? "run-list",
+    agent.updatedAt,
+    heartbeats?.length ?? 0,
+    isDashboardContentLoading ? "dashboard-loading" : "dashboard-ready",
+    isRunsContentLoading ? "runs-loading" : "runs-ready",
+  ].join(":");
 
   return (
     <>
@@ -631,7 +641,16 @@ export function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <div className={cn("agent-detail-container space-y-6", isMobile && showConfigActionBar && "pb-24")}>
+      <div
+        ref={agentDetailRootRef}
+        className={cn("agent-detail-container space-y-6", isMobile && showConfigActionBar && "pb-24")}
+      >
+        <IssueDetailFind
+          highlightMode="css"
+          rootRef={agentDetailRootRef}
+          refreshKey={agentFindRefreshKey}
+          searchLabel="Find in agent"
+        />
       {/* Header */}
       <div className="agent-detail-header flex items-center justify-between gap-2">
         <div className="flex items-center gap-3 min-w-0">

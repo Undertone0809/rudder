@@ -321,6 +321,22 @@ describe("agent run filters", () => {
     }))).toEqual(["Source: Heartbeat"]);
   });
 
+  it("filters and labels Delegation Runs distinctly from Heartbeat Runs", () => {
+    const delegated = run({
+      invocationSource: "delegation",
+      contextSnapshot: { scene: "delegation", sourceRunId: "source-run-1" },
+    });
+    const heartbeat = run({ invocationSource: "timer" });
+
+    expect(applyRunFilters([heartbeat, delegated], defaultFilterState({
+      scenes: ["delegation"],
+    }))).toEqual([delegated]);
+    expect(runFilterChips(defaultFilterState({
+      sources: ["delegation"],
+      scenes: ["delegation"],
+    }))).toEqual(["Source: Delegation", "Scene: Delegation"]);
+  });
+
   it("filters timer and manual heartbeat invocations through the normalized heartbeat scene", () => {
     const timerRun = run({
       id: "11111111-0000-4000-8000-000000000000",
@@ -500,6 +516,20 @@ describe("agent run filters", () => {
       const toInput = document.body.querySelector<HTMLInputElement>('input[aria-label="Custom run end time"]');
       expect(fromInput?.value).toBe("2026-05-24T08:00");
       expect(toInput?.value).toBe("");
+    } finally {
+      cleanupToolbar(root, container);
+    }
+  });
+
+  it("keeps the responsive filter trigger accessible when its text is hidden", () => {
+    const { container, root } = renderToolbar({
+      state: defaultFilterState({ scenes: ["delegation"] }),
+    });
+
+    try {
+      const filterButton = container.querySelector<HTMLButtonElement>('button[aria-label="Filter runs: 1 active"]');
+      expect(filterButton).not.toBeNull();
+      expect(filterButton?.textContent).toContain("Filter: 1");
     } finally {
       cleanupToolbar(root, container);
     }

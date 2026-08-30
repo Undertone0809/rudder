@@ -3,7 +3,7 @@ import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef,
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
+import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockIdentity, transcriptToolCardIdentity, truncate } from "./RunTranscriptView.common";
 import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
@@ -86,9 +86,9 @@ export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTra
 
   for (const block of blocks) {
     if (block.type === "command_group") {
-      block.items.forEach((entry, index) => {
+      block.items.forEach((entry) => {
         actions.push({
-          key: `tool-${entry.ts}-${index}`,
+          key: `tool-${transcriptToolCardIdentity(entry)}`,
           type: "tool",
           entry,
         });
@@ -97,8 +97,8 @@ export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTra
     }
 
     if (block.type === "tool") {
-      actions.push({
-        key: `tool-${block.ts}-${block.toolUseId ?? block.name}`,
+        actions.push({
+          key: `tool-${transcriptBlockIdentity(block)}`,
         type: "tool",
         entry: {
           ts: block.ts,
@@ -116,8 +116,8 @@ export function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTra
     }
 
     if (block.type === "stdout") {
-      actions.push({
-        key: `stdout-${block.ts}`,
+        actions.push({
+          key: `stdout-${transcriptBlockIdentity(block)}`,
         type: "stdout",
         entry: block,
       });
@@ -908,14 +908,14 @@ export function segmentChatTranscriptBlocks(blocks: TranscriptBlock[]): ChatTran
     if (actions.length > 0) {
       segments.push({
         type: "actions",
-        key: `actions-${pendingActionBlocks[0]?.ts ?? segments.length}-${segments.length}`,
+        key: `actions-${transcriptBlockIdentity(pendingActionBlocks[0]!)}`,
         actions,
       });
     }
     pendingActionBlocks = [];
   };
 
-  blocks.forEach((block, index) => {
+  blocks.forEach((block) => {
     if (isChatActionBlock(block)) {
       pendingActionBlocks.push(block);
       return;
@@ -924,7 +924,7 @@ export function segmentChatTranscriptBlocks(blocks: TranscriptBlock[]): ChatTran
     flushActions();
     segments.push({
       type: "block",
-      key: transcriptBlockStableKey(block, index),
+      key: transcriptBlockIdentity(block),
       block,
     });
   });
@@ -1578,7 +1578,7 @@ export function TranscriptChatTimeline({
         const fullWidth = block.type === "message" && block.source === "steer";
         return (
           <div
-            key={transcriptBlockStableKey(block, index)}
+            key={transcriptBlockIdentity(block)}
             data-transcript-chat-column={fullWidth ? "full" : "reading"}
             className={fullWidth ? CHAT_FULL_COLUMN_CLASS : CHAT_READING_COLUMN_CLASS}
           >

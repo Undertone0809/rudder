@@ -95,6 +95,7 @@ export const heartbeatRunListColumns = {
   finishedAt: heartbeatRuns.finishedAt,
   error: heartbeatRuns.error,
   wakeupRequestId: heartbeatRuns.wakeupRequestId,
+  sourceRunId: heartbeatRuns.sourceRunId,
   exitCode: heartbeatRuns.exitCode,
   signal: heartbeatRuns.signal,
   usageJson: heartbeatRuns.usageJson,
@@ -215,11 +216,13 @@ export async function withAgentStartLock<T>(agentId: string, fn: () => Promise<T
 }
 
 export interface WakeupOptions {
-  source?: "timer" | "assignment" | "review" | "on_demand" | "automation";
-  triggerDetail?: "manual" | "ping" | "callback" | "system";
+  source?: "timer" | "assignment" | "review" | "on_demand" | "automation" | "delegation";
+  triggerDetail?: "manual" | "ping" | "callback" | "system" | "agent_run_created";
   reason?: string | null;
   payload?: Record<string, unknown> | null;
   idempotencyKey?: string | null;
+  /** Organization-wide key used only by governed Delegation admission. */
+  delegationIdempotencyKey?: string | null;
   requestedByActorType?: "user" | "agent" | "system";
   requestedByActorId?: string | null;
   contextSnapshot?: Record<string, unknown>;
@@ -228,6 +231,8 @@ export interface WakeupOptions {
   terminalIssueAudit?: TerminalIssueSemanticAudit;
   startImmediately?: boolean;
   expectedIssueExecutionRunId?: string | null;
+  /** Derived by the delegation route; never accepted from model tool input. */
+  sourceRunId?: string | null;
 }
 
 export type UsageTotals = {

@@ -143,6 +143,8 @@ describe("BreadcrumbBar", () => {
     expect(html).not.toContain("Issue Tracker");
     expect(html).toContain("Search issues...");
     expect(html).toContain("Create Issue");
+    expect(html).toContain('data-testid="issues-header-actions"');
+    expect(html).toContain("justify-end");
   });
 
   it("uses issue detail breadcrumbs in the messenger issue detail header", () => {

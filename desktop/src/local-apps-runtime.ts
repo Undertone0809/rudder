@@ -20,6 +20,7 @@ import {
   type LocalAppPersistedRuntimeLiveness,
   type LocalAppProcessPlatform,
 } from "./local-app-process-platform.js";
+import { boundedLocalAppLogTail, LocalAppRuntimeLogStore } from "./local-app-runtime-log-store.js";
 import type {
   LocalAppDefinition,
   LocalAppRegistry,
@@ -110,6 +111,7 @@ type RuntimeManagerOptions = {
   hostExecutablePath?: string;
   platform?: NodeJS.Platform;
   maxLogBytes?: number;
+  logDirectory?: string;
   verifyListenerOwnership?: (input: {
     port: number;
     pid: number;
@@ -336,6 +338,7 @@ export class LocalAppRuntimeManager {
   private readonly hostExecutablePath: string;
   private readonly processPlatform: LocalAppProcessPlatform;
   private readonly maxLogBytes: number;
+  private readonly logStore: LocalAppRuntimeLogStore | null;
   private readonly verifyListenerOwnership: (input: {
     port: number;
     pid: number;
@@ -380,6 +383,9 @@ export class LocalAppRuntimeManager {
       probeLoopbackListener: probeLoopbackListenerLiveness,
     });
     this.maxLogBytes = Math.max(256, options.maxLogBytes ?? 64 * 1024);
+    this.logStore = options.logDirectory
+      ? new LocalAppRuntimeLogStore({ directory: options.logDirectory, maxBytes: this.maxLogBytes })
+      : null;
     this.verifyListenerOwnership = options.verifyListenerOwnership
       ?? this.processPlatform.verifyListenerOwnership;
     this.spawnWatchdog = options.spawnWatchdog ?? spawn;
@@ -419,10 +425,8 @@ export class LocalAppRuntimeManager {
 
   private appendLog(record: RuntimeRecord, chunk: Buffer | string): void {
     record.logText += chunk.toString();
-    const bytes = Buffer.byteLength(record.logText);
-    if (bytes <= this.maxLogBytes) return;
-    const buffer = Buffer.from(record.logText);
-    record.logText = buffer.subarray(buffer.length - this.maxLogBytes).toString("utf8");
+    record.logText = boundedLocalAppLogTail(record.logText, this.maxLogBytes);
+    this.logStore?.schedule(record.definition.id, record.logText);
   }
 
   private recordFromPersistedDescriptor(
@@ -454,7 +458,7 @@ export class LocalAppRuntimeManager {
 
   private async persistedStatus(id: string, definition: LocalAppDefinition): Promise<RuntimeRecord> {
     let descriptor = await this.registry.getRuntimeDescriptor(id);
-    if (descriptor && ["starting", "running", "stopping"].includes(descriptor.status)) {
+    if (descriptor && ["starting", "running", "stopping", "orphaned_unverified"].includes(descriptor.status)) {
       const liveness = await this.probePersistedRuntimeLiveness({
         pid: descriptor.pid,
         pgid: descriptor.pgid,
@@ -473,6 +477,9 @@ export class LocalAppRuntimeManager {
       }
     }
     const record = this.recordFromPersistedDescriptor(definition, descriptor);
+    if (this.logStore) {
+      record.logText = await this.logStore.read(id).catch(() => "");
+    }
     this.records.set(id, record);
     return record;
   }
@@ -1188,6 +1195,7 @@ export class LocalAppRuntimeManager {
       verified: false,
       logText: "",
     };
+    await this.logStore?.clear(id).catch(() => undefined);
     this.records.set(id, record);
     let generationClaimed = false;
     try {
@@ -1311,7 +1319,13 @@ export class LocalAppRuntimeManager {
 
   async logs(id: string): Promise<string[]> {
     const record = await this.getRecord(id);
+    await this.logStore?.flush(id).catch(() => undefined);
     return record.logText ? record.logText.split(/\r?\n/).filter(Boolean) : [];
+  }
+
+  async discardPersistedState(id: string): Promise<void> {
+    this.records.delete(id);
+    await this.logStore?.clear(id).catch(() => undefined);
   }
 
   async attestedTarget(id: string): Promise<{ origin: string; openPath: string; partition: string } | null> {
@@ -1400,7 +1414,7 @@ export class LocalAppRuntimeManager {
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.acceptingLifecycleOperations = false;
-    this.shutdownPromise = this.shutdownInternal();
+    this.shutdownPromise = this.shutdownInternal().finally(() => this.logStore?.flushAll().catch(() => undefined));
     return this.shutdownPromise;
   }
 }

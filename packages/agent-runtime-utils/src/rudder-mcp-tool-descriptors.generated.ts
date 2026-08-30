@@ -6820,8 +6820,52 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
       ],
       "type": "object"
     }
+  },
+  {
+    "capabilityId": "runs.create",
+    "name": "rudder_runs_create",
+    "description": "Create an independently governed Delegation Run for the current or another same-organization Agent.",
+    "semanticDescription": "Create an independently governed Delegation Run for the current or another same-organization Agent. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: not required by this tool. Agent context: required from runtime env. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false,
+      "title": "Create an independently governed Delegation Run"
+    },
+    "mutating": true,
+    "requiresOrgId": false,
+    "requiresAgentId": true,
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {
+          "description": "Required stable key for safe replay.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "targetAgentId": {
+          "description": "Optional same-organization target Agent id.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "task": {
+          "description": "Delegation task to run independently.",
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    }
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "db0fd5ef1f23df4e5605fdca726624cf39c5f515629269c616cf1ef1c786ce24";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "457869e72e5cd04a54f036324e167365ff4c13aa396a74ec3ed11676f7c70e67";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";
-export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "39ba4e0cc156e0de4dad0a13d9801c9feaead2c31fedf71b047fb615290112c4";
+export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "c97d1031e16cde221a04bbc7e14bef57835e76c4a6d637f2c4cd77ef346bce14";

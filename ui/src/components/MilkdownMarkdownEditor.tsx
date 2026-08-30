@@ -63,10 +63,6 @@ import {
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import {
-  isWebsiteIconUrlKnownFailed,
-  markWebsiteIconUrlFailed,
-} from "../lib/website-icon-cache";
-import {
   canRequestWebsiteMetadata,
   getWebsiteMetadata,
 } from "../lib/website-metadata-cache";
@@ -212,7 +208,7 @@ export function createMilkdownWebsiteIconElement(href: string) {
   host.append(image);
 
   const showIcon = (iconUrl: string | null | undefined, darkMode?: string) => {
-    if (!iconUrl || isWebsiteIconUrlKnownFailed(iconUrl)) return;
+    if (!iconUrl) return;
     image.onload = () => {
       image.style.visibility = "visible";
       host.dataset.websiteIcon = "metadata";
@@ -221,7 +217,6 @@ export function createMilkdownWebsiteIconElement(href: string) {
       else delete image.dataset.darkMode;
     };
     image.onerror = () => {
-      markWebsiteIconUrlFailed(iconUrl);
       image.removeAttribute("src");
       image.style.visibility = "hidden";
       host.dataset.websiteIcon = "generic";

@@ -46,12 +46,14 @@ import {
   TranscriptActionIconStatus,
   TranscriptAnnotationSourceContext,
   TranscriptBlock,
+  transcriptBlockIdentity,
   TranscriptDensity,
   TranscriptMarkdownLinkClickHandler,
   TranscriptPresentation,
   TranscriptRunAnnotationContext,
   TranscriptSentAnnotationContext,
   TranscriptToolCardEntry,
+  transcriptToolCardIdentity,
   truncate
 } from "./RunTranscriptView.common";
 import { formatSemanticDigest, getTodoListCompletedCount } from "./RunTranscriptView.normalize";
@@ -155,43 +157,6 @@ function TranscriptAnnotationSource({
   );
 }
 
-function transcriptBlockIdentity(block: TranscriptBlock): string {
-  const primarySourceEntryId = block.sourceEntryIds?.[0];
-  if (primarySourceEntryId) return primarySourceEntryId;
-  switch (block.type) {
-    case "message":
-      return [
-        block.type,
-        block.messageId ?? block.segmentId ?? block.generationId ?? "block",
-        block.generationSeqStart ?? block.ts,
-        block.generationSeqEnd ?? block.ts,
-      ].join(":");
-    case "thinking":
-      return [
-        block.type,
-        block.segmentId ?? block.generationId ?? "block",
-        block.generationSeqStart ?? block.ts,
-        block.generationSeqEnd ?? block.ts,
-      ].join(":");
-    case "tool":
-      return [block.type, block.toolUseId ?? block.name, block.ts].join(":");
-    case "command_group":
-      return [
-        block.type,
-        block.items[0]?.toolUseId ?? block.items[0]?.name ?? "group",
-        block.ts,
-      ].join(":");
-    case "activity":
-      return [block.type, block.activityId ?? block.name, block.ts].join(":");
-    case "todo_list":
-      return [block.type, block.todoListId ?? block.ts].join(":");
-    case "stdout":
-    case "memory_update":
-    case "event":
-      return [block.type, block.ts].join(":");
-  }
-}
-
 function isStableTranscriptBlock(block: TranscriptBlock): boolean {
   switch (block.type) {
     case "message":
@@ -259,7 +224,10 @@ export function TranscriptRunAnnotationBlock({
   children: ReactNode;
 }) {
   const stable = isStableTranscriptBlock(block);
-  const blockId = transcriptBlockIdentity(block);
+  // React keys may be namespaced for collision resistance, but annotation payloads
+  // must keep the raw persisted event id expected by the server.
+  const blockId = block.sourceEntryIds?.find((sourceEntryId) => sourceEntryId.trim())?.trim()
+    ?? transcriptBlockIdentity(block);
   const itemInteractionId = interactionId ?? blockId;
   const annotationText = transcriptBlockAnnotationText(block);
   const canAnnotate = presentation === "detail"
@@ -1304,9 +1272,9 @@ export function TranscriptCommandGroup({
       </div>
       {open && (
         <div className={cn("motion-disclosure-enter mt-3 space-y-3", renderGroupFailure && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3")}>
-          {block.items.map((item, index) => (
+          {block.items.map((item) => (
             <TranscriptToolCard
-              key={`${item.ts}-${index}`}
+              key={transcriptToolCardIdentity(item)}
               block={item}
               density={density}
               presentation="chat"

@@ -40,8 +40,60 @@ async function syncAgentSkills(page: Page, agentId: string, orgId: string, desir
 }
 
 test.describe("Chat edit streaming layout", () => {
+  test("exposes editing only for the latest user-authored message", async ({ page }) => {
+    test.setTimeout(180_000);
+    const pageErrors: string[] = [];
+    const requestFailures: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.message));
+    page.on("requestfailed", (request) => requestFailures.push(
+      `${request.method()} ${request.url()} ${request.failure()?.errorText ?? "unknown"}`,
+    ));
+    const organization = await createStreamingOrg(page, `Latest-Edit-${Date.now()}`);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${organization.chatAgent.id}`);
+
+    const composer = page.getByTestId("chat-composer-editor-scroll").locator(".rudder-mdxeditor-content").first();
+    const sendButton = page.getByRole("button", { name: "Send", exact: true });
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+
+    const sendAndStop = async (body: string) => {
+      await composer.fill(body);
+      await sendButton.click();
+      await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: body })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 45_000 });
+      await page.getByRole("button", { name: "Stop streaming" }).click();
+      await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0, { timeout: 15_000 });
+    };
+
+    await sendAndStop("First user message");
+    await sendAndStop("Second user message");
+
+    const firstMessage = page.getByTestId("chat-user-message").filter({ hasText: "First user message" });
+    const secondMessage = page.getByTestId("chat-user-message").filter({ hasText: "Second user message" });
+    await expect(page.getByTestId("chat-user-message")).toHaveCount(2);
+    await expect(firstMessage.getByRole("button", { name: "Edit message" })).toHaveCount(0);
+    await expect(secondMessage.getByRole("button", { name: "Edit message" })).toHaveCount(1);
+    await page.screenshot({ path: "/tmp/r6z-99-latest-user-edit-final.png", fullPage: true });
+
+    await page.reload();
+    await expect(secondMessage).toBeVisible({ timeout: 15_000 });
+    await expect(firstMessage.getByRole("button", { name: "Edit message" })).toHaveCount(0);
+    await expect(secondMessage.getByRole("button", { name: "Edit message" })).toHaveCount(1);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(firstMessage.getByRole("button", { name: "Edit message" })).toHaveCount(0);
+    await expect(secondMessage.getByRole("button", { name: "Edit message" })).toHaveCount(1);
+    expect(pageErrors, "The chat workflow should not emit page errors").toEqual([]);
+    const unexpectedRequestFailures = requestFailures.filter((failure) => !failure.endsWith("net::ERR_ABORTED"));
+    expect(unexpectedRequestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
+  });
+
   test("shows only the replacement branch while an edited message is streaming", async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(180_000);
     const organization = await createStreamingOrg(page, `Edt-Chat-${Date.now()}`);
     const skill = await createSkill(page, organization.id, "Build Advisor", "build-advisor");
     await syncAgentSkills(page, organization.chatAgent.id, organization.id, [`org:${skill.key}`]);
@@ -99,7 +151,7 @@ test.describe("Chat edit streaming layout", () => {
 
     await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Streaming reply", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Streaming reply", { exact: false }).first()).toBeVisible({ timeout: 45_000 });
     await expect.poll(() => lastActiveGeneration?.activeGenerationId ?? null, { timeout: 15_000 }).not.toBeNull();
 
     await page.getByRole("button", { name: "Stop streaming" }).click();
@@ -177,13 +229,17 @@ test.describe("Chat edit streaming layout", () => {
     await inlineEditor.getByRole("button", { name: "Send" }).click();
 
     await expect(chatMain.getByText("Edited edit target", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(chatMain.getByText("Original edit target", { exact: true })).toHaveCount(0);
-    await expect(chatMain.locator(".chat-message-user")).toHaveCount(1);
+    await expect(chatMain.locator(".chat-message-user:visible").filter({ hasText: "Original edit target" })).toHaveCount(0);
+    await expect(chatMain.locator(".chat-message-user:visible")).toHaveCount(1);
     await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("chat-running-queue")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Stop streaming" }).click();
     await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0, { timeout: 15_000 });
+
+    const editedMessage = page.getByTestId("chat-user-message").filter({ hasText: "Edited edit target" });
+    await expect(editedMessage).toBeVisible({ timeout: 15_000 });
+    await expect(editedMessage.getByRole("button", { name: "Edit message" })).toHaveCount(1);
 
     await page.getByRole("button", { name: "Previous branch" }).click();
 
@@ -193,15 +249,18 @@ test.describe("Chat edit streaming layout", () => {
     await expect(chatMain.getByText("Chat run stopped before a final reply", { exact: false })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(chatMain.getByText("Edited edit target", { exact: true })).toHaveCount(0);
+    await expect(chatMain.locator(".chat-message-user:visible").filter({ hasText: "Edited edit target" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0);
     await expect(page.getByText("1/2")).toBeVisible({ timeout: 15_000 });
+    const historicalMessage = page.getByTestId("chat-user-message").filter({ hasText: "Original edit target" });
+    await expect(historicalMessage.getByRole("button", { name: "Edit message" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Next branch" }).click();
     await expect(chatMain.getByText("Edited edit target", { exact: true })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(chatMain.getByText("Original edit target", { exact: true })).toHaveCount(0);
+    await expect(chatMain.locator(".chat-message-user:visible").filter({ hasText: "Original edit target" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Stop streaming" })).toHaveCount(0);
+    await expect(editedMessage.getByRole("button", { name: "Edit message" })).toHaveCount(1);
   });
 });

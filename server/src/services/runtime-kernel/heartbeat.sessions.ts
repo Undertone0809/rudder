@@ -749,6 +749,8 @@ export function mergeMissingRecoveryContextFields(
     "taskKey",
     "projectId",
     "projectWorkspaceId",
+    "sourceRunId",
+    "delegationTask",
     "commentId",
     "wakeCommentId",
     "issue",

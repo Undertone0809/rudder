@@ -51,6 +51,7 @@ export const AGENT_RUN_SCENES = [
   "automation",
   "review",
   "heartbeat",
+  "delegation",
 ] as const;
 export type AgentRunScene = (typeof AGENT_RUN_SCENES)[number];
 
@@ -380,6 +381,7 @@ export const RUDDER_AGENT_V1_MCP_TOOL_NAMES = [
   "rudder_runs_errors",
   "rudder_runs_cancel",
   "rudder_runs_retry",
+  "rudder_runs_create",
 ] as const;
 export type RudderAgentV1McpToolName = (typeof RUDDER_AGENT_V1_MCP_TOOL_NAMES)[number];
 export const RUDDER_BROWSER_MCP_TOOL_NAMES = RUDDER_AGENT_V1_MCP_TOOL_NAMES
@@ -937,6 +939,7 @@ export const HEARTBEAT_INVOCATION_SOURCES = [
   "on_demand",
   "automation",
   "chat",
+  "delegation",
 ] as const;
 export type HeartbeatInvocationSource = (typeof HEARTBEAT_INVOCATION_SOURCES)[number];
 
@@ -947,6 +950,7 @@ export const WAKEUP_TRIGGER_DETAILS = [
   "system",
   "chat_assistant_reply",
   "chat_assistant_reply_stream",
+  "agent_run_created",
 ] as const;
 export type WakeupTriggerDetail = (typeof WAKEUP_TRIGGER_DETAILS)[number];
 

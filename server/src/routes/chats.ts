@@ -3242,6 +3242,21 @@ export function chatRoutes(
       return;
     }
 
+    if (req.body.clientMutationId) {
+      const replayedUserMessage = await svc.getUserMessageByClientMutationId(
+        conversation.orgId,
+        conversation.id,
+        req.body.clientMutationId,
+      );
+      if (replayedUserMessage) {
+        if (replayedUserMessage.body !== req.body.body) {
+          throw conflict("Chat mutation key was already used for different content");
+        }
+        res.status(200).json({ messages: [replayedUserMessage] });
+        return;
+      }
+    }
+
     const inlineAnnotationsProvided = res.locals.inlineAnnotationsProvided === true;
     const preparedAnnotations = inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
@@ -3258,16 +3273,31 @@ export function chatRoutes(
       return;
     }
 
-    const releaseGeneration = claimChatGeneration(conversation.id, null, null);
+    const releaseGeneration = claimChatGeneration(
+      conversation.id,
+      null,
+      null,
+      req.body.clientMutationId ?? null,
+    );
     if (!releaseGeneration) {
       if (req.body.editUserMessageId) {
         res.status(409).json({ error: "Stop the current response before editing this message" });
         return;
       }
+      const activeGeneration = getActiveChatGeneration(conversation.id);
+      if (
+        req.body.clientMutationId
+        && activeGeneration?.clientMutationId === req.body.clientMutationId
+      ) {
+        throw conflict("This message is already being sent. Try again shortly.", {
+          code: "chat_send_in_progress",
+          phase: "message_acceptance",
+        });
+      }
       const item = await svc.createQueuedMessage({
         orgId: conversation.orgId,
         conversationId: conversation.id,
-        clientMutationId: `message:${randomUUID()}`,
+        clientMutationId: req.body.clientMutationId ?? `message:${randomUUID()}`,
         runtimeSnapshotVersion: 1,
         expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
         requestActor: queueRequestActor(req),
@@ -3300,6 +3330,7 @@ export function chatRoutes(
         {
           provided: inlineAnnotationsProvided,
           prepared: preparedAnnotations,
+          clientMutationId: req.body.clientMutationId ?? null,
         },
       );
       await touchSideChat(req, conversation as ChatConversation);

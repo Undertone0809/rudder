@@ -541,6 +541,7 @@ describe("TranscriptRunAnnotationBlock", () => {
       anchorKind: "text",
       text: "Selectable transcript text",
       sourceRunId: "run-1",
+      blockId: "event-1",
       sourceMemberIds: ["event-1"],
       comment: "Needs review",
       pendingFiles: [],

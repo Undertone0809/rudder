@@ -50,6 +50,7 @@ export function IssueDetailFind({
   const [query, setQuery] = useState("");
   const [matchCount, setMatchCount] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [contentRevision, setContentRevision] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const matchesRef = useRef<IssueFindMatch[]>([]);
   const activeIndexRef = useRef(0);
@@ -129,6 +130,27 @@ export function IssueDetailFind({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closeFind, disabled, focusInput, onOpenChange, open]);
 
+  useEffect(() => {
+    const root = rootRef.current;
+    const view = root?.ownerDocument.defaultView as (Window & {
+      CSS?: { highlights?: unknown };
+      Highlight?: unknown;
+    }) | null;
+    if (!open || highlightMode !== "css" || !root || !view?.CSS?.highlights || !view.Highlight) return;
+
+    const observer = new MutationObserver((mutations) => {
+      const contentChanged = mutations.some((mutation) => {
+        const target = mutation.target instanceof Element
+          ? mutation.target
+          : mutation.target.parentElement;
+        return !target?.closest("[data-issue-find-ui]");
+      });
+      if (contentChanged) setContentRevision((revision) => revision + 1);
+    });
+    observer.observe(root, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [highlightMode, open, rootRef]);
+
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root || !open) return;
@@ -160,7 +182,7 @@ export function IssueDetailFind({
       clearIssueFindHighlights(root);
       matchesRef.current = [];
     };
-  }, [highlightMode, open, query, refreshKey, rootRef]);
+  }, [contentRevision, highlightMode, open, query, refreshKey, rootRef]);
 
   useEffect(() => {
     return () => {
@@ -178,6 +200,7 @@ export function IssueDetailFind({
   return (
     <div
       data-issue-find-ui
+      data-detail-escape-layer="true"
       role="search"
       aria-label={searchLabel}
       className="fixed right-4 top-4 z-50 flex w-[min(420px,calc(100vw-2rem))] items-center gap-1 rounded-md border border-border bg-popover p-1.5 text-popover-foreground shadow-md"

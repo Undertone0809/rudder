@@ -8458,7 +8458,16 @@ describe("Atomic new-chat drafts", () => {
     });
     mockState.invalidateQueries.mockImplementation(() => blockedRefresh);
     mockState.sendMessageStream.mockRejectedValueOnce(
-      new ApiError("Source annotation was rejected", 422, null),
+      new ApiError(
+        "Annotation selected text does not exactly match its rendered Markdown source range",
+        422,
+        {
+          details: {
+            code: "chat_annotation_selection_mismatch",
+            phase: "annotation_validation",
+          },
+        },
+      ),
     );
 
     const { container } = renderChat();
@@ -8483,7 +8492,7 @@ describe("Atomic new-chat drafts", () => {
       expect(container.textContent).toContain("recovery-context.txt");
       expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
         title: "Could not send message",
-        body: "Check the message and try again.",
+        body: "The selected response text changed. Re-select the highlighted text and try again.",
         tone: "error",
       }));
     });
@@ -8492,6 +8501,51 @@ describe("Atomic new-chat drafts", () => {
     await act(async () => {
       await Promise.resolve();
     });
+  });
+
+  it("reuses the send mutation key after a pre-ack network failure", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],
+    };
+    mockState.sendMessageStream
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockImplementationOnce(async (
+        _chatId: string,
+        body: string,
+        options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+      ) => {
+        await options.onEvent({
+          type: "ack",
+          userMessage: message({ id: "accepted-once", body }),
+        });
+        await options.onEvent({ type: "final", messages: [] });
+      });
+
+    const { container } = renderChat();
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(editor, "Retry without duplication.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(editor?.value).toBe("Retry without duplication."));
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2));
+
+    const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
+    const retryOptions = mockState.sendMessageStream.mock.calls[1]?.[2];
+    expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
+    expect(retryOptions?.clientMutationId).toBe(firstOptions?.clientMutationId);
+    expect(editor?.value).toBe("");
   });
 
   it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {

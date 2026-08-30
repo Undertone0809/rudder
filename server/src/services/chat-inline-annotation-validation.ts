@@ -117,6 +117,13 @@ async function assertSelectedTextExactlyMatchesRange(
   annotation: RangeBasedChatInlineAnnotation,
   source: string,
 ) {
+  const selectionMismatch = () => unprocessable(
+    "Annotation selected text does not exactly match its rendered Markdown source range",
+    {
+      code: "chat_annotation_selection_mismatch",
+      phase: "annotation_validation",
+    },
+  );
   const resolvedLabelProjection =
     await renderedMarkdownSelectionTextWithResolvedLabels(query, {
       orgId,
@@ -129,9 +136,7 @@ async function assertSelectedTextExactlyMatchesRange(
   );
   if (visibleResolvedSelections.includes(annotation.selectedText)) return;
   if (resolvedLabelProjection.overlapsResolvableDynamicLabel) {
-    throw unprocessable(
-      "Annotation selected text does not exactly match its rendered Markdown source range",
-    );
+    throw selectionMismatch();
   }
   const expectedSelectedText = renderedMarkdownSelectionText(
     source,
@@ -145,11 +150,12 @@ async function assertSelectedTextExactlyMatchesRange(
     && annotation.selectedText === expectedSelectedText
   ) return;
   if (!rawRangeContainsVisibleText && visibleResolvedSelections.length === 0) {
-    throw unprocessable("Annotation source range must contain visible text");
+    throw unprocessable("Annotation source range must contain visible text", {
+      code: "chat_annotation_range_empty",
+      phase: "annotation_validation",
+    });
   }
-  throw unprocessable(
-    "Annotation selected text does not exactly match its rendered Markdown source range",
-  );
+  throw selectionMismatch();
 }
 
 function trimTrailingWhitespace(value: string) {

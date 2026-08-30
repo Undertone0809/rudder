@@ -36,6 +36,7 @@ import {
   chatInlineAnnotationService,
 } from "./chat-inline-annotations.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
+import { chatService } from "./chats.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -588,6 +589,41 @@ describe("chatInlineAnnotationService", () => {
     expect(onTransactionCommitted).toHaveBeenCalledWith(committedUserMessage?.id);
   });
 
+  it("converges concurrent user-message retries on one client mutation", async () => {
+    const source = await seedSource({ body: "Assistant source" });
+    const chats = chatService(db);
+    const persist = createChatAnnotationMessagePersistence(db, chats.getMessage);
+    const clientMutationId = `send:${randomUUID()}`;
+    const replayed = vi.fn();
+
+    const [first, retry] = await Promise.all([
+      persist(source.conversationId, source.orgId, "Send exactly once", null, {
+        clientMutationId,
+        onIdempotentReplay: replayed,
+      }),
+      persist(source.conversationId, source.orgId, "Send exactly once", null, {
+        clientMutationId,
+        onIdempotentReplay: replayed,
+      }),
+    ]);
+
+    expect(retry.id).toBe(first.id);
+    expect(first).not.toHaveProperty("clientMutationId");
+    expect(replayed).toHaveBeenCalledTimes(1);
+    expect(await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.clientMutationId, clientMutationId)))
+      .toHaveLength(1);
+    await expect(persist(
+      source.conversationId,
+      source.orgId,
+      "Different content",
+      null,
+      { clientMutationId },
+    )).rejects.toMatchObject({ status: 409 });
+  });
+
   it("accepts rendered assistant selections across links, inline code, CJK, entities, whitespace, and blocks", async () => {
     const body = [
       "## 说明",
@@ -691,6 +727,10 @@ describe("chatInlineAnnotationService", () => {
     })).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("selected text"),
+      details: {
+        code: "chat_annotation_selection_mismatch",
+        phase: "annotation_validation",
+      },
     });
 
     await expect(service.prepare({

@@ -137,8 +137,8 @@ Invariants:
 - Traversal, absolute paths, duplicate/case-colliding paths, oversize files,
   oversize packages, invalid JSON, invalid identity, and literal MCP secrets
   are rejected.
-- ZIP input is limited to 500 files, 2 MiB per file, 10 MiB compressed and
-  expanded package size, and a 100:1 expansion ratio. Rudder strips at most one
+- ZIP input is limited to 500 files, 2 MiB per file, a 100 MiB package safety
+  ceiling, and a 100:1 expansion ratio. Rudder strips at most one
   common outer package root and then applies the normal path checks.
 - GitHub marketplace ingestion accepts only HTTPS `github.com` repositories
   with a full 40-character commit SHA. Rudder fetches that immutable archive;

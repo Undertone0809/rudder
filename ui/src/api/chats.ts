@@ -338,6 +338,7 @@ export const chatsApi = {
     body: string,
     options: {
       signal?: AbortSignal;
+      clientMutationId?: string;
       editUserMessageId?: string | null;
       queuedMessageId?: string | null;
       modelOverride?: string | null;
@@ -353,6 +354,7 @@ export const chatsApi = {
       ? (() => {
         const form = new FormData();
         form.append("body", body);
+        if (options.clientMutationId) form.append("clientMutationId", options.clientMutationId);
         if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
         if (options.queuedMessageId) form.append("queuedMessageId", options.queuedMessageId);
         form.append("modelOverride", options.modelOverride ?? "__rudder_agent_default__");
@@ -367,6 +369,7 @@ export const chatsApi = {
       })()
       : JSON.stringify({
         body,
+        ...(options.clientMutationId ? { clientMutationId: options.clientMutationId } : {}),
         ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
         ...(options.queuedMessageId ? { queuedMessageId: options.queuedMessageId } : {}),
         modelOverride: options.modelOverride ?? null,

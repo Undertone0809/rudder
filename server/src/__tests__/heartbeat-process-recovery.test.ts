@@ -2043,6 +2043,71 @@ describe("heartbeat orphaned process recovery", () => {
     });
   });
 
+  it("preserves Delegation provenance when retrying a terminal Delegation Run", async () => {
+    const { orgId, agentId, runId } = await seedRunFixture({
+      includeIssue: false,
+      runStatus: "failed",
+      runErrorCode: "model_error",
+      runError: "Delegated task failed",
+      contextSnapshot: {
+        scene: "delegation",
+        rudderScene: "delegation",
+        delegationTask: "Retry this bounded delegated task.",
+        forceFreshSession: true,
+      },
+    });
+    const sourceRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: sourceRunId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "succeeded",
+      contextSnapshot: {},
+      finishedAt: new Date("2026-03-18T23:59:00.000Z"),
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        invocationSource: "delegation",
+        sourceRunId,
+        contextSnapshot: {
+          scene: "delegation",
+          rudderScene: "delegation",
+          delegationTask: "Retry this bounded delegated task.",
+          sourceRunId,
+          forceFreshSession: true,
+        },
+      })
+      .where(eq(heartbeatRuns.id, runId));
+
+    const retriedRun = await heartbeatService(db).retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:06:00.000Z"),
+    });
+
+    expect(retriedRun).toMatchObject({
+      invocationSource: "delegation",
+      retryOfRunId: runId,
+      sourceRunId,
+      sessionReuseScope: "none",
+    });
+    expect(retriedRun.contextSnapshot).toMatchObject({
+      scene: "delegation",
+      rudderScene: "delegation",
+      delegationTask: "Retry this bounded delegated task.",
+      sourceRunId,
+    });
+    const retryWakeup = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, retriedRun.wakeupRequestId!))
+      .then((rows) => rows[0]);
+    expect(retryWakeup?.source).toBe("delegation");
+  });
+
   it("backfills recovery context from the retry chain when the source retry run is lossy", async () => {
     const { orgId, agentId, runId, issueId } = await seedRunFixture({
       runStatus: "failed",

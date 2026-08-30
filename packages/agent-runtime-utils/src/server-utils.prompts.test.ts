@@ -3,6 +3,7 @@ import {
   AGENT_ISSUE_CREATION_PROMPT_TEMPLATE,
   COMMENT_MENTION_PROMPT_TEMPLATE,
   DEFAULT_AGENT_PROMPT_TEMPLATE,
+  DELEGATION_PROMPT_TEMPLATE,
   GOAL_CHANGE_DECIDED_PROMPT_TEMPLATE,
   GOAL_CONTINUATION_PROMPT_TEMPLATE,
   GOAL_FEEDBACK_PROMPT_TEMPLATE,
@@ -23,6 +24,27 @@ import {
 } from "./server-utils.js";
 
 describe("server-utils prompt contracts", () => {
+  it("selects the isolated Delegation prompt and keeps it attached to custom personas", () => {
+    const context = {
+      scene: "delegation",
+      sourceRunId: "source-run-1",
+      sourceAgentId: "source-agent-1",
+      targetAgentId: "target-agent-1",
+      delegationTask: "Inspect the target independently",
+    };
+
+    expect(selectPromptTemplate(undefined, context)).toBe(DELEGATION_PROMPT_TEMPLATE);
+    expect(selectPromptTemplate("Custom persona", context)).toBe(
+      `Custom persona\n\n${DELEGATION_PROMPT_TEMPLATE}`,
+    );
+    const rendered = renderTemplate(DELEGATION_PROMPT_TEMPLATE, {
+      agent: { id: "target-agent-1", name: "Target" },
+      context,
+    });
+    expect(rendered).toContain("Inspect the target independently");
+    expect(rendered).toContain("Do not inherit its transcript, session, workspace");
+  });
+
   it("selects the dedicated single-issue prompt for Agent Issue creation wakes", () => {
     const context = {
       wakeReason: "agent_issue_creation_requested",

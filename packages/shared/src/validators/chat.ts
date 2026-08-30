@@ -484,6 +484,7 @@ export const createSideChatSchema = z.object({
 
 export const addChatMessageSchema = z.object({
   body: z.string().trim().max(20000).default(""),
+  clientMutationId: z.string().trim().min(1).max(120).optional(),
   inlineAnnotations: chatInlineAnnotationsInputSchema.optional(),
   editUserMessageId: z.string().uuid().optional().nullable(),
   queuedMessageId: z.string().uuid().optional().nullable(),

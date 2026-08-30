@@ -397,6 +397,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           sessionDisplayId: run.sessionReuseScope === "none" ? null : frozenSessionDisplayId,
         };
     const previousSessionParams = sessionSelection.sessionParams;
+    const runtimeScene = resolveRuntimeSceneForRun(run);
     const config = await runContextSvc.materializeManagedInstructionsForRun({
       ...agent,
       agentRuntimeConfig: parseObject(agent.agentRuntimeConfig),
@@ -424,7 +425,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       : workspaceManagedConfig;
     const { resolvedConfig, runtimeConfig, runtimeSkillEntries, secretKeys } =
       await runContextSvc.prepareRuntimeConfig({
-        scene: "heartbeat",
+        scene: runtimeScene,
         agent,
         baseConfig: mergedConfig,
       });
@@ -625,7 +626,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ]
         : []),
     ];
-    const runtimeScene = resolveRuntimeSceneForRun(run);
     const runtimeSceneContext = await runContextSvc.buildSceneContext({
       scene: runtimeScene,
       agent,

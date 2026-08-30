@@ -39,6 +39,21 @@ describe("chat generation runtime controls", () => {
     clearActiveChatGenerationsForTest();
   });
 
+  it("publishes the active send mutation while a generation is starting", () => {
+    const releaseGeneration = claimChatGeneration(
+      "chat-1",
+      new AbortController(),
+      null,
+      "send-mutation-1",
+    );
+
+    expect(getActiveChatGeneration("chat-1")).toMatchObject({
+      clientMutationId: "send-mutation-1",
+      lifecycle: "starting",
+    });
+    releaseGeneration?.();
+  });
+
   it("invalidates and disposes the prior attempt before publishing a fallback handle", async () => {
     const releaseGeneration = claimChatGeneration("chat-1", new AbortController(), "generation-1");
     expect(releaseGeneration).not.toBeNull();

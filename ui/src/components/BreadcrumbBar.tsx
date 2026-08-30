@@ -375,7 +375,10 @@ export function BreadcrumbBar({
         )}
         {desktopChrome && !showPrimaryDetailBreadcrumbs ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
         {isIssuesRoute ? (
-          <div className={cn("hidden min-w-0 flex-1 items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>
+          <div
+            data-testid="issues-header-actions"
+            className={cn("hidden min-w-0 flex-1 items-center justify-end gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}
+          >
             <div ref={issueSearchContainerRef} className="relative min-w-0 w-80 max-w-full shrink">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input

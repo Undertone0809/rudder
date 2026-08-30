@@ -5,6 +5,7 @@ import {
   createAgentHireSchema,
   createAgentKeySchema,
   createAgentSchema,
+  createDelegationRunSchema,
   toAgentRun,
   toAgentRuns,
   toHeartbeatRun,
@@ -26,6 +27,7 @@ import { redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
 import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
+import { delegationRunService } from "../services/delegation-runs.js";
 import { resolveHeartbeatRunIdReference } from "../services/heartbeat-run-reference.js";
 import {
   issueService,
@@ -101,6 +103,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     KNOWN_INSTRUCTIONS_PATH_KEYS,
     KNOWN_INSTRUCTIONS_BUNDLE_KEYS,
   } = ctx;
+  const delegation = delegationRunService(db, { heartbeat, access });
 
   async function ensureFirstAgentIntelligenceDefaults(
     orgId: string,
@@ -1117,6 +1120,59 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     });
 
     res.status(202).json(toHeartbeatRun(run));
+  });
+
+  router.post("/agent-runs/delegation", validate(createDelegationRunSchema), async (req, res) => {
+    if (req.actor.type !== "agent" || !req.actor.agentId || !req.actor.runId) {
+      res.status(403).json({ error: "Delegation Run requires an authenticated Agent Run" });
+      return;
+    }
+
+    const sourceAgent = await svc.getById(req.actor.agentId);
+    if (!sourceAgent) {
+      res.status(404).json({ error: "Source Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, sourceAgent.orgId);
+
+    const admission = await delegation.create({
+      sourceAgentId: req.actor.agentId,
+      sourceRunId: req.actor.runId,
+      task: req.body.task,
+      targetAgentId: req.body.targetAgentId,
+      idempotencyKey: req.body.idempotencyKey,
+      requestedByActorId: req.actor.agentId,
+    });
+
+    await logActivity(db, {
+      orgId: sourceAgent.orgId,
+      actorType: "agent",
+      actorId: req.actor.agentId,
+      agentId: req.actor.agentId,
+      runId: req.actor.runId,
+      action: "agent_run.delegated",
+      entityType: admission.runId ? "agent_run" : "agent_wakeup_request",
+      entityId: admission.runId ?? admission.wakeupRequestId,
+      idempotencyKey: `delegation:${sourceAgent.orgId}:${req.body.idempotencyKey}`,
+      details: {
+        sourceRunId: admission.sourceRunId,
+        sourceAgentId: admission.sourceAgentId,
+        targetAgentId: admission.targetAgentId,
+        wakeupRequestId: admission.wakeupRequestId,
+        admissionStatus: admission.admissionStatus,
+        replayed: admission.replayed,
+      },
+    });
+
+    res.status(202).json({
+      runId: admission.runId,
+      wakeupRequestId: admission.wakeupRequestId,
+      sourceRunId: admission.sourceRunId,
+      targetAgentId: admission.targetAgentId,
+      scene: admission.scene,
+      admissionStatus: admission.admissionStatus,
+      replayed: admission.replayed,
+    });
   });
 
   router.post("/agents/:id/heartbeat/invoke", async (req, res) => {

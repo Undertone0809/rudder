@@ -794,6 +794,12 @@ async function callToolDirectlyIfSupported(
         { status: "done", comment },
       ));
     }
+    case "runs.create":
+      return success(await api.post("/api/agent-runs/delegation", {
+        task: requiredString(input, "task"),
+        ...(optionalString(input.targetAgentId) ? { targetAgentId: optionalString(input.targetAgentId) } : {}),
+        idempotencyKey: requiredString(input, "idempotencyKey"),
+      }));
     case "runs.list":
       return success(await api.get(
         `/api/run-intelligence/orgs/${encodeURIComponent(requiredRuntimeString(env, "RUDDER_ORG_ID"))}/runs?${buildDirectRunsListQuery(input)}`,
@@ -1661,6 +1667,11 @@ function cliArgsForCapability(
     }
     case "chat.archive":
       return ["chat", "archive", requiredAnyString(input, ["chat", "chatId"])];
+    case "runs.create": {
+      const args = ["runs", "create", "--task", requiredString(input, "task"), "--idempotency-key", requiredString(input, "idempotencyKey")];
+      pushOptional(args, "--target-agent-id", input.targetAgentId);
+      return args;
+    }
     case "runs.list": {
       const args = ["runs", "list"];
       pushOptional(args, "--updated-after", input.updatedAfter);
@@ -1994,10 +2005,11 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
   }
 
   if (typeof value === "string") {
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+    const characterLength = Array.from(value).length;
+    if (typeof schema.minLength === "number" && characterLength < schema.minLength) {
       return `must contain at least ${schema.minLength} character(s)`;
     }
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+    if (typeof schema.maxLength === "number" && characterLength > schema.maxLength) {
       return `must contain at most ${schema.maxLength} characters`;
     }
     if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
