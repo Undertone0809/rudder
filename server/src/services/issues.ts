@@ -66,6 +66,7 @@ import {
   followedByUserCondition,
   isUniqueConstraintConflict,
   participatedByAgentCondition,
+  resolveIdempotentIssueOrigin,
   sameRunLock,
   touchedByUserCondition,
   unreadForUserCondition,
@@ -1029,20 +1030,15 @@ export function issueService(db: Db, storage?: StorageService) {
     ) => {
       const { labelIds: inputLabelIds, ...rawIssueData } = data;
       const issueData = { ...rawIssueData };
-      const idempotentOriginKind = issueData.originKind === "agent_issue_creation" || issueData.originKind === "run_debug"
-        ? issueData.originKind
-        : null;
-      const idempotentOriginId = idempotentOriginKind && typeof issueData.originId === "string"
-        ? issueData.originId
-        : null;
-      if (idempotentOriginKind && idempotentOriginId) {
+      const idempotentOrigin = resolveIdempotentIssueOrigin(issueData.originKind, issueData.originId);
+      if (idempotentOrigin) {
         const existing = await db
           .select()
           .from(issues)
           .where(and(
             eq(issues.orgId, orgId),
-            eq(issues.originKind, idempotentOriginKind),
-            eq(issues.originId, idempotentOriginId),
+            eq(issues.originKind, idempotentOrigin.kind),
+            eq(issues.originId, idempotentOrigin.id),
           ))
           .then((rows) => rows[0] ?? null);
         if (existing) {
@@ -1277,17 +1273,7 @@ export function issueService(db: Db, storage?: StorageService) {
             );
           })));
         }
-        const idempotentConstraint = idempotentOriginKind === "agent_issue_creation"
-          ? "issues_agent_issue_creation_origin_uq"
-          : idempotentOriginKind === "run_debug"
-            ? "issues_run_debug_origin_uq"
-            : null;
-        if (
-          !idempotentOriginKind
-          || !idempotentConstraint
-          || !idempotentOriginId
-          || !isUniqueConstraintConflict(error, idempotentConstraint)
-        ) {
+        if (!idempotentOrigin || !isUniqueConstraintConflict(error, idempotentOrigin.constraint)) {
           throw error;
         }
         const existing = await db
@@ -1295,8 +1281,8 @@ export function issueService(db: Db, storage?: StorageService) {
           .from(issues)
           .where(and(
             eq(issues.orgId, orgId),
-            eq(issues.originKind, idempotentOriginKind),
-            eq(issues.originId, idempotentOriginId),
+            eq(issues.originKind, idempotentOrigin.kind),
+            eq(issues.originId, idempotentOrigin.id),
           ))
           .then((rows) => rows[0] ?? null);
         if (!existing) throw error;

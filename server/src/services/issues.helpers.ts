@@ -33,6 +33,17 @@ export function isUniqueConstraintConflict(error: unknown, constraintName: strin
   return isPostgresError(error, "23505", constraintName);
 }
 
+export function resolveIdempotentIssueOrigin(originKind: string | null | undefined, originId: string | null | undefined) {
+  if (!originId || (originKind !== "agent_issue_creation" && originKind !== "run_debug")) return null;
+  return {
+    kind: originKind,
+    id: originId,
+    constraint: originKind === "agent_issue_creation"
+      ? "issues_agent_issue_creation_origin_uq"
+      : "issues_run_debug_origin_uq",
+  };
+}
+
 export function assertTransition(from: string, to: string) {
   if (from === to) return;
   if (!ALL_ISSUE_STATUSES.includes(to)) {
