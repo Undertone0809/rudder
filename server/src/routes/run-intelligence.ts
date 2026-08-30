@@ -4,7 +4,7 @@ import {
   type ObservedRunDetail,
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
-import { shortRefFor, type RunInspectionHeader } from "@rudderhq/shared";
+import { shortRefFor, toAgentRunOrigin, type RunInspectionHeader } from "@rudderhq/shared";
 import { Router } from "express";
 import { badRequest, notFound } from "../errors.js";
 import { formatShortRunId } from "../services/heartbeat-run-reference.js";
@@ -116,6 +116,16 @@ function compactRunHeader(run: ObservedRunDetail["run"]): RunInspectionHeader {
     exitCode: run.exitCode,
     signal: run.signal,
     chatConversationId: run.chatConversationId ?? null,
+    sourceRunId: run.sourceRunId ?? null,
+    scene: toAgentRunOrigin({
+      id: run.id,
+      invocationSource: run.invocationSource,
+      triggerDetail: run.triggerDetail,
+      wakeupRequestId: run.wakeupRequestId ?? null,
+      sourceRunId: run.sourceRunId ?? null,
+      chatConversationId: run.chatConversationId ?? null,
+      contextSnapshot: run.contextSnapshot,
+    }).scene,
     logBytes: run.logBytes,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,

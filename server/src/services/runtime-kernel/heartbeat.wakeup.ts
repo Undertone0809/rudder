@@ -28,6 +28,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
     const reason = opts.reason ?? null;
     const payload = opts.payload ?? null;
     const existingWakeupRequestId = readNonEmptyString(opts.existingWakeupRequestId);
+    const sourceRunId = readNonEmptyString(opts.sourceRunId) ?? readNonEmptyString(contextSnapshot.sourceRunId);
     const originTerminalRunId = readNonEmptyString(opts.originTerminalRunId);
     const expectedIssueExecutionRunId = readNonEmptyString(opts.expectedIssueExecutionRunId);
     const {
@@ -245,6 +246,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
         requestedByActorType: opts.requestedByActorType ?? null,
         requestedByActorId: opts.requestedByActorId ?? null,
         idempotencyKey: opts.idempotencyKey ?? null,
+        delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
         finishedAt: new Date(),
       }).onConflictDoNothing();
     };
@@ -279,7 +281,9 @@ export function createHeartbeatWakeupHandlers(context: any) {
 
     if (agent.status === "terminated" || agent.status === "pending_approval") {
       if (await deferGoalRequest("deferred_goal_blocked", "agent.unavailable")) return null;
-      if (existingWakeupRequestId) await writeSkippedRequest("agent.unavailable");
+      if (existingWakeupRequestId || source === "delegation") {
+        await writeSkippedRequest("agent.unavailable");
+      }
       throw conflict("Agent is not invokable in its current state", { status: agent.status });
     }
 
@@ -392,6 +396,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           requestedByActorType: opts.requestedByActorType ?? null,
           requestedByActorId: opts.requestedByActorId ?? null,
           idempotencyKey: opts.idempotencyKey ?? null,
+          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
         });
       });
       return null;
@@ -463,6 +468,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               requestedByActorType: opts.requestedByActorType ?? null,
               requestedByActorId: opts.requestedByActorId ?? null,
               idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
               finishedAt: new Date(),
             });
           }
@@ -622,6 +628,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
                 requestedByActorType: opts.requestedByActorType ?? null,
                 requestedByActorId: opts.requestedByActorId ?? null,
                 idempotencyKey: opts.idempotencyKey ?? null,
+                delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
                 runId: mergedRun.id,
                 finishedAt: new Date(),
               });
@@ -712,6 +719,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               requestedByActorType: opts.requestedByActorType ?? null,
               requestedByActorId: opts.requestedByActorId ?? null,
               idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
             });
           }
 
@@ -737,6 +745,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               requestedByActorType: opts.requestedByActorType ?? null,
               requestedByActorId: opts.requestedByActorId ?? null,
               idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
             });
 
         const existingRun = await findLinkedRun(tx, wakeupRequest);
@@ -752,6 +761,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             triggerDetail,
             status: "queued",
             wakeupRequestId: wakeupRequest.id,
+            sourceRunId,
             contextSnapshot: enrichedContextSnapshot,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
@@ -867,6 +877,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             requestedByActorType: opts.requestedByActorType ?? null,
             requestedByActorId: opts.requestedByActorId ?? null,
             idempotencyKey: opts.idempotencyKey ?? null,
+            delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
             runId: lockedRun.id,
             finishedAt: new Date(),
           });
@@ -932,6 +943,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           requestedByActorType: opts.requestedByActorType ?? null,
           requestedByActorId: opts.requestedByActorId ?? null,
           idempotencyKey: opts.idempotencyKey ?? null,
+          delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
         });
       }
 
@@ -949,6 +961,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           triggerDetail,
           status: "queued",
           wakeupRequestId: wakeupRequest.id,
+          sourceRunId,
           contextSnapshot: enrichedContextSnapshot,
           sessionIdBefore: sessionBefore,
           sessionParamsBeforeJson: admissionSessionSelection.sessionParams,
@@ -1205,6 +1218,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             triggerDetail,
             status: "queued",
             wakeupRequestId: pendingWakeup.id,
+            sourceRunId: readNonEmptyString(recoveredContext.sourceRunId) ?? sourceRunId,
             contextSnapshot: recoveredContext,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: recoveredSessionSelection.sessionParams,

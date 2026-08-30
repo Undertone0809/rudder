@@ -63,6 +63,7 @@ const sourceLabels: Record<HeartbeatInvocationSource, string> = {
   on_demand: "Manual",
   automation: "Automation",
   chat: "Chat",
+  delegation: "Delegation",
 };
 
 const contextLabels: Record<RunFilterContext, string> = {
@@ -78,6 +79,7 @@ const sceneLabels: Record<AgentRunScene, string> = {
   automation: "Automation",
   review: "Review",
   heartbeat: "Heartbeat",
+  delegation: "Delegation",
 };
 
 const targetTypeLabels: Record<AgentRunTargetType, string> = {
@@ -676,6 +678,7 @@ export function RunFiltersToolbar({
             <Button
               variant="ghost"
               size="sm"
+              aria-label={activeFilterCount > 0 ? `Filter runs: ${activeFilterCount} active` : "Filter runs"}
               className={cn("h-7 px-2 text-xs", activeFilterCount > 0 && "text-[color:var(--accent-strong)] bg-accent/30")}
             >
               <SlidersHorizontal className="h-3.5 w-3.5 sm:mr-1" />

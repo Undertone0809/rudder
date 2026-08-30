@@ -151,6 +151,7 @@ operating-practices guide for operating behavior:
 | `rudder_runs_errors` | `rudder runs errors <run-id>` | List failed tool calls, stderr, runtime failures, and jump-to-context commands. | no | no | no | no |
 | `rudder_runs_cancel` | `rudder runs cancel <run-id>` | Cancel a heartbeat run through the governed server route. | yes | no | no | attached when available |
 | `rudder_runs_retry` | `rudder runs retry <run-id>` | Retry a failed, timed out, or cancelled run through the governed server route. | yes | no | no | attached when available |
+| `rudder_runs_create` | `rudder runs create --task <text> --idempotency-key <key> [--target-agent-id <id>]` | Create an independently governed Delegation Run for the current or another same-organization Agent. | yes | no | required | required |
 
 ## Issue Command I/O And Shapes
 

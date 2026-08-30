@@ -145,6 +145,7 @@ const runSceneLabels: Record<AgentRunScene, string> = {
   automation: "Automation",
   review: "Review",
   heartbeat: "Heartbeat",
+  delegation: "Delegation",
 };
 
 const runTargetLabels: Record<AgentRunTargetType, string> = {

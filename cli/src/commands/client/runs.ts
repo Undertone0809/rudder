@@ -12,6 +12,12 @@ import {
 } from "./common.js";
 import { formatExamplesAndCautions } from "./help.js";
 
+interface RunsCreateOptions extends BaseClientOptions {
+  task: string;
+  targetAgentId?: string;
+  idempotencyKey: string;
+}
+
 interface RunsListOptions extends BaseClientOptions {
   updatedAfter?: string;
   runIdPrefix?: string;
@@ -203,6 +209,28 @@ interface RunErrorsResponse {
 
 export function registerRunsCommands(program: Command): void {
   const runs = program.command("runs").description("Run debugging operations");
+
+  addCommonClientOptions(
+    runs
+      .command("create")
+      .description(getAgentCliCapabilityById("runs.create").description)
+      .requiredOption("--task <text>", "Delegation task text")
+      .option("--target-agent-id <id>", "Same-organization target Agent; defaults to the current Agent")
+      .requiredOption("--idempotency-key <key>", "Stable key for safe replay")
+      .action(async (opts: RunsCreateOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const row = await ctx.api.post("/api/agent-runs/delegation", {
+            task: opts.task,
+            ...(opts.targetAgentId ? { targetAgentId: opts.targetAgentId } : {}),
+            idempotencyKey: opts.idempotencyKey,
+          });
+          printOutput(row, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
 
   addCommonClientOptions(
     runs

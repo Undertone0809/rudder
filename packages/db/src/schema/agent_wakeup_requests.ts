@@ -18,6 +18,7 @@ export const agentWakeupRequests = pgTable(
     requestedByActorType: text("requested_by_actor_type"),
     requestedByActorId: text("requested_by_actor_id"),
     idempotencyKey: text("idempotency_key"),
+    delegationIdempotencyKey: text("delegation_idempotency_key"),
     runId: uuid("run_id"),
     requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
     claimedAt: timestamp("claimed_at", { withTimezone: true }),
@@ -40,5 +41,8 @@ export const agentWakeupRequests = pgTable(
     companyAgentIdempotencyKeyUniqueIdx: uniqueIndex("agent_wakeup_requests_company_agent_idempotency_key_uq")
       .on(table.orgId, table.agentId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
+    companyDelegationIdempotencyKeyUniqueIdx: uniqueIndex("agent_wakeup_requests_company_delegation_idempotency_key_uq")
+      .on(table.orgId, table.delegationIdempotencyKey)
+      .where(sql`${table.delegationIdempotencyKey} is not null`),
   }),
 );

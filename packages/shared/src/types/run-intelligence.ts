@@ -1,4 +1,4 @@
-import type { HeartbeatInvocationSource, HeartbeatRunStatus, WakeupTriggerDetail } from "../constants.js";
+import type { AgentRunScene, HeartbeatInvocationSource, HeartbeatRunStatus, WakeupTriggerDetail } from "../constants.js";
 import type { HeartbeatSessionReuseScope } from "./heartbeat.js";
 
 export interface RunSummaryIssue {
@@ -43,6 +43,8 @@ export interface RunSummary {
   triggerDetail: WakeupTriggerDetail | null;
   status: HeartbeatRunStatus;
   sessionReuseScope: HeartbeatSessionReuseScope;
+  sourceRunId?: string | null;
+  scene?: AgentRunScene;
   issue: RunSummaryIssue | null;
   target: RunSummaryTarget | null;
   chatConversationId: string | null;
@@ -83,6 +85,8 @@ export interface RunInspectionHeader {
   exitCode: number | null;
   signal: string | null;
   chatConversationId: string | null;
+  sourceRunId?: string | null;
+  scene?: AgentRunScene;
   logBytes: number | null;
   createdAt: Date;
   updatedAt: Date;

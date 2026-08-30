@@ -41,7 +41,7 @@ const DEFAULT_MANAGED_INSTRUCTION_RUNTIMES = new Set([
   "pi_local",
 ]);
 
-export type AgentRunScene = "issue" | "chat" | "automation" | "review" | "heartbeat";
+export type AgentRunScene = "issue" | "chat" | "automation" | "review" | "heartbeat" | "delegation";
 
 export type AgentRunContextAgent = {
   id: string;

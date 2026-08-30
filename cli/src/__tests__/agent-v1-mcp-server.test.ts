@@ -163,6 +163,7 @@ const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_runs_errors: { run: "run_123" },
   rudder_runs_cancel: { run: "run_123" },
   rudder_runs_retry: { run: "run_123" },
+  rudder_runs_create: { task: "Inspect the target independently", idempotencyKey: "delegation-1" },
 };
 
 describe("agent-v1 MCP server", () => {
@@ -186,7 +187,7 @@ describe("agent-v1 MCP server", () => {
           }]
         : []
     ));
-    expect(directCapabilities).toHaveLength(48);
+    expect(directCapabilities).toHaveLength(49);
 
     for (const capability of directCapabilities) {
       if (!capability.mcp) throw new Error(`Direct capability lacks MCP descriptor: ${capability.id}`);
@@ -226,6 +227,57 @@ describe("agent-v1 MCP server", () => {
       expect(new URL(String(url)).pathname, capability.id).toBe(expectedPath);
       expect(init?.method ?? "GET", capability.id).toBe(capability.api.method);
     }
+  });
+
+  it("counts astral Unicode task characters consistently before direct runs.create dispatch", async () => {
+    const acceptedTask = "🙂".repeat(10_001);
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        task: acceptedTask,
+        idempotencyKey: "unicode-delegation",
+      });
+      return new Response(JSON.stringify({ admissionStatus: "queued" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+      RUDDER_RUN_ID: "22222222-2222-4222-8222-222222222222",
+    });
+
+    const accepted = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 48,
+      method: "tools/call",
+      params: {
+        name: "rudder_runs_create",
+        arguments: { task: acceptedTask, idempotencyKey: "unicode-delegation" },
+      },
+    }, env);
+    const rejected = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: 49,
+      method: "tools/call",
+      params: {
+        name: "rudder_runs_create",
+        arguments: { task: "🙂".repeat(20_001), idempotencyKey: "unicode-too-long" },
+      },
+    }, env);
+
+    expect(accepted?.result).toMatchObject({
+      isError: false,
+      structuredContent: { admissionStatus: "queued" },
+    });
+    expect(rejected?.result).toMatchObject({
+      isError: true,
+      structuredContent: { code: "rudder_mcp_invalid_arguments" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("exposes Computer Use only on the enabled dedicated MCP surface", async () => {
