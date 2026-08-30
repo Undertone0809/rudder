@@ -70,6 +70,7 @@ interface McpServerEnv {
   RUDDER_COMPUTER_ENABLED?: string;
   RUDDER_PROJECT_LIBRARY_PATH?: string;
   RUDDER_MCP_RUDDER_BIN?: string;
+  RUDDER_TOOL_TRANSPORT_SURFACE?: string;
   [key: string]: string | undefined;
 }
 
@@ -182,6 +183,7 @@ export function buildMcpServerEnv(env: NodeJS.ProcessEnv = process.env): McpServ
     RUDDER_COMPUTER_ENABLED: env.RUDDER_COMPUTER_ENABLED,
     RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
     RUDDER_MCP_RUDDER_BIN: env.RUDDER_MCP_RUDDER_BIN,
+    RUDDER_TOOL_TRANSPORT_SURFACE: env.RUDDER_TOOL_TRANSPORT_SURFACE,
   };
 }
 
@@ -223,6 +225,7 @@ export function buildAgentV1ToolCallPlan(
       RUDDER_BROWSER_ENABLED: env.RUDDER_BROWSER_ENABLED,
       RUDDER_COMPUTER_ENABLED: env.RUDDER_COMPUTER_ENABLED,
       RUDDER_PROJECT_LIBRARY_PATH: env.RUDDER_PROJECT_LIBRARY_PATH,
+      RUDDER_TOOL_TRANSPORT_SURFACE: "mcp",
     },
     tempFiles,
   };
@@ -751,6 +754,18 @@ async function callToolDirectlyIfSupported(
         `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/heartbeat-context${query ? `?${query}` : ""}`,
       ));
     }
+    case "issue.comments.list": {
+      const params = new URLSearchParams();
+      appendOptionalQuery(params, "after", input.after);
+      appendOptionalQuery(params, "order", input.order ?? "desc");
+      return success(await api.get(
+        `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/comments?${params}`,
+      ));
+    }
+    case "issue.comments.get":
+      return success(await api.get(
+        `/api/issues/${encodeURIComponent(requiredAnyString(input, ["issue", "issueId"]))}/comments/${encodeURIComponent(requiredAnyString(input, ["comment", "commentId"]))}`,
+      ));
     case "issue.checkout": {
       const expectedStatuses = parseCsvInput(input.expectedStatuses, "todo,backlog,blocked");
       const payload = checkoutIssueSchema.parse({
@@ -973,6 +988,7 @@ function mcpApiClient(env: McpServerEnv, signal?: AbortSignal): RudderApiClient 
     apiKey: optionalString(env.RUDDER_API_KEY) ?? undefined,
     agentId: optionalString(env.RUDDER_AGENT_ID) ?? undefined,
     runId: optionalString(env.RUDDER_RUN_ID) ?? undefined,
+    transportSurface: "mcp",
     signal,
   });
 }
@@ -2162,6 +2178,18 @@ function errorMessage(err: unknown): string {
 
 function errorDetails(err: unknown): unknown {
   if (!(err instanceof Error)) return undefined;
+  if (err instanceof ApiRequestError) {
+    const details = isRecord(err.details)
+      ? err.details
+      : err.details === undefined
+        ? {}
+        : { upstreamDetails: err.details };
+    return {
+      code: err.code ?? "api_request_error",
+      status: err.status,
+      ...details,
+    };
+  }
   const code = (err as Error & { code?: unknown }).code;
   return code ? { code } : undefined;
 }

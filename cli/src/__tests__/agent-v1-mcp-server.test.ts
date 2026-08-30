@@ -186,7 +186,7 @@ describe("agent-v1 MCP server", () => {
           }]
         : []
     ));
-    expect(directCapabilities).toHaveLength(46);
+    expect(directCapabilities).toHaveLength(48);
 
     for (const capability of directCapabilities) {
       if (!capability.mcp) throw new Error(`Direct capability lacks MCP descriptor: ${capability.id}`);
@@ -195,6 +195,7 @@ describe("agent-v1 MCP server", () => {
         .replace("{orgId}", "runtime-org")
         .replace("{goal}", String(input.goal))
         .replace("{issue}", String(input.issue))
+        .replace("{comment}", String(input.comment))
         .replace("{run}", String(input.run));
       const requests: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
       const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -476,6 +477,7 @@ describe("agent-v1 MCP server", () => {
     ]);
     expect(plan.args).not.toContain("wrong-agent");
     expect(plan.args).not.toContain("also-wrong");
+    expect(plan.env.RUDDER_TOOL_TRANSPORT_SURFACE).toBe("mcp");
   });
 
   it("requires and forwards the first message when creating a chat", () => {

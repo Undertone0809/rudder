@@ -12,7 +12,7 @@ describe("Rudder agent contract", () => {
   it("projects complete CLI, MCP, and current direct API descriptor sets", () => {
     expect(RUDDER_AGENT_CONTRACT.capabilities).toHaveLength(117);
     expect(RUDDER_AGENT_CONTRACT.capabilities.filter((capability) => capability.mcp)).toHaveLength(106);
-    expect(RUDDER_AGENT_CONTRACT.capabilities.filter((capability) => capability.api.transport === "direct")).toHaveLength(46);
+    expect(RUDDER_AGENT_CONTRACT.capabilities.filter((capability) => capability.api.transport === "direct")).toHaveLength(48);
     expect(RUDDER_AGENT_CONTRACT.capabilities.find((capability) => capability.id === "issue.checkout")?.api).toEqual({
       method: "POST",
       pathTemplate: "/api/issues/{issue}/checkout",

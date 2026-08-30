@@ -7,17 +7,23 @@ spec_depth: logic_contract
 contract_ids:
   - AGENT.CONTROL.TOOLS.001
 related_code:
+  - contracts/rudder-agent-contract/v1.json
   - cli/src/agent-v1-capabilities.ts
   - cli/src/agent-v1-registry.ts
   - cli/src/agent-v1-mcp-server.ts
+  - cli/src/client/api-request-error.ts
+  - cli/src/client/http.ts
+  - cli/src/client/issue-transport-budget.ts
   - cli/src/program.ts
   - cli/src/commands/client/browser.ts
   - packages/agent-runtime-utils/src/rudder-mcp.ts
   - packages/agent-runtime-utils/src/rudder-mcp-contract.ts
+  - packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts
   - packages/agent-runtime-utils/src/rudder-mcp-server.ts
   - packages/agent-runtime-utils/src/types.ts
   - packages/shared/src/types/mcp.ts
   - packages/shared/src/validators/mcp.ts
+  - native/crates/agent-contract-core/src/contract.generated.json
   - packages/agent-runtimes/claude-local/src/server/execute.ts
   - packages/agent-runtimes/codex-local/src/server/execute.ts
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
@@ -34,6 +40,8 @@ related_tests:
   - cli/src/__tests__/browser-command.test.ts
   - cli/src/__tests__/agent-v1-registry.test.ts
   - cli/src/__tests__/agent-v1-mcp-server.test.ts
+  - cli/src/__tests__/http.test.ts
+  - cli/src/__tests__/issue-transport-budget.e2e.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/opencode-local-execute.test.ts
@@ -121,6 +129,11 @@ ordinary Chat replies, or non-MCP work.
 - Runtime MCP identity: environment values such as `RUDDER_API_URL`,
   `RUDDER_API_KEY`, `RUDDER_ORG_ID`, `RUDDER_AGENT_ID`, `RUDDER_RUN_ID`, and
   `RUDDER_PROJECT_LIBRARY_PATH`.
+- Issue transport budget: run-scoped temporary state shared by the typed MCP
+  server and CLI client for Issue read/comment 5xx fingerprints. It records
+  operation, Issue id, status/code, normalized message, transport surface,
+  remaining heterogeneous fallback, and bounded retry time without changing
+  the Issue record.
 - Browser capability state: the runtime-managed `RUDDER_BROWSER_ENABLED` flag
   controls manifest projection, while the Browser API independently enforces
   the live instance setting and active-run/tab ownership on every call.
@@ -186,29 +199,39 @@ ordinary Chat replies, or non-MCP work.
    arguments and invokes the matching Rudder CLI command with `--json`.
 11. Success returns structured JSON content. Failure returns an MCP error result
    with a stable Rudder MCP error code and safe diagnostic details.
-12. When MCP/native tool exposure is unavailable or a transport/configuration
+12. Issue read/comment calls share one run-scoped 5xx budget across the typed
+   MCP and CLI surfaces. The first 5xx records a fingerprint and permits one
+   different-surface fallback. A same-surface repeat is short-circuited without
+   spending that fallback; after the heterogeneous fallback returns a 5xx, all
+   matching operation/Issue calls are short-circuited with
+   `issue_transport_unavailable` until a success clears the state or the
+   bounded backoff expires.
+13. When MCP/native tool exposure is unavailable or a transport/configuration
    error blocks the tool, the agent may consult `rudder-docs` for the exact CLI
-   reference and use that compatibility path.
-13. Browser calls additionally verify the live setting, active run, safe web
+   reference and use that compatibility path. An exhausted Issue transport
+   budget is not MCP unavailability: the agent must not switch profiles or use
+   direct API calls to bypass it, and must preserve Issue ownership, reviewer,
+   and lifecycle state.
+14. Browser calls additionally verify the live setting, active run, safe web
     URL, and run-owned tab before forwarding an allowed action to the in-memory
     Desktop Broker. A stale manifest cannot bypass live disablement.
-14. Separately, run context selects canonical active organization connections,
+15. Separately, run context selects canonical active organization connections,
     derives the effective coarse Agent policy, and snapshots the allowed
     external tool surface at run start. The snapshot is server-owned; legacy
     enabled-tool ids may only narrow it.
-15. The adapter renders every external binding as its own server or generic
+16. The adapter renders every external binding as its own server or generic
     native-tool group. The adapter derives the fixed Rudder proxy URL and
     run-scoped proxy authorization once outside the array. The binding never
     carries those coordinates, provider OAuth tokens, organization secret ids,
     connection ids, or provider-specific project/workspace fields.
-16. Every external `tools/list` and `tools/call` returns through the Rudder
+17. Every external `tools/list` and `tools/call` returns through the Rudder
     proxy and evaluates `run-start snapshot ∩ current binding ∩ current
     provider policy`. A binding reduction blocks later calls in the active run;
     a binding increase is available only to the next run. The proxy writes
     redacted audit evidence.
     Failure of an external server does not alter first-party `rudder-tools`
     availability or identity.
-17. A first-party Rudder MCP preflight failure is recorded as degraded tool
+18. A first-party Rudder MCP preflight failure is recorded as degraded tool
     availability instead of a runtime boot failure. Supported adapters continue
     model execution, and the Agent may use non-MCP work paths or the documented
     CLI compatibility path where available. A failed core MCP is omitted from
@@ -227,8 +250,14 @@ ordinary Chat replies, or non-MCP work.
 | Agent needs unsearched issue discovery | `rudder_issue_list` accepts optional status, assignee, and project filters; `rudder_issue_search` remains query-required. |
 | Required runtime context is missing | Tool call is rejected with `rudder_mcp_missing_runtime_context`. |
 | Direct runtime API dispatch succeeds | MCP/native tool result returns structured JSON content without shelling out to the Rudder CLI. |
+| Agent reads an Issue, compact Issue context, or Issue comments through typed MCP | The first-party MCP server dispatches the read directly so 5xx transport diagnostics remain structured and share the run budget with CLI fallback. |
 | Direct dispatch is not implemented for the capability and CLI invocation succeeds with JSON output | MCP result returns structured JSON content. |
 | Direct API dispatch, CLI invocation, or native bridge invocation fails | Tool result is marked error with a stable Rudder diagnostic code or safe error text. |
+| First Issue read/comment 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. |
+| Same surface repeats before fallback/backoff | Return `issue_transport_unavailable` without another backend request; preserve the one different-surface fallback. |
+| Different surface succeeds | Return success and clear the short-circuit state immediately. |
+| Different surface returns a 5xx | Consume the fallback and return `issue_transport_unavailable`; make no additional backend call for that operation/Issue until the retry time. |
+| Issue transport budget is exhausted while local work remains possible | Agent records `Issue transport unavailable`, continues local work when safe, and does not mutate ownership, reviewer, or lifecycle as a recovery action. |
 | Browser capability is enabled for a supported local run | Manifest exposes exactly the eight `rudder_browser_*` tools; Browser API derives identity and enforces the live setting and tab lease. |
 | Browser is disabled after run start | Browser tools disappear from future manifests/runs and current calls fail with `browser_disabled`; active leases are revoked. |
 | Desktop Browser Broker is unavailable | Browser call fails with `browser_unavailable` instead of hanging or falling back to an uncontrolled browser. |
@@ -255,6 +284,11 @@ raw cookie access or arbitrary script execution. The agent does not provide
 organization, agent, run, API, Broker, or auth identity; those come from
 Rudder-managed runtime environment.
 
+For an Issue read/comment 5xx, the agent also sees a bounded
+`issueTransport` diagnostic: fingerprint, operation, Issue id, upstream
+status/code/message, initial/fallback surface, remaining fallback count,
+retry-after duration, and the `Issue transport unavailable` checkpoint label.
+
 ### Operator-Visible Output
 
 Operators may see `Rudder MCP tools` on Agent Detail Integrations Manage with
@@ -274,6 +308,12 @@ Evidence can include:
 - CLI/MCP server tests proving the manifest, schemas, runtime identity
   rejection, missing-context errors, stdio handling, and direct runtime API
   dispatch for supported core tools
+- CLI HTTP client tests proving the MCP-to-CLI shared fingerprint, one
+  heterogeneous fallback, same-surface short circuit, successful recovery,
+  bounded-backoff recovery, and lifecycle-route exclusion
+- MCP stdio-to-CLI process E2E proving typed MCP retains the transport
+  diagnostic and a third invocation is short-circuited after the single CLI
+  fallback returns the same 5xx
 - runtime adapter tests proving inherited user/provider MCP config is stripped
   while Rudder-owned MCP config or native bridge config is injected
 - Agent Detail E2E proving the read-only Manage row is visible only where
@@ -325,6 +365,11 @@ Evidence can include:
   canonical required inputs, reject additional properties, and carry known
   bounds used by runtime validation.
 - CLI fallback remains valid when MCP is unavailable or broken.
+- CLI compatibility is not an independent Issue backend after a typed MCP
+  Issue read/comment 5xx. One heterogeneous fallback is allowed; repeated MCP,
+  CLI, profile, or direct API probing must not bypass the run-scoped budget.
+- Issue transport failure state is temporary runtime evidence, not Issue
+  lifecycle state, and must not reassign or transition the Issue.
 - Managed runtime config must not inherit arbitrary user/provider MCP servers
   into the Rudder-run tool surface.
 - Native bridges must preserve runtime-managed identity and must not bake API

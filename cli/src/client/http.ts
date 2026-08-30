@@ -1,19 +1,12 @@
 import { URL } from "node:url";
 
-export class ApiRequestError extends Error {
-  status: number;
-  code?: string | null;
-  details?: unknown;
-  body?: unknown;
+import { ApiRequestError } from "./api-request-error.js";
+import {
+  IssueTransportBudget,
+  type RudderToolTransportSurface,
+} from "./issue-transport-budget.js";
 
-  constructor(status: number, message: string, details?: unknown, body?: unknown, code?: string | null) {
-    super(message);
-    this.status = status;
-    this.code = code ?? null;
-    this.details = details;
-    this.body = body;
-  }
-}
+export { ApiRequestError } from "./api-request-error.js";
 
 interface RequestOptions {
   ignoreNotFound?: boolean;
@@ -32,6 +25,10 @@ interface ApiClientOptions {
   runId?: string;
   signal?: AbortSignal;
   recoverAuth?: (input: RecoverAuthInput) => Promise<string | null>;
+  transportSurface?: RudderToolTransportSurface;
+  transportStateDir?: string;
+  transportBackoffMs?: number;
+  now?: () => number;
 }
 
 export class RudderApiClient {
@@ -41,6 +38,7 @@ export class RudderApiClient {
   readonly runId?: string;
   readonly signal?: AbortSignal;
   readonly recoverAuth?: (input: RecoverAuthInput) => Promise<string | null>;
+  private readonly issueTransportBudget: IssueTransportBudget;
 
   constructor(opts: ApiClientOptions) {
     this.apiBase = opts.apiBase.replace(/\/+$/, "");
@@ -49,6 +47,13 @@ export class RudderApiClient {
     this.runId = opts.runId?.trim() || undefined;
     this.signal = opts.signal;
     this.recoverAuth = opts.recoverAuth;
+    this.issueTransportBudget = new IssueTransportBudget({
+      runId: this.runId,
+      surface: opts.transportSurface,
+      stateDir: opts.transportStateDir,
+      backoffMs: opts.transportBackoffMs,
+      now: opts.now,
+    });
   }
 
   get<T>(path: string, opts?: RequestOptions): Promise<T | null> {
@@ -98,6 +103,7 @@ export class RudderApiClient {
     hasRetriedAuth = false,
   ): Promise<T | null> {
     const url = buildUrl(this.apiBase, path);
+    const reservation = await this.issueTransportBudget.reserve(init.method, path);
 
     const headers: Record<string, string> = {
       accept: "application/json",
@@ -121,13 +127,20 @@ export class RudderApiClient {
       }
     }
 
-    const response = await fetch(url, {
-      ...init,
-      headers,
-      signal: init.signal ?? this.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        signal: init.signal ?? this.signal,
+      });
+    } catch (error) {
+      await this.issueTransportBudget.succeed(reservation);
+      throw error;
+    }
 
     if (opts?.ignoreNotFound && response.status === 404) {
+      await this.issueTransportBudget.succeed(reservation);
       return null;
     }
 
@@ -140,12 +153,16 @@ export class RudderApiClient {
           error: apiError,
         });
         if (recoveredToken) {
+          await this.issueTransportBudget.succeed(reservation);
           this.setApiKey(recoveredToken);
           return this.request<T>(path, init, opts, true);
         }
       }
+      await this.issueTransportBudget.fail(reservation, apiError);
       throw apiError;
     }
+
+    await this.issueTransportBudget.succeed(reservation);
 
     if (response.status === 204) {
       return null;

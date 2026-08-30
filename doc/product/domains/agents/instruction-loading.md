@@ -104,6 +104,12 @@ Checkout-eligible assignee wake templates own the checkout/409 safety rail
 because that rule applies at the assignment handoff boundary, not to generic
 chat, review, heartbeat, or relationship-authorized explicit work.
 
+The universal operating contract does define the failure-domain boundary for
+Rudder Issue read/comment transport. Typed MCP and CLI share one backend and
+one run-scoped fallback budget. The contract prevents an agent from turning a
+single server 5xx into repeated MCP, CLI, profile, or direct API probes and
+prevents transport recovery from changing Issue ownership or lifecycle.
+
 ## Actors / Objects / State
 
 - Runtime agent: the assignee agent process invoked through a local runtime
@@ -219,6 +225,12 @@ chat, review, heartbeat, or relationship-authorized explicit work.
    - sibling `MEMORY.md`, when present
    - prepared runtime context sections, including the selected resources prompt
    - runtime `RUDDER_AGENT_HEARTBEAT_INSTRUCTION`, only when included
+
+   The runtime operating contract includes the Issue transport failure rule:
+   after a typed MCP 5xx, at most one CLI fallback may run; a matching or
+   budget-exhausted result stops further probes for the diagnostic backoff and
+   requires the `Issue transport unavailable` checkpoint when local work
+   continues.
 
 7. Missing optional sibling files are silently omitted. A missing configured
    entry file logs a warning and records a command note, but the run continues
@@ -369,6 +381,7 @@ Persistence boundaries are explicit:
 | --- | --- | --- | --- | --- |
 | Heartbeat Run | `rudderScene = heartbeat`; timer/self-check or operator `Run heartbeat` manual trigger | Runtime operating contract, agent files, resources/startup context, runtime heartbeat instruction, then heartbeat prompt are available to the agent; the instruction may point to `rudder-docs` only when exact product details are needed | Heartbeat instruction must not appear before durable agent files, force `rudder-docs` loading, or carry the issue checkout rail | Prompt order and prompt contract tests, command notes, `runtimePromptMetrics.runtimeHeartbeatChars > 0`, adapter invocation event |
 | Issue Run | `rudderScene = issue`; assignment, assignee follow-up, changes-requested, assignee recovery, or comment wake | Agent gets operating contract, agent files, resources/startup context, and issue/comment wake prompt; checkout-eligible assignee execution receives the checkout/409 rail, while explicit current-assignee/current-reviewer mention work receives the preserve-status execution-lease rail; runtime heartbeat instruction is excluded | Assignment work must not omit the ownership-conflict stop; explicit relationship work must not checkout, reassign, or silently transition status; collaborator mention must not gain ownership | `server-utils.prompts.test.ts`, `shouldIncludeRuntimeHeartbeatInstructions` tests, `runtimeHeartbeatChars = 0`, assignment, custom-template, recovery, and comment wake tests |
+| Issue transport 5xx | Issue read/comment typed MCP call returns 5xx | Agent may use the single recorded CLI fallback; the same fingerprint or `issue_transport_unavailable` stops further MCP/CLI/profile/direct probes for the reported backoff and preserves ownership/reviewer/lifecycle | Transport failure must not trigger unbounded surface probing or lifecycle mutation | Operating-contract prompt test plus CLI shared-budget tests |
 | Review Run | `rudderScene = review`; reviewer routing, reviewer recovery, or review follow-up after missing decision while issue remains `in_review` | Agent gets operating contract, agent files, resources/startup context, and review-scene prompt; reviewer recovery preserves review wording; runtime heartbeat instruction and assignee checkout rail are excluded | Review or reviewer recovery must stay reviewer-scoped and must not become assignee implementation | Prompt contract tests, scene derivation tests, and prompt metrics show reviewer recovery plus no assignee rail or runtime heartbeat section |
 | Chat Run | `rudderScene = chat` | Agent gets the same operating contract and configured agent files plus chat-scene context; runtime heartbeat instruction is excluded and there is no global instruction to consult `rudder-docs` | Chat prompts must not be framed as autonomous heartbeat work or force documentation lookup | Adapter metadata and prompt metrics show no runtime heartbeat section; prompt contract tests show no global docs pointer |
 | Automation Run | `rudderScene = automation` | Agent gets operating contract, agent files, resources/startup context, and automation context; runtime heartbeat instruction is excluded | Automation dispatch must not inherit heartbeat/self-check close-out instructions unless it explicitly creates a heartbeat scene run | Scene derivation tests and prompt metrics show no runtime heartbeat section |
@@ -388,7 +401,9 @@ The runtime agent sees a provider-specific prompt surface, but the instruction
 stack must preserve this semantic order:
 
 1. Rudder runtime operating contract. It identifies the agent as operating
-   inside Rudder's and is always injected from runtime code.
+   inside Rudder and is always injected from runtime code. It also defines the
+   run-scoped Issue transport fallback limit and required exhausted-budget
+   checkpoint behavior.
 2. Configured entry instruction file, if readable and not legacy
    `HEARTBEAT.md`. The section includes a path directive that tells the agent
    where the file was loaded from and how to resolve relative references.
@@ -471,6 +486,8 @@ The contract is evidenced by:
   workspace fallback events
 - package tests and adapter tests that assert ordering, heartbeat inclusion,
   heartbeat exclusion, resource de-duplication, command notes, and metrics
+- prompt and CLI client tests that assert Issue transport fingerprinting,
+  cross-surface fallback limits, bounded recovery, and lifecycle preservation
 
 ## Canonical Scenarios
 

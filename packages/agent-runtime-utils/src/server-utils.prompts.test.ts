@@ -740,6 +740,15 @@ describe("server-utils prompt contracts", () => {
     expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("bundled `rudder` skill");
   });
 
+  it("bounds Issue transport fallback across typed MCP, CLI, and direct API probes", () => {
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain(
+      "treat typed Rudder MCP and the `rudder issue` CLI as one backend failure domain",
+    );
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("make at most one recorded fallback through the CLI");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("do not switch profiles, repeat either surface, or call the API directly");
+    expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("keep Issue ownership, reviewer, and lifecycle state unchanged");
+  });
+
   it("keeps reviewer recovery scoped to review without the assignee rail", () => {
     const context = {
       wakeSource: "recovery.manual",

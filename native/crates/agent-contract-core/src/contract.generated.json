@@ -1,5 +1,5 @@
 {
-  "artifactHash": "e0d6f8e2e3478cb54147d6034c3bedd6d0d976b7a2e0b9452d3632c637df0e40",
+  "artifactHash": "39ba4e0cc156e0de4dad0a13d9801c9feaead2c31fedf71b047fb615290112c4",
   "baselineProvenance": {
     "g0IntegrationSha": "68a5b27ce7a8c22277b6daac4838f0fe35049b3d",
     "issue": "R6Z-130",
@@ -1628,7 +1628,9 @@
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "GET",
+        "pathTemplate": "/api/issues/{issue}/comments",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": false,
@@ -1688,7 +1690,9 @@
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "GET",
+        "pathTemplate": "/api/issues/{issue}/comments/{comment}",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": false,

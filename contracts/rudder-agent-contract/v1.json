@@ -1627,7 +1627,9 @@
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "GET",
+        "pathTemplate": "/api/issues/{issue}/comments",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": false,
@@ -1687,7 +1689,9 @@
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "GET",
+        "pathTemplate": "/api/issues/{issue}/comments/{comment}",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": false,

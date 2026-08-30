@@ -642,18 +642,24 @@ contracts:
     docs:
       - doc/product/domains/agents/control-tools.md
     related_code:
+      - contracts/rudder-agent-contract/v1.json
       - cli/src/agent-v1-capabilities.ts
       - cli/src/agent-v1-registry.ts
       - cli/src/agent-v1-mcp-server.ts
+      - cli/src/client/api-request-error.ts
+      - cli/src/client/http.ts
+      - cli/src/client/issue-transport-budget.ts
       - cli/src/program.ts
       - cli/src/commands/client/browser.ts
       - packages/agent-runtime-utils/src/rudder-mcp.ts
       - packages/agent-runtime-utils/src/rudder-mcp-contract.ts
+      - packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts
       - packages/agent-runtime-utils/src/rudder-mcp-server.ts
       - packages/agent-runtime-utils/src/types.ts
       - packages/agent-runtime-utils/src/managed-external-mcp.ts
       - packages/shared/src/types/mcp.ts
       - packages/shared/src/validators/mcp.ts
+      - native/crates/agent-contract-core/src/contract.generated.json
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
@@ -673,6 +679,8 @@ contracts:
       - cli/src/__tests__/browser-command.test.ts
       - cli/src/__tests__/agent-v1-registry.test.ts
       - cli/src/__tests__/agent-v1-mcp-server.test.ts
+      - cli/src/__tests__/http.test.ts
+      - cli/src/__tests__/issue-transport-budget.e2e.test.ts
       - tests/e2e/agent-mcp-contract.spec.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/codex-local-execute.test.ts

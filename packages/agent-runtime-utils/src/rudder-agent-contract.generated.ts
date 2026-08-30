@@ -1628,7 +1628,9 @@ export const RUDDER_AGENT_CONTRACT = {
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "GET",
+        "pathTemplate": "/api/issues/{issue}/comments",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": false,
@@ -1688,7 +1690,9 @@ export const RUDDER_AGENT_CONTRACT = {
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "GET",
+        "pathTemplate": "/api/issues/{issue}/comments/{comment}",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": false,
@@ -9316,4 +9320,4 @@ export const RUDDER_AGENT_CONTRACT = {
   },
   "schema": "rudder.agent-contract-source/v1"
 } as const;
-export const RUDDER_AGENT_CONTRACT_HASH = "e0d6f8e2e3478cb54147d6034c3bedd6d0d976b7a2e0b9452d3632c637df0e40";
+export const RUDDER_AGENT_CONTRACT_HASH = "39ba4e0cc156e0de4dad0a13d9801c9feaead2c31fedf71b047fb615290112c4";
