@@ -999,7 +999,7 @@ fn schema_violation(value: &Value, schema: &Value) -> Option<String> {
     }
 
     if let Some(text) = value.as_str() {
-        let length = text.encode_utf16().count();
+        let length = text.chars().count();
         if let Some(minimum) = schema.get("minLength").and_then(Value::as_u64)
             && length < minimum as usize
         {
@@ -1995,6 +1995,14 @@ mod tests {
             "rudder_mcp_missing_runtime_context"
         );
         assert_eq!(dispatcher.calls, 0);
+    }
+
+    #[test]
+    fn string_schema_lengths_count_unicode_code_points() {
+        let schema = json!({ "type": "string", "minLength": 1, "maxLength": 1 });
+
+        assert!(schema_violation(&json!("\u{1f642}"), &schema).is_none());
+        assert!(schema_violation(&json!("\u{1f642}\u{1f642}"), &schema).is_some());
     }
 
     #[test]

@@ -462,6 +462,81 @@ fn rejects_empty_object_for_live_min_properties_constraint() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn node_and_rust_count_astral_unicode_schema_lengths_equally() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let wrapper = std::env::temp_dir().join(format!(
+        "rudder-r6z-133-unicode-node-wrapper-{}",
+        std::process::id()
+    ));
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncd '{}' || exit 1\nexec pnpm --filter @rudderhq/cli exec tsx src/index.ts \"$@\"\n",
+            repo_root().display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&wrapper).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&wrapper, permissions).unwrap();
+
+    let node_env = BTreeMap::from([
+        ("RUDDER_API_URL", "http://127.0.0.1:1"),
+        ("RUDDER_API_KEY", "test-key"),
+        ("RUDDER_ORG_ID", "test-org"),
+        ("RUDDER_AGENT_ID", "test-agent"),
+        ("RUDDER_RUN_ID", "test-run"),
+    ]);
+    let mut rust_env = node_env.clone();
+    rust_env.insert("RUDDER_NODE_CLI_BIN", wrapper.to_str().unwrap());
+
+    for (id, task, expected_code) in [
+        (32, "\u{1f642}".repeat(10_001), "rudder_mcp_tool_error"),
+        (
+            33,
+            "\u{1f642}".repeat(20_001),
+            "rudder_mcp_invalid_arguments",
+        ),
+    ] {
+        let message = format!(
+            "{}\n",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": "rudder_runs_create",
+                    "arguments": {
+                        "task": task,
+                        "idempotencyKey": format!("unicode-boundary-{id}")
+                    }
+                }
+            })
+        );
+        let node = request_without_eof(node_command(), &message, &node_env);
+        let rust = request_without_eof(
+            Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation")),
+            &message,
+            &rust_env,
+        );
+
+        assert_eq!(
+            validation_projection(&rust),
+            validation_projection(&node),
+            "request id {id}"
+        );
+        assert_eq!(
+            rust["result"]["structuredContent"]["code"], expected_code,
+            "request id {id}"
+        );
+    }
+
+    let _ = std::fs::remove_file(&wrapper);
+}
+
 #[test]
 fn oversized_whitespace_prefix_fails_at_the_process_boundary() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_rudder-mcp-foundation"))
