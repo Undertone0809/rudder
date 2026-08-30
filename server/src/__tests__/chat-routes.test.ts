@@ -46,6 +46,8 @@ const mockChatService = vi.hoisted(() => ({
   listRecentUserMessages: vi.fn(),
   getMessageTranscript: vi.fn(),
   getMessage: vi.fn(),
+  getUserMessageByClientMutationId: vi.fn(),
+  getUserMessageMutationByClientMutationId: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
   updateMessageStructuredPayload: vi.fn(),
@@ -624,6 +626,8 @@ describe("chat routes", { retry: 2 }, () => {
       items: [],
     });
     mockChatService.getQueuedMessageReplay.mockResolvedValue(null);
+    mockChatService.getUserMessageByClientMutationId.mockResolvedValue(null);
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValue(null);
     mockChatService.createQueuedMessage.mockImplementation(async (input: Record<string, unknown>) => ({
       id: "queued-1",
       orgId: input.orgId,
@@ -2515,6 +2519,164 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
     expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
     expect(hasActiveChatGeneration("chat-1")).toBe(false);
+  });
+
+  it("replays the accepted user-message acknowledgement for a repeated send mutation", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage(
+      "message-idempotent-user",
+      "user",
+      "message",
+      "Send exactly once",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValue({
+      message: userMessage,
+      fingerprint: null,
+    });
+    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce({
+      available: false,
+      error: "Runtime temporarily unavailable",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: "Send exactly once",
+        clientMutationId: "send-mutation-1",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(200);
+    expect(String(res.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        type: "ack",
+        userMessage: expect.objectContaining({
+          id: userMessage.id,
+          body: userMessage.body,
+        }),
+      }),
+      { type: "final", messages: [] },
+    ]);
+    expect(mockChatService.getUserMessageMutationByClientMutationId).toHaveBeenCalledWith(
+      conversation.orgId,
+      conversation.id,
+      "send-mutation-1",
+    );
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.getChatAssistantAvailability).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replay key when annotations, files, edit target, or runtime payload changed", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage(
+      "message-idempotent-user",
+      "user",
+      "message",
+      "Same body",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValue({
+      message: userMessage,
+      fingerprint: "stored-full-payload-fingerprint",
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: "Same body",
+        clientMutationId: "send-mutation-full-payload",
+        modelOverride: "different-model",
+        inlineAnnotations: [],
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("different content");
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("stops a concurrent database replay before generation and cleans loser files", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage(
+      "message-concurrent-winner",
+      "user",
+      "message",
+      "Exactly once across servers",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockImplementationOnce(async (
+      _conversationId: string,
+      _orgId: string,
+      _body: string,
+      _editUserMessageId: string | null,
+      options: { onIdempotentReplay?: (messageId: string) => void },
+    ) => {
+      options.onIdempotentReplay?.(userMessage.id);
+      return userMessage;
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .field("body", userMessage.body)
+      .field("clientMutationId", "send-mutation-concurrent")
+      .attach("files", Buffer.from("loser file"), {
+        filename: "loser.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "chat.message_added" }),
+    );
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      conversation.orgId,
+      "chats/chat-1/image.png",
+    );
+  });
+
+  it("does not queue a concurrent retry with the active send mutation", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    const releaseGeneration = claimChatGeneration(
+      conversation.id,
+      new AbortController(),
+      null,
+      "send-mutation-active",
+    );
+
+    try {
+      const res = await request(createApp())
+        .post("/api/chats/chat-1/messages/stream")
+        .send({
+          body: "Send exactly once",
+          clientMutationId: "send-mutation-active",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        error: "This message is already being sent. Try again shortly.",
+        details: {
+          code: "chat_send_in_progress",
+          phase: "message_acceptance",
+        },
+      });
+      expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+    } finally {
+      releaseGeneration?.();
+    }
   });
 
   it("rejects agent-authenticated streaming chat edits before assistant generation", async () => {

@@ -56,6 +56,7 @@ import {
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
+import { chatMessageMutationFingerprint } from "../services/chat-message-mutation-fingerprint.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
@@ -3243,6 +3244,39 @@ export function chatRoutes(
     }
 
     const inlineAnnotationsProvided = res.locals.inlineAnnotationsProvided === true;
+    const clientMutationFingerprint = req.body.clientMutationId
+      ? chatMessageMutationFingerprint({
+        body: req.body.body,
+        editUserMessageId: req.body.editUserMessageId ?? null,
+        inlineAnnotationsProvided,
+        inlineAnnotations: req.body.inlineAnnotations,
+        modelOverride: req.body.modelOverride ?? null,
+        effortOverride: req.body.effortOverride ?? null,
+        files: [],
+      })
+      : null;
+    if (req.body.clientMutationId) {
+      const replayedMutation = await svc.getUserMessageMutationByClientMutationId(
+        conversation.orgId,
+        conversation.id,
+        req.body.clientMutationId,
+      );
+      if (replayedMutation) {
+        const replayedUserMessage = replayedMutation.message;
+        if (
+          replayedUserMessage.body !== req.body.body
+          || (
+            replayedMutation.fingerprint !== null
+            && replayedMutation.fingerprint !== clientMutationFingerprint
+          )
+        ) {
+          throw conflict("Chat mutation key was already used for different content");
+        }
+        res.status(200).json({ messages: [replayedUserMessage] });
+        return;
+      }
+    }
+
     const preparedAnnotations = inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
@@ -3267,7 +3301,8 @@ export function chatRoutes(
       const item = await svc.createQueuedMessage({
         orgId: conversation.orgId,
         conversationId: conversation.id,
-        clientMutationId: `message:${randomUUID()}`,
+        clientMutationId: req.body.clientMutationId ?? `message:${randomUUID()}`,
+        mutationFingerprint: clientMutationFingerprint ?? undefined,
         runtimeSnapshotVersion: 1,
         expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
         requestActor: queueRequestActor(req),
@@ -3292,7 +3327,7 @@ export function chatRoutes(
     }
 
     try {
-      const userMessage = await addUserMessage(
+      const persistence = await addUserMessage(
         conversation as ChatConversation,
         req.body.body,
         actor,
@@ -3300,8 +3335,15 @@ export function chatRoutes(
         {
           provided: inlineAnnotationsProvided,
           prepared: preparedAnnotations,
+          clientMutationId: req.body.clientMutationId ?? null,
+          clientMutationFingerprint,
         },
       );
+      const userMessage = persistence.message;
+      if (!persistence.accepted) {
+        res.status(200).json({ messages: [userMessage] });
+        return;
+      }
       await touchSideChat(req, conversation as ChatConversation);
       if (!req.body.editUserMessageId) {
         startChatTitleGeneration(conversation as ChatConversation, userMessage);

@@ -8494,6 +8494,60 @@ describe("Atomic new-chat drafts", () => {
     });
   });
 
+  it("reuses the send mutation key after a pre-ack network failure", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],
+    };
+    mockState.sendMessageStream
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockImplementationOnce(async (
+        _chatId: string,
+        body: string,
+        options: { onEvent: (event: ChatStreamEvent) => void | Promise<void> },
+      ) => {
+        await options.onEvent({
+          type: "ack",
+          userMessage: message({ id: "accepted-once", body }),
+        });
+        await options.onEvent({ type: "final", messages: [] });
+      });
+
+    const firstRender = renderChat();
+    const { container } = firstRender;
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(editor, "Retry without duplication.");
+      editor!.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await clickEnabledButtonByAriaLabel(container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(editor?.value).toBe("Retry without duplication."));
+    cleanupFn?.();
+    cleanupFn = null;
+
+    const remounted = renderChat();
+    const remountedEditor = remounted.container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await vi.waitFor(() => expect(remountedEditor?.value).toBe("Retry without duplication."));
+    await clickEnabledButtonByAriaLabel(remounted.container, "Send");
+    await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2));
+
+    const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
+    const retryOptions = mockState.sendMessageStream.mock.calls[1]?.[2];
+    expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
+    expect(retryOptions?.clientMutationId).toBe(firstOptions?.clientMutationId);
+    expect(remountedEditor?.value).toBe("");
+  });
+
   it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {
     mockState.messagesByChatId = {
       "chat-1": [message({ id: "existing-user-message", body: "Existing turn." })],

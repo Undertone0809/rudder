@@ -34,6 +34,9 @@ export type AddUserChatMessageOptions = {
     createdByUserId: string | null;
   }>;
   attachmentFileIndexesByAnnotationId?: Map<string, number[]>;
+  clientMutationId?: string | null;
+  clientMutationFingerprint?: string | null;
+  onIdempotentReplay?: (messageId: string) => void;
   onTransactionCommitted?: (messageId: string) => void;
 };
 
@@ -105,6 +108,35 @@ export function createChatAnnotationMessagePersistence(
       let messageStructuredPayload = options.structuredPayload ?? null;
       let messageTranscript = chatTranscriptFromPayload(messageStructuredPayload);
       const attachmentIdMap = new Map<string, string>();
+
+      if (options.clientMutationId) {
+        const existing = await tx
+          .select({
+            id: chatMessages.id,
+            body: chatMessages.body,
+            fingerprint: chatMessages.clientMutationFingerprint,
+          })
+          .from(chatMessages)
+          .where(and(
+            eq(chatMessages.orgId, orgId),
+            eq(chatMessages.conversationId, conversationId),
+            eq(chatMessages.clientMutationId, options.clientMutationId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (existing) {
+          if (
+            existing.body !== body
+            || (
+              existing.fingerprint !== null
+              && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
+            )
+          ) {
+            throw conflict("Chat mutation key was already used for different content");
+          }
+          return { messageId: existing.id, replayed: true };
+        }
+      }
 
       if (editUserMessageId) {
         target = await tx
@@ -210,6 +242,8 @@ export function createChatAnnotationMessagePersistence(
           status: "completed",
           body,
           structuredPayload: stripChatMetadataFromPayload(sanitizeChatStructuredPayload(messageStructuredPayload)),
+          clientMutationId: options.clientMutationId ?? null,
+          clientMutationFingerprint: options.clientMutationFingerprint ?? null,
           chatTurnId: turnId,
           turnVariant,
         })
@@ -308,7 +342,40 @@ export function createChatAnnotationMessagePersistence(
         ));
       return message.id;
     });
-    options.onTransactionCommitted?.(messageId);
+    let persisted: { messageId: string; replayed: boolean };
+    try {
+      persisted = await persist();
+    } catch (error) {
+      if (!options.clientMutationId || postgresErrorCode(error) !== "23505") throw error;
+      const existing = await db
+        .select({
+          id: chatMessages.id,
+          body: chatMessages.body,
+          fingerprint: chatMessages.clientMutationFingerprint,
+        })
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.orgId, orgId),
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.clientMutationId, options.clientMutationId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!existing) throw error;
+      if (
+        existing.body !== body
+        || (
+          existing.fingerprint !== null
+          && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
+        )
+      ) {
+        throw conflict("Chat mutation key was already used for different content");
+      }
+      persisted = { messageId: existing.id, replayed: true };
+    }
+    if (persisted.replayed) options.onIdempotentReplay?.(persisted.messageId);
+    else options.onTransactionCommitted?.(persisted.messageId);
+    const { messageId } = persisted;
     const message = await getMessage(conversationId, messageId);
     if (!message) throw new Error("Failed to hydrate created chat message");
     return message;

@@ -125,6 +125,11 @@ import {
 } from "@/lib/chat-response-annotations";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import {
+  clearPendingChatSendMutation,
+  readPendingChatSendMutation,
+  savePendingChatSendMutation,
+} from "@/lib/chat-send-mutation-storage";
+import {
   buildChatSkillOptions,
   buildChatSkillReferenceOptions,
   filterChatSkillOptions,
@@ -1612,6 +1617,46 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         state: "streaming",
         createdAt: startedAt,
         transcript: [], replyingAgentId: conversation.chatRuntime.runtimeAgentId ?? conversation.preferredAgentId ?? null, });
+      const mutationScopeKey = `${selectedOrganizationId}:${chatId}:${editUserMessageId ?? "new"}`;
+      const mutationFingerprint = JSON.stringify({
+        body,
+        editUserMessageId,
+        files: filesToUpload.map((file) => ({
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+        })),
+        inlineAnnotations: serializedAnnotations.inlineAnnotations,
+        modelOverride: activeRuntimeOverrides.modelOverride,
+        effortOverride: activeRuntimeOverrides.effortOverride,
+      });
+      const retainedMutation = pendingSendMutationsRef.current[mutationScopeKey]
+        ?? readPendingChatSendMutation(selectedOrganizationId, chatId, editUserMessageId);
+      const clientMutationId = retainedMutation?.fingerprint === mutationFingerprint
+        ? retainedMutation.id
+        : globalThis.crypto.randomUUID();
+      pendingSendMutationsRef.current[mutationScopeKey] = {
+        fingerprint: mutationFingerprint,
+        id: clientMutationId,
+      };
+      savePendingChatSendMutation(
+        selectedOrganizationId,
+        chatId,
+        editUserMessageId,
+        { fingerprint: mutationFingerprint, id: clientMutationId },
+      );
+      const settleClientMutation = () => {
+        if (pendingSendMutationsRef.current[mutationScopeKey]?.id === clientMutationId) {
+          delete pendingSendMutationsRef.current[mutationScopeKey];
+        }
+        clearPendingChatSendMutation(
+          selectedOrganizationId,
+          chatId,
+          editUserMessageId,
+          clientMutationId,
+        );
+      };
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         editUserMessageId,

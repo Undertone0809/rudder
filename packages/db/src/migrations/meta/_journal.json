@@ -1135,13 +1135,6 @@
       "when": 1788092400000,
       "tag": "0161_chat_message_mutation_fingerprint",
       "breakpoints": true
-    },
-    {
-      "idx": 162,
-      "version": "7",
-      "when": 1788105600000,
-      "tag": "0162_run_debug_issue_origin",
-      "breakpoints": true
     }
   ]
 }

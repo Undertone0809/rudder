@@ -16,6 +16,8 @@ type ChatService = ReturnType<typeof chatService>;
 type ActorInfo = ReturnType<typeof getActorInfo>;
 
 export type ChatAnnotationRouteInput = {
+  clientMutationId?: string | null;
+  clientMutationFingerprint?: string | null;
   provided: boolean;
   prepared: PreparedChatInlineAnnotations | null;
   storedAttachments?: Array<{
@@ -59,11 +61,15 @@ export function createChatAnnotationRouteHelpers(input: {
     annotationInput?: ChatAnnotationRouteInput,
   ) {
     input.assertLocalMutationAllowed(conversation);
-    let transactionCommitReported = false;
+    let persistenceDisposition: "accepted" | "replayed" | null = null;
     const reportTransactionCommit = (messageId: string) => {
-      if (transactionCommitReported) return;
-      transactionCommitReported = true;
+      if (persistenceDisposition) return;
+      persistenceDisposition = "accepted";
       annotationInput?.onPersisted?.(messageId);
+    };
+    const reportIdempotentReplay = () => {
+      if (persistenceDisposition) return;
+      persistenceDisposition = "replayed";
     };
     const transactionCommitOptions = annotationInput?.onPersisted
       ? { onTransactionCommitted: reportTransactionCommit }
@@ -86,6 +92,13 @@ export function createChatAnnotationRouteHelpers(input: {
           }
           : {}),
         ...transactionCommitOptions,
+        ...(annotationInput.clientMutationId
+          ? {
+            clientMutationId: annotationInput.clientMutationId,
+            clientMutationFingerprint: annotationInput.clientMutationFingerprint ?? null,
+            onIdempotentReplay: reportIdempotentReplay,
+          }
+          : {}),
       }
       : annotationInput?.storedAttachments?.length
         ? {
@@ -95,9 +108,25 @@ export function createChatAnnotationRouteHelpers(input: {
             createdByUserId: actor.actorType === "user" ? actor.actorId : null,
           })),
           ...transactionCommitOptions,
+          ...(annotationInput.clientMutationId
+            ? {
+              clientMutationId: annotationInput.clientMutationId,
+              clientMutationFingerprint: annotationInput.clientMutationFingerprint ?? null,
+              onIdempotentReplay: reportIdempotentReplay,
+            }
+            : {}),
         }
-        : annotationInput?.onPersisted
-          ? transactionCommitOptions
+        : annotationInput?.onPersisted || annotationInput?.clientMutationId
+          ? {
+            ...transactionCommitOptions,
+            ...(annotationInput.clientMutationId
+              ? {
+                clientMutationId: annotationInput.clientMutationId,
+                clientMutationFingerprint: annotationInput.clientMutationFingerprint ?? null,
+                onIdempotentReplay: reportIdempotentReplay,
+              }
+              : {}),
+          }
           : undefined;
     const userMessage = messageOptions
       ? await input.chats.addUserChatMessage(
@@ -113,7 +142,11 @@ export function createChatAnnotationRouteHelpers(input: {
         body,
         editUserMessageId ?? null,
       );
-    reportTransactionCommit(userMessage.id);
+    if (!persistenceDisposition) reportTransactionCommit(userMessage.id);
+    const accepted = persistenceDisposition === "accepted";
+    if (!accepted) {
+      return { message: userMessage as ChatMessage, accepted: false };
+    }
     const persistedAnnotations = chatInlineAnnotationsFromStructuredPayload(
       userMessage.structuredPayload,
     );
@@ -176,7 +209,7 @@ export function createChatAnnotationRouteHelpers(input: {
         })),
     );
 
-    return userMessage as ChatMessage;
+    return { message: userMessage as ChatMessage, accepted: true };
   }
 
   async function storeUserMessageFiles(
