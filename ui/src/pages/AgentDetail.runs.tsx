@@ -37,6 +37,7 @@ import {
   type ClaudeLoginResult
 } from "../api/agents";
 import { healthApi } from "../api/health";
+import { issuesApi } from "../api/issues";
 import { CopyText } from "../components/CopyText";
 import { RunIssueReportDialog } from "../components/RunIssueReportDialog";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -49,6 +50,7 @@ import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
 import { createChatResponseAnnotationState, validateChatResponseAnnotationAdd } from "../lib/chat-response-annotations";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import {
   GENERIC_RUN_FAILURE_BODY,
@@ -657,6 +659,26 @@ export function RunsTab({
     setSidebarOpen(false);
   }, [contextKey, orgId, setSidebarOpen, sidePanel]);
 
+  const createDebugTaskForRun = useCallback(async (run: HeartbeatRun, diagnostics: string) => {
+    const result = await issuesApi.createRunDebugIssue(orgId, run.id, diagnostics);
+    const issueRef = result.issue.identifier ?? result.issue.id;
+    const organizationPrefix = typeof window === "undefined"
+      ? null
+      : extractOrganizationPrefixFromPath(window.location.pathname);
+    pushToast({
+      title: result.created ? `Created Debug task ${issueRef}` : `Debug task ${issueRef} already exists`,
+      body: result.created
+        ? "The task includes the source Run and bounded diagnostic context."
+        : "Rudder reused the task already created for this Run.",
+      tone: "success",
+      dedupeKey: `run-debug-issue:${orgId}:${run.id}`,
+      action: {
+        label: `Open ${issueRef}`,
+        href: applyOrganizationPrefix(`/issues/${issueRef}`, organizationPrefix),
+      },
+    });
+  }, [orgId, pushToast]);
+
   const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
     if (!input.text.trim()) return;
     const annotationId = crypto.randomUUID();
@@ -811,6 +833,7 @@ export function RunsTab({
             agentRuntimeType={agentRuntimeType}
             onAnnotate={annotateRun}
             onAskAgent={(diagnostics) => askAgentAboutRun(selectedRun, diagnostics)}
+            onCreateTask={(diagnostics) => createDebugTaskForRun(selectedRun, diagnostics)}
           />
         </div>
 
@@ -927,12 +950,14 @@ export function RunDetail({
   agentRuntimeType,
   onAnnotate,
   onAskAgent,
+  onCreateTask,
 }: {
   run: HeartbeatRun;
   agentRouteId: string;
   agentRuntimeType: string;
   onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
   onAskAgent: (diagnostics: string) => void;
+  onCreateTask: (diagnostics: string) => Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -1392,6 +1417,7 @@ export function RunDetail({
         open={issueReportOpen}
         onOpenChange={setIssueReportOpen}
         onAskAgent={onAskAgent}
+        onCreateTask={onCreateTask}
       />
 
       <RunChatContextCard run={run} agentRouteId={agentRouteId} />

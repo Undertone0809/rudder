@@ -1029,18 +1029,20 @@ export function issueService(db: Db, storage?: StorageService) {
     ) => {
       const { labelIds: inputLabelIds, ...rawIssueData } = data;
       const issueData = { ...rawIssueData };
-      const agentIssueCreationOrigin = issueData.originKind === "agent_issue_creation"
-        && typeof issueData.originId === "string"
+      const idempotentOriginKind = issueData.originKind === "agent_issue_creation" || issueData.originKind === "run_debug"
+        ? issueData.originKind
+        : null;
+      const idempotentOriginId = idempotentOriginKind && typeof issueData.originId === "string"
         ? issueData.originId
         : null;
-      if (agentIssueCreationOrigin) {
+      if (idempotentOriginKind && idempotentOriginId) {
         const existing = await db
           .select()
           .from(issues)
           .where(and(
             eq(issues.orgId, orgId),
-            eq(issues.originKind, "agent_issue_creation"),
-            eq(issues.originId, agentIssueCreationOrigin),
+            eq(issues.originKind, idempotentOriginKind),
+            eq(issues.originId, idempotentOriginId),
           ))
           .then((rows) => rows[0] ?? null);
         if (existing) {
@@ -1275,7 +1277,17 @@ export function issueService(db: Db, storage?: StorageService) {
             );
           })));
         }
-        if (!agentIssueCreationOrigin || !isUniqueConstraintConflict(error, "issues_agent_issue_creation_origin_uq")) {
+        const idempotentConstraint = idempotentOriginKind === "agent_issue_creation"
+          ? "issues_agent_issue_creation_origin_uq"
+          : idempotentOriginKind === "run_debug"
+            ? "issues_run_debug_origin_uq"
+            : null;
+        if (
+          !idempotentOriginKind
+          || !idempotentConstraint
+          || !idempotentOriginId
+          || !isUniqueConstraintConflict(error, idempotentConstraint)
+        ) {
           throw error;
         }
         const existing = await db
@@ -1283,8 +1295,8 @@ export function issueService(db: Db, storage?: StorageService) {
           .from(issues)
           .where(and(
             eq(issues.orgId, orgId),
-            eq(issues.originKind, "agent_issue_creation"),
-            eq(issues.originId, agentIssueCreationOrigin),
+            eq(issues.originKind, idempotentOriginKind),
+            eq(issues.originId, idempotentOriginId),
           ))
           .then((rows) => rows[0] ?? null);
         if (!existing) throw error;
