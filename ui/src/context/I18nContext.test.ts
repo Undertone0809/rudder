@@ -8,6 +8,7 @@ import { translateMessage } from "./I18nContext";
 describe("translateMessage", () => {
   it("returns localized copy for zh-CN", () => {
     expect(translateMessage("zh-CN", "common.systemSettings")).toBe("系统设置");
+    expect(translateMessage("zh-CN", "common.backToWorkspace")).toBe("返回工作区");
   });
 
   it("localizes the unmentioned Agent comment confirmation", () => {
@@ -75,6 +76,7 @@ describe("translateMessage", () => {
     expect(translateLegacyString("zh-CN", "Review")).toBe("评审");
     expect(translateLegacyString("zh-CN", "Reviewer")).toBe("评审人");
     expect(translateLegacyString("zh-CN", "Workspace")).toBe("工作区");
+    expect(translateLegacyString("zh-CN", "Open board")).toBe("打开工作区");
     expect(translateLegacyString("zh-CN", "Cancelled")).toBe("已取消");
     expect(translateLegacyString("zh-CN", "Hidden columns")).toBe("隐藏列");
     expect(translateLegacyString("zh-CN", "0 issues working in current view")).toBe(
