@@ -567,6 +567,12 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({
+    confirm: vi.fn(async () => true),
+  }),
+}));
+
 vi.mock("../context/SidePanelContext", () => ({
   useSidePanel: () => ({
     openTarget: mockState.openSidePanelTarget,

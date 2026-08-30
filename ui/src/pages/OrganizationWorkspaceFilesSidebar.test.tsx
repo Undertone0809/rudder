@@ -219,6 +219,12 @@ vi.mock("../context/ToastContext", () => ({
   }),
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({
+    confirm: vi.fn(async () => true),
+  }),
+}));
+
 vi.mock("../hooks/useViewedOrganization", () => ({
   useViewedOrganization: () => ({
     viewedOrganizationId: "org-1",
