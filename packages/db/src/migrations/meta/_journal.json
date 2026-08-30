@@ -1128,6 +1128,13 @@
       "when": 1788084000000,
       "tag": "0160_delegation_run_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1788092400000,
+      "tag": "0161_chat_message_mutation_fingerprint",
+      "breakpoints": true
     }
   ]
 }

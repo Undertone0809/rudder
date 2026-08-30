@@ -8521,7 +8521,8 @@ describe("Atomic new-chat drafts", () => {
         await options.onEvent({ type: "final", messages: [] });
       });
 
-    const { container } = renderChat();
+    const firstRender = renderChat();
+    const { container } = firstRender;
     const editor = container.querySelector<HTMLTextAreaElement>(
       "textarea[aria-label='Composer draft']",
     );
@@ -8538,14 +8539,22 @@ describe("Atomic new-chat drafts", () => {
     await clickEnabledButtonByAriaLabel(container, "Send");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(editor?.value).toBe("Retry without duplication."));
-    await clickEnabledButtonByAriaLabel(container, "Send");
+    cleanupFn?.();
+    cleanupFn = null;
+
+    const remounted = renderChat();
+    const remountedEditor = remounted.container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Composer draft']",
+    );
+    await vi.waitFor(() => expect(remountedEditor?.value).toBe("Retry without duplication."));
+    await clickEnabledButtonByAriaLabel(remounted.container, "Send");
     await vi.waitFor(() => expect(mockState.sendMessageStream).toHaveBeenCalledTimes(2));
 
     const firstOptions = mockState.sendMessageStream.mock.calls[0]?.[2];
     const retryOptions = mockState.sendMessageStream.mock.calls[1]?.[2];
     expect(firstOptions?.clientMutationId).toEqual(expect.any(String));
     expect(retryOptions?.clientMutationId).toBe(firstOptions?.clientMutationId);
-    expect(editor?.value).toBe("");
+    expect(remountedEditor?.value).toBe("");
   });
 
   it("does not restore an existing-chat draft when a pre-ack stream error identifies the committed user message", async () => {

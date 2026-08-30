@@ -21,6 +21,7 @@ export const chatMessages = pgTable(
     runId: uuid("run_id").references(() => heartbeatRuns.id, { onDelete: "set null" }),
     replyingAgentId: uuid("replying_agent_id").references(() => agents.id, { onDelete: "set null" }),
     clientMutationId: text("client_mutation_id"),
+    clientMutationFingerprint: text("client_mutation_fingerprint"),
     /** User+assistant pairs that share a logical "turn" (for edit/regenerate variants). */
     chatTurnId: uuid("chat_turn_id"),
     turnVariant: integer("turn_variant").notNull().default(0),
