@@ -260,7 +260,7 @@ test.describe("Organization workspaces agent avatar", () => {
     expect(deletedListing.entries.some((entry) => entry.path === orphanedWorkspacePath)).toBe(false);
   });
 
-  test("moves entries by drag-and-drop and supports VS Code-style tree keyboard selection", async ({ page, request }) => {
+  test("moves entries by drag-and-drop and keeps keyboard focus distinct from file selection", async ({ page, request }) => {
     const organizationRes = await request.post("/api/orgs", {
       data: {
         name: `Organization-Workspaces-Tree-Interaction-${Date.now()}`,
@@ -272,6 +272,7 @@ test.describe("Organization workspaces agent avatar", () => {
 
     const folderPath = "target-folder";
     const filePath = "tree-file.md";
+    const unopenedFilePath = "tree-other.md";
     const movedPath = `${folderPath}/${filePath}`;
 
     const directoryRes = await request.post(`/api/orgs/${organization.id}/workspace/directory`, {
@@ -282,25 +283,38 @@ test.describe("Organization workspaces agent avatar", () => {
       data: { filePath, content: "# Tree file\n" },
     });
     expect(fileRes.ok()).toBe(true);
+    const unopenedFileRes = await request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: { filePath: unopenedFilePath, content: "# Other file\n" },
+    });
+    expect(unopenedFileRes.ok()).toBe(true);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`/${organization.issuePrefix}/library`);
+    await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(filePath)}`);
 
     const folderRow = page.locator(`[data-workspace-entry-path="${folderPath}"]`);
     const folderButton = folderRow.locator("> button").first();
     const fileRow = page.locator(`[data-workspace-entry-path="${filePath}"]`);
+    const fileButton = fileRow.locator("> button").first();
+    const unopenedFileRow = page.locator(`[data-workspace-entry-path="${unopenedFilePath}"]`);
+    const unopenedFileButton = unopenedFileRow.locator("> button").first();
     await expect(folderRow).toBeVisible();
     await expect(fileRow).toBeVisible();
+    await expect(unopenedFileRow).toBeVisible();
+    await expect(fileButton).toHaveAttribute("aria-selected", "true");
 
     await folderButton.click();
-    await expect(folderButton).toHaveAttribute("aria-selected", "true");
-    await folderButton.press("ArrowDown");
-    await expect(fileRow.locator("> button").first()).toBeFocused();
-    await expect(fileRow.locator("> button").first()).toHaveAttribute("aria-selected", "true");
+    await expect(folderButton).toHaveAttribute("aria-selected", "false");
+    await expect(fileButton).toHaveAttribute("aria-selected", "true");
+
+    await fileButton.focus();
+    await fileButton.press("ArrowDown");
+    await expect(unopenedFileButton).toBeFocused();
+    await expect(unopenedFileButton).toHaveAttribute("aria-selected", "false");
+    await expect(fileButton).toHaveAttribute("aria-selected", "true");
 
     await fileRow.dragTo(folderRow);
     await expect(page.locator(`[data-workspace-entry-path="${movedPath}"]`)).toBeVisible();
