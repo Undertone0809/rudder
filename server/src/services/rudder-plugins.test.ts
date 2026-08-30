@@ -138,7 +138,7 @@ describe("inspectRudderPluginPackage", () => {
     ]))).toThrow("duplicate or case-colliding path");
   });
 
-  it("enforces file count and byte limits before parsing", () => {
+  it("enforces file count and per-file limits before parsing", () => {
     const tooMany = Array.from({ length: 500 }, (_, index) => ({
       path: `assets/${index}.txt`,
       content: "x",
@@ -147,6 +147,25 @@ describe("inspectRudderPluginPackage", () => {
     expect(() => inspectRudderPluginPackage(input([
       { path: "skills/research/SKILL.md", content: "x".repeat(2 * 1024 * 1024 + 1) },
     ]))).toThrow("exceeds 2 MiB");
+  });
+
+  it("accepts packages above the retired 10 MiB aggregate limit", () => {
+    const files = Array.from({ length: 6 }, (_, index) => ({
+      path: `skills/research/assets/payload-${index}.txt`,
+      content: "x".repeat(1_800_000),
+    }));
+    files.push({
+      path: "skills/research/SKILL.md",
+      content: "---\nname: Research\n---\n",
+    });
+
+    const result = inspectRudderPluginPackage(input(files));
+
+    expect(result.normalized.totalBytes).toBeGreaterThan(10 * 1024 * 1024);
+    expect(result.report.errors).toEqual([]);
+    expect(result.report.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "skill:research", status: "ready" }),
+    ]));
   });
 
   it("rejects literal MCP credentials while allowing environment references", () => {

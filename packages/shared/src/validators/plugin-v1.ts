@@ -15,7 +15,8 @@ export const inspectRudderPluginSchema = z.object({
 export const inspectRudderPluginArchiveSchema = z.object({
   sourceLabel: z.string().trim().min(1).max(240),
   filename: z.string().trim().min(1).max(240).refine((value) => /\.zip$/i.test(value), "Only ZIP Plugin archives are supported"),
-  content: z.string().min(1).max(14_000_000),
+  // 100 MiB binary package ceiling plus base64 expansion.
+  content: z.string().min(1).max(140_000_000),
   encoding: z.literal("base64"),
 }).strict();
 
