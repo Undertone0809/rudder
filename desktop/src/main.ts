@@ -575,6 +575,7 @@ function applyDesktopAppIdentity(profile: LocalEnvProfile): string {
 
 const initialProfile = resolveDesktopLocalEnvProfile();
 const APP_NAME = applyDesktopAppIdentity(initialProfile);
+const DESKTOP_WINDOW_TITLE = "Rudder";
 const desktopCapabilities = resolveDesktopCapabilities();
 function readCurrentDesktopSystemPermissions(): DesktopSystemPermissions {
   return resolveDesktopSystemPermissions({
@@ -1740,7 +1741,7 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
   );
   const window = new BrowserWindow({
     ...initialWindowSize,
-    title: APP_NAME,
+    title: DESKTOP_WINDOW_TITLE,
     show: false,
     autoHideMenuBar: process.platform !== "darwin",
     ...macWindowEffects,
@@ -1753,6 +1754,11 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
+
+  window.webContents.on("page-title-updated", (event) => {
+    event.preventDefault();
+    window.setTitle(DESKTOP_WINDOW_TITLE);
+  });
 
   if (kind === "app") {
     const browserProfile = requireBrowserProfileController();
@@ -1831,7 +1837,7 @@ async function replaceMainWindow(nextWindow: BrowserWindow, kind: "app" | "boot"
   mainWindow = nextWindow;
   currentMainRenderer = nextWindow.webContents;
   currentMainWindowKind = kind;
-  mainWindow.setTitle(APP_NAME);
+  mainWindow.setTitle(DESKTOP_WINDOW_TITLE);
   mainWindow.show();
 
   if (previousWindow && previousWindow !== nextWindow && !previousWindow.isDestroyed()) {

@@ -2649,6 +2649,31 @@ async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64
   }
 }
 
+async function assertDesktopWindowTitle(electronApp, context) {
+  const actual = await electronApp.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    return window?.getTitle() ?? null;
+  });
+  assert.equal(actual, "Rudder", `${context} should keep the native window title fixed to Rudder`);
+}
+
+async function assertRendererCannotChangeDesktopWindowTitle(electronApp, page, context) {
+  const originalDocumentTitle = await page.title();
+  await page.evaluate(() => {
+    document.title = "Smoke renderer title must not escape";
+  });
+  await waitForSmokeCondition(`${context} native title guard`, async () => {
+    const title = await electronApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      return window?.getTitle() ?? null;
+    });
+    return title === "Rudder" ? title : null;
+  });
+  await page.evaluate((title) => {
+    document.title = title;
+  }, originalDocumentTitle);
+}
+
 function resolveMacPackagedSmokeHomeEnv() {
   return process.platform === "darwin" && process.env.HOME
     ? { HOME: process.env.HOME }
@@ -2713,6 +2738,7 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
     );
   }
   await assertFreshDesktopWindowSize(electronApp, "a fresh Desktop profile");
+  await assertDesktopWindowTitle(electronApp, "a fresh Desktop profile");
   return { electronApp, page };
 }
 
@@ -3773,6 +3799,8 @@ async function launchDesktop(userDataDir, mode, ports, extraEnv = {}, executable
   // hands off to the application window. The shared tolerance stays strict
   // enough to reject the former 1440px default.
   await assertFreshDesktopWindowSize(electronApp, "the ready application window");
+  await assertDesktopWindowTitle(electronApp, "the ready application window");
+  await assertRendererCannotChangeDesktopWindowTitle(electronApp, page, "the ready application window");
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
   return { electronApp, page, baseUrl };
