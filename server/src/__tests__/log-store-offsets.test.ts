@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempRoots: string[] = [];
 const initialNativeMode = process.env.RUDDER_NATIVE_MODE;
+const initialNativeRunEvidenceIndex = process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX;
+const initialNativeEvidenceIndexPath = process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH;
 
 async function makeTempRoot(prefix: string): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -15,9 +17,11 @@ async function makeTempRoot(prefix: string): Promise<string> {
 afterEach(async () => {
   if (initialNativeMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
   else process.env.RUDDER_NATIVE_MODE = initialNativeMode;
+  if (initialNativeRunEvidenceIndex === undefined) delete process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX;
+  else process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = initialNativeRunEvidenceIndex;
+  if (initialNativeEvidenceIndexPath === undefined) delete process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH;
+  else process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = initialNativeEvidenceIndexPath;
   delete process.env.RUN_LOG_BASE_PATH;
-  delete process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX;
-  delete process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH;
   delete process.env.WORKSPACE_OPERATION_LOG_BASE_PATH;
   vi.resetModules();
   await Promise.all(tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
