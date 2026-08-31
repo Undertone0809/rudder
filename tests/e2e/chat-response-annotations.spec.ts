@@ -1023,9 +1023,33 @@ test.describe("Chat response annotations", () => {
     await expect(page.getByText("Failed to send message")).toHaveCount(0);
 
     const sentTurn = page.getByTestId("chat-user-message-turn").last();
-    await expect(sentTurn.getByRole("button", { name: "Show 6 annotations" })).toBeVisible({
+    const sentChip = sentTurn.getByRole("button", { name: "Show 6 annotations" });
+    await expect(sentChip).toBeVisible({
       timeout: 15_000,
     });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await sentChip.hover();
+    const hoverTriggerId = await sentChip
+      .locator("..")
+      .getAttribute("data-annotation-hover-trigger");
+    expect(hoverTriggerId).toBeTruthy();
+    const hoverDetails = page
+      .locator(`[data-annotation-hover-content="${hoverTriggerId}"]`)
+      .getByTestId("chat-response-annotation-hover-details");
+    await expect(hoverDetails.first()).toContainText(orderedItems.at(-1)!);
+    const scrollMetrics = await hoverDetails.evaluateAll((elements) => elements.map((element) => ({
+      clientHeight: element.clientHeight,
+      overflowY: getComputedStyle(element).overflowY,
+      scrollHeight: element.scrollHeight,
+    })));
+    expect(scrollMetrics.some(({ clientHeight, scrollHeight }) => scrollHeight > clientHeight))
+      .toBe(true);
+    expect(scrollMetrics.every(({ overflowY }) => overflowY === "auto")).toBe(true);
+    await sentChip.focus();
+    await page.keyboard.press("End");
+    await expect.poll(() => hoverDetails.evaluateAll((elements) => (
+      Math.max(...elements.map((element) => element.scrollTop))
+    ))).toBeGreaterThan(0);
     await page.screenshot({
       path: `/tmp/rudder-response-annotations-${testInfo.workerIndex}-ordered-list.png`,
       fullPage: false,

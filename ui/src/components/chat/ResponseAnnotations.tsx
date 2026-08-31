@@ -13,6 +13,7 @@ import {
   CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
   restoreChatAnnotationRange,
 } from "@/lib/chat-response-annotation-selection";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isImageContentType } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
 import type {
@@ -35,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  cloneElement,
   useCallback,
   useEffect,
   useId,
@@ -351,23 +353,30 @@ function countLabel(count: number, labels: ResponseAnnotationLabels) {
 
 type ResponseAnnotation = ChatInlineAnnotation | ChatInlineAnnotationInput;
 
+type AnnotationHoverItem = {
+  annotation: ResponseAnnotation;
+  ordinal: number;
+};
+
 function isFileAnnotation(annotation: ResponseAnnotation) {
   return annotation.surface === "workspace_file" || annotation.surface === "local_file";
 }
 
 function AnnotationHoverDetails({
-  annotations,
+  items,
   labels,
 }: {
-  annotations: ResponseAnnotation[];
+  items: AnnotationHoverItem[];
   labels: ResponseAnnotationLabels;
 }) {
+  const scrollRef = useScrollbarActivityRef();
   return (
     <div
+      ref={scrollRef}
       data-testid="chat-response-annotation-hover-details"
-      className="max-h-[min(18rem,calc(100vh-2rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain text-left"
+      className="scrollbar-auto-hide max-h-[min(18rem,calc(100vh-2rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain text-left"
     >
-      {annotations.map((annotation, index) => (
+      {items.map(({ annotation, ordinal }, index) => (
         <div
           key={annotation.id}
           className={cn(
@@ -377,7 +386,7 @@ function AnnotationHoverDetails({
         >
           <AnnotationContent
             annotation={annotation}
-            ordinal={index + 1}
+            ordinal={ordinal}
             attachments={[]}
             labels={labels}
           />
@@ -389,31 +398,126 @@ function AnnotationHoverDetails({
 
 function AnnotationHoverTooltip({
   annotations,
+  ordinals,
   labels,
   children,
 }: {
   annotations: ResponseAnnotation[];
+  ordinals?: number[];
   labels: ResponseAnnotationLabels;
   children: ReactElement;
 }) {
-  const chatAnnotations = annotations.filter((annotation) => !isFileAnnotation(annotation));
-  if (chatAnnotations.length === 0) return children;
+  const [open, setOpen] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const triggerId = useId();
+  const lastPointerRef = useRef({ x: -1, y: -1 });
+  const chatItems = annotations
+    .map((annotation, index) => ({ annotation, ordinal: ordinals?.[index] ?? index + 1 }))
+    .filter(({ annotation }) => !isFileAnnotation(annotation));
+  const trigger = cloneElement(children as ReactElement<Record<string, unknown>>, {
+    "data-annotation-hover-trigger": triggerId,
+  });
+
+  const findTrigger = useCallback(() => (
+    Array.from(document.querySelectorAll<HTMLElement>("[data-annotation-hover-trigger]"))
+      .find((element) => element.dataset.annotationHoverTrigger === triggerId) ?? null
+  ), [triggerId]);
+  const containsPoint = useCallback((element: HTMLElement | null, x: number, y: number) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }, []);
+  const setContentRef = useCallback((element: HTMLDivElement | null) => {
+    contentRef.current = element;
+    element?.parentElement?.style.setProperty("pointer-events", "none");
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const details = () => contentRef.current?.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-details']",
+    ) ?? null;
+    const handlePointerMove = (event: PointerEvent) => {
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      const triggerElement = findTrigger();
+      if (
+        containsPoint(triggerElement, event.clientX, event.clientY)
+        || containsPoint(contentRef.current, event.clientX, event.clientY)
+        || triggerElement?.contains(document.activeElement)
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    const handleWheel = (event: WheelEvent) => {
+      const scrollElement = details();
+      if (!containsPoint(contentRef.current, event.clientX, event.clientY) || !scrollElement) {
+        return;
+      }
+      event.preventDefault();
+      scrollElement.scrollTop += event.deltaY;
+      scrollElement.dispatchEvent(new Event("scroll"));
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      const triggerElement = findTrigger();
+      const scrollElement = details();
+      if (!triggerElement?.contains(document.activeElement) || !scrollElement) return;
+      const page = Math.max(40, scrollElement.clientHeight * 0.8);
+      const nextTop = event.key === "ArrowDown"
+        ? scrollElement.scrollTop + 40
+        : event.key === "ArrowUp"
+          ? scrollElement.scrollTop - 40
+          : event.key === "PageDown"
+            ? scrollElement.scrollTop + page
+            : event.key === "PageUp"
+              ? scrollElement.scrollTop - page
+              : event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? scrollElement.scrollHeight
+                  : null;
+      if (nextTop === null) return;
+      event.preventDefault();
+      scrollElement.scrollTop = nextTop;
+      scrollElement.dispatchEvent(new Event("scroll"));
+    };
+    document.addEventListener("pointermove", handlePointerMove, true);
+    document.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointermove", handlePointerMove, true);
+      document.removeEventListener("wheel", handleWheel, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [containsPoint, findTrigger, open]);
+
+  if (chatItems.length === 0) return children;
   return (
     <TooltipProvider
       delayDuration={180}
       skipDelayDuration={80}
-      disableHoverableContent
     >
-      <Tooltip>
-        <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <Tooltip
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            const { x, y } = lastPointerRef.current;
+            if (containsPoint(contentRef.current, x, y)) return;
+          }
+          setOpen(nextOpen);
+        }}
+      >
+        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent
+          ref={setContentRef}
           side="top"
           sideOffset={8}
           collisionPadding={8}
           data-testid="chat-response-annotation-hover-tooltip"
+          data-annotation-hover-content={triggerId}
           className="pointer-events-none z-[100] max-w-[calc(100vw-1rem)] overflow-hidden border border-[color:var(--border-soft)] bg-popover p-3 text-left text-popover-foreground whitespace-normal shadow-lg"
         >
-          <AnnotationHoverDetails annotations={chatAnnotations} labels={labels} />
+          <AnnotationHoverDetails items={chatItems} labels={labels} />
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -525,6 +629,7 @@ export function ResponseAnnotationMarker({
   return (
     <AnnotationHoverTooltip
       annotations={annotation ? [annotation] : []}
+      ordinals={[ordinal]}
       labels={labels}
     >
       {marker}

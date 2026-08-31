@@ -826,4 +826,92 @@ describe("response annotation components", () => {
     expect(entry.querySelector("button")).toBeNull();
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it("preserves canonical ordinals when file annotations are omitted from hover details", async () => {
+    render(
+      <SentResponseAnnotationsCard
+        annotations={[workspaceFileAnnotation, annotation]}
+        attachments={[]}
+      />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 2 annotations']",
+    )!;
+    act(() => {
+      chip.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    const tooltip = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    );
+    expect(tooltip?.textContent).toContain("2. Selected excerpt");
+    expect(tooltip?.textContent).not.toContain("1. Selected excerpt");
+    expect(tooltip?.textContent).toContain(annotation.selectedText);
+    expect(tooltip?.textContent).not.toContain(workspaceFileAnnotation.selectedText);
+  });
+
+  it("scrolls dense hover details from the focused trigger without intercepting clicks", async () => {
+    const annotations = Array.from({ length: 10 }, (_, index) => ({
+      ...annotation,
+      id: `10000000-0000-4000-8000-${String(index + 20).padStart(12, "0")}`,
+      selectedText: `${annotation.selectedText} ${"More evidence. ".repeat(20)}`,
+    }));
+    render(
+      <SentResponseAnnotationsCard annotations={annotations} attachments={[]} />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 10 annotations']",
+    )!;
+    act(() => {
+      chip.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    const details = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-details']",
+    )!;
+    expect(details.classList.contains("scrollbar-auto-hide")).toBe(true);
+    expect(details.closest("[data-testid='chat-response-annotation-hover-tooltip']")?.className)
+      .toContain("pointer-events-none");
+    expect(details.closest("[data-radix-popper-content-wrapper]")?.getAttribute("style"))
+      .toContain("pointer-events: none");
+    Object.defineProperty(details, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(details, "scrollHeight", { configurable: true, value: 800 });
+    const tooltip = details.closest<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    )!;
+    tooltip.getBoundingClientRect = () => ({
+      bottom: 300,
+      height: 200,
+      left: 100,
+      right: 400,
+      top: 100,
+      width: 300,
+      x: 100,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    act(() => {
+      document.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        clientX: 200,
+        clientY: 200,
+        deltaY: 120,
+      }));
+    });
+    expect(details.scrollTop).toBe(120);
+    act(() => chip.focus());
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    });
+    expect(details.scrollTop).toBe(800);
+    expect(details.classList.contains("is-scrolling")).toBe(true);
+  });
 });
