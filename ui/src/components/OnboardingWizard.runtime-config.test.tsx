@@ -409,11 +409,11 @@ describe("OnboardingWizard runtime config", () => {
     });
 
     await vi.waitFor(() => {
-      expect(findButton(surface, "kimi-for-coding")).toBeTruthy();
+      expect(findButton(surface, "Kimi for Coding")).toBeTruthy();
     });
 
     await act(async () => {
-      click(findButton(surface, "kimi-for-coding"));
+      click(findButton(surface, "Kimi for Coding"));
       await flush();
       inputValue(
         document.querySelector<HTMLInputElement>(
