@@ -94,6 +94,10 @@ describe("unified delivery workflows", () => {
     expect(desktop).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
     expect(desktop.indexOf("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts"))
       .toBeLessThan(desktop.indexOf("pnpm desktop:dist"));
+    expect(desktop).toContain("Verify packaged release-set lifecycle");
+    for (const scenario of ["startup-recovery", "clean", "upgrade", "auto-update", "auto-update-public"]) {
+      expect(desktop).toContain(scenario);
+    }
   });
 
   it("publishes only frozen run artifacts without dispatching or rebuilding Desktop", () => {
