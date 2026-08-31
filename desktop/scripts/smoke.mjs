@@ -6314,13 +6314,27 @@ async function runBrowserScenario(mode) {
 
 async function runTerminalScenario(mode) {
   const scenarioRoot = path.join(tmpRoot, "terminal");
-  if (mode === "packaged") {
-    await preparePackagedExternalRuntimeFixture(scenarioRoot);
-    console.log("[desktop-smoke] packaged Agent Terminal native PTY passed");
-    return;
-  }
   const ports = await allocateSmokePorts();
-  const run = await launchDesktop(scenarioRoot, mode, ports);
+  const packagedExecutable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
+  const packagedRuntime = mode === "packaged"
+    ? await preparePackagedExternalRuntimeFixture(scenarioRoot, { executablePath: packagedExecutable })
+    : null;
+  const packagedAuthEnv = mode === "packaged" ? {
+    ...resolveMacPackagedSmokeHomeEnv(),
+    RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+  } : {};
+  const run = await launchDesktop(
+    scenarioRoot,
+    mode,
+    ports,
+    {
+      ...packagedRuntime?.env,
+      ...packagedAuthEnv,
+    },
+    packagedExecutable,
+  );
   try {
     const company = await createCompany(run.baseUrl);
     const primedAgentListing = await fetch(`${run.baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
@@ -7950,7 +7964,7 @@ function resolveScenarioList(mode, scenario) {
       ? ["auto-update-public"]
       : [];
     return mode === "packaged"
-      ? ["account-gate", ...packagedPublicUpdate]
+      ? ["account-gate", "terminal", ...packagedPublicUpdate]
       : ["startup-recovery", "app-builder", "clean", ...localApps];
   }
   if (scenario === "all") {
@@ -7958,7 +7972,7 @@ function resolveScenarioList(mode, scenario) {
       ? ["auto-update-public"]
       : [];
     return mode === "packaged"
-      ? ["account-gate", ...packagedPublicUpdate]
+      ? ["account-gate", "terminal", ...packagedPublicUpdate]
       : ["startup-recovery", "postgres-runtime-handoff", "app-builder", "clean", "local-apps", "agent-browser", "upgrade"];
   }
   if (scenario === "account-gate"
