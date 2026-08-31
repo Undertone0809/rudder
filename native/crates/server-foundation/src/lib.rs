@@ -43,6 +43,7 @@ const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUEUE_DEPTH: usize = 1024;
 const MAX_DATABASE_CONNECTIONS: u32 = 64;
 const MAX_WORKERS: usize = 32;
+const READ_ONLY_AUTHORITIES: [&str; 1] = ["workspace_backup_list"];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
 
@@ -356,6 +357,7 @@ pub struct StartupReceipt {
     pub public_listener: bool,
     pub product_write_authority: bool,
     pub database_authority: &'static str,
+    pub read_only_authorities: [&'static str; 1],
     pub limits: LimitsReceipt,
 }
 
@@ -672,7 +674,7 @@ impl AppState {
             public_listener: false,
             product_write_authority: false,
             websocket_supported: false,
-            read_only_authorities: ["workspace_backup_list"],
+            read_only_authorities: READ_ONLY_AUTHORITIES,
             limits: self.config.limits(),
         };
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
@@ -875,7 +877,8 @@ impl ServerRuntime {
             bound_addr: self.bound_addr,
             public_listener: false,
             product_write_authority: false,
-            database_authority: "pool-boundary-only",
+            database_authority: "read-only-product-data",
+            read_only_authorities: READ_ONLY_AUTHORITIES,
             limits: self.control.state.config.limits(),
         }
     }

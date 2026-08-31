@@ -1,12 +1,16 @@
 #![cfg(unix)]
 
 use serde_json::Value;
+use sqlx::postgres::PgPoolOptions;
 use std::{
+    env, fs,
     io::{self, BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
+    path::PathBuf,
     process::{Child, ChildStdout, Command, Stdio},
     time::{Duration, Instant},
 };
+use tempfile::TempDir;
 
 #[cfg(unix)]
 #[test]
@@ -32,6 +36,11 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         .expect("socket address");
     assert_eq!(startup["publicListener"], false);
     assert_eq!(startup["productWriteAuthority"], false);
+    assert_eq!(startup["databaseAuthority"], "read-only-product-data");
+    assert_eq!(
+        startup["readOnlyAuthorities"],
+        serde_json::json!(["workspace_backup_list"])
+    );
 
     let health = get_with_retry(bound_addr, "/healthz");
     assert!(health.starts_with("HTTP/1.1 200"), "{health}");
@@ -72,6 +81,90 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(shutdown["schema"], "rudder.native.server.shutdown.v1");
     assert_eq!(shutdown["state"], "stopped");
     assert_eq!(shutdown["reason"], "sigterm");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contract() {
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&postgres.url)
+        .await
+        .expect("connect test PostgreSQL");
+    sqlx::raw_sql(WORKSPACE_BACKUP_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install workspace backup fixture");
+    pool.close().await;
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "4096"),
+    ]);
+
+    let org_one = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+    );
+    assert!(org_one.starts_with("HTTP/1.1 200"), "{org_one}");
+    let org_one_body = response_json(&org_one);
+    let backups = org_one_body["backups"].as_array().expect("backup array");
+    assert_eq!(
+        backups.len(),
+        2,
+        "deleted and cross-org rows must be absent"
+    );
+    assert_eq!(backups[0]["id"], "10000000-0000-0000-0000-000000000002");
+    assert_eq!(backups[1]["id"], "10000000-0000-0000-0000-000000000001");
+    assert_eq!(backups[0]["orgId"], "00000000-0000-0000-0000-000000000001");
+    assert_eq!(backups[0]["artifactProvider"], "local_file");
+    assert_eq!(backups[0]["warnings"], serde_json::json!([]));
+    assert_eq!(backups[0]["expiresAt"], "2026-09-30T12:00:00.000Z");
+    assert_eq!(backups[1]["warnings"], serde_json::json!(["older"]));
+    assert_eq!(backups[1]["expiresAt"], "2026-10-15T12:00:00.000Z");
+
+    let org_two = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000002/workspace/backups",
+    );
+    let org_two_body = response_json(&org_two);
+    assert_eq!(org_two_body["backups"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        org_two_body["backups"][0]["orgId"],
+        "00000000-0000-0000-0000-000000000002"
+    );
+
+    let unknown = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000099/workspace/backups",
+    );
+    assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
+    assert!(unknown.contains("organization_not_found"), "{unknown}");
+
+    let post = http_request(
+        bound_addr,
+        "POST",
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+    )
+    .expect("POST backup route");
+    assert!(post.starts_with("HTTP/1.1 404"), "{post}");
+    stop_server(child, stdout);
+
+    let (limited_child, limited_stdout, limited_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "128"),
+    ]);
+    let limited = get_with_retry(
+        limited_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+    );
+    assert!(limited.starts_with("HTTP/1.1 500"), "{limited}");
+    assert!(limited.contains("response_limit"), "{limited}");
+    assert!(response_body_len(&limited) <= 128, "{limited}");
+    stop_server(limited_child, limited_stdout);
 }
 
 #[cfg(unix)]
@@ -260,16 +353,25 @@ fn get_with_retry(addr: SocketAddr, path: &str) -> String {
 }
 
 fn http_get(addr: SocketAddr, path: &str) -> std::io::Result<String> {
+    http_request(addr, "GET", path)
+}
+
+fn http_request(addr: SocketAddr, method: &str, path: &str) -> std::io::Result<String> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     )?;
     stream.flush()?;
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
     Ok(response)
+}
+
+fn response_json(response: &str) -> Value {
+    let (_, body) = response.split_once("\r\n\r\n").expect("HTTP response body");
+    serde_json::from_str(body).expect("JSON response body")
 }
 
 fn http_get_with_body(addr: SocketAddr, body: &[u8]) -> io::Result<String> {
@@ -343,3 +445,145 @@ fn response_body_len(response: &str) -> usize {
         .map(|(_, body)| body.len())
         .unwrap_or_default()
 }
+
+struct PostgresHarness {
+    _temp_dir: TempDir,
+    data_dir: PathBuf,
+    pg_ctl: PathBuf,
+    url: String,
+}
+
+impl PostgresHarness {
+    fn start() -> Self {
+        let initdb = postgres_binary("initdb");
+        let pg_ctl = postgres_binary("pg_ctl");
+        let temp_dir = tempfile::tempdir().expect("create PostgreSQL temp directory");
+        let data_dir = temp_dir.path().join("data");
+        let log_path = temp_dir.path().join("postgres.log");
+        let port = TcpListener::bind("127.0.0.1:0")
+            .expect("reserve PostgreSQL port")
+            .local_addr()
+            .unwrap()
+            .port();
+
+        run_checked(
+            Command::new(&initdb).arg("-D").arg(&data_dir).args([
+                "--encoding=UTF8",
+                "--locale=C",
+                "--auth=trust",
+                "--username=postgres",
+                "--no-sync",
+            ]),
+            "initdb",
+        );
+        run_checked(
+            Command::new(&pg_ctl)
+                .arg("-D")
+                .arg(&data_dir)
+                .arg("-l")
+                .arg(&log_path)
+                .arg("-o")
+                .arg(format!("-h 127.0.0.1 -p {port} -F"))
+                .args(["-w", "start"]),
+            "pg_ctl start",
+        );
+
+        Self {
+            _temp_dir: temp_dir,
+            data_dir,
+            pg_ctl,
+            url: format!("postgresql://postgres@127.0.0.1:{port}/postgres"),
+        }
+    }
+}
+
+impl Drop for PostgresHarness {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.pg_ctl)
+            .arg("-D")
+            .arg(&self.data_dir)
+            .args(["-m", "immediate", "-w", "stop"])
+            .status();
+    }
+}
+
+fn postgres_binary(name: &str) -> PathBuf {
+    let executable = format!("{name}{}", env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+    if let Some(bin_dir) = env::var_os("RUDDER_POSTGRES_BIN_DIR") {
+        candidates.push(PathBuf::from(bin_dir).join(&executable));
+    }
+    if let Some(path) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&path).map(|dir| dir.join(&executable)));
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin").join(&executable));
+    candidates.push(PathBuf::from("/usr/local/bin").join(&executable));
+    if let Ok(versions) = fs::read_dir("/usr/lib/postgresql") {
+        candidates.extend(
+            versions
+                .filter_map(Result::ok)
+                .map(|entry| entry.path().join("bin").join(&executable)),
+        );
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("PostgreSQL test binary {name} was not found"))
+}
+
+fn run_checked(command: &mut Command, label: &str) {
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("run {label}: {error}"));
+    assert!(
+        output.status.success(),
+        "{label} failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+const WORKSPACE_BACKUP_FIXTURE_SQL: &str = r#"
+CREATE TABLE organizations (id uuid PRIMARY KEY);
+CREATE TABLE workspace_backups (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  status text NOT NULL,
+  trigger_source text NOT NULL,
+  artifact_ref text NOT NULL,
+  archive_sha256 text,
+  tree_sha256 text,
+  file_count integer,
+  byte_size bigint,
+  compressed_size bigint,
+  manifest jsonb,
+  warnings jsonb,
+  error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  expires_at timestamptz,
+  restored_from_backup_id uuid,
+  created_by_user_id text,
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL
+);
+INSERT INTO organizations (id) VALUES
+  ('00000000-0000-0000-0000-000000000001'),
+  ('00000000-0000-0000-0000-000000000002');
+INSERT INTO workspace_backups (
+  id, org_id, status, trigger_source, artifact_ref, file_count, byte_size,
+  compressed_size, manifest, warnings, expires_at, created_at, updated_at
+) VALUES
+  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001',
+   'completed', 'manual', '/backups/older.tar.zst', 2, 20, 10, '{"version":1}', '["older"]',
+   '2026-10-15T12:00:00Z', '2026-08-30T12:00:00Z', '2026-08-30T12:00:00Z'),
+  ('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001',
+   'completed', 'scheduled', '/backups/newer.tar.zst', 3, 30, 15, '{"version":1}', '{}',
+   NULL, '2026-08-31T12:00:00Z', '2026-08-31T12:00:00Z'),
+  ('10000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001',
+   'deleted', 'manual', '/backups/deleted.tar.zst', 1, 10, 5, '{}', '[]',
+   NULL, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z'),
+  ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002',
+   'completed', 'manual', '/backups/org-two.tar.zst', 1, 10, 5, '{}', '[]',
+   NULL, '2026-08-31T12:00:00Z', '2026-08-31T12:00:00Z');
+"#;

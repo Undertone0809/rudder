@@ -1428,6 +1428,8 @@ dependencies = [
  "libc",
  "rudder-server-foundation-core",
  "serde_json",
+ "sqlx",
+ "tempfile",
  "tokio",
 ]
 
