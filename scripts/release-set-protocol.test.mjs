@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   RELEASE_SET_SCHEMA,
-  SIGNED_RELEASE_SET_SCHEMA,
   ReleaseSetProtocolError,
+  SIGNED_RELEASE_SET_SCHEMA,
   advanceReleaseSetTransition,
   canonicalizeReleaseSet,
   compareSemver,
