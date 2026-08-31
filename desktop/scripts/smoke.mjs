@@ -3268,10 +3268,11 @@ async function clonePackagedAppForUpdateSmoke(sourceAppPath, targetAppPath) {
 
 async function discardCompletedAutoUpdateScenarioStorage(scenarioRoot) {
   const paths = resolveInstancePaths(scenarioRoot);
+  const cleanupOptions = { recursive: true, force: true, maxRetries: 8, retryDelay: 250 };
   await Promise.all([
-    rm(path.join(scenarioRoot, "installed"), { recursive: true, force: true }),
-    rm(paths.rudderHome, { recursive: true, force: true }),
-    rm(paths.electronUserDataDir, { recursive: true, force: true }),
+    rm(path.join(scenarioRoot, "installed"), cleanupOptions),
+    rm(paths.rudderHome, cleanupOptions),
+    rm(paths.electronUserDataDir, cleanupOptions),
   ]);
 }
 
