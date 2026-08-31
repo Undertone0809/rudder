@@ -4,7 +4,7 @@ import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor 
 import { Link } from "@/lib/router";
 import type { Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target, User } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Bot, ChevronDown, Hexagon, ListTree, Plus, Search, Tag, Target, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -18,7 +18,7 @@ import { useExperimentalGoalsEnabled } from "../hooks/useExperimentalGoalsEnable
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "../lib/agent-labels";
-import { formatAssigneeUserLabel } from "../lib/assignees";
+import { formatAssigneeUserLabel, isSystemUserId } from "../lib/assignees";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { timeAgo } from "../lib/timeAgo";
@@ -487,7 +487,7 @@ export function IssueProperties({
       className="w-full"
     />
   ) : assigneeUserLabel ? (
-    <AssigneeLabel kind="user" label={assigneeUserLabel} />
+    <AssigneeLabel kind={isSystemUserId(issue.assigneeUserId) ? "system" : "user"} label={assigneeUserLabel} />
   ) : (
     <AssigneeLabel kind="unassigned" label="Unassigned" muted />
   );
@@ -518,7 +518,7 @@ export function IssueProperties({
         >
           <AssigneeLabel kind="unassigned" label="No assignee" />
         </button>
-        {currentUserId && (
+        {currentUserId && !isSystemUserId(currentUserId) && (
           <button
             className={cn(
               "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
@@ -532,7 +532,7 @@ export function IssueProperties({
             <AssigneeSelfActionLabel />
           </button>
         )}
-        {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
+        {issue.createdByUserId && !isSystemUserId(issue.createdByUserId) && issue.createdByUserId !== currentUserId && (
           <button
             className={cn(
               "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
@@ -598,7 +598,7 @@ export function IssueProperties({
       className="w-full"
     />
   ) : reviewerUserLabel ? (
-    <AssigneeLabel kind="user" label={reviewerUserLabel} />
+    <AssigneeLabel kind={isSystemUserId(issue.reviewerUserId) ? "system" : "user"} label={reviewerUserLabel} />
   ) : (
     <AssigneeLabel kind="unassigned" label="No reviewer" muted />
   );
@@ -626,7 +626,7 @@ export function IssueProperties({
         >
           <AssigneeLabel kind="unassigned" label="No reviewer" />
         </button>
-        {currentUserId && (
+        {currentUserId && !isSystemUserId(currentUserId) && (
           <button
             className={cn(
               "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
@@ -1191,7 +1191,11 @@ export function IssueProperties({
                   </Link>
                 ) : (
                   <>
-                    <User className="h-3.5 w-3.5 text-muted-foreground" />
+                    {isSystemUserId(issue.createdByUserId) ? (
+                      <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : (
+                      <User className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
                     <span className="text-sm">{creatorUserLabel ?? "User"}</span>
                   </>
                 )}

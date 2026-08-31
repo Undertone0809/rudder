@@ -460,6 +460,71 @@ describe("IssueProperties", () => {
     expect(scrollRegion?.classList.contains("scrollbar-auto-hide")).toBe(true);
   });
 
+  it("treats the local board principal as a system origin, not a human assignee", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{ ...baseIssue, createdByUserId: "local-board" }}
+          onUpdate={vi.fn()}
+          inline
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("System");
+    expect(container.textContent).not.toContain("Board");
+
+    const assigneeTrigger = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes(longAgentName));
+    act(() => {
+      assigneeTrigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.querySelector('[data-testid="issue-properties-assignee-scroll"]')?.textContent)
+      .not.toContain("Assign to Board");
+  });
+
+  it("uses system identity treatment for legacy local-board assignments", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssueProperties
+          issue={{
+            ...baseIssue,
+            assigneeAgentId: null,
+            assigneeUserId: "local-board",
+            reviewerUserId: "local-board",
+          }}
+          onUpdate={vi.fn()}
+          inline
+        />,
+      );
+    });
+
+    expect(container.querySelectorAll('[data-slot="assignee-label"][data-kind="system"]')).toHaveLength(2);
+  });
+
   it("renders reviewer self assignment as an explicit action row", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

@@ -2,10 +2,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import { cn } from "@/lib/utils";
 import type { Agent, AgentRole } from "@rudderhq/shared";
-import { Minus, User } from "lucide-react";
+import { Bot, Minus, User } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 
-type AssigneeLabelKind = "agent" | "user" | "unassigned";
+type AssigneeLabelKind = "agent" | "system" | "user" | "unassigned";
 
 interface AssigneeLabelProps {
   kind: AssigneeLabelKind;
@@ -82,7 +82,7 @@ export function AssigneeLabel({
               kind === "unassigned" && "border border-dashed border-muted-foreground/35 bg-muted/30",
             )}
           >
-            {kind === "user" ? <User className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
+            {kind === "system" ? <Bot className="h-3 w-3" /> : kind === "user" ? <User className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
           </AvatarFallback>
         </Avatar>
       )}
