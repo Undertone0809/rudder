@@ -161,7 +161,7 @@ This Issue implements items 3-8 and the reference behavior needed by items
 1-2; it intentionally records items 1-2 as an unclaimed integration boundary.
 
 The current `0.7.16` compatibility entry binds migration fingerprint
-`3152669d55bd95e21d1aee03f0dada1d433ad28c4004ecd9c68030e4da72d2b5`
+`085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db`
 and immutable fixtures back through `0.6.5`.
 
 ## Failure-Closed Cases
