@@ -87,6 +87,53 @@ describe("LiveUpdatesProvider issue invalidation", () => {
   });
 });
 
+describe("LiveUpdatesProvider approval invalidation", () => {
+  it("refreshes the open Requests thread and approval detail for live approval activity", () => {
+    const invalidations: unknown[] = [];
+    const queryClient = {
+      invalidateQueries: (input: unknown) => {
+        invalidations.push(input);
+      },
+      getQueryData: () => undefined,
+    };
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(
+      queryClient as never,
+      "organization-1",
+      {
+        entityType: "approval",
+        entityId: "approval-1",
+        action: "approval.created",
+      },
+    );
+
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.approvals.list("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threads("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threadPages("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.customGroups("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.threadPreview("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.messenger.approvals("organization-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.approvals.detail("approval-1"),
+    });
+    expect(invalidations).toContainEqual({
+      queryKey: queryKeys.approvals.issues("approval-1"),
+    });
+  });
+});
+
 describe("LiveUpdatesProvider agent workspace invalidation", () => {
   it("refreshes agent Library folders when agent activity changes their ownership", () => {
     const invalidations: unknown[] = [];
