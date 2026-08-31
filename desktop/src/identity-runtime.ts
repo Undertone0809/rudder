@@ -25,6 +25,10 @@ import {
 } from "./identity-offline-grant.js";
 import { resolveDesktopIdentitySafeStorage } from "./identity-safe-storage-policy.js";
 import {
+  connectDesktopLocalAccountSession,
+  selectMatchingDesktopOfflineGrant,
+} from "./identity-session-connection.js";
+import {
   createDesktopIdentitySessionStore,
   desktopIdentityMemoryFallbackAllowed,
 } from "./identity-session-store.js";
@@ -211,7 +215,11 @@ export function createDesktopIdentityRuntime(options: {
     },
 
     prepareLocalSession(audience: string): PreparedDesktopLocalAccountSession {
-      const credential = offlineGrantStore.read();
+      const credential = selectMatchingDesktopOfflineGrant(
+        offlineGrantStore.read(),
+        vault.read(),
+        origin,
+      );
       return {
         localAccountAuth: accountRequired
           ? localAuthOptions(origin, audience, sessionSecret, credential)
@@ -219,28 +227,20 @@ export function createDesktopIdentityRuntime(options: {
         async connect(localApiUrl: string): Promise<void> {
           if (!accountRequired) return;
           options.onLocalExchange();
-          let exchangeCode: string | null = null;
-          try {
-            exchangeCode = await client.createServerExchange(audience);
-          } catch (onlineError) {
-            if (
-              !credential
-              || (onlineError as { code?: unknown }).code === "IDENTITY_SESSION_REJECTED"
-            ) throw onlineError;
-          }
-          if (exchangeCode) {
-            await establishDesktopLocalSession({
+          await connectDesktopLocalAccountSession({
+            credential,
+            createServerExchange: () => client.createServerExchange(audience),
+            establishOnline: (exchangeCode) => establishDesktopLocalSession({
               localApiUrl,
               exchangeCode,
               installCookie: (details) => session.defaultSession.cookies.set(details),
-            });
-            return;
-          }
-          await establishDesktopOfflineLocalSession({
-            localApiUrl,
-            credential: credential!,
-            installCookie: (details) => session.defaultSession.cookies.set(details),
-            updateTrustedTime: (next) => offlineGrantStore.updateTrustedTime(next),
+            }),
+            establishOffline: (offlineCredential) => establishDesktopOfflineLocalSession({
+              localApiUrl,
+              credential: offlineCredential,
+              installCookie: (details) => session.defaultSession.cookies.set(details),
+              updateTrustedTime: (next) => offlineGrantStore.updateTrustedTime(next),
+            }),
           });
         },
       };
