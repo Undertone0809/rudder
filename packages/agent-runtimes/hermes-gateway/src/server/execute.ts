@@ -26,6 +26,7 @@ const MAX_SAFE_EVENT_TEXT = MAX_PROJECTED_EVENT_BYTES;
 const STOP_RECONCILIATION_MS = 1_500;
 const MAX_SKILL_BYTES = 128 * 1024;
 const MAX_SKILL_PROJECTION_BYTES = 512 * 1024;
+const MAX_SESSION_LINEAGE_DEPTH = 32;
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 type RunEvent = Record<string, unknown>;
@@ -59,6 +60,59 @@ type HermesSessionResolution = {
   created: boolean;
 };
 
+async function verifyHermesMessageSessionLineage(params: {
+  base: URL;
+  config: Record<string, unknown>;
+  requestedSessionId: string;
+  returnedSessionId: string;
+  requestTimeout: number;
+}): Promise<void> {
+  let childSessionId = params.returnedSessionId;
+  const seen = new Set<string>();
+
+  for (let depth = 0; depth < MAX_SESSION_LINEAGE_DEPTH; depth += 1) {
+    if (seen.has(childSessionId)) break;
+    seen.add(childSessionId);
+
+    const childResponse = await requestJson(
+      endpoint(params.base, `/api/sessions/${encodeURIComponent(childSessionId)}`),
+      params.config,
+      {},
+      params.requestTimeout,
+    );
+    if (!childResponse.response.ok) break;
+    const returnedChildId = responseSessionId(childResponse.body);
+    if (returnedChildId !== childSessionId) break;
+
+    const child = asRecord(childResponse.body.session);
+    const parentSessionId = asString(child?.parent_session_id, "").trim();
+    if (!parentSessionId) break;
+
+    const parentResponse = await requestJson(
+      endpoint(params.base, `/api/sessions/${encodeURIComponent(parentSessionId)}`),
+      params.config,
+      {},
+      params.requestTimeout,
+    );
+    if (!parentResponse.response.ok) break;
+    const returnedParentId = responseSessionId(parentResponse.body);
+    const parent = asRecord(parentResponse.body.session);
+    const parentEndReason = asString(parent?.end_reason, "").trim().toLowerCase();
+
+    // Hermes redirects message reads to the live tip after context compression.
+    // Only compression edges are accepted so forks and unrelated descendants
+    // cannot silently replace the provider session Rudder persisted.
+    if (returnedParentId !== parentSessionId || parentEndReason !== "compression") break;
+    if (parentSessionId === params.requestedSessionId) return;
+    childSessionId = parentSessionId;
+  }
+
+  throw new Error(
+    `Hermes session messages returned provider ID "${params.returnedSessionId}", ` +
+    `which is not a verified compression continuation of "${params.requestedSessionId}".`,
+  );
+}
+
 async function resolveHermesSession(params: {
   base: URL;
   config: Record<string, unknown>;
@@ -81,7 +135,10 @@ async function resolveHermesSession(params: {
     }
     const returnedId = responseSessionId(current.body);
     if (!returnedId || returnedId !== providerSessionId) {
-      throw new Error("Hermes session mapping returned a conflicting provider ID.");
+      throw new Error(
+        `Hermes session mapping returned provider ID "${returnedId ?? "missing"}" ` +
+        `for requested session "${providerSessionId}".`,
+      );
     }
   } else {
     const createdResponse = await requestJson(
@@ -119,7 +176,13 @@ async function resolveHermesSession(params: {
   const messageData = Array.isArray(messages.body.data) ? messages.body.data : [];
   const returnedMessageSessionId = asString(messages.body.session_id, "").trim();
   if (returnedMessageSessionId && returnedMessageSessionId !== providerSessionId) {
-    throw new Error("Hermes session messages returned a conflicting provider ID.");
+    await verifyHermesMessageSessionLineage({
+      base: params.base,
+      config: params.config,
+      requestedSessionId: providerSessionId,
+      returnedSessionId: returnedMessageSessionId,
+      requestTimeout: params.requestTimeout,
+    });
   }
 
   return { providerSessionId, messageCount: messageData.length, created };
