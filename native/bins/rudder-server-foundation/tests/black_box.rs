@@ -275,6 +275,25 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     sqlx::query(
         "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
     )
+    .bind(fixture.aggregate_limit_archive.to_string_lossy().as_ref())
+    .bind(&fixture.aggregate_limit_sha256)
+    .bind("10000000-0000-0000-0000-000000000002")
+    .execute(&pool)
+    .await
+    .expect("attach aggregate-limit workspace backup artifact");
+    let aggregate_limit = get_with_retry_read_timeout(bound_addr, route, Duration::from_secs(30));
+    assert!(
+        aggregate_limit.starts_with("HTTP/1.1 422"),
+        "{aggregate_limit}"
+    );
+    assert!(
+        aggregate_limit.contains("workspace_backup_artifact_invalid"),
+        "{aggregate_limit}"
+    );
+
+    sqlx::query(
+        "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+    )
     .bind(fixture.archive.to_string_lossy().as_ref())
     .bind(&fixture.sha256)
     .bind("10000000-0000-0000-0000-000000000002")
@@ -502,9 +521,13 @@ fn stop_server(mut child: Child, mut stdout: BufReader<ChildStdout>) {
 }
 
 fn get_with_retry(addr: SocketAddr, path: &str) -> String {
+    get_with_retry_read_timeout(addr, path, Duration::from_secs(2))
+}
+
+fn get_with_retry_read_timeout(addr: SocketAddr, path: &str, read_timeout: Duration) -> String {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        match http_get(addr, path) {
+        match http_request_with_read_timeout(addr, "GET", path, read_timeout) {
             Ok(response) => return response,
             Err(error) if std::time::Instant::now() < deadline => {
                 let _ = error;
@@ -520,8 +543,17 @@ fn http_get(addr: SocketAddr, path: &str) -> std::io::Result<String> {
 }
 
 fn http_request(addr: SocketAddr, method: &str, path: &str) -> std::io::Result<String> {
+    http_request_with_read_timeout(addr, method, path, Duration::from_secs(2))
+}
+
+fn http_request_with_read_timeout(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    read_timeout: Duration,
+) -> std::io::Result<String> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_read_timeout(Some(read_timeout))?;
     write!(
         stream,
         "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -711,6 +743,8 @@ struct WorkspaceBackupArchiveFixture {
     archive: PathBuf,
     sha256: String,
     invalid_archives: Vec<(PathBuf, String)>,
+    aggregate_limit_archive: PathBuf,
+    aggregate_limit_sha256: String,
     legacy_artifact: PathBuf,
     legacy_sha256: String,
 }
@@ -746,6 +780,31 @@ fn create_workspace_backup_archive(
     policy_version: &str,
     tree_sha256: Option<String>,
 ) -> (PathBuf, String) {
+    create_workspace_backup_archive_with_limits(
+        root,
+        name,
+        entries,
+        plan_entries,
+        policy_version,
+        tree_sha256,
+        8 * 1024 * 1024,
+        16 * 1024,
+        64 * 1024,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_workspace_backup_archive_with_limits(
+    root: &Path,
+    name: &str,
+    entries: &[serde_json::Value],
+    plan_entries: &[serde_json::Value],
+    policy_version: &str,
+    tree_sha256: Option<String>,
+    max_archive_bytes: u64,
+    max_file_bytes: u64,
+    max_total_file_bytes: u64,
+) -> (PathBuf, String) {
     let tree_sha256 = tree_sha256.unwrap_or_else(|| workspace_backup_tree_sha256(entries));
     let manifest_path = root.join(format!("{name}-manifest.json"));
     fs::write(
@@ -779,8 +838,14 @@ fn create_workspace_backup_archive(
     )
     .expect("write archive plan");
     let archive = root.join(format!("{name}.zip"));
-    let created = create_archive(&plan_path, &archive, 8 * 1024 * 1024, 16 * 1024, 64 * 1024)
-        .expect("create v2 workspace backup fixture");
+    let created = create_archive(
+        &plan_path,
+        &archive,
+        max_archive_bytes,
+        max_file_bytes,
+        max_total_file_bytes,
+    )
+    .expect("create v2 workspace backup fixture");
     (archive, created.sha256)
 }
 
@@ -895,6 +960,61 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         None,
     ));
 
+    let five_mib = 5 * 1024 * 1024;
+    let large_source = root.path().join("five-mib.bin");
+    fs::File::create(&large_source)
+        .and_then(|file| file.set_len(five_mib))
+        .expect("write sparse five MiB fixture");
+    let one_byte_source = root.path().join("one-byte.bin");
+    fs::write(&one_byte_source, [0]).expect("write one-byte fixture");
+    let five_mib_sha256 = format!("{:x}", Sha256::digest(vec![0; five_mib as usize]));
+    let mut aggregate_entries = Vec::new();
+    let mut aggregate_plan_entries = vec![serde_json::json!({
+        "kind":"directory",
+        "archivePath":"workspace/"
+    })];
+    for index in 0..20 {
+        let path = format!("large-{index:02}.bin");
+        aggregate_entries.push(serde_json::json!({
+            "path":path,
+            "kind":"file",
+            "byteSize":five_mib,
+            "mtimeMs":null,
+            "mode":null,
+            "sha256":five_mib_sha256
+        }));
+        aggregate_plan_entries.push(serde_json::json!({
+            "kind":"file",
+            "archivePath":format!("workspace/{path}"),
+            "sourcePath":large_source
+        }));
+    }
+    aggregate_entries.push(serde_json::json!({
+        "path":"over-limit.bin",
+        "kind":"file",
+        "byteSize":1,
+        "mtimeMs":null,
+        "mode":null,
+        "sha256":format!("{:x}", Sha256::digest([0]))
+    }));
+    aggregate_plan_entries.push(serde_json::json!({
+        "kind":"file",
+        "archivePath":"workspace/over-limit.bin",
+        "sourcePath":one_byte_source
+    }));
+    let (aggregate_limit_archive, aggregate_limit_sha256) =
+        create_workspace_backup_archive_with_limits(
+            root.path(),
+            "aggregate-byte-limit",
+            &aggregate_entries,
+            &aggregate_plan_entries,
+            "workspace-backup-v2-policy-1",
+            None,
+            116 * 1024 * 1024,
+            five_mib,
+            100 * 1024 * 1024 + 1,
+        );
+
     let legacy_artifact = root.path().join("workspace.json");
     let legacy_bytes = serde_json::to_vec(&serde_json::json!({
         "version": 1,
@@ -914,6 +1034,8 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         archive,
         sha256,
         invalid_archives,
+        aggregate_limit_archive,
+        aggregate_limit_sha256,
         legacy_artifact,
         legacy_sha256,
     }

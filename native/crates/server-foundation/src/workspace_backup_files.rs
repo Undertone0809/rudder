@@ -14,6 +14,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 const MAX_ARCHIVE_BYTES: u64 = 116 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_TOTAL_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const V2_POLICY_VERSION: &str = "workspace-backup-v2-policy-1";
 
 #[derive(Debug, Deserialize)]
@@ -218,9 +219,16 @@ fn validate_manifest(
 
     let mut paths = HashSet::new();
     let mut folded_paths = HashSet::new();
+    let mut total_file_bytes = 0u64;
     for entry in &manifest.entries {
         validate_entry_path(&entry.path)?;
+        if entry.kind == "file" {
+            total_file_bytes = total_file_bytes
+                .checked_add(entry.byte_size)
+                .ok_or(ArtifactError::Invalid)?;
+        }
         if entry.byte_size > MAX_FILE_BYTES
+            || total_file_bytes > MAX_TOTAL_FILE_BYTES
             || !paths.insert(entry.path.clone())
             || !folded_paths.insert(fold_case(&entry.path))
             || (entry.kind == "directory" && (entry.byte_size != 0 || entry.sha256.is_some()))
