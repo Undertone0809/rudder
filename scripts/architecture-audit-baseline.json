@@ -386,6 +386,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/components/MarkdownBody.tsx",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "MarkdownBody still centralizes rich reference rendering and compatibility behavior while chat content projections are being separated.",
+      "target": "Extract reference and content-type projections behind focused renderers and reduce the component below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "server/src/services/runtime-kernel/heartbeat.execute.ts",
       "lines": 1501,
       "owner": "runtime-server",

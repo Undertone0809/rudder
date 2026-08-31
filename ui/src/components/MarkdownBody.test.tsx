@@ -7,9 +7,9 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup as renderReactToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderedMarkdownSelectionText } from "../../../server/src/services/chat-inline-annotation-rendering";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
 import { ThemeProvider } from "../context/ThemeContext";
-import { renderedMarkdownSelectionText } from "../../../server/src/services/chat-inline-annotation-rendering";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,

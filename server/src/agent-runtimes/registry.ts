@@ -42,9 +42,9 @@ import {
 } from "@rudderhq/agent-runtime-hermes-gateway";
 import {
   execute as hermesGatewayExecute,
+  testEnvironment as hermesGatewayTestEnvironment,
   listHermesGatewaySkills,
   syncHermesGatewaySkills,
-  testEnvironment as hermesGatewayTestEnvironment,
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
 import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,

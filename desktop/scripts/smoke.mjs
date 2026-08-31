@@ -7329,6 +7329,7 @@ async function runLocalAppsScenario(mode) {
     await currentSavedRow.hover();
     await currentSavedRow.getByRole("button", { name: `Saved View actions for ${definition.title}` }).click();
     await run.page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
+    await run.page.getByRole("button", { name: "Remove Saved View" }).click();
     await waitForLocalAppSavedViewRemoval(run.baseUrl, company.id, saved.savedView.id);
     await currentSavedRow.waitFor({ state: "detached", timeout: 15_000 });
     const afterRemovalStatus = await readDesktopLocalAppStatus(run.page, definition.id);

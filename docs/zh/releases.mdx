@@ -18,6 +18,38 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年8月31日" description="v0.7.16" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.16
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.16)
+
+这个版本让 Agent 更容易委派和恢复工作，并为运行调试、长时间运行、Chat、Desktop 和本地化体验带来更可靠的支持。
+
+### 新功能
+
+- 增加受治理的 Delegation Run：Agent 可以通过 `rudder runs create` 或 MCP，为自己或同一组织中的另一个 Agent 创建独立运行，并保留来源关联、支持幂等重放，还可以在 Agent 详情中按 Delegation 筛选。
+- 为失败的 Agent Run 增加 Debug Chat。在 Run Detail 中，可以把经过限制和脱敏的诊断信息发送给 Agent，并在侧面板中继续处理；目标 Agent 不可用时可以切换后重试，也可以在打开 GitHub Issue 前先检查诊断内容。
+- 为 Hermes Gateway 增加按运行同步技能。为 Agent 选择组织技能后，Rudder 会把已选技能同步到每次新运行中，不会修改 Hermes 的技能目录。
+
+### 改进
+
+- Agent Run 默认不会仅因运行时间过长或长时间无活动而超时。连续 24 小时没有记录到活动时，Rudder 会发出提醒，但保留运行中的状态。
+- 让 Chat 发送具备可重试性和持久幂等性，避免重复消息，并在发送或流式响应失败时保留草稿；消息编辑现在仅允许修改最新一条用户消息。
+- 在 Agent 详情的所有视图中增加查找支持，提供匹配高亮和键盘导航。
+- 改进 Desktop 本地应用恢复：重启后保留有界运行日志，便于继续诊断。
+- 为不可逆的删除操作增加确认，并改善 Issue、工作区和状态界面的简体中文用词。
+
+### 问题修复
+
+- 修复 Run Detail 中 Transcript 批注和流式活动在运行更新时消失的问题。
+- 修复 Markdown 实时预览中的无序列表项目符号和流式更新时的文本选中；网站图标的临时加载失败现在可以干净重试。
+- 修复原生 CLI/MCP 对 Unicode 字符串长度的计算不一致问题，让非 ASCII 输入得到一致处理。
+- 修复有界工具失败和等待网络的恢复路径，避免 Run 或 Debug Chat 停留在过时状态。
+- 修复 macOS 透明窗口可能出现的渲染异常。
+
+</Update>
+
 <Update label="2026年8月28日" description="v0.7.15" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.15

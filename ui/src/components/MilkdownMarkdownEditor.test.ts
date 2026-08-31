@@ -19,9 +19,9 @@ import type { MentionOption } from "./MarkdownEditor";
 import {
   applyMention,
   createMilkdownWebsiteIconElement,
+  findSelectedRudderTokenRangeFromDom,
   fragmentContainsRudderToken,
   getMilkdownProseMirrorView,
-  findSelectedRudderTokenRangeFromDom,
   hasRudderMarkdownReference,
   imageFilesFromFileList,
   insertMissingRudderTokenBoundarySpaces,
