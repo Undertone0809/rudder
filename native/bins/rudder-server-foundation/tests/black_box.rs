@@ -46,6 +46,14 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("\"effectiveEngine\":\"rust\""));
     assert!(capabilities.contains("maxQueueDepth"));
     assert!(capabilities.contains("maxDatabaseConnections"));
+    assert!(capabilities.contains("workspace_backup_list"));
+
+    let backup_list = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups",
+    );
+    assert!(backup_list.starts_with("HTTP/1.1 503"), "{backup_list}");
+    assert!(backup_list.contains("database_disabled"), "{backup_list}");
 
     let pid = child.id() as i32;
     let signal_result = unsafe { libc::kill(pid, libc::SIGTERM) };

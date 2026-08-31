@@ -46,6 +46,35 @@ const MAX_WORKERS: usize = 32;
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
 
+const WORKSPACE_BACKUP_LIST_SQL: &str = r#"
+SELECT jsonb_build_object(
+  'id', id::text,
+  'orgId', org_id::text,
+  'status', status,
+  'triggerSource', trigger_source,
+  'artifactProvider', 'local_file',
+  'artifactRef', artifact_ref,
+  'archiveSha256', archive_sha256,
+  'treeSha256', tree_sha256,
+  'fileCount', file_count,
+  'byteSize', byte_size,
+  'compressedSize', compressed_size,
+  'manifest', manifest,
+  'warnings', CASE WHEN jsonb_typeof(warnings) = 'array' THEN warnings ELSE '[]'::jsonb END,
+  'error', error,
+  'startedAt', CASE WHEN started_at IS NULL THEN NULL ELSE to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'finishedAt', CASE WHEN finished_at IS NULL THEN NULL ELSE to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'expiresAt', to_char(COALESCE(expires_at, created_at + interval '30 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'restoredFromBackupId', restored_from_backup_id::text,
+  'createdByUserId', created_by_user_id,
+  'createdAt', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'updatedAt', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+)::text
+FROM workspace_backups
+WHERE org_id::text = $1 AND status <> 'deleted'
+ORDER BY created_at DESC
+"#;
+
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub listen_addr: SocketAddr,
@@ -388,7 +417,14 @@ struct CapabilitiesReceipt {
     public_listener: bool,
     product_write_authority: bool,
     websocket_supported: bool,
+    read_only_authorities: [&'static str; 1],
     limits: LimitsReceipt,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceBackupListReceipt {
+    backups: Vec<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -636,9 +672,61 @@ impl AppState {
             public_listener: false,
             product_write_authority: false,
             websocket_supported: false,
+            read_only_authorities: ["workspace_backup_list"],
             limits: self.config.limits(),
         };
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
+    }
+
+    async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
+        let DatabaseState::Configured(pool) = &self.database else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+
+        let organization_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id::text = $1)",
+        )
+        .bind(org_id)
+        .fetch_one(pool)
+        .await;
+        match organization_exists {
+            Ok(false) => {
+                return self.json_error(StatusCode::NOT_FOUND, "organization_not_found");
+            }
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_list_failed",
+                );
+            }
+            Ok(true) => {}
+        }
+
+        match sqlx::query_scalar::<_, String>(WORKSPACE_BACKUP_LIST_SQL)
+            .bind(org_id)
+            .fetch_all(pool)
+            .await
+        {
+            Ok(rows) => match rows
+                .into_iter()
+                .map(|row| serde_json::from_str::<serde_json::Value>(&row))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(backups) => bounded_json(
+                    StatusCode::OK,
+                    &WorkspaceBackupListReceipt { backups },
+                    self.config.max_response_bytes,
+                ),
+                Err(_) => self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_list_failed",
+                ),
+            },
+            Err(_) => self.json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "workspace_backup_list_failed",
+            ),
+        }
     }
 }
 
@@ -713,6 +801,10 @@ async fn capabilities(state: web::Data<AppState>) -> HttpResponse {
     state.capabilities()
 }
 
+async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
+    state.workspace_backups(org_id.as_str()).await
+}
+
 pub struct ServerRuntime {
     server: Option<actix_web::dev::Server>,
     control: ServerControl,
@@ -739,6 +831,10 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(
+                    "/api/orgs/{org_id}/workspace/backups",
+                    web::get().to(workspace_backups),
+                )
         })
         .workers(config.workers)
         .disable_signals()
@@ -996,5 +1092,27 @@ mod tests {
         let state = AppState::new(ServerConfig::default()).unwrap();
         assert_eq!(state.health().status(), StatusCode::OK);
         assert_eq!(state.capabilities().status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn workspace_backup_list_fails_closed_without_database() {
+        let state = AppState::new(ServerConfig::default()).unwrap();
+        let response = state.workspace_backups("organization-1").await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("database_disabled"));
+    }
+
+    #[test]
+    fn workspace_backup_list_query_is_organization_scoped_and_read_only() {
+        let normalized = WORKSPACE_BACKUP_LIST_SQL.to_ascii_lowercase();
+        assert!(normalized.contains("where org_id::text = $1"));
+        assert!(normalized.contains("status <> 'deleted'"));
+        assert!(normalized.contains("order by created_at desc"));
+        for mutation in ["insert ", "update ", "delete ", "truncate "] {
+            assert!(!normalized.contains(mutation), "query contains {mutation}");
+        }
     }
 }
