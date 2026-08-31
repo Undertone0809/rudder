@@ -117,6 +117,7 @@ import {
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
+import { isPackagedTestIdentityMarker } from "./identity-ipc.js";
 import {
   createDesktopIdentityRuntime,
   type DesktopLocalAccountAuth,
@@ -1426,7 +1427,15 @@ function initializeBrowserProfile(instanceRoot: string): void {
   });
   browserProfileController = controller;
   replaceBrowserRuntimeLifecycle();
-  const sourceRegistry = createBrowserImportSourceRegistry();
+  const smokeBrowserImportHome = process.env.RUDDER_DESKTOP_SMOKE_BROWSER_IMPORT_HOME?.trim();
+  const allowSmokeBrowserImportHome = Boolean(smokeBrowserImportHome)
+    && app.isPackaged
+    && app.getName().startsWith("Rudder-smoke-")
+    && process.env.RUDDER_DESKTOP_SMOKE_AUTH_BYPASS === "1"
+    && isPackagedTestIdentityMarker(path.join(process.resourcesPath, "native", "packaged-test-identity.marker"));
+  const sourceRegistry = createBrowserImportSourceRegistry({
+    homeDir: allowSmokeBrowserImportHome ? path.resolve(smokeBrowserImportHome!) : undefined,
+  });
   browserCookieImporter = createBrowserCookieImporter({
     sourceRegistry,
     cookies: {
@@ -3218,7 +3227,7 @@ async function bootstrap(): Promise<void> {
             probation: {
               executable: path.join(journal.installPath, "Contents", "MacOS", "Rudder"),
               args: ["--rudder-update-probation"],
-              timeoutMs: 10_000,
+              timeoutMs: 60_000,
             },
           };
           const recovery = recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });

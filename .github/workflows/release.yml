@@ -454,6 +454,13 @@ jobs:
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
 
+      - name: Verify packaged release-set lifecycle
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: |
+          for scenario in startup-recovery clean upgrade auto-update auto-update-public; do
+            node desktop/scripts/smoke.mjs --mode=packaged --scenario="$scenario"
+          done
+
       - name: Collect verified Desktop asset
         run: |
           node scripts/collect-desktop-release-assets.mjs \

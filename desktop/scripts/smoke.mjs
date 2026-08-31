@@ -1015,19 +1015,29 @@ async function createPackagedIdentitySmokeExecutable(scenarioRoot) {
     ? path.resolve(sourceExecutable, "..", "..", "..")
     : path.dirname(sourceExecutable);
   const copiedRoot = path.join(scenarioRoot, "packaged-identity-smoke");
-  await cp(sourceRoot, copiedRoot, { recursive: true, dereference: true });
+  await mkdir(scenarioRoot, { recursive: true });
+  if (process.platform === "darwin") {
+    const clone = await runCapturedProcess("/bin/cp", ["-cR", sourceRoot, copiedRoot], { timeoutMs: 120_000 });
+    assert.equal(clone.code, 0, `packaged identity clone failed: ${clone.stderr.trim() || "unknown error"}`);
+  } else {
+    await cp(sourceRoot, copiedRoot, { recursive: true, dereference: true });
+  }
   const resourcesDir = process.platform === "darwin"
     ? path.join(copiedRoot, "Contents", "Resources")
     : path.join(copiedRoot, "resources");
+  await writePackagedTestIdentityMarker(resourcesDir);
+  return process.platform === "darwin"
+    ? path.join(copiedRoot, "Contents", "MacOS", path.basename(sourceExecutable))
+    : path.join(copiedRoot, path.basename(sourceExecutable));
+}
+
+async function writePackagedTestIdentityMarker(resourcesDir) {
   await mkdir(path.join(resourcesDir, "native"), { recursive: true });
   await writeFile(
     path.join(resourcesDir, "native", "packaged-test-identity.marker"),
     "rudder-packaged-test-identity-v1\n",
     { encoding: "utf8", mode: 0o600 },
   );
-  return process.platform === "darwin"
-    ? path.join(copiedRoot, "Contents", "MacOS", path.basename(sourceExecutable))
-    : path.join(copiedRoot, path.basename(sourceExecutable));
 }
 
 async function createDegradedIdentitySmokeServer() {
@@ -1099,7 +1109,7 @@ async function resolvePackagedExecutablePath() {
 }
 
 async function preparePackagedExternalRuntimeFixture(userDataDir, options = {}) {
-  const executablePath = await resolvePackagedExecutablePath();
+  const executablePath = options.executablePath ?? await resolvePackagedExecutablePath();
   const resourcesDir = process.platform === "darwin"
     ? path.resolve(path.dirname(executablePath), "..", "Resources")
     : path.resolve(path.dirname(executablePath), "resources");
@@ -1110,14 +1120,6 @@ async function preparePackagedExternalRuntimeFixture(userDataDir, options = {}) 
   const updateHelperPath = nativeTarget
     ? path.join(resourcesDir, "native", nativeTarget, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper")
     : null;
-  if (options.authBypass === true) {
-    await mkdir(path.join(resourcesDir, "native"), { recursive: true });
-    await writeFile(
-      path.join(resourcesDir, "native", "packaged-test-identity.marker"),
-      "rudder-packaged-test-identity-v1\n",
-      { encoding: "utf8", mode: 0o600 },
-    );
-  }
   if (process.platform === "darwin" && process.arch === "arm64") {
     assert.ok(nativeHostPath, "packaged Desktop should stage a Rust process host target");
     const nativeStats = await stat(nativeHostPath);
@@ -1243,6 +1245,7 @@ async function preparePackagedExternalRuntimeFixture(userDataDir, options = {}) 
     userDataDir,
     env: {
       PATH: `${staleBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      ...(nativeHostPath ? { RUDDER_NATIVE_PROCESS_HOST_PATH: nativeHostPath } : {}),
       RUDDER_POSTGRES_BIN_DIR: path.join(packagedPostgresRuntimeDir, "bin"),
     },
   };
@@ -1935,6 +1938,7 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
     "RUDDER_DESKTOP_CLI_ENTRY",
     "RUDDER_HOME",
     "RUDDER_IN_WORKTREE",
+    "RUDDER_NATIVE_PROCESS_HOST_PATH",
     "RUDDER_OPERATOR_HOME",
     "RUDDER_RUNTIME_TMPDIR",
   ];
@@ -1946,6 +1950,11 @@ async function verifyPackagedExternalRuntimeAdapterBrowser(input) {
   process.env.RUDDER_DESKTOP_CLI_ENTRY = input.packagedRuntime.cliEntry;
   process.env.RUDDER_HOME = path.join(probeRoot, "rudder-home");
   delete process.env.RUDDER_IN_WORKTREE;
+  if (input.packagedRuntime.nativeHostPath) {
+    process.env.RUDDER_NATIVE_PROCESS_HOST_PATH = input.packagedRuntime.nativeHostPath;
+  } else {
+    delete process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
+  }
   process.env.RUDDER_OPERATOR_HOME = probeRoot;
   process.env.RUDDER_RUNTIME_TMPDIR = path.join(probeRoot, "tmp");
 
@@ -2694,13 +2703,16 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
   const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const smokeHomeDir = path.join(userDataDir, "home");
   await mkdir(smokeHomeDir, { recursive: true });
+  const smokeHome = mode === "packaged" && process.platform === "darwin" && process.env.HOME
+    ? process.env.HOME
+    : smokeHomeDir;
   const electronApp = await electron.launch({
     executablePath,
     args,
     cwd: smokeHomeDir,
     env: {
       ...process.env,
-      HOME: smokeHomeDir,
+      HOME: smokeHome,
       RUDDER_DESKTOP_APP_NAME: smokeAppName,
       RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
       RUDDER_HOME: paths.rudderHome,
@@ -3266,6 +3278,8 @@ async function runPackagedRuntimeFallbackAutoUpdateScenario(mode, fixture) {
   const installPath = path.join(scenarioRoot, "installed", "Rudder.app");
   const statePath = path.join(paths.electronUserDataDir, "desktop-auto-update.json");
   await clonePackagedAppForUpdateSmoke(fixture.sourceAppPath, installPath);
+  await writePackagedTestIdentityMarker(path.join(installPath, "Contents", "Resources"));
+  const baselineExecutable = path.join(installPath, "Contents", "MacOS", "Rudder");
 
   const requestStart = fixture.releaseRequests.length;
   const run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), {
@@ -3279,7 +3293,7 @@ async function runPackagedRuntimeFallbackAutoUpdateScenario(mode, fixture) {
     RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL: fixture.releaseBaseUrl,
     RUDDER_DESKTOP_SMOKE_RUNTIME_FALLBACK_DELAY_MS: "3000",
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH: installPath,
-  });
+  }, baselineExecutable);
   const uiEvidencePromise = (async () => {
     await capturePackagedUpdateUiEvidence(run.electronApp, run.page, {
       assetKind: "full",
@@ -3327,6 +3341,8 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
   const instanceSentinelPath = path.join(paths.instanceRoot, "full-update-preserved.txt");
   const instanceSentinel = "preserve-instance-data-across-full-update\n";
   await clonePackagedAppForUpdateSmoke(fixture.sourceAppPath, installPath);
+  await writePackagedTestIdentityMarker(path.join(installPath, "Contents", "Resources"));
+  const baselineExecutable = path.join(installPath, "Contents", "MacOS", "Rudder");
   await mkdir(paths.instanceRoot, { recursive: true });
   await writeFile(instanceSentinelPath, instanceSentinel, "utf8");
 
@@ -3347,7 +3363,7 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
   fixture.beginReleaseMetadataGate();
   let run;
   try {
-    run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), extraEnv);
+    run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), extraEnv, baselineExecutable);
   } catch (error) {
     fixture.releaseReleaseMetadataGate();
     throw error;
@@ -3436,7 +3452,10 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -3458,8 +3477,17 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   assert.equal(process.platform, "darwin", "public automatic update acceptance is macOS-only");
   const scenarioRoot = path.join(tmpRoot, "auto-update-public");
   const paths = resolveInstancePaths(scenarioRoot);
+  // A Desktop instance keeps one database port across update-driven relaunches.
+  // Reallocating it while the owned PostgreSQL process survives creates a test-only split identity.
+  const ports = await allocateSmokePorts();
   const executablePath = await resolvePackagedExecutablePath();
   const resourcesDir = path.resolve(path.dirname(executablePath), "..", "Resources");
+  const packagedTestIdentityMarkerPath = path.join(resourcesDir, "native", "packaged-test-identity.marker");
+  assert.equal(
+    await pathExists(packagedTestIdentityMarkerPath),
+    false,
+    "public update smoke must start from a release bundle without a packaged test identity marker",
+  );
   const nativeTarget = resolveNativeTarget(process.platform, process.arch);
   assert.ok(nativeTarget);
   const helperPath = path.join(resourcesDir, "native", nativeTarget, "rudder-update-helper");
@@ -3476,6 +3504,8 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const fullAssetPath = path.join(scenarioRoot, "release", fullAssetName);
   const shellAssetPath = path.join(scenarioRoot, "release", shellAssetName);
   await clonePackagedAppForUpdateSmoke(sourceAppPath, installPath);
+  await writePackagedTestIdentityMarker(path.join(installPath, "Contents", "Resources"));
+  const baselineExecutable = path.join(installPath, "Contents", "MacOS", "Rudder");
   const installedBaseline = JSON.parse(await readFile(path.join(installPath, "Contents", "Resources", "app", "package.json"), "utf8"));
   assert.equal(installedBaseline.version, expectedReleaseVersion, "public update must replace the current installed bundle");
   await clonePackagedAppForUpdateSmoke(sourceAppPath, candidateAppPath);
@@ -3499,6 +3529,12 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     "## New Features\n\n- Installed by the silent update smoke candidate.\n",
     "utf8",
   );
+  await mkdir(path.join(candidateAppPath, "Contents", "Resources", "native"), { recursive: true });
+  await writeFile(
+    path.join(candidateAppPath, "Contents", "Resources", "native", "packaged-test-identity.marker"),
+    "rudder-packaged-test-identity-v1\n",
+    { encoding: "utf8", mode: 0o600 },
+  );
   // This is still a real portable ZIP of the candidate bundle. Keep the
   // acceptance run bounded on developer machines by using a fast compression
   // level; release packaging continues to use the production default (9).
@@ -3508,8 +3544,9 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   await rm(path.join(candidateAppPath, "Contents", "Resources", "postgres-18.4"), { recursive: true, force: true });
   const shellArchiveResult = await runCapturedProcess("ditto", macPortableZipArgs(candidateAppPath, shellAssetPath, { compressionLevel: 1 }), { timeoutMs: 120_000 });
   assert.equal(shellArchiveResult.code, 0, `public shell update candidate archive failed: ${shellArchiveResult.stderr}`);
+  const runtimeFixtureExecutable = await createPackagedIdentitySmokeExecutable(scenarioRoot);
   await preparePackagedExternalRuntimeFixture(scenarioRoot, {
-    authBypass: true,
+    executablePath: runtimeFixtureExecutable,
     runtimeVersion: candidateVersion,
     verifyProcessHost: false,
   });
@@ -3605,7 +3642,7 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: lifecyclePath,
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH: installPath,
   };
-  const run = await launchDesktopWindow(scenarioRoot, mode, await allocateSmokePorts(), extraEnv);
+  const run = await launchDesktopWindow(scenarioRoot, mode, ports, extraEnv, baselineExecutable);
   const preparingRuntimeUiEvidencePromise = capturePackagedUpdateUiEvidence(run.electronApp, run.page, {
     assetKind: "shell",
     label: "auto-update-shell-preparing-runtime",
@@ -3690,8 +3727,11 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     const firstNotesRun = await launchDesktopWindow(
       scenarioRoot,
       mode,
-      await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      ports,
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -3725,8 +3765,11 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     const secondNotesRun = await launchDesktopWindow(
       scenarioRoot,
       mode,
-      await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      ports,
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -5812,14 +5855,21 @@ async function runStartupRecoveryScenario(mode) {
   const invalidPostgresBinDir = path.join(scenarioRoot, "missing-postgres-bin");
   const supportHandoffPath = path.join(scenarioRoot, "support-handoffs.jsonl");
   const bugReportHandoffPath = path.join(scenarioRoot, "bug-report-handoffs.jsonl");
+  const packagedExecutable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
   const { electronApp, page } = await launchDesktopWindow(scenarioRoot, mode, ports, {
+    ...(mode === "packaged" ? {
+      ...resolveMacPackagedSmokeHomeEnv(),
+      RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+    } : {}),
     RUDDER_POSTGRES_BIN_DIR: invalidPostgresBinDir,
     RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_PATH: supportHandoffPath,
     RUDDER_DESKTOP_SMOKE_SUPPORT_HANDOFF_SEQUENCE: "resolve,resolve,reject",
     RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_PATH: bugReportHandoffPath,
     RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_SEQUENCE: "resolve,resolve,resolve,reject,reject",
     RUDDER_DESKTOP_SMOKE_BUG_REPORT_HANDOFF_DELAY_SEQUENCE: "80,80,700,1500,80",
-  });
+  }, packagedExecutable);
 
   let scenarioError = null;
   try {
@@ -6010,8 +6060,21 @@ async function runCleanScenario(mode) {
   const ports = await allocateSmokePorts();
   const runtimeUrls = createRuntimeUrls(ports);
   const browserImportFixture = await createSyntheticBrowserImportFixture(scenarioRoot);
-  const packagedRuntime = mode === "packaged" ? await preparePackagedExternalRuntimeFixture(scenarioRoot) : null;
-  const firstRun = await launchDesktop(scenarioRoot, mode, ports, packagedRuntime?.env);
+  const packagedExecutable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
+  const packagedRuntime = mode === "packaged"
+    ? await preparePackagedExternalRuntimeFixture(scenarioRoot, { executablePath: packagedExecutable })
+    : null;
+  const packagedAuthEnv = mode === "packaged" ? {
+    ...resolveMacPackagedSmokeHomeEnv(),
+    RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+    RUDDER_DESKTOP_SMOKE_BROWSER_IMPORT_HOME: path.join(scenarioRoot, "home"),
+  } : {};
+  const firstRun = await launchDesktop(scenarioRoot, mode, ports, {
+    ...packagedRuntime?.env,
+    ...packagedAuthEnv,
+  }, packagedExecutable);
   const browserFixture = await startBrowserSmokeFixture();
   try {
     if (packagedRuntime) {
@@ -6037,7 +6100,7 @@ async function runCleanScenario(mode) {
     );
     await verifyAgentWorkspaceTerminal(firstRun.electronApp, firstRun.page, firstRun.baseUrl, company, ceo);
     const issue = await createIssue(firstRun.baseUrl, company.id, ceo.id);
-    if (mode === "packaged") {
+    if (packagedRuntime) {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
       assert.equal(await pathExists(packagedRuntime.staleMarker), false, "packaged runtime must not invoke stale PATH rudder");
     }
@@ -6108,7 +6171,13 @@ async function runCleanScenario(mode) {
     await closeDesktop(firstRun.electronApp);
 
     const isolatedPorts = await allocateSmokePorts();
-    const isolatedRun = await launchDesktop(path.join(tmpRoot, "browser-isolated-instance"), mode, isolatedPorts);
+    const isolatedRun = await launchDesktop(
+      path.join(tmpRoot, "browser-isolated-instance"),
+      mode,
+      isolatedPorts,
+      packagedAuthEnv,
+      packagedExecutable,
+    );
     try {
       assert.equal(
         await readBrowserSmokeCookie(isolatedRun.electronApp, isolatedRun.page),
@@ -6119,7 +6188,10 @@ async function runCleanScenario(mode) {
       await closeDesktop(isolatedRun.electronApp);
     }
 
-    const secondRun = await launchDesktop(scenarioRoot, mode, ports);
+    const secondRun = await launchDesktop(scenarioRoot, mode, ports, {
+      ...packagedRuntime?.env,
+      ...packagedAuthEnv,
+    }, packagedExecutable);
     try {
       await verifyCompaniesPersist(secondRun.baseUrl, company.id);
       assert.equal(
@@ -6284,6 +6356,8 @@ async function openSmokeSidePanel(page) {
 
 async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company, agent) {
   console.log("[desktop-smoke] verifying Agent workspace Terminal");
+  const materializeResponse = await fetch(`${baseUrl}/api/agents/${agent.id}`);
+  assert.equal(materializeResponse.ok, true, "Agent detail should materialize the managed workspace before Terminal smoke");
   const chat = await createAgentTerminalChat(baseUrl, company.id, agent.id);
   const companyRouteKey = company.urlKey ?? company.issuePrefix;
   await page.goto(new URL(`/${companyRouteKey}/messenger/chat/${chat.id}`, baseUrl).href);
@@ -6296,10 +6370,27 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   await target.click();
   const terminal = sidePanel.getByTestId("terminal-panel-view");
   await terminal.waitFor({ state: "visible", timeout: 15_000 });
-  await page.waitForFunction(() => {
-    const panel = document.querySelector("[data-testid='terminal-panel-view']");
-    return Boolean(panel && !panel.textContent?.includes("Starting terminal") && !panel.textContent?.includes("Terminal unavailable"));
-  }, null, { timeout: 15_000 });
+  const starting = terminal.getByText("Starting terminal", { exact: true });
+  try {
+    await starting.waitFor({ state: "hidden", timeout: 15_000 });
+    const unavailable = terminal.getByText("Terminal unavailable", { exact: true });
+    if (await unavailable.isVisible()) {
+      throw new Error(await terminal.locator("p").innerText().catch(() => "Terminal unavailable"));
+    }
+  } catch (cause) {
+    const diagnostics = await terminal.evaluate((panel) => ({
+      status: panel.querySelector("h3")?.textContent?.trim() || "",
+      error: panel.querySelector("p")?.textContent?.trim() || "",
+      hostChildCount: panel.querySelector("[data-testid='terminal-xterm-host']")?.childElementCount ?? -1,
+      textareaAttached: Boolean(panel.querySelector(".xterm-helper-textarea")),
+      screenAttached: Boolean(panel.querySelector(".xterm-screen")),
+    })).catch(() => null);
+    await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true }).catch(() => {});
+    throw new Error(
+      `Agent Terminal did not become ready within 15000ms; diagnostics=${JSON.stringify(diagnostics)}; screenshot=${terminalFailureSmokeScreenshotPath}`,
+      { cause },
+    );
+  }
 
   const xtermInput = terminal.locator(".xterm-helper-textarea");
   await xtermInput.waitFor({ state: "attached", timeout: 10_000 });
@@ -6369,7 +6460,9 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
 
   const terminalTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]');
   await terminalTab.hover();
-  await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+  const closeTerminalTab = sidePanel.getByRole("button", { name: "Close Terminal tab" });
+  await closeTerminalTab.focus();
+  await closeTerminalTab.press("Enter");
   await terminal.waitFor({ state: "detached", timeout: 10_000 });
 
   const listingResponse = await fetch(`${baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
@@ -6404,7 +6497,9 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
       return text.includes("TERMINAL_RESTARTED=yes") ? text : null;
     });
     await recoveredSidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]').hover();
-    await recoveredSidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+    const closeRecoveredTerminalTab = recoveredSidePanel.getByRole("button", { name: "Close Terminal tab" });
+    await closeRecoveredTerminalTab.focus();
+    await closeRecoveredTerminalTab.press("Enter");
     await failedTerminal.waitFor({ state: "detached", timeout: 10_000 });
   } finally {
     await restoreWorkspace();
@@ -7484,8 +7579,15 @@ async function runUpgradeScenario(mode) {
   const paths = resolveInstancePaths(scenarioRoot);
   const ports = await allocateSmokePorts();
   const runtimeUrls = createRuntimeUrls(ports);
+  const packagedExecutable = mode === "packaged"
+    ? await createPackagedIdentitySmokeExecutable(scenarioRoot)
+    : null;
+  const packagedEnv = mode === "packaged" ? {
+    ...resolveMacPackagedSmokeHomeEnv(),
+    RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+  } : {};
 
-  const firstRun = await launchDesktop(scenarioRoot, mode, ports);
+  const firstRun = await launchDesktop(scenarioRoot, mode, ports, packagedEnv, packagedExecutable);
   await degradeIssueSchema(runtimeUrls.databaseUrl);
   await closeDesktop(firstRun.electronApp);
 
@@ -7509,7 +7611,7 @@ async function runUpgradeScenario(mode) {
     "utf8",
   );
 
-  const secondRun = await launchDesktop(scenarioRoot, mode, ports);
+  const secondRun = await launchDesktop(scenarioRoot, mode, ports, packagedEnv, packagedExecutable);
   const company = await createCompany(secondRun.baseUrl);
   await verifyBundledSkills(secondRun.baseUrl, company.id);
   const ceo = await createCeo(secondRun.baseUrl, company.id);
