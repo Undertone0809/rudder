@@ -4476,6 +4476,12 @@ describe("MessengerContextSidebar chat actions", () => {
       await Promise.resolve();
     });
 
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: 'Remove "Market dashboard" from Messenger?',
+      description: "This deletes the Saved View's durable placement. Any open Main tab stays open, but this cannot be undone.",
+      confirmLabel: "Remove Saved View",
+      tone: "destructive",
+    });
     expect(mockDeleteSavedView).toHaveBeenCalledWith("org-1", "saved-a");
     const cacheCall = setQueryData.mock.calls.find(([queryKey]) => (
       Array.isArray(queryKey)

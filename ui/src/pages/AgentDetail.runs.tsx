@@ -1,5 +1,11 @@
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -16,10 +22,15 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bug,
+  ChevronDown,
   ChevronRight,
   Clock,
   History,
-  RotateCcw
+  ListTodo,
+  Loader2,
+  MessageCircle,
+  RotateCcw,
+  Wrench
 } from "lucide-react";
 import {
   useCallback,
@@ -37,6 +48,7 @@ import {
   type ClaudeLoginResult
 } from "../api/agents";
 import { healthApi } from "../api/health";
+import { issuesApi } from "../api/issues";
 import { CopyText } from "../components/CopyText";
 import { RunIssueReportDialog } from "../components/RunIssueReportDialog";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -49,6 +61,7 @@ import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { retryAgentRun } from "../lib/agent-run-retry";
 import { createChatResponseAnnotationState, validateChatResponseAnnotationAdd } from "../lib/chat-response-annotations";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import {
   GENERIC_RUN_FAILURE_BODY,
@@ -58,7 +71,7 @@ import {
 } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { stageRunFeedbackPendingFiles } from "../lib/run-feedback-pending-files";
-import { buildRunDebugChatMessage } from "../lib/run-issue-report";
+import { buildRunDebugChatMessage, buildRunIssueDiagnostics } from "../lib/run-issue-report";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { sidePanelTargetKey, type SidePanelTarget } from "../lib/side-panel-targets";
 import { resolveSourceBadge } from "../lib/source-badge";
@@ -564,10 +577,10 @@ export function RunsTab({
     if (sidePanel.contextKey !== contextKey) return;
     const restoreKey = `${contextKey}:${orgId}:${agentId}`;
     if (restoredFeedbackContextRef.current === restoreKey) return;
-    restoredFeedbackContextRef.current = restoreKey;
     const existing = runFeedbackTargetForContext(null, sidePanel.tabs, orgId, agentId);
     feedbackTargetRef.current = existing;
     if (existing) {
+      restoredFeedbackContextRef.current = restoreKey;
       return;
     }
     if (typeof window === "undefined") return;
@@ -593,6 +606,7 @@ export function RunsTab({
       };
       feedbackTargetRef.current = restoredTarget;
       if (sidePanel.open) {
+        restoredFeedbackContextRef.current = restoreKey;
         sidePanel.openTargetForContext(contextKey, restoredTarget);
       }
     } catch {
@@ -656,6 +670,26 @@ export function RunsTab({
     sidePanel.openTargetForContext(contextKey, target);
     setSidebarOpen(false);
   }, [contextKey, orgId, setSidebarOpen, sidePanel]);
+
+  const createDebugTaskForRun = useCallback(async (run: HeartbeatRun, diagnostics: string) => {
+    const result = await issuesApi.createRunDebugIssue(orgId, run.id, diagnostics);
+    const issueRef = result.issue.identifier ?? result.issue.id;
+    const organizationPrefix = typeof window === "undefined"
+      ? null
+      : extractOrganizationPrefixFromPath(window.location.pathname);
+    pushToast({
+      title: result.created ? `Created Debug task ${issueRef}` : `Debug task ${issueRef} already exists`,
+      body: result.created
+        ? "The task includes the source Run and bounded diagnostic context."
+        : "Rudder reused the task already created for this Run.",
+      tone: "success",
+      dedupeKey: `run-debug-issue:${orgId}:${run.id}`,
+      action: {
+        label: `Open ${issueRef}`,
+        href: applyOrganizationPrefix(`/issues/${issueRef}`, organizationPrefix),
+      },
+    });
+  }, [orgId, pushToast]);
 
   const annotateRun = useCallback(async (input: TranscriptRunAnnotationInput) => {
     if (!input.text.trim()) return;
@@ -811,6 +845,7 @@ export function RunsTab({
             agentRuntimeType={agentRuntimeType}
             onAnnotate={annotateRun}
             onAskAgent={(diagnostics) => askAgentAboutRun(selectedRun, diagnostics)}
+            onCreateTask={(diagnostics) => createDebugTaskForRun(selectedRun, diagnostics)}
           />
         </div>
 
@@ -927,15 +962,20 @@ export function RunDetail({
   agentRuntimeType,
   onAnnotate,
   onAskAgent,
+  onCreateTask,
 }: {
   run: HeartbeatRun;
   agentRouteId: string;
   agentRuntimeType: string;
   onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
   onAskAgent: (diagnostics: string) => void;
+  onCreateTask: (diagnostics: string) => Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [debugTaskPending, setDebugTaskPending] = useState(false);
+  const [debugTaskError, setDebugTaskError] = useState<string | null>(null);
+  const debugTaskPendingRef = useRef(false);
   const [searchParams] = useSearchParams();
   const { confirm } = useDialog();
   const { data: hydratedRun } = useQuery({
@@ -956,7 +996,40 @@ export function RunDetail({
 
   useEffect(() => {
     setClaudeLoginResult(null);
+    setDebugTaskError(null);
+    setDebugTaskPending(false);
+    debugTaskPendingRef.current = false;
   }, [run.id]);
+
+  function debugDiagnostics() {
+    return buildRunIssueDiagnostics(run, {
+      version: health?.version ?? "unknown",
+      environment: [
+        health?.localEnv ?? "unknown",
+        health?.runtimeOwnerKind ?? "unknown",
+      ].join(" / "),
+    });
+  }
+
+  function startDebugChat() {
+    setDebugTaskError(null);
+    onAskAgent(debugDiagnostics());
+  }
+
+  async function createDebugTask() {
+    if (debugTaskPendingRef.current) return;
+    debugTaskPendingRef.current = true;
+    setDebugTaskPending(true);
+    setDebugTaskError(null);
+    try {
+      await onCreateTask(debugDiagnostics());
+    } catch (error) {
+      setDebugTaskError(error instanceof Error ? error.message : "Could not create the Debug task.");
+    } finally {
+      debugTaskPendingRef.current = false;
+      setDebugTaskPending(false);
+    }
+  }
 
   const cancelRun = useMutation({
     mutationFn: () => agentRunsApi.cancel(run.id),
@@ -1145,18 +1218,55 @@ export function RunDetail({
                   </div>
                 )}
                 {failureDisplay.tone === "destructive" && (
-                  <div className="mt-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setIssueReportOpen(true)}
-                      data-testid="run-report-issue"
-                    >
-                      <Bug className="mr-1.5 h-3.5 w-3.5" />
-                      Report issue
-                    </Button>
+                  <div className="mt-2 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            disabled={debugTaskPending}
+                            data-testid="run-debug-menu-trigger"
+                          >
+                            {debugTaskPending ? (
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Wrench className="mr-1.5 h-3.5 w-3.5" />
+                            )}
+                            {debugTaskPending ? "Creating task" : "Debug"}
+                            {!debugTaskPending ? <ChevronDown className="ml-1 h-3.5 w-3.5" /> : null}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-48">
+                          <DropdownMenuItem onSelect={() => void createDebugTask()}>
+                            <ListTodo />
+                            Create task
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={startDebugChat}>
+                            <MessageCircle />
+                            Start chat
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setIssueReportOpen(true)}
+                        data-testid="run-report-issue"
+                      >
+                        <Bug className="mr-1.5 h-3.5 w-3.5" />
+                        Report issue
+                      </Button>
+                    </div>
+                    {debugTaskError ? (
+                      <p role="alert" className="text-xs text-destructive">
+                        {debugTaskError}
+                      </p>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -1391,7 +1501,6 @@ export function RunDetail({
         ].join(" / ")}
         open={issueReportOpen}
         onOpenChange={setIssueReportOpen}
-        onAskAgent={onAskAgent}
       />
 
       <RunChatContextCard run={run} agentRouteId={agentRouteId} />

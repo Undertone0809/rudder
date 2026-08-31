@@ -111,14 +111,16 @@ describe("chatInlineAnnotationService", () => {
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
   let originalWorkspaceHome: string | undefined;
+  let ownedWorkspaceHome = "";
 
   beforeAll(async () => {
     const started = await startTempDatabase();
     originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = path.join(
+    ownedWorkspaceHome = path.join(
       started.dataDir || os.tmpdir(),
       `rudder-annotation-workspaces-${randomUUID()}`,
     );
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = ownedWorkspaceHome;
     db = createDb(started.connectionString);
     service = chatInlineAnnotationService(db);
     instance = started.instance;
@@ -142,16 +144,16 @@ describe("chatInlineAnnotationService", () => {
 
   afterAll(async () => {
     await instance?.stop();
-    if (process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME) {
-      fs.rmSync(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME, {
+    if (ownedWorkspaceHome) {
+      fs.rmSync(ownedWorkspaceHome, {
         recursive: true,
         force: true,
       });
-      if (originalWorkspaceHome === undefined) {
-        delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-      } else {
-        process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
-      }
+    }
+    if (originalWorkspaceHome === undefined) {
+      delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+    } else {
+      process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
     }
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
@@ -594,22 +596,29 @@ describe("chatInlineAnnotationService", () => {
     const chats = chatService(db);
     const persist = createChatAnnotationMessagePersistence(db, chats.getMessage);
     const clientMutationId = `send:${randomUUID()}`;
+    const clientMutationFingerprint = "a".repeat(64);
     const replayed = vi.fn();
+    const accepted = vi.fn();
 
     const [first, retry] = await Promise.all([
       persist(source.conversationId, source.orgId, "Send exactly once", null, {
         clientMutationId,
+        clientMutationFingerprint,
         onIdempotentReplay: replayed,
+        onTransactionCommitted: accepted,
       }),
       persist(source.conversationId, source.orgId, "Send exactly once", null, {
         clientMutationId,
+        clientMutationFingerprint,
         onIdempotentReplay: replayed,
+        onTransactionCommitted: accepted,
       }),
     ]);
 
     expect(retry.id).toBe(first.id);
     expect(first).not.toHaveProperty("clientMutationId");
     expect(replayed).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
     expect(await db
       .select()
       .from(chatMessages)
@@ -620,7 +629,7 @@ describe("chatInlineAnnotationService", () => {
       source.orgId,
       "Different content",
       null,
-      { clientMutationId },
+      { clientMutationId, clientMutationFingerprint: "b".repeat(64) },
     )).rejects.toMatchObject({ status: 409 });
   });
 

@@ -1864,6 +1864,7 @@ export function chatService(db: Db, storage?: StorageService) {
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
     idempotencyPayload?: ChatQueuedMessagePayload;
+    mutationFingerprint?: string;
     runtimeSnapshotVersion?: 1 | null;
     expectedGenerationId?: string | null;
     requestActor?: ChatQueueRequestActor | null;
@@ -3507,6 +3508,7 @@ export function chatService(db: Db, storage?: StorageService) {
     return rows.map((row) => {
       const publicRow = { ...row };
       delete publicRow.clientMutationId;
+      delete publicRow.clientMutationFingerprint;
       const generationId = generationIdByAssistantMessageId.get(row.id) ?? null;
       const includeRowTranscript = includeTranscript
         || Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
@@ -4332,6 +4334,30 @@ export function chatService(db: Db, storage?: StorageService) {
       .limit(1)
       .then((rows) => rows[0] ?? null);
     return row ? getMessage(conversationId, row.id) : null;
+  }
+
+  async function getUserMessageMutationByClientMutationId(
+    orgId: string,
+    conversationId: string,
+    clientMutationId: string,
+  ) {
+    const row = await db
+      .select({
+        id: chatMessages.id,
+        fingerprint: chatMessages.clientMutationFingerprint,
+      })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, orgId),
+        eq(chatMessages.conversationId, conversationId),
+        eq(chatMessages.role, "user"),
+        eq(chatMessages.clientMutationId, clientMutationId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!row) return null;
+    const message = await getMessage(conversationId, row.id);
+    return message ? { message, fingerprint: row.fingerprint } : null;
   }
 
   async function transcriptSnapshotForWrite(
@@ -5295,6 +5321,7 @@ export function chatService(db: Db, storage?: StorageService) {
     convertToIssue,
     getMessage,
     getUserMessageByClientMutationId,
+    getUserMessageMutationByClientMutationId,
     applyApprovedApproval,
     createProposalApproval,
     resolveOperationProposal,

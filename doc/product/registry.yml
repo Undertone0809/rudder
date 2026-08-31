@@ -442,6 +442,24 @@ contracts:
       - doc/plans/2026-06-20-agent-run-unification-completion.md
       - doc/plans/2026-06-24-agent-run-scene-runtime-contract.md
       - doc/plans/2026-07-21-chat-agent-run-conversation-grouping.md
+  RUN.DEBUG.HANDOFF.001:
+    owner: product
+    domain: execution
+    docs:
+      - doc/product/domains/execution/agent-runs.md
+    related_code:
+      - packages/db/src/schema/issues.ts
+      - packages/shared/src/validators/issue.ts
+      - server/src/routes/issues.mutations.ts
+      - server/src/services/issues.ts
+      - ui/src/api/issues.ts
+      - ui/src/components/RunIssueReportDialog.tsx
+      - ui/src/lib/run-issue-report.ts
+      - ui/src/pages/AgentDetail.runs.tsx
+    related_tests:
+      - server/src/__tests__/issue-lifecycle-routes.test.ts
+      - ui/src/components/RunIssueReportDialog.test.tsx
+      - tests/e2e/agent-run-debug-chat.spec.ts
   RUN.CHAT.AGENT.001:
     owner: product
     domain: execution

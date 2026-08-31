@@ -60,6 +60,7 @@ import {
   WorkspaceLaunchTargetIcon,
 } from "../components/workspaces/WorkspaceLaunchControls";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
@@ -210,6 +211,7 @@ function OrganizationWorkspaceBrowserForOrganization({
   ),
 }: OrganizationWorkspaceBrowserProps) {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
+  const { confirm } = useDialog();
   const { locale } = useI18n();
   const { pushToast } = useToast();
   const { openTarget: openSidePanelTarget } = useSidePanel();
@@ -898,6 +900,19 @@ function OrganizationWorkspaceBrowserForOrganization({
       });
     },
   });
+
+  const confirmAndRemoveProjectResourceAttachment = async (
+    project: Project,
+    attachment: ProjectResourceAttachment,
+  ) => {
+    const confirmed = await confirm({
+      title: `Remove "${attachment.resource.name}" from this project?`,
+      description: "This removes the source from the project. The underlying resource and its files are not deleted.",
+      confirmLabel: "Remove source",
+      tone: "destructive",
+    });
+    if (confirmed) removeProjectResourceAttachment.mutate({ project, attachment });
+  };
 
   const deleteLegacyHeartbeatInstructions = useMutation({
     mutationFn: () => organizationsApi.deleteLegacyHeartbeatInstructions(viewedOrganizationId!),
@@ -2294,7 +2309,9 @@ function OrganizationWorkspaceBrowserForOrganization({
                           onAddResources={handleAddProjectResources}
                           onCopyResourceLocator={(attachment) => void handleCopyResourceLocator(attachment)}
                           onOpenResource={(attachment) => void handleOpenResourceDefault(attachment)}
-                          onUnlinkResource={(project, attachment) => removeProjectResourceAttachment.mutate({ project, attachment })}
+                          onUnlinkResource={(project, attachment) => {
+                            void confirmAndRemoveProjectResourceAttachment(project, attachment);
+                          }}
                           onOpenSkillAddDialog={() => navigate("/hub?tab=skills")}
                           unlinkingResourceId={removeProjectResourceAttachment.variables?.attachment.id ?? null}
                           expandedDirectories={expandedDirectories}

@@ -118,7 +118,7 @@ test("adds recent local sources through the progressive Sources dialog", async (
   const created = await (await createResponse).json() as {
     id: string;
     urlKey: string | null;
-    resources: Array<{ resource: { name: string; locator: string } }>;
+    resources: Array<{ id: string; resource: { name: string; locator: string } }>;
   };
   expect(created.resources.map((attachment) => attachment.resource.name).sort()).toEqual([
     "Recent local source 01",
@@ -140,6 +140,52 @@ test("adds recent local sources through the progressive Sources dialog", async (
   await expect(page.getByRole("button", { name: "Add sources", exact: true })).toBeVisible();
   await expect(page.getByText("Recent local source 01", { exact: true })).toBeVisible();
   await expect(page.getByText("Recent local source 02", { exact: true })).toBeVisible();
+
+  let deleteRequests = 0;
+  await page.route(`**/api/projects/${created.id}/resources/*`, async (route) => {
+    if (route.request().method() === "DELETE") {
+      deleteRequests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    await route.continue();
+  });
+
+  const removeSourceButton = page.getByRole("button", { name: "Remove Recent local source 01" });
+  await removeSourceButton.click();
+  let removeDialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: 'Remove "Recent local source 01" from this project?' }),
+  });
+  await expect(removeDialog).toBeVisible();
+  await expect(removeDialog).toContainText("The underlying resource and its files are not deleted.");
+  await removeDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(removeDialog).toHaveCount(0);
+  await expect(removeSourceButton).toBeVisible();
+  expect(deleteRequests).toBe(0);
+
+  await removeSourceButton.click();
+  removeDialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: 'Remove "Recent local source 01" from this project?' }),
+  });
+  await page.keyboard.press("Escape");
+  await expect(removeDialog).toHaveCount(0);
+  await expect(removeSourceButton).toBeVisible();
+  expect(deleteRequests).toBe(0);
+
+  await removeSourceButton.click();
+  removeDialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: 'Remove "Recent local source 01" from this project?' }),
+  });
+  const deleteResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE"
+    && response.url().includes(`/api/projects/${created.id}/resources/`)
+    && response.ok(),
+  );
+  await removeDialog.getByRole("button", { name: "Remove source" }).click({ clickCount: 2 });
+  await deleteResponse;
+  await expect(page.getByText("Project source removed")).toBeVisible();
+  await expect(page.getByText("Recent local source 01", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Recent local source 02", { exact: true })).toBeVisible();
+  expect(deleteRequests).toBe(1);
   expect(dialogAccessibilityMessages).toEqual([]);
 });
 

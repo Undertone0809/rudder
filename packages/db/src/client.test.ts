@@ -951,6 +951,8 @@ describe("applyPendingMigrations", () => {
           "0158_agent_run_goal_binding.sql",
           "0159_chat_message_send_idempotency.sql",
           "0160_delegation_run_provenance.sql",
+          "0161_chat_message_mutation_fingerprint.sql",
+          "0162_run_debug_issue_origin.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1132,6 +1134,8 @@ describe("applyPendingMigrations", () => {
           "0158_agent_run_goal_binding.sql",
           "0159_chat_message_send_idempotency.sql",
           "0160_delegation_run_provenance.sql",
+          "0161_chat_message_mutation_fingerprint.sql",
+          "0162_run_debug_issue_origin.sql",
         ],
         reason: "pending-migrations",
       });

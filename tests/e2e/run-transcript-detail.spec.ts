@@ -1063,12 +1063,15 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("annotates a failed tool result block with its own source identity", async ({ page }) => {
-    const consoleErrors: string[] = [];
+  test("hides live affordances and annotates terminal reasoning and tool variants with their own source identity", async ({ page }) => {
+    test.setTimeout(240_000);
+    const consoleErrors: Array<{ text: string; url: string }> = [];
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
     page.on("console", (message) => {
-      if (message.type() === "error") consoleErrors.push(message.text());
+      if (message.type() === "error") {
+        consoleErrors.push({ text: message.text(), url: message.location().url });
+      }
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("requestfailed", (request) => {
@@ -1090,6 +1093,14 @@ test.describe("Run transcript detail", () => {
     });
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json() as { id: string };
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Transcript Annotation Coverage",
+        description: "Project context for reasoning and tool feedback coverage.",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
     const runId = randomUUID();
     const startedAt = new Date("2026-07-30T10:00:00.000Z");
     await e2eDb.insert(heartbeatRuns).values({
@@ -1102,7 +1113,7 @@ test.describe("Run transcript detail", () => {
       startedAt,
       finishedAt: new Date(startedAt.getTime() + 60_000),
       createdAt: startedAt,
-      updatedAt: new Date(startedAt.getTime() + 60_000),
+      updatedAt: startedAt,
     });
 
     const eventAt = (seconds: number) => new Date(startedAt.getTime() + seconds * 1_000);
@@ -1273,6 +1284,78 @@ test.describe("Run transcript detail", () => {
         },
         createdAt: eventAt(9),
       },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 10,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript streamed reasoning entry",
+        payload: {
+          kind: "thinking",
+          text: "Persisted reasoning delta without a provider completion marker.",
+          delta: true,
+          ts: eventAt(10).toISOString(),
+        },
+        createdAt: eventAt(10),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 11,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript tool call without result",
+        payload: {
+          kind: "tool_call",
+          name: "shell",
+          input: { command: "printf pending" },
+          toolUseId: "coverage-tool-pending",
+          ts: eventAt(11).toISOString(),
+        },
+        createdAt: eventAt(11),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 12,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript generic tool call entry",
+        payload: {
+          kind: "tool_call",
+          name: "search",
+          input: { query: "annotation eligibility" },
+          toolUseId: "coverage-tool-generic",
+          ts: eventAt(12).toISOString(),
+        },
+        createdAt: eventAt(12),
+      },
+      {
+        orgId: organization.id,
+        runId,
+        agentId: agent.id,
+        seq: 13,
+        eventType: "transcript.entry",
+        stream: "system",
+        level: "info",
+        message: "chat transcript generic tool result entry",
+        payload: {
+          kind: "tool_result",
+          toolUseId: "coverage-tool-generic",
+          toolName: "search",
+          content: "Found persisted transcript evidence",
+          isError: false,
+          ts: eventAt(13).toISOString(),
+        },
+        createdAt: eventAt(13),
+      },
     ]).returning({ id: heartbeatRunEvents.id, seq: heartbeatRunEvents.seq });
     const eventSourceIds = new Map(insertedEvents.map((event) => [event.seq, String(event.id)]));
     const sourceEntryIdForSeq = (seq: number) => {
@@ -1288,7 +1371,39 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
+    const expectHoverTrigger = async (block: Locator, trigger: Locator) => {
+      await expect(async () => {
+        await block.hover();
+        await expect(trigger).toHaveCSS("opacity", "1", { timeout: 1_000 });
+      }).toPass({ timeout: 10_000 });
+    };
     await expect(detailPane.getByText("System status is ready", { exact: false })).toBeVisible({ timeout: 15_000 });
+
+    await e2eDb.update(heartbeatRuns)
+      .set({
+        status: "running",
+        runningSubstate: "waiting_for_network",
+        networkWaitNextRetryAt: new Date(Date.now() + 10 * 60_000),
+        finishedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(detailPane.getByText("System status is ready", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.locator("[data-run-transcript-annotation-trigger]")).toHaveCount(0);
+
+    await e2eDb.update(heartbeatRuns)
+      .set({
+        status: "succeeded",
+        runningSubstate: null,
+        networkWaitNextRetryAt: null,
+        finishedAt: new Date(startedAt.getTime() + 60_000),
+        updatedAt: new Date(startedAt.getTime() + 60_000),
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(detailPane.getByText("System status is ready", { exact: false })).toBeVisible({ timeout: 15_000 });
+
     for (const sourceEntryId of [
       sourceEntryIdForSeq(1),
       sourceEntryIdForSeq(2),
@@ -1303,17 +1418,18 @@ test.describe("Run transcript detail", () => {
 
     const userBlock = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(2)}"]`);
     const userTrigger = userBlock.getByTestId("run-transcript-annotation-trigger");
-    await userTrigger.hover();
-    await expect(userTrigger).toHaveCSS("opacity", "1");
+    await expectHoverTrigger(userBlock, userTrigger);
     await userTrigger.focus();
     await expect(userTrigger).toBeFocused();
 
-    const groupToggle = detailPane.getByRole("button", { name: /Expand tool activity/ });
-    await expect(groupToggle).toHaveCount(1);
-    const groupSummaryRoot = groupToggle.locator("..");
+    const groupToggles = detailPane.getByRole("button", { name: /Expand tool activity/ });
+    await expect(groupToggles).toHaveCount(2);
+    const groupSummaryRoot = groupToggles.first().locator("..");
     await expect(groupSummaryRoot).toHaveAttribute("data-run-transcript-block-type", "event");
     await expect(groupSummaryRoot.getByTestId("run-transcript-annotation-trigger")).toBeVisible();
-    await groupToggle.click();
+    for (let index = await groupToggles.count() - 1; index >= 0; index -= 1) {
+      await groupToggles.nth(index).click();
+    }
     const toolA = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(6)}"]`);
     const toolB = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(8)}"]`);
     await expect(toolA).toHaveCount(1);
@@ -1324,8 +1440,7 @@ test.describe("Run transcript detail", () => {
     await expect(toolBTrigger).toBeVisible();
     const toolARow = toolA.getByRole("button", { name: /Expand command details: Ran printf same/ });
     await expect(toolARow).toBeVisible();
-    await toolARow.hover();
-    await expect(toolATrigger).toHaveCSS("opacity", "1");
+    await expectHoverTrigger(toolA, toolATrigger);
     await toolATrigger.focus();
     await expect(toolATrigger).toBeFocused();
     await toolBTrigger.focus();
@@ -1333,8 +1448,20 @@ test.describe("Run transcript detail", () => {
     await toolB.locator('[data-transcript-action-row-disclosure="true"]').click();
     const failedToolRow = toolB.getByRole("button", { name: /Collapse command details: Ran printf same/ });
     await expect(failedToolRow).toBeVisible();
-    await failedToolRow.hover();
-    await expect(toolBTrigger).toHaveCSS("opacity", "1");
+    await expectHoverTrigger(toolB, toolBTrigger);
+
+    const reasoning = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(10)}"]`);
+    const pendingTool = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(11)}"]`);
+    const genericTool = detailPane.locator(`[data-run-transcript-block-id="${sourceEntryIdForSeq(12)}"]`);
+    await expect(reasoning).toHaveAttribute("data-run-transcript-block-type", "thinking");
+    await expect(pendingTool).toHaveAttribute("data-run-transcript-block-type", "tool");
+    await expect(genericTool).toHaveAttribute("data-run-transcript-block-type", "tool");
+    const reasoningTrigger = reasoning.getByTestId("run-transcript-annotation-trigger");
+    const pendingToolTrigger = pendingTool.getByTestId("run-transcript-annotation-trigger");
+    const genericToolTrigger = genericTool.getByTestId("run-transcript-annotation-trigger");
+    await expectHoverTrigger(reasoning, reasoningTrigger);
+    await expectHoverTrigger(pendingTool, pendingToolTrigger);
+    await expectHoverTrigger(genericTool, genericToolTrigger);
 
     const annotationEditor = page.locator("[data-testid='chat-response-annotation-editor'][data-state='open']");
     const saveItemAnnotation = async (trigger: Locator, comment: string) => {
@@ -1342,9 +1469,13 @@ test.describe("Run transcript detail", () => {
       await expect(annotationEditor).toBeVisible();
       await annotationEditor.getByRole("textbox", { name: "Comment" }).fill(comment);
       await annotationEditor.getByRole("button", { name: "Save" }).click();
+      await expect(annotationEditor).toBeHidden();
     };
     await saveItemAnnotation(toolATrigger, "Review first identical tool item.");
     await saveItemAnnotation(toolBTrigger, "Review second identical tool item.");
+    await saveItemAnnotation(reasoningTrigger, "Review persisted reasoning delta.");
+    await saveItemAnnotation(pendingToolTrigger, "Review tool call without a result.");
+    await saveItemAnnotation(genericToolTrigger, "Review generic tool output.");
 
     const draft = await page.evaluate(({ orgId, agentId }) => {
       const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
@@ -1366,15 +1497,269 @@ test.describe("Run transcript detail", () => {
         sourceMemberIds: [sourceEntryIdForSeq(8), sourceEntryIdForSeq(9)],
         selectedText: expect.stringContaining("prompt_cache_retention is not supported on this model"),
       }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(10),
+        sourceMemberIds: [sourceEntryIdForSeq(10)],
+        selectedText: expect.stringContaining("Persisted reasoning delta"),
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(11),
+        sourceMemberIds: [sourceEntryIdForSeq(11)],
+        selectedText: expect.stringContaining("printf pending"),
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(12),
+        sourceMemberIds: [sourceEntryIdForSeq(12), sourceEntryIdForSeq(13)],
+        selectedText: expect.stringContaining("Found persisted transcript evidence"),
+      }),
     ]));
 
+    const [terminalReasoningEvent] = await e2eDb.insert(heartbeatRunEvents).values({
+      orgId: organization.id,
+      runId,
+      agentId: agent.id,
+      seq: 14,
+      eventType: "transcript.entry",
+      stream: "system",
+      level: "info",
+      message: "chat transcript terminal reasoning entry",
+      payload: {
+        kind: "thinking",
+        text: "Terminal reasoning summary after provider completion.",
+        delta: false,
+        ts: eventAt(14).toISOString(),
+      },
+      createdAt: eventAt(14),
+    }).returning({ id: heartbeatRunEvents.id });
+    if (!terminalReasoningEvent) throw new Error("Missing terminal reasoning event");
+    eventSourceIds.set(14, String(terminalReasoningEvent.id));
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const reloadedDetailPane = page.getByTestId("agent-runs-detail-pane");
+    await expect(reloadedDetailPane.getByText("Persisted reasoning delta", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(reloadedDetailPane.getByText("Terminal reasoning summary", { exact: false })).toBeVisible();
+    const restoredDraft = await page.evaluate(({ orgId, agentId }) => {
+      const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
+      return raw ? JSON.parse(raw) as {
+        inlineAnnotations?: Array<{
+          sourceEntryId?: string;
+          sourceMemberIds?: string[];
+          comment?: string | null;
+        }>;
+      } : null;
+    }, { orgId: organization.id, agentId: agent.id });
+    expect(restoredDraft?.inlineAnnotations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(10),
+        sourceMemberIds: [sourceEntryIdForSeq(10)],
+        comment: "Review persisted reasoning delta.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(11),
+        sourceMemberIds: [sourceEntryIdForSeq(11)],
+        comment: "Review tool call without a result.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(12),
+        sourceMemberIds: [sourceEntryIdForSeq(12), sourceEntryIdForSeq(13)],
+        comment: "Review generic tool output.",
+      }),
+    ]));
+
+    const reloadedReasoning = reloadedDetailPane.locator(
+      `[data-run-transcript-block-id="${sourceEntryIdForSeq(10)}"]`,
+    );
+    await reloadedReasoning.scrollIntoViewIfNeeded();
+    await expectHoverTrigger(
+      reloadedReasoning,
+      reloadedReasoning.getByTestId("run-transcript-annotation-trigger"),
+    );
+    await reloadedReasoning.getByTestId("run-transcript-annotation-trigger").focus();
+    const terminalReasoning = reloadedDetailPane.locator(
+      `[data-run-transcript-block-id="${sourceEntryIdForSeq(14)}"]`,
+    );
+    const terminalReasoningTrigger = terminalReasoning.getByTestId("run-transcript-annotation-trigger");
+    await expectHoverTrigger(terminalReasoning, terminalReasoningTrigger);
+    await saveItemAnnotation(terminalReasoningTrigger, "Review terminal reasoning summary.");
+    const reloadedGroupToggles = reloadedDetailPane.getByRole("button", { name: /Expand tool activity/ });
+    for (let index = await reloadedGroupToggles.count() - 1; index >= 0; index -= 1) {
+      await reloadedGroupToggles.nth(index).click();
+    }
+    const reloadedGenericTool = reloadedDetailPane.locator(
+      `[data-run-transcript-block-id="${sourceEntryIdForSeq(12)}"]`,
+    );
+    await reloadedGenericTool.scrollIntoViewIfNeeded();
+    await expectHoverTrigger(
+      reloadedGenericTool,
+      reloadedGenericTool.getByTestId("run-transcript-annotation-trigger"),
+    );
+
+    const feedbackPanel = page.getByTestId("run-feedback-chat-panel");
+    await expect(feedbackPanel).toBeVisible();
+    const projectSelector = feedbackPanel.getByTestId("run-feedback-project-selector");
+    await projectSelector.click();
+    await page.getByTestId("run-feedback-project-menu")
+      .getByRole("menuitemradio", { name: "Transcript Annotation Coverage" })
+      .click();
+    await expect(projectSelector).toContainText("Transcript Annotation Coverage");
+    const sendFeedback = feedbackPanel.getByRole("button", { name: "Send feedback" });
+    await expect(sendFeedback).toBeEnabled();
+    const stopResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && response.url().includes("/messages/stream/stop")
+    ));
+    await sendFeedback.click();
+    const stopFeedback = feedbackPanel.getByRole("button", { name: "Stop feedback" });
+    await expect(stopFeedback).toBeVisible({ timeout: 15_000 });
+    await stopFeedback.click();
+    const stopResponse = await stopResponsePromise;
+    expect(stopResponse.ok(), await stopResponse.text()).toBe(true);
+    await expect(feedbackPanel.getByText("Annotation-only feedback", { exact: true })).toBeVisible({ timeout: 30_000 });
+    const annotationDisclosure = feedbackPanel.getByRole("button", { name: /(?:Show|Hide) 6 annotations?/ });
+    await expect(annotationDisclosure).toBeVisible();
+    if ((await annotationDisclosure.getAttribute("aria-expanded")) !== "true") await annotationDisclosure.click();
+    const sentAnnotationsCard = page.getByTestId("chat-response-annotation-sent-card");
+    await expect(sentAnnotationsCard).toBeVisible();
+    await expect(sentAnnotationsCard.getByTestId("chat-response-annotation-sent-card-entry")).toHaveCount(6);
+    const annotationComments = [
+      "Review first identical tool item.",
+      "Review second identical tool item.",
+      "Review persisted reasoning delta.",
+      "Review tool call without a result.",
+      "Review generic tool output.",
+      "Review terminal reasoning summary.",
+    ];
+    for (const comment of annotationComments) {
+      const renderedComment = sentAnnotationsCard.getByText(comment, { exact: true });
+      await renderedComment.scrollIntoViewIfNeeded();
+      await expect(renderedComment).toBeVisible();
+    }
+
+    const feedbackTarget = await page.evaluate(({ orgId, agentId }) => {
+      const raw = window.localStorage.getItem(`rudder.run-feedback-draft:${orgId}:${agentId}`);
+      return raw ? JSON.parse(raw) as { conversationId?: string | null } : null;
+    }, { orgId: organization.id, agentId: agent.id });
+    expect(feedbackTarget?.conversationId).toEqual(expect.any(String));
+    const messagesResponse = await page.request.get(
+      `/api/chats/${feedbackTarget!.conversationId}/messages?orgId=${organization.id}`,
+    );
+    expect(messagesResponse.ok(), await messagesResponse.text()).toBe(true);
+    const messages = await messagesResponse.json() as Array<{
+      role: string;
+      structuredPayload?: {
+        inlineAnnotations?: Array<{
+          sourceEntryId?: string;
+          sourceMemberIds?: string[];
+          comment?: string | null;
+        }>;
+      } | null;
+    }>;
+    const submittedAnnotations = messages.find((message) => message.role === "user")
+      ?.structuredPayload?.inlineAnnotations;
+    expect(submittedAnnotations).toHaveLength(6);
+    expect(submittedAnnotations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(6),
+        sourceMemberIds: [sourceEntryIdForSeq(6), sourceEntryIdForSeq(7)],
+        comment: "Review first identical tool item.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(8),
+        sourceMemberIds: [sourceEntryIdForSeq(8), sourceEntryIdForSeq(9)],
+        comment: "Review second identical tool item.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(10),
+        sourceMemberIds: [sourceEntryIdForSeq(10)],
+        comment: "Review persisted reasoning delta.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(11),
+        sourceMemberIds: [sourceEntryIdForSeq(11)],
+        comment: "Review tool call without a result.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(12),
+        sourceMemberIds: [sourceEntryIdForSeq(12), sourceEntryIdForSeq(13)],
+        comment: "Review generic tool output.",
+      }),
+      expect.objectContaining({
+        sourceEntryId: sourceEntryIdForSeq(14),
+        sourceMemberIds: [sourceEntryIdForSeq(14)],
+        comment: "Review terminal reasoning summary.",
+      }),
+    ]));
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const openSidePanel = page.getByRole("button", { name: "Open Side Panel" });
+    await openSidePanel.focus();
+    await openSidePanel.press("Enter");
+    const reloadedFeedbackPanel = page.getByTestId("run-feedback-chat-panel");
+    await expect(reloadedFeedbackPanel).toBeVisible({ timeout: 15_000 });
+    const reloadedAnnotationDisclosure = reloadedFeedbackPanel.getByRole(
+      "button",
+      { name: /(?:Show|Hide) 6 annotations?/ },
+    );
+    await expect(reloadedAnnotationDisclosure).toBeVisible({ timeout: 15_000 });
+    if ((await reloadedAnnotationDisclosure.getAttribute("aria-expanded")) !== "true") {
+      await reloadedAnnotationDisclosure.click();
+    }
+    const reloadedSentAnnotationsCard = page.getByTestId("chat-response-annotation-sent-card");
+    await expect(reloadedSentAnnotationsCard.getByTestId("chat-response-annotation-sent-card-entry")).toHaveCount(6);
+    for (const comment of annotationComments) {
+      const restoredComment = reloadedSentAnnotationsCard.getByText(comment, { exact: true });
+      await restoredComment.scrollIntoViewIfNeeded();
+      await expect(restoredComment).toBeVisible();
+    }
+    const restoredTerminalReasoningAnnotation = reloadedSentAnnotationsCard
+      .getByTestId("chat-response-annotation-sent-card-entry")
+      .filter({ hasText: "Review terminal reasoning summary." });
+    await restoredTerminalReasoningAnnotation.getByRole("button", { name: "Show source" }).click();
+    await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}/runs/${runId}$`));
+    await expect(async () => {
+      const restoredTerminalReasoningSource = page.getByTestId("agent-runs-detail-pane").locator(
+        `[data-run-transcript-block-id="${sourceEntryIdForSeq(14)}"]`,
+      );
+      await restoredTerminalReasoningSource.scrollIntoViewIfNeeded();
+      await expect(restoredTerminalReasoningSource).toBeVisible();
+    }).toPass({ timeout: 10_000 });
+    await page.screenshot({ path: "/tmp/rudder-r6z-186-transcript-comments-desktop.png" });
+    const closeSidePanel = page.getByTestId("chat-side-panel-collapse");
+    await closeSidePanel.focus();
+    await closeSidePanel.press("Enter");
+    await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+
     await page.setViewportSize({ width: 390, height: 844 });
-    expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    const mobileGroupToggles = reloadedDetailPane.getByRole("button", { name: /Expand tool activity/ });
+    for (let index = await mobileGroupToggles.count() - 1; index >= 0; index -= 1) {
+      await mobileGroupToggles.nth(index).click();
+    }
+    const mobileGenericTool = reloadedDetailPane.locator(
+      `[data-run-transcript-block-id="${sourceEntryIdForSeq(12)}"]`,
+    );
+    await mobileGenericTool.scrollIntoViewIfNeeded();
+    await mobileGenericTool.getByTestId("run-transcript-annotation-trigger").focus();
+    expect(await reloadedDetailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-r6z-100-failed-tool-annotation-mobile.png", fullPage: true });
-    expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
+    await page.screenshot({ path: "/tmp/rudder-r6z-186-transcript-comments-mobile.png", fullPage: true });
+    const unexpectedConsoleErrors = consoleErrors.filter(({ text, url }) => {
+      if (text !== "Failed to load resource: the server responded with a status of 404 (Not Found)") return true;
+      try {
+        return new URL(url).pathname !== `/api/agent-runs/${runId}/log`;
+      } catch {
+        return true;
+      }
+    });
+    expect(
+      unexpectedConsoleErrors,
+      `console errors: ${unexpectedConsoleErrors.map(({ text, url }) => `${text} @ ${url}`).join(" | ")}`,
+    ).toEqual([]);
     expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
-    expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
+    const unexpectedRequestFailures = requestFailures.filter((failure) => !failure.endsWith("net::ERR_ABORTED"));
+    expect(
+      unexpectedRequestFailures,
+      `request failures: ${unexpectedRequestFailures.join(" | ")}`,
+    ).toEqual([]);
   });
 
   test("exposes item-scoped annotation affordances across transcript types and action rows", async ({ page }) => {

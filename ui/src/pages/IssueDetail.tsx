@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import type { Agent, AssistanceRequest, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { extractLibraryDirectoryMentionPaths, extractLibraryDocMentionIds, extractLibraryFileMentionPaths, isLowSignalIssueContentOnlyUpdate, issueUpdatedChangedKeys as sharedIssueUpdatedChangedKeys, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
@@ -1603,7 +1604,13 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       queryClient.setQueryData(queryKeys.issues.comment(issueId!, comment.id), comment);
       invalidateIssue();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
+      pushToast({ title: "Comment deleted", tone: "success" });
     },
+    onError: (error) => pushToast({
+      title: "Failed to delete comment",
+      body: error instanceof Error ? error.message : "Try again.",
+      tone: "error",
+    }),
   });
 
   const uploadAttachment = useMutation({
@@ -1658,6 +1665,17 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
       setAttachmentError(err instanceof Error ? err.message : "Delete failed");
     },
   });
+
+  const confirmAndDeleteAttachment = async (attachment: IssueAttachment) => {
+    const attachmentName = attachment.originalFilename ?? attachment.id;
+    const confirmed = await confirm({
+      title: `Delete "${attachmentName}"?`,
+      description: "This permanently removes the attachment from the issue. This cannot be undone.",
+      confirmLabel: "Delete attachment",
+      tone: "destructive",
+    });
+    if (confirmed) deleteAttachment.mutate(attachment.id);
+  };
 
   const openInChat = useCallback(() => {
     if (!issue) {
@@ -2101,7 +2119,8 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           onSave={(description) => updateIssue.mutateAsync({ description: description.trim() ? description : null })}
           as="p"
           className="text-[15px] leading-7 text-foreground"
-          placeholder="Add a description..."
+          placeholder={translateLegacyString(locale, "Add a description...")}
+          ariaLabel={translateLegacyString(locale, "Add a description... Markdown editor")}
           multiline
           editorEngine="codemirror" documentIdentity={`issue:${issue.id}`}
           alwaysEdit
@@ -2444,7 +2463,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteAttachment.mutate(attachment.id)}
+                    onClick={() => void confirmAndDeleteAttachment(attachment)}
                     disabled={deleteAttachment.isPending}
                     title="Delete attachment"
                   >

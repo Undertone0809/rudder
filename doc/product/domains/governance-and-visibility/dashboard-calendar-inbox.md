@@ -81,12 +81,17 @@ Flow:
 1. Calendar service collects events from source records for a time range.
 2. UI displays events by day/week/month.
 3. Event detail links back to the owning work object.
+4. A writable manual event can be deleted only after an explicit confirmation
+   names the event and states that deletion cannot be undone.
 
 Invariants:
 
 - Calendar event display must not become a second state machine for
   automations/issues.
 - Source identity must be preserved for navigable events.
+- Cancel, close, or Escape from event deletion must preserve the event and send
+  no delete request. A confirmed deletion sends one request and exposes success
+  or failure feedback while preventing duplicate submission.
 
 Evidence:
 

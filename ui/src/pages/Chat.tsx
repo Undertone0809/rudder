@@ -125,6 +125,11 @@ import {
 } from "@/lib/chat-response-annotations";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import {
+  clearPendingChatSendMutation,
+  readPendingChatSendMutation,
+  savePendingChatSendMutation,
+} from "@/lib/chat-send-mutation-storage";
+import {
   buildChatSkillOptions,
   buildChatSkillReferenceOptions,
   filterChatSkillOptions,
@@ -224,7 +229,7 @@ import {
   useChatRuntimeMutation,
   useChatRuntimeSelection,
 } from "./Chat.model-selector";
-import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, latestContinuableInterruptedChatMessage, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
+import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranchPreview, ChatEmptyStatePromptOptions, ChatEmptyStatePromptStarters, ChatEmptyStateRecentConversations, EmptyStatePromptGroup, EmptyStatePromptSuggestion, INTERRUPTED_CHAT_CONTINUATION_PROMPT, NO_CHAT_AGENT_LABEL, NO_PROJECT_ID, applyChatPromptToDraft, approvalNeedsAction, askUserAnswerFromMessage, askUserRequestFromMessage, buildChatProposalRejectFeedbackPrompt, buildChatProposalRevisionPrompt, buildDraftChatContextLinks, buildMessengerChatThreadSummary, canRefreshAssistantChatMessage, canRefreshDisplayedAssistantChatMessage, chatEmptyStateHeading, chatPromptGroupForExactTrigger, chatPromptQueryKey, chatPromptSuggestionsForDisplay, chatPromptSuggestionsForDraft, chatSidePanelTargetFromHref, composerMenuPositionForAnchor, computeDisplayedChatMessages, conversationDisplayTitle, draftIssueContextLabel, findLatestUnansweredAskUserMessage, findRetrySourceUserMessage, formatChatPrimaryIssueBreadcrumb, isAskUserMessageAnswered, isChatAgentSelectionLocked, isChatProjectSelectionLocked, isUserVisibleIncomingChatMessage, issueProposalFromMessage, latestContinuableInterruptedChatMessage, latestEditableChatUserMessageId, materializePendingAttachment, mergeChatConversationsForStatus, mergeChatMessages, operationProposalFromMessage, operationProposalStatusFromMessage, parseAskUserAnswerMessage, pendingAttachmentKey, projectContextId, projectDisplayName, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, resolveDraftIssueContext, scrollChatMessagesToBottom, shouldAttachApprovalFeedbackSystemMessage, shouldAttachIssueCreatedSystemMessage, shouldHandlePlainChatLinkClick, withOptimisticOutgoingMessage, withOptimisticPlanMode } from "./Chat.parts";
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
 import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annotation-selection";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
@@ -306,6 +311,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const [, refreshPendingFiles] = useState(0);
   const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, boolean>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
+  const [deletingQueuedItemIds, setDeletingQueuedItemIds] = useState<Set<string>>(() => new Set());
+  const deletingQueuedItemIdsRef = useRef(new Set<string>());
   const [pendingFirstTurn, setPendingFirstTurn] = useState<{
     body: string;
     files: File[];
@@ -1630,7 +1637,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         modelOverride: activeRuntimeOverrides.modelOverride,
         effortOverride: activeRuntimeOverrides.effortOverride,
       });
-      const retainedMutation = pendingSendMutationsRef.current[mutationScopeKey];
+      const retainedMutation = pendingSendMutationsRef.current[mutationScopeKey]
+        ?? readPendingChatSendMutation(selectedOrganizationId, chatId, editUserMessageId);
       const clientMutationId = retainedMutation?.fingerprint === mutationFingerprint
         ? retainedMutation.id
         : globalThis.crypto.randomUUID();
@@ -1638,10 +1646,22 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         fingerprint: mutationFingerprint,
         id: clientMutationId,
       };
+      savePendingChatSendMutation(
+        selectedOrganizationId,
+        chatId,
+        editUserMessageId,
+        { fingerprint: mutationFingerprint, id: clientMutationId },
+      );
       const settleClientMutation = () => {
         if (pendingSendMutationsRef.current[mutationScopeKey]?.id === clientMutationId) {
           delete pendingSendMutationsRef.current[mutationScopeKey];
         }
+        clearPendingChatSendMutation(
+          selectedOrganizationId,
+          chatId,
+          editUserMessageId,
+          clientMutationId,
+        );
       };
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
@@ -2443,6 +2463,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     activeStream && (
       activeEditCutoffMs !== null
       || !activeStream.userMessageId || !rawMessages.some((message) => message.id === activeStream.userMessageId) ), );
+  const latestEditableUserMessageId = showOptimisticUserMessage
+    ? null
+    : latestEditableChatUserMessageId(rawMessages);
+  useEffect(() => {
+    if (inlineEditUserMessageId === null) return;
+    if (branchPreview || inlineEditUserMessageId !== latestEditableUserMessageId) {
+      setInlineEditUserMessageId(null);
+      setInlineEditDraft("");
+    }
+  }, [branchPreview, inlineEditUserMessageId, latestEditableUserMessageId]);
   const nativeSteerAnchors = useMemo(
     () => visibleMessages
       .map(nativeSteerTranscriptAnchor)
@@ -3278,14 +3308,31 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       pushToast({ title: "Failed to edit queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
     });
   };
-  const deleteQueuedMessage = (itemId: string) => {
-    if (!selectedConversation) return;
+  const deleteQueuedMessage = async (itemId: string) => {
+    if (!selectedConversation || deletingQueuedItemIdsRef.current.has(itemId)) return;
+    const confirmed = await confirm({
+      title: "Delete queued message?",
+      description: "This permanently removes the queued message before it is sent. This cannot be undone.",
+      confirmLabel: "Delete message",
+      tone: "destructive",
+    });
+    if (!confirmed || deletingQueuedItemIdsRef.current.has(itemId)) return;
     const chatId = selectedConversation.id;
-    void chatsApi.cancelQueuedMessage(chatId, itemId)
-      .then(() => refreshQueue(chatId))
-      .catch((error) => {
-        pushToast({ title: "Failed to delete queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
+    deletingQueuedItemIdsRef.current.add(itemId);
+    setDeletingQueuedItemIds((current) => new Set(current).add(itemId));
+    try {
+      await chatsApi.cancelQueuedMessage(chatId, itemId);
+      refreshQueue(chatId);
+    } catch (error) {
+      pushToast({ title: "Failed to delete queued message", body: error instanceof Error ? error.message : "Try again.", tone: "error" });
+    } finally {
+      deletingQueuedItemIdsRef.current.delete(itemId);
+      setDeletingQueuedItemIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
       });
+    }
   }; const renderComposer = (centered: boolean) => {
     if (selectedConversationExternalBound && selectedConversation) {
       return (
@@ -3367,7 +3414,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Steer</button>
                           ) : null}
                           <button type="button" aria-label="Edit queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => editQueuedMessage(item.id, item.payload.body)}><Pencil className="h-3.5 w-3.5" /></button>
-                          <button type="button" aria-label="Delete queued message" className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={() => deleteQueuedMessage(item.id)}><Trash2 className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label="Delete queued message" aria-busy={deletingQueuedItemIds.has(item.id)} disabled={deletingQueuedItemIds.has(item.id)} className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50" onClick={() => void deleteQueuedMessage(item.id)}><Trash2 className="h-3.5 w-3.5" /></button>
                         </>
                       ) : itemRetryable ? (
                         <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Retry</button>
@@ -4167,7 +4214,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       chatId: selectedConversation.id,
                                       message: messageToConvert,
                                       proposalOverride: issueProposalOverridesByMessageId[messageToConvert.id], })
-                                  } onCopyMessageText={copyChatMessageText} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
+                                  } onCopyMessageText={copyChatMessageText} onEditUserMessage={selectedConversationExternalBound || message.id !== latestEditableUserMessageId ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
                                     message,
                                     branchControls: refreshTurnBranchControls,
                                     hasActiveReply: selectedConversationHasActiveReply,
@@ -4195,7 +4242,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   turnBranchControls={messageTurnBranchControls}
                                   skillReferences={chatSkillReferences}
                                   issueCreatedMessage={issueCreatedMessage}
-                                  inlineEdit={inlineEditUserMessageId === message.id ? {
+                                  inlineEdit={inlineEditUserMessageId === message.id && message.id === latestEditableUserMessageId ? {
                                     draft: inlineEditDraft,
                                     canSubmitWithoutBody: (
                                       chatInlineAnnotationsFromStructuredPayload(

@@ -214,6 +214,61 @@ test.describe("Workspace shell", () => {
     expect(copyItemMetrics.scrollWidth).toBeLessThanOrEqual(copyItemMetrics.clientWidth + 1);
   });
 
+  test("highlights only the open Library file across refresh, keyboard folding, and narrow viewports", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-File-Selection-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const workspaceRoot = resolveE2EOrganizationWorkspaceRoot(organization.id);
+    const instructionsPath = path.join(workspaceRoot, "agents", "selection-agent", "instructions");
+    await fs.mkdir(instructionsPath, { recursive: true });
+    await fs.writeFile(path.join(instructionsPath, "MEMORY.md"), "# Memory\n", "utf8");
+    await fs.writeFile(path.join(instructionsPath, "SOUL.md"), "# Soul\n", "utf8");
+
+    await gotoOrganizationPath(
+      page,
+      organization,
+      "/library?path=agents%2Fselection-agent%2Finstructions%2FMEMORY.md",
+    );
+
+    const instructionsRow = page.locator(
+      '[data-workspace-entry-path="agents/selection-agent/instructions"]',
+    );
+    const memoryRow = page.locator(
+      '[data-workspace-entry-path="agents/selection-agent/instructions/MEMORY.md"]',
+    );
+    const soulRow = page.locator(
+      '[data-workspace-entry-path="agents/selection-agent/instructions/SOUL.md"]',
+    );
+    const expectOnlyFileSelected = async (selectedRow: typeof memoryRow) => {
+      await expect(instructionsRow.locator("button").first()).toHaveAttribute("aria-selected", "false");
+      expect(await instructionsRow.evaluate((element) => element.classList.contains("bg-accent"))).toBe(false);
+      await expect(selectedRow.locator("button").first()).toHaveAttribute("aria-selected", "true");
+      expect(await selectedRow.getAttribute("class")).toContain("bg-accent");
+    };
+
+    await expectOnlyFileSelected(memoryRow);
+    await soulRow.locator("button").first().click();
+    await expectOnlyFileSelected(soulRow);
+    await expect(memoryRow.locator("button").first()).toHaveAttribute("aria-selected", "false");
+
+    await page.reload();
+    await expectOnlyFileSelected(soulRow);
+
+    const instructionsButton = instructionsRow.locator("button").first();
+    await instructionsButton.focus();
+    await instructionsButton.press("ArrowLeft");
+    await expect(soulRow).toHaveCount(0);
+    await instructionsButton.press("ArrowRight");
+    await expectOnlyFileSelected(soulRow);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectOnlyFileSelected(soulRow);
+  });
+
   test("keeps the shared desktop wrapper visually neutral", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -929,6 +984,15 @@ test.describe("Workspace shell", () => {
     await expect(resourceMenu.getByRole("menuitem", { name: "Open resource" })).toBeVisible();
     await expect(resourceMenu.getByRole("menuitem", { name: "Copy locator" })).toBeVisible();
     await resourceMenu.getByRole("menuitem", { name: "Unlink resource" }).click();
+    const unlinkDialog = page.getByRole("dialog", { name: `Remove "New Zealand codebase" from this project?` });
+    await expect(unlinkDialog).toContainText("underlying resource and its files are not deleted");
+    const unlinkResponse = page.waitForResponse((response) =>
+      response.request().method() === "DELETE"
+      && response.url().includes(`/api/projects/${project.id}/resources/${attachment.id}`)
+      && response.ok(),
+    );
+    await unlinkDialog.getByRole("button", { name: "Remove source" }).click();
+    await unlinkResponse;
     await expect(page.getByText("Resource unlinked")).toBeVisible();
     await expect(page.getByTestId(`org-workspaces-project-resource-${attachment.id}`)).toHaveCount(0);
     await expect.poll(async () => {
@@ -1686,6 +1750,47 @@ test.describe("Workspace shell", () => {
 
     await page.screenshot({
       path: testInfo.outputPath("workspace-shell-issues-board.png"),
+      fullPage: true,
+    });
+  });
+
+  test("localizes issue board statuses in zh-CN", async ({ page }, testInfo) => {
+    await page.route("**/api/health", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, uiLocale: "zh-CN" } });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Workspace-Shell-Issue-Board-ZH-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const backlogRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Localized backlog issue",
+        status: "backlog",
+        priority: "medium",
+      },
+    });
+    expect(backlogRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/issues");
+    await page.getByTitle("看板视图").click();
+
+    await expect(page.getByText("Localized backlog issue", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建积压任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建待办任务" })).toBeVisible();
+    await expect(page.getByTestId("kanban-hidden-columns").getByText("隐藏列", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建进行中任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建评审中任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建已完成任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建已取消任务" })).toBeVisible();
+
+    await page.screenshot({
+      path: testInfo.outputPath("workspace-shell-issues-board-zh-CN.png"),
       fullPage: true,
     });
   });

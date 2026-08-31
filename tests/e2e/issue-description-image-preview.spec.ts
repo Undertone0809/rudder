@@ -362,6 +362,13 @@ test("issue description images stay clickable while editing and open the global 
     },
   });
   expect(issueAttachmentRes.ok()).toBe(true);
+  const issueAttachment = await issueAttachmentRes.json() as { id: string };
+
+  const commentResponse = await page.request.post(`${E2E_BASE_URL}/api/issues/${issue.id}/comments`, {
+    data: { body: "Delete confirmation comment evidence" },
+  });
+  expect(commentResponse.ok()).toBe(true);
+  const comment = await commentResponse.json() as { id: string };
 
   const descriptionRes = await page.request.patch(`${E2E_BASE_URL}/api/issues/${issue.id}`, {
     data: {
@@ -459,4 +466,137 @@ test("issue description images stay clickable while editing and open the global 
     contentType: "image/png",
   });
   await page.screenshot({ path: "/tmp/rudder-issue-attachment-image-preview.png", fullPage: false });
+  await attachmentPreview.getByRole("button", { name: "Close image preview" }).click();
+
+  let attachmentDeleteRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "DELETE" && request.url().endsWith(`/api/attachments/${issueAttachment.id}`)) {
+      attachmentDeleteRequests += 1;
+    }
+  });
+  const deleteAttachmentButton = attachmentName.locator("xpath=..").getByTitle("Delete attachment");
+
+  await deleteAttachmentButton.click();
+  let deleteDialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: 'Delete "issue-evidence.png"?' }),
+  });
+  await expect(deleteDialog).toContainText("This cannot be undone.");
+  await deleteDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(attachmentName).toBeVisible();
+  expect(attachmentDeleteRequests).toBe(0);
+
+  await deleteAttachmentButton.click();
+  deleteDialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: 'Delete "issue-evidence.png"?' }),
+  });
+  await page.keyboard.press("Escape");
+  await expect(deleteDialog).toHaveCount(0);
+  await expect(attachmentName).toBeVisible();
+  expect(attachmentDeleteRequests).toBe(0);
+
+  await deleteAttachmentButton.click();
+  deleteDialog = page.getByRole("dialog").filter({
+    has: page.getByRole("heading", { name: 'Delete "issue-evidence.png"?' }),
+  });
+  const deleteAttachmentResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE"
+    && response.url().endsWith(`/api/attachments/${issueAttachment.id}`)
+    && response.ok(),
+  );
+  await deleteDialog.getByRole("button", { name: "Delete attachment" }).click({ clickCount: 2 });
+  await deleteAttachmentResponse;
+  await expect(attachmentName).toHaveCount(0);
+  expect(attachmentDeleteRequests).toBe(1);
+
+  const commentBody = page.getByText("Delete confirmation comment evidence", { exact: true });
+  const issueRouteId = issue.identifier ?? issue.id;
+  const commentActionsButton = page.getByRole("button", { name: "Comment actions", exact: true });
+  await commentActionsButton.scrollIntoViewIfNeeded();
+  const commentActionsHandle = await commentActionsButton.elementHandle();
+  expect(commentActionsHandle).not.toBeNull();
+  const openCommentActions = async () => {
+    await commentActionsHandle!.dispatchEvent("pointerdown", { button: 0, ctrlKey: false, pointerType: "mouse" });
+    await expect(page.getByRole("menuitem", { name: "Delete", exact: true })).toBeVisible();
+  };
+  let commentDeleteRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "DELETE"
+      && request.url().endsWith(`/api/issues/${issueRouteId}/comments/${comment.id}`)
+    ) {
+      commentDeleteRequests += 1;
+    }
+  });
+
+  await openCommentActions();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).dispatchEvent("click");
+  let commentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
+  await expect(commentDialog).toContainText("permanently removes the comment from the issue");
+  await commentDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(commentDialog).toHaveCount(0);
+  await expect(commentBody).toBeVisible();
+  expect(commentDeleteRequests).toBe(0);
+
+  await openCommentActions();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).dispatchEvent("click");
+  commentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
+  await page.keyboard.press("Escape");
+  await expect(commentDialog).toHaveCount(0);
+  await expect(commentBody).toBeVisible();
+  expect(commentDeleteRequests).toBe(0);
+
+  let releaseFailedCommentDelete!: () => void;
+  const failedCommentDeleteRelease = new Promise<void>((resolve) => {
+    releaseFailedCommentDelete = resolve;
+  });
+  let markCommentDeletePending!: () => void;
+  const commentDeletePending = new Promise<void>((resolve) => {
+    markCommentDeletePending = resolve;
+  });
+  let interceptFailedCommentDelete = true;
+  await page.route(`**/api/issues/${issueRouteId}/comments/${comment.id}`, async (route) => {
+    if (route.request().method() !== "DELETE" || !interceptFailedCommentDelete) {
+      await route.continue();
+      return;
+    }
+    interceptFailedCommentDelete = false;
+    markCommentDeletePending();
+    await failedCommentDeleteRelease;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Simulated comment deletion failure" }),
+    });
+  });
+
+  await openCommentActions();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).dispatchEvent("click");
+  commentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
+  await commentDialog.getByRole("button", { name: "Delete comment" }).click();
+  await commentDeletePending;
+  expect(await commentActionsHandle!.evaluate((element) => (element as HTMLButtonElement).disabled)).toBe(true);
+  const pendingCommentDeleteAction = page.getByRole("menuitem", { name: "Delete", exact: true });
+  await expect(pendingCommentDeleteAction).toBeDisabled();
+  await pendingCommentDeleteAction.dispatchEvent("click");
+  expect(commentDeleteRequests).toBe(1);
+  releaseFailedCommentDelete();
+  await expect(page.getByText("Failed to delete comment")).toBeVisible();
+  await expect.poll(() => commentActionsHandle!.evaluate((element) => (element as HTMLButtonElement).disabled)).toBe(false);
+  await expect(commentBody).toBeVisible();
+  expect(commentDeleteRequests).toBe(1);
+
+  await page.keyboard.press("Escape");
+  await openCommentActions();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).dispatchEvent("click");
+  commentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
+  const commentDeleteResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE"
+    && response.url().endsWith(`/api/issues/${issueRouteId}/comments/${comment.id}`)
+    && response.ok(),
+  );
+  await commentDialog.getByRole("button", { name: "Delete comment" }).click({ clickCount: 2 });
+  await commentDeleteResponse;
+  await expect(commentBody).toHaveCount(0);
+  await expect(page.getByText("Comment deleted")).toBeVisible();
+  expect(commentDeleteRequests).toBe(2);
 });

@@ -11,8 +11,9 @@ export type ChatServerQueueClaim = {
   leaseEpoch: number;
 };
 
-export type MessageHydrationRow = Omit<MessageRow, "clientMutationId"> & {
+export type MessageHydrationRow = Omit<MessageRow, "clientMutationId" | "clientMutationFingerprint"> & {
   clientMutationId?: string | null;
+  clientMutationFingerprint?: string | null;
   transcriptSummary?: {
     entryCount: number;
     startedAt: string | null;

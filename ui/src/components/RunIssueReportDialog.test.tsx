@@ -93,7 +93,6 @@ describe("RunIssueReportDialog", () => {
           environment="test"
           open
           onOpenChange={() => undefined}
-          onAskAgent={() => undefined}
         />,
       );
     });
@@ -114,40 +113,4 @@ describe("RunIssueReportDialog", () => {
     expect(diagnostics?.className).not.toContain("field-sizing-content");
   });
 
-  it("sends the generated snapshot to Ask agent after the GitHub text is edited", async () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    const onAskAgent = vi.fn();
-
-    await act(async () => {
-      root?.render(
-        <RunIssueReportDialog
-          run={createRun()}
-          version="0.7.2"
-          environment="test"
-          open
-          onOpenChange={() => undefined}
-          onAskAgent={onAskAgent}
-        />,
-      );
-    });
-
-    const diagnostics = container.querySelector<HTMLTextAreaElement>("#run-issue-diagnostics")!;
-    const generatedSnapshot = diagnostics.value;
-    await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-      valueSetter?.call(diagnostics, "Edited GitHub-only report");
-      diagnostics.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => {
-      Array.from(container!.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Ask agent"))
-        ?.click();
-    });
-
-    expect(onAskAgent).toHaveBeenCalledOnce();
-    expect(onAskAgent).toHaveBeenCalledWith(generatedSnapshot);
-    expect(onAskAgent).not.toHaveBeenCalledWith("Edited GitHub-only report");
-  });
 });

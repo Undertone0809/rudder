@@ -4,6 +4,7 @@ import { act, createRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewProvider } from "../context/ImagePreviewContext";
+import { readAtomicInlineTokenElement } from "../lib/inline-token-dom";
 import { applyMentionChipDecoration } from "../lib/mention-chips";
 import { normalizePlainTextComposerMarkdown } from "../lib/plain-text-composer-markdown";
 import {
@@ -137,7 +138,7 @@ vi.mock("../lib/skill-reference", () => ({
   applySkillTokenDecoration: vi.fn(),
   clearSkillTokenDecoration: vi.fn(),
   parseSkillReference: (href: string, label: string) => (
-    href.endsWith("/SKILL.md") || href.toLowerCase().endsWith(".md")
+    href.startsWith("skill://") || href.endsWith("/SKILL.md") || href.toLowerCase().endsWith(".md")
       ? { href, label: label.trim() }
       : null
   ),
@@ -215,6 +216,7 @@ vi.mock("@mdxeditor/editor", async () => {
     const mentionLinkMatch = linkMatch && /^(agent|project|issue|chat):\/\//.test(linkMatch[2])
       ? linkMatch
       : null;
+    const skillLinkMatch = linkMatch && /^skill:\/\//.test(linkMatch[2]) ? linkMatch : null;
 
     return (
       <div className={props.className}>
@@ -232,6 +234,18 @@ vi.mock("@mdxeditor/editor", async () => {
                 {mentionLinkMatch[1]}
               </span>
               {markdown.slice((mentionLinkMatch.index ?? 0) + mentionLinkMatch[0].length)}
+            </>
+          ) : skillLinkMatch ? (
+            <>
+              {markdown.slice(0, skillLinkMatch.index)}
+              <span
+                contentEditable={false}
+                data-skill-href={skillLinkMatch[2]}
+                data-skill-token="true"
+              >
+                {skillLinkMatch[1]}
+              </span>
+              {markdown.slice((skillLinkMatch.index ?? 0) + skillLinkMatch[0].length)}
             </>
           ) : linkMatch ? (
             <>
@@ -1254,14 +1268,14 @@ describe("MarkdownEditor", () => {
     const token = container.querySelector("[data-mention-kind='issue']");
     expect(editable).toBeTruthy();
     expect(token).toBeTruthy();
-
-    await act(async () => {
-      token!.dispatchEvent(new MouseEvent("mousedown", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 10,
-      }));
-    });
+    const trailingText = token!.nextSibling;
+    expect(trailingText?.nodeType).toBe(Node.TEXT_NODE);
+    const range = document.createRange();
+    range.setStart(trailingText!, trailingText!.textContent?.length ?? 0);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
 
     const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(pasteEvent, "clipboardData", {
@@ -1304,14 +1318,14 @@ describe("MarkdownEditor", () => {
     const token = container.querySelector("[data-mention-kind='issue']");
     expect(editable).toBeTruthy();
     expect(token).toBeTruthy();
-
-    await act(async () => {
-      token!.dispatchEvent(new MouseEvent("mousedown", {
-        bubbles: true,
-        cancelable: true,
-        clientX: 10,
-      }));
-    });
+    const trailingText = token!.nextSibling;
+    expect(trailingText?.nodeType).toBe(Node.TEXT_NODE);
+    const range = document.createRange();
+    range.setStart(trailingText!, trailingText!.textContent?.length ?? 0);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
 
     await act(async () => {
       editable!.dispatchEvent(new InputEvent("beforeinput", {
@@ -1354,6 +1368,7 @@ describe("MarkdownEditor", () => {
     expect(editable).toBeTruthy();
     expect(token).toBeTruthy();
     expect(tokenText?.nodeType).toBe(Node.TEXT_NODE);
+    expect(readAtomicInlineTokenElement(tokenText)).not.toBeNull();
 
     const selection = window.getSelection();
     const range = document.createRange();
@@ -1367,10 +1382,86 @@ describe("MarkdownEditor", () => {
     });
 
     expect(selection?.anchorNode).toBe(editable);
-    expect(selection?.anchorOffset).toBe(1);
+    expect(selection?.anchorOffset).toBe(0);
   });
 
-  it("places mouse-driven mention token carets on token edges instead of inside the token", async () => {
+  it.each([
+    ["agent mention", "[原则](agent://agent-1)", "[data-mention-kind='agent']"],
+    ["skill reference", "[visualize](skill://org/skill-1?ref=visualize)", "[data-skill-token='true']"],
+  ])("keeps forward and reverse selections outside an atomic %s", async (_label, reference, selector) => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value={`前置 ${reference} 后置`}
+          onChange={() => undefined}
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    const token = container.querySelector<HTMLElement>(selector);
+    const tokenText = token?.querySelector(".rudder-inline-token-label")?.firstChild ?? token?.firstChild;
+    const tokenHost = token?.parentElement?.classList.contains("rudder-skill-token-wrap")
+      ? token.parentElement
+      : token;
+    const leadingText = tokenHost?.previousSibling;
+    const trailingText = tokenHost?.nextSibling;
+    expect(editable).toBeTruthy();
+    expect(tokenText?.nodeType).toBe(Node.TEXT_NODE);
+    expect(readAtomicInlineTokenElement(tokenText)).not.toBeNull();
+    expect(leadingText?.nodeType).toBe(Node.TEXT_NODE);
+    expect(trailingText?.nodeType).toBe(Node.TEXT_NODE);
+
+    const selection = window.getSelection();
+    const tokenIndex = Array.prototype.indexOf.call(token!.parentNode!.childNodes, token);
+    const dispatchSelectionChange = async () => {
+      await act(async () => {
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+    };
+
+    selection?.setBaseAndExtent(leadingText!, 1, tokenText!, 1);
+    await dispatchSelectionChange();
+    expect(selection?.anchorNode).toBe(leadingText);
+    expect(selection?.anchorOffset).toBe(1);
+    expect(selection?.focusNode).toBe(token?.parentNode);
+    expect(selection?.focusOffset).toBe(tokenIndex + 1);
+
+    selection?.setBaseAndExtent(trailingText!, 1, tokenText!, 1);
+    await dispatchSelectionChange();
+    expect(selection?.anchorNode).toBe(trailingText);
+    expect(selection?.anchorOffset).toBe(1);
+    expect(selection?.focusNode).toBe(token?.parentNode);
+    expect(selection?.focusOffset).toBe(tokenIndex);
+
+    selection?.setBaseAndExtent(tokenText!, 0, tokenText!, 1);
+    await dispatchSelectionChange();
+    expect(selection?.anchorNode).toBe(token?.parentNode);
+    expect(selection?.anchorOffset).toBe(tokenIndex);
+    expect(selection?.focusNode).toBe(token?.parentNode);
+    expect(selection?.focusOffset).toBe(tokenIndex + 1);
+
+    selection?.setBaseAndExtent(tokenText!, 1, tokenText!, 0);
+    await dispatchSelectionChange();
+    expect(selection?.anchorNode).toBe(token?.parentNode);
+    expect(selection?.anchorOffset).toBe(tokenIndex + 1);
+    expect(selection?.focusNode).toBe(token?.parentNode);
+    expect(selection?.focusOffset).toBe(tokenIndex);
+  });
+
+  it("places mouse-driven mention token carets before the token instead of inside it", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -1430,10 +1521,69 @@ describe("MarkdownEditor", () => {
     });
 
     expect(selection?.anchorNode).toBe(editable);
-    expect(selection?.anchorOffset).toBe(1);
+    expect(selection?.anchorOffset).toBe(0);
   });
 
-  it("keeps a plain-text composer editable after clicking a decorated token", async () => {
+  it("moves arrow-key carets across a plain-text mention as one atomic token", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="前置 [原则](agent://agent-1) 后置"
+          onChange={() => undefined}
+          plainText
+        />,
+      );
+    });
+
+    const editable = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    const token = container.querySelector<HTMLElement>("[data-mention-kind='agent']");
+    expect(editable).toBeTruthy();
+    expect(token).toBeTruthy();
+    const tokenIndex = Array.prototype.indexOf.call(token!.parentNode!.childNodes, token);
+    const selection = window.getSelection();
+
+    const placeAtParentOffset = (offset: number) => {
+      const range = document.createRange();
+      range.setStart(token!.parentNode!, offset);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    };
+
+    placeAtParentOffset(tokenIndex + 1);
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowLeft",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(selection?.anchorNode).toBe(token?.parentNode);
+    expect(selection?.anchorOffset).toBe(tokenIndex);
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(selection?.anchorNode).toBe(token?.parentNode);
+    expect(selection?.anchorOffset).toBe(tokenIndex + 1);
+  });
+
+  it("keeps a plain-text composer focused with its caret before a clicked decorated token", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -1474,17 +1624,7 @@ describe("MarkdownEditor", () => {
     const selection = window.getSelection();
     expect(selection?.isCollapsed).toBe(true);
     expect(selection?.anchorNode).toBe(token?.parentNode);
-    expect(selection?.anchorOffset).toBe(2);
-
-    await act(async () => {
-      editable!.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "x",
-        bubbles: true,
-        cancelable: true,
-      }));
-    });
-
-    expect(onChange).toHaveBeenLastCalledWith(`前置 [Launch planning](${href}) x`);
+    expect(selection?.anchorOffset).toBe(1);
   });
 
   it("keeps the caret after a mention selected with Tab in a plain text composer", async () => {
