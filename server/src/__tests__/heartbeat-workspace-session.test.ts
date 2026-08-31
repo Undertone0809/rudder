@@ -152,12 +152,14 @@ describe("resolveRuntimeSessionParamsForWorkspace", () => {
       agent,
       previousSessionParams: {
         sessionId: "session-1",
+        hermesSessionId: "session-1",
       },
       resolvedWorkspace: buildResolvedWorkspace({ cwd: canonicalAgentCwd }),
     });
 
     expect(result.sessionParams).toMatchObject({
       sessionId: "session-1",
+      hermesSessionId: "session-1",
       cwd: canonicalAgentCwd,
     });
     expect(result.warning).toContain("canonical run directory");
