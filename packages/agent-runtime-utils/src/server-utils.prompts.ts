@@ -5,6 +5,23 @@ export const DEFAULT_AGENT_PROMPT_TEMPLATE =
 {{context.rudderWorkspace.orgResourcesPrompt}}
 `;
 
+export const DELEGATION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}) running an independent Rudder Delegation Run.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+## Delegated Task
+
+- Source Run: {{context.sourceRunId}}
+- Source Agent: {{context.sourceAgentId}}
+- Target Agent: {{context.targetAgentId}}
+
+The Source Run is provenance only. Do not inherit its transcript, session, workspace, credentials, environment variables, or arbitrary paths. Use your own Agent runtime, workspace, instructions, and skills.
+
+Task:
+{{context.delegationTask}}
+
+Complete only this bounded task and report the result through the normal Run evidence path.`;
+
 export const AGENT_ISSUE_CREATION_PROMPT_TEMPLATE = `<wake_context>
 You are agent {{agent.id}} ({{agent.name}}). A Rudder user explicitly asked you to create one issue in the background.
 
@@ -809,6 +826,7 @@ export function selectPromptTemplate(
   // Select based on wake source/reason
   const wakeSource = String(context.wakeSource ?? "");
   const wakeReason = String(context.wakeReason ?? "");
+  const delegationScene = context.scene === "delegation" || context.rudderScene === "delegation";
   const goalWakeKind = detectGoalWakeKind(context);
   const agentIssueCreationRequest = asPromptRecord(context.agentIssueCreationRequest);
   const rawAgentIssueCreationRequestId = agentIssueCreationRequest?.id;
@@ -858,6 +876,9 @@ export function selectPromptTemplate(
 
   // Custom prompt bodies define the persona, but platform-owned execution rails still apply.
   if (configuredTemplate?.trim()) {
+    if (delegationScene && !configuredTemplate.includes(DELEGATION_PROMPT_TEMPLATE)) {
+      return `${configuredTemplate}\n\n${DELEGATION_PROMPT_TEMPLATE}`;
+    }
     if (goalWakeKind) {
       const goalRuntimeTemplate = buildGoalPromptTemplate(context, goalWakeKind);
       return `${configuredTemplate}\n\n${goalRuntimeTemplate}`;
@@ -877,6 +898,7 @@ export function selectPromptTemplate(
   if (goalWakeKind) {
     return buildGoalPromptTemplate(context, goalWakeKind);
   }
+  if (delegationScene) return DELEGATION_PROMPT_TEMPLATE;
   if (isRecovery) {
     if (!hasIssueContext) return RECOVERY_PROMPT_TEMPLATE;
     return reviewerContext ? ISSUE_REVIEW_RECOVERY_PROMPT_TEMPLATE : ISSUE_RECOVERY_PROMPT_TEMPLATE;

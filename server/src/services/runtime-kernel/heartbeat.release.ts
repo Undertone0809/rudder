@@ -384,6 +384,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
             triggerDetail: promotedTriggerDetail,
             status: "queued",
             wakeupRequestId: deferred.id,
+            sourceRunId: readNonEmptyString(promotedContextSnapshot.sourceRunId),
             contextSnapshot: promotedContextSnapshot,
             sessionIdBefore: sessionBefore,
             sessionParamsBeforeJson: promotedSessionSelection.sessionParams,

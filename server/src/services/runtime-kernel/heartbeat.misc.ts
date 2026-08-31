@@ -356,7 +356,7 @@ export function createHeartbeatMiscHandlers(context: any) {
 
     return enqueueRecoveryRun(run, agent, {
       recoveryTrigger: "manual",
-      source: "on_demand",
+      source: run.invocationSource === "delegation" ? "delegation" : "on_demand",
       triggerDetail: "manual",
       wakeReason: "retry_failed_run",
       requestedByActorType: opts?.requestedByActorType ?? "user",

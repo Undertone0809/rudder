@@ -152,6 +152,7 @@ describe("agent-v1 registry", () => {
       "runs.errors",
       "runs.cancel",
       "runs.retry",
+      "runs.create",
     ]);
   });
 

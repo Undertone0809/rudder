@@ -1134,6 +1134,7 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_assigned" })).toBe(false);
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "review", wakeReason: "issue_review_requested" })).toBe(false);
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "automation" })).toBe(false);
+    expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "delegation" })).toBe(false);
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "chat" })).toBe(false);
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_commented" })).toBe(false);
     expect(shouldIncludeRuntimeHeartbeatInstructions({ rudderScene: "issue", wakeReason: "issue_comment_mentioned" })).toBe(false);

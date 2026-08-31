@@ -30,6 +30,9 @@ export const heartbeatRuns = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     error: text("error"),
     wakeupRequestId: uuid("wakeup_request_id").references(() => agentWakeupRequests.id),
+    sourceRunId: uuid("source_run_id").references((): AnyPgColumn => heartbeatRuns.id, {
+      onDelete: "set null",
+    }),
     exitCode: integer("exit_code"),
     signal: text("signal"),
     usageJson: jsonb("usage_json").$type<Record<string, unknown>>(),
@@ -113,6 +116,10 @@ export const heartbeatRuns = pgTable(
       table.orgId,
       table.status,
       table.updatedAt,
+    ),
+    companySourceRunIdx: index("heartbeat_runs_company_source_run_idx").on(
+      table.orgId,
+      table.sourceRunId,
     ),
     statusExecutionLeaseCreatedIdx: index("heartbeat_runs_status_execution_lease_created_idx").on(
       table.status,

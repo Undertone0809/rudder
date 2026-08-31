@@ -27,6 +27,22 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const chatPrompt = context.chatMode === true && typeof context.chatPrompt === "string"
     ? context.chatPrompt
     : null;
+  const delegationTask = (context.scene === "delegation" || context.rudderScene === "delegation") && typeof context.delegationTask === "string"
+    ? context.delegationTask.trim()
+    : "";
+  const delegationPrompt = delegationTask
+    ? `You are agent ${agent.id} (${agent.name}) running an independent Rudder Delegation Run.
+
+Source Run ${asString(context.sourceRunId, "unknown")} and Source Agent ${asString(context.sourceAgentId, "unknown")} are provenance only. Do not inherit the source Run's transcript, session, workspace, credentials, environment variables, or arbitrary paths. Use the target Agent's own runtime, workspace, instructions, and skills.
+
+## Delegated Task
+
+${delegationTask}
+
+Complete only this bounded task and report the result through the normal Run evidence path.`
+    : null;
+  const runtimePrompt = chatPrompt ?? delegationPrompt;
+  if (delegationTask) env.RUDDER_DELEGATION_TASK = delegationTask;
 
   if (onMeta) {
     await onMeta({
@@ -35,7 +51,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       cwd,
       commandArgs: args,
       env: redactEnvForLogs(env),
-      ...(chatPrompt !== null ? { prompt: chatPrompt } : {}),
+      ...(runtimePrompt !== null ? { prompt: runtimePrompt } : {}),
     });
   }
 
@@ -46,7 +62,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     graceSec,
     onLog,
     onSpawn,
-    ...(chatPrompt !== null ? { stdin: chatPrompt } : {}),
+    ...(runtimePrompt !== null ? { stdin: runtimePrompt } : {}),
     abortSignal,
   });
 
@@ -76,7 +92,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     exitCode: proc.exitCode,
     signal: proc.signal,
     timedOut: false,
-    ...(chatPrompt !== null && proc.stdout.trim().length > 0
+    ...(runtimePrompt !== null && proc.stdout.trim().length > 0
       ? { summary: proc.stdout.trim() }
       : {}),
     resultJson: {

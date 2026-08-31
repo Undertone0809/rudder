@@ -2625,6 +2625,7 @@ export function messengerService(db: Db) {
           triggerDetail: heartbeatRuns.triggerDetail,
           status: heartbeatRuns.status,
           wakeupRequestId: heartbeatRuns.wakeupRequestId,
+          sourceRunId: heartbeatRuns.sourceRunId,
           chatConversationId: heartbeatRuns.chatConversationId,
           resultJson: heartbeatRuns.resultJson,
           contextSnapshot: heartbeatRuns.contextSnapshot,

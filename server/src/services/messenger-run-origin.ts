@@ -23,6 +23,7 @@ export interface MessengerFailedRunOriginRow {
   invocationSource: string;
   triggerDetail: string | null;
   wakeupRequestId: string | null;
+  sourceRunId?: string | null;
   chatConversationId: string | null;
   contextSnapshot: Record<string, unknown> | null;
 }
@@ -57,6 +58,7 @@ function descriptorForOrigin(
     automationRunId: null,
     automationId: null,
     wakeupRequestId: null,
+    sourceRunId: origin.sourceRunId,
     targetLabel: null,
     targetStatus: null,
     sourceState: "legacy_unknown",

@@ -14,6 +14,7 @@ import {
   isUuidLike,
   shortRefFor,
   summarizeTokenUsage,
+  toAgentRunOrigin,
   toHeartbeatRun,
   type HeartbeatRun,
   type HeartbeatRunEvent,
@@ -226,6 +227,8 @@ type SummaryRunRow = {
   logStore: string | null;
   logRef: string | null;
   chatConversationId: string | null;
+  sourceRunId: string | null;
+  contextSnapshot: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
   agentName: string | null;
@@ -380,6 +383,7 @@ async function serializeRunRow(
       finishedAt: row.finishedAt,
       error: row.error,
       wakeupRequestId: row.wakeupRequestId,
+      sourceRunId: row.sourceRunId,
       exitCode: row.exitCode,
       signal: row.signal,
       usageJson: row.usageJson,
@@ -461,6 +465,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
       goalId: heartbeatRuns.goalId,
+      sourceRunId: heartbeatRuns.sourceRunId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
@@ -525,6 +530,8 @@ async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
       chatConversationId: heartbeatRuns.chatConversationId,
+      sourceRunId: heartbeatRuns.sourceRunId,
+      contextSnapshot: heartbeatRuns.contextSnapshot,
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
@@ -650,6 +657,7 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
+      sourceRunId: heartbeatRuns.sourceRunId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
@@ -755,6 +763,15 @@ export async function listRunSummaries(db: Db, input: ListRunSummariesInput): Pr
       triggerDetail: row.triggerDetail as RunSummary["triggerDetail"],
       status: row.status as RunSummary["status"],
       sessionReuseScope: row.sessionReuseScope,
+      sourceRunId: row.sourceRunId,
+      scene: toAgentRunOrigin({
+        id: row.id,
+        invocationSource: row.invocationSource,
+        triggerDetail: row.triggerDetail,
+        wakeupRequestId: null,
+        sourceRunId: row.sourceRunId,
+        contextSnapshot: row.contextSnapshot,
+      }).scene,
       issue: row.issueId ? issueMap.get(row.issueId) ?? null : null,
       target: row.targetType && row.targetId ? { type: row.targetType, id: row.targetId } : null,
       chatConversationId: row.chatConversationId,
