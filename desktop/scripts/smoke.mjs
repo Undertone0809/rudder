@@ -6498,12 +6498,13 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     await rename(unavailablePath, workspacePath);
   };
   await rename(workspacePath, unavailablePath);
+  await writeFile(workspacePath, "terminal smoke obstruction\n", "utf8");
   try {
     const recoveredSidePanel = await openSmokeSidePanel(page);
     await recoveredSidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
     const failedTerminal = recoveredSidePanel.getByTestId("terminal-panel-view");
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "visible", timeout: 15_000 });
-    await failedTerminal.getByText(/Agent workspace is unavailable/u).waitFor({ state: "visible", timeout: 15_000 });
+    await failedTerminal.getByText("Could not validate the selected Agent.", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
     await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
     console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
     await restoreWorkspace();
