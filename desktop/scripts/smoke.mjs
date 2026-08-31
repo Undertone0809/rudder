@@ -2659,9 +2659,12 @@ async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64
 }
 
 async function assertDesktopWindowTitle(electronApp, context) {
-  const actual = await electronApp.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    return window?.getTitle() ?? null;
+  const actual = await waitForSmokeCondition(`${context} native window title`, async () => {
+    const title = await electronApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      return window?.getTitle() ?? null;
+    });
+    return title === "Rudder" ? title : null;
   });
   assert.equal(actual, "Rudder", `${context} should keep the native window title fixed to Rudder`);
 }
