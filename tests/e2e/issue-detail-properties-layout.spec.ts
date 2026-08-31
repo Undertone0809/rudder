@@ -58,6 +58,48 @@ async function readResponsiveIssueLayout(page: Page) {
 }
 
 test.describe("Issue detail properties layout", () => {
+  test("does not expose the local board principal as a human user", async ({ page }, testInfo) => {
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Issue-Detail-System-Principal-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string };
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "System-created issue should not expose a Board user",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier?: string | null; createdByUserId?: string | null };
+    expect(issue.createdByUserId).toBe("local-board");
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+
+    const propertiesPanel = page.getByRole("region", { name: "Issue properties" });
+    await expect(propertiesPanel).toBeVisible();
+    await expect(propertiesPanel.getByText("System", { exact: true })).toBeVisible();
+    await expect(propertiesPanel.getByText("Board", { exact: true })).toHaveCount(0);
+    const activityEntry = page.getByTestId("issue-activity-row").filter({ hasText: "System" }).first();
+    await expect(activityEntry).toBeVisible();
+    await expect(activityEntry).toContainText("created the issue");
+    await expect(activityEntry).not.toContainText("Board");
+
+    const assigneeRow = propertiesPanel.locator('[data-slot="issue-property-row"]')
+      .filter({ hasText: "Assignee" });
+    await assigneeRow.getByRole("button").click();
+    await expect(page.getByPlaceholder("Search assignees...")).toBeVisible();
+    await expect(page.getByText("Assign to Board", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Assign to me", { exact: true })).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath("issue-detail-system-principal.png"),
+      fullPage: false,
+    });
+  });
   test("keeps selected Agent identity compact across Issue Properties surfaces", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");

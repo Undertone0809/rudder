@@ -19,17 +19,22 @@ describe("assignee selection helpers", () => {
   });
 
   it("encodes and parses current-user assignees", () => {
-    const [option] = currentUserAssigneeOption("local-board");
+    const [option] = currentUserAssigneeOption("user-1");
 
     expect(option).toEqual({
-      id: "user:local-board",
+      id: "user:user-1",
       label: "Me",
-      searchText: "me board human local-board",
+      searchText: "me human user-1",
     });
     expect(parseAssigneeValue(option.id)).toEqual({
       assigneeAgentId: null,
-      assigneeUserId: "local-board",
+      assigneeUserId: "user-1",
     });
+  });
+
+  it("keeps the local board principal out of human assignee options", () => {
+    expect(currentUserAssigneeOption("local-board")).toEqual([]);
+    expect(formatAssigneeUserLabel("local-board", "user-1")).toBe("System");
   });
 
   it("treats an empty selection as no assignee", () => {
@@ -46,9 +51,9 @@ describe("assignee selection helpers", () => {
     });
   });
 
-  it("formats current and board user labels consistently", () => {
+  it("formats current and system user labels consistently", () => {
     expect(formatAssigneeUserLabel("user-1", "user-1")).toBe("Me");
-    expect(formatAssigneeUserLabel("local-board", "someone-else")).toBe("Board");
+    expect(formatAssigneeUserLabel("local-board", "someone-else")).toBe("System");
     expect(formatAssigneeUserLabel("user-abcdef", "someone-else")).toBe("user-");
   });
 
