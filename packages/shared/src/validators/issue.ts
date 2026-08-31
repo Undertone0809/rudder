@@ -82,6 +82,12 @@ export const createIssueSchema = z.object({
 
 export type CreateIssue = z.infer<typeof createIssueSchema>;
 
+export const createRunDebugIssueSchema = z.object({
+  diagnostics: z.string().trim().min(1).max(32_000),
+});
+
+export type CreateRunDebugIssue = z.infer<typeof createRunDebugIssueSchema>;
+
 export const createIssueLabelSchema = z.object({
   name: z.string().trim().min(1).max(48),
   color: z.string().regex(/^#(?:[0-9a-fA-F]{6})$/, "Color must be a 6-digit hex value"),

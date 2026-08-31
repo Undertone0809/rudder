@@ -15,8 +15,8 @@ import {
   createRunIssueReportUrl,
 } from "@/lib/run-issue-report";
 import type { HeartbeatRun } from "@rudderhq/shared";
-import { Bot, ExternalLink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ExternalLink, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 function browserPlatform(): string {
   if (typeof navigator === "undefined") return "Other (please describe below)";
@@ -33,35 +33,39 @@ export function RunIssueReportDialog({
   environment,
   open,
   onOpenChange,
-  onAskAgent,
 }: {
   run: HeartbeatRun;
   version: string;
   environment: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAskAgent: (diagnostics: string) => void;
 }) {
-  const [generatedDiagnostics, setGeneratedDiagnostics] = useState("");
   const [diagnostics, setDiagnostics] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
+  const [openingGitHub, setOpeningGitHub] = useState(false);
+  const openingGitHubRef = useRef(false);
   const diagnosticsScrollRef = useScrollbarActivityRef();
 
   useEffect(() => {
     if (!open) return;
     const generated = buildRunIssueDiagnostics(run, { version, environment });
-    setGeneratedDiagnostics(generated);
     setDiagnostics(generated);
     setOpenError(null);
+    setOpeningGitHub(false);
+    openingGitHubRef.current = false;
   }, [environment, open, run, version]);
 
   async function openGitHubIssue() {
+    if (openingGitHubRef.current) return;
     const target = createRunIssueReportUrl(run, {
       diagnostics,
       version,
       environment,
       platform: browserPlatform(),
     });
+    openingGitHubRef.current = true;
+    setOpeningGitHub(true);
+    setOpenError(null);
     try {
       const desktopShell = readDesktopShell();
       if (desktopShell?.openExternal) {
@@ -72,13 +76,10 @@ export function RunIssueReportDialog({
       onOpenChange(false);
     } catch (error) {
       setOpenError(error instanceof Error ? error.message : "Could not open GitHub.");
+    } finally {
+      openingGitHubRef.current = false;
+      setOpeningGitHub(false);
     }
-  }
-
-  function askAgent() {
-    if (!generatedDiagnostics.trim()) return;
-    onAskAgent(generatedDiagnostics);
-    onOpenChange(false);
   }
 
   return (
@@ -110,20 +111,20 @@ export function RunIssueReportDialog({
             excerpts can still contain private user content, so remove anything you do not want
             to publish.
           </p>
-          {openError ? <p className="text-xs text-destructive">{openError}</p> : null}
+          {openError ? <p role="alert" className="text-xs text-destructive">{openError}</p> : null}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={openingGitHub}>
             Cancel
           </Button>
-          <Button variant="outline" onClick={askAgent} disabled={!generatedDiagnostics.trim()}>
-            <Bot className="mr-1.5 h-3.5 w-3.5" />
-            Ask agent
-          </Button>
-          <Button onClick={() => void openGitHubIssue()} disabled={!diagnostics.trim()}>
-            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-            Open GitHub issue
+          <Button onClick={() => void openGitHubIssue()} disabled={!diagnostics.trim() || openingGitHub}>
+            {openingGitHub ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {openingGitHub ? "Opening GitHub" : "Open GitHub issue"}
           </Button>
         </DialogFooter>
       </DialogContent>
