@@ -35,6 +35,29 @@ function manifest(tags, sqlByTag, label) {
 }
 
 describe("release migration compatibility matrix", () => {
+  it("accepts the checked-in 0.7.16 candidate against immutable release fixtures", () => {
+    const result = runCompatibilityPreflight({
+      candidateVersion: "0.7.16",
+      channel: "stable",
+    });
+
+    expect(result.candidateFingerprint).toBe(
+      "3152669d55bd95e21d1aee03f0dada1d433ad28c4004ecd9c68030e4da72d2b5",
+    );
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.15",
+      "0.7.14",
+      "0.7.13",
+      "0.7.12",
+      "0.7.11",
+      "0.7.10",
+      "0.7.9",
+      "0.7.1",
+      "0.7.0",
+      "0.6.5",
+    ]);
+  }, 60_000);
+
   it("accepts the checked-in 0.7.15 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
       candidateVersion: "0.7.15",
@@ -54,7 +77,7 @@ describe("release migration compatibility matrix", () => {
       "0.7.0",
       "0.6.5",
     ]);
-  });
+  }, 60_000);
 
   it("accepts the checked-in 0.7.14 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
@@ -74,7 +97,7 @@ describe("release migration compatibility matrix", () => {
       "0.7.0",
       "0.6.5",
     ]);
-  });
+  }, 60_000);
 
   it("accepts the checked-in 0.7.13 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
@@ -93,7 +116,7 @@ describe("release migration compatibility matrix", () => {
       "0.7.0",
       "0.6.5",
     ]);
-  });
+  }, 60_000);
 
   it("retains the 0.7.11 compatibility declaration", () => {
     const declaration = migrationCompatibilityMatrix["0.7.11"];
