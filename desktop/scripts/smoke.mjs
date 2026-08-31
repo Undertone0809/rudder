@@ -6320,6 +6320,8 @@ async function runTerminalScenario(mode) {
   const run = await launchDesktop(scenarioRoot, mode, ports);
   try {
     const company = await createCompany(run.baseUrl);
+    const primedAgentListing = await fetch(`${run.baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
+    assert.equal(primedAgentListing.ok, true, "Agent workspace listing should be readable before Agent creation");
     const agent = await createCeo(run.baseUrl, company.id);
     await verifyAgentWorkspaceTerminal(run.electronApp, run.page, run.baseUrl, company, agent);
     await closeDesktop(run.electronApp);
@@ -6457,6 +6459,21 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   await electronApp.evaluate(({ BrowserWindow }, size) => {
     BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
   }, originalWindowSize);
+
+  await xtermInput.pressSequentially("exit", { delay: 2 });
+  await xtermInput.press("Enter");
+  await terminal.getByText("Shell exited").waitFor({ state: "visible", timeout: 15_000 });
+  await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
+  console.log(`[desktop-smoke] Agent Terminal shell-exit screenshot: ${terminalFailureSmokeScreenshotPath}`);
+  await terminal.getByRole("button", { name: "Restart terminal" }).click();
+  await terminal.getByText("Shell exited").waitFor({ state: "hidden", timeout: 15_000 });
+  const shellRestartedInput = terminal.locator(".xterm-helper-textarea");
+  await shellRestartedInput.pressSequentially("printf 'TERMINAL_RESTARTED=yes\\n'", { delay: 2 });
+  await shellRestartedInput.press("Enter");
+  await waitForSmokeCondition("Agent Terminal restart output", async () => {
+    const text = await terminal.locator(".xterm-rows").innerText();
+    return text.includes("TERMINAL_RESTARTED=yes") ? text : null;
+  });
 
   const terminalTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]');
   await terminalTab.hover();

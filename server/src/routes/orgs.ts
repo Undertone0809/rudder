@@ -582,6 +582,7 @@ export function organizationRoutes(
     const directoryPath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, directoryPath, "directory");
     const result = await workspaceBrowser.listFiles(orgId, directoryPath);
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
     res.json(result);
   });
 

@@ -639,12 +639,18 @@ const terminalController = createTerminalController({
   resolveWorkspace: async (orgId, agentId) => {
     const apiUrl = serverHandle?.apiUrl;
     if (!apiUrl) throw new Error("The local Rudder runtime is not ready.");
-    const [agentResponse, filesResponse] = await Promise.all([
-      session.defaultSession.fetch(buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`), { credentials: "include" }),
-      session.defaultSession.fetch(buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`), { credentials: "include" }),
-    ]);
+    // The Agent detail request materializes its canonical workspace before the
+    // directory listing starts the native manifest watcher.
+    const agentResponse = await session.defaultSession.fetch(
+      buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`),
+      { credentials: "include", cache: "no-store" },
+    );
     if (!agentResponse.ok) throw new Error(agentResponse.status === 404 ? "The selected Agent no longer exists." : "Could not validate the selected Agent.");
     const agent = await agentResponse.json() as { id?: unknown; orgId?: unknown; name?: unknown };
+    const filesResponse = await session.defaultSession.fetch(
+      buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`),
+      { credentials: "include", cache: "no-store" },
+    );
     if (!filesResponse.ok) throw new Error("The Agent workspace is unavailable on this machine.");
     const listing = await filesResponse.json() as { rootPath?: unknown; directoryPath?: unknown; rootExists?: unknown; entries?: unknown };
     const workspace = resolveTerminalWorkspaceFromApi(orgId, agentId, agent, listing);
