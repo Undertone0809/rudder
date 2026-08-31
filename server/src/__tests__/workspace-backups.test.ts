@@ -19,11 +19,23 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveDefaultBackupDir, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { compareWorkspaceBackupFilenames } from "../services/workspace-backup-v2.js";
 import {
   reconcileWorkspaceBackupArtifactStorage,
   reconcileWorkspaceRestoreReceipts,
   workspaceBackupService,
 } from "../services/workspace-backups.js";
+
+it("uses the portable Unicode scalar filename order shared with native browsing", () => {
+  const names = [
+    "A", "a", "B", "b", "á", "â", "å", "ä", "ã", "é", "z", "file2", "file10",
+    "Å", "a\u0301", "\ue000", "😀",
+  ];
+  expect(names.sort(compareWorkspaceBackupFilenames)).toEqual([
+    "A", "B", "a", "a\u0301", "b", "file10", "file2", "z", "Å", "á", "â", "ã", "ä",
+    "å", "é", "\ue000", "😀",
+  ]);
+});
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

@@ -1447,10 +1447,10 @@ dependencies = [
  "sha2",
  "sqlx",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "unicode-normalization",
 ]
 
 [[package]]

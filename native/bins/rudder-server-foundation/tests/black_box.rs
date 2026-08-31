@@ -8,7 +8,7 @@ use std::{
     env, fs,
     io::{self, BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -253,6 +253,34 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
 
     let post = http_request(bound_addr, "POST", route).expect("POST backup files route");
     assert!(post.starts_with("HTTP/1.1 404"), "{post}");
+
+    for (archive, sha256) in &fixture.invalid_archives {
+        sqlx::query(
+            "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+        )
+        .bind(archive.to_string_lossy().as_ref())
+        .bind(sha256)
+        .bind("10000000-0000-0000-0000-000000000002")
+        .execute(&pool)
+        .await
+        .expect("attach invalid workspace backup artifact");
+        let invalid = get_with_retry(bound_addr, route);
+        assert!(invalid.starts_with("HTTP/1.1 422"), "{invalid}");
+        assert!(
+            invalid.contains("workspace_backup_artifact_invalid"),
+            "{invalid}"
+        );
+    }
+
+    sqlx::query(
+        "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+    )
+    .bind(fixture.archive.to_string_lossy().as_ref())
+    .bind(&fixture.sha256)
+    .bind("10000000-0000-0000-0000-000000000002")
+    .execute(&pool)
+    .await
+    .expect("restore valid workspace backup artifact");
 
     sqlx::query(
         "UPDATE workspace_backups SET status = 'succeeded', artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
@@ -682,8 +710,78 @@ struct WorkspaceBackupArchiveFixture {
     _root: TempDir,
     archive: PathBuf,
     sha256: String,
+    invalid_archives: Vec<(PathBuf, String)>,
     legacy_artifact: PathBuf,
     legacy_sha256: String,
+}
+
+fn workspace_backup_tree_sha256(entries: &[serde_json::Value]) -> String {
+    let mut entries = entries.iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left["path"]
+            .as_str()
+            .expect("entry path")
+            .encode_utf16()
+            .cmp(right["path"].as_str().expect("entry path").encode_utf16())
+    });
+    let mut hash = Sha256::new();
+    for entry in entries {
+        hash.update(entry["path"].as_str().expect("entry path").as_bytes());
+        hash.update(b"\0");
+        hash.update(entry["kind"].as_str().expect("entry kind").as_bytes());
+        hash.update(b"\0");
+        hash.update(entry["byteSize"].as_u64().expect("entry size").to_string());
+        hash.update(b"\0");
+        hash.update(entry["sha256"].as_str().unwrap_or("").as_bytes());
+        hash.update(b"\n");
+    }
+    format!("{:x}", hash.finalize())
+}
+
+fn create_workspace_backup_archive(
+    root: &Path,
+    name: &str,
+    entries: &[serde_json::Value],
+    plan_entries: &[serde_json::Value],
+    policy_version: &str,
+    tree_sha256: Option<String>,
+) -> (PathBuf, String) {
+    let tree_sha256 = tree_sha256.unwrap_or_else(|| workspace_backup_tree_sha256(entries));
+    let manifest_path = root.join(format!("{name}-manifest.json"));
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 2,
+            "policyVersion": policy_version,
+            "identity": {
+                "orgId": "00000000-0000-0000-0000-000000000001",
+                "instanceId": "black-box",
+                "rootPath": "/fixture/workspace"
+            },
+            "createdAt": "2026-09-01T00:00:00.000Z",
+            "entries": entries,
+            "treeSha256": tree_sha256,
+            "warnings": []
+        }))
+        .expect("serialize v2 manifest"),
+    )
+    .expect("write v2 manifest");
+    let plan_path = root.join(format!("{name}-plan.json"));
+    fs::write(
+        &plan_path,
+        serde_json::to_vec(&serde_json::json!({
+            "protocolVersion": 1,
+            "manifestSource": manifest_path,
+            "treeSha256": tree_sha256,
+            "entries": plan_entries
+        }))
+        .expect("serialize archive plan"),
+    )
+    .expect("write archive plan");
+    let archive = root.join(format!("{name}.zip"));
+    let created = create_archive(&plan_path, &archive, 8 * 1024 * 1024, 16 * 1024, 64 * 1024)
+        .expect("create v2 workspace backup fixture");
+    (archive, created.sha256)
 }
 
 fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
@@ -697,54 +795,105 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
     fs::write(&root_file, b"root").expect("write root fixture");
     fs::write(&nested_file, b"nested").expect("write nested fixture");
 
-    let entries = serde_json::json!([
-        {"path":"docs","kind":"directory","byteSize":0,"mtimeMs":null,"mode":null,"sha256":null},
-        {"path":"docs/readme.md","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":null},
-        {"path":"docs/alpha.txt","kind":"file","byteSize":5,"mtimeMs":null,"mode":null,"sha256":null},
-        {"path":"root.txt","kind":"file","byteSize":4,"mtimeMs":null,"mode":null,"sha256":null},
-        {"path":"nested/deep.txt","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":null}
-    ]);
-    let manifest_path = root.path().join("manifest.json");
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec(&serde_json::json!({
-            "version": 2,
-            "policyVersion": "workspace-backup-v2-policy-1",
-            "identity": {
-                "orgId": "00000000-0000-0000-0000-000000000001",
-                "instanceId": "black-box",
-                "rootPath": "/fixture/workspace"
-            },
-            "createdAt": "2026-09-01T00:00:00.000Z",
-            "entries": entries,
-            "treeSha256": "1".repeat(64),
-            "warnings": []
-        }))
-        .expect("serialize v2 manifest"),
-    )
-    .expect("write v2 manifest");
-    let plan_path = root.path().join("plan.json");
-    fs::write(
-        &plan_path,
-        serde_json::to_vec(&serde_json::json!({
-            "protocolVersion": 1,
-            "manifestSource": manifest_path,
-            "treeSha256": "1".repeat(64),
-            "entries": [
-                {"kind":"directory","archivePath":"workspace/"},
-                {"kind":"directory","archivePath":"workspace/docs/"},
-                {"kind":"file","archivePath":"workspace/docs/readme.md","sourcePath":docs_readme},
-                {"kind":"file","archivePath":"workspace/docs/alpha.txt","sourcePath":docs_alpha},
-                {"kind":"file","archivePath":"workspace/root.txt","sourcePath":root_file},
-                {"kind":"file","archivePath":"workspace/nested/deep.txt","sourcePath":nested_file}
-            ]
-        }))
-        .expect("serialize archive plan"),
-    )
-    .expect("write archive plan");
-    let archive = root.path().join("workspace.zip");
-    let created = create_archive(&plan_path, &archive, 8 * 1024 * 1024, 1024, 4096)
-        .expect("create v2 workspace backup fixture");
+    let entries = vec![
+        serde_json::json!({"path":"docs","kind":"directory","byteSize":0,"mtimeMs":null,"mode":null,"sha256":null}),
+        serde_json::json!({"path":"docs/readme.md","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"readme"))}),
+        serde_json::json!({"path":"docs/alpha.txt","kind":"file","byteSize":5,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"alpha"))}),
+        serde_json::json!({"path":"root.txt","kind":"file","byteSize":4,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"root"))}),
+        serde_json::json!({"path":"nested/deep.txt","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"nested"))}),
+    ];
+    let plan_entries = vec![
+        serde_json::json!({"kind":"directory","archivePath":"workspace/"}),
+        serde_json::json!({"kind":"directory","archivePath":"workspace/docs/"}),
+        serde_json::json!({"kind":"file","archivePath":"workspace/docs/readme.md","sourcePath":docs_readme}),
+        serde_json::json!({"kind":"file","archivePath":"workspace/docs/alpha.txt","sourcePath":docs_alpha}),
+        serde_json::json!({"kind":"file","archivePath":"workspace/root.txt","sourcePath":root_file}),
+        serde_json::json!({"kind":"file","archivePath":"workspace/nested/deep.txt","sourcePath":nested_file}),
+    ];
+    let (archive, sha256) = create_workspace_backup_archive(
+        root.path(),
+        "workspace",
+        &entries,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    );
+
+    let mut invalid_archives = Vec::new();
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "invalid-policy",
+        &entries,
+        &plan_entries,
+        "unsupported-policy",
+        None,
+    ));
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "invalid-tree",
+        &entries,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        Some("1".repeat(64)),
+    ));
+    let mut missing = entries.clone();
+    missing.push(serde_json::json!({"path":"ghost.txt","kind":"file","byteSize":0,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b""))}));
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "missing-entry",
+        &missing,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    ));
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "unlisted-entry",
+        &entries[..entries.len() - 1],
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    ));
+    let mut wrong_kind = entries.clone();
+    wrong_kind[0] = serde_json::json!({"path":"docs","kind":"file","byteSize":0,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b""))});
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "kind-mismatch",
+        &wrong_kind,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    ));
+    let mut wrong_size = entries.clone();
+    wrong_size[3]["byteSize"] = serde_json::json!(5);
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "size-mismatch",
+        &wrong_size,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    ));
+    let mut duplicate = entries.clone();
+    duplicate.push(entries[3].clone());
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "duplicate-path",
+        &duplicate,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    ));
+    let mut case_collision = entries.clone();
+    case_collision.push(serde_json::json!({"path":"ROOT.TXT","kind":"file","byteSize":4,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"root"))}));
+    invalid_archives.push(create_workspace_backup_archive(
+        root.path(),
+        "case-collision",
+        &case_collision,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+    ));
 
     let legacy_artifact = root.path().join("workspace.json");
     let legacy_bytes = serde_json::to_vec(&serde_json::json!({
@@ -763,7 +912,8 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
     WorkspaceBackupArchiveFixture {
         _root: root,
         archive,
-        sha256: created.sha256,
+        sha256,
+        invalid_archives,
         legacy_artifact,
         legacy_sha256,
     }
