@@ -74,6 +74,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/pages/AgentDetail.runs.tsx",
+      "lines": 1501,
+      "owner": "agents-ui",
+      "rationale": "Agent run history, filtering, transcript evidence, and run actions remain concentrated while the agent detail surface is extracted.",
+      "target": "Extract run-history controllers and evidence views and reduce the module below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
       "path": "server/src/routes/chats.ts",
       "lines": 1792,
       "owner": "collaboration-server",

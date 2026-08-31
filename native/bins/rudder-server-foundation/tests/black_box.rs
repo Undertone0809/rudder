@@ -483,7 +483,10 @@ impl PostgresHarness {
                 .arg("-l")
                 .arg(&log_path)
                 .arg("-o")
-                .arg(format!("-h 127.0.0.1 -p {port} -F"))
+                .arg(format!(
+                    "-h 127.0.0.1 -p {port} -F -k {}",
+                    temp_dir.path().display()
+                ))
                 .args(["-w", "start"]),
             "pg_ctl start",
         );
