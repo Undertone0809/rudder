@@ -1,6 +1,8 @@
 #![cfg(unix)]
 
+use rudder_archive_core::create_archive;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use std::{
     env, fs,
@@ -39,7 +41,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(startup["databaseAuthority"], "read-only-product-data");
     assert_eq!(
         startup["readOnlyAuthorities"],
-        serde_json::json!(["workspace_backup_list"])
+        serde_json::json!(["workspace_backup_list", "workspace_backup_files_list"])
     );
 
     let health = get_with_retry(bound_addr, "/healthz");
@@ -56,6 +58,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("maxQueueDepth"));
     assert!(capabilities.contains("maxDatabaseConnections"));
     assert!(capabilities.contains("workspace_backup_list"));
+    assert!(capabilities.contains("workspace_backup_files_list"));
 
     let backup_list = get_with_retry(
         bound_addr,
@@ -63,6 +66,13 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     );
     assert!(backup_list.starts_with("HTTP/1.1 503"), "{backup_list}");
     assert!(backup_list.contains("database_disabled"), "{backup_list}");
+
+    let backup_files = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000001/files",
+    );
+    assert!(backup_files.starts_with("HTTP/1.1 503"), "{backup_files}");
+    assert!(backup_files.contains("database_disabled"), "{backup_files}");
 
     let pid = child.id() as i32;
     let signal_result = unsafe { libc::kill(pid, libc::SIGTERM) };
@@ -165,6 +175,131 @@ async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contrac
     assert!(limited.contains("response_limit"), "{limited}");
     assert!(response_body_len(&limited) <= 128, "{limited}");
     stop_server(limited_child, limited_stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&postgres.url)
+        .await
+        .expect("connect test PostgreSQL");
+    sqlx::raw_sql(WORKSPACE_BACKUP_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install workspace backup fixture");
+
+    let fixture = workspace_backup_archive_fixture();
+    sqlx::query(
+        "UPDATE workspace_backups SET status = 'succeeded', artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+    )
+    .bind(fixture.archive.to_string_lossy().as_ref())
+    .bind(&fixture.sha256)
+    .bind("10000000-0000-0000-0000-000000000002")
+    .execute(&pool)
+    .await
+    .expect("attach workspace backup artifact");
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "4096"),
+    ]);
+    let route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/files";
+
+    let root = response_json(&get_with_retry(bound_addr, route));
+    assert_eq!(root["source"], "org_root");
+    assert_eq!(
+        root["rootPath"],
+        "backup:10000000-0000-0000-0000-000000000002"
+    );
+    assert_eq!(root["directoryPath"], "");
+    assert_eq!(
+        root["entries"],
+        serde_json::json!([
+            {"name":"docs","path":"docs","isDirectory":true},
+            {"name":"nested","path":"nested","isDirectory":true},
+            {"name":"root.txt","path":"root.txt","isDirectory":false}
+        ])
+    );
+
+    let docs = response_json(&get_with_retry(bound_addr, &format!("{route}?path=docs")));
+    assert_eq!(
+        docs["entries"],
+        serde_json::json!([
+            {"name":"alpha.txt","path":"docs/alpha.txt","isDirectory":false},
+            {"name":"readme.md","path":"docs/readme.md","isDirectory":false}
+        ])
+    );
+
+    let empty = response_json(&get_with_retry(
+        bound_addr,
+        &format!("{route}?path=missing"),
+    ));
+    assert_eq!(empty["entries"], serde_json::json!([]));
+    assert_eq!(empty["message"], "This backup folder is empty.");
+
+    let invalid_path = get_with_retry(bound_addr, &format!("{route}?path=..%2Fsecret"));
+    assert!(invalid_path.starts_with("HTTP/1.1 422"), "{invalid_path}");
+    assert!(invalid_path.contains("workspace_backup_path_invalid"));
+
+    let cross_org = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000002/workspace/backups/10000000-0000-0000-0000-000000000002/files",
+    );
+    assert!(cross_org.starts_with("HTTP/1.1 404"), "{cross_org}");
+
+    let post = http_request(bound_addr, "POST", route).expect("POST backup files route");
+    assert!(post.starts_with("HTTP/1.1 404"), "{post}");
+
+    sqlx::query(
+        "UPDATE workspace_backups SET status = 'succeeded', artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+    )
+    .bind(fixture.legacy_artifact.to_string_lossy().as_ref())
+    .bind(&fixture.legacy_sha256)
+    .bind("10000000-0000-0000-0000-000000000001")
+    .execute(&pool)
+    .await
+    .expect("attach legacy workspace backup artifact");
+    let legacy_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000001/files?path=docs";
+    let legacy = response_json(&get_with_retry(bound_addr, legacy_route));
+    assert_eq!(legacy["entries"], docs["entries"]);
+
+    sqlx::query("UPDATE workspace_backups SET status = 'running' WHERE id = $1::uuid")
+        .bind("10000000-0000-0000-0000-000000000001")
+        .execute(&pool)
+        .await
+        .expect("mark backup running");
+    let running = get_with_retry(bound_addr, legacy_route);
+    assert!(running.starts_with("HTTP/1.1 409"), "{running}");
+    assert!(running.contains("workspace_backup_running"));
+
+    sqlx::query("UPDATE workspace_backups SET status = 'failed' WHERE id = $1::uuid")
+        .bind("10000000-0000-0000-0000-000000000001")
+        .execute(&pool)
+        .await
+        .expect("mark backup failed");
+    let failed = get_with_retry(bound_addr, legacy_route);
+    assert!(failed.starts_with("HTTP/1.1 422"), "{failed}");
+    assert!(failed.contains("workspace_backup_failed"));
+
+    sqlx::query("UPDATE workspace_backups SET archive_sha256 = $1 WHERE id = $2::uuid")
+        .bind("0".repeat(64))
+        .bind("10000000-0000-0000-0000-000000000002")
+        .execute(&pool)
+        .await
+        .expect("corrupt recorded checksum");
+    let checksum_mismatch = get_with_retry(bound_addr, route);
+    assert!(
+        checksum_mismatch.starts_with("HTTP/1.1 422"),
+        "{checksum_mismatch}"
+    );
+    assert!(checksum_mismatch.contains("workspace_backup_artifact_invalid"));
+
+    stop_server(child, stdout);
+    pool.close().await;
 }
 
 #[cfg(unix)]
@@ -541,6 +676,97 @@ fn run_checked(command: &mut Command, label: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+struct WorkspaceBackupArchiveFixture {
+    _root: TempDir,
+    archive: PathBuf,
+    sha256: String,
+    legacy_artifact: PathBuf,
+    legacy_sha256: String,
+}
+
+fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
+    let root = tempfile::tempdir().expect("workspace backup fixture root");
+    let docs_readme = root.path().join("readme.md");
+    let docs_alpha = root.path().join("alpha.txt");
+    let root_file = root.path().join("root.txt");
+    let nested_file = root.path().join("deep.txt");
+    fs::write(&docs_readme, b"readme").expect("write readme fixture");
+    fs::write(&docs_alpha, b"alpha").expect("write alpha fixture");
+    fs::write(&root_file, b"root").expect("write root fixture");
+    fs::write(&nested_file, b"nested").expect("write nested fixture");
+
+    let entries = serde_json::json!([
+        {"path":"docs","kind":"directory","byteSize":0,"mtimeMs":null,"mode":null,"sha256":null},
+        {"path":"docs/readme.md","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":null},
+        {"path":"docs/alpha.txt","kind":"file","byteSize":5,"mtimeMs":null,"mode":null,"sha256":null},
+        {"path":"root.txt","kind":"file","byteSize":4,"mtimeMs":null,"mode":null,"sha256":null},
+        {"path":"nested/deep.txt","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":null}
+    ]);
+    let manifest_path = root.path().join("manifest.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 2,
+            "policyVersion": "workspace-backup-v2-policy-1",
+            "identity": {
+                "orgId": "00000000-0000-0000-0000-000000000001",
+                "instanceId": "black-box",
+                "rootPath": "/fixture/workspace"
+            },
+            "createdAt": "2026-09-01T00:00:00.000Z",
+            "entries": entries,
+            "treeSha256": "1".repeat(64),
+            "warnings": []
+        }))
+        .expect("serialize v2 manifest"),
+    )
+    .expect("write v2 manifest");
+    let plan_path = root.path().join("plan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_vec(&serde_json::json!({
+            "protocolVersion": 1,
+            "manifestSource": manifest_path,
+            "treeSha256": "1".repeat(64),
+            "entries": [
+                {"kind":"directory","archivePath":"workspace/"},
+                {"kind":"directory","archivePath":"workspace/docs/"},
+                {"kind":"file","archivePath":"workspace/docs/readme.md","sourcePath":docs_readme},
+                {"kind":"file","archivePath":"workspace/docs/alpha.txt","sourcePath":docs_alpha},
+                {"kind":"file","archivePath":"workspace/root.txt","sourcePath":root_file},
+                {"kind":"file","archivePath":"workspace/nested/deep.txt","sourcePath":nested_file}
+            ]
+        }))
+        .expect("serialize archive plan"),
+    )
+    .expect("write archive plan");
+    let archive = root.path().join("workspace.zip");
+    let created = create_archive(&plan_path, &archive, 8 * 1024 * 1024, 1024, 4096)
+        .expect("create v2 workspace backup fixture");
+
+    let legacy_artifact = root.path().join("workspace.json");
+    let legacy_bytes = serde_json::to_vec(&serde_json::json!({
+        "version": 1,
+        "orgId": "00000000-0000-0000-0000-000000000001",
+        "instanceId": "black-box",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "rootPath": "/fixture/workspace",
+        "entries": entries,
+        "warnings": []
+    }))
+    .expect("serialize legacy artifact");
+    fs::write(&legacy_artifact, &legacy_bytes).expect("write legacy artifact");
+    let legacy_sha256 = format!("{:x}", Sha256::digest(&legacy_bytes));
+
+    WorkspaceBackupArchiveFixture {
+        _root: root,
+        archive,
+        sha256: created.sha256,
+        legacy_artifact,
+        legacy_sha256,
+    }
 }
 
 const WORKSPACE_BACKUP_FIXTURE_SQL: &str = r#"
