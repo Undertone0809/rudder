@@ -6872,7 +6872,7 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
         && (!bodyText || evidence.bodyText.includes(bodyText))
         ? {
             partition: webview.getAttribute("partition"),
-            url: currentUrl,
+            url: webview.getURL(),
             ...evidence,
           }
         : false;
