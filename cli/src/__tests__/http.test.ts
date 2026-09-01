@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -327,17 +328,16 @@ describe("RudderApiClient", () => {
       "/api/issues/iss-1/comments",
       { body: "preserve this comment", reopen: true },
     ));
-    expect(writeError).toMatchObject({
-      message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue comment iss-1 --body-file ./issue-comment.md --json",
-      details: {
-        issueTransport: {
-          fallbackAction: {
-            surface: "cli",
-            command: "rudder issue comment iss-1 --body-file ./issue-comment.md --json",
-          },
-        },
-      },
-    });
+    const writeFallback = (writeError.details as {
+      issueTransport: { fallbackAction: { command: string } };
+    }).issueTransport.fallbackAction;
+    expect(writeError.message).toContain("use the equivalent Rudder CLI fallback once:");
+    expect(writeFallback.command).toMatch(
+      /^rudder issue comment iss-1 --body-file \/.+ --reopen --json$/,
+    );
+    const bodyFile = writeFallback.command.match(/--body-file (\S+) --reopen --json/)?.[1];
+    expect(bodyFile).toBeTruthy();
+    expect(await fs.readFile(bodyFile!, "utf8")).toBe("preserve this comment");
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
@@ -402,6 +402,392 @@ describe("RudderApiClient", () => {
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("scopes Issue list and search budgets by organization and project, not query filters", async () => {
+    const stateDir = await transportStateDir();
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const common = {
+      apiBase: "http://localhost:3100",
+      runId: "run-issue-collection-scope",
+      transportStateDir: stateDir,
+    };
+    const mcp = new RudderApiClient({ ...common, transportSurface: "mcp" });
+    const cli = new RudderApiClient({ ...common, transportSurface: "cli" });
+
+    const firstList = await captureApiError(
+      mcp.get("/api/orgs/org-1/issues?projectId=project-1&status=todo"),
+    );
+    expect(firstList).toMatchObject({
+      details: {
+        issueTransport: {
+          operation: "issue.list",
+          scopeKey: "org:org-1|project:project-1",
+          issueId: null,
+          initialSurface: "mcp",
+          fallbackBudgetRemaining: 1,
+        },
+      },
+    });
+    await expect(cli.get("/api/orgs/org-1/issues?projectId=project-1&status=in_progress")).rejects.toMatchObject({
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { scopeKey: "org:org-1|project:project-1" } },
+    });
+    await expect(mcp.get("/api/orgs/org-1/issues?projectId=project-1&status=done")).rejects.toMatchObject({
+      status: 503,
+      code: "issue_transport_unavailable",
+    });
+
+    const firstSearch = await captureApiError(
+      mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=first-search"),
+    );
+    expect(firstSearch).toMatchObject({
+      details: {
+        issueTransport: {
+          operation: "issue.search",
+          scopeKey: "org:org-1|project:project-1",
+        },
+      },
+    });
+    await expect(cli.get("/api/orgs/org-1/issues?projectId=project-1&q=different-search")).rejects.toMatchObject({
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { scopeKey: "org:org-1|project:project-1" } },
+    });
+
+    await expect(mcp.get("/api/orgs/org-1/issues?projectId=project-2&q=different-search")).rejects.toMatchObject({
+      status: 500,
+      details: { issueTransport: { scopeKey: "org:org-1|project:project-2" } },
+    });
+    await expect(mcp.get("/api/orgs/org-2/issues?projectId=project-1&q=different-search")).rejects.toMatchObject({
+      status: 500,
+      details: { issueTransport: { scopeKey: "org:org-2|project:project-1" } },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("scopes runs list budgets by organization or linked Issue, ignoring list filters", async () => {
+    const stateDir = await transportStateDir();
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const common = {
+      apiBase: "http://localhost:3100",
+      runId: "run-runs-collection-scope",
+      transportStateDir: stateDir,
+    };
+    const mcp = new RudderApiClient({ ...common, transportSurface: "mcp" });
+    const cli = new RudderApiClient({ ...common, transportSurface: "cli" });
+
+    const firstOrg = await captureApiError(
+      mcp.get("/api/run-intelligence/orgs/org-1/runs?projection=summary&agentId=rowan&limit=50"),
+    );
+    expect(firstOrg).toMatchObject({
+      details: {
+        issueTransport: {
+          operation: "runs.list",
+          scopeKey: "org:org-1",
+          issueId: null,
+        },
+      },
+    });
+    await expect(cli.get("/api/run-intelligence/orgs/org-1/runs?projection=summary&agentId=alex&limit=100")).rejects.toMatchObject({
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { scopeKey: "org:org-1" } },
+    });
+    await expect(mcp.get("/api/run-intelligence/orgs/org-1/runs?projection=summary&agentId=sage&limit=20")).rejects.toMatchObject({
+      status: 503,
+      code: "issue_transport_unavailable",
+    });
+
+    const firstIssue = await captureApiError(
+      mcp.get("/api/run-intelligence/orgs/org-1/runs?issueId=issue-1&agentId=rowan&limit=50"),
+    );
+    expect(firstIssue).toMatchObject({
+      details: {
+        issueTransport: {
+          scopeKey: "org:org-1|issue:issue-1",
+          issueId: "issue-1",
+        },
+      },
+    });
+    await expect(cli.get("/api/run-intelligence/orgs/org-1/runs?issueId=issue-1&agentId=alex&limit=100")).rejects.toMatchObject({
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { scopeKey: "org:org-1|issue:issue-1" } },
+    });
+    await expect(mcp.get("/api/run-intelligence/orgs/org-2/runs?issueId=issue-1&limit=20")).rejects.toMatchObject({
+      status: 500,
+      details: { issueTransport: { scopeKey: "org:org-2|issue:issue-1" } },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("gates concurrent collection fanout behind one readiness probe", async () => {
+    const stateDir = await transportStateDir();
+    let releaseFailure: (() => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const requestStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      markStarted?.();
+      await failureGate;
+      return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const mcp = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId: "run-collection-fanout",
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    const first = captureApiError(mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=probe"));
+    await requestStarted;
+    const second = captureApiError(mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=fanout"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    releaseFailure?.();
+
+    await expect(first).resolves.toMatchObject({
+      status: 500,
+      details: { issueTransport: { state: "fallback_available" } },
+    });
+    await expect(second).resolves.toMatchObject({
+      status: 503,
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { state: "fallback_available" } },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets concurrent collection reads continue after a healthy probe", async () => {
+    const stateDir = await transportStateDir();
+    let releaseFirst: (() => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        markStarted?.();
+        await firstGate;
+        return new Response(JSON.stringify({ request: "probe" }), { status: 200 });
+      })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request: "fanout" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const mcp = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId: "run-healthy-collection-fanout",
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    const first = mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=probe");
+    await firstStarted;
+    const second = mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=fanout");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    releaseFirst?.();
+    await expect(first).resolves.toEqual({ request: "probe" });
+    await expect(second).resolves.toEqual({ request: "fanout" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses legacy Issue state that only contains issueId", async () => {
+    const stateDir = await transportStateDir();
+    const runId = "run-legacy-issue-state";
+    const issueId = "iss-legacy";
+    const normalizedMessage = "internal server error";
+    const legacyFingerprint = createHash("sha256")
+      .update(["issue.get", issueId, 500, "api_request_error", normalizedMessage].join("\n"))
+      .digest("hex");
+    const stateFile = path.join(
+      stateDir,
+      "issue-transport-budget",
+      `${createHash("sha256").update([runId, "issue.get", issueId].join("\n")).digest("hex")}.json`,
+    );
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(stateFile, `${JSON.stringify({
+      operation: "issue.get",
+      issueId,
+      phase: "fallback_available",
+      initialSurface: "mcp",
+      failure: {
+        fingerprint: legacyFingerprint,
+        status: 500,
+        code: "api_request_error",
+        normalizedMessage,
+      },
+      observedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    })}\n`);
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const cli = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId,
+      transportSurface: "cli",
+      transportStateDir: stateDir,
+    });
+
+    await expect(cli.get(`/api/issues/${issueId}`)).rejects.toMatchObject({
+      status: 500,
+      code: "issue_transport_unavailable",
+      details: {
+        issueTransport: {
+          scopeKey: `issue:${issueId}`,
+          fallbackMatchedFingerprint: true,
+        },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the budget lock cannot be acquired", async () => {
+    const stateDir = await transportStateDir();
+    const runId = "run-lock-failure";
+    const issueId = "iss-lock";
+    const stateFile = path.join(
+      stateDir,
+      "issue-transport-budget",
+      `${createHash("sha256").update([runId, "issue.get", issueId].join("\n")).digest("hex")}.json`,
+    );
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(`${stateFile}.lock`, "stale lock\n");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId,
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    await expect(client.get(`/api/issues/${issueId}`)).rejects.toMatchObject({
+      status: 503,
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { state: "blocked", checkpoint: "Issue transport unavailable" } },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the budget state is malformed", async () => {
+    const stateDir = await transportStateDir();
+    const runId = "run-corrupt-state";
+    const issueId = "iss-corrupt";
+    const stateFile = path.join(
+      stateDir,
+      "issue-transport-budget",
+      `${createHash("sha256").update([runId, "issue.get", issueId].join("\n")).digest("hex")}.json`,
+    );
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(stateFile, "{not-json\n");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId,
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    await expect(client.get(`/api/issues/${issueId}`)).rejects.toMatchObject({
+      status: 503,
+      code: "issue_transport_unavailable",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not let a late success clear a concurrent Issue failure", async () => {
+    const stateDir = await transportStateDir();
+    let releaseFailure: (() => void) | undefined;
+    let releaseSuccess: (() => void) | undefined;
+    let markFailureStarted: (() => void) | undefined;
+    let markSuccessStarted: (() => void) | undefined;
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const successGate = new Promise<void>((resolve) => { releaseSuccess = resolve; });
+    const failureStarted = new Promise<void>((resolve) => { markFailureStarted = resolve; });
+    const successStarted = new Promise<void>((resolve) => { markSuccessStarted = resolve; });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        markFailureStarted?.();
+        await failureGate;
+        return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+      })
+      .mockImplementationOnce(async () => {
+        markSuccessStarted?.();
+        await successGate;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const common = {
+      apiBase: "http://localhost:3100",
+      runId: "run-generation-success",
+      transportStateDir: stateDir,
+    };
+    const mcp = new RudderApiClient({ ...common, transportSurface: "mcp" });
+    const cli = new RudderApiClient({ ...common, transportSurface: "cli" });
+
+    const first = captureApiError(mcp.get("/api/issues/iss-1/comments"));
+    await failureStarted;
+    const second = mcp.get("/api/issues/iss-1/comments");
+    await successStarted;
+    releaseFailure?.();
+    await expect(first).resolves.toMatchObject({
+      status: 500,
+      details: { issueTransport: { state: "fallback_available" } },
+    });
+    releaseSuccess?.();
+    await expect(second).resolves.toEqual({ ok: true });
+    await expect(cli.get("/api/issues/iss-1/comments")).rejects.toMatchObject({
+      status: 500,
+      code: "issue_transport_unavailable",
+      details: { issueTransport: { state: "blocked" } },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("ignores a late fallback failure after expiry starts a fresh generation", async () => {
+    const stateDir = await transportStateDir();
+    let now = 1_000;
+    let releaseFallback: (() => void) | undefined;
+    let markFallbackStarted: (() => void) | undefined;
+    const fallbackGate = new Promise<void>((resolve) => { releaseFallback = resolve; });
+    const fallbackStarted = new Promise<void>((resolve) => { markFallbackStarted = resolve; });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }))
+      .mockImplementationOnce(async () => {
+        markFallbackStarted?.();
+        await fallbackGate;
+        return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+      })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: "recovered" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: "again" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const common = {
+      apiBase: "http://localhost:3100",
+      runId: "run-generation-expiry",
+      transportStateDir: stateDir,
+      transportBackoffMs: 1_000,
+      now: () => now,
+    };
+    const mcp = new RudderApiClient({ ...common, transportSurface: "mcp" });
+    const cli = new RudderApiClient({ ...common, transportSurface: "cli" });
+
+    await expect(mcp.get("/api/issues/iss-1/comments")).rejects.toMatchObject({ status: 500 });
+    const fallback = captureApiError(cli.get("/api/issues/iss-1/comments"));
+    await fallbackStarted;
+    now = 3_001;
+    await expect(mcp.get("/api/issues/iss-1/comments")).resolves.toEqual({ ok: "recovered" });
+    releaseFallback?.();
+    await expect(fallback).resolves.toMatchObject({ status: 500 });
+    await expect(mcp.get("/api/issues/iss-1/comments")).resolves.toEqual({ ok: "again" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("does not spend the fallback budget on a repeated call from the same surface", async () => {
