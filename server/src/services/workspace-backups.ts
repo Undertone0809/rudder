@@ -33,7 +33,7 @@ import {
 } from "../home-paths.js";
 import { organizationService } from "./orgs.js";
 import {
-  createWorkspaceBackupV2File,
+  compareWorkspaceBackupFilenames, createWorkspaceBackupV2File,
   createWorkspaceBackupV2Native,
   formatWorkspaceBackupV2NativeFallback,
   inspectWorkspaceBackupV2ForService,
@@ -943,7 +943,7 @@ function directChildrenFromArtifact(
 
   return [...children.values()].sort((left, right) => {
     if (left.isDirectory !== right.isDirectory) return left.isDirectory ? -1 : 1;
-    return left.name.localeCompare(right.name);
+    return compareWorkspaceBackupFilenames(left.name, right.name);
   });
 }
 

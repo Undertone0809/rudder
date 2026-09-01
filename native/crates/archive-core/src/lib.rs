@@ -33,6 +33,14 @@ pub struct ManifestInspection {
     pub byte_size: u64,
     pub sha256: String,
     pub entry_count: usize,
+    pub entries: Vec<ArchiveEntryInspection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchiveEntryInspection {
+    pub archive_path: String,
+    pub byte_size: u64,
+    pub is_directory: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -279,7 +287,8 @@ fn preflight<R: Read + Seek>(
         }
         let dos_directory = external_attributes == 0x10;
         let name = validate_name(raw_name, dos_directory)?;
-        if !exact_names.insert(name.clone()) || !folded_names.insert(name.to_ascii_lowercase()) {
+        let folded_name: String = name.chars().flat_map(char::to_lowercase).collect();
+        if !exact_names.insert(name.clone()) || !folded_names.insert(folded_name) {
             return Err(ArchiveError::new("duplicate_entry_name"));
         }
         entries.push(CentralEntry {
@@ -463,11 +472,21 @@ pub fn inspect_manifest(
         (validated.entries[index].size as u64).min(limits.max_manifest_bytes) as usize,
     );
     let result = read_entry(&mut validated, index, limits.max_manifest_bytes, &mut bytes)?;
+    let entries = validated
+        .entries
+        .iter()
+        .map(|entry| ArchiveEntryInspection {
+            archive_path: entry.name.clone(),
+            byte_size: entry.size as u64,
+            is_directory: entry.name.ends_with('/'),
+        })
+        .collect();
     Ok(ManifestInspection {
         manifest_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
         byte_size: result.byte_size,
         sha256: result.sha256,
         entry_count: validated.entries.len(),
+        entries,
     })
 }
 

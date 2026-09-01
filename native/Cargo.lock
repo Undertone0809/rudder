@@ -1426,8 +1426,10 @@ name = "rudder-server-foundation"
 version = "0.7.17"
 dependencies = [
  "libc",
+ "rudder-archive-core",
  "rudder-server-foundation-core",
  "serde_json",
+ "sha2",
  "sqlx",
  "tempfile",
  "tokio",
@@ -1438,10 +1440,14 @@ name = "rudder-server-foundation-core"
 version = "0.7.17"
 dependencies = [
  "actix-web",
+ "base64",
+ "rudder-archive-core",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
