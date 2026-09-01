@@ -2716,6 +2716,12 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
     env: {
       ...process.env,
       HOME: smokeHome,
+      // The packaged smoke must not inherit the CI runner's PostgreSQL path.
+      // Each scenario either uses the packaged payload or supplies an explicit
+      // isolated fixture through extraEnv below.
+      ...(mode === "packaged"
+        ? { RUDDER_POSTGRES_BIN_DIR: "", RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR: "" }
+        : {}),
       RUDDER_DESKTOP_APP_NAME: smokeAppName,
       RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
       RUDDER_HOME: paths.rudderHome,
