@@ -1939,6 +1939,16 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         mousedown: (event, view) => {
           const pointerTarget = event.target instanceof Element ? event.target : null;
           if (
+            isPrimaryPlainMouseEvent(event)
+            && pointerTarget?.closest("[data-markdown-link-href]")
+          ) {
+            // Source-driven links are rendered as decorated spans rather than
+            // real anchors. Keep the preview stable so the matching click
+            // handler can open the link instead of activating the source line.
+            event.preventDefault();
+            return true;
+          }
+          if (
             event.button === 0
             && (event.metaKey || event.ctrlKey)
             && pointerTarget?.closest("[data-markdown-link-href]")
@@ -2005,16 +2015,16 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           return true;
         },
         click: (event) => {
-          if (
-            event.button !== 0
-            || (!event.metaKey && !event.ctrlKey)
-          ) {
-            return false;
-          }
           const target = event.target instanceof HTMLElement ? event.target : null;
           const link = target?.closest<HTMLElement>("[data-markdown-link-href]");
           const href = link?.dataset.markdownLinkHref;
-          if (!href) return false;
+          if (
+            !href
+            || (
+              !isPrimaryPlainMouseEvent(event)
+              && !(event.button === 0 && (event.metaKey || event.ctrlKey))
+            )
+          ) return false;
           event.preventDefault();
           event.stopPropagation();
           openDecoratedMarkdownLink(href);
