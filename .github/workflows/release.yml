@@ -260,7 +260,7 @@ jobs:
       - name: Build publish payloads
         run: |
           pnpm install --frozen-lockfile
-          pnpm build
+          pnpm --filter '!@rudderhq/desktop' -r build
           bash scripts/prepare-server-ui-dist.sh
           for pkg_dir in \
             server \
