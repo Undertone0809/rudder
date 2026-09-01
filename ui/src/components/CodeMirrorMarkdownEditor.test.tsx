@@ -811,6 +811,47 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     anchorClick.mockRestore();
   });
 
+  it("opens an ordinary preview link on a plain click without revealing its source", async () => {
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="Read [Messenger](/r4/messenger)."
+          onChange={() => undefined}
+        />,
+      );
+    });
+    await flushReact();
+
+    const link = container?.querySelector<HTMLElement>("[data-markdown-link-href]");
+    expect(link?.getAttribute("data-markdown-link-href")).toBe("/r4/messenger");
+    const pointerDown = new MouseEvent("mousedown", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    const click = new MouseEvent("click", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      link?.dispatchEvent(pointerDown);
+      link?.dispatchEvent(click);
+    });
+    await flushReact();
+
+    expect(pointerDown.defaultPrevented).toBe(true);
+    expect(click.defaultPrevented).toBe(true);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
+    expect(container?.querySelector('[data-markdown-preview-state="source"]')).toBeNull();
+    anchorClick.mockRestore();
+  });
+
   it("keeps canonical Rudder and skill references atomic inside an active source block", async () => {
     const markdown = "Assign [Ada](agent://agent-1) and [$review](/skills/review/SKILL.md).";
     const ref = createRef<MarkdownEditorRef>();
