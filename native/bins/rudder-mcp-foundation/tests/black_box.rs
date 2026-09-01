@@ -42,7 +42,8 @@ fn repo_root() -> PathBuf {
 }
 
 fn node_command() -> Command {
-    let mut command = Command::new("pnpm");
+    let pnpm = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
+    let mut command = Command::new(pnpm);
     command.current_dir(repo_root()).args([
         "--filter",
         "@rudderhq/cli",
