@@ -73,6 +73,7 @@ import {
   type ImageContextMenuTarget,
 } from "./ImageContextMenu";
 import type { InlineTokenClickEvent, MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
+import { resolveMentionReplacementRange } from "./MilkdownMarkdownEditor.mention-range";
 import { ProjectIcon } from "./ProjectIdentity";
 import { StatusIcon } from "./StatusIcon";
 
@@ -956,10 +957,9 @@ export function insertMentionIntoProseMirrorView(
 ) {
   const token = mentionTokenDetails(option, agentMentionIntent);
   if (!token) return false;
-  const triggerText = `${state.trigger}${state.query}`;
-  const { from, to } = view.state.selection;
-  const start = Math.max(0, from - triggerText.length);
-  const replaceTo = isWhitespaceText(textAt(view.state.doc, to, to + 1)) ? to + 1 : to;
+  const mentionRange = resolveMentionReplacementRange(view, state, (from, to) => textAt(view.state.doc, from, to));
+  if (!mentionRange) return false;
+  const { from: start, to: replaceTo } = mentionRange;
   const linkMark = view.state.schema.marks.link?.create({ href: token.href });
   const mentionNode = view.state.schema.text(token.label, linkMark ? [linkMark] : undefined);
   const spaceNode = view.state.schema.text(" ");

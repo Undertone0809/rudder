@@ -6850,6 +6850,7 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
       || typeof webview.executeJavaScript !== "function"
       || webview.getURL() !== url) return false;
     try {
+      const currentUrl = webview.getURL();
       const evidence = await webview.executeJavaScript(`(async () => {
         const response = await fetch(window.location.href, { cache: "no-store", credentials: "same-origin" });
         return {
@@ -6861,7 +6862,8 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
           title: document.title,
         };
       })()`);
-      return evidence.pathname === new URL(url).pathname
+      return currentUrl === url
+        && evidence.pathname === new URL(url).pathname
         && evidence.fetchOk === true
         && evidence.fetchStatus >= 200
         && evidence.fetchStatus < 300
@@ -6883,7 +6885,9 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
     expectedPartition,
     expectedUrl,
   }, { timeout: 45_000 });
-  return evidenceHandle.jsonValue();
+  const evidence = await evidenceHandle.jsonValue();
+  await evidenceHandle.dispose();
+  return { ...evidence, expectedUrl };
 }
 
 async function readActiveLocalAppGuestIdentity(page, definition, marker = null) {
@@ -7354,7 +7358,10 @@ async function runLocalAppsScenario(mode) {
     await currentSavedRow.hover();
     await currentSavedRow.getByRole("button", { name: `Saved View actions for ${definition.title}` }).click();
     await run.page.getByRole("menuitem", { name: "Remove from Messenger" }).click();
-    await run.page.getByRole("button", { name: "Remove Saved View" }).click();
+    const removeDialog = run.page.getByRole("dialog", {
+      name: `Remove "${definition.title}" from Messenger?`,
+    });
+    await removeDialog.getByRole("button", { name: "Remove Saved View" }).click();
     await waitForLocalAppSavedViewRemoval(run.baseUrl, company.id, saved.savedView.id);
     await currentSavedRow.waitFor({ state: "detached", timeout: 15_000 });
     const afterRemovalStatus = await readDesktopLocalAppStatus(run.page, definition.id);

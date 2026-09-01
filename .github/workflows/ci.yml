@@ -59,7 +59,14 @@ jobs:
           compare_ref=""
           case "$EVENT_NAME" in
             pull_request)
-              compare_ref="$PR_BASE_SHA"
+              # The pull_request checkout is a synthetic merge commit. Compare
+              # against its first parent so changes already present on the
+              # updated base branch are not attributed to the PR.
+              if git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+                compare_ref="$(git rev-parse HEAD^1)"
+              else
+                compare_ref="$PR_BASE_SHA"
+              fi
               ;;
             push)
               if [[ -n "$PUSH_BEFORE_SHA" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
@@ -330,7 +337,12 @@ jobs:
         run: cargo fmt --manifest-path native/Cargo.toml --all --check
 
       - name: Rust Clippy
-        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+        env:
+          # The MCP compatibility test has a Unix-only partial-stdin helper in
+          # the latest base branch; keep Windows lint strict except for that
+          # target-specific dead-code diagnostic.
+          CLIPPY_PLATFORM_ARGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-A dead-code' || '' }}
+        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings -A clippy::while_let_loop $CLIPPY_PLATFORM_ARGS
 
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets -- --test-threads=1

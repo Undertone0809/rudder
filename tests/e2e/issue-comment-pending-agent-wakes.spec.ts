@@ -123,9 +123,15 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await appendComposerText(page, composer, " please review this change");
 
   const wakeStatus = activity.getByTestId("comment-agent-wake-status");
-  const firstStatus = activity.getByTestId(`comment-agent-wake-status-${firstAgent.id}`);
-  const secondStatus = activity.getByTestId(`comment-agent-wake-status-${secondAgent.id}`);
-  await expect(wakeStatus.getByRole("button")).toHaveCount(2);
+  const wakeSummary = wakeStatus.getByTestId("comment-agent-wake-summary");
+  const firstStatus = page.getByTestId(`comment-agent-wake-status-${firstAgent.id}`);
+  const secondStatus = page.getByTestId(`comment-agent-wake-status-${secondAgent.id}`);
+  await expect(wakeStatus.getByRole("button")).toHaveCount(1);
+  await expect(wakeSummary).toContainText("2 agents will start when sent");
+  await expect(firstStatus).toHaveCount(0);
+  await wakeSummary.click();
+  const wakePopover = page.getByTestId("comment-agent-wake-popover");
+  await expect(wakePopover).toBeVisible();
   await expect(firstStatus).toHaveAttribute("data-wake-state", "pending");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
   await expect(composer.locator(`a[href^="agent://${firstAgent.id}"]`)).toHaveCount(2);
@@ -134,6 +140,9 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(500);
+  await expect(wakePopover).toBeHidden();
+  await wakeSummary.click();
+  await expect(wakePopover).toBeVisible();
   await expect(firstStatus).toBeVisible();
   await expect(secondStatus).toBeVisible();
   await expect(firstStatus).toContainText("Noah Platform");
@@ -172,9 +181,8 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await page.screenshot({ path: testInfo.outputPath("issue-comment-pending-agent-wakes-focused.png") });
   await page.keyboard.press("Enter");
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
-  await expect(firstStatus).toContainText("won't start this time");
+  await expect(firstStatus).toContainText("reference only");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
-  await expect(composer).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath("issue-comment-pending-agent-wakes-cancelled.png") });
 
   await page.goto(`/${organization.issuePrefix}/issues/${otherIssueRef}`);
@@ -185,8 +193,12 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
     .locator("[contenteditable='true']")
     .last()).toBeEmpty();
   await page.goto(`/${organization.issuePrefix}/issues/${issueRef}`);
+  const restoredWakeSummary = activity.getByTestId("comment-agent-wake-summary");
+  await expect(restoredWakeSummary).toContainText("1 of 2 agents will start when sent");
+  await restoredWakeSummary.click();
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
+  await expect(firstStatus).toBeVisible();
 
   await composer.evaluate((editor, agentId) => {
     const anchor = editor.querySelector(`a[href^="agent://${agentId}"]`);
@@ -203,6 +215,10 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
 
   await appendComposerText(page, composer, " and ");
   await addAgentMention(page, composer, secondAgent);
+  const refreshedWakeSummary = activity.getByTestId("comment-agent-wake-summary");
+  await expect(refreshedWakeSummary).toContainText("2 agents will start when sent");
+  await refreshedWakeSummary.click();
+  await expect(wakePopover).toBeVisible();
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
 
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -229,6 +245,7 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await appendComposerText(page, composer, " and ");
   await addAgentMention(page, composer, secondAgent);
   await appendComposerText(page, composer, " keep this draft after a failed request");
+  await page.getByTestId("comment-agent-wake-summary").click();
   await expect(firstStatus).toHaveAttribute("data-wake-state", "pending");
   await firstStatus.click();
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
