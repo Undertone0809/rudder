@@ -36,7 +36,6 @@ import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
 import { onboardingApi } from "../api/onboarding";
 import { organizationsApi } from "../api/orgs";
-import { secretsApi } from "../api/secrets";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
@@ -53,8 +52,6 @@ import {
   runtimeModelEmptyLabel,
   runtimeModelEmptyMessage,
   runtimeModelSearchPlaceholder,
-  runtimeProviderCredentialEnvKey,
-  runtimeProviderCredentialLabel,
   runtimeProviderSetupHint,
 } from "../lib/runtime-models";
 import { cn } from "../lib/utils";
@@ -131,12 +128,6 @@ export function OnboardingWizard() {
   const [cursorMode, setCursorMode] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
-  const [providerApiKey, setProviderApiKey] = useState("");
-  const [providerSecretBinding, setProviderSecretBinding] = useState<{
-    envKey: string;
-    value: string;
-    secretId: string;
-  } | null>(null);
   const [url, setUrl] = useState("");
   const [adapterEnvResult, setAdapterEnvResult] =
     useState<AgentRuntimeEnvironmentTestResult | null>(null);
@@ -149,6 +140,7 @@ export function OnboardingWizard() {
   const draftOrganizationIdRef = useRef<string | null>(null);
   const shouldCleanupDraftOrganizationRef = useRef(false);
   const hasAppliedInitialAgentNameRef = useRef(false);
+  const adapterEnvRequestVersionRef = useRef(0);
   // Created entity IDs — pre-populate from existing organization when skipping step 1
   const [createdCompanyId, setCreatedCompanyId] = useState<string | null>(
     existingCompanyId ?? null
@@ -336,10 +328,11 @@ export function OnboardingWizard() {
       ? "opencode"
       : "claude");
   useEffect(() => {
-    if (step !== 2) return;
+    adapterEnvRequestVersionRef.current += 1;
     setAdapterEnvResult(null);
     setAdapterEnvError(null);
-  }, [step, agentRuntimeType, model, thinkingEffort, cursorMode, command, args, providerApiKey, url]);
+    setAdapterEnvLoading(false);
+  }, [step, agentRuntimeType, model, thinkingEffort, cursorMode, command, args, url]);
   useEffect(() => {
     if (!effectiveOnboardingOpen) return;
     const handlePageHide = () => {
@@ -365,8 +358,6 @@ export function OnboardingWizard() {
   );
   const requiresProviderModel = requiresExplicitProviderModel(agentRuntimeType);
   const providerSetupHint = runtimeProviderSetupHint(agentRuntimeType, model);
-  const providerCredentialEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, model);
-  const providerCredentialLabel = runtimeProviderCredentialLabel(agentRuntimeType, model);
   const adapterEnvBlockingMessage = adapterEnvResult
     ? blockingRuntimeEnvironmentMessage(adapterEnvResult)
     : null;
@@ -385,12 +376,8 @@ export function OnboardingWizard() {
     setThinkingEffort("");
     setThinkingEffortOpen(false);
     setCursorMode("");
-    setProviderApiKey("");
-    setProviderSecretBinding(null);
   }
   function selectModel(nextModel: string) {
-    const currentEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, model);
-    const nextEnvKey = runtimeProviderCredentialEnvKey(agentRuntimeType, nextModel);
     const nextThinkingEffortOptions = thinkingEffortOptionsForRuntime(
       agentRuntimeType,
       nextModel || defaultModelForRuntime(agentRuntimeType),
@@ -400,10 +387,6 @@ export function OnboardingWizard() {
     setThinkingEffort((current) =>
       nextThinkingEffortOptions.some((option) => option.id === current) ? current : "",
     );
-    if (currentEnvKey !== nextEnvKey) {
-      setProviderApiKey("");
-      setProviderSecretBinding(null);
-    }
   }
   function reset() {
     setStep(1);
@@ -422,8 +405,6 @@ export function OnboardingWizard() {
     setCursorMode("");
     setCommand("");
     setArgs("");
-    setProviderApiKey("");
-    setProviderSecretBinding(null);
     setUrl("");
     setAdapterEnvResult(null);
     setAdapterEnvError(null);
@@ -459,14 +440,8 @@ export function OnboardingWizard() {
       setRouteDismissed(true);
     }
   }
-  function buildAdapterConfig(
-    providerCredential?: { envKey: string; binding: Record<string, unknown> } | null,
-  ): Record<string, unknown> {
+  function buildAdapterConfig(): Record<string, unknown> {
     const adapter = getUIAdapter(agentRuntimeType);
-    const envBindings: Record<string, unknown> = {};
-    if (providerCredential) {
-      envBindings[providerCredential.envKey] = providerCredential.binding;
-    }
     const config = adapter.buildAdapterConfig({
       ...defaultCreateValues,
       agentRuntimeType,
@@ -496,7 +471,6 @@ export function OnboardingWizard() {
         agentRuntimeType === "codex_local"
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
           : defaultCreateValues.dangerouslyBypassSandbox,
-      envBindings,
     });
     if (agentRuntimeType === "claude_local" && forceUnsetAnthropicApiKey) {
       const env =
@@ -510,48 +484,6 @@ export function OnboardingWizard() {
     }
     return config;
   }
-  async function ensureProviderCredentialBinding(): Promise<{
-    envKey: string;
-    binding: Record<string, unknown>;
-  } | null> {
-    const envKey = providerCredentialEnvKey;
-    const value = providerApiKey.trim();
-    if (!envKey || !value) return null;
-    if (!createdCompanyId) {
-      throw new Error("Complete organization setup before storing provider credentials.");
-    }
-    if (
-      providerSecretBinding &&
-      providerSecretBinding.envKey === envKey &&
-      providerSecretBinding.value === value
-    ) {
-      return {
-        envKey,
-        binding: {
-          type: "secret_ref",
-          secretId: providerSecretBinding.secretId,
-          version: "latest",
-        },
-      };
-    }
-    const secret = await secretsApi.create(createdCompanyId, {
-      name: `onboarding-${envKey.toLowerCase().replace(/_/g, "-")}-${Date.now()}`,
-      value,
-      description: `Created from onboarding for ${model.trim() || envKey}.`,
-    });
-    setProviderSecretBinding({ envKey, value, secretId: secret.id });
-    return {
-      envKey,
-      binding: {
-        type: "secret_ref",
-        secretId: secret.id,
-        version: "latest",
-      },
-    };
-  }
-  async function buildAdapterConfigWithProviderSecret(): Promise<Record<string, unknown>> {
-    return buildAdapterConfig(await ensureProviderCredentialBinding());
-  }
   async function runAdapterEnvironmentTest(
     agentRuntimeConfigOverride?: Record<string, unknown>
   ): Promise<AgentRuntimeEnvironmentTestResult | null> {
@@ -560,6 +492,7 @@ export function OnboardingWizard() {
       setAdapterEnvError("Complete organization setup before testing the runtime.");
       return null;
     }
+    const requestVersion = adapterEnvRequestVersionRef.current;
     setAdapterEnvLoading(true);
     setAdapterEnvError(null);
     try {
@@ -567,18 +500,22 @@ export function OnboardingWizard() {
         createdCompanyId,
         agentRuntimeType,
         {
-          agentRuntimeConfig: agentRuntimeConfigOverride ?? (await buildAdapterConfigWithProviderSecret())
+          agentRuntimeConfig: agentRuntimeConfigOverride ?? buildAdapterConfig()
         }
       );
+      if (requestVersion !== adapterEnvRequestVersionRef.current) return null;
       setAdapterEnvResult(result);
       return result;
     } catch (err) {
+      if (requestVersion !== adapterEnvRequestVersionRef.current) return null;
       setAdapterEnvError(
         err instanceof Error ? err.message : "Runtime environment test failed"
       );
       return null;
     } finally {
-      setAdapterEnvLoading(false);
+      if (requestVersion === adapterEnvRequestVersionRef.current) {
+        setAdapterEnvLoading(false);
+      }
     }
   }
   async function handleStep1Next() {
@@ -669,7 +606,7 @@ export function OnboardingWizard() {
           ? "checking_runtime"
           : "creating_agent",
       );
-      const agentRuntimeConfig = await buildAdapterConfigWithProviderSecret();
+      const agentRuntimeConfig = buildAdapterConfig();
       if (isLocalAdapter) {
         const result = adapterEnvResult ?? (await runAdapterEnvironmentTest(agentRuntimeConfig));
         if (!result) return;
@@ -1074,24 +1011,6 @@ export function OnboardingWizard() {
                       {providerSetupHint ? (
                         <div className="rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                           {providerSetupHint}
-                        </div>
-                      ) : null}
-                      {providerCredentialEnvKey ? (
-                        <div className="space-y-1.5">
-                          <label className="text-xs text-muted-foreground block">
-                            {providerCredentialLabel}
-                          </label>
-                          <input
-                            className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                            type="password"
-                            autoComplete="off"
-                            placeholder={`Paste ${providerCredentialEnvKey}`}
-                            value={providerApiKey}
-                            onChange={(event) => setProviderApiKey(event.currentTarget.value)}
-                          />
-                          <p className="text-[11px] leading-relaxed text-muted-foreground">
-                            Stored as a Rudder secret and referenced by this agent runtime for Test now and future runs.
-                          </p>
                         </div>
                       ) : null}
                     </div>

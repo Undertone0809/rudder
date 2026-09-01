@@ -804,6 +804,112 @@ describe("issue lifecycle routes", () => {
     });
   });
 
+  it("creates one idempotent Debug task from a failed Run with bounded source context", async () => {
+    const createdIssue = makeIssue({
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      title: "Debug failed Run: process_lost",
+    });
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      shortRef: "run_5555555",
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "failed",
+      errorCode: "process_lost",
+      goalId: null,
+      contextSnapshot: { issueId: createdIssue.id },
+    });
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      id: createdIssue.id,
+      projectId: "99999999-9999-4999-8999-999999999999",
+    }));
+    mockIssueService.createWithResult
+      .mockResolvedValueOnce({ issue: createdIssue, created: true })
+      .mockResolvedValueOnce({ issue: createdIssue, created: false });
+
+    const client = await createClient();
+    const first = await client
+      .post(`/api/orgs/organization-1/agent-runs/${RUN_ID}/debug-issue`)
+      .send({ diagnostics: "API_KEY=secret-value\nrun output" });
+    const replay = await client
+      .post(`/api/orgs/organization-1/agent-runs/${RUN_ID}/debug-issue`)
+      .send({ diagnostics: "API_KEY=secret-value\nrun output" });
+
+    expect(first.status).toBe(201);
+    expect(first.body).toMatchObject({ created: true, issue: { id: createdIssue.id } });
+    expect(replay.status).toBe(200);
+    expect(replay.body).toMatchObject({ created: false, issue: { id: createdIssue.id } });
+    expect(mockIssueService.createWithResult).toHaveBeenCalledTimes(2);
+    expect(mockIssueService.createWithResult).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        status: "todo",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        projectId: "99999999-9999-4999-8999-999999999999",
+        originKind: "run_debug",
+        originId: RUN_ID,
+        originRunId: RUN_ID,
+        description: expect.stringMatching(/Open source Run[\s\S]*BEGIN UNTRUSTED[\s\S]*API_KEY=\[REDACTED\]/),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockLogActivity).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not copy a cross-organization source Issue into a Debug task", async () => {
+    const sourceIssueId = "66666666-6666-4666-8666-666666666666";
+    const createdIssue = makeIssue({ title: "Debug failed Run: process_lost" });
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "failed",
+      errorCode: "process_lost",
+      goalId: null,
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    mockIssueService.getById.mockResolvedValue(makeIssue({
+      id: sourceIssueId,
+      orgId: "organization-2",
+      projectId: "99999999-9999-4999-8999-999999999999",
+      goalId: "88888888-8888-4888-8888-888888888888",
+    }));
+    mockIssueService.createWithResult.mockResolvedValue({ issue: createdIssue, created: true });
+
+    const response = await (await createClient())
+      .post(`/api/orgs/organization-1/agent-runs/${RUN_ID}/debug-issue`)
+      .send({ diagnostics: "bounded evidence" });
+
+    expect(response.status).toBe(201);
+    expect(mockIssueService.createWithResult).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        projectId: null,
+        goalId: null,
+        description: expect.not.stringContaining(`issue://${sourceIssueId}`),
+      }),
+    );
+  });
+
+  it("rejects Debug task creation for a non-failed Run", async () => {
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: RUN_ID,
+      orgId: "organization-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+      contextSnapshot: {},
+    });
+
+    const response = await (await createClient())
+      .post(`/api/orgs/organization-1/agent-runs/${RUN_ID}/debug-issue`)
+      .send({ diagnostics: "bounded evidence" });
+
+    expect(response.status).toBe(422);
+    expect(response.body.error).toContain("Only failed or timed out Agent Runs");
+    expect(mockIssueService.createWithResult).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["mismatched", 409, "Agent Issue creation request does not match the active run"],
     ["cross-organization", 403, "Agent Issue creation run context does not belong to this organization and Agent"],

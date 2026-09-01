@@ -66,6 +66,7 @@ import {
   followedByUserCondition,
   isUniqueConstraintConflict,
   participatedByAgentCondition,
+  resolveIdempotentIssueOrigin,
   sameRunLock,
   touchedByUserCondition,
   unreadForUserCondition,
@@ -1029,18 +1030,15 @@ export function issueService(db: Db, storage?: StorageService) {
     ) => {
       const { labelIds: inputLabelIds, ...rawIssueData } = data;
       const issueData = { ...rawIssueData };
-      const agentIssueCreationOrigin = issueData.originKind === "agent_issue_creation"
-        && typeof issueData.originId === "string"
-        ? issueData.originId
-        : null;
-      if (agentIssueCreationOrigin) {
+      const idempotentOrigin = resolveIdempotentIssueOrigin(issueData.originKind, issueData.originId);
+      if (idempotentOrigin) {
         const existing = await db
           .select()
           .from(issues)
           .where(and(
             eq(issues.orgId, orgId),
-            eq(issues.originKind, "agent_issue_creation"),
-            eq(issues.originId, agentIssueCreationOrigin),
+            eq(issues.originKind, idempotentOrigin.kind),
+            eq(issues.originId, idempotentOrigin.id),
           ))
           .then((rows) => rows[0] ?? null);
         if (existing) {
@@ -1275,7 +1273,7 @@ export function issueService(db: Db, storage?: StorageService) {
             );
           })));
         }
-        if (!agentIssueCreationOrigin || !isUniqueConstraintConflict(error, "issues_agent_issue_creation_origin_uq")) {
+        if (!idempotentOrigin || !isUniqueConstraintConflict(error, idempotentOrigin.constraint)) {
           throw error;
         }
         const existing = await db
@@ -1283,8 +1281,8 @@ export function issueService(db: Db, storage?: StorageService) {
           .from(issues)
           .where(and(
             eq(issues.orgId, orgId),
-            eq(issues.originKind, "agent_issue_creation"),
-            eq(issues.originId, agentIssueCreationOrigin),
+            eq(issues.originKind, idempotentOrigin.kind),
+            eq(issues.originId, idempotentOrigin.id),
           ))
           .then((rows) => rows[0] ?? null);
         if (!existing) throw error;

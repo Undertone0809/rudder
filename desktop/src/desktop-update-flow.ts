@@ -456,7 +456,7 @@ export function createDesktopUpdateFlow(context: {
       probation: {
         executable: path.join(transactionPaths.installPath, "Contents", "MacOS", "Rudder"),
         args: ["--rudder-update-probation"],
-        timeoutMs: 10_000,
+        timeoutMs: 60_000,
       },
     };
 

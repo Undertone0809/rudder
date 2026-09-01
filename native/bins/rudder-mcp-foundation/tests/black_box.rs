@@ -1,7 +1,9 @@
 use serde_json::Value;
+#[cfg(unix)]
+use std::io::{BufRead, BufReader};
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -40,8 +42,8 @@ fn repo_root() -> PathBuf {
 }
 
 fn node_command() -> Command {
-    let command_name = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
-    let mut command = Command::new(command_name);
+    let pnpm = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
+    let mut command = Command::new(pnpm);
     command.current_dir(repo_root()).args([
         "--filter",
         "@rudderhq/cli",
@@ -93,6 +95,7 @@ fn validation_projection(response: &Value) -> Value {
     })
 }
 
+#[cfg(unix)]
 fn request_without_eof(mut command: Command, body: &str, env: &BTreeMap<&str, &str>) -> Value {
     clear_runtime_env(&mut command);
     command

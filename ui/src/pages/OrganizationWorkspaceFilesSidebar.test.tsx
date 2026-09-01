@@ -203,6 +203,10 @@ vi.mock("@/lib/router", () => ({
   ],
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({ confirm: vi.fn(async () => true) }),
+}));
+
 vi.mock("../api/orgs", () => ({
   organizationsApi: {
     copyWorkspaceEntry: mockState.copyWorkspaceEntry,

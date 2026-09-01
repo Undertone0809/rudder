@@ -117,6 +117,7 @@ import {
   type DesktopFileLaunchTargetId,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
+import { isPackagedTestIdentityMarker } from "./identity-ipc.js";
 import {
   createDesktopIdentityRuntime,
   type DesktopLocalAccountAuth,
@@ -575,6 +576,7 @@ function applyDesktopAppIdentity(profile: LocalEnvProfile): string {
 
 const initialProfile = resolveDesktopLocalEnvProfile();
 const APP_NAME = applyDesktopAppIdentity(initialProfile);
+const DESKTOP_WINDOW_TITLE = "Rudder";
 const desktopCapabilities = resolveDesktopCapabilities();
 function readCurrentDesktopSystemPermissions(): DesktopSystemPermissions {
   return resolveDesktopSystemPermissions({
@@ -637,12 +639,11 @@ const terminalController = createTerminalController({
   resolveWorkspace: async (orgId, agentId) => {
     const apiUrl = serverHandle?.apiUrl;
     if (!apiUrl) throw new Error("The local Rudder runtime is not ready.");
-    const [agentResponse, filesResponse] = await Promise.all([
-      session.defaultSession.fetch(buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`), { credentials: "include" }),
-      session.defaultSession.fetch(buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`), { credentials: "include" }),
-    ]);
+    const fetchNoStore = (url: string) => session.defaultSession.fetch(url, { credentials: "include", cache: "no-store" });
+    const agentResponse = await fetchNoStore(buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`));
     if (!agentResponse.ok) throw new Error(agentResponse.status === 404 ? "The selected Agent no longer exists." : "Could not validate the selected Agent.");
     const agent = await agentResponse.json() as { id?: unknown; orgId?: unknown; name?: unknown };
+    const filesResponse = await fetchNoStore(buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`));
     if (!filesResponse.ok) throw new Error("The Agent workspace is unavailable on this machine.");
     const listing = await filesResponse.json() as { rootPath?: unknown; directoryPath?: unknown; rootExists?: unknown; entries?: unknown };
     const workspace = resolveTerminalWorkspaceFromApi(orgId, agentId, agent, listing);
@@ -1425,7 +1426,15 @@ function initializeBrowserProfile(instanceRoot: string): void {
   });
   browserProfileController = controller;
   replaceBrowserRuntimeLifecycle();
-  const sourceRegistry = createBrowserImportSourceRegistry();
+  const smokeBrowserImportHome = process.env.RUDDER_DESKTOP_SMOKE_BROWSER_IMPORT_HOME?.trim();
+  const allowSmokeBrowserImportHome = Boolean(smokeBrowserImportHome)
+    && app.isPackaged
+    && app.getName().startsWith("Rudder-smoke-")
+    && process.env.RUDDER_DESKTOP_SMOKE_AUTH_BYPASS === "1"
+    && isPackagedTestIdentityMarker(path.join(process.resourcesPath, "native", "packaged-test-identity.marker"));
+  const sourceRegistry = createBrowserImportSourceRegistry({
+    homeDir: allowSmokeBrowserImportHome ? path.resolve(smokeBrowserImportHome!) : undefined,
+  });
   browserCookieImporter = createBrowserCookieImporter({
     sourceRegistry,
     cookies: {
@@ -1740,7 +1749,7 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
   );
   const window = new BrowserWindow({
     ...initialWindowSize,
-    title: APP_NAME,
+    title: DESKTOP_WINDOW_TITLE,
     show: false,
     autoHideMenuBar: process.platform !== "darwin",
     ...macWindowEffects,
@@ -1753,6 +1762,11 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
   }
+
+  window.webContents.on("page-title-updated", (event) => {
+    event.preventDefault();
+    window.setTitle(DESKTOP_WINDOW_TITLE);
+  });
 
   if (kind === "app") {
     const browserProfile = requireBrowserProfileController();
@@ -1831,7 +1845,7 @@ async function replaceMainWindow(nextWindow: BrowserWindow, kind: "app" | "boot"
   mainWindow = nextWindow;
   currentMainRenderer = nextWindow.webContents;
   currentMainWindowKind = kind;
-  mainWindow.setTitle(APP_NAME);
+  mainWindow.setTitle(DESKTOP_WINDOW_TITLE);
   mainWindow.show();
 
   if (previousWindow && previousWindow !== nextWindow && !previousWindow.isDestroyed()) {
@@ -3212,7 +3226,7 @@ async function bootstrap(): Promise<void> {
             probation: {
               executable: path.join(journal.installPath, "Contents", "MacOS", "Rudder"),
               args: ["--rudder-update-probation"],
-              timeoutMs: 10_000,
+              timeoutMs: 60_000,
             },
           };
           const recovery = recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });

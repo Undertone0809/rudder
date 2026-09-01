@@ -326,8 +326,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare Windows PostgreSQL test runtime
-        if: matrix.target == 'x86_64-pc-windows-msvc'
+      - name: Prepare PostgreSQL test runtime
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         run: |
           bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
           echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"

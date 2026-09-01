@@ -260,7 +260,7 @@ jobs:
       - name: Build publish payloads
         run: |
           pnpm install --frozen-lockfile
-          pnpm build
+          pnpm --filter '!@rudderhq/desktop' -r build
           bash scripts/prepare-server-ui-dist.sh
           for pkg_dir in \
             server \
@@ -424,7 +424,7 @@ jobs:
           fi
 
       - name: Smoke packaged App Builder
-        if: matrix.platform != 'windows'
+        if: matrix.platform == 'linux' || (matrix.platform == 'macos' && matrix.arch == 'arm64')
         run: |
           if [ "$(uname -s)" = "Linux" ]; then
             dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
@@ -453,6 +453,13 @@ jobs:
       - name: Smoke packaged account gate
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
+
+      - name: Verify packaged release-set lifecycle
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: |
+          for scenario in startup-recovery clean upgrade auto-update auto-update-public terminal; do
+            node desktop/scripts/smoke.mjs --mode=packaged --scenario="$scenario"
+          done
 
       - name: Collect verified Desktop asset
         run: |

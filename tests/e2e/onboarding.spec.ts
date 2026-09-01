@@ -302,6 +302,86 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toHaveCount(0);
   });
 
+  test("keeps provider credentials in the local runtime during first-agent setup", async ({ page }) => {
+    await page.goto("/onboarding");
+    await expectOnboardingStep(page, "Name your organization");
+    await page.locator('input[placeholder="Acme Corp"]').fill(`E2E-Runtime-Credentials-${Date.now()}`);
+    const createOrganizationResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith("/api/orgs")
+      && response.ok(),
+    );
+    await page.getByRole("button", { name: "Next" }).click();
+    const organization = await (await createOrganizationResponse).json() as { id: string };
+
+    await page.route(`**/api/orgs/${organization.id}/adapters/pi_local/models`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "kimi-coding/kimi-for-coding", label: "Kimi for Coding" },
+          { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
+        ]),
+      });
+    });
+    await page.route(
+      `**/api/orgs/${organization.id}/adapters/pi_local/test-environment`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            agentRuntimeType: "pi_local",
+            status: "pass",
+            testedAt: "2026-08-31T00:00:00.000Z",
+            checks: [{ code: "pi_hello_probe_passed", level: "info", message: "Pi hello probe succeeded." }],
+          }),
+        });
+      },
+    );
+
+    await expectOnboardingStep(page, "Create your first agent");
+    await expect(page.locator('input[placeholder*="API_KEY"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "More Agent Runtime Types" }).click();
+    await page.getByRole("button", { name: "Pi" }).click();
+
+    const onboardingDialog = page.getByTestId("onboarding-dialog");
+    await onboardingDialog.getByRole("button", { name: "Kimi for Coding", exact: true }).click();
+    const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+    await modelPopover.getByRole("button", { name: "deepseek-chat", exact: true }).click();
+
+    await expect(page.locator('input[placeholder*="API_KEY"]')).toHaveCount(0);
+    await expect(onboardingDialog.getByText("Configure DeepSeek authentication in the Pi runtime", { exact: false })).toBeVisible();
+
+    const testEnvironmentRequest = page.waitForRequest((request) =>
+      request.method() === "POST"
+      && request.url().endsWith(`/api/orgs/${organization.id}/adapters/pi_local/test-environment`),
+    );
+    await onboardingDialog.getByRole("button", { name: "Test now", exact: true }).click();
+    const testBody = (await testEnvironmentRequest).postDataJSON() as {
+      agentRuntimeConfig: Record<string, unknown>;
+    };
+    expect(testBody.agentRuntimeConfig).toMatchObject({ model: "deepseek/deepseek-chat" });
+    expect(testBody.agentRuntimeConfig).not.toHaveProperty("env");
+    await expect(onboardingDialog.getByText("Passed", { exact: true })).toBeVisible();
+
+    const createAgentResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/orgs/${organization.id}/agents`)
+      && response.ok(),
+    );
+    await onboardingDialog.getByRole("button", { name: "Create", exact: true }).click();
+    const agent = await (await createAgentResponse).json() as {
+      agentRuntimeConfig: Record<string, unknown>;
+    };
+    expect(agent.agentRuntimeConfig).toMatchObject({ model: "deepseek/deepseek-chat" });
+    expect(agent.agentRuntimeConfig).not.toHaveProperty("env");
+    await expect(page).toHaveURL(/\/messenger(?:\/chat)?$/, { timeout: 30_000 });
+
+    const cleanupResponse = await page.request.delete(`/api/orgs/${organization.id}`);
+    expect(cleanupResponse.ok()).toBe(true);
+  });
+
   test("explains each slow setup stage while creating a starter organization", async ({
     page,
   }) => {

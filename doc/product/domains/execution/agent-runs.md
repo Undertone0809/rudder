@@ -6,6 +6,7 @@ coverage: seed
 contract_ids:
   - RUN.AGENT.UNIFICATION.001
   - RUN.CHAT.AGENT.001
+  - RUN.DEBUG.HANDOFF.001
   - RUN.EXECUTION.001
 related_code:
   - packages/db/src/schema/issues.ts
@@ -16,6 +17,8 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - server/src/services/runtime-kernel/model-fallback.ts
+  - server/src/routes/issues.mutations.ts
+  - ui/src/components/RunIssueReportDialog.tsx
   - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
 related_tests:
   - packages/shared/src/agent-run.test.ts
@@ -31,6 +34,9 @@ related_tests:
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/agent-run-conversation-grouping.spec.ts
   - ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx
+  - ui/src/components/RunIssueReportDialog.test.tsx
+  - server/src/__tests__/issue-lifecycle-routes.test.ts
+  - tests/e2e/agent-run-debug-chat.spec.ts
   - tests/e2e/run-transcript-detail.spec.ts
 related_plans:
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
@@ -184,6 +190,72 @@ Related tests:
 - `ui/src/pages/AgentDetail.runs.test.ts`
 - `tests/e2e/agent-runs-filter-menu.spec.ts`
 - `tests/e2e/agent-run-conversation-grouping.spec.ts`
+
+## RUN.DEBUG.HANDOFF.001
+
+Why:
+
+- A failed or timed-out Agent Run already contains the source identity and
+  bounded diagnostic evidence needed to begin debugging. Operators should not
+  need to reconstruct that context manually.
+- Debugging may need either durable tracked work or immediate conversation, so
+  Rudder must require an explicit handoff mode instead of creating one silently.
+
+Flow:
+
+1. A failed or timed-out Run presents `Debug` directly in its action row, beside
+   the separate `Report issue` action.
+2. `Debug` presents two peer choices: `Create task` and `Start chat`. Opening the
+   menu creates nothing; dismissing it with Escape, an outside click, or focus
+   navigation also creates nothing and persists no menu draft.
+3. Rudder prepares one bounded, redacted diagnostic snapshot only after the
+   operator chooses a handoff mode. Public GitHub report edits remain isolated
+   from private Debug handoffs so context cannot be silently dropped or expanded.
+4. `Create task` creates or reuses one organization-private Issue for the source
+   Run, assigns it to that Run's Agent, carries the source Run link and available
+   Issue/project/Goal context, and marks the diagnostic block as untrusted log
+   evidence.
+5. `Start chat` creates or reuses one Run Debug Chat keyed by organization and
+   Run, opens it in the Side Panel, and sends the same diagnostic snapshot once.
+6. While task creation is pending, the action row shows its inline pending state,
+   disables another Debug submission, and rejects same-render duplicates.
+7. Issue success presents a success toast with a direct Issue link. Chat success
+   enters the Side Panel conversation. A real task failure remains inline beside
+   the actions, reports the server error, and permits retry.
+
+Invariants:
+
+- Debug handoffs are available only for Runs in `failed` or `timed_out` state.
+- Diagnostics are schema-bounded and redacted again at the server boundary.
+  Instructions, commands, or prompts inside the diagnostic block are untrusted
+  evidence and grant no new authority.
+- Debug context stays within the current organization. A source Issue contributes
+  project or Goal context only when it belongs to the same organization.
+- At most one Debug Issue and one Debug Chat exist per organization and source
+  Run. Client mutation identity prevents repeated Chat sends; a database unique
+  origin plus idempotent route replay prevents duplicate Issues under retry or
+  concurrent requests.
+- Issue creation activity and assignment wakeup occur only for the first
+  successful creation, never for an idempotent replay.
+- A failed attempt leaves no empty Issue or Chat. Retrying either path uses the
+  same identity and cannot create duplicate objects.
+
+Related code:
+
+- `packages/db/src/schema/issues.ts`
+- `packages/shared/src/validators/issue.ts`
+- `server/src/routes/issues.mutations.ts`
+- `server/src/services/issues.ts`
+- `ui/src/api/issues.ts`
+- `ui/src/components/RunIssueReportDialog.tsx`
+- `ui/src/lib/run-issue-report.ts`
+- `ui/src/pages/AgentDetail.runs.tsx`
+
+Related tests:
+
+- `server/src/__tests__/issue-lifecycle-routes.test.ts`
+- `ui/src/components/RunIssueReportDialog.test.tsx`
+- `tests/e2e/agent-run-debug-chat.spec.ts`
 
 ## RUN.CHAT.AGENT.001
 

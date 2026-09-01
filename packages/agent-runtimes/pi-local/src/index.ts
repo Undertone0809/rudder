@@ -54,8 +54,7 @@ Notes:
 - Custom provider/model IDs may be typed directly in Rudder. Use \`provider/model\`,
   for example \`deepseek/deepseek-chat\`. For native DeepSeek, authenticate Pi
   with \`DEEPSEEK_API_KEY\` in the runtime env or \`pi /login\`. Rudder onboarding
-  exposes a provider API key field for these models, stores it as an organization
-  secret, and references that secret from the agent runtime env. If Pi reports
+  only selects the model; provider authentication remains a Pi runtime concern. If Pi reports
   an OpenRouter credential error for a DeepSeek-looking model ID, set
   \`OPENROUTER_API_KEY\` or add a native DeepSeek provider/model to
   \`~/.pi/agent/models.json\`. Use Rudder's environment test as the source of

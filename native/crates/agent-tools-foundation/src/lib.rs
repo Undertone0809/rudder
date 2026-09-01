@@ -1237,10 +1237,7 @@ pub fn run_stdio(
     mut dispatcher: impl ToolDispatcher,
 ) -> Result<(), FoundationError> {
     let mut input = MessageReader::new(input);
-    loop {
-        let Some(payload) = input.next_message()? else {
-            break;
-        };
+    while let Some(payload) = input.next_message()? {
         let mode = input.mode().expect("message mode must be selected");
         let request: JsonRpcRequest = serde_json::from_slice(&payload)?;
         let Some(response) = handle_message(&request, surface, &context, &mut dispatcher) else {
@@ -1267,10 +1264,7 @@ where
     let output = Arc::new(Mutex::new(output));
     let mut workers = Vec::new();
     let active = Arc::new(Mutex::new(HashSet::<String>::new()));
-    loop {
-        let Some(payload) = input.next_message()? else {
-            break;
-        };
+    while let Some(payload) = input.next_message()? {
         let mode = input.mode().expect("message mode must be selected");
         let request: JsonRpcRequest = serde_json::from_slice(&payload)?;
         if request.method.as_deref() == Some("notifications/cancelled") {

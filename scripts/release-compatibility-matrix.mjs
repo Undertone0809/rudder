@@ -12,8 +12,63 @@ const journalPath = "packages/db/src/migrations/meta/_journal.json";
 const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
+  "0.7.16": {
+    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    fixtures: [
+      {
+        version: "0.7.15",
+        ref: "v0.7.15",
+        fingerprint: "3fa86ccfeb959872e3d87af335928aff13880fc990c51f1dcf3c42baa6eb07ce",
+      },
+      {
+        version: "0.7.14",
+        ref: "v0.7.14",
+        fingerprint: "3fa86ccfeb959872e3d87af335928aff13880fc990c51f1dcf3c42baa6eb07ce",
+      },
+      {
+        version: "0.7.13",
+        ref: "v0.7.13",
+        fingerprint: "3fa86ccfeb959872e3d87af335928aff13880fc990c51f1dcf3c42baa6eb07ce",
+      },
+      {
+        version: "0.7.12",
+        ref: "v0.7.12",
+        fingerprint: "4055105a1e97c33aaaa11ef75d5d4cc48d914f06f83b7804928008dd37f846c0",
+      },
+      {
+        version: "0.7.11",
+        ref: "v0.7.11",
+        fingerprint: "d9d8397a27fbe3bfc48452d1b8bddabda45098666983db656f2119e59fa09cd0",
+      },
+      {
+        version: "0.7.10",
+        ref: "v0.7.10",
+        fingerprint: "4af6af875fe7f0a67ecd1f2c8d75d03f93403160516ade8482df56ce1976a788",
+      },
+      {
+        version: "0.7.9",
+        ref: "v0.7.9",
+        fingerprint: "4af6af875fe7f0a67ecd1f2c8d75d03f93403160516ade8482df56ce1976a788",
+      },
+      {
+        version: "0.7.1",
+        ref: "v0.7.1",
+        fingerprint: "a30e16cfafac9884e9239af03f0c9c4200b958f0ae0c14f31a5b5198f65a9444",
+      },
+      {
+        version: "0.7.0",
+        ref: "v0.7.0",
+        fingerprint: "2efffbc9abd94c1a29818e11086119978c9385cf250e44c42eb4901083307fc6",
+      },
+      {
+        version: "0.6.5",
+        ref: "v0.6.5",
+        fingerprint: "0328b4ffb5dcc557b50072e449ee2d5ab8b8770b24010e664f9ae86ecd86366b",
+      },
+    ],
+  },
   "0.7.15": {
-    candidateFingerprint: "c490a6ffe6574eb07b05f42632b442860fc751c5cb3582326f2d3dde63d2abe3",
+    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
     fixtures: [
       {
         version: "0.7.14",
@@ -63,7 +118,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.14": {
-    candidateFingerprint: "c490a6ffe6574eb07b05f42632b442860fc751c5cb3582326f2d3dde63d2abe3",
+    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
     fixtures: [
       {
         version: "0.7.13",
@@ -108,7 +163,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.13": {
-    candidateFingerprint: "c490a6ffe6574eb07b05f42632b442860fc751c5cb3582326f2d3dde63d2abe3",
+    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
     fixtures: [
       {
         version: "0.7.12",

@@ -148,7 +148,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
         "xpath=ancestor::div[contains(@class, 'update-container')]",
       );
     await expect(page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`)).toBeVisible();
-    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(46);
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(47);
     const latestUpdate = page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`).locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );

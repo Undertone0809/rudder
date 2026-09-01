@@ -40,7 +40,7 @@ Operational fields:
 
 Notes:
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
-- The default Claude Code model is DeepSeek. Reuse an existing DeepSeek credential by setting DEEPSEEK_API_KEY in the runtime env or organization secret bindings.
+- The default Claude Code model is DeepSeek. Configure DeepSeek authentication in the Claude Code runtime before running the agent; Rudder only selects the model.
 - Claude runs keep HOME/USERPROFILE on the operator home for normal local CLI auth and host tooling state; RUDDER_OPERATOR_HOME records the same boundary.
 - Rudder keeps Claude adapter-managed runtime state separate through CLAUDE_CONFIG_DIR, sanitized settings, selected skill add-dir paths, runtime temp files, and an isolated Git config pointer.
 - Claude loads only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page. Operator HOME does not authorize provider-native, project, global, stale, or unselected skills to become Rudder-loaded skills.

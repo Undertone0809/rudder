@@ -424,6 +424,29 @@ describe("organization workspace file agent access", () => {
     expect(res.body).toBeDefined();
   });
 
+  it("prevents workspace directory listings from being served stale", async () => {
+    mockWorkspaceBrowser.listFiles.mockResolvedValue({
+      source: "org_root",
+      rootPath: "/tmp/rudder-workspace",
+      directoryPath: "agents",
+      rootExists: true,
+      entries: [],
+      message: "This folder is empty.",
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    });
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/workspace/files?path=agents");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("private, no-store, max-age=0");
+    expect(mockWorkspaceBrowser.listFiles).toHaveBeenCalledWith("organization-1", "agents");
+  });
+
   it("rejects malformed agent artifacts fallback paths", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
