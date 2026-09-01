@@ -130,10 +130,19 @@ ordinary Chat replies, or non-MCP work.
   `RUDDER_API_KEY`, `RUDDER_ORG_ID`, `RUDDER_AGENT_ID`, `RUDDER_RUN_ID`, and
   `RUDDER_PROJECT_LIBRARY_PATH`.
 - Issue transport budget: run-scoped temporary state shared by the typed MCP
-  server and CLI client for Issue read/comment 5xx fingerprints. It records
-  operation, Issue id, status/code, normalized message, transport surface,
-  remaining heterogeneous fallback, and bounded retry time without changing
-  the Issue record.
+  server and CLI client for scoped Issue and run-collection 5xx fingerprints.
+  Item reads/comments use the operation and Issue id as their scope. Issue list
+  and search use organization plus project (or `*` when project is omitted),
+  ignoring query text and other list filters. `runs.list` uses organization,
+  optionally combined with its linked Issue. The state records operation,
+  normalized `scopeKey`, optional Issue id, status/code, normalized message,
+  transport surface, remaining heterogeneous fallback, and bounded retry time
+  without changing the Issue or Run record.
+- Collection readiness gate: for `issue.list`, `issue.search`, and `runs.list`,
+  the first concurrent request for a scope is the bounded readiness probe.
+  Same-scope requests arriving while the probe is in flight wait for its
+  result; a failed probe short-circuits the fanout, while a successful probe
+  clears the temporary state and lets the waiting requests continue.
 - Browser capability state: the runtime-managed `RUDDER_BROWSER_ENABLED` flag
   controls manifest projection, while the Browser API independently enforces
   the live instance setting and active-run/tab ownership on every call.
@@ -199,16 +208,21 @@ ordinary Chat replies, or non-MCP work.
    arguments and invokes the matching Rudder CLI command with `--json`.
 11. Success returns structured JSON content. Failure returns an MCP error result
    with a stable Rudder MCP error code and safe diagnostic details.
-12. Issue read/comment calls share one run-scoped 5xx budget across the typed
-   MCP and CLI surfaces. The first 5xx records a fingerprint and permits one
-   different-surface fallback. A same-surface repeat is short-circuited without
-   spending that fallback; after the heterogeneous fallback returns a 5xx, all
-   matching operation/Issue calls are short-circuited with
-   `issue_transport_unavailable` until a success clears the state or the
-   bounded backoff expires.
+12. Issue item reads/comments and the `issue.list`, `issue.search`, and
+    `runs.list` collection reads share one run-scoped 5xx budget across the
+    typed MCP and CLI surfaces. Item scopes use operation plus Issue id; Issue
+    collections use organization plus project, ignoring query and other list
+    filters; run collections use organization plus linked Issue when present.
+    Each first 5xx records a fingerprint and permits one different-surface
+    fallback. A same-surface repeat is short-circuited without spending that
+    fallback. For collection scopes, concurrent fanout waits behind one
+    readiness probe and does not issue more requests after a failed probe.
+    After the heterogeneous fallback returns a 5xx, all matching scoped calls
+    are short-circuited with `issue_transport_unavailable` until a success
+    clears the state or the bounded backoff expires.
 13. When MCP/native tool exposure is unavailable or a transport/configuration
    error blocks the tool, the agent may consult `rudder-docs` for the exact CLI
-   reference and use that compatibility path. An exhausted Issue transport
+   reference and use that compatibility path. An exhausted scoped transport
    budget is not MCP unavailability: the agent must not switch profiles or use
    direct API calls to bypass it, and must preserve Issue ownership, reviewer,
    and lifecycle state.
@@ -253,11 +267,12 @@ ordinary Chat replies, or non-MCP work.
 | Agent reads an Issue, compact Issue context, or Issue comments through typed MCP | The first-party MCP server dispatches the read directly so 5xx transport diagnostics remain structured and share the run budget with CLI fallback. |
 | Direct dispatch is not implemented for the capability and CLI invocation succeeds with JSON output | MCP result returns structured JSON content. |
 | Direct API dispatch, CLI invocation, or native bridge invocation fails | Tool result is marked error with a stable Rudder diagnostic code or safe error text. |
-| First Issue read/comment 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. |
-| Same surface repeats before fallback/backoff | Return `issue_transport_unavailable` without another backend request; preserve the one different-surface fallback. |
-| Different surface succeeds | Return success and clear the short-circuit state immediately. |
-| Different surface returns a 5xx | Consume the fallback and return `issue_transport_unavailable`; make no additional backend call for that operation/Issue until the retry time. |
-| Issue transport budget is exhausted while local work remains possible | Agent records `Issue transport unavailable`, continues local work when safe, and does not mutate ownership, reviewer, or lifecycle as a recovery action. |
+| First scoped Issue or collection 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. |
+| Same scoped surface repeats before fallback/backoff | Return `issue_transport_unavailable` without another backend request; preserve the one different-surface fallback. Query text and other collection filters do not change the scope. |
+| Concurrent collection request arrives while the readiness probe is in flight | Wait for the bounded probe; continue only after success, and short-circuit without a backend request after probe failure. |
+| Different surface succeeds | Return success and clear the scoped short-circuit state immediately. |
+| Different surface returns a 5xx | Consume the fallback and return `issue_transport_unavailable`; make no additional backend call for that scoped operation until the retry time. |
+| Scoped transport budget is exhausted while local work remains possible | Agent records `Issue transport unavailable`, continues local work when safe, and does not mutate ownership, reviewer, or lifecycle as a recovery action. |
 | Browser capability is enabled for a supported local run | Manifest exposes exactly the eight `rudder_browser_*` tools; Browser API derives identity and enforces the live setting and tab lease. |
 | Browser is disabled after run start | Browser tools disappear from future manifests/runs and current calls fail with `browser_disabled`; active leases are revoked. |
 | Desktop Browser Broker is unavailable | Browser call fails with `browser_unavailable` instead of hanging or falling back to an uncontrolled browser. |
@@ -284,10 +299,11 @@ raw cookie access or arbitrary script execution. The agent does not provide
 organization, agent, run, API, Broker, or auth identity; those come from
 Rudder-managed runtime environment.
 
-For an Issue read/comment 5xx, the agent also sees a bounded
-`issueTransport` diagnostic: fingerprint, operation, Issue id, upstream
-status/code/message, initial/fallback surface, remaining fallback count,
-retry-after duration, and the `Issue transport unavailable` checkpoint label.
+For a scoped Issue or collection 5xx, the agent also sees a bounded
+`issueTransport` diagnostic: fingerprint, operation, `scopeKey`, optional
+Issue id, upstream status/code/message, initial/fallback surface, remaining
+fallback count, retry-after duration, and the `Issue transport unavailable`
+checkpoint label.
 
 ### Operator-Visible Output
 
@@ -308,12 +324,14 @@ Evidence can include:
 - CLI/MCP server tests proving the manifest, schemas, runtime identity
   rejection, missing-context errors, stdio handling, and direct runtime API
   dispatch for supported core tools
-- CLI HTTP client tests proving the MCP-to-CLI shared fingerprint, one
-  heterogeneous fallback, same-surface short circuit, successful recovery,
-  bounded-backoff recovery, and lifecycle-route exclusion
+- CLI HTTP client tests proving the MCP-to-CLI shared fingerprint and scoped
+  collection budgets, one heterogeneous fallback, same-surface short circuit,
+  concurrent readiness gating, successful recovery, bounded-backoff recovery,
+  legacy state reuse, and lifecycle-route exclusion
 - MCP stdio-to-CLI process E2E proving typed MCP retains the transport
-  diagnostic and a third invocation is short-circuited after the single CLI
-  fallback returns the same 5xx
+  diagnostic for `runs.list`, a CLI process consumes the single fallback, and
+  a third differently filtered invocation is short-circuited after the same
+  scoped 5xx
 - runtime adapter tests proving inherited user/provider MCP config is stripped
   while Rudder-owned MCP config or native bridge config is injected
 - Agent Detail E2E proving the read-only Manage row is visible only where
@@ -365,9 +383,10 @@ Evidence can include:
   canonical required inputs, reject additional properties, and carry known
   bounds used by runtime validation.
 - CLI fallback remains valid when MCP is unavailable or broken.
-- CLI compatibility is not an independent Issue backend after a typed MCP
-  Issue read/comment 5xx. One heterogeneous fallback is allowed; repeated MCP,
-  CLI, profile, or direct API probing must not bypass the run-scoped budget.
+- CLI compatibility is not an independent backend after a typed MCP scoped
+  Issue or collection 5xx. One heterogeneous fallback is allowed; repeated
+  MCP, CLI, profile, or direct API probing must not bypass the run-scoped
+  budget or its normalized scope.
 - Issue transport failure state is temporary runtime evidence, not Issue
   lifecycle state, and must not reassign or transition the Issue.
 - Managed runtime config must not inherit arbitrary user/provider MCP servers
