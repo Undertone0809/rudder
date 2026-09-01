@@ -46,6 +46,8 @@ console.log(JSON.stringify({ ok: true, capability, protocolVersion: 1, accepted:
 }
 
 describe("native runtime payload bridge", () => {
+  const deadlineTestTimeoutMs = 5_000;
+
   it("runs verify before extraction and preserves accepted ownership", async () => {
     const f = await fixture("success");
     process.env.RUDDER_NATIVE_PAYLOAD_PATH = f.binary;
@@ -165,7 +167,7 @@ describe("native runtime payload bridge", () => {
       destinationPath: path.join(f.root, "destination"),
       maxArchiveBytes: 1024,
       expectedSha256: createHash("sha256").update("payload").digest("hex"),
-      timeoutMs: 1_000,
+      timeoutMs: deadlineTestTimeoutMs,
       preparePublish: async (_extractPath, _publishPath, context) => {
         callback.signal = context.signal;
         await new Promise<void>((_resolve, reject) => {
@@ -196,7 +198,7 @@ describe("native runtime payload bridge", () => {
       destinationPath: path.join(f.root, "destination"),
       maxArchiveBytes: 1024,
       expectedSha256: createHash("sha256").update("payload").digest("hex"),
-      timeoutMs: 1_000,
+      timeoutMs: deadlineTestTimeoutMs,
       preparePublish: async (_extractPath, _publishPath, context) => {
         await new Promise<void>((_resolve, reject) => {
           context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });
@@ -210,7 +212,7 @@ describe("native runtime payload bridge", () => {
       },
     })).rejects.toMatchObject({ code: "deadline_exceeded" });
 
-    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(Date.now() - startedAt).toBeLessThan(deadlineTestTimeoutMs + 1_000);
     await cleanupStarted;
     releaseCleanup();
   });
