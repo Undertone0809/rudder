@@ -1349,6 +1349,15 @@ function isRunningInsideDesktopExecutable(): boolean {
   return path.basename(process.execPath).toLowerCase().startsWith(DESKTOP_APP_NAME.toLowerCase());
 }
 
+function desktopApplicationEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // The macOS update CLI runs through Electron with this flag enabled. The
+  // quit handoff must launch the real Electron app so it can emit
+  // `second-instance`, rather than another Node-mode process.
+  delete env.ELECTRON_RUN_AS_NODE;
+  return env;
+}
+
 async function waitForUpdateQuitResponse(responsePath: string, timeoutMs = 8_000): Promise<UpdateQuitResponse | null> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1371,6 +1380,7 @@ async function requestDesktopQuit(
     `${DESKTOP_UPDATE_QUIT_ARG}=${responsePath}`,
     ...(options.forceUpdate ? [DESKTOP_UPDATE_FORCE_ARG] : []),
   ], {
+    env: desktopApplicationEnvironment(),
     stdio: "ignore",
     timeout: 5_000,
   });
@@ -2101,12 +2111,12 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         let applySignal: { force: boolean } | null = null;
         let applySignalController: ReturnType<typeof createDesktopApplySignalController> | null = null;
         if (desktopProgressJson && opts.desktopWaitForApply === true) {
+          applySignalController = createDesktopApplySignalController();
           writeDesktopProgress({
             phase: "ready_to_install",
             message: "Desktop update is downloaded and verified.",
             percent: 100,
           });
-          applySignalController = createDesktopApplySignalController();
           applySignal = await applySignalController.waitForInitialSignal();
           writeDesktopProgress({
             phase: "preparing_restart",

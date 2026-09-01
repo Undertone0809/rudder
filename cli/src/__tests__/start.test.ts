@@ -2061,6 +2061,58 @@ describe("desktop start command helpers", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("launches the update quit handoff outside Electron Node mode", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-quit-env-test."));
+    const installRoot = path.join(dir, "Applications");
+    const appPath = path.join(installRoot, "Rudder.app");
+    const executablePath = path.join(dir, "rudder-update-quit-env-shim");
+    const envPath = path.join(dir, "quit-env.json");
+    await mkdir(appPath, { recursive: true });
+    await writeFile(
+      executablePath,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(envPath)}, JSON.stringify({ electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE ?? null }));`,
+        `const prefix = ${JSON.stringify("--rudder-update-quit=")};`,
+        "const arg = process.argv.find((value) => value.startsWith(prefix));",
+        [
+          "if (arg) fs.writeFileSync(",
+          "arg.slice(prefix.length),",
+          "JSON.stringify({ ok: true, status: 'quitting', pid: 4242 }) + '\\n',",
+          "'utf8'",
+          ");",
+        ].join(" "),
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(executablePath, 0o755);
+
+    const previousElectronRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    try {
+      await prepareForDesktopReplace(
+        {
+          installRoot,
+          appPath,
+          executablePath,
+          metadataPath: path.join(installRoot, ".rudder-install.json"),
+        },
+        { platform: "macos", arch: "arm64", extension: ".zip" },
+        {
+          updateQuitForceDelayMs: 0,
+          waitForDesktopProcessExit: vi.fn(async () => true),
+        },
+      );
+
+      expect(JSON.parse(await readFile(envPath, "utf8"))).toEqual({ electronRunAsNode: null });
+    } finally {
+      if (previousElectronRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previousElectronRunAsNode;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform === "win32")("passes the force update flag to the Desktop quit request", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-force-quit-flag-test."));
     const installRoot = path.join(dir, "Applications");
