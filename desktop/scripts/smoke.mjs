@@ -6433,16 +6433,14 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     initialLayout.screenWidth >= initialLayout.hostWidth - 32,
     `Agent Terminal screen should fit its host (${JSON.stringify(initialLayout)})`,
   );
-  await xtermInput.pressSequentially("printf 'RUDDER_AGENT_HOME=%s\\n' \"$AGENT_HOME\"; pwd", { delay: 2 });
+  await xtermInput.pressSequentially("if [ -n \"$AGENT_HOME\" ] && [ \"$AGENT_HOME\" = \"$PWD\" ]; then printf 'RUDDER_%s=%s\\n' AGENT_HOME_CWD_MATCH yes; else printf 'RUDDER_%s=%s\\n' AGENT_HOME_CWD_MATCH no; fi", { delay: 2 });
   await xtermInput.press("Enter");
   await waitForSmokeCondition("Agent Terminal command output", async () => {
     const text = await terminal.locator(".xterm-rows").innerText();
-    return text.includes("RUDDER_AGENT_HOME=") ? text : null;
+    return text.includes("RUDDER_AGENT_HOME_CWD_MATCH=yes") ? text : null;
   });
   const output = await terminal.locator(".xterm-rows").innerText();
-  const agentHome = output.match(/RUDDER_AGENT_HOME=([^\r\n]+)/u)?.[1]?.trim();
-  assert.ok(agentHome, "Terminal should print its trusted AGENT_HOME");
-  assert.ok(output.includes(agentHome), "pwd should resolve to the same Agent workspace root");
+  assert.match(output, /RUDDER_AGENT_HOME_CWD_MATCH=yes/u, "Terminal should resolve AGENT_HOME and pwd to the same Agent workspace root");
 
   await sidePanel.getByTestId("chat-side-panel-collapse").click();
   await sidePanel.waitFor({ state: "hidden", timeout: 5_000 });
@@ -6472,7 +6470,7 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
       ? layout
       : null;
   });
-  await xtermInput.pressSequentially("printf 'TERMINAL_RESIZED=yes\\n'", { delay: 2 });
+  await xtermInput.pressSequentially("printf 'TERMINAL_%s=%s\\n' RESIZED yes", { delay: 2 });
   await xtermInput.press("Enter");
   await waitForSmokeCondition("Agent Terminal output after resize", async () => {
     const text = await terminal.locator(".xterm-rows").innerText();
@@ -6491,8 +6489,9 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   console.log(`[desktop-smoke] Agent Terminal shell-exit screenshot: ${terminalFailureSmokeScreenshotPath}`);
   await terminal.getByRole("button", { name: "Restart terminal" }).click();
   await terminal.getByText("Shell exited").waitFor({ state: "hidden", timeout: 15_000 });
+  await starting.waitFor({ state: "hidden", timeout: 15_000 });
   const shellRestartedInput = terminal.locator(".xterm-helper-textarea");
-  await shellRestartedInput.pressSequentially("printf 'TERMINAL_RESTARTED=yes\\n'", { delay: 2 });
+  await shellRestartedInput.pressSequentially("printf 'TERMINAL_%s=%s\\n' RESTARTED yes", { delay: 2 });
   await shellRestartedInput.press("Enter");
   await waitForSmokeCondition("Agent Terminal restart output", async () => {
     const text = await terminal.locator(".xterm-rows").innerText();
@@ -6531,8 +6530,9 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     await restoreWorkspace();
     await failedTerminal.getByRole("button", { name: "Restart terminal" }).click();
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "hidden", timeout: 15_000 });
+    await failedTerminal.getByText("Starting terminal", { exact: true }).waitFor({ state: "hidden", timeout: 15_000 });
     const restartedInput = failedTerminal.locator(".xterm-helper-textarea");
-    await restartedInput.pressSequentially("printf 'TERMINAL_RESTARTED=yes\\n'", { delay: 2 });
+    await restartedInput.pressSequentially("printf 'TERMINAL_%s=%s\\n' RESTARTED yes", { delay: 2 });
     await restartedInput.press("Enter");
     await waitForSmokeCondition("Agent Terminal restart output", async () => {
       const text = await failedTerminal.locator(".xterm-rows").innerText();
