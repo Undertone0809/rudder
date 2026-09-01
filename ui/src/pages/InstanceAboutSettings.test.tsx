@@ -62,13 +62,13 @@ vi.mock("@/context/I18nContext", () => ({
         "about.actions.title": "Actions",
         "about.actions.description": "Actions section",
         "about.updates.title": "Check for updates",
-        "about.updates.description": "Update section",
+        "about.updates.description": "__static_update_description__",
         "about.updates.check": "Check for updates",
         "about.updates.progress.detailsTitle": "Update progress details",
         "about.updates.progress.title": "Updating to v0.7.14",
         "about.updates.progress.phase.preparing_runtime": "Preparing lightweight update...",
         "about.feedback.title": "Send feedback",
-        "about.feedback.description": "Feedback section",
+        "about.feedback.description": "__static_feedback_description__",
         "about.feedback.send": "Send feedback",
         "common.systemSettings": "System settings",
         "common.about": "About",
@@ -122,15 +122,18 @@ describe("InstanceAboutSettings", () => {
     ).toBe("0.1.0-canary.18");
   });
 
-  it("describes the feedback recipient without exposing the raw email address", () => {
-    expect(en["about.feedback.description"]).toContain("Rudder maintainer's email");
+  it("keeps feedback recipient details out of the static about page copy", () => {
     expect(en["about.feedback.toastBody"]).toContain("Rudder maintainer's email");
-    expect(zhCN["about.feedback.description"]).toContain("Rudder 维护者邮箱");
     expect(zhCN["about.feedback.toastBody"]).toContain("Rudder 维护者邮箱");
-    expect(en["about.feedback.description"]).not.toContain("zeeland4work@gmail.com");
     expect(en["about.feedback.toastBody"]).not.toContain("zeeland4work@gmail.com");
-    expect(zhCN["about.feedback.description"]).not.toContain("zeeland4work@gmail.com");
     expect(zhCN["about.feedback.toastBody"]).not.toContain("zeeland4work@gmail.com");
+  });
+
+  it("does not render static descriptions for update and feedback actions", () => {
+    const html = renderToStaticMarkup(<InstanceAboutSettings />);
+
+    expect(html).not.toContain("__static_update_description__");
+    expect(html).not.toContain("__static_feedback_description__");
   });
 
   it("provides natural runtime preparation labels in both supported locales", () => {

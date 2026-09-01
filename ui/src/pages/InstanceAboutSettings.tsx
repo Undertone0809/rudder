@@ -511,28 +511,25 @@ export function InstanceAboutSettings() {
         <SettingsGroup>
           <SettingsItem
             title={t("about.updates.title")}
-            description={(
+            description={updateResult ? (
               <div className="flex flex-col gap-1">
-                <div>{t("about.updates.description")}</div>
-                {updateResult ? (
-                  <div className="text-[12px]">
-                    {updateResult.status === "update-available"
-                      ? t("about.updates.available.inline", {
-                        latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
+                <div className="text-[12px]">
+                  {updateResult.status === "update-available"
+                    ? t("about.updates.available.inline", {
+                      latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
+                      channel: formatUpdateChannel(t, updateResult.channel),
+                    })
+                    : updateResult.status === "up-to-date"
+                      ? t("about.updates.current.inline", {
+                        currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
                         channel: formatUpdateChannel(t, updateResult.channel),
                       })
-                      : updateResult.status === "up-to-date"
-                        ? t("about.updates.current.inline", {
-                          currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
-                          channel: formatUpdateChannel(t, updateResult.channel),
-                        })
-                        : t("about.updates.unavailable.inline", {
-                          channel: formatUpdateChannel(t, updateResult.channel),
-                        })}
-                  </div>
-                ) : null}
+                      : t("about.updates.unavailable.inline", {
+                        channel: formatUpdateChannel(t, updateResult.channel),
+                      })}
+                </div>
               </div>
-            )}
+            ) : undefined}
             action={(
               <div className="flex flex-wrap items-center gap-2">
                 {updateResult?.status === "update-available" && updateResult.latestVersion ? (
@@ -566,7 +563,6 @@ export function InstanceAboutSettings() {
 
           <SettingsItem
             title={t("about.feedback.title")}
-            description={t("about.feedback.description")}
             action={(
               <Button
                 variant="outline"
