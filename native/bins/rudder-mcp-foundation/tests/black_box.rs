@@ -1,7 +1,9 @@
 use serde_json::Value;
+#[cfg(unix)]
+use std::io::{BufRead, BufReader};
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -92,6 +94,7 @@ fn validation_projection(response: &Value) -> Value {
     })
 }
 
+#[cfg(unix)]
 fn request_without_eof(mut command: Command, body: &str, env: &BTreeMap<&str, &str>) -> Value {
     clear_runtime_env(&mut command);
     command
