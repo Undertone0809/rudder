@@ -86,6 +86,7 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toMatch(/platform: windows\n\s+arch: x64/);
     expect(releaseWorkflow).toMatch(/platform: linux\n\s+arch: x64/);
     expect(releaseWorkflow).toContain("Smoke packaged App Builder");
+    expect(desktop).toContain("if: matrix.platform == 'linux' || (matrix.platform == 'macos' && matrix.arch == 'arm64')");
     expect(releaseWorkflow).toContain("Smoke staged PostgreSQL runtime");
     expect(releaseWorkflow).toContain("Smoke packaged account gate");
     expect(preflight).toContain("Verify migration compatibility manifest");
