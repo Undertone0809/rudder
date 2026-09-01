@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("issue description special mention links stay inside the active organization route", async ({ page }) => {
   await page.goto("/");
@@ -73,4 +75,46 @@ test("issue description special mention links stay inside the active organizatio
   await expect(page.locator("main").getByRole("heading", {
     name: "Target issue for special mention navigation",
   })).toBeVisible();
+});
+
+test("ordinary issue description Markdown links open from the live preview", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Description-Ordinary-Link-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Issue with an ordinary Markdown link",
+      description: `Open [Messenger](/${organization.issuePrefix}/messenger) to continue reviewing the work.`,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/issues/${issue.identifier ?? issue.id}`);
+
+  const editor = page
+    .locator(".rudder-issue-description-surface")
+    .locator('[data-editor-engine="codemirror-live-preview"]');
+  const messengerLink = editor.locator(
+    `[data-markdown-link-href="/${organization.issuePrefix}/messenger"]`,
+  );
+  await expect(messengerLink).toBeVisible();
+  await messengerLink.click();
+
+  await expect(page).toHaveURL(
+    new RegExp(`/${organization.issuePrefix}/messenger(?:/|$)`),
+  );
+  await expect(page.getByTestId("chat-main-workspace-card")).toBeVisible();
+  await page.screenshot({
+    path: join(tmpdir(), "rudder-issue-markdown-link-open.png"),
+  });
 });
