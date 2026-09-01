@@ -27,6 +27,7 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - ui/src/components/AgentConfigForm.environment.tsx
   - ui/src/components/AgentConfigForm.helpers.tsx
+  - ui/src/components/OnboardingWizard.tsx
   - ui/src/components/AgentAvatar.tsx
   - ui/src/components/AgentIconPicker.tsx
   - ui/src/components/NewIssueDialog.tsx
@@ -108,6 +109,14 @@ Product model:
   local ownership mode, and a Rudder secret reference; plaintext OpenClaw device
   keys, Hermes bearer keys, and provider session IDs do not belong in general
   Agent config JSON.
+- For provider authentication, local-adapter onboarding collects the runtime
+  choice and model name, along with any runtime-owned execution options exposed
+  by that adapter. It does not collect provider API keys or create provider
+  secret bindings as part of the basic Agent config flow. Provider
+  authentication remains configuration owned by the selected agent runtime;
+  Rudder may show runtime-owned setup guidance and probe the environment, while
+  generic environment or secret-reference controls remain an advanced runtime
+  configuration surface.
 - V1 local ownership modes are `rudder_managed_local` and
   `attach_existing_local`. Managed mode owns only the recorded process identity
   and start epoch and binds it to the resolved workspace. Each process identity
@@ -258,6 +267,10 @@ Product model:
 - Runtime environment test results are tri-state operator evidence: `pass` is
   ready, `warn` is visible setup guidance, and `fail` is a failed probe. Warning
   checks must remain visible instead of being hidden or normalized to a pass.
+- A local adapter environment test is scoped to the selected runtime, model,
+  and adapter config. If that selection changes while a probe is pending, the
+  earlier result is invalidated and cannot authorize the new configuration; the
+  operator must test the new selection again.
 - External local runtimes are registered as `openclaw_gateway` and
   `hermes_gateway`. `hermes_local` remains a `Legacy` CLI adapter with its
   existing configuration semantics; it is not silently reinterpreted as an API
