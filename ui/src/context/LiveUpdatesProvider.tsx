@@ -9,7 +9,6 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { RunForIssue } from "../api/activity";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/agent-runs";
 import { authApi } from "../api/auth";
-import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { queryKeys } from "../lib/queryKeys";
 import { useLocation } from "../lib/router";
@@ -757,13 +756,6 @@ function invalidateActivityQueries(
 
   if (entityType === "approval") {
     queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(orgId) });
-    void invalidateMessengerThreadSummaryQueries(queryClient, orgId);
-    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.approvals(orgId) });
-    if (entityId) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.detail(entityId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.approvals.issues(entityId) });
-    }
     return;
   }
 

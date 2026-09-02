@@ -176,7 +176,6 @@ Platform behavior:
 
 On macOS, Rudder Desktop keeps the native traffic-light window controls while hiding the default window title text.
 The app uses Electron's `titleBarStyle: "hiddenInset"` so the top chrome remains a real macOS window region instead of a fake in-app replacement.
-On Windows, the native window title is always `Rudder` and never mirrors the renderer's page or conversation title.
 
 This means the top row of the app is treated as shared chrome:
 

@@ -3014,58 +3014,6 @@ test.describe("Messenger unified threads contract", () => {
     await expect(approvalMessage.locator("img").first()).toBeVisible();
   });
 
-  test("renders approvals created while the Requests thread is already open", async ({ page }) => {
-    const organization = await createOrganization(page, `Messenger-Live-Approval-${Date.now()}`);
-    await page.goto("/");
-    await page.evaluate((orgId) => {
-      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-    }, organization.id);
-
-    let requestsThreadFetches = 0;
-    page.on("request", (request) => {
-      const url = new URL(request.url());
-      if (url.pathname === `/api/orgs/${organization.id}/messenger/approvals`) {
-        requestsThreadFetches += 1;
-      }
-    });
-
-    await page.goto(`/${organization.issuePrefix}/messenger/approvals`, { waitUntil: "commit" });
-    await expect(
-      page
-        .getByTestId("messenger-panel-header")
-        .getByRole("heading", { name: "Requests", exact: true }),
-    ).toBeVisible({ timeout: 15_000 });
-    await expect.poll(() => requestsThreadFetches).toBe(1);
-    await expect(page.locator('[data-testid^="messenger-approval-card-"]')).toHaveCount(0);
-
-    const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
-      data: {
-        type: "hire_agent",
-        payload: {
-          name: "Live approval candidate",
-          role: "engineer",
-          title: "Runtime Engineer",
-          capabilities: "Validate that live approval activity refreshes the open Requests thread.",
-        },
-      },
-    });
-    expect(approvalRes.ok()).toBe(true);
-    const approval = await approvalRes.json() as { id: string };
-    const approvalCard = page.getByTestId(`messenger-approval-card-${approval.id}`);
-
-    await expect(approvalCard).toBeVisible({ timeout: 15_000 });
-    await expect(approvalCard).toContainText("Live approval candidate");
-    await expect.poll(() => requestsThreadFetches).toBeGreaterThanOrEqual(2);
-    await expect(page.getByTestId(`messenger-approval-card-${approval.id}`)).toHaveCount(1);
-
-    const rejectRes = await page.request.post(`/api/approvals/${approval.id}/reject`, {
-      data: { decisionNote: "Live state transition verification." },
-    });
-    expect(rejectRes.ok()).toBe(true);
-    await expect(approvalCard).toContainText("rejected", { timeout: 15_000 });
-    await expect(approvalCard.getByRole("button", { name: "Approve" })).toHaveCount(0);
-  });
-
   test("renders the mixed Messenger directory and supports issue + approval actions", async ({ page }, testInfo) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);

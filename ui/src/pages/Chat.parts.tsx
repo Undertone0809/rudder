@@ -752,17 +752,6 @@ export function computeDisplayedChatMessages(
   );
 }
 
-export function latestEditableChatUserMessageId(messages: readonly ChatMessage[]) {
-  let latest: ChatMessage | null = null;
-  for (const message of messages) {
-    if (message.role !== "user" || message.supersededAt) continue;
-    if (!latest || new Date(message.createdAt).getTime() >= new Date(latest.createdAt).getTime()) {
-      latest = message;
-    }
-  }
-  return latest?.id ?? null;
-}
-
 export function mergeChatConversationsForStatus(
   current: ChatConversation[],
   incoming: ChatConversation,

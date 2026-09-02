@@ -22,15 +22,12 @@ import path from "node:path";
 import { HttpError, notFound, unprocessable } from "../errors.js";
 import { resolveRudderInstanceRoot } from "../home-paths.js";
 import type { ManagedMcpConnectionServiceOptions } from "./mcp/managed-connections.js";
-import {
-  MAX_PLUGIN_PACKAGE_BYTES,
-  MAX_PLUGIN_PACKAGE_MIB,
-  rudderPluginService,
-} from "./rudder-plugins.js";
+import { rudderPluginService } from "./rudder-plugins.js";
 
 const DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/Undertone0809/rudder-plugins/main/catalog.json";
 const MAX_FILES = 500;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const FETCH_CONCURRENCY = 12;
 const MAX_REDIRECTS = 3;
 const CATALOG_DEGRADED_VISIBILITY_MS = 30_000;
@@ -638,9 +635,7 @@ function safePackageEntries(tree: GitTreeEntry[], subdirectory: string): Array<G
     const size = entry.size ?? 0;
     if (size > MAX_FILE_BYTES) throw unprocessable(`Plugin file exceeds 2 MiB: ${relativePath}`);
     total += size;
-    if (total > MAX_PLUGIN_PACKAGE_BYTES) {
-      throw unprocessable(`Plugin package exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
-    }
+    if (total > MAX_TOTAL_BYTES) throw unprocessable("Plugin package exceeds the 10 MiB V1 limit");
   }
   return entries;
 }
@@ -714,13 +709,11 @@ async function fetchGitHubArchiveFiles(
   }
   if (!response.ok) throw unprocessable(`GitHub archive returned HTTP ${response.status}`);
   const contentLength = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_PLUGIN_PACKAGE_BYTES) {
-    throw unprocessable(`Plugin archive exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
+  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_BYTES) {
+    throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
   }
   const archive = Buffer.from(await response.arrayBuffer());
-  if (archive.byteLength > MAX_PLUGIN_PACKAGE_BYTES) {
-    throw unprocessable(`Plugin archive exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
-  }
+  if (archive.byteLength > MAX_TOTAL_BYTES) throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
 
   const tree: GitTreeEntry[] = [];
   const files: RudderPluginPackageFileInput[] = [];
@@ -788,10 +781,10 @@ async function fetchGitHubArchiveFiles(
       }
       entryBytes += data.byteLength;
       totalBytes += data.byteLength;
-      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_PLUGIN_PACKAGE_BYTES) {
+      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_TOTAL_BYTES) {
         failure = new Error(entryBytes > MAX_FILE_BYTES
           ? `Plugin file exceeds 2 MiB: ${normalized}`
-          : `Plugin package exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
+          : "Plugin package exceeds the 10 MiB V1 limit");
         file.terminate();
         return;
       }

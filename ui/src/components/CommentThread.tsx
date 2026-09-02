@@ -352,7 +352,6 @@ function CommentActionsMenu({
   collapsed,
   canEdit,
   canDelete,
-  deletePending,
   onToggleCollapsed,
   onEdit,
   onDelete,
@@ -364,7 +363,6 @@ function CommentActionsMenu({
   collapsed: boolean;
   canEdit: boolean;
   canDelete: boolean;
-  deletePending: boolean;
   onToggleCollapsed: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -383,8 +381,6 @@ function CommentActionsMenu({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-busy={deletePending}
-          disabled={deletePending}
           className={collapsed
             ? "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             : "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"}
@@ -419,7 +415,6 @@ function CommentActionsMenu({
             {canDelete ? (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
-                disabled={deletePending}
                 onSelect={(event) => {
                   event.preventDefault();
                   onDelete();
@@ -578,8 +573,6 @@ const TimelineList = memo(function TimelineList({
   const organizationPrefix = extractOrganizationPrefixFromPath(location.pathname);
   const [commentCollapsedOverrides, setCommentCollapsedOverrides] = useState<Record<string, boolean>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
-  const [deletingCommentIds, setDeletingCommentIds] = useState<Set<string>>(() => new Set());
-  const deletingCommentIdsRef = useRef(new Set<string>());
   const [editBody, setEditBody] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editAttaching, setEditAttaching] = useState(false);
@@ -832,26 +825,15 @@ const TimelineList = memo(function TimelineList({
           }
         };
         const handleDelete = async () => {
-          if (!onDelete || deletingCommentIdsRef.current.has(comment.id)) return;
+          if (!onDelete) return;
           const confirmed = await confirm({
             title: "Delete this comment?",
             description: "This permanently removes the comment from the issue. This cannot be undone.",
             confirmLabel: "Delete comment",
             tone: "destructive",
           });
-          if (!confirmed || deletingCommentIdsRef.current.has(comment.id)) return;
-          deletingCommentIdsRef.current.add(comment.id);
-          setDeletingCommentIds((current) => new Set(current).add(comment.id));
-          try {
-            await onDelete(comment.id);
-          } finally {
-            deletingCommentIdsRef.current.delete(comment.id);
-            setDeletingCommentIds((current) => {
-              const next = new Set(current);
-              next.delete(comment.id);
-              return next;
-            });
-          }
+          if (!confirmed) return;
+          await onDelete(comment.id);
         };
         const authorNode = comment.authorAgentId ? (
           <Link
@@ -954,7 +936,6 @@ const TimelineList = memo(function TimelineList({
                       collapsed={commentCollapsed}
                       canEdit={canEdit}
                       canDelete={canDelete}
-                      deletePending={deletingCommentIds.has(comment.id)}
                       onToggleCollapsed={handleToggleCollapsed}
                       onEdit={handleStartEdit}
                       onDelete={handleDelete}

@@ -20,16 +20,6 @@ function actionTitle(action: ChatErrorAction) {
   }
 }
 
-function apiErrorCode(error: ApiError) {
-  if (!error.body || typeof error.body !== "object") return null;
-  const details = "details" in error.body
-    ? (error.body as { details?: unknown }).details
-    : null;
-  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
-  const code = "code" in details ? (details as { code?: unknown }).code : null;
-  return typeof code === "string" ? code : null;
-}
-
 export function chatErrorToast(error: unknown, action: ChatErrorAction = "send"): ChatErrorToast {
   if (error instanceof ApiTimeoutError) {
     return {
@@ -39,24 +29,6 @@ export function chatErrorToast(error: unknown, action: ChatErrorAction = "send")
   }
 
   if (error instanceof ApiError) {
-    if (error.status === 409 && apiErrorCode(error) === "chat_send_in_progress") {
-      return {
-        title: actionTitle(action),
-        body: "This message is already being sent. Try again shortly.",
-      };
-    }
-    if (
-      error.status === 422
-      && (
-        apiErrorCode(error) === "chat_annotation_selection_mismatch"
-        || error.message === "Annotation selected text does not exactly match its rendered Markdown source range"
-      )
-    ) {
-      return {
-        title: actionTitle(action),
-        body: "The selected response text changed. Re-select the highlighted text and try again.",
-      };
-    }
     if (error.status === 401 || error.status === 403) {
       return {
         title: actionTitle(action),

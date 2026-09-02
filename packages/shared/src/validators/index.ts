@@ -145,9 +145,9 @@ export {
 } from "./project.js";
 
 export {
-  addIssueCommentSchema, checkoutIssueSchema, createIssueAttachmentMetadataSchema, createIssueLabelSchema, createIssueSchema, createIssueWorkspaceAttachmentSchema, createLibraryDocumentSchema, createRunDebugIssueSchema, issueDocumentFormatSchema, issueExecutionWorkspaceSettingsSchema, issueRunWorkspaceSettingsSchema, linkIssueApprovalSchema, reorderIssueSchema, reportIssueCommitSchema, restoreLibraryDocumentRevisionSchema, updateIssueCommentSchema, updateIssueLabelSchema,
+  addIssueCommentSchema, checkoutIssueSchema, createIssueAttachmentMetadataSchema, createIssueLabelSchema, createIssueSchema, createIssueWorkspaceAttachmentSchema, createLibraryDocumentSchema, issueDocumentFormatSchema, issueExecutionWorkspaceSettingsSchema, issueRunWorkspaceSettingsSchema, linkIssueApprovalSchema, reorderIssueSchema, reportIssueCommitSchema, restoreLibraryDocumentRevisionSchema, updateIssueCommentSchema, updateIssueLabelSchema,
   updateIssueSchema, updateLibraryDocumentSchema, type AddIssueComment, type CheckoutIssue, type CreateIssue, type CreateIssueAttachmentMetadata, type CreateIssueLabel, type CreateIssueWorkspaceAttachment,
-  type CreateLibraryDocument, type CreateRunDebugIssue, type IssueExecutionWorkspaceSettings, type IssueRunWorkspaceSettings, type LinkIssueApproval, type ReorderIssue, type ReportIssueCommit, type RestoreLibraryDocumentRevision, type UpdateIssue, type UpdateIssueComment, type UpdateIssueLabel, type UpdateLibraryDocument
+  type CreateLibraryDocument, type IssueExecutionWorkspaceSettings, type IssueRunWorkspaceSettings, type LinkIssueApproval, type ReorderIssue, type ReportIssueCommit, type RestoreLibraryDocumentRevision, type UpdateIssue, type UpdateIssueComment, type UpdateIssueLabel, type UpdateLibraryDocument
 } from "./issue.js";
 
 export {

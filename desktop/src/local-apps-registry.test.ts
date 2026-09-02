@@ -138,18 +138,6 @@ describe("Desktop Local App registry", () => {
     await expect(registry.requireApprovedDefinition(created.id)).rejects.toThrow("Review changes");
   });
 
-  it("rejects a second definition for the same canonical project directory", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-registry-duplicate-"));
-    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
-    const prepared = await registry.prepareDefinition(draft(root));
-    await registry.createDefinition(prepared);
-
-    await expect(registry.createDefinition({ ...prepared, title: "Duplicate" }))
-      .rejects.toThrow("already registered");
-    expect(await registry.listDefinitions()).toHaveLength(1);
-    await expect(registry.findDefinitionByCwd(prepared.cwd)).resolves.toMatchObject({ cwd: prepared.cwd });
-  });
-
   it("never exposes inherited environment values in renderer-facing definitions", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-env-"));
     process.env.RUDDER_TEST_TOKEN = "do-not-expose";
@@ -291,9 +279,10 @@ describe("Desktop Local App registry", () => {
     const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
     await expect(reloaded.listDefinitions()).resolves.toHaveLength(1);
     await expect(reloaded.getRuntimeDescriptor(created.id)).resolves.toMatchObject({
-      status: "quarantined",
-      pid: null,
-      pgid: null,
+      status: "orphaned_unverified",
+      pid: 77_701,
+      pgid: 77_701,
+      port: 31_701,
     });
     expect((await readdir(root)).some((name) => name.startsWith("registry.json.corrupt-"))).toBe(true);
 

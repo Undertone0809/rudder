@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { PluginIcon, PluginIconFrame, themedPluginIconUrl } from "./PluginIcon";
+import { PluginIcon, themedPluginIconUrl } from "./PluginIcon";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,19 +26,6 @@ function render(element: ReactNode) {
 }
 
 describe("PluginIcon", () => {
-  it("keeps the shared frame compact without clipping the original logo outline", () => {
-    const { container } = render(
-      <PluginIconFrame className="h-10 w-10">
-        <PluginIcon src="/square-logo.png" className="h-full w-full p-1" testId="plugin-icon" />
-      </PluginIconFrame>,
-    );
-
-    const frame = container.firstElementChild;
-    expect(frame?.classList.contains("rounded-[4px]")).toBe(true);
-    expect(frame?.classList.contains("overflow-hidden")).toBe(false);
-    expect(container.querySelector("img")?.className).toContain("object-contain");
-  });
-
   it("adds the selected theme only to catalog icon URLs", () => {
     expect(themedPluginIconUrl("/api/plugins/catalog/canva/icon", "dark")).toBe(
       "/api/plugins/catalog/canva/icon?theme=dark",

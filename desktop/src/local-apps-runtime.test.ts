@@ -833,59 +833,6 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     }
   });
 
-  it("reconciles a persisted orphan only when every ownership signal is provably dead", async () => {
-    const { registry, definition } = await approvedFixture();
-    await registry.recordRuntimeDescriptor(definition.id, {
-      status: "orphaned_unverified", pid: 991_003, pgid: 991_003, generation: "dead-orphan", port: 31_993,
-    });
-    const probePersistedRuntimeLiveness = vi.fn(async () => ({
-      pid: "dead" as const, processGroup: "dead" as const, listener: "dead" as const,
-    }));
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: process.platform,
-      probePersistedRuntimeLiveness,
-    });
-
-    await expect(manager.status(definition.id)).resolves.toMatchObject({ status: "stopped" });
-    await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toBeNull();
-    expect(probePersistedRuntimeLiveness).toHaveBeenCalledWith({
-      pid: 991_003, pgid: 991_003, port: 31_993,
-    });
-  });
-
-  it("restores bounded Local App logs after the Desktop runtime is recreated", async () => {
-    const { root, registry, definition } = await approvedFixture();
-    const logDirectory = path.join(root, "persisted-logs");
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: process.platform,
-      ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
-      watchdogStartTimeoutMs: localAppWatchdogStartTimeoutMs,
-      ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
-      verifyListenerOwnership: fixtureListenerOwnershipOverride,
-      logDirectory,
-      maxLogBytes: 256,
-    });
-    try {
-      await manager.start(definition.id);
-      await vi.waitFor(async () => {
-        expect(await manager.logs(definition.id)).not.toEqual([]);
-      });
-      await manager.stop(definition.id);
-      const expectedLogs = await manager.logs(definition.id);
-      await manager.shutdown();
-
-      const restored = new LocalAppRuntimeManager({ registry, logDirectory, maxLogBytes: 256 });
-      expect(await restored.logs(definition.id)).toEqual(expectedLogs);
-      expect(Buffer.byteLength((await restored.logs(definition.id)).join("\n"))).toBeLessThanOrEqual(256);
-      await restored.shutdown();
-    } finally {
-      await manager.stop(definition.id).catch(() => undefined);
-      await manager.shutdown().catch(() => undefined);
-    }
-  });
-
   it.runIf(process.platform !== "win32").each([
     {
       label: "a live process group",

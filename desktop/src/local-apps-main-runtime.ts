@@ -39,7 +39,6 @@ export function createDesktopLocalAppsRuntime(options: {
   });
   const runtime = new LocalAppRuntimeManager({
     registry,
-    logDirectory: path.join(options.userDataPath, "local-apps", "logs"),
     nativeRuntimeRoot: path.join(options.userDataPath, "local-apps", "native-runtime"),
     ...(process.platform === "win32" ? { cleanupTimeoutMs: 30_000 } : {}),
   });

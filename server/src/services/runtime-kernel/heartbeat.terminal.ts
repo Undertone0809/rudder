@@ -22,7 +22,6 @@ export const MAX_TERMINAL_EFFECT_INTENT_BYTES = 96 * 1024;
 
 export type TerminalEffectName =
   | "automation_chat"
-  | "assignment_recovery_result"
   | "runtime_cost"
   | "task_session"
   | "agent_issue_creation_settlement"

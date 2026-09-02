@@ -263,31 +263,8 @@ test.describe("Plugins V1", () => {
     await expect(page.getByTestId("installed-plugin-icon")).toHaveJSProperty("complete", true);
     await expect(page.getByTestId("catalog-plugin-icon")).toHaveJSProperty("complete", true);
     await expect(page.locator('img[data-testid="configured-plugin-icon"]')).toHaveJSProperty("complete", true);
-    for (const icon of [
-      page.getByTestId("installed-plugin-icon"),
-      page.getByTestId("catalog-plugin-icon"),
-      page.locator('img[data-testid="configured-plugin-icon"]'),
-    ]) {
-      await expect(icon).toHaveCSS("object-fit", "contain");
-      const frame = icon.locator("..");
-      await expect(frame).toHaveCSS("overflow", "visible");
-      await expect(frame).toHaveCSS("border-radius", "4px");
-    }
     await page.screenshot({
       path: `/tmp/rudder-plugin-icons-${testInfo.workerIndex}.png`,
-      fullPage: true,
-    });
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.reload();
-    await expect(page.getByRole("heading", { name: "Hub" })).toBeVisible();
-    await expect(page.getByTestId("installed-plugin-icon")).toBeVisible();
-    await expect(page.getByTestId("catalog-plugin-icon")).toBeVisible();
-    await expect(page.locator('img[data-testid="configured-plugin-icon"]')).toBeVisible();
-    await expect(page.getByTestId("installed-plugin-icon")).toHaveJSProperty("complete", true);
-    await expect(page.getByTestId("catalog-plugin-icon")).toHaveJSProperty("complete", true);
-    await expect(page.locator('img[data-testid="configured-plugin-icon"]')).toHaveJSProperty("complete", true);
-    await page.screenshot({
-      path: `/tmp/rudder-plugin-icons-narrow-${testInfo.workerIndex}.png`,
       fullPage: true,
     });
   });

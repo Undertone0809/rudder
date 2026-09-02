@@ -7,7 +7,8 @@
    `main`; work that lands after the cutoff belongs to the next release.
 3. Require matching English and Chinese public changelog entries and
    `releases/vX.Y.Z.md`.
-4. Confirm the exact source passed CI and stable preflight.
+4. Confirm the exact source has a successful `Qualification summary`, then
+   passed stable preflight.
 5. Confirm the version is absent from every public npm package and the stable
    tag does not already point elsewhere.
 6. Report source/tag/targets, checks, migration or data impact, and rollback
@@ -28,8 +29,11 @@ be dispatched.
 ## Publish
 
 Dispatch or execute one main-only stable workflow with the locked source. It
-must complete preflight and package validation before its first publish
-mutation; do not require a separate preview dispatch or second human hand-off.
+must complete exact-source qualification, preflight, candidate verification,
+and package validation before its first publish mutation; do not require a
+separate preview dispatch or second human hand-off. When a verified candidate
+already exists, pass its `candidate_run_id` and promote those exact bytes
+without rebuilding Desktop or npm payloads.
 The standard sequence is:
 
 1. publish every public package once under `latest`;

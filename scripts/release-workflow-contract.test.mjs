@@ -47,12 +47,27 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain('workflows: ["Test"]');
     expect(releaseWorkflow).toContain('description: "Full commit SHA to promote as stable"');
     expect(releaseWorkflow).toContain("Require immutable stable source SHA");
-    expect(releaseWorkflow).toContain("Require successful Test for exact source");
+    expect(releaseWorkflow).toContain("Resolve exact successful Test qualification");
+    expect(releaseWorkflow).toContain("Qualification summary");
+    expect(releaseWorkflow).toContain("Download exact Test impact plan");
+    expect(releaseWorkflow).toContain("Require exact aggregate qualification receipt");
+    expect(releaseWorkflow).toContain("main_attest push qualification");
     expect(releaseWorkflow).toContain('actions/workflows/ci.yml/runs');
     expect(releaseWorkflow).toContain('-f head_sha="$SOURCE_SHA"');
     expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main');
     expect(testWorkflow).toContain("Require dispatch ref to match exact source");
+    expect(testWorkflow).toContain("Require exact trusted dispatch source");
+    expect(testWorkflow).toContain("source_sha:");
+    expect(testWorkflow).toContain("merge_group:");
     expect(testWorkflow).toContain('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"');
+    expect(testWorkflow).not.toContain('test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"');
+    const architecture = workflowJob(testWorkflow, "architecture");
+    expect(architecture).toContain('needs.plan.outputs.comparison_sha');
+    expect(architecture).not.toContain('HEAD^2');
+    expect(releaseWorkflow).toContain(
+      'workflow_source_sha: ${{ steps.candidate_validation.outputs.workflow_source_sha || github.workflow_sha }}',
+    );
+    expect(releaseWorkflow).not.toContain("candidate_workflow_sha");
   });
 
   it("runs source, docs, platform, and fast packaged Desktop gates in Test", () => {
@@ -75,10 +90,15 @@ describe("unified delivery workflows", () => {
     const preflight = workflowJob(releaseWorkflow, "preflight");
     const desktop = workflowJob(releaseWorkflow, "desktop-candidate");
     const candidate = workflowJob(releaseWorkflow, "candidate-complete");
+    const candidateVerify = workflowJob(releaseWorkflow, "candidate-verify");
     const canary = workflowJob(releaseWorkflow, "publish-canary");
     const stable = workflowJob(releaseWorkflow, "publish-stable");
     expect(candidate).toContain("- npm-candidate");
     expect(candidate).toContain("- desktop-candidate");
+    expect(candidateVerify).toContain("workflow_source_sha");
+    expect(candidateVerify).toContain("--runtime-file dist/candidate-manifest/runtime.json");
+    expect(candidateVerify).toContain("--source-tree-sha");
+    expect(candidate).toContain("node-version: 24");
     expect(canary).toContain("- candidate-complete");
     expect(stable).toContain("- candidate-complete");
     expect(releaseWorkflow).toMatch(/platform: macos\n\s+arch: x64/);
@@ -86,7 +106,6 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toMatch(/platform: windows\n\s+arch: x64/);
     expect(releaseWorkflow).toMatch(/platform: linux\n\s+arch: x64/);
     expect(releaseWorkflow).toContain("Smoke packaged App Builder");
-    expect(desktop).toContain("if: matrix.platform == 'linux' || (matrix.platform == 'macos' && matrix.arch == 'arm64')");
     expect(releaseWorkflow).toContain("Smoke staged PostgreSQL runtime");
     expect(releaseWorkflow).toContain("Smoke packaged account gate");
     expect(preflight).toContain("Verify migration compatibility manifest");
@@ -95,10 +114,6 @@ describe("unified delivery workflows", () => {
     expect(desktop).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
     expect(desktop.indexOf("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts"))
       .toBeLessThan(desktop.indexOf("pnpm desktop:dist"));
-    expect(desktop).toContain("Verify packaged release-set lifecycle");
-    for (const scenario of ["startup-recovery", "clean", "upgrade", "auto-update", "auto-update-public", "terminal"]) {
-      expect(desktop).toContain(scenario);
-    }
   });
 
   it("publishes only frozen run artifacts without dispatching or rebuilding Desktop", () => {
@@ -108,7 +123,9 @@ describe("unified delivery workflows", () => {
     const stable = workflowJob(releaseWorkflow, "publish-stable");
     expect(npmCandidate).toContain("npm pack --json");
     expect(npmCandidate).toContain("manifest.tsv");
+    expect(npmCandidate).toContain("needs.preflight.outputs.candidate_external != 'true'");
     expect(desktopCandidate).toContain("pnpm desktop:dist");
+    expect(desktopCandidate).toContain("needs.preflight.outputs.candidate_external != 'true'");
     expect(desktopCandidate).toContain("actions/upload-artifact@v7");
     for (const publish of [canary, stable]) {
       expect(publish).toContain("actions/download-artifact@v8");
@@ -117,6 +134,8 @@ describe("unified delivery workflows", () => {
       expect(publish).not.toContain("pnpm desktop:dist");
       expect(publish).not.toContain("gh workflow run desktop-release.yml");
       expect(publish).toContain("publish-github-release-assets-immutable.mjs");
+      expect(publish).toContain("--source-tree-sha");
+      expect(publish).toContain("--workflow-source-sha");
       expect(publish).toContain("--phase binaries");
       expect(publish).not.toContain("--phase checksum");
       expect(publish).not.toContain("gh release upload");
@@ -142,14 +161,21 @@ describe("unified delivery workflows", () => {
       expect(mirror).toContain("id-token: write");
       expect(mirror).toContain("timeout-minutes: 240");
       expect(mirror).toContain("pattern: desktop-*");
+      expect(mirror).toContain("name: npm-release-candidate");
+      expect(mirror).toContain("name: release-candidate-manifest");
+      expect(mirror).toContain("Verify candidate before COS mutation");
+      expect(mirror).toContain("--runtime-file dist/candidate-manifest/runtime.json");
       expect(mirror).toContain("mirror-desktop-release-to-cos.mjs");
       expect(mirror).toContain("TENCENT_CLOUD_OIDC_PROVIDER_ID");
       expect(mirror).toContain("TENCENT_CLOUD_ROLE_ARN");
       expect(mirror).toContain("TENCENT_COS_BUCKET");
       expect(mirror).toContain("TENCENT_COS_REGION");
       const cosIndex = mirror.indexOf("mirror-desktop-release-to-cos.mjs");
+      const verificationIndex = mirror.indexOf("Verify candidate before COS mutation");
       const markerIndex = mirror.indexOf("--phase checksum");
       expect(cosIndex).toBeGreaterThan(-1);
+      expect(verificationIndex).toBeGreaterThan(-1);
+      expect(verificationIndex).toBeLessThan(cosIndex);
       expect(markerIndex).toBeGreaterThan(cosIndex);
     }
     expect(canaryMirror).toContain("- publish-canary");
@@ -191,6 +217,12 @@ describe("unified delivery workflows", () => {
     const canaryChecksum = workflowJob(releaseWorkflow, "checksum-canary");
     const stableChecksum = workflowJob(releaseWorkflow, "checksum-stable");
     for (const checksum of [canaryChecksum, stableChecksum]) {
+      expect(checksum).toContain("- candidate-verify");
+      expect(checksum).toContain("needs.candidate-verify.result == 'success'");
+      expect(checksum).toContain("run-id: ${{ needs.preflight.outputs.candidate_run_id }}");
+      expect(checksum).toContain("name: release-candidate-manifest");
+      expect(checksum).toContain("Use verified candidate checksum trust root");
+      expect(checksum).not.toContain("shasum -a 256 Rudder-*");
       expect(checksum).toContain("needs.preflight.outputs.mirror_cos != 'true'");
       expect(checksum).toContain("--phase checksum");
       expect(checksum).toContain("Tencent COS package sync: DISABLED");
@@ -219,9 +251,9 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("environment: desktop-release-mirror");
     expect(recovery).toContain("id-token: write");
     expect(recovery).toContain("timeout-minutes: 240");
-    expect(recovery.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(3);
+    expect(recovery.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(5);
     expect(recovery.match(/continue-on-error: true/g)).toHaveLength(3);
-    expect(recovery.match(/run-id: \$\{\{ inputs\.candidate_run_id \}\}/g)).toHaveLength(3);
+    expect(recovery.match(/run-id: \$\{\{ inputs\.candidate_run_id \}\}/g)).toHaveLength(5);
     for (const attempt of [1, 2, 3]) {
       expect(recovery.match(new RegExp(`id: download_candidate_assets_attempt_${attempt}`, "g"))).toHaveLength(1);
     }
@@ -238,10 +270,17 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain("steps.download_candidate_assets_attempt_1.outcome");
     expect(recovery).toContain("steps.download_candidate_assets_attempt_2.outcome");
     expect(recovery).toContain("steps.download_candidate_assets_attempt_3.outcome");
+    expect(recovery).toContain("Download frozen candidate npm payloads");
+    expect(recovery).toContain("Download frozen candidate manifest");
+    expect(recovery).toContain("release-candidate-manifest.mjs verify");
+    expect(recovery).toContain("--source-tree-sha");
+    expect(recovery).toContain("--qualification-run-id");
+    expect(recovery).toContain("--workflow-source-sha");
+    expect(recovery).toContain("Verify frozen candidate manifest and checksum trust root");
     expect(recovery).toContain('= "success"');
-    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).toContain("ref: ${{ github.workflow_sha }}");
     expect(recovery).not.toContain("ref: ${{ inputs.source_ref }}");
-    expect(recovery).toContain("WORKFLOW_SHA: ${{ github.sha }}");
+    expect(recovery).toContain("WORKFLOW_SHA: ${{ github.workflow_sha }}");
     expect(recovery.match(/^\s+WORKFLOW_SHA:/gm)).toHaveLength(1);
     expect(recovery).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(recovery).toContain('test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"');
@@ -252,7 +291,11 @@ describe("unified delivery workflows", () => {
     expect(recovery).toContain(".name == \"Publish stable\" and .conclusion == \"success\"");
     expect(recovery).toContain(".name == \"Mirror stable Desktop release to Tencent COS\" and .conclusion == \"failure\"");
     expect(recovery).toContain("test \"$SOURCE_REF\" = \"$remote_tag_sha\"");
-    expect(recovery).not.toContain("jq -r '.head_sha' <<< \"$run_json\"");
+    expect(recovery).toContain('candidate_head_sha="$(jq -r \'.head_sha\' <<< "$candidate_run_json")"');
+    expect(recovery).toContain('git cat-file -e "$candidate_head_sha^{commit}"');
+    expect(recovery).toContain('git merge-base --is-ancestor "$candidate_head_sha" refs/remotes/origin/main');
+    expect(recovery).toContain('echo "workflow_source_sha=$candidate_head_sha" >> "$GITHUB_OUTPUT"');
+    expect(recovery).not.toContain('test "$(jq -r \'.head_sha\' <<< "$candidate_run_json")" = "$SOURCE_REF"');
     expect(recovery).toContain("SOURCE_REF: ${{ inputs.source_ref }}");
     expect(recovery).toContain(".prerelease");
     expect(recovery).toContain("mirror-desktop-release-to-cos.mjs");
@@ -339,7 +382,7 @@ describe("unified delivery workflows", () => {
 
   it("runs mirror recovery from trusted main workflow code while preserving the released source", () => {
     const recovery = workflowJob(releaseWorkflow, "mirror-recovery");
-    expect(recovery).toContain("ref: ${{ github.sha }}");
+    expect(recovery).toContain("ref: ${{ github.workflow_sha }}");
     expect(recovery).toContain('test "$GITHUB_REF" = "refs/heads/main"');
     expect(recovery).toContain('git cat-file -e "$SOURCE_REF^{commit}"');
     expect(recovery).toContain('test "$SOURCE_REF" = "$remote_tag_sha"');
@@ -364,7 +407,7 @@ describe("unified delivery workflows", () => {
   });
 
   it("keeps every irreversible publish action behind candidate-complete", () => {
-    for (const jobName of ["preflight", "npm-candidate", "desktop-candidate", "candidate-complete"]) {
+    for (const jobName of ["preflight", "npm-candidate", "desktop-candidate", "candidate-complete", "candidate-verify"]) {
       const job = workflowJob(releaseWorkflow, jobName);
       expect(job).not.toContain("npm publish");
       expect(job).not.toContain("git push origin \"refs/tags/");
@@ -463,18 +506,22 @@ describe("unified delivery workflows", () => {
     const stableMirror = workflowJob(releaseWorkflow, "mirror-stable");
     expect(releaseWorkflow).toContain('description: "Original Release run ID containing the verified candidate artifacts (required for resume)"');
     expect(releaseWorkflow).toContain('candidate_run_id is required when resume_missing is true.');
-    expect(releaseWorkflow).toContain("Require matching verified candidate run for recovery");
+    expect(releaseWorkflow).toContain("Require matching verified candidate run");
     expect(preflight).toContain("actions/runs/$CANDIDATE_RUN_ID");
-    expect(preflight).not.toContain("test \"$(jq -r '.head_sha' <<< \"$run_json\")\" = \"$SOURCE_SHA\"");
-    expect(preflight).toContain('test "$(jq -r \'.path\' <<< "$run_json")" = ".github/workflows/release.yml"');
-    expect(preflight).toContain('test "$(jq -r \'.head_branch\' <<< "$run_json")" = "main"');
-    expect(preflight).toContain('test "$(jq -r \'.head_repository.full_name\' <<< "$run_json")" = "$GITHUB_REPOSITORY"');
-    expect(preflight).toContain('candidate_workflow_sha="$(jq -r \'.head_sha\' <<< "$run_json")"');
-    expect(preflight).toContain('git cat-file -e "$candidate_workflow_sha^{commit}"');
-    expect(preflight).toContain("git merge-base --is-ancestor \"$candidate_workflow_sha\" refs/remotes/origin/main");
+    expect(preflight).toContain('candidate_head_sha="$(jq -r \'.head_sha\' <<< "$candidate_run_json")"');
+    expect(preflight).toContain('git cat-file -e "$candidate_head_sha^{commit}"');
+    expect(preflight).toContain('git merge-base --is-ancestor "$candidate_head_sha" refs/remotes/origin/main');
+    expect(preflight).not.toContain('test "$(jq -r \'.head_sha\' <<< "$candidate_run_json")" = "$SOURCE_SHA"');
+    expect(preflight).toContain('test "$(jq -r \'.path\' <<< "$candidate_run_json")" = ".github/workflows/release.yml"');
+    expect(preflight).toContain('test "$(jq -r \'.head_branch\' <<< "$candidate_run_json")" = "main"');
+    expect(preflight).toContain('test "$(jq -r \'.head_repository.full_name\' <<< "$candidate_run_json")" = "$GITHUB_REPOSITORY"');
+    expect(preflight).toContain('TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}');
+    expect(preflight).toContain('git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}"');
+    expect(preflight).toContain("git merge-base --is-ancestor \"$TRUSTED_WORKFLOW_SHA\" refs/remotes/origin/main");
+    expect(preflight).toContain('echo "workflow_source_sha=$candidate_head_sha" >> "$GITHUB_OUTPUT"');
     expect(preflight).toContain("success|cancelled|failure");
     expect(preflight).toContain("actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100");
-    expect(preflight).toContain('.name == "Publish stable" and .conclusion == "success"');
+    expect(preflight).toContain('.name == "Verify immutable candidate" and .conclusion == "success"');
     expect(preflight).toContain('git ls-remote --tags origin "refs/tags/$TAG"');
     expect(preflight).toContain('test "$SOURCE_SHA" = "$remote_tag_sha"');
     for (const artifact of [
@@ -488,9 +535,9 @@ describe("unified delivery workflows", () => {
     }
     expect(preflight).toContain(".artifacts | map(select(.expired == false))");
     const identityIndex = preflight.indexOf(".head_repository.full_name");
-    const trustedWorkflowIndex = preflight.indexOf('git cat-file -e "$candidate_workflow_sha^{commit}"');
+    const trustedWorkflowIndex = preflight.indexOf('git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}"');
     const terminalIndex = preflight.indexOf("success|cancelled|failure");
-    const publishIndex = preflight.indexOf('.name == "Publish stable" and .conclusion == "success"');
+    const publishIndex = preflight.indexOf('.name == "Verify immutable candidate" and .conclusion == "success"');
     const tagIndex = preflight.indexOf('git ls-remote --tags origin "refs/tags/$TAG"');
     const artifactsIndex = preflight.indexOf(".artifacts | map(select(.expired == false))");
     expect(identityIndex).toBeGreaterThan(-1);
@@ -501,8 +548,9 @@ describe("unified delivery workflows", () => {
     expect(artifactsIndex).toBeGreaterThan(tagIndex);
     expect(npmCandidate).toContain("if: needs.preflight.outputs.resume != 'true'");
     expect(desktopCandidate).toContain("if: needs.preflight.outputs.resume != 'true'");
-    expect(candidateComplete).toContain("needs.npm-candidate.result == 'skipped'");
-    expect(candidateComplete).toContain("needs.desktop-candidate.result == 'skipped'");
+    expect(candidateComplete).toContain("candidate_external");
+    expect(candidateComplete).toContain("needs.desktop-candidate.result == 'success'");
+    expect(stable).toContain("candidate-verify");
     expect(stable).toContain('run-id: ${{ needs.preflight.outputs.candidate_run_id }}');
     expect(stable).toContain('github-token: ${{ github.token }}');
     expect(stable).toContain('test "$RESUME_MISSING" = "true"');

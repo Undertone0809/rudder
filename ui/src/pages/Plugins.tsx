@@ -2,7 +2,7 @@ import { agentsApi } from "@/api/agents";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
-import { PluginIcon, PluginIconFrame, themedPluginIconUrl } from "@/components/PluginIcon";
+import { PluginIcon, themedPluginIconUrl } from "@/components/PluginIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -242,9 +242,9 @@ function PluginDetailDialog({
       <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <div className="flex items-start gap-3 pr-8">
-            <PluginIconFrame className="h-10 w-10 bg-muted/45">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/45">
               <InstalledPluginIcon plugin={plugin} iconUrl={iconUrl} testId="installed-plugin-dialog-icon" />
-            </PluginIconFrame>
+            </div>
             <div className="min-w-0">
               <DialogTitle>{plugin.displayName}</DialogTitle>
               <DialogDescription className="mt-1">{plugin.description ?? "No description provided."}</DialogDescription>
@@ -941,9 +941,9 @@ export function Plugins() {
                       if (appKey && !plugin.pendingUpdate) navigate(appRoute(appKey));
                       else openPluginDetail(plugin);
                     }}>
-                      <PluginIconFrame className="h-9 w-9">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
                         <InstalledPluginIcon plugin={plugin} iconUrl={installedCatalogIcons.get(plugin.id)} testId="installed-plugin-icon" />
-                      </PluginIconFrame>
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className={cn("text-[11px]", plugin.enabled && plugin.setupState === "ready" && !plugin.pendingUpdate ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{plugin.pendingUpdate ? "Update available" : stateLabel(plugin)}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>
@@ -957,9 +957,9 @@ export function Plugins() {
                   ))}
                   {localApps.map((app) => (
                     <button key={app.id} type="button" disabled={!app.appKey} onClick={() => app.appKey && navigate(appRoute(app.appKey))} className="group flex min-h-[104px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35 disabled:cursor-not-allowed disabled:opacity-55">
-                      <PluginIconFrame className="h-9 w-9">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
                         <AppWindow className="h-4.5 w-4.5" aria-hidden />
-                      </PluginIconFrame>
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{app.name}</span><span className={cn("text-[11px]", app.appKey ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{app.appKey ? "Ready" : app.buildStatus.replaceAll("_", " ")}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">Private interactive capability built in Rudder.</p>
@@ -1003,14 +1003,14 @@ export function Plugins() {
                 <div className="grid gap-2 md:grid-cols-2">
                   {discover.map((plugin) => (
                     <button key={plugin.slug} type="button" className="group flex min-h-[112px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35" onClick={() => navigate(`/hub/plugins/${encodeURIComponent(plugin.slug)}`)}>
-                      <PluginIconFrame className="h-10 w-10">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
                         <PluginIcon
                           src={themedPluginIconUrl(plugin.iconUrl, resolvedTheme)}
                           className="h-full w-full p-1"
                           fallbackClassName="h-4.5 w-4.5"
                           testId="catalog-plugin-icon"
                         />
-                      </PluginIconFrame>
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span>{plugin.updateAvailable ? <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400">Update available</span> : plugin.installedPluginId ? <span className="text-[11px] text-emerald-700 dark:text-emerald-400">Installed</span> : null}</div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.shortDescription}</p>
@@ -1047,14 +1047,14 @@ export function Plugins() {
                         }
                       }}
                     >
-                      <PluginIconFrame className="h-9 w-9">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
                         <PluginIcon
                           src={configuredPluginIconUrl(plugin, catalogQuery.data?.entries ?? [], resolvedTheme)}
                           className="h-full w-full p-1"
                           fallbackClassName="h-4.5 w-4.5"
                           testId="configured-plugin-icon"
                         />
-                      </PluginIconFrame>
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{plugin.displayName}</span><span className="text-[11px] text-muted-foreground">{plugin.category ?? "Plugin"}</span></div>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plugin.description ?? "No description provided."}</p>

@@ -188,21 +188,6 @@ function compareEntries(left: WorkspaceBackupV2Entry, right: WorkspaceBackupV2En
   return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 }
 
-// Cross-runtime backup browsing uses Unicode scalar order. Unlike localeCompare,
-// this is stable across Node ICU versions and reproducible by native clients.
-export function compareWorkspaceBackupFilenames(left: string, right: string) {
-  let leftOffset = 0;
-  let rightOffset = 0;
-  while (leftOffset < left.length && rightOffset < right.length) {
-    const leftCodePoint = left.codePointAt(leftOffset)!;
-    const rightCodePoint = right.codePointAt(rightOffset)!;
-    if (leftCodePoint !== rightCodePoint) return leftCodePoint < rightCodePoint ? -1 : 1;
-    leftOffset += leftCodePoint > 0xffff ? 2 : 1;
-    rightOffset += rightCodePoint > 0xffff ? 2 : 1;
-  }
-  return leftOffset < left.length ? 1 : rightOffset < right.length ? -1 : 0;
-}
-
 function addWarning(warnings: string[], value: string) {
   if (warnings.length < MAX_WARNING_COUNT) warnings.push(value);
   else if (warnings.length === MAX_WARNING_COUNT) warnings.push("Additional backup warnings omitted.");

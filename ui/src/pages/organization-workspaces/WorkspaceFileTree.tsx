@@ -190,6 +190,7 @@ function projectResourceKindIcon(kind: ProjectResourceAttachment["resource"]["ki
 function ProjectResourcesVirtualTree({
   group,
   selectedResourcePath,
+  activeEntryPath,
   onSelectResource,
   onFocusEntry,
   onAddResources,
@@ -201,6 +202,7 @@ function ProjectResourcesVirtualTree({
 }: {
   group: ProjectResourceTreeGroup;
   selectedResourcePath: string | null;
+  activeEntryPath: string | null;
   onSelectResource: (attachmentId: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onAddResources: (project: Project) => void;
@@ -214,6 +216,7 @@ function ProjectResourcesVirtualTree({
   const [expanded, setExpanded] = useState(
     selectedResourcePath?.startsWith(`${folderPath}/`) ?? false,
   );
+  const folderActive = activeEntryPath === folderPath;
   const [folderActionMenuOpen, setFolderActionMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -228,6 +231,7 @@ function ProjectResourcesVirtualTree({
         <div
           className={cn(
             "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-colors hover:bg-accent/60",
+            folderActive && "bg-accent text-foreground",
           )}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           data-workspace-entry-path={folderPath}
@@ -241,14 +245,14 @@ function ProjectResourcesVirtualTree({
         >
           <button
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
             onClick={() => {
               onFocusEntry(folderPath);
               setExpanded((value) => !value);
             }}
             onFocus={() => onFocusEntry(folderPath)}
             aria-expanded={expanded}
-            aria-selected={false}
+            aria-selected={folderActive}
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -294,6 +298,7 @@ function ProjectResourcesVirtualTree({
             {group.resources.map((attachment) => {
               const entryPath = projectResourceEntryPath(group.project, attachment);
               const isSelected = selectedResourcePath === entryPath;
+              const isActive = activeEntryPath === entryPath;
               const Icon = projectResourceKindIcon(attachment.resource.kind);
               const isUnlinking = unlinkingResourceId === attachment.id;
               return (
@@ -301,7 +306,7 @@ function ProjectResourcesVirtualTree({
                   <div
                     className={cn(
                       "group flex w-full items-center rounded-md pr-1 text-sm transition-colors",
-                      isSelected
+                      isSelected || isActive
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                     )}
@@ -311,13 +316,13 @@ function ProjectResourcesVirtualTree({
                   >
                     <button
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
                       onClick={() => {
                         onFocusEntry(entryPath);
                         onSelectResource(attachment.id);
                       }}
                       onFocus={() => onFocusEntry(entryPath)}
-                      aria-selected={isSelected}
+                      aria-selected={isActive || isSelected}
                     >
                       <Icon className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{attachment.resource.name}</span>
@@ -601,6 +606,9 @@ export function WorkspaceTreeNode({
   const entryOpenTargets = entry.isDirectory
     ? workspaceLaunchTargets
     : workspaceFileOpenTargets(workspaceLaunchTargets);
+  const isActive = activeEntryPath === entry.path
+    || selectedSkillTreePath === entry.path
+    || (!activeEntryPath && selectedFilePath === entry.path);
   const isDraggingEntry = draggedEntryPath === entry.path;
   const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -849,6 +857,7 @@ export function WorkspaceTreeNode({
             isDraggingEntry
               ? "rudder-workspace-tree-entry--dragging text-muted-foreground"
               : "hover:bg-accent/60",
+            isActive && !isDraggingEntry && "bg-accent text-foreground",
             dropActive && !isDraggingEntry && "bg-[#2f80ed]/10 ring-1 ring-[#2f80ed]/30",
           )}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
@@ -867,7 +876,7 @@ export function WorkspaceTreeNode({
         >
           <button
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
             onClick={() => {
               onFocusEntry(entry.path);
               setExpanded((value) => !value);
@@ -875,7 +884,7 @@ export function WorkspaceTreeNode({
             onFocus={() => onFocusEntry(entry.path)}
             onKeyDown={handleKeyboardNavigation}
             aria-expanded={expanded}
-            aria-selected={false}
+            aria-selected={isActive}
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -999,6 +1008,7 @@ export function WorkspaceTreeNode({
               <ProjectResourcesVirtualTree
                 group={projectResourceGroup}
                 selectedResourcePath={selectedResourcePath}
+                activeEntryPath={activeEntryPath}
                 onSelectResource={onSelectResource}
                 onFocusEntry={onFocusEntry}
                 onAddResources={onAddResources}
@@ -1032,7 +1042,7 @@ export function WorkspaceTreeNode({
           "group flex w-full items-center rounded-md pr-1 text-sm transition-[background-color,color,opacity,transform] duration-150",
           isDraggingEntry
             ? "rudder-workspace-tree-entry--dragging text-muted-foreground"
-            : isSelected
+            : isSelected || isActive
               ? "bg-accent text-foreground"
               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
         )}
@@ -1049,7 +1059,7 @@ export function WorkspaceTreeNode({
       >
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
           onClick={() => {
             onFocusEntry(entry.path);
             if (entry.virtualSkillId && entry.virtualSkillFilePath) {
@@ -1060,7 +1070,7 @@ export function WorkspaceTreeNode({
           }}
           onFocus={() => onFocusEntry(entry.path)}
           onKeyDown={handleKeyboardNavigation}
-          aria-selected={isSelected}
+          aria-selected={isActive || isSelected}
         >
           <FileIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{primaryLabel}</span>

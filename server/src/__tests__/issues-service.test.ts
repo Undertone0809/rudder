@@ -189,43 +189,6 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
-  it("reuses one Run Debug Issue across concurrent creation attempts", async () => {
-    const orgId = randomUUID();
-    const runId = randomUUID();
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Run Debug idempotency",
-      urlKey: deriveOrganizationUrlKey("Run Debug idempotency"),
-      issuePrefix: `D${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
-
-    const results = await Promise.all([
-      svc.createWithResult(orgId, {
-        title: "Debug failed Run",
-        status: "todo",
-        priority: "medium",
-        originKind: "run_debug",
-        originId: runId,
-        originRunId: runId,
-      }),
-      svc.createWithResult(orgId, {
-        title: "Debug failed Run",
-        status: "todo",
-        priority: "medium",
-        originKind: "run_debug",
-        originId: runId,
-        originRunId: runId,
-      }),
-    ]);
-
-    expect(results.map((result) => result.created).sort()).toEqual([false, true]);
-    expect(new Set(results.map((result) => result.issue.id))).toEqual(new Set([results[0]!.issue.id]));
-    const persisted = await db.select().from(issues).where(eq(issues.originId, runId));
-    expect(persisted).toHaveLength(1);
-    expect(persisted[0]).toMatchObject({ originKind: "run_debug", originRunId: runId });
-  });
-
   it("keeps pending terminal runs visible without leaking terminal state from the issue list route", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

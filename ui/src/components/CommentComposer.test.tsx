@@ -76,30 +76,23 @@ describe("CommentComposer pending Agent wakes", () => {
 
     const status = container.querySelector<HTMLElement>("[data-testid='comment-agent-wake-status']");
     expect(status).not.toBeNull();
-    const summary = status?.querySelector<HTMLButtonElement>("[data-testid='comment-agent-wake-summary']");
-    expect(summary?.textContent).toContain("2 agents will start when sent");
+    expect(status?.querySelectorAll("button")).toHaveLength(2);
+    expect(status?.textContent).toContain("Noahwill start when sent");
+    expect(status?.textContent).toContain("Sagewill start when sent");
 
-    await act(async () => summary?.click());
-    const popover = document.body.querySelector<HTMLElement>("[data-testid='comment-agent-wake-popover']");
-    expect(popover).not.toBeNull();
-    expect(popover?.textContent).toContain("Will start when sent");
-    expect(popover?.textContent).toContain("Noah");
-    expect(popover?.textContent).toContain("Sage");
-
-    const cancelNoah = document.body.querySelector<HTMLButtonElement>(
+    const cancelNoah = container.querySelector<HTMLButtonElement>(
       "button[aria-label='Cancel starting Noah when this comment is sent']",
     );
     expect(cancelNoah).not.toBeNull();
     expect(cancelNoah?.hasAttribute("aria-pressed")).toBe(false);
     await act(async () => cancelNoah?.click());
 
-    const skippedNoah = document.body.querySelector<HTMLButtonElement>(
+    const skippedNoah = container.querySelector<HTMLButtonElement>(
       "button[aria-label='Start Noah when this comment is sent']",
     );
     expect(skippedNoah?.dataset.wakeState).toBe("skipped");
-    expect(skippedNoah?.textContent).toContain("reference only");
-    expect(summary?.textContent).toContain("1 of 2 agents will start when sent");
-    expect(document.body.querySelector("[data-testid='comment-agent-wake-status-agent-sage']")?.getAttribute("data-wake-state"))
+    expect(skippedNoah?.textContent).toContain("won't start this time");
+    expect(container.querySelector("[data-testid='comment-agent-wake-status-agent-sage']")?.getAttribute("data-wake-state"))
       .toBe("pending");
 
     const draft = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Comment draft']")?.value ?? "";
@@ -108,9 +101,8 @@ describe("CommentComposer pending Agent wakes", () => {
     expect(draft).toContain("[Sage](agent://agent-sage?intent=wake)");
 
     await act(async () => skippedNoah?.click());
-    expect(document.body.querySelector("[data-testid='comment-agent-wake-status-agent-noah']")?.getAttribute("data-wake-state"))
+    expect(container.querySelector("[data-testid='comment-agent-wake-status-agent-noah']")?.getAttribute("data-wake-state"))
       .toBe("pending");
-    expect(summary?.textContent).toContain("2 agents will start when sent");
   });
 
   it("shows no wake status for unknown or code-only Agent links", async () => {

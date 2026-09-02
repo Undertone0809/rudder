@@ -41,7 +41,6 @@
     "release:stable": "./scripts/release.sh stable",
     "release:github": "./scripts/create-github-release.sh",
     "release:rollback": "./scripts/rollback-latest.sh",
-    "release-set:check": "vitest run scripts/release-set-protocol.test.mjs",
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",

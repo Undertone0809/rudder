@@ -581,22 +581,42 @@ test("automatically runs queued messages after an operator Stop", async ({ page 
   await createQueuedMessage(page, chatId, "Cancelled Queue message must never run", 4);
   await expect(page.getByTestId("chat-running-queue")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(4, { timeout: 15_000 });
-  await page
+  const queuedDeleteButton = page
     .getByTestId("chat-running-queue-item")
     .nth(3)
-    .getByRole("button", { name: "Delete queued message" })
-    .click();
-  const cancelQueueDeleteResponse = page.waitForResponse((response) =>
+    .getByRole("button", { name: "Delete queued message" });
+  let queueDeleteRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "DELETE" && request.url().includes(`/api/chats/${chatId}/queue/`)) {
+      queueDeleteRequests += 1;
+    }
+  });
+
+  await queuedDeleteButton.click();
+  let queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
+  await expect(queueDeleteDialog).toContainText("before it is sent");
+  await queueDeleteDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(queuedDeleteButton).toBeVisible();
+  expect(queueDeleteRequests).toBe(0);
+
+  await queuedDeleteButton.click();
+  queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
+  await page.keyboard.press("Escape");
+  await expect(queueDeleteDialog).toHaveCount(0);
+  await expect(queuedDeleteButton).toBeVisible();
+  expect(queueDeleteRequests).toBe(0);
+
+  await queuedDeleteButton.click();
+  queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
+  const queueDeleteResponse = page.waitForResponse((response) =>
     response.request().method() === "DELETE"
     && response.url().includes(`/api/chats/${chatId}/queue/`)
     && response.ok(),
   );
-  await page
-    .getByRole("dialog", { name: "Delete queued message?" })
-    .getByRole("button", { name: "Delete message" })
-    .click();
-  await cancelQueueDeleteResponse;
+  await queueDeleteDialog.getByRole("button", { name: "Delete message" }).click({ clickCount: 2 });
+  await queueDeleteResponse;
   await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(3, { timeout: 15_000 });
+  expect(queueDeleteRequests).toBe(1);
   await expect(page.getByTestId("chat-running-queue")).toContainText("3 queued");
   await expect(page.getByTestId("chat-running-queue-item").nth(0)).toContainText("Queued");
   await expect(page.getByTestId("chat-running-queue-item").nth(1)).toContainText("#2");
@@ -623,107 +643,6 @@ test("automatically runs queued messages after an operator Stop", async ({ page 
     expect(finalQueueRes.ok()).toBe(true);
     return (await finalQueueRes.json()).items.length;
   }, { timeout: 30_000 }).toBe(0);
-});
-
-test("requires explicit confirmation before deleting a queued message", async ({ page }) => {
-  const organization = await createStreamingOrg(page, `Queue-Delete-Confirmation-${Date.now()}`);
-  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
-    data: {
-      title: "Queue deletion verification",
-      preferredAgentId: organization.chatAgent.id,
-      initialMessage: { body: "Prepare queue deletion verification" },
-    },
-  });
-  expect(chatRes.ok(), await chatRes.text()).toBe(true);
-  const chat = await chatRes.json() as { id: string };
-
-  await page.goto("/");
-  await page.evaluate((orgId) => {
-    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-  }, organization.id);
-  await page.goto(`/${organization.urlKey}/messenger/chat/${chat.id}`);
-
-  const composer = page.locator(".rudder-mdxeditor-content").first();
-  await expect(composer).toBeVisible({ timeout: 15_000 });
-  await composer.fill("Keep the queue active while deletion is verified");
-  await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
-
-  await createQueuedMessage(page, chat.id, "Delete only after explicit confirmation", 1);
-  await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(1, { timeout: 15_000 });
-  const queuedDeleteButton = page
-    .getByTestId("chat-running-queue-item")
-    .first()
-    .getByRole("button", { name: "Delete queued message" });
-  let queueDeleteRequests = 0;
-  page.on("request", (request) => {
-    if (request.method() === "DELETE" && request.url().includes(`/api/chats/${chat.id}/queue/`)) {
-      queueDeleteRequests += 1;
-    }
-  });
-
-  await queuedDeleteButton.click();
-  let queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
-  await expect(queueDeleteDialog).toContainText("before it is sent");
-  await queueDeleteDialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(queuedDeleteButton).toBeVisible();
-  expect(queueDeleteRequests).toBe(0);
-
-  await queuedDeleteButton.click();
-  queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
-  await page.keyboard.press("Escape");
-  await expect(queueDeleteDialog).toHaveCount(0);
-  await expect(queuedDeleteButton).toBeVisible();
-  expect(queueDeleteRequests).toBe(0);
-
-  let releaseFailedQueueDelete!: () => void;
-  const failedQueueDeleteRelease = new Promise<void>((resolve) => {
-    releaseFailedQueueDelete = resolve;
-  });
-  let markQueueDeletePending!: () => void;
-  const queueDeletePending = new Promise<void>((resolve) => {
-    markQueueDeletePending = resolve;
-  });
-  let interceptFailedQueueDelete = true;
-  await page.route("**/api/chats/**/queue/**", async (route) => {
-    if (route.request().method() !== "DELETE" || !interceptFailedQueueDelete) {
-      await route.continue();
-      return;
-    }
-    interceptFailedQueueDelete = false;
-    markQueueDeletePending();
-    await failedQueueDeleteRelease;
-    await route.fulfill({
-      status: 500,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "Simulated queued message deletion failure" }),
-    });
-  });
-
-  await queuedDeleteButton.click();
-  queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
-  await queueDeleteDialog.getByRole("button", { name: "Delete message" }).click();
-  await queueDeletePending;
-  await expect(queuedDeleteButton).toBeDisabled();
-  await queuedDeleteButton.dispatchEvent("click");
-  expect(queueDeleteRequests).toBe(1);
-  releaseFailedQueueDelete();
-  await expect(page.getByText("Failed to delete queued message")).toBeVisible();
-  await expect(queuedDeleteButton).toBeEnabled();
-  await expect(queuedDeleteButton).toBeVisible();
-  expect(queueDeleteRequests).toBe(1);
-
-  await queuedDeleteButton.click();
-  queueDeleteDialog = page.getByRole("dialog", { name: "Delete queued message?" });
-  const queueDeleteResponse = page.waitForResponse((response) =>
-    response.request().method() === "DELETE"
-    && response.url().includes(`/api/chats/${chat.id}/queue/`)
-    && response.ok(),
-  );
-  await queueDeleteDialog.getByRole("button", { name: "Delete message" }).click({ clickCount: 2 });
-  await queueDeleteResponse;
-  await expect(page.getByTestId("chat-running-queue-item")).toHaveCount(0, { timeout: 15_000 });
-  expect(queueDeleteRequests).toBe(2);
 });
 
 test("keeps a streaming chat visible after navigating to issue detail and back", async ({ page }) => {

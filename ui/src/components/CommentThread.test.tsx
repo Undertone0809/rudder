@@ -996,31 +996,6 @@ describe("CommentThread", () => {
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 
-  it("keeps Agent wake status inside the attachment toolbar", () => {
-    const container = renderInteractive(
-      <MemoryRouter>
-        <CommentThread
-          comments={[]}
-          agentMap={new Map([[
-            "agent-1",
-            { id: "agent-1", name: "Dylan", role: "Reviewer", status: "active" } as Agent,
-          ]])}
-          imageUploadHandler={async () => "/api/assets/file/content"}
-          onAdd={async () => undefined}
-        />
-      </MemoryRouter>,
-    );
-    const editor = container.querySelector('textarea[aria-label="Leave a comment..."]');
-    change(editor, "[Dylan](agent://agent-1) please review");
-
-    const toolbar = container.querySelector("[data-testid='issue-comment-composer-toolbar']");
-    const wakeStatus = container.querySelector("[data-testid='comment-agent-wake-status']");
-    expect(toolbar).not.toBeNull();
-    expect(wakeStatus).not.toBeNull();
-    expect(toolbar?.contains(wakeStatus)).toBe(true);
-    expect(wakeStatus?.textContent).toContain("won't start this time");
-  });
-
   it("steers an active Issue Run without requiring an Agent mention", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
     const container = renderInteractive(

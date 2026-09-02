@@ -9,12 +9,6 @@ export interface AssigneeOption {
   searchText?: string;
 }
 
-export const LOCAL_BOARD_USER_ID = "local-board";
-
-export function isSystemUserId(userId: string | null | undefined): boolean {
-  return userId === LOCAL_BOARD_USER_ID;
-}
-
 interface CommentAssigneeSuggestionInput {
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
@@ -69,11 +63,11 @@ export function parseAssigneeValue(value: string): AssigneeSelection {
 }
 
 export function currentUserAssigneeOption(currentUserId: string | null | undefined): AssigneeOption[] {
-  if (!currentUserId || isSystemUserId(currentUserId)) return [];
+  if (!currentUserId) return [];
   return [{
     id: assigneeValueFromSelection({ assigneeUserId: currentUserId }),
     label: "Me",
-    searchText: `me human ${currentUserId}`,
+    searchText: currentUserId === "local-board" ? "me board human local-board" : `me human ${currentUserId}`,
   }];
 }
 
@@ -82,7 +76,7 @@ export function formatAssigneeUserLabel(
   currentUserId: string | null | undefined,
 ): string | null {
   if (!userId) return null;
-  if (isSystemUserId(userId)) return "System";
   if (currentUserId && userId === currentUserId) return "Me";
+  if (userId === "local-board") return "Board";
   return userId.slice(0, 5);
 }

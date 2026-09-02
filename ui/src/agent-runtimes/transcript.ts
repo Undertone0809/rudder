@@ -1,15 +1,6 @@
 import { redactHomePathUserSegments, redactTranscriptEntryPaths } from "@rudderhq/agent-runtime-utils";
 import type { StdoutLineParser, TranscriptEntry } from "./types";
 
-type StreamingTextEntry = Extract<TranscriptEntry, { kind: "assistant" | "thinking" }> & {
-  streamStartTs?: string;
-};
-
-function streamStartTs(entry: TranscriptEntry): string | undefined {
-  const candidate = (entry as StreamingTextEntry).streamStartTs?.trim();
-  return candidate || undefined;
-}
-
 export type RunLogChunk = { ts: string; stream: "stdout" | "stderr" | "system"; chunk: string };
 export type TranscriptBuildOptions = { censorUsernameInLogs?: boolean };
 export type TranscriptLogBuildState = { stdoutBuffer: string; lastStdoutTs: string | null };
@@ -41,9 +32,6 @@ export function appendTranscriptEntry(entries: TranscriptEntry[], entry: Transcr
         ...last,
         text: last.text + entry.text,
         ts: entry.ts,
-        ...((last.kind === "assistant" || last.kind === "thinking")
-          ? { streamStartTs: streamStartTs(last) ?? last.ts }
-          : {}),
         ...(last.kind === "assistant" && entry.kind === "assistant" && (last.phase ?? entry.phase)
           ? { phase: last.phase ?? entry.phase }
           : {}),

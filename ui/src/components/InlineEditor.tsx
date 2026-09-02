@@ -16,7 +16,6 @@ interface InlineEditorProps {
   as?: "h1" | "h2" | "p" | "span";
   className?: string;
   placeholder?: string;
-  ariaLabel?: string;
   multiline?: boolean;
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
@@ -48,7 +47,6 @@ export function InlineEditor({
   as: Tag = "span",
   className,
   placeholder = "Click to edit...",
-  ariaLabel,
   multiline = false,
   imageUploadHandler,
   mentions,
@@ -310,7 +308,6 @@ export function InlineEditor({
             setDraft(nextDraft);
           }}
           placeholder={placeholder}
-          ariaLabel={ariaLabel}
           bordered={false}
           className="bg-transparent"
           contentClassName={markdownEditorContentClassName}

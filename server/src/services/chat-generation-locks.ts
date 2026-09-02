@@ -18,7 +18,6 @@ const CHAT_CONTROL_LEASE_RENEW_INTERVAL_MS = 10_000;
 
 type ActiveChatGeneration = {
   generationId: string | null;
-  clientMutationId: string | null;
   token: symbol;
   abortController: AbortController | null;
   lifecycle: "starting" | "running" | "closing" | "stopping";
@@ -77,7 +76,6 @@ export function claimChatGeneration(
   conversationId: string,
   abortController: AbortController | null = null,
   generationId: string | null = null,
-  clientMutationId: string | null = null,
 ): (() => void) | null {
   if (activeChatGenerations.has(conversationId)) return null;
 
@@ -86,7 +84,6 @@ export function claimChatGeneration(
     token,
     abortController,
     generationId,
-    clientMutationId,
     lifecycle: "starting",
     attemptEpoch: 0,
     attemptOwnerToken: null,
@@ -113,7 +110,6 @@ export function hasActiveChatGeneration(conversationId: string): boolean {
 
 export function getActiveChatGeneration(conversationId: string): {
   generationId: string | null;
-  clientMutationId: string | null;
   attemptEpoch: number;
   lifecycle: ActiveChatGeneration["lifecycle"];
   runtimeType: string | null;
@@ -122,7 +118,6 @@ export function getActiveChatGeneration(conversationId: string): {
   if (!active) return null;
   return {
     generationId: active.generationId,
-    clientMutationId: active.clientMutationId,
     attemptEpoch: active.attemptEpoch,
     lifecycle: active.lifecycle,
     runtimeType: active.control?.handle.runtimeType ?? null,

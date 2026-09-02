@@ -316,6 +316,65 @@ rl.on("line", (line) => {
         });
       }, 500);
     }
+    if (prompt.includes("Show two historical file diffs")) {
+      const changes = [
+        {
+          path: "/workspace/src/audit-log.ts",
+          kind: { type: "update", move_path: null },
+        },
+        {
+          path: "/workspace/src/InvoicePanel.tsx",
+          kind: { type: "update", move_path: null },
+        },
+      ];
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "fileChange",
+            id: "file-change-e2e",
+            status: "inProgress",
+            changes,
+          },
+        },
+      });
+      send({
+        method: "item/fileChange/patchUpdated",
+        params: {
+          threadId,
+          turnId,
+          itemId: "file-change-e2e",
+          changes: [
+            {
+              path: "/workspace/src/InvoicePanel.tsx",
+              kind: { type: "update", move_path: null },
+              diff: "@@ -7 +7 @@\n-export const label = \"Draft\";\n+export const label = \"Ready for review\";",
+            },
+            {
+              path: "/workspace/src/audit-log.ts",
+              kind: { type: "update", move_path: null },
+              diff: "@@ -1,0 +1,2 @@\n+export const auditMode = \"strict\";\n+export const retainDays = 30;",
+            },
+          ],
+        },
+      });
+      send({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId,
+          item: {
+            type: "fileChange",
+            id: "file-change-e2e",
+            status: "completed",
+            changes,
+          },
+        },
+      });
+      setTimeout(() => finish("The two file changes are ready for review."), 250);
+    }
     fallbackTimer = setTimeout(
       () => finish(`Initial App Server reply (${prompt.includes("Keep Steer message position stable") ? "marker-true" : "marker-false"})`),
       prompt.includes("Render dual reasoning streams")

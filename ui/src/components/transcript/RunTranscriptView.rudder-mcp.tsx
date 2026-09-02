@@ -1,4 +1,6 @@
+import { adapterLabels } from "@/components/agent-config-primitives";
 import { AgentIdentity } from "@/components/AgentAvatar";
+import { StatusIcon } from "@/components/StatusIcon";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { cn } from "@/lib/utils";
@@ -9,8 +11,8 @@ import {
   CircleDot,
   FolderKanban,
   Goal,
+  Repeat,
   ShieldCheck,
-  Zap,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -358,6 +360,7 @@ interface SemanticCardModel {
   description: string | null;
   commentBody: string | null;
   status: string | null;
+  statusValue: string | null;
   target: string | null;
   agentRef: string | null;
   timestamp: string | null;
@@ -384,7 +387,8 @@ function cardModel(
   const commentBody = toolName.includes("comment")
     ? readString(record, ["body", "commentBody", "content", "text"])
     : null;
-  const status = statusLabel(readString(record, ["status", "lifecycle", "decision", "state", "kind", "priority"]));
+  const statusValue = readString(record, ["status", "lifecycle", "decision", "state", "kind", "priority"]);
+  const status = statusLabel(statusValue);
   const agentRef = readString(record, [
     "assigneeAgentId", "ownerAgentId", "authorAgentId", "createdByAgentId", "requestedByAgentId", "agentId", "leadAgentId",
   ]);
@@ -402,6 +406,7 @@ function cardModel(
     description: description === title ? null : description,
     commentBody,
     status,
+    statusValue,
     target: targetFor(domain, record, args, toolName, triggerAutomationParents),
     agentRef,
     timestamp,
@@ -420,7 +425,7 @@ function domainIcon(domain: RudderMcpDomain): LucideIcon {
   if (domain === "issue") return CircleDot;
   if (domain === "project") return FolderKanban;
   if (domain === "approval") return ShieldCheck;
-  return Zap;
+  return Repeat;
 }
 
 function resolveAgent(ref: string | null, agents: TranscriptAgentDirectoryEntry[]) {
@@ -431,6 +436,99 @@ function resolveAgent(ref: string | null, agents: TranscriptAgentDirectoryEntry[
     icon: null,
     role: null,
   };
+}
+
+const runtimeProviders: Record<string, string> = {
+  claude_local: "Anthropic",
+  codex_local: "OpenAI",
+  cursor: "Cursor",
+  gemini_local: "Google",
+  hermes_gateway: "Hermes",
+  hermes_local: "Hermes",
+  http: "HTTP",
+  openclaw_gateway: "OpenClaw",
+  process: "Local process",
+};
+
+const modelProviders: Record<string, string> = {
+  anthropic: "Anthropic",
+  deepseek: "DeepSeek",
+  google: "Google",
+  kimi: "Kimi",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+};
+
+function configuredAgentModel(agent: TranscriptAgentDirectoryEntry) {
+  const model = agent.agentRuntimeConfig?.model ?? agent.runtimeConfig?.model;
+  return typeof model === "string" && model.trim() ? model.trim() : null;
+}
+
+function runtimeProvider(agent: TranscriptAgentDirectoryEntry, model: string | null) {
+  if (agent.agentRuntimeType === "claude_local" && model?.toLowerCase().startsWith("deepseek")) {
+    return "DeepSeek";
+  }
+  const modelProvider = model?.includes("/") ? model.split("/", 1)[0]?.trim() : null;
+  if (modelProvider) {
+    return modelProviders[modelProvider.toLowerCase()]
+      ?? modelProvider.replace(/(^|[-_])\w/g, (match) => match.replace(/[-_]/g, " ").toUpperCase());
+  }
+  return agent.agentRuntimeType ? runtimeProviders[agent.agentRuntimeType] ?? null : null;
+}
+
+function agentRuntimeSummary(agent: TranscriptAgentDirectoryEntry) {
+  const model = configuredAgentModel(agent);
+  const provider = runtimeProvider(agent, model);
+  const runtime = agent.agentRuntimeType ? adapterLabels[agent.agentRuntimeType] ?? agent.agentRuntimeType : null;
+  return [provider, model, runtime].filter(Boolean).join(" · ");
+}
+
+function SemanticAgentIdentity({
+  agent,
+  align = "start",
+}: {
+  agent: TranscriptAgentDirectoryEntry;
+  align?: "start" | "end" | "responsive";
+}) {
+  const runtimeSummary = agentRuntimeSummary(agent);
+  return (
+    <span
+      className={cn(
+        "flex min-w-0 flex-col gap-0.5",
+        align === "end" && "items-end",
+        align === "responsive" && "items-start sm:items-end",
+      )}
+      data-rudder-semantic-agent="true"
+    >
+      <AgentIdentity
+        name={agent.name}
+        icon={agent.icon}
+        role={agent.role as AgentRole | null | undefined}
+        size="sm"
+        className="min-w-0 max-w-full text-muted-foreground"
+      />
+      {runtimeSummary ? (
+        <span
+          className={cn(
+            "max-w-full truncate text-[10px] text-muted-foreground",
+            align === "start" && "pl-7",
+            align === "responsive" && "pl-7 sm:pl-0",
+          )}
+          title={runtimeSummary}
+        >
+          {runtimeSummary}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function SemanticDomainIcon({ model, domain }: { model: SemanticCardModel; domain: RudderMcpDomain }) {
+  if (domain === "issue" && model.statusValue) {
+    return <StatusIcon status={model.statusValue} className="size-4" />;
+  }
+  const Icon = domainIcon(domain);
+  return <Icon className="size-4" aria-hidden />;
 }
 
 function SemanticEntityCard({
@@ -444,7 +542,6 @@ function SemanticEntityCard({
   agents: TranscriptAgentDirectoryEntry[];
   compact?: boolean;
 }) {
-  const Icon = domainIcon(domain);
   const agent = resolveAgent(model.agentRef, agents);
   const target = organizationAwareTarget(model.target);
   const [hovered, setHovered] = useState(false);
@@ -452,40 +549,32 @@ function SemanticEntityCard({
   const interactive = Boolean(target) && (hovered || focused);
   const content = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/35 text-muted-foreground">
-          <Icon className="size-4" aria-hidden />
-        </span>
+      <span className="row-span-3 inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/35 text-muted-foreground">
+        <SemanticDomainIcon model={model} domain={domain} />
+      </span>
+      <span className="flex min-w-0 items-start justify-between gap-3">
+        <span className="min-w-0 text-[10px] font-semibold text-muted-foreground">{model.eyebrow}</span>
         {model.status ? (
-          <span className="max-w-[9rem] truncate rounded-sm border border-border/60 bg-background/70 px-2 py-0.5 text-[10px] font-medium capitalize text-muted-foreground">
+          <span className="max-w-[9rem] shrink-0 truncate text-[10px] font-semibold capitalize text-foreground">
             {model.status}
           </span>
         ) : null}
-      </div>
-      <div className="mt-3 min-w-0">
-        <div className="text-[10px] font-semibold text-muted-foreground">{model.eyebrow}</div>
-        {model.title ? <div className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-foreground" title={model.title}>{model.title}</div> : null}
+      </span>
+      <span className="min-w-0">
+        {model.title ? <span className="line-clamp-2 block text-sm font-semibold leading-5 text-foreground" title={model.title}>{model.title}</span> : null}
         {model.description ? (
-          <div className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground" title={model.description}>{model.description}</div>
+          <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground" title={model.description}>{model.description}</span>
         ) : null}
-      </div>
-      <div className="mt-auto flex min-w-0 items-end justify-between gap-2 pt-3">
-        {agent ? (
-          <AgentIdentity
-            name={agent.name}
-            icon={agent.icon}
-            role={agent.role as AgentRole | null | undefined}
-            size="sm"
-            className="min-w-0 max-w-[10rem] text-muted-foreground"
-          />
-        ) : <span />}
+      </span>
+      <span className="flex min-w-0 items-end justify-between gap-2 border-t border-border/60 pt-2">
+        {agent ? <SemanticAgentIdentity agent={agent} /> : <span />}
         {formatDate(model.timestamp) ? <span className="shrink-0 text-[10px] text-muted-foreground">{formatDate(model.timestamp)}</span> : null}
-      </div>
+      </span>
     </>
   );
   const className = cn(
-    "flex shrink-0 snap-start flex-col overflow-hidden border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.32)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.72)]",
-    compact ? "min-h-36 w-full rounded-md" : "h-52 w-[17.5rem] rounded-md",
+    "grid shrink-0 snap-start grid-cols-[1.75rem_minmax(0,1fr)] content-start gap-x-2.5 gap-y-1.5 overflow-hidden rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05),0_8px_20px_-16px_rgba(15,23,42,0.34)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.28),0_10px_22px_-16px_rgba(0,0,0,0.72)]",
+    compact ? "w-full" : "min-h-36 w-[22rem]",
     target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-card hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.38)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-18px_rgba(0,0,0,0.78)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
     interactive && "-translate-y-0.5 border-foreground/30 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.42)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.82)]",
   );
@@ -583,7 +672,7 @@ function Rail({
       {models.slice(0, mounted).map((model) => (
         <SemanticEntityCard key={model.key} model={model} domain={domain} agents={agents} />
       ))}
-      {mounted < models.length ? <div ref={sentinelRef} className="h-52 w-px shrink-0" aria-hidden data-rudder-semantic-sentinel="true" /> : null}
+      {mounted < models.length ? <div ref={sentinelRef} className="h-36 w-px shrink-0" aria-hidden data-rudder-semantic-sentinel="true" /> : null}
     </div>
   );
 }
@@ -660,18 +749,8 @@ function Receipt({
         ) : null}
       </span>
       {agent || model.status || formatDate(model.timestamp) ? (
-        <span className="col-start-3 row-start-1 flex shrink-0 flex-col items-end gap-1">
-          {agent ? (
-            <span data-rudder-semantic-agent="true">
-              <AgentIdentity
-                name={agent.name}
-                icon={agent.icon}
-                role={agent.role as AgentRole | null | undefined}
-                size="sm"
-                className="max-w-[11rem] text-muted-foreground"
-              />
-            </span>
-          ) : null}
+        <span className="col-start-2 row-start-2 flex min-w-0 flex-col items-start gap-1 sm:col-start-3 sm:row-start-1 sm:items-end">
+          {agent ? <SemanticAgentIdentity agent={agent} align="responsive" /> : null}
           {model.status ? <span className="rounded-sm border border-border/60 px-2 py-0.5 text-[10px] capitalize text-muted-foreground">{model.status}</span> : null}
           {formatDate(model.timestamp) ? <span className="text-[10px] text-muted-foreground">{formatDate(model.timestamp)}</span> : null}
         </span>
@@ -679,7 +758,7 @@ function Receipt({
       {model.commentBody ? (
         <span
           ref={commentScrollRef}
-          className="scrollbar-auto-hide col-start-2 col-end-4 row-start-2 block max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words border-l-2 border-foreground/15 pl-2.5 pr-2 text-xs leading-5 text-foreground/80"
+          className="scrollbar-auto-hide col-start-2 col-end-3 row-start-3 block max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words border-l-2 border-foreground/15 pl-2.5 pr-2 text-xs leading-5 text-foreground/80 sm:col-end-4 sm:row-start-2"
           data-rudder-semantic-comment-body="true"
         >
           {model.commentBody}
@@ -688,7 +767,7 @@ function Receipt({
     </>
   );
   const className = cn(
-    "grid w-full grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.30)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.70)]",
+    "grid w-full grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.30)] sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.70)]",
     target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-card hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.36)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-18px_rgba(0,0,0,0.76)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
     interactive && "-translate-y-0.5 border-foreground/30 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.40)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.80)]",
   );

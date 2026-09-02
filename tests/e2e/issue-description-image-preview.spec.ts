@@ -545,47 +545,6 @@ test("issue description images stay clickable while editing and open the global 
   await expect(commentBody).toBeVisible();
   expect(commentDeleteRequests).toBe(0);
 
-  let releaseFailedCommentDelete!: () => void;
-  const failedCommentDeleteRelease = new Promise<void>((resolve) => {
-    releaseFailedCommentDelete = resolve;
-  });
-  let markCommentDeletePending!: () => void;
-  const commentDeletePending = new Promise<void>((resolve) => {
-    markCommentDeletePending = resolve;
-  });
-  let interceptFailedCommentDelete = true;
-  await page.route(`**/api/issues/${issueRouteId}/comments/${comment.id}`, async (route) => {
-    if (route.request().method() !== "DELETE" || !interceptFailedCommentDelete) {
-      await route.continue();
-      return;
-    }
-    interceptFailedCommentDelete = false;
-    markCommentDeletePending();
-    await failedCommentDeleteRelease;
-    await route.fulfill({
-      status: 500,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "Simulated comment deletion failure" }),
-    });
-  });
-
-  await openCommentActions();
-  await page.getByRole("menuitem", { name: "Delete", exact: true }).dispatchEvent("click");
-  commentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
-  await commentDialog.getByRole("button", { name: "Delete comment" }).click();
-  await commentDeletePending;
-  expect(await commentActionsHandle!.evaluate((element) => (element as HTMLButtonElement).disabled)).toBe(true);
-  const pendingCommentDeleteAction = page.getByRole("menuitem", { name: "Delete", exact: true });
-  await expect(pendingCommentDeleteAction).toBeDisabled();
-  await pendingCommentDeleteAction.dispatchEvent("click");
-  expect(commentDeleteRequests).toBe(1);
-  releaseFailedCommentDelete();
-  await expect(page.getByText("Failed to delete comment")).toBeVisible();
-  await expect.poll(() => commentActionsHandle!.evaluate((element) => (element as HTMLButtonElement).disabled)).toBe(false);
-  await expect(commentBody).toBeVisible();
-  expect(commentDeleteRequests).toBe(1);
-
-  await page.keyboard.press("Escape");
   await openCommentActions();
   await page.getByRole("menuitem", { name: "Delete", exact: true }).dispatchEvent("click");
   commentDialog = page.getByRole("dialog", { name: "Delete this comment?" });
@@ -598,5 +557,5 @@ test("issue description images stay clickable while editing and open the global 
   await commentDeleteResponse;
   await expect(commentBody).toHaveCount(0);
   await expect(page.getByText("Comment deleted")).toBeVisible();
-  expect(commentDeleteRequests).toBe(2);
+  expect(commentDeleteRequests).toBe(1);
 });

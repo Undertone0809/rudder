@@ -227,6 +227,22 @@ function quarantinedRuntimeDescriptor(value: unknown): LocalAppRuntimeDescriptor
     && !descriptor.generation.includes("\0")
     ? descriptor.generation
     : randomUUID();
+  const pid = descriptor?.pid;
+  const pgid = descriptor?.pgid;
+  const port = descriptor?.port;
+  if (isSafeLocalAppProcessId(pid)
+    && isSafeLocalAppProcessId(pgid)
+    && Number.isInteger(port)
+    && port! > 0
+    && port! <= 65_535) {
+    return {
+      status: "orphaned_unverified",
+      pid,
+      pgid,
+      port,
+      generation,
+    };
+  }
   return { status: "quarantined", pid: null, pgid: null, generation };
 }
 
@@ -435,19 +451,9 @@ export class LocalAppRegistry {
       updatedAt: now,
     };
     return this.mutate((state) => {
-      if (state.definitions.some((entry) => entry.cwd === definition.cwd)) {
-        throw new Error("Local App project is already registered");
-      }
       state.definitions.push(definition);
       return structuredClone(definition);
     });
-  }
-
-  async findDefinitionByCwd(cwd: string): Promise<LocalAppDefinition | null> {
-    const definition = (await this.load()).definitions
-      .filter((entry) => entry.cwd === cwd)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-    return definition ? structuredClone(definition) : null;
   }
 
   async updateDefinition(id: string, input: LocalAppDefinitionDraft): Promise<LocalAppDefinition> {

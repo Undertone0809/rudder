@@ -10,20 +10,12 @@ use serde::Serialize;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::{sync::Notify, time::timeout};
 use tracing::{info, warn};
-
-mod workspace_backup_files;
-
-use workspace_backup_files::{
-    ArtifactError as BackupArtifactError, WorkspaceBackupFilesQuery, file_list_receipt,
-    load_entries, normalize_directory_path,
-};
 
 pub const HEALTH_SCHEMA: &str = "rudder.native.server.health.v1";
 pub const READINESS_SCHEMA: &str = "rudder.native.server.readiness.v1";
@@ -51,45 +43,8 @@ const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUEUE_DEPTH: usize = 1024;
 const MAX_DATABASE_CONNECTIONS: u32 = 64;
 const MAX_WORKERS: usize = 32;
-const READ_ONLY_AUTHORITIES: &[&str] = &["workspace_backup_list", "workspace_backup_files_list"];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
-
-const WORKSPACE_BACKUP_LIST_SQL: &str = r#"
-SELECT jsonb_build_object(
-  'id', id::text,
-  'orgId', org_id::text,
-  'status', status,
-  'triggerSource', trigger_source,
-  'artifactProvider', 'local_file',
-  'artifactRef', artifact_ref,
-  'archiveSha256', archive_sha256,
-  'treeSha256', tree_sha256,
-  'fileCount', file_count,
-  'byteSize', byte_size,
-  'compressedSize', compressed_size,
-  'manifest', manifest,
-  'warnings', CASE WHEN jsonb_typeof(warnings) = 'array' THEN warnings ELSE '[]'::jsonb END,
-  'error', error,
-  'startedAt', CASE WHEN started_at IS NULL THEN NULL ELSE to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
-  'finishedAt', CASE WHEN finished_at IS NULL THEN NULL ELSE to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
-  'expiresAt', to_char(COALESCE(expires_at, created_at + interval '30 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'restoredFromBackupId', restored_from_backup_id::text,
-  'createdByUserId', created_by_user_id,
-  'createdAt', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'updatedAt', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-)::text
-FROM workspace_backups
-WHERE org_id::text = $1 AND status <> 'deleted'
-ORDER BY created_at DESC
-"#;
-
-const WORKSPACE_BACKUP_FILES_SQL: &str = r#"
-SELECT artifact_ref, archive_sha256, status
-FROM workspace_backups
-WHERE org_id::text = $1 AND id::text = $2 AND status <> 'deleted'
-LIMIT 1
-"#;
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -372,7 +327,6 @@ pub struct StartupReceipt {
     pub public_listener: bool,
     pub product_write_authority: bool,
     pub database_authority: &'static str,
-    pub read_only_authorities: &'static [&'static str],
     pub limits: LimitsReceipt,
 }
 
@@ -434,14 +388,7 @@ struct CapabilitiesReceipt {
     public_listener: bool,
     product_write_authority: bool,
     websocket_supported: bool,
-    read_only_authorities: &'static [&'static str],
     limits: LimitsReceipt,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceBackupListReceipt {
-    backups: Vec<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -689,127 +636,8 @@ impl AppState {
             public_listener: false,
             product_write_authority: false,
             websocket_supported: false,
-            read_only_authorities: READ_ONLY_AUTHORITIES,
             limits: self.config.limits(),
         };
-        bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
-    }
-
-    async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
-        let DatabaseState::Configured(pool) = &self.database else {
-            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
-        };
-
-        let organization_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id::text = $1)",
-        )
-        .bind(org_id)
-        .fetch_one(pool)
-        .await;
-        match organization_exists {
-            Ok(false) => {
-                return self.json_error(StatusCode::NOT_FOUND, "organization_not_found");
-            }
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace_backup_list_failed",
-                );
-            }
-            Ok(true) => {}
-        }
-
-        match sqlx::query_scalar::<_, String>(WORKSPACE_BACKUP_LIST_SQL)
-            .bind(org_id)
-            .fetch_all(pool)
-            .await
-        {
-            Ok(rows) => match rows
-                .into_iter()
-                .map(|row| serde_json::from_str::<serde_json::Value>(&row))
-                .collect::<Result<Vec<_>, _>>()
-            {
-                Ok(backups) => bounded_json(
-                    StatusCode::OK,
-                    &WorkspaceBackupListReceipt { backups },
-                    self.config.max_response_bytes,
-                ),
-                Err(_) => self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace_backup_list_failed",
-                ),
-            },
-            Err(_) => self.json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "workspace_backup_list_failed",
-            ),
-        }
-    }
-
-    async fn workspace_backup_files(
-        &self,
-        org_id: &str,
-        backup_id: &str,
-        directory_path: &str,
-    ) -> HttpResponse {
-        let DatabaseState::Configured(pool) = &self.database else {
-            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
-        };
-
-        let normalized_directory = match normalize_directory_path(directory_path) {
-            Ok(path) => path,
-            Err(reason) => return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, reason),
-        };
-        let row = sqlx::query_as::<_, (String, Option<String>, String)>(WORKSPACE_BACKUP_FILES_SQL)
-            .bind(org_id)
-            .bind(backup_id)
-            .fetch_optional(pool)
-            .await;
-        let (artifact_ref, archive_sha256, status) = match row {
-            Ok(Some(row)) => row,
-            Ok(None) => {
-                return self.json_error(StatusCode::NOT_FOUND, "workspace_backup_not_found");
-            }
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace_backup_files_list_failed",
-                );
-            }
-        };
-        if status == "running" {
-            return self.json_error(StatusCode::CONFLICT, "workspace_backup_running");
-        }
-        if status == "failed" {
-            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "workspace_backup_failed");
-        }
-
-        let org_id = org_id.to_owned();
-        let artifact_path = PathBuf::from(artifact_ref);
-        let entries = tokio::task::spawn_blocking(move || {
-            load_entries(&artifact_path, &org_id, archive_sha256.as_deref())
-        })
-        .await;
-        let entries = match entries {
-            Ok(Ok(entries)) => entries,
-            Ok(Err(BackupArtifactError::NotFound)) => {
-                return self
-                    .json_error(StatusCode::NOT_FOUND, "workspace_backup_artifact_not_found");
-            }
-            Ok(Err(BackupArtifactError::Invalid)) => {
-                return self.json_error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "workspace_backup_artifact_invalid",
-                );
-            }
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace_backup_files_list_failed",
-                );
-            }
-        };
-        let receipt = file_list_receipt(&entries, normalized_directory, backup_id);
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
     }
 }
@@ -885,21 +713,6 @@ async fn capabilities(state: web::Data<AppState>) -> HttpResponse {
     state.capabilities()
 }
 
-async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
-    state.workspace_backups(org_id.as_str()).await
-}
-
-async fn workspace_backup_files(
-    state: web::Data<AppState>,
-    route: web::Path<(String, String)>,
-    query: web::Query<WorkspaceBackupFilesQuery>,
-) -> HttpResponse {
-    let (org_id, backup_id) = route.into_inner();
-    state
-        .workspace_backup_files(&org_id, &backup_id, &query.path)
-        .await
-}
-
 pub struct ServerRuntime {
     server: Option<actix_web::dev::Server>,
     control: ServerControl,
@@ -926,14 +739,6 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
-                .route(
-                    "/api/orgs/{org_id}/workspace/backups",
-                    web::get().to(workspace_backups),
-                )
-                .route(
-                    "/api/orgs/{org_id}/workspace/backups/{backup_id}/files",
-                    web::get().to(workspace_backup_files),
-                )
         })
         .workers(config.workers)
         .disable_signals()
@@ -974,8 +779,7 @@ impl ServerRuntime {
             bound_addr: self.bound_addr,
             public_listener: false,
             product_write_authority: false,
-            database_authority: "read-only-product-data",
-            read_only_authorities: READ_ONLY_AUTHORITIES,
+            database_authority: "pool-boundary-only",
             limits: self.control.state.config.limits(),
         }
     }
@@ -1192,37 +996,5 @@ mod tests {
         let state = AppState::new(ServerConfig::default()).unwrap();
         assert_eq!(state.health().status(), StatusCode::OK);
         assert_eq!(state.capabilities().status(), StatusCode::OK);
-    }
-
-    #[actix_web::test]
-    async fn workspace_backup_list_fails_closed_without_database() {
-        let state = AppState::new(ServerConfig::default()).unwrap();
-        let response = state.workspace_backups("organization-1").await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = actix_web::body::to_bytes(response.into_body())
-            .await
-            .unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("database_disabled"));
-    }
-
-    #[test]
-    fn workspace_backup_list_query_is_organization_scoped_and_read_only() {
-        let normalized = WORKSPACE_BACKUP_LIST_SQL.to_ascii_lowercase();
-        assert!(normalized.contains("where org_id::text = $1"));
-        assert!(normalized.contains("status <> 'deleted'"));
-        assert!(normalized.contains("order by created_at desc"));
-        for mutation in ["insert ", "update ", "delete ", "truncate "] {
-            assert!(!normalized.contains(mutation), "query contains {mutation}");
-        }
-    }
-
-    #[test]
-    fn workspace_backup_files_query_is_organization_scoped_and_read_only() {
-        let normalized = WORKSPACE_BACKUP_FILES_SQL.to_ascii_lowercase();
-        assert!(normalized.contains("where org_id::text = $1 and id::text = $2"));
-        assert!(normalized.contains("status <> 'deleted'"));
-        for mutation in ["insert ", "update ", "delete ", "truncate "] {
-            assert!(!normalized.contains(mutation), "query contains {mutation}");
-        }
     }
 }

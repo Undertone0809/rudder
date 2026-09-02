@@ -35,6 +35,7 @@ import { PageTabBar } from "../components/PageTabBar";
 import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput, type TranscriptSkillTarget } from "../components/transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
+import { useI18n } from "../context/I18nContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { queryKeys } from "../lib/queryKeys";
 import { chatTranscriptEntriesToRunTranscriptEntries, heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries, resolveRunChatTranscriptTarget } from "../lib/run-detail-events";
@@ -92,6 +93,7 @@ export function LogViewer({
   onAnnotate?: (input: TranscriptRunAnnotationInput) => void;
 }) {
   type RunDetailTab = "transcript" | "invocation";
+  const { locale } = useI18n();
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
   const [logLines, setLogLines] = useState<RunLogChunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -649,9 +651,11 @@ export function LogViewer({
                   { value: "transcript", label: "Transcript" },
                   {
                     value: "invocation",
-                    label: "Invocation",
-                    mobileLabel: "Invocation",
-                    tooltip: "Exact adapter invocation and Agent Instruction stack",
+                    label: locale === "zh-CN" ? "元数据" : "Metadata",
+                    mobileLabel: locale === "zh-CN" ? "元数据" : "Metadata",
+                    tooltip: locale === "zh-CN"
+                      ? "运行时元数据和 Agent 指令堆栈"
+                      : "Runtime metadata and Agent Instruction stack",
                   },
                 ]}
                 value={activeDetailTab}

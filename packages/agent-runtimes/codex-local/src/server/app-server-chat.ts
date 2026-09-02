@@ -178,6 +178,26 @@ function normalizeThreadItem(value: unknown): JsonRecord {
   return { ...item, type: type || "unknown" };
 }
 
+function mergeFileChangePatch(item: JsonRecord, patchChanges: unknown[]): JsonRecord {
+  const patchByPath = new Map<string, JsonRecord>();
+  for (const value of patchChanges) {
+    const change = asRecord(value);
+    const changePath = asString(change?.path);
+    if (change && changePath) patchByPath.set(changePath, change);
+  }
+  if (patchByPath.size === 0) return item;
+
+  const itemChanges = Array.isArray(item.changes) ? item.changes : [];
+  const changes = itemChanges.length > 0
+    ? itemChanges.map((value) => {
+        const change = asRecord(value);
+        const patch = change ? patchByPath.get(asString(change.path)) : null;
+        return change && patch ? { ...patch, ...change, diff: patch.diff } : value;
+      })
+    : [...patchByPath.values()];
+  return { ...item, changes };
+}
+
 function readThreadSnapshot(response: unknown): { status: string; items: JsonRecord[] } | null {
   const thread = asRecord(asRecord(response)?.thread);
   if (!thread) return null;
@@ -339,6 +359,7 @@ export async function executeCodexAppServerChat(
   const reasoningSummaryIndexByItemId = new Map<string, number>();
   const agentMessagePhaseByItemId = new Map<string, "commentary" | "final_answer" | null>();
   const commandWorkingDirectoryByItemId = new Map<string, string | null>();
+  const fileChangePatchByItemId = new Map<string, unknown[]>();
   let threadId: string | null = null;
   let turnId: string | null = null;
   let turnCompleted = false;
@@ -450,6 +471,13 @@ export async function executeCodexAppServerChat(
         await emitReasoningDelta(itemId, asString(params.delta));
         return;
       }
+      if (notification.method === "item/fileChange/patchUpdated") {
+        const itemId = asString(params.itemId);
+        if (itemId && Array.isArray(params.changes)) {
+          fileChangePatchByItemId.set(itemId, params.changes);
+        }
+        return;
+      }
       if (notification.method === "item/started" || notification.method === "item/completed") {
         let item = normalizeThreadItem(params.item);
         if (item.type === "userMessage") return;
@@ -472,6 +500,12 @@ export async function executeCodexAppServerChat(
             commandWorkingDirectoryByItemId.set(itemId, cwd);
           }
           item = withCommandWorkingDirectory(item, cwd);
+        }
+        if (notification.method === "item/completed" && item.type === "file_change") {
+          const itemId = asString(item.id);
+          const patchChanges = itemId ? fileChangePatchByItemId.get(itemId) : null;
+          if (patchChanges) item = mergeFileChangePatch(item, patchChanges);
+          if (itemId) fileChangePatchByItemId.delete(itemId);
         }
         if (
           notification.method === "item/completed"

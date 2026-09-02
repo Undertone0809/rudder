@@ -346,7 +346,7 @@ export async function testEnvironment(
       code: "claude_deepseek_api_key_missing",
       level: "warn",
       message: "DEEPSEEK_API_KEY is not set for the configured Claude Code DeepSeek model.",
-      hint: "Configure DEEPSEEK_API_KEY in the Claude Code runtime or authenticate the runtime, then run Test now again.",
+      hint: "Paste DEEPSEEK_API_KEY into the runtime env or configure the organization secret binding, then run Test now again.",
     });
   } else {
     checks.push({

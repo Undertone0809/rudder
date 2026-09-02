@@ -205,7 +205,7 @@ test("preserves current issue metadata in a generated passive follow-up invocati
   await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/runs/${passiveRunValue.id}`, {
     waitUntil: "domcontentloaded",
   });
-  await page.getByRole("tab", { name: "Invocation" }).click();
+  await page.getByRole("tab", { name: "Metadata" }).click();
   const invocationPrompt = page.getByTestId("invocation-prompt");
   await expect(invocationPrompt).toContainText(`Assignee: Metadata Runner (agent)`);
   await expect(invocationPrompt).toContainText(`Reviewer: none`);

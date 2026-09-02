@@ -177,6 +177,35 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
 
+## Qualification And Candidate Promotion
+
+`Test` qualifies a source through one deterministic plan. Pull requests use
+affected checks only when the changed-path scope is bounded; workflow,
+release, dependency, shared-contract, database, native, Desktop, and merge
+queue changes use the full family set. Pushes to `main` and trusted manual
+exact-source runs also produce a full qualification receipt. The required
+receipt is the successful `Qualification summary` job for the exact source,
+not merely a successful individual platform job.
+
+Release builds are separated from publication. The candidate jobs build the 15
+npm payloads and seven Desktop assets once, then create the short-lived
+`release-candidate-manifest` artifact. The manifest binds the source commit and
+tree, release version, qualification run, candidate run, release workflow
+source, runtime identity, every file size and SHA-256, and the seven-file
+`SHASUMS256.txt` root. The candidate artifact also carries the exact
+`runtime.json` used to create the manifest; every consumer compares it with the
+manifest and checks the expected Node/pnpm/Rust/packaging identity.
+`candidate-verify` downloads the artifacts by the candidate run ID and verifies
+every byte before any publication job. Canary, stable, and COS mirror jobs
+verify the same manifest again immediately before their irreversible actions.
+
+A manual stable promotion may provide `candidate_run_id` to promote a verified
+prebuilt candidate without rebuilding it. The candidate run, workflow source,
+source tree, qualification receipt, version, and artifact retention must all
+match; expired, missing, or mismatched candidates fail closed. Partial stable
+recovery uses the original candidate run and never republishes an immutable
+npm version or rebuilds Desktop assets.
+
 ## TL;DR
 
 ### Canary
@@ -271,13 +300,15 @@ Example:
 The workflow:
 
 - resolves the source ref to an immutable SHA and requires successful Test for
-  that exact commit; CI qualifies docs structure and static search once instead
-  of repeating those checks in the stable publish job
+  that exact commit, including a successful `Qualification summary`; CI
+  qualifies docs structure and static search once instead of repeating those
+  checks in the stable publish job
 - runs release-specific version/tag/npm preflight before dependency install
 - publishes the committed `X.Y.Z` under npm dist-tag `latest`
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md` and uploads
-  the exact Desktop binaries already built and verified by this run
+  the exact Desktop binaries already built and verified by the candidate
+  manifest; stable promotion never rebuilds Desktop
 - publishes GitHub `SHASUMS256.txt` directly by default; when `mirror_cos: true`
   is explicitly selected, runs `mirror-stable` against the same frozen Actions
   artifacts before publishing the checksum marker
@@ -585,7 +616,9 @@ then re-run the failed `mirror-stable` job. Stable partial recovery must use
 the original Release `candidate_run_id`, which downloads the same frozen
 Desktop artifacts. The recovery workflow must run from a reviewed main-history
 revision, while `source_ref` identifies the original stable tag commit. The
-mirror step verifies the downloaded artifacts against the existing GitHub
+candidate manifest carries the released source identity; the candidate
+workflow run's own dispatch `head_sha` only proves that the run came from the
+repository's `main` history. The mirror step verifies the downloaded artifacts against the existing GitHub
 Release before upload. Identical existing GitHub/COS bytes are accepted; any
 same-name content conflict blocks completion. Automatic Canary releases never
 enter this failure path because their `workflow_run` policy forces COS off; if

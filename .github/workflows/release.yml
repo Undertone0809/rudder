@@ -76,6 +76,9 @@ jobs:
       publish: ${{ steps.release.outputs.publish }}
       resume: ${{ steps.release.outputs.resume }}
       candidate_run_id: ${{ steps.release.outputs.candidate_run_id }}
+      candidate_external: ${{ steps.release.outputs.candidate_external }}
+      workflow_source_sha: ${{ steps.candidate_validation.outputs.workflow_source_sha || github.workflow_sha }}
+      qualification_run_id: ${{ steps.qualification_output.outputs.run_id }}
       mirror_cos: ${{ steps.release.outputs.mirror_cos }}
     steps:
       - uses: actions/checkout@v6
@@ -105,21 +108,129 @@ jobs:
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
 
-      - name: Require successful Test for exact source
+      - name: Resolve exact successful Test qualification
+        id: qualification
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          count="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
-            -f head_sha="$SOURCE_SHA" \
-            -f status=success \
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f branch=main \
+            -f status=completed \
             -f per_page=100 \
-            --jq '[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length')"
-          test "$count" -ge 1 || {
-            echo "No successful Test workflow found for exact source $SOURCE_SHA." >&2
+            --jq '.workflow_runs | map(select(.conclusion == "success" and .head_branch == "main" and ((.event == "push") or (.event == "workflow_dispatch") or (.event == "merge_group")))) | sort_by(.updated_at) | reverse')"
+          selected_run_id=""
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100")"
+            if ! jq -e '.jobs[] | select(.name == "Qualification summary" and .conclusion == "success")' <<< "$jobs" >/dev/null; then
+              continue
+            fi
+            artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+              | jq -r --arg name "ci-impact-plan-$run_id" '.artifacts[] | select(.name == $name and .expired == false) | .id' | head -n 1)"
+            [ -n "$artifact_id" ] || continue
+            plan_root="$RUNNER_TEMP/qualification-plan-$run_id"
+            mkdir -p "$plan_root"
+            plan_zip="$RUNNER_TEMP/qualification-plan-$run_id.zip"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$plan_zip"
+            unzip -q -o "$plan_zip" -d "$plan_root"
+            plan_path="$(find "$plan_root" -type f -name ci-impact-plan.json -print -quit)"
+            [ -n "$plan_path" ] || continue
+            if node --input-type=module - "$plan_path" "$SOURCE_SHA" "$source_tree_sha" <<'NODE'
+            import { createHash } from "node:crypto";
+            import { readFileSync } from "node:fs";
+
+            const [planPath, sourceSha, sourceTreeSha] = process.argv.slice(2);
+            const plan = JSON.parse(readFileSync(planPath, "utf8"));
+            const { planDigest, ...withoutDigest } = plan;
+            const expectedDigest = createHash("sha256").update(JSON.stringify(withoutDigest)).digest("hex");
+            if (planDigest !== expectedDigest) throw new Error("Test impact-plan digest is invalid");
+            if (plan.sourceSha !== sourceSha || plan.sourceTreeSha !== sourceTreeSha) {
+              throw new Error("Test impact plan source identity does not match release source");
+            }
+            if (plan.qualification !== "full" || plan.fullQualification !== true) {
+              throw new Error("Release promotion requires full Test qualification");
+            }
+            NODE
+            then
+              selected_run_id="$run_id"
+              break
+            fi
+          done < <(jq -r '.[].id' <<< "$runs")
+          test -n "$selected_run_id" || {
+            echo "No successful full Test qualification artifact found for exact source $SOURCE_SHA." >&2
             exit 1
           }
+          echo "run_id=$selected_run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Use triggering Test qualification
+        id: triggering_qualification
+        if: github.event_name == 'workflow_run'
+        run: echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve qualification output
+        id: qualification_output
+        run: |
+          if [ -n "${{ steps.qualification.outputs.run_id }}" ]; then
+            echo "run_id=${{ steps.qualification.outputs.run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=${{ steps.triggering_qualification.outputs.run_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download exact Test impact plan
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-impact-plan-${{ steps.qualification_output.outputs.run_id }}
+          path: dist/qualification-plan
+          run-id: ${{ steps.qualification_output.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Require exact aggregate qualification receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          QUALIFICATION_RUN_ID: ${{ steps.qualification_output.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          qualification_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID")"
+          test "$(jq -r '.path' <<< "$qualification_json")" = ".github/workflows/ci.yml"
+          test "$(jq -r '.head_repository.full_name' <<< "$qualification_json")" = "$GITHUB_REPOSITORY"
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            test "$(jq -r '.head_branch' <<< "$qualification_json")" = "main"
+            test "$(jq -r '.head_sha' <<< "$qualification_json")" = "$SOURCE_SHA"
+          fi
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID/jobs?per_page=100")"
+          jq -e '.jobs[] | select(.name == "Qualification summary" and .conclusion == "success")' <<< "$jobs" >/dev/null || {
+            echo "Test run $QUALIFICATION_RUN_ID has no successful Qualification summary for exact source $SOURCE_SHA." >&2
+            exit 1
+          }
+          plan_path="$(find dist/qualification-plan -type f -name 'ci-impact-plan.json' -print -quit)"
+          test -n "$plan_path"
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          node --input-type=module - "$plan_path" "$EVENT_NAME" "$SOURCE_SHA" "$source_tree_sha" <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+
+          const [planPath, eventName, sourceSha, sourceTreeSha] = process.argv.slice(2);
+          const plan = JSON.parse(readFileSync(planPath, "utf8"));
+          const { planDigest, ...withoutDigest } = plan;
+          const expectedDigest = createHash("sha256").update(JSON.stringify(withoutDigest)).digest("hex");
+          if (planDigest !== expectedDigest) throw new Error("Test impact-plan digest is invalid");
+          if (plan.sourceSha !== sourceSha || plan.sourceTreeSha !== sourceTreeSha) {
+            throw new Error("Test impact plan source identity does not match release source");
+          }
+          if (plan.qualification !== "full" || plan.fullQualification !== true) {
+            throw new Error("Release promotion requires full Test qualification");
+          }
+          if (eventName === "workflow_run" && (plan.profile !== "main_attest" || plan.event !== "push")) {
+            throw new Error(`Automatic canary requires main_attest push qualification, got ${plan.profile}/${plan.event}`);
+          }
+          console.log(`verified\t${plan.profile}\t${plan.sourceSha}\t${plan.sourceTreeSha}\t${plan.planDigest}`);
+          NODE
 
       - name: Resolve release identity
         id: release
@@ -138,9 +249,12 @@ jobs:
             tag="canary/v${version}"
             publish="true"
             resume="false"
+            candidate_external="false"
           else
             channel="stable"
             resume="${RESUME_MISSING:-false}"
+            candidate_external="false"
+            if [ -n "${CANDIDATE_RUN_ID:-}" ]; then candidate_external="true"; fi
             if [ "$resume" = "true" ]; then
               [[ "${CANDIDATE_RUN_ID:-}" =~ ^[0-9]+$ ]] || {
                 echo "candidate_run_id is required when resume_missing is true." >&2
@@ -163,8 +277,13 @@ jobs:
             echo "publish=$publish"
             echo "resume=$resume"
             echo "candidate_run_id=${CANDIDATE_RUN_ID:-$GITHUB_RUN_ID}"
+            echo "candidate_external=$candidate_external"
             echo "mirror_cos=$mirror_cos"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Require stable workflow dispatch from main
+        if: github.event_name == 'workflow_dispatch'
+        run: test "$GITHUB_REF" = "refs/heads/main"
 
       - name: Report Tencent COS sync policy
         run: |
@@ -181,37 +300,46 @@ jobs:
           --candidate-version "${{ steps.release.outputs.version }}"
           --channel "${{ steps.release.outputs.channel }}"
 
-      - name: Require matching verified candidate run for recovery
-        if: steps.release.outputs.resume == 'true'
+      - name: Require matching verified candidate run
+        id: candidate_validation
+        if: steps.release.outputs.resume == 'true' || steps.release.outputs.candidate_external == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN_ID: ${{ steps.release.outputs.candidate_run_id }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
           TAG: ${{ steps.release.outputs.tag }}
+          CANDIDATE_EXTERNAL: ${{ steps.release.outputs.candidate_external }}
         run: |
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
-          test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
-          test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
-          test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
-          candidate_workflow_sha="$(jq -r '.head_sha' <<< "$run_json")"
-          git cat-file -e "$candidate_workflow_sha^{commit}"
-          git merge-base --is-ancestor "$candidate_workflow_sha" refs/remotes/origin/main
-          run_conclusion="$(jq -r '.conclusion' <<< "$run_json")"
+          set -euo pipefail
+          candidate_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.path' <<< "$candidate_run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r '.head_branch' <<< "$candidate_run_json")" = "main"
+          test "$(jq -r '.head_repository.full_name' <<< "$candidate_run_json")" = "$GITHUB_REPOSITORY"
+          candidate_head_sha="$(jq -r '.head_sha' <<< "$candidate_run_json")"
+          [[ "$candidate_head_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$candidate_head_sha^{commit}"
+          git merge-base --is-ancestor "$candidate_head_sha" refs/remotes/origin/main
+          run_conclusion="$(jq -r '.conclusion' <<< "$candidate_run_json")"
           case "$run_conclusion" in
             success|cancelled|failure) ;;
             *) echo "Candidate run $CANDIDATE_RUN_ID did not produce a usable stable candidate." >&2; exit 1 ;;
           esac
           jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100")"
-          jq -e '.jobs[] | select(.name == "Publish stable" and .conclusion == "success")' <<< "$jobs" >/dev/null || {
-            echo "Candidate run $CANDIDATE_RUN_ID did not complete Publish stable successfully." >&2
+          jq -e '.jobs[] | select(.name == "Verify immutable candidate" and .conclusion == "success")' <<< "$jobs" >/dev/null || {
+            echo "Candidate run $CANDIDATE_RUN_ID did not complete Verify immutable candidate successfully." >&2
             exit 1
           }
           remote_tag_sha="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
-          test -n "$remote_tag_sha"
-          test "$SOURCE_SHA" = "$remote_tag_sha"
+          if [ "$CANDIDATE_EXTERNAL" = "true" ] && [ -z "$remote_tag_sha" ]; then
+            echo "Promoting a prebuilt candidate before the stable tag exists."
+          else
+            test -n "$remote_tag_sha"
+            test "$SOURCE_SHA" = "$remote_tag_sha"
+          fi
           artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" --jq '.artifacts | map(select(.expired == false)) | map(.name) | .[]')"
           for artifact in \
             npm-release-candidate \
+            release-candidate-manifest \
             desktop-macos-x64 \
             desktop-macos-arm64 \
             desktop-windows-x64 \
@@ -221,11 +349,31 @@ jobs:
               exit 1
             }
           done
+          manifest_artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name == "release-candidate-manifest" and .expired == false) | .id' | head -n 1)"
+          test -n "$manifest_artifact_id"
+          manifest_root="$RUNNER_TEMP/candidate-manifest-$CANDIDATE_RUN_ID"
+          mkdir -p "$manifest_root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$manifest_artifact_id/zip" > "$RUNNER_TEMP/candidate-manifest-$CANDIDATE_RUN_ID.zip"
+          unzip -q -o "$RUNNER_TEMP/candidate-manifest-$CANDIDATE_RUN_ID.zip" -d "$manifest_root"
+          manifest_path="$(find "$manifest_root" -type f -name candidate-manifest.json -print -quit)"
+          test -n "$manifest_path"
+          manifest_source_sha="$(jq -r '.source.commitSha // empty' "$manifest_path")"
+          manifest_tree_sha="$(jq -r '.source.treeSha // empty' "$manifest_path")"
+          manifest_workflow_sha="$(jq -r '.candidate.workflow.sourceSha // empty' "$manifest_path")"
+          [[ "$manifest_source_sha" = "$SOURCE_SHA" ]]
+          [[ "$manifest_tree_sha" = "$(git rev-parse "${SOURCE_SHA}^{tree}")" ]]
+          [[ "$manifest_workflow_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(jq -r '.candidate.workflow.path' "$manifest_path")" = ".github/workflows/release.yml"
+          test "$(jq -r '.candidate.workflow.ref' "$manifest_path")" = "main"
+          git cat-file -e "$manifest_workflow_sha^{commit}"
+          git merge-base --is-ancestor "$manifest_workflow_sha" refs/remotes/origin/main
+          echo "workflow_source_sha=$manifest_workflow_sha" >> "$GITHUB_OUTPUT"
 
   npm-candidate:
     name: Build npm candidate
     needs: preflight
-    if: needs.preflight.outputs.resume != 'true'
+    if: needs.preflight.outputs.resume != 'true' && needs.preflight.outputs.candidate_external != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -260,7 +408,7 @@ jobs:
       - name: Build publish payloads
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter '!@rudderhq/desktop' -r build
+          pnpm build
           bash scripts/prepare-server-ui-dist.sh
           for pkg_dir in \
             server \
@@ -301,7 +449,7 @@ jobs:
   desktop-candidate:
     name: Desktop candidate ${{ matrix.platform }} ${{ matrix.arch }}
     needs: preflight
-    if: needs.preflight.outputs.resume != 'true'
+    if: needs.preflight.outputs.resume != 'true' && needs.preflight.outputs.candidate_external != 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
@@ -424,7 +572,7 @@ jobs:
           fi
 
       - name: Smoke packaged App Builder
-        if: matrix.platform == 'linux' || (matrix.platform == 'macos' && matrix.arch == 'arm64')
+        if: matrix.platform != 'windows'
         run: |
           if [ "$(uname -s)" = "Linux" ]; then
             dbus-run-session -- xvfb-run --auto-servernum node desktop/scripts/app-builder-smoke.mjs --packaged
@@ -454,13 +602,6 @@ jobs:
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=account-gate
 
-      - name: Verify packaged release-set lifecycle
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
-        run: |
-          for scenario in startup-recovery clean upgrade auto-update auto-update-public terminal; do
-            node desktop/scripts/smoke.mjs --mode=packaged --scenario="$scenario"
-          done
-
       - name: Collect verified Desktop asset
         run: |
           node scripts/collect-desktop-release-assets.mjs \
@@ -485,26 +626,169 @@ jobs:
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
-      ((needs.preflight.outputs.resume == 'true' &&
-        needs.npm-candidate.result == 'skipped' &&
-        needs.desktop-candidate.result == 'skipped') ||
-       (needs.preflight.outputs.resume != 'true' &&
-        needs.npm-candidate.result == 'success' &&
-        needs.desktop-candidate.result == 'success'))
+      needs.preflight.outputs.resume != 'true' &&
+      needs.preflight.outputs.candidate_external != 'true' &&
+      needs.npm-candidate.result == 'success' &&
+      needs.desktop-candidate.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Record immutable candidate
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: npm-release-candidate
+          path: dist/npm-payloads
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+      - name: Collect candidate runtime identity
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          const root = JSON.parse(readFileSync("package.json", "utf8"));
+          const desktop = JSON.parse(readFileSync("desktop/package.json", "utf8"));
+          const electron = desktop.devDependencies?.electron ?? desktop.dependencies?.electron ?? "unknown";
+          writeFileSync("dist/runtime.json", `${JSON.stringify({
+            node: process.version,
+            nodeMajor: Number(process.versions.node.split(".")[0]),
+            pnpm: root.packageManager ?? "pnpm@9.15.4",
+            rust: "dtolnay/rust-toolchain@stable",
+            electron,
+            packaging: "electron-builder via pnpm desktop:dist",
+          }, null, 2)}\n`);
+          NODE
+      - name: Create and verify immutable candidate manifest
+        env:
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          QUALIFICATION_RUN_ID: ${{ needs.preflight.outputs.qualification_run_id }}
+          CANDIDATE_RUN_ID: ${{ needs.preflight.outputs.candidate_run_id }}
+          WORKFLOW_SOURCE_SHA: ${{ needs.preflight.outputs.workflow_source_sha }}
+        run: |
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          node scripts/release-candidate-manifest.mjs create \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --workflow-ref main \
+            --runtime-file dist/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets \
+            --retention-days 7 \
+            --out dist/candidate-manifest.json
+          mkdir -p dist/candidate-manifest
+          cp dist/candidate-manifest.json dist/candidate-manifest/candidate-manifest.json
+          cp dist/runtime.json dist/candidate-manifest/runtime.json
+          cp dist/desktop-assets/SHASUMS256.txt dist/candidate-manifest/SHASUMS256.txt
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest/*
+          if-no-files-found: error
+          retention-days: 7
+
+  candidate-verify:
+    name: Verify immutable candidate
+    needs:
+      - preflight
+      - candidate-complete
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.preflight.outputs.candidate_external == 'true' || needs.candidate-complete.result == 'success')
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: npm-release-candidate
+          path: dist/npm-payloads
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: dist/desktop-assets
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify source, workflow, runtime, and every candidate byte
+        env:
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          QUALIFICATION_RUN_ID: ${{ needs.preflight.outputs.qualification_run_id }}
+          CANDIDATE_RUN_ID: ${{ needs.preflight.outputs.candidate_run_id }}
+          WORKFLOW_SOURCE_SHA: ${{ needs.preflight.outputs.workflow_source_sha }}
+        run: |
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          cp dist/candidate-manifest/SHASUMS256.txt dist/desktop-assets/SHASUMS256.txt
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
+
+      - name: Record candidate identity
         run: |
           echo "Source: ${{ needs.preflight.outputs.source_sha }}"
           echo "Version: ${{ needs.preflight.outputs.version }}"
           echo "Tag: ${{ needs.preflight.outputs.tag }}"
+          echo "Qualification: ${{ needs.preflight.outputs.qualification_run_id }}"
+          echo "Candidate: ${{ needs.preflight.outputs.candidate_run_id }}"
 
   publish-canary:
     name: Publish canary
     needs:
       - preflight
       - candidate-complete
-    if: needs.preflight.outputs.channel == 'canary' && needs.preflight.outputs.publish == 'true'
+      - candidate-verify
+    if: >-
+      needs.preflight.outputs.channel == 'canary' &&
+      needs.preflight.outputs.publish == 'true' &&
+      needs.candidate-verify.result == 'success'
     permissions:
       contents: write
       id-token: write
@@ -527,11 +811,43 @@ jobs:
           pattern: npm-release-candidate
           path: dist/npm-payloads
           merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
           path: dist/desktop-assets
           merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify candidate before canary publication
+        env:
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          QUALIFICATION_RUN_ID: ${{ needs.preflight.outputs.qualification_run_id }}
+          CANDIDATE_RUN_ID: ${{ needs.preflight.outputs.candidate_run_id }}
+          WORKFLOW_SOURCE_SHA: ${{ needs.preflight.outputs.workflow_source_sha }}
+        run: |
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          cp dist/candidate-manifest/SHASUMS256.txt dist/desktop-assets/SHASUMS256.txt
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
       - name: Publish exact candidate
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -552,7 +868,6 @@ jobs:
           git push origin "refs/tags/$RELEASE_TAG"
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
           cd "$GITHUB_WORKSPACE"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --title "${RELEASE_TAG##*/}" --prerelease --notes "Desktop artifacts for $RELEASE_TAG."
@@ -569,10 +884,12 @@ jobs:
     needs:
       - preflight
       - candidate-complete
+      - candidate-verify
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
-      needs.candidate-complete.result == 'success' &&
+      (needs.candidate-complete.result == 'success' || needs.preflight.outputs.candidate_external == 'true') &&
+      needs.candidate-verify.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.mirror_recovery != 'true' &&
       github.event.inputs.dry_run == 'false'
@@ -608,6 +925,34 @@ jobs:
           merge-multiple: true
           run-id: ${{ needs.preflight.outputs.candidate_run_id }}
           github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify candidate before stable publication
+        env:
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          QUALIFICATION_RUN_ID: ${{ needs.preflight.outputs.qualification_run_id }}
+          CANDIDATE_RUN_ID: ${{ needs.preflight.outputs.candidate_run_id }}
+          WORKFLOW_SOURCE_SHA: ${{ needs.preflight.outputs.workflow_source_sha }}
+        run: |
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          cp dist/candidate-manifest/SHASUMS256.txt dist/desktop-assets/SHASUMS256.txt
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
       - name: Publish missing npm payloads
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -652,7 +997,6 @@ jobs:
           PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "$RELEASE_VERSION"
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
           cd "$GITHUB_WORKSPACE"
           node scripts/publish-github-release-assets-immutable.mjs \
             --tag "$RELEASE_TAG" \
@@ -672,11 +1016,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
       - name: Require immutable recovery inputs
         env:
-          WORKFLOW_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           SOURCE_REF: ${{ inputs.source_ref }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
@@ -699,17 +1043,23 @@ jobs:
           git cat-file -e "$SOURCE_REF^{commit}"
           git merge-base --is-ancestor "$SOURCE_REF" refs/remotes/origin/main
       - name: Validate frozen candidate run and existing Release
+        id: candidate_validation
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
           SOURCE_REF: ${{ inputs.source_ref }}
         run: |
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
-          test "$(jq -r '.path' <<< "$run_json")" = ".github/workflows/release.yml"
-          test "$(jq -r '.head_branch' <<< "$run_json")" = "main"
-          test "$(jq -r '.head_repository.full_name' <<< "$run_json")" = "$GITHUB_REPOSITORY"
-          run_conclusion="$(jq -r '.conclusion' <<< "$run_json")"
+          set -euo pipefail
+          candidate_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.path' <<< "$candidate_run_json")" = ".github/workflows/release.yml"
+          test "$(jq -r '.head_branch' <<< "$candidate_run_json")" = "main"
+          test "$(jq -r '.head_repository.full_name' <<< "$candidate_run_json")" = "$GITHUB_REPOSITORY"
+          candidate_head_sha="$(jq -r '.head_sha' <<< "$candidate_run_json")"
+          [[ "$candidate_head_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$candidate_head_sha^{commit}"
+          git merge-base --is-ancestor "$candidate_head_sha" refs/remotes/origin/main
+          run_conclusion="$(jq -r '.conclusion' <<< "$candidate_run_json")"
           case "$run_conclusion" in
             success|cancelled|failure) ;;
             *) echo "Candidate run $CANDIDATE_RUN_ID did not produce a usable stable candidate." >&2; exit 1 ;;
@@ -739,6 +1089,35 @@ jobs:
               exit 1
             }
           done
+          for artifact in npm-release-candidate release-candidate-manifest; do
+            jq -e --arg name "$artifact" '.artifacts[] | select(.name == $name and .expired == false)' <<< "$artifacts" >/dev/null || {
+              echo "Candidate run $CANDIDATE_RUN_ID is missing unexpired artifact $artifact." >&2
+              exit 1
+            }
+          done
+          manifest_artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name == "release-candidate-manifest" and .expired == false) | .id' | head -n 1)"
+          test -n "$manifest_artifact_id"
+          manifest_root="$RUNNER_TEMP/candidate-manifest-$CANDIDATE_RUN_ID"
+          mkdir -p "$manifest_root"
+          manifest_zip="$RUNNER_TEMP/candidate-manifest-$CANDIDATE_RUN_ID.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$manifest_artifact_id/zip" > "$manifest_zip"
+          unzip -q -o "$manifest_zip" -d "$manifest_root"
+          manifest_path="$(find "$manifest_root" -type f -name candidate-manifest.json -print -quit)"
+          test -n "$manifest_path"
+          manifest_source_sha="$(jq -r '.source.commitSha // empty' "$manifest_path")"
+          manifest_tree_sha="$(jq -r '.source.treeSha // empty' "$manifest_path")"
+          manifest_workflow_sha="$(jq -r '.candidate.workflow.sourceSha // empty' "$manifest_path")"
+          [[ "$manifest_source_sha" = "$SOURCE_REF" ]]
+          [[ "$manifest_tree_sha" = "$(git rev-parse "${SOURCE_REF}^{tree}")" ]]
+          [[ "$manifest_workflow_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(jq -r '.release.version' "$manifest_path")" = "${RECOVERY_TAG#v}"
+          test "$(jq -r '.candidate.runId' "$manifest_path")" = "$CANDIDATE_RUN_ID"
+          test "$(jq -r '.candidate.workflow.path' "$manifest_path")" = ".github/workflows/release.yml"
+          test "$(jq -r '.candidate.workflow.ref' "$manifest_path")" = "main"
+          git cat-file -e "$manifest_workflow_sha^{commit}"
+          git merge-base --is-ancestor "$manifest_workflow_sha" refs/remotes/origin/main
+          echo "workflow_source_sha=$manifest_workflow_sha" >> "$GITHUB_OUTPUT"
           release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RECOVERY_TAG")"
           test "$(jq -r '.draft' <<< "$release_json")" = "false"
           test "$(jq -r '.prerelease' <<< "$release_json")" = "false"
@@ -751,6 +1130,20 @@ jobs:
           pattern: desktop-*
           path: dist/desktop-assets
           merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download frozen candidate npm payloads
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-release-candidate
+          path: dist/npm-payloads
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download frozen candidate manifest
+        uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
       - name: Download frozen candidate desktop assets (attempt 2)
@@ -782,11 +1175,27 @@ jobs:
             test "${{ steps.download_candidate_assets_attempt_2.outcome }}" = "success" || \
             test "${{ steps.download_candidate_assets_attempt_3.outcome }}" = "success"
           test "$(find dist/desktop-assets -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-      - name: Generate checksum trust root
+      - name: Verify frozen candidate manifest and checksum trust root
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
         run: |
-          cd dist/desktop-assets
-          test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_REF}^{tree}")"
+          cp dist/candidate-manifest/SHASUMS256.txt dist/desktop-assets/SHASUMS256.txt
+          qualification_run_id="$(node -p "require('./dist/candidate-manifest/candidate-manifest.json').qualification.runId")"
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_REF" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "${RECOVERY_TAG#v}" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$qualification_run_id" \
+            --workflow-source-sha "${{ steps.candidate_validation.outputs.workflow_source_sha }}" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
       - name: Mirror frozen GitHub binaries to Tencent COS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -908,11 +1317,46 @@ jobs:
           pattern: desktop-*
           path: dist/desktop-assets
           merge-multiple: true
-      - name: Generate checksum trust root
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-release-candidate
+          path: dist/npm-payloads
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify candidate before COS mutation
+        env:
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          QUALIFICATION_RUN_ID: ${{ needs.preflight.outputs.qualification_run_id }}
+          CANDIDATE_RUN_ID: ${{ needs.preflight.outputs.candidate_run_id }}
+          WORKFLOW_SOURCE_SHA: ${{ needs.preflight.outputs.workflow_source_sha }}
+        run: |
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          cp dist/candidate-manifest/SHASUMS256.txt dist/desktop-assets/SHASUMS256.txt
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
+      - name: Confirm candidate binaries before COS mutation
         run: |
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
       - name: Mirror GitHub binaries to Tencent COS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -953,10 +1397,12 @@ jobs:
     needs:
       - preflight
       - publish-canary
+      - candidate-verify
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
       needs.publish-canary.result == 'success' &&
+      needs.candidate-verify.result == 'success' &&
       needs.preflight.outputs.mirror_cos != 'true'
     permissions:
       actions: read
@@ -971,11 +1417,19 @@ jobs:
           pattern: desktop-*
           path: dist/desktop-assets
           merge-multiple: true
-      - name: Generate checksum trust root
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Use verified candidate checksum trust root
         run: |
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
+          cp ../candidate-manifest/SHASUMS256.txt SHASUMS256.txt
       - name: Report Tencent COS sync policy
         run: |
           echo "Tencent COS package sync: DISABLED; publishing the GitHub checksum marker directly."
@@ -1016,11 +1470,44 @@ jobs:
           merge-multiple: true
           run-id: ${{ needs.preflight.outputs.candidate_run_id }}
           github-token: ${{ github.token }}
-      - name: Generate checksum trust root
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-release-candidate
+          path: dist/npm-payloads
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify candidate before COS mutation
+        env:
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          QUALIFICATION_RUN_ID: ${{ needs.preflight.outputs.qualification_run_id }}
+          CANDIDATE_RUN_ID: ${{ needs.preflight.outputs.candidate_run_id }}
+          WORKFLOW_SOURCE_SHA: ${{ needs.preflight.outputs.workflow_source_sha }}
+        run: |
+          set -euo pipefail
+          source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+          cp dist/candidate-manifest/SHASUMS256.txt dist/desktop-assets/SHASUMS256.txt
+          node scripts/release-candidate-manifest.mjs verify \
+            --manifest dist/candidate-manifest/candidate-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-sha "$source_tree_sha" \
+            --version "$VERSION" \
+            --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --qualification-run-id "$QUALIFICATION_RUN_ID" \
+            --workflow-source-sha "$WORKFLOW_SOURCE_SHA" \
+            --runtime-file dist/candidate-manifest/runtime.json \
+            --npm-dir dist/npm-payloads \
+            --desktop-dir dist/desktop-assets
+      - name: Confirm candidate binaries before COS mutation
         run: |
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
       - name: Mirror GitHub binaries to Tencent COS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1061,10 +1548,12 @@ jobs:
     needs:
       - preflight
       - publish-stable
+      - candidate-verify
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
       needs.publish-stable.result == 'success' &&
+      needs.candidate-verify.result == 'success' &&
       needs.preflight.outputs.mirror_cos != 'true'
     permissions:
       actions: read
@@ -1081,11 +1570,17 @@ jobs:
           merge-multiple: true
           run-id: ${{ needs.preflight.outputs.candidate_run_id }}
           github-token: ${{ github.token }}
-      - name: Generate checksum trust root
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-manifest
+          path: dist/candidate-manifest
+          run-id: ${{ needs.preflight.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Use verified candidate checksum trust root
         run: |
           cd dist/desktop-assets
           test "$(find . -maxdepth 1 -type f -name 'Rudder-*' | wc -l | xargs)" = "7"
-          shasum -a 256 Rudder-* > SHASUMS256.txt
+          cp ../candidate-manifest/SHASUMS256.txt SHASUMS256.txt
       - name: Report Tencent COS sync policy
         run: |
           echo "Tencent COS package sync: DISABLED; publishing the GitHub checksum marker directly."

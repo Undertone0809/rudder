@@ -36,7 +36,6 @@ import {
   chatInlineAnnotationService,
 } from "./chat-inline-annotations.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
-import { chatService } from "./chats.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -111,16 +110,14 @@ describe("chatInlineAnnotationService", () => {
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
   let originalWorkspaceHome: string | undefined;
-  let ownedWorkspaceHome = "";
 
   beforeAll(async () => {
     const started = await startTempDatabase();
     originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-    ownedWorkspaceHome = path.join(
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = path.join(
       started.dataDir || os.tmpdir(),
       `rudder-annotation-workspaces-${randomUUID()}`,
     );
-    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = ownedWorkspaceHome;
     db = createDb(started.connectionString);
     service = chatInlineAnnotationService(db);
     instance = started.instance;
@@ -144,16 +141,16 @@ describe("chatInlineAnnotationService", () => {
 
   afterAll(async () => {
     await instance?.stop();
-    if (ownedWorkspaceHome) {
-      fs.rmSync(ownedWorkspaceHome, {
+    if (process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME) {
+      fs.rmSync(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME, {
         recursive: true,
         force: true,
       });
-    }
-    if (originalWorkspaceHome === undefined) {
-      delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-    } else {
-      process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
+      if (originalWorkspaceHome === undefined) {
+        delete process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
+      } else {
+        process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = originalWorkspaceHome;
+      }
     }
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
@@ -591,48 +588,6 @@ describe("chatInlineAnnotationService", () => {
     expect(onTransactionCommitted).toHaveBeenCalledWith(committedUserMessage?.id);
   });
 
-  it("converges concurrent user-message retries on one client mutation", async () => {
-    const source = await seedSource({ body: "Assistant source" });
-    const chats = chatService(db);
-    const persist = createChatAnnotationMessagePersistence(db, chats.getMessage);
-    const clientMutationId = `send:${randomUUID()}`;
-    const clientMutationFingerprint = "a".repeat(64);
-    const replayed = vi.fn();
-    const accepted = vi.fn();
-
-    const [first, retry] = await Promise.all([
-      persist(source.conversationId, source.orgId, "Send exactly once", null, {
-        clientMutationId,
-        clientMutationFingerprint,
-        onIdempotentReplay: replayed,
-        onTransactionCommitted: accepted,
-      }),
-      persist(source.conversationId, source.orgId, "Send exactly once", null, {
-        clientMutationId,
-        clientMutationFingerprint,
-        onIdempotentReplay: replayed,
-        onTransactionCommitted: accepted,
-      }),
-    ]);
-
-    expect(retry.id).toBe(first.id);
-    expect(first).not.toHaveProperty("clientMutationId");
-    expect(replayed).toHaveBeenCalledTimes(1);
-    expect(accepted).toHaveBeenCalledTimes(1);
-    expect(await db
-      .select()
-      .from(chatMessages)
-      .where(eq(chatMessages.clientMutationId, clientMutationId)))
-      .toHaveLength(1);
-    await expect(persist(
-      source.conversationId,
-      source.orgId,
-      "Different content",
-      null,
-      { clientMutationId, clientMutationFingerprint: "b".repeat(64) },
-    )).rejects.toMatchObject({ status: 409 });
-  });
-
   it("accepts rendered assistant selections across links, inline code, CJK, entities, whitespace, and blocks", async () => {
     const body = [
       "## 说明",
@@ -736,10 +691,6 @@ describe("chatInlineAnnotationService", () => {
     })).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("selected text"),
-      details: {
-        code: "chat_annotation_selection_mismatch",
-        phase: "annotation_validation",
-      },
     });
 
     await expect(service.prepare({

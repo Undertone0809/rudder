@@ -19,12 +19,11 @@ import type { MentionOption } from "./MarkdownEditor";
 import {
   applyMention,
   createMilkdownWebsiteIconElement,
-  findSelectedRudderTokenRangeFromDom,
   fragmentContainsRudderToken,
   getMilkdownProseMirrorView,
+  findSelectedRudderTokenRangeFromDom,
   hasRudderMarkdownReference,
   imageFilesFromFileList,
-  insertMentionIntoProseMirrorView,
   insertMissingRudderTokenBoundarySpaces,
   insertTextAfterRudderTokenBoundary,
   isMilkdownEditableUnexpectedlyBlank,
@@ -621,67 +620,6 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
 
     expect(markdown).toBe(`[Griffin (CEO)](${buildAgentMentionHref("agent-1", null)}) 我们`);
     editable.remove();
-  });
-
-  it("uses the saved mention range when an option click moves the editor selection", () => {
-    const source = "before @dyl after";
-    const textNode = document.createTextNode(source);
-    const schema = new Schema({
-      nodes: {
-        doc: { content: "paragraph+" },
-        paragraph: { content: "text*" },
-        text: {},
-      },
-      marks: {
-        link: { attrs: { href: {} } },
-      },
-    });
-    const doc = schema.node("doc", null, [
-      schema.node("paragraph", null, [schema.text(source)]),
-    ]);
-    const editorState = EditorState.create({
-      doc,
-      selection: TextSelection.create(doc, 1),
-    });
-    const dispatched: Array<typeof editorState.tr> = [];
-    const view = {
-      state: editorState,
-      posAtDOM: (node: Node, offset: number) => {
-        expect(node).toBe(textNode);
-        return offset + 1;
-      },
-      dispatch: (transaction: typeof editorState.tr) => {
-        dispatched.push(transaction);
-      },
-    };
-    const option: MentionOption = {
-      id: "agent:agent-1",
-      name: "Dylan (PM)",
-      kind: "agent",
-      agentId: "agent-1",
-    };
-
-    expect(insertMentionIntoProseMirrorView(
-      view as unknown as Parameters<typeof insertMentionIntoProseMirrorView>[0],
-      {
-        trigger: "@",
-        query: "dyl",
-        top: 0,
-        left: 0,
-        viewportTop: 0,
-        viewportBottom: 0,
-        viewportLeft: 0,
-        textNode,
-        atPos: 7,
-        endPos: 11,
-      },
-      option,
-    )).toBe(true);
-    expect(dispatched).toHaveLength(1);
-    expect(dispatched[0]?.doc.textContent).toBe("before Dylan (PM) after");
-    expect(dispatched[0]?.selection.from).toBe(19);
-    expect(dispatched[0]?.doc.nodeAt(8)?.marks[0]?.attrs.href)
-      .toBe(buildAgentMentionHref("agent-1", null));
   });
 
   it("moves typed text outside a mention when the boundary space was deleted", () => {

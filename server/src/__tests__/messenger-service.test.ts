@@ -541,7 +541,6 @@ describe("messengerService and issue follows", () => {
     body?: string;
     sourceBody?: string;
     expectedGenerationId?: string | null;
-    mutationFingerprint?: string;
   } = {}) {
     const orgId = randomUUID();
     const conversationId = randomUUID();
@@ -581,7 +580,6 @@ describe("messengerService and issue follows", () => {
       orgId,
       conversationId,
       clientMutationId: randomUUID(),
-      mutationFingerprint: input.mutationFingerprint,
       expectedGenerationId: input.expectedGenerationId ?? null,
       payload: {
         body: input.body ?? "",
@@ -727,66 +725,6 @@ describe("messengerService and issue follows", () => {
     });
     expect(JSON.stringify(activities[0]?.details)).not.toContain(fixture.annotation.selectedText);
     expect(JSON.stringify(activities[0]?.details)).not.toContain(fixture.annotation.comment);
-  });
-
-  it("replays one durable mutation after Queue materialization without a second message or generation", async () => {
-    const mutationFingerprint = "c".repeat(64);
-    const fixture = await createQueuedAnnotationFixture({
-      body: "Continue after a lost Queue ACK",
-      mutationFingerprint,
-    });
-
-    const claim = await chatSvc.claimNextServerQueuedMessage({
-      workerId: "lost-queue-ack-worker",
-      leaseMs: 30_000,
-    });
-    const replayed = vi.fn();
-    const accepted = vi.fn();
-    const retry = await chatSvc.addUserChatMessage(
-      fixture.conversationId,
-      fixture.orgId,
-      "Continue after a lost Queue ACK",
-      null,
-      {
-        clientMutationId: fixture.queued.clientMutationId,
-        clientMutationFingerprint: mutationFingerprint,
-        onIdempotentReplay: replayed,
-        onTransactionCommitted: accepted,
-      },
-    );
-    const userMessages = await db
-      .select()
-      .from(chatMessages)
-      .where(and(
-        eq(chatMessages.orgId, fixture.orgId),
-        eq(chatMessages.conversationId, fixture.conversationId),
-        eq(chatMessages.role, "user"),
-      ));
-    const generations = await db
-      .select()
-      .from(chatGenerations)
-      .where(and(
-        eq(chatGenerations.orgId, fixture.orgId),
-        eq(chatGenerations.conversationId, fixture.conversationId),
-      ));
-    const activities = await db
-      .select()
-      .from(activityLog)
-      .where(and(
-        eq(activityLog.orgId, fixture.orgId),
-        eq(activityLog.entityId, fixture.conversationId),
-      ));
-
-    expect(retry.id).toBe(claim?.userMessageId);
-    expect(replayed).toHaveBeenCalledOnce();
-    expect(accepted).not.toHaveBeenCalled();
-    expect(userMessages).toHaveLength(1);
-    expect(userMessages[0]).toMatchObject({
-      clientMutationId: fixture.queued.clientMutationId,
-      clientMutationFingerprint: mutationFingerprint,
-    });
-    expect(generations).toHaveLength(1);
-    expect(activities.filter((activity) => activity.action === "chat.message_added")).toHaveLength(1);
   });
 
   it("quarantines a stale annotated row and continues to the next valid Queue item", async () => {
@@ -1181,29 +1119,11 @@ describe("messengerService and issue follows", () => {
     expect(retriedClaim?.userMessageId).toBe(claim?.userMessageId);
     expect(retriedClaim?.item.payload.body).toBe("Edited after materialization and safe release");
     expect(message?.body).toBe("Edited after materialization and safe release");
-    expect(message?.clientMutationId).toBe(clientMutationId);
-    expect(message?.clientMutationFingerprint).toEqual(expect.any(String));
     expect(messageAttachments).toHaveLength(1);
     expect(canonicalAnnotations[0]?.attachmentIds).toEqual([messageAttachments[0]?.id]);
     expect(materializedQueue?.payload).not.toHaveProperty("__rudderQueueAnnotationAssets");
     expect((materializedQueue?.payload.inlineAnnotations as Array<{ attachmentIds: string[] }>)[0]?.attachmentIds)
       .toEqual([messageAttachments[0]?.id]);
-    expect(await db
-      .select()
-      .from(chatMessages)
-      .where(and(eq(chatMessages.orgId, fixture.orgId), eq(chatMessages.role, "user"))))
-      .toHaveLength(1);
-    const replayedMessage = await chatSvc.addUserChatMessage(
-      fixture.conversationId,
-      fixture.orgId,
-      message!.body,
-      null,
-      {
-        clientMutationId,
-        clientMutationFingerprint: message!.clientMutationFingerprint,
-      },
-    );
-    expect(replayedMessage.id).toBe(message?.id);
     expect(await db
       .select()
       .from(chatMessages)

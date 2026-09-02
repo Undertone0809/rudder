@@ -203,10 +203,6 @@ vi.mock("@/lib/router", () => ({
   ],
 }));
 
-vi.mock("../context/DialogContext", () => ({
-  useDialog: () => ({ confirm: vi.fn(async () => true) }),
-}));
-
 vi.mock("../api/orgs", () => ({
   organizationsApi: {
     copyWorkspaceEntry: mockState.copyWorkspaceEntry,
@@ -220,12 +216,6 @@ vi.mock("../context/I18nContext", () => ({
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({
     pushToast: mockState.pushToast,
-  }),
-}));
-
-vi.mock("../context/DialogContext", () => ({
-  useDialog: () => ({
-    confirm: vi.fn(async () => true),
   }),
 }));
 

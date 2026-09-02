@@ -13,7 +13,7 @@ import {
 } from "@rudderhq/shared";
 import { and, eq, gt, gte, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { listDetachedChatTranscripts, replaceDetachedChatTranscript, selectChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
@@ -34,22 +34,8 @@ export type AddUserChatMessageOptions = {
     createdByUserId: string | null;
   }>;
   attachmentFileIndexesByAnnotationId?: Map<string, number[]>;
-  clientMutationId?: string | null;
-  clientMutationFingerprint?: string | null;
-  onIdempotentReplay?: (messageId: string) => void;
   onTransactionCommitted?: (messageId: string) => void;
 };
-
-function postgresErrorCode(error: unknown) {
-  if (!error || typeof error !== "object") return null;
-  const direct = "code" in error ? (error as { code?: unknown }).code : null;
-  if (typeof direct === "string") return direct;
-  const cause = "cause" in error ? (error as { cause?: unknown }).cause : null;
-  return cause && typeof cause === "object" && "code" in cause
-    && typeof (cause as { code?: unknown }).code === "string"
-    ? (cause as { code: string }).code
-    : null;
-}
 
 function remapInlineAnnotationAttachmentIds(
   structuredPayload: Record<string, unknown> | null | undefined,
@@ -111,7 +97,7 @@ export function createChatAnnotationMessagePersistence(
     editUserMessageId?: string | null,
     options: AddUserChatMessageOptions = {},
   ) {
-    const persist = () => db.transaction(async (tx) => {
+    const messageId = await db.transaction(async (tx) => {
       const now = new Date();
       let target: MessageRow | null = null;
       let turnId: string = randomUUID();
@@ -119,35 +105,6 @@ export function createChatAnnotationMessagePersistence(
       let messageStructuredPayload = options.structuredPayload ?? null;
       let messageTranscript = chatTranscriptFromPayload(messageStructuredPayload);
       const attachmentIdMap = new Map<string, string>();
-
-      if (options.clientMutationId) {
-        const existing = await tx
-          .select({
-            id: chatMessages.id,
-            body: chatMessages.body,
-            fingerprint: chatMessages.clientMutationFingerprint,
-          })
-          .from(chatMessages)
-          .where(and(
-            eq(chatMessages.orgId, orgId),
-            eq(chatMessages.conversationId, conversationId),
-            eq(chatMessages.clientMutationId, options.clientMutationId),
-          ))
-          .limit(1)
-          .then((rows) => rows[0] ?? null);
-        if (existing) {
-          if (
-            existing.body !== body
-            || (
-              existing.fingerprint !== null
-              && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
-            )
-          ) {
-            throw conflict("Chat mutation key was already used for different content");
-          }
-          return { messageId: existing.id, replayed: true };
-        }
-      }
 
       if (editUserMessageId) {
         target = await tx
@@ -253,8 +210,6 @@ export function createChatAnnotationMessagePersistence(
           status: "completed",
           body,
           structuredPayload: stripChatMetadataFromPayload(sanitizeChatStructuredPayload(messageStructuredPayload)),
-          clientMutationId: options.clientMutationId ?? null,
-          clientMutationFingerprint: options.clientMutationFingerprint ?? null,
           chatTurnId: turnId,
           turnVariant,
         })
@@ -351,42 +306,9 @@ export function createChatAnnotationMessagePersistence(
           eq(chatConversations.id, conversationId),
           eq(chatConversations.orgId, orgId),
         ));
-      return { messageId: message.id, replayed: false };
+      return message.id;
     });
-    let persisted: { messageId: string; replayed: boolean };
-    try {
-      persisted = await persist();
-    } catch (error) {
-      if (!options.clientMutationId || postgresErrorCode(error) !== "23505") throw error;
-      const existing = await db
-        .select({
-          id: chatMessages.id,
-          body: chatMessages.body,
-          fingerprint: chatMessages.clientMutationFingerprint,
-        })
-        .from(chatMessages)
-        .where(and(
-          eq(chatMessages.orgId, orgId),
-          eq(chatMessages.conversationId, conversationId),
-          eq(chatMessages.clientMutationId, options.clientMutationId),
-        ))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (!existing) throw error;
-      if (
-        existing.body !== body
-        || (
-          existing.fingerprint !== null
-          && existing.fingerprint !== (options.clientMutationFingerprint ?? null)
-        )
-      ) {
-        throw conflict("Chat mutation key was already used for different content");
-      }
-      persisted = { messageId: existing.id, replayed: true };
-    }
-    if (persisted.replayed) options.onIdempotentReplay?.(persisted.messageId);
-    else options.onTransactionCommitted?.(persisted.messageId);
-    const { messageId } = persisted;
+    options.onTransactionCommitted?.(messageId);
     const message = await getMessage(conversationId, messageId);
     if (!message) throw new Error("Failed to hydrate created chat message");
     return message;

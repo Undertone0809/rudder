@@ -2,6 +2,7 @@ name: Test
 
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - main
@@ -24,8 +25,154 @@ defaults:
     shell: bash
 
 jobs:
+  plan:
+    name: Plan qualification profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      profile: ${{ steps.impact.outputs.profile }}
+      qualification: ${{ steps.impact.outputs.qualification }}
+      source_sha: ${{ steps.impact.outputs.source_sha }}
+      source_tree_sha: ${{ steps.impact.outputs.source_tree_sha }}
+      comparison_sha: ${{ steps.impact.outputs.comparison_sha }}
+      changed_areas: ${{ steps.impact.outputs.changed_areas }}
+      affected_scopes: ${{ steps.impact.outputs.affected_scopes }}
+      required_families: ${{ steps.impact.outputs.required_families }}
+      escalation_reasons: ${{ steps.impact.outputs.escalation_reasons }}
+      full_qualification: ${{ steps.impact.outputs.full_qualification }}
+      plan_digest: ${{ steps.impact.outputs.plan_digest }}
+      run_architecture: ${{ steps.impact.outputs.run_architecture }}
+      run_affected: ${{ steps.impact.outputs.run_affected }}
+      run_docs: ${{ steps.impact.outputs.run_docs }}
+      run_verify: ${{ steps.impact.outputs.run_verify }}
+      run_native: ${{ steps.impact.outputs.run_native }}
+      run_desktop: ${{ steps.impact.outputs.run_desktop }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+
+      - name: Require exact trusted dispatch source
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - name: Resolve comparison source
+        id: comparison
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base_sha=""
+          case "$EVENT_NAME" in
+            pull_request) base_sha="$PR_BASE_SHA" ;;
+            merge_group) base_sha="$MERGE_BASE_SHA" ;;
+            push) base_sha="$PUSH_BEFORE_SHA" ;;
+            workflow_dispatch)
+              base_sha="$(git rev-parse "$HEAD_SHA^" 2>/dev/null || true)"
+              ;;
+          esac
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          else
+            git cat-file -e "$base_sha^{commit}"
+            echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Collect changed paths
+        env:
+          HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+          BASE_SHA: ${{ steps.comparison.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$BASE_SHA" ]]; then
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
+          else
+            git diff-tree --no-commit-id --name-only -r "$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
+          fi
+
+      - name: Select deterministic qualification profile
+        id: impact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+          BASE_SHA: ${{ steps.comparison.outputs.sha }}
+        run: |
+          node scripts/ci-impact-plan.mjs \
+            --event "$EVENT_NAME" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --head-tree-sha "$(git rev-parse "${HEAD_SHA}^{tree}")" \
+            --files-from "$RUNNER_TEMP/changed-files.txt" \
+            --output "$GITHUB_OUTPUT" \
+            --report "$RUNNER_TEMP/ci-impact-plan.json"
+          cat "$RUNNER_TEMP/ci-impact-plan.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload impact plan evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-impact-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ci-impact-plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  affected:
+    name: Affected qualification
+    needs: plan
+    if: needs.plan.outputs.run_affected == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      CHANGED_AREAS: ${{ needs.plan.outputs.changed_areas }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install dependencies without Electron binary
+        run: pnpm install --frozen-lockfile
+
+      - name: Run affected workspace checks
+        run: |
+          set -euo pipefail
+          has_area() { case ",$CHANGED_AREAS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+          if has_area ui; then
+            pnpm --filter @rudderhq/ui typecheck
+            pnpm --filter @rudderhq/ui build
+          fi
+          if has_area server; then pnpm --filter @rudderhq/server typecheck; fi
+          if has_area cli; then pnpm --filter @rudderhq/cli typecheck; fi
+          if has_area identity; then pnpm --filter @rudderhq/identity typecheck; fi
+          if has_area e2e || has_area ui; then
+            pnpm exec playwright install chromium
+            pnpm test:e2e --grep @smoke
+          fi
+
   architecture:
     name: Architecture ratchet
+    needs: plan
+    if: needs.plan.outputs.run_architecture == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,11 +184,12 @@ jobs:
       - name: Require dispatch ref to match exact source
         if: github.event_name == 'workflow_dispatch'
         env:
-          DISPATCH_REF_SHA: ${{ github.sha }}
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"
 
       - name: Architecture audit tests
         run: node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs
@@ -49,50 +197,18 @@ jobs:
       - name: Declared architecture boundaries
         run: node scripts/architecture-boundaries.mjs
 
-      - name: Select architecture comparison ref
-        id: comparison
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          compare_ref=""
-          case "$EVENT_NAME" in
-            pull_request)
-              # The pull_request checkout is a synthetic merge commit. Compare
-              # against its first parent so changes already present on the
-              # updated base branch are not attributed to the PR.
-              if git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
-                compare_ref="$(git rev-parse HEAD^1)"
-              else
-                compare_ref="$PR_BASE_SHA"
-              fi
-              ;;
-            push)
-              if [[ -n "$PUSH_BEFORE_SHA" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
-                compare_ref="$PUSH_BEFORE_SHA"
-              fi
-              ;;
-            workflow_dispatch)
-              if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
-                compare_ref="$(git rev-parse HEAD^2)"
-              elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-                compare_ref="$(git rev-parse HEAD^)"
-              fi
-              ;;
-          esac
-          echo "ref=$compare_ref" >> "$GITHUB_OUTPUT"
-
       - name: Reject new architecture debt
-        if: steps.comparison.outputs.ref != ''
-        run: node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref "${{ steps.comparison.outputs.ref }}" --fail-on-regression
+        if: needs.plan.outputs.comparison_sha != 'unknown' && needs.plan.outputs.comparison_sha != ''
+        run: node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref "${{ needs.plan.outputs.comparison_sha }}" --fail-on-regression
 
       - name: Report missing initial comparison ref
-        if: steps.comparison.outputs.ref == ''
+        if: needs.plan.outputs.comparison_sha == 'unknown' || needs.plan.outputs.comparison_sha == ''
         run: echo "Architecture ratchet skipped because this is an initial push with no parent comparison commit."
 
   docs:
     name: Docs qualification
+    needs: plan
+    if: needs.plan.outputs.run_docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -158,6 +274,8 @@ jobs:
 
   verify:
     name: Verify ${{ matrix.os }}
+    needs: plan
+    if: needs.plan.outputs.run_verify == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -278,6 +396,8 @@ jobs:
 
   native-foundations:
     name: Native foundations ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.outputs.run_native == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -326,8 +446,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare PostgreSQL test runtime
-        if: matrix.target != 'x86_64-unknown-linux-gnu'
+      - name: Prepare Windows PostgreSQL test runtime
+        if: matrix.target == 'x86_64-pc-windows-msvc'
         run: |
           bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
           echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
@@ -337,12 +457,7 @@ jobs:
         run: cargo fmt --manifest-path native/Cargo.toml --all --check
 
       - name: Rust Clippy
-        env:
-          # The MCP compatibility test has a Unix-only partial-stdin helper in
-          # the latest base branch; keep Windows lint strict except for that
-          # target-specific dead-code diagnostic.
-          CLIPPY_PLATFORM_ARGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-A dead-code' || '' }}
-        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings -A clippy::while_let_loop $CLIPPY_PLATFORM_ARGS
+        run: cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
 
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets -- --test-threads=1
@@ -393,6 +508,8 @@ jobs:
 
   desktop-packaged-smoke:
     name: Desktop packaged smoke macOS arm64
+    needs: plan
+    if: needs.plan.outputs.run_desktop == 'true'
     runs-on: macos-14
     timeout-minutes: 25
     env:
@@ -407,11 +524,12 @@ jobs:
       - name: Require dispatch ref to match exact source
         if: github.event_name == 'workflow_dispatch'
         env:
-          DISPATCH_REF_SHA: ${{ github.sha }}
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"
 
       - uses: actions/setup-node@v6
         with:
@@ -483,3 +601,71 @@ jobs:
           RUDDER_NATIVE_MODE: required
           RUDDER_NATIVE_PROCESS_HOST_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-process-host
         run: pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/issue-active-run-steer.spec.ts
+
+  qualification-summary:
+    name: Qualification summary
+    needs:
+      - plan
+      - architecture
+      - affected
+      - docs
+      - verify
+      - native-foundations
+      - desktop-packaged-smoke
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the selected qualification families
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          REQUIRED_FAMILIES: ${{ needs.plan.outputs.required_families }}
+          PROFILE: ${{ needs.plan.outputs.profile }}
+          QUALIFICATION: ${{ needs.plan.outputs.qualification }}
+          SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+          SOURCE_TREE_SHA: ${{ needs.plan.outputs.source_tree_sha }}
+          COMPARISON_SHA: ${{ needs.plan.outputs.comparison_sha }}
+          PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
+          ARCHITECTURE_RESULT: ${{ needs.architecture.result }}
+          AFFECTED_RESULT: ${{ needs.affected.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          NATIVE_RESULT: ${{ needs.native-foundations.result }}
+          DESKTOP_RESULT: ${{ needs.desktop-packaged-smoke.result }}
+        run: |
+          set -euo pipefail
+          test "$PLAN_RESULT" = success
+          echo "profile=$PROFILE"
+          echo "qualification=$QUALIFICATION"
+          echo "source_sha=$SOURCE_SHA"
+          echo "source_tree_sha=$SOURCE_TREE_SHA"
+          echo "comparison_sha=$COMPARISON_SHA"
+          echo "plan_digest=$PLAN_DIGEST"
+          result_for() {
+            case "$1" in
+              architecture) echo "$ARCHITECTURE_RESULT" ;;
+              affected) echo "$AFFECTED_RESULT" ;;
+              docs) echo "$DOCS_RESULT" ;;
+              verify) echo "$VERIFY_RESULT" ;;
+              native) echo "$NATIVE_RESULT" ;;
+              desktop) echo "$DESKTOP_RESULT" ;;
+              *) echo "unknown" ;;
+            esac
+          }
+          IFS=',' read -ra required <<< "$REQUIRED_FAMILIES"
+          for family in "${required[@]}"; do
+            result="$(result_for "$family")"
+            echo "$family=$result"
+            test "$result" = success || {
+              echo "Required qualification family $family did not succeed: $result" >&2
+              exit 1
+            }
+          done
+          for family in architecture affected docs verify native desktop; do
+            if [[ ",$REQUIRED_FAMILIES," != *",$family,"* ]]; then
+              result="$(result_for "$family")"
+              test "$result" = skipped || {
+                echo "Non-required qualification family $family was not intentionally skipped: $result" >&2
+                exit 1
+              }
+            fi
+          done
