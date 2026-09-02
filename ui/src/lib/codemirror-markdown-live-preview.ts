@@ -248,6 +248,7 @@ function syntaxDecorationsForBlocks(
             attributes: safeInteractiveMarkdownHref(href)
               ? {
                 "aria-label": `Open ${href}`,
+                contenteditable: "false",
                 "data-markdown-link-href": href,
                 role: "link",
                 tabindex: "0",
@@ -298,6 +299,7 @@ function syntaxDecorationsForBlocks(
           attributes: safeInteractiveMarkdownHref(href)
             ? {
               "aria-label": `Open ${href}`,
+              contenteditable: "false",
               "data-markdown-link-href": href,
               role: "link",
               tabindex: "0",

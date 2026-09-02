@@ -6,6 +6,7 @@ import { cn } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
 import {
   MarkdownEditor,
+  type MarkdownEditorLinkClickHandler,
   type MarkdownEditorRef,
   type MentionOption,
 } from "./MarkdownEditor";
@@ -21,6 +22,7 @@ interface InlineEditorProps {
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
   onMentionQueryChange?: (query: string | null) => void;
+  onLinkClick?: MarkdownEditorLinkClickHandler;
   editorEngine?: MarkdownEditorEngine;
   documentIdentity?: string;
   alwaysEdit?: boolean;
@@ -53,6 +55,7 @@ export function InlineEditor({
   imageUploadHandler,
   mentions,
   onMentionQueryChange,
+  onLinkClick,
   editorEngine,
   documentIdentity,
   alwaysEdit = false,
@@ -317,6 +320,7 @@ export function InlineEditor({
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
           onMentionQueryChange={onMentionQueryChange}
+          onLinkClick={onLinkClick}
           documentIdentity={documentIdentity}
           activateInlineTokensOnPlainClick={variant === "issue-description"}
           submitShortcut="mod-enter"
@@ -409,8 +413,15 @@ export function InlineEditor({
         <MarkdownBody
           className={markdownBodyClassName}
           copyMarkdownOnCopy
-          onLinkClick={({ event }) => {
+          onLinkClick={({ event, href, label, sourceHref }) => {
+            const handled = onLinkClick?.({
+              event: event.nativeEvent,
+              href,
+              label,
+              sourceHref,
+            });
             event.stopPropagation();
+            return handled;
           }}
         >
           {value}

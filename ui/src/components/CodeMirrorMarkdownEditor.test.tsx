@@ -852,6 +852,55 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     anchorClick.mockRestore();
   });
 
+  it("delegates ordinary preview link activation to the caller for click and Enter", async () => {
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const onLinkClick = vi.fn(() => true);
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="Read [Proposal](/Users/zeeland/projects/rudder-oss/doc/proposal.md)."
+          onChange={() => undefined}
+          onLinkClick={onLinkClick}
+        />,
+      );
+    });
+    await flushReact();
+
+    const link = container?.querySelector<HTMLElement>("[data-markdown-link-href]");
+    expect(link?.textContent).toBe("Proposal");
+    expect(link?.getAttribute("contenteditable")).toBe("false");
+    const click = new MouseEvent("click", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      link?.dispatchEvent(click);
+    });
+
+    expect(onLinkClick).toHaveBeenCalledWith(expect.objectContaining({
+      href: "/Users/zeeland/projects/rudder-oss/doc/proposal.md",
+      label: "Proposal",
+    }));
+    expect(anchorClick).not.toHaveBeenCalled();
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      link?.focus();
+      link?.dispatchEvent(enter);
+    });
+
+    expect(onLinkClick).toHaveBeenCalledTimes(2);
+    expect(anchorClick).not.toHaveBeenCalled();
+    anchorClick.mockRestore();
+  });
+
   it("keeps canonical Rudder and skill references atomic inside an active source block", async () => {
     const markdown = "Assign [Ada](agent://agent-1) and [$review](/skills/review/SKILL.md).";
     const ref = createRef<MarkdownEditorRef>();
