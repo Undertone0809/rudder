@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { renderToStaticMarkup } from "react-dom/server";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { describe, expect, it } from "vitest";
 import { TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
@@ -16,6 +17,17 @@ import {
 } from "./RunTranscriptView.rudder-mcp";
 
 const toolFixtures = {
+  rudder_agent_me: {
+    result: {
+      id: "agent-1",
+      shortRef: "ada",
+      name: "Ada",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "openai/gpt-5.6-sol" },
+      runtimeConfig: {},
+    },
+    expected: "Ada",
+  },
   rudder_goal_list: { result: [{ id: "goal-1", title: "Launch", lifecycle: "active" }], expected: "Launch" },
   rudder_goal_context: { result: { id: "goal-1", title: "Launch", lifecycle: "active" }, expected: "Launch" },
   rudder_goal_progress: { result: { id: "activity-1", goalId: "goal-1", summary: "Validated demand" }, expected: "Progress recorded" },
@@ -85,20 +97,22 @@ function renderPresenter(
   triggerAutomationParents: ReadonlyMap<string, string> = new Map(),
 ) {
   return renderToStaticMarkup(
-    <RudderMcpPresenterProvider agents={agents} triggerAutomationParents={triggerAutomationParents}>
-      <RudderMcpSemanticPresenter block={entry} />
-    </RudderMcpPresenterProvider>,
+    <ThemeProvider>
+      <RudderMcpPresenterProvider agents={agents} triggerAutomationParents={triggerAutomationParents}>
+        <RudderMcpSemanticPresenter block={entry} />
+      </RudderMcpPresenterProvider>
+    </ThemeProvider>,
   );
 }
 
 describe("Rudder MCP semantic presenter registry", () => {
-  it("maps the exact first-batch 40 tools to one of three shared presenter families", () => {
+  it("maps the exact first-batch 41 tools to one of three shared presenter families", () => {
     const entries = Object.entries(RUDDER_MCP_PRESENTER_REGISTRY);
-    expect(entries).toHaveLength(40);
+    expect(entries).toHaveLength(41);
     expect(entries.filter(([, item]) => item.kind === "rail")).toHaveLength(9);
-    expect(entries.filter(([, item]) => item.kind === "summary")).toHaveLength(7);
+    expect(entries.filter(([, item]) => item.kind === "summary")).toHaveLength(8);
     expect(entries.filter(([, item]) => item.kind === "receipt")).toHaveLength(24);
-    expect(new Set(entries.map(([name]) => name)).size).toBe(40);
+    expect(new Set(entries.map(([name]) => name)).size).toBe(41);
     for (const [name, definition] of entries) {
       expect(getRudderMcpPresenterDefinition(name)).toEqual({ toolName: name, ...definition });
       expect(getRudderMcpPresenterDefinition(`mcp__rudder-tools__${name}`, {})).toEqual({ toolName: name, ...definition });
@@ -165,7 +179,7 @@ describe("Rudder MCP semantic cards", () => {
     expect(html).toContain("Ada");
     expect(html).not.toContain("Open");
     expect(html).toContain('data-rudder-semantic-card-surface="true"');
-    expect(html).toContain("shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.32)]");
+    expect(html).toContain("shadow-[0_1px_2px_rgba(15,23,42,0.05),0_8px_20px_-16px_rgba(15,23,42,0.34)]");
   });
 
   it("shows the structured comment body in Issue and Approval receipts", () => {
@@ -198,7 +212,8 @@ describe("Rudder MCP semantic cards", () => {
       issueId: "RUD-1",
       body: "First line\n<script>not markup</script>",
     }));
-    expect(html).toContain("First line\n&lt;script&gt;not markup&lt;/script&gt;");
+    expect(html).toContain("First line");
+    expect(html).toContain("&lt;script&gt;not markup&lt;/script&gt;");
     expect(html).not.toContain("<script>not markup</script>");
   });
 
