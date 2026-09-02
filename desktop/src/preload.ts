@@ -291,6 +291,7 @@ contextBridge.exposeInMainWorld("desktopIdentity", {
 });
 
 contextBridge.exposeInMainWorld("desktopShell", {
+  platform: process.platform,
   getBootState: () => ipcRenderer.invoke("desktop:get-boot-state") as Promise<BootState>,
   onBootState: (listener: (state: BootState) => void) => {
     const wrapped = (_event: IpcRendererEvent, payload: BootState) => {
@@ -322,6 +323,10 @@ contextBridge.exposeInMainWorld("desktopShell", {
   copyImage: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:copy-image", payload),
   showImageInFolder: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:show-image-in-folder", payload),
   setAppearance: (theme: "light" | "dark" | "system") => ipcRenderer.invoke("desktop:set-appearance", theme),
+  minimizeWindow: () => ipcRenderer.invoke("desktop:minimize-window") as Promise<void>,
+  toggleMaximizeWindow: () => ipcRenderer.invoke("desktop:toggle-maximize-window") as Promise<boolean>,
+  closeWindow: () => ipcRenderer.invoke("desktop:close-window") as Promise<void>,
+  isWindowMaximized: () => ipcRenderer.invoke("desktop:is-window-maximized") as Promise<boolean>,
   getUpdateChannel: () => ipcRenderer.invoke("desktop:get-update-channel") as Promise<DesktopUpdateChannel>,
   setUpdateChannel: (channel: DesktopUpdateChannel) =>
     ipcRenderer.invoke("desktop:set-update-channel", channel) as Promise<DesktopUpdateChannel>,
@@ -584,6 +589,7 @@ declare global {
       onStateChanged(listener: (state: DesktopIdentityState) => void): () => void;
     };
     desktopShell: {
+      platform: NodeJS.Platform;
       getBootState(): Promise<BootState>;
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;
@@ -601,6 +607,10 @@ declare global {
       copyImage(payload: DesktopImageDataPayload): Promise<void>;
       showImageInFolder(payload: DesktopImageDataPayload): Promise<void>;
       setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+      minimizeWindow(): Promise<void>;
+      toggleMaximizeWindow(): Promise<boolean>;
+      closeWindow(): Promise<void>;
+      isWindowMaximized(): Promise<boolean>;
       getUpdateChannel(): Promise<DesktopUpdateChannel>;
       setUpdateChannel(channel: DesktopUpdateChannel): Promise<DesktopUpdateChannel>;
       reloadApp(): Promise<void>;

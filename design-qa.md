@@ -42,3 +42,33 @@ The complete card is readable at the normalized scale, so a separate crop was un
 - P3: The web reference includes Privacy and Terms links. The Desktop gate keeps the privacy promise but does not repeat those links; adding them later would improve parity but does not alter the requested login composition or block use.
 
 final result: passed
+
+---
+
+# Windows Transparent Desktop Shell Design QA
+
+- Source visual truth: `C:\Users\zeela\.codex\attachments\bd916bf6-a361-44d5-869d-ec7665534a81\image-1.png`
+- Implementation screenshot: `C:\Users\zeela\AppData\Local\Temp\rudder-windows-glass-final.png`
+- Candidate fingerprint: `86e0e4ed18d1361eb30e08c71bc52b50bc5fbd362a8a6634163f20ffeba402d0`
+- State: Windows Desktop, restored application window, light theme, Dashboard loaded
+- Source pixels: `2028 × 1497`
+- Implementation pixels: `1620 × 1020`
+
+## Findings
+
+No actionable P0, P1, or P2 visual differences remain for the requested shell behavior.
+
+- The Windows window now exposes transparent pixels at its rounded outer corners instead of an opaque rectangular background.
+- The application backdrop, navigation rail, workspace shell, and work cards retain the same layered translucent hierarchy used by the macOS glass shell.
+- Custom Minimize, Maximize/Restore, and Close controls preserve Windows window actions after removing the native frame.
+- Caption controls render in a body-level portal above full-screen onboarding and modal portals.
+- Maximized windows remove rounded clipping; boot and recovery windows keep a native frame for safety.
+
+## Evidence Notes
+
+- Electron smoke captured a top-left application pixel with alpha `0` and observed the Windows platform class plus all three caption controls.
+- The implementation screenshot shows the rounded transparent perimeter and the underlying desktop/application content through the shell gutters.
+- A Windows Security Center prompt from the unrelated WorkBuddy application appeared during the screenshot and dimmed the Rudder content. It was not interacted with and is not part of the implementation.
+- Focused unit and CSS regression tests cover platform defaults, transparent BrowserWindow options, rounded shape calculation, caption actions, body-level portaling, and maximized clipping.
+
+final result: passed

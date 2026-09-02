@@ -338,6 +338,7 @@ export type DesktopBrowserShortcutRequest = {
 };
 
 export type DesktopShellApi = {
+  platform?: NodeJS.Platform;
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;
@@ -355,6 +356,10 @@ export type DesktopShellApi = {
   copyImage?(payload: DesktopImageDataPayload): Promise<void>;
   showImageInFolder?(payload: DesktopImageDataPayload): Promise<void>;
   setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+  minimizeWindow?(): Promise<void>;
+  toggleMaximizeWindow?(): Promise<boolean>;
+  closeWindow?(): Promise<void>;
+  isWindowMaximized?(): Promise<boolean>;
   getUpdateChannel?(): Promise<DesktopUpdateChannel>;
   setUpdateChannel?(channel: DesktopUpdateChannel): Promise<DesktopUpdateChannel>;
   reloadApp?(): Promise<void>;

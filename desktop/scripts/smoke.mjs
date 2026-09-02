@@ -1972,6 +1972,31 @@ async function assertFreshDesktopWindowSize(electronApp, context, tolerance = 64
   }
 }
 
+async function assertDesktopGlassShell(electronApp, page, context) {
+  const rendererState = await page.evaluate(() => ({
+    platform: window.desktopShell?.platform ?? null,
+    glass: document.documentElement.classList.contains("desktop-shell-glass"),
+    macos: document.documentElement.classList.contains("desktop-shell-macos"),
+    windows: document.documentElement.classList.contains("desktop-shell-windows"),
+    captionControls: document.querySelectorAll(".desktop-caption-control").length,
+  }));
+
+  assert.equal(rendererState.glass, true, `${context} should enable the cross-platform glass shell class`);
+  if (process.platform === "win32") {
+    assert.equal(rendererState.platform, "win32", `${context} should expose the Windows desktop platform`);
+    assert.equal(rendererState.windows, true, `${context} should enable Windows shell styling`);
+    assert.equal(rendererState.macos, false, `${context} should not enable macOS-only styling on Windows`);
+    assert.equal(rendererState.captionControls, 3, `${context} should render minimize, maximize, and close controls`);
+    const cornerAlpha = await electronApp.evaluate(async ({ BrowserWindow }) => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!window) return null;
+      const image = await window.capturePage({ x: 0, y: 0, width: 1, height: 1 });
+      return image.toBitmap()[3] ?? null;
+    });
+    assert.equal(cornerAlpha, 0, `${context} should keep the rounded Windows corner fully transparent`);
+  }
+}
+
 async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
@@ -2313,6 +2338,7 @@ async function launchDesktop(userDataDir, mode, ports, extraEnv = {}) {
   // hands off to the application window. The shared tolerance stays strict
   // enough to reject the former 1440px default.
   await assertFreshDesktopWindowSize(electronApp, "the ready application window");
+  await assertDesktopGlassShell(electronApp, page, "the ready application window");
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
   return { electronApp, page, baseUrl };
