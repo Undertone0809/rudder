@@ -1700,7 +1700,16 @@ export function Layout() {
                             <ThreeColumnContextSidebar />
                           )}
                         </div>
-                        {!isLibraryRoute ? (
+                        {isLibraryRoute ? (
+                          <div
+                            data-testid="workspace-column-gutter"
+                            aria-hidden="true"
+                            className={cn(
+                              "motion-resize shrink-0",
+                              contextSidebarVisible ? "w-2 md:w-[9px]" : "w-0 overflow-hidden",
+                            )}
+                          />
+                        ) : (
                           <div
                             data-testid="workspace-column-resizer"
                             aria-hidden={!contextSidebarVisible}
@@ -1717,7 +1726,7 @@ export function Layout() {
                           >
                             <div className="workspace-column-resizer-line" />
                           </div>
-                        ) : null}
+                        )}
                       </>
                     ) : null}
                     {showIntegratedShellSidebar
