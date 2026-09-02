@@ -71,11 +71,7 @@ describe("product analytics collector", () => {
   it("rejects a conflicting event id instead of overwriting the first payload", () => {
     const collector = createCollector();
     collector.ingestBatch({ authorization, events: [event()] });
-    const result = collector.ingestBatch({
-      authorization,
-      events: [event({ properties: { work_surface: "chat" } })],
-      now: new Date("2026-08-03T00:00:00.000Z"),
-    });
+    const result = collector.ingestBatch({ authorization, events: [event({ properties: { work_surface: "chat" } })] });
 
     expect(result.rejected).toEqual([{ eventId, status: "rejected", errorCode: "conflict", late: false }]);
     expect(collector.store.listEvents()[0]?.properties).toEqual({ work_surface: "issue", is_first_loop: true });

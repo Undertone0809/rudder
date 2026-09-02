@@ -77,35 +77,26 @@ test.describe("Organization workspaces image preview", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`/${organization.issuePrefix}/library?path=${encodeURIComponent(jsonFilePath)}`);
     await expect(page.getByTestId("org-workspaces-editor-tabs")).toContainText("evals.json", { timeout: 15_000 });
-    await expect(page.getByTestId(`org-workspaces-editor-tab-${jsonFilePath}`).getByRole("tab"))
-      .toHaveAttribute("aria-selected", "true");
 
-    await expect(page.getByTestId("workspace-column-resizer")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-column-gutter")).toBeVisible();
-
-    const [contextCardBox, gutterBox, mainCardBox, headerBox, tabStripBox] = await Promise.all([
+    const [contextCardBox, mainCardBox, headerBox, tabStripBox, activeTabBox] = await Promise.all([
       page.getByTestId("workspace-context-card").boundingBox(),
-      page.getByTestId("workspace-column-gutter").boundingBox(),
       page.getByTestId("workspace-main-card").boundingBox(),
       page.getByTestId("workspace-context-header").boundingBox(),
       page.getByTestId("org-workspaces-editor-tabs").boundingBox(),
+      page.getByTestId("org-workspaces-editor-tabs").locator(".rudder-doc-editor-tab--active").boundingBox(),
     ]);
 
     expect(contextCardBox).not.toBeNull();
-    expect(gutterBox).not.toBeNull();
     expect(mainCardBox).not.toBeNull();
     expect(headerBox).not.toBeNull();
     expect(tabStripBox).not.toBeNull();
+    expect(activeTabBox).not.toBeNull();
 
     expect(Math.abs(contextCardBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(0.5);
     expect(Math.abs(contextCardBox!.y - tabStripBox!.y)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(contextCardBox!.y - activeTabBox!.y)).toBeLessThanOrEqual(0.5);
     expect(Math.abs(headerBox!.height - tabStripBox!.height)).toBeLessThanOrEqual(0.5);
-    expect(gutterBox!.width).toBeGreaterThanOrEqual(8);
-    expect(gutterBox!.width).toBeLessThanOrEqual(10);
-    expect(mainCardBox!.x - (contextCardBox!.x + contextCardBox!.width)).toBeCloseTo(gutterBox!.width, 0);
-
-    await page.getByRole("button", { name: "Hide Library sidebar" }).click();
-    await expect(page.getByTestId("workspace-column-gutter")).toHaveCSS("width", "0px");
+    expect(activeTabBox!.height - tabStripBox!.height).toBeCloseTo(1, 0);
   });
 
   test("renders image files inline in the workspace browser", async ({ page, request }) => {

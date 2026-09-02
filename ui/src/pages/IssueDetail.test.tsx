@@ -17,6 +17,9 @@ let capturedMentions: Array<Record<string, unknown>> = [];
 let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let capturedInlineEditorProps: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
+const sidePanelMocks = vi.hoisted(() => ({
+  openTarget: vi.fn(),
+}));
 const queryErrors = new Set<string>();
 const queryRefetch = vi.fn(async () => undefined);
 const queryOptionsByKey = new Map<string, Record<string, unknown>>();
@@ -229,6 +232,10 @@ vi.mock("../context/OrganizationContext", () => ({
       { id: "org-2", urlKey: "org-two", issuePrefix: "ORG2", status: "active" },
     ],
   }),
+}));
+
+vi.mock("../context/SidePanelContext", () => ({
+  useSidePanel: () => ({ openTarget: sidePanelMocks.openTarget }),
 }));
 
 vi.mock("../context/I18nContext", () => ({
@@ -714,6 +721,7 @@ describe("IssueDetail", () => {
     queryErrors.clear();
     queryOptionsByKey.clear();
     queryRefetch.mockClear();
+    sidePanelMocks.openTarget.mockClear();
     queryData.set(JSON.stringify(["issues", "detail", "ORG2-1"]), parentIssue);
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
     queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
@@ -901,6 +909,41 @@ describe("IssueDetail", () => {
       editorEngine: "codemirror",
       alwaysEdit: true,
       variant: "issue-description",
+    });
+  });
+
+  it("opens absolute local Markdown links from the description in the Side Panel", () => {
+    renderToStaticMarkup(<IssueDetail />);
+
+    const descriptionEditorProps = capturedInlineEditorProps.find(
+      (props) => props.placeholder === "Add a description...",
+    );
+    const onLinkClick = descriptionEditorProps?.onLinkClick as ((input: {
+      event: MouseEvent;
+      href: string;
+      label: string;
+    }) => boolean | void) | undefined;
+    const event = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      metaKey: false,
+      preventDefault: vi.fn(),
+      shiftKey: false,
+      stopPropagation: vi.fn(),
+    } as unknown as MouseEvent;
+
+    expect(onLinkClick?.({
+      event,
+      href: "/Users/zeeland/projects/rudder-oss/doc/proposal.md",
+      label: "proposal",
+    })).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopPropagation).toHaveBeenCalledOnce();
+    expect(sidePanelMocks.openTarget).toHaveBeenCalledWith({
+      kind: "local_file",
+      filePath: "/Users/zeeland/projects/rudder-oss/doc/proposal.md",
+      label: "proposal",
     });
   });
 

@@ -228,6 +228,35 @@ describe("TranscriptLocalFilePreview", () => {
     expect(openPath).toHaveBeenCalledWith("/private/tmp/evidence.md");
   });
 
+  it("does not expose a default-app action when the Desktop shell lacks openPath", async () => {
+    readDesktopShell.mockReturnValue({ previewLocalFile, updateLocalFile });
+    previewLocalFile.mockResolvedValue({
+      canonicalPath: "/private/tmp/evidence.md",
+      fileName: "evidence.md",
+      parentPath: "/private/tmp",
+      contentType: "text/markdown; charset=utf-8",
+      previewKind: "markdown",
+      content: "# Evidence",
+      base64: null,
+      sizeBytes: 10,
+      modifiedAt: "2026-07-21T00:00:00.000Z",
+      truncated: false,
+      writeCapability: null,
+    });
+
+    const container = await renderPreview();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='chat-side-panel-local-file-open-menu']")).toBeNull();
+    expect(Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .some((button) => button.textContent?.includes("Open"))).toBe(false);
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
+      .toContain("Evidence");
+  });
+
   it("conditionally saves an edited local Markdown file", async () => {
     vi.useFakeTimers();
     const initial = {

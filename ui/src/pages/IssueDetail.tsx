@@ -66,7 +66,7 @@ import { IssueParentContext } from "../components/IssueParentContext";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueRefreshNotice } from "../components/IssueRefreshNotice";
 import { LiveRunWidget } from "../components/LiveRunWidget";
-import type { MentionOption } from "../components/MarkdownEditor";
+import type { MarkdownEditorLinkClickHandler, MentionOption } from "../components/MarkdownEditor";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { PropertiesManifest, PropertiesManifestSheet, PropertiesManifestTrigger } from "../components/PropertiesManifest";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -77,6 +77,7 @@ import { useI18n } from "../context/I18nContext";
 import { useImagePreview } from "../context/ImagePreviewContext";
 import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { useSidePanel } from "../context/SidePanelContext";
 import { useToast } from "../context/ToastContext";
 import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useIssueFollows } from "../hooks/useIssueFollows";
@@ -93,6 +94,7 @@ import { isImageContentType } from "../lib/image-actions";
 import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { libraryCopy } from "../lib/library-copy";
+import { resolveLocalFileTarget } from "../lib/local-file-targets";
 import { invalidateMessengerThreadSummaryQueries } from "../lib/messenger-query-cache";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { usePluginMentionCatalog } from "../lib/plugin-mentions";
@@ -988,6 +990,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const navigateBack = useNavigationBack();
   const { pushToast } = useToast();
   const { openImagePreview } = useImagePreview();
+  const { openTarget } = useSidePanel();
   const { confirm } = useDialog();
   const { locale } = useI18n();
   const operatorDisplayName = useOperatorDisplayName();
@@ -1018,6 +1021,31 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const subIssueStatusQueuesRef = useRef(new Map<string, Promise<void>>());
+
+  const handleIssueMarkdownLinkClick = useCallback<MarkdownEditorLinkClickHandler>(({ event, href, label }) => {
+    if (
+      "button" in event
+      && (
+        event.button !== 0
+        || event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+      )
+    ) {
+      return false;
+    }
+    const filePath = resolveLocalFileTarget(href, label);
+    if (!filePath) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    openTarget({
+      kind: "local_file",
+      filePath,
+      label: label.trim() || filePath.split(/[\\/]/u).at(-1) || filePath,
+    });
+    return true;
+  }, [openTarget]);
 
   const {
     data: issue,
@@ -2127,6 +2155,7 @@ export function IssueDetail({ embeddedIssueId = null, embedded = false }: IssueD
           variant="issue-description"
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
+          onLinkClick={handleIssueMarkdownLinkClick}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync({ file, usage: "description_inline" });
             return attachment.contentPath;

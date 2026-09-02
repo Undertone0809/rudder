@@ -98,6 +98,7 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
         label: "Debug Run",
       })}>Open Debug Chat</button>
       <button type="button" onClick={() => sidePanel.openTarget({ kind: "library_file", filePath: "docs/spec.md", label: "Spec" })}>Open file</button>
+      <button type="button" onClick={() => sidePanel.openTarget({ kind: "local_file", filePath: "/workspace/docs/spec.md", label: "Local spec" })}>Open local file</button>
       <button type="button" onClick={() => sidePanel.openTargetInNewTab({ kind: "library_file", filePath: "docs/spec.md", label: "Spec copy" })}>Open file in new tab</button>
       <button type="button" onClick={() => sidePanel.openTarget({
         kind: "local_app",
@@ -227,6 +228,19 @@ describe("SidePanelProvider context visibility", () => {
     expect(window.location.pathname).toBe("/rudder-studio/agents/agent-1/runs/run-1");
     expect(text(container, "open")).toBe("true");
     expect(text(container, "active-key")).toBe("run-debug-chat:org-a:run-1");
+    expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("keeps a local file in the mobile Side Panel without redirecting to Library", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.history.replaceState({}, "", "/rudder-studio/issues/ISS-1");
+    ({ container, root } = renderSidePanelProvider());
+
+    click(container, "Open local file");
+
+    expect(window.location.pathname).toBe("/rudder-studio/issues/ISS-1");
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("local-file:/workspace/docs/spec.md");
     expect(text(container, "tab-count")).toBe("1");
   });
 

@@ -183,40 +183,6 @@ rl.on("line", (line) => {
       } });
       finish("completed");
     }
-    if (process.env.RUDDER_TEST_FILE_CHANGE_PATCH === "1") {
-      const changes = [
-        { path: "/workspace/src/first.ts", kind: { type: "update", move_path: null } },
-        { path: "/workspace/src/second.ts", kind: { type: "update", move_path: null } },
-      ];
-      send({ method: "item/started", params: {
-        threadId,
-        turnId,
-        item: { type: "fileChange", id: "file-change-1", status: "inProgress", changes },
-      } });
-      send({ method: "item/fileChange/patchUpdated", params: {
-        threadId,
-        turnId,
-        itemId: "file-change-1",
-        changes: [
-          {
-            path: "/workspace/src/second.ts",
-            kind: { type: "update", move_path: null },
-            diff: "@@ -2 +2 @@\\n-beforeSecond\\n+afterSecond",
-          },
-          {
-            path: "/workspace/src/first.ts",
-            kind: { type: "update", move_path: null },
-            diff: "@@ -1 +1 @@\\n-beforeFirst\\n+afterFirst",
-          },
-        ],
-      } });
-      send({ method: "item/completed", params: {
-        threadId,
-        turnId,
-        item: { type: "fileChange", id: "file-change-1", status: "completed", changes },
-      } });
-      finish("completed");
-    }
     if (process.env.RUDDER_TEST_COLLAB_AGENT_TRANSCRIPT === "1") {
       const startedItem = {
         type: "collabAgentToolCall",
@@ -616,68 +582,6 @@ describe("executeCodexAppServerChat", () => {
       name: "command_execution",
       toolUseId: "command-1",
       input: { id: "command-1", command: "cat README.md", cwd: root },
-    });
-  });
-
-  it("attaches item-scoped patch updates to completed file-change evidence by path", async () => {
-    const stdoutLines: string[] = [];
-    const result = await executeCodexAppServerChat({
-      command: fakeCodex,
-      cwd: root,
-      env: {
-        ...process.env,
-        PATH: process.env.PATH ?? "",
-        RUDDER_TEST_FILE_CHANGE_PATCH: "1",
-      } as Record<string, string>,
-      prompt: "Edit two files",
-      model: "gpt-test",
-      modelReasoningEffort: "high",
-      search: false,
-      bypassApprovalsAndSandbox: true,
-      imagePaths: [],
-      sessionId: null,
-      timeoutSec: 5,
-      onLog: vi.fn(async (stream, chunk) => {
-        if (stream === "stdout") stdoutLines.push(chunk.trim());
-      }),
-    });
-
-    expect(result.exitCode).toBe(0);
-    const entries = stdoutLines.flatMap((line) => (
-      parseCodexStdoutLine(line, "2026-09-02T00:00:00.000Z")
-    ));
-    expect(entries).toContainEqual({
-      kind: "tool_call",
-      ts: "2026-09-02T00:00:00.000Z",
-      name: "file_change",
-      toolUseId: "file-change-1",
-      input: {
-        id: "file-change-1",
-        status: "inProgress",
-        changes: [
-          { path: "/workspace/src/first.ts", kind: { type: "update", move_path: null } },
-          { path: "/workspace/src/second.ts", kind: { type: "update", move_path: null } },
-        ],
-      },
-    });
-    const completed = entries.find((entry) => entry.kind === "tool_result" && entry.toolUseId === "file-change-1");
-    expect(completed).toMatchObject({ kind: "tool_result", toolName: "file_change", isError: false });
-    if (completed?.kind !== "tool_result") throw new Error("expected completed file-change evidence");
-    expect(JSON.parse(completed.content)).toEqual({
-      id: "file-change-1",
-      status: "completed",
-      changes: [
-        {
-          path: "/workspace/src/first.ts",
-          kind: { type: "update", move_path: null },
-          diff: "@@ -1 +1 @@\n-beforeFirst\n+afterFirst",
-        },
-        {
-          path: "/workspace/src/second.ts",
-          kind: { type: "update", move_path: null },
-          diff: "@@ -2 +2 @@\n-beforeSecond\n+afterSecond",
-        },
-      ],
     });
   });
 

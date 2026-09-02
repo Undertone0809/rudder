@@ -163,6 +163,17 @@ export interface InlineTokenClickEvent {
   shiftKey?: boolean;
 }
 
+export interface MarkdownEditorLinkClickEvent {
+  event: MouseEvent | KeyboardEvent;
+  href: string;
+  label: string;
+  sourceHref?: string;
+}
+
+export type MarkdownEditorLinkClickHandler = (
+  input: MarkdownEditorLinkClickEvent,
+) => boolean | void;
+
 export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -193,6 +204,8 @@ export interface MarkdownEditorProps {
   onInlineTokenClick?: (token: AtomicInlineTokenElement, event: InlineTokenClickEvent) => void;
   /** Opt into activating inline tokens on plain click for document surfaces where tokens behave like links. */
   activateInlineTokensOnPlainClick?: boolean;
+  /** Optional handler for ordinary links activated from the live Markdown preview. */
+  onLinkClick?: MarkdownEditorLinkClickHandler;
   documentIdentity?: string;
   engine?: "legacy" | "milkdown" | "codemirror";
 }

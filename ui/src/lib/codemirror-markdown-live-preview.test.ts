@@ -164,12 +164,14 @@ describe("sourceDrivenMarkdownPreview", () => {
         range.class === "rudder-cm-markdown-link"
       ));
       expect(link?.attributes?.["data-markdown-link-href"]).toBe(href);
+      expect(link?.attributes?.contenteditable).toBe("false");
     }
 
     const email = decoratedRanges("<foo@example.com>").find((range) => (
       range.class === "rudder-cm-markdown-link"
     ));
     expect(email?.attributes?.["data-markdown-link-href"]).toBe("mailto:foo@example.com");
+    expect(email?.attributes?.contenteditable).toBe("false");
     expect(safeInteractiveMarkdownHref("data:text/html,unsafe")).toBeNull();
   });
 

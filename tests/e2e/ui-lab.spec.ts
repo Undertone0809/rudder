@@ -140,17 +140,11 @@ test.describe("UI Lab", () => {
 
     await page.getByRole("button", { name: /MCP Cards/ }).click();
     const semanticCardsLab = page.getByTestId("ui-lab-rudder-mcp-cards");
-    await expect(semanticCardsLab.getByText("Entity cards", { exact: true })).toBeVisible();
-    for (const domain of ["agent", "issue", "goal", "project", "approval", "automation"]) {
-      await expect(semanticCardsLab.getByTestId(`ui-lab-${domain}-card`)).toBeVisible();
-    }
-    await expect(semanticCardsLab.getByTestId("ui-lab-agent-card")).toContainText("OpenAI · gpt-5.4 · Codex (local)");
-    await expect(semanticCardsLab.getByTestId("ui-lab-issue-card").locator('[data-slot="issue-status-icon"]')).toHaveAttribute("data-status", "in_progress");
     await expect(semanticCardsLab.getByText("Horizontal result rail")).toBeVisible();
     const semanticLabRail = semanticCardsLab.locator('[data-rudder-semantic-rail="goal"]');
     await expect(semanticLabRail).toBeVisible();
     await expect(semanticLabRail.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(6);
-    await expect(semanticCardsLab.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(20);
+    await expect(semanticCardsLab.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(11);
     await semanticLabRail.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
     await expect(semanticLabRail.locator('[data-rudder-semantic-card-surface="true"]')).toHaveCount(12);
     await semanticLabRail.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
@@ -164,49 +158,23 @@ test.describe("UI Lab", () => {
       return { boxShadow: style.boxShadow, transitionProperty: style.transitionProperty };
     });
     expect(semanticSurfaceStyle.boxShadow).not.toBe("none");
-    expect(semanticSurfaceStyle.transitionProperty).toContain("border-color");
-    expect(semanticSurfaceStyle.transitionProperty).not.toContain("transform");
+    expect(semanticSurfaceStyle.transitionProperty).toContain("transform");
     const firstSemanticSurface = semanticCardsLab.locator('[data-rudder-semantic-card-link="true"]').first();
     const restingSurfaceStyle = await firstSemanticSurface.evaluate((element) => {
       const style = window.getComputedStyle(element);
-      return {
-        backgroundColor: style.backgroundColor,
-        borderColor: style.borderColor,
-        boxShadow: style.boxShadow,
-        transform: style.transform,
-      };
+      return { boxShadow: style.boxShadow, transform: style.transform };
     });
     await firstSemanticSurface.hover();
     await expect(firstSemanticSurface).toHaveAttribute("data-rudder-semantic-card-interactive", "true");
     await expect.poll(() => firstSemanticSurface.evaluate((element, resting) => {
       const style = window.getComputedStyle(element);
-      return {
-        borderChanged: style.borderColor !== resting.borderColor,
-        backgroundUnchanged: style.backgroundColor === resting.backgroundColor,
-        shadowUnchanged: style.boxShadow === resting.boxShadow,
-        transformUnchanged: style.transform === resting.transform,
-      };
-    }, restingSurfaceStyle)).toEqual({
-      backgroundUnchanged: true,
-      borderChanged: true,
-      shadowUnchanged: true,
-      transformUnchanged: true,
-    });
-    const markdownComment = semanticCardsLab.getByTestId("ui-lab-issue-comment-receipt");
-    await expect(markdownComment.locator("strong")).toContainText("The horizontal rail reads clearly now.");
-    await expect(markdownComment.locator("li")).toHaveCount(2);
-    const receiptActionBox = await markdownComment.locator('[data-rudder-semantic-action="true"]').boundingBox();
-    const receiptMetaBox = await markdownComment.locator('[data-rudder-semantic-receipt-meta="true"]').boundingBox();
-    expect(receiptActionBox).not.toBeNull();
-    expect(receiptMetaBox).not.toBeNull();
-    expect(receiptActionBox!.y + receiptActionBox!.height).toBeLessThanOrEqual(receiptMetaBox!.y + 1);
+      return style.boxShadow !== resting.boxShadow && style.transform !== resting.transform;
+    }, restingSurfaceStyle)).toBe(true);
     const longComment = semanticCardsLab
       .getByTestId("ui-lab-long-comment-receipt")
       .locator('[data-rudder-semantic-comment-body="true"]');
     await expect(longComment).toContainText("Review note 48:");
     await expect(longComment).toContainText("End of complete long comment fixture.");
-    await expect(longComment).toContainText("<script data-semantic-raw-html-probe>not executable</script>");
-    await expect(longComment.locator("script[data-semantic-raw-html-probe]")).toHaveCount(0);
     const longCommentGeometry = await longComment.evaluate((element) => ({
       clientHeight: element.clientHeight,
       scrollHeight: element.scrollHeight,

@@ -1,6 +1,35 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+async function installLocalFilePreviewStub(page: Page, targetPath: string, content: string) {
+  await page.addInitScript(({ filePath, fileContent }) => {
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        listWorkspaceLaunchTargets: async () => [],
+        openPath: async () => {},
+        previewLocalFile: async (requestedPath: string) => {
+          if (requestedPath !== filePath) throw new Error(`Unexpected local file path: ${requestedPath}`);
+          return {
+            canonicalPath: filePath,
+            fileName: filePath.split("/").at(-1) ?? filePath,
+            parentPath: filePath.slice(0, filePath.lastIndexOf("/")),
+            contentType: "text/markdown; charset=utf-8",
+            previewKind: "markdown",
+            content: fileContent,
+            base64: null,
+            sizeBytes: fileContent.length,
+            modifiedAt: "2026-09-02T00:00:00.000Z",
+            truncated: false,
+            writeCapability: null,
+          };
+        },
+        setSidePanelCloseShortcutActive: async () => {},
+      },
+    });
+  }, { filePath: targetPath, fileContent: content });
+}
 
 test("issue description special mention links stay inside the active organization route", async ({ page }) => {
   await page.goto("/");
@@ -117,4 +146,89 @@ test("ordinary issue description Markdown links open from the live preview", asy
   await page.screenshot({
     path: join(tmpdir(), "rudder-issue-markdown-link-open.png"),
   });
+});
+
+test("opens an absolute local Markdown link from the issue description in the Side Panel", async ({ page }, testInfo) => {
+  const localFilePath = "/Users/zeeland/projects/uranus/rudder/proposals/2026-08-20-rudder-actix-web-backend-migration-proposal.md";
+  const originalDescription = `Review [Proposal](${localFilePath}) before continuing.`;
+  await installLocalFilePreviewStub(
+    page,
+    localFilePath,
+    "# Proposal\n\nOpened from an absolute local Markdown link in an Issue description.",
+  );
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Description-Local-File-${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey?: string };
+  const organizationRouteKey = organization.urlKey ?? organization.issuePrefix;
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Issue with an absolute local Markdown link",
+      description: originalDescription,
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok(), await issueRes.text()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+  await page.goto(`/${organizationRouteKey}/issues/${issue.identifier ?? issue.id}`);
+
+  const editor = page.locator(
+    ".rudder-issue-description-surface [data-editor-engine='codemirror-live-preview']",
+  );
+  const localFileLink = editor.locator("[data-markdown-link-href]").filter({ hasText: "Proposal" });
+  await expect(localFileLink).toBeVisible();
+  const issueUrl = page.url();
+  await localFileLink.click();
+
+  const sidePanel = page.getByTestId("chat-side-panel");
+  await expect(sidePanel).toBeVisible();
+  await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toContainText(
+    "Opened from an absolute local Markdown link in an Issue description.",
+  );
+  await expect(sidePanel.getByText("2026-08-20-rudder-actix-web-backend-migration-proposal.md", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(issueUrl);
+
+  await page.screenshot({
+    path: testInfo.outputPath("issue-description-local-file-side-panel.png"),
+    fullPage: true,
+  });
+
+  await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+  await expect(sidePanel).toBeHidden();
+  await localFileLink.focus();
+  await expect(localFileLink).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(sidePanel).toBeVisible();
+  await expect(sidePanel.getByTestId("chat-side-panel-local-file-view")).toContainText(
+    "Opened from an absolute local Markdown link in an Issue description.",
+  );
+  await expect(page).toHaveURL(issueUrl);
+
+  await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
+  await expect(sidePanel).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await localFileLink.click();
+
+  await expect(sidePanel).toBeVisible();
+  await expect(sidePanel.getByText("2026-08-20-rudder-actix-web-backend-migration-proposal.md", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(issueUrl);
+  await page.screenshot({
+    path: testInfo.outputPath("issue-description-local-file-side-panel-mobile.png"),
+    fullPage: true,
+  });
+
+  const issueReadback = await page.request.get(`/api/issues/${issue.id}`);
+  expect(issueReadback.ok(), await issueReadback.text()).toBe(true);
+  expect((await issueReadback.json() as { description: string | null }).description).toBe(
+    originalDescription,
+  );
 });

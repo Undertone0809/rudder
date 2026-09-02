@@ -490,34 +490,6 @@ pub fn inspect_manifest(
     })
 }
 
-pub fn read_file(
-    input: &Path,
-    entry_name: &str,
-    max_archive_bytes: u64,
-    max_file_bytes: u64,
-) -> Result<(Vec<u8>, ExtractedFile), ArchiveError> {
-    if !input.is_absolute() {
-        return Err(ArchiveError::new("absolute_existing_paths_required"));
-    }
-    let file = File::open(input).map_err(|error| ArchiveError::io("archive_open_failed", error))?;
-    let mut validated = validated_archive(file, max_archive_bytes)?;
-    let index = validated
-        .entries
-        .iter()
-        .position(|entry| entry.name == entry_name)
-        .ok_or_else(|| ArchiveError::new("entry_missing"))?;
-    if entry_name.ends_with('/') {
-        return Err(ArchiveError::new("target_not_file"));
-    }
-    let expected_size = validated.entries[index].size as u64;
-    if expected_size > max_file_bytes {
-        return Err(ArchiveError::new("entry_size_limit"));
-    }
-    let mut bytes = Vec::with_capacity(expected_size as usize);
-    let result = read_entry(&mut validated, index, max_file_bytes, &mut bytes)?;
-    Ok((bytes, result))
-}
-
 pub fn extract_file(
     input: &Path,
     entry_name: &str,
@@ -1326,59 +1298,6 @@ mod tests {
                 .all(|(start, end)| *end <= unrelated_start || *start >= unrelated_end),
             "manifest inspection read unrelated file body at {unrelated_start}..{unrelated_end}; reads={:?}",
             reads.borrow()
-        );
-    }
-
-    #[test]
-    fn read_file_returns_bytes_and_enforces_target_boundaries() {
-        use tempfile::tempdir;
-
-        let root = tempdir().unwrap();
-        let manifest = root.path().join("manifest.json");
-        let source = root.path().join("readme.txt");
-        let plan = root.path().join("plan.json");
-        let archive = root.path().join("archive.zip");
-        fs::write(&manifest, b"{}").unwrap();
-        fs::write(&source, b"hello").unwrap();
-        fs::write(
-            &plan,
-            serde_json::to_vec(&serde_json::json!({
-                "protocolVersion": CREATE_PROTOCOL_VERSION,
-                "manifestSource": manifest,
-                "treeSha256": "a".repeat(64),
-                "entries": [
-                    {"kind": "directory", "archivePath": "workspace/"},
-                    {"kind": "file", "archivePath": "workspace/readme.txt", "sourcePath": source},
-                ],
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        let created = create_archive(&plan, &archive, 8 * 1024 * 1024, 5, 5).unwrap();
-
-        let (bytes, extracted) =
-            read_file(&archive, "workspace/readme.txt", created.byte_size, 5).unwrap();
-        assert_eq!(bytes, b"hello");
-        assert_eq!(extracted.byte_size, 5);
-        assert_eq!(extracted.sha256, format!("{:x}", Sha256::digest(b"hello")));
-
-        assert_eq!(
-            read_file(&archive, "workspace/missing.txt", created.byte_size, 5)
-                .unwrap_err()
-                .code(),
-            "entry_missing"
-        );
-        assert_eq!(
-            read_file(&archive, "workspace/", created.byte_size, 5)
-                .unwrap_err()
-                .code(),
-            "target_not_file"
-        );
-        assert_eq!(
-            read_file(&archive, "workspace/readme.txt", created.byte_size, 4)
-                .unwrap_err()
-                .code(),
-            "entry_size_limit"
         );
     }
 

@@ -1,8 +1,5 @@
 use base64::Engine;
-use rudder_archive_core::{
-    ArchiveEntryInspection, ArchiveLimits, MANIFEST_PATH, inspect_manifest,
-    read_file as read_archive_file,
-};
+use rudder_archive_core::{ArchiveEntryInspection, ArchiveLimits, MANIFEST_PATH, inspect_manifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,7 +15,6 @@ const MAX_ARCHIVE_BYTES: u64 = 116 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_TOTAL_FILE_BYTES: u64 = 100 * 1024 * 1024;
-const MAX_PREVIEW_BYTES: usize = 200_000;
 const V2_POLICY_VERSION: &str = "workspace-backup-v2-policy-1";
 
 #[derive(Debug, Deserialize)]
@@ -68,25 +64,12 @@ struct V2Manifest {
     warnings: Vec<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct V1Artifact {
     version: u32,
     org_id: String,
-    entries: Vec<V1ArtifactEntry>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct V1ArtifactEntry {
-    path: String,
-    kind: String,
-    #[serde(default)]
-    byte_size: Option<u64>,
-    #[serde(default)]
-    sha256: Option<String>,
-    #[serde(default)]
-    data_base64: Option<String>,
+    entries: Vec<ArtifactEntry>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -109,29 +92,9 @@ pub(crate) struct FileListReceipt {
     message: Option<&'static str>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct FileReadReceipt {
-    source: &'static str,
-    root_path: String,
-    repo_url: Option<String>,
-    file_path: String,
-    library_entry_id: Option<String>,
-    mention_href: Option<String>,
-    markdown_link: Option<String>,
-    root_exists: bool,
-    content: Option<String>,
-    content_type: &'static str,
-    preview_kind: &'static str,
-    content_path: Option<String>,
-    message: Option<&'static str>,
-    truncated: bool,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ArtifactError {
     NotFound,
-    FileNotFound,
     Invalid,
 }
 
@@ -182,42 +145,6 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, ArtifactError> {
 
 fn verify_sha256(bytes: &[u8], expected: Option<&str>) -> Result<(), ArtifactError> {
     if expected.is_some_and(|expected| format!("{:x}", Sha256::digest(bytes)) != expected) {
-        return Err(ArtifactError::Invalid);
-    }
-    Ok(())
-}
-
-fn verify_sha256_file(path: &Path, expected: Option<&str>) -> Result<(), ArtifactError> {
-    let metadata = path.metadata().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            ArtifactError::NotFound
-        } else {
-            ArtifactError::Invalid
-        }
-    })?;
-    if !metadata.is_file() || metadata.len() > MAX_ARCHIVE_BYTES {
-        return Err(ArtifactError::Invalid);
-    }
-    let mut file = File::open(path).map_err(|_| ArtifactError::Invalid)?;
-    let mut hash = Sha256::new();
-    let mut total = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|_| ArtifactError::Invalid)?;
-        if read == 0 {
-            break;
-        }
-        total = total
-            .checked_add(read as u64)
-            .ok_or(ArtifactError::Invalid)?;
-        if total > MAX_ARCHIVE_BYTES {
-            return Err(ArtifactError::Invalid);
-        }
-        hash.update(&buffer[..read]);
-    }
-    if total != metadata.len()
-        || expected.is_some_and(|expected| format!("{:x}", hash.finalize()) != expected)
-    {
         return Err(ArtifactError::Invalid);
     }
     Ok(())
@@ -370,55 +297,6 @@ fn validate_manifest(
         .collect())
 }
 
-fn validate_v1_entries(entries: &[V1ArtifactEntry]) -> Result<(), ArtifactError> {
-    let mut paths = HashSet::new();
-    let mut folded_paths = HashSet::new();
-    let mut total_file_bytes = 0u64;
-    for entry in entries {
-        validate_entry_path(&entry.path)?;
-        if entry.kind != "directory" && entry.kind != "file" {
-            return Err(ArtifactError::Invalid);
-        }
-        if !paths.insert(entry.path.clone()) || !folded_paths.insert(fold_case(&entry.path)) {
-            return Err(ArtifactError::Invalid);
-        }
-        if let Some(byte_size) = entry.byte_size {
-            if byte_size > MAX_FILE_BYTES
-                || (entry.kind == "directory" && byte_size != 0)
-                || (entry.kind == "file"
-                    && (total_file_bytes
-                        .checked_add(byte_size)
-                        .ok_or(ArtifactError::Invalid)?
-                        > MAX_TOTAL_FILE_BYTES))
-            {
-                return Err(ArtifactError::Invalid);
-            }
-            if entry.kind == "file" {
-                total_file_bytes = total_file_bytes
-                    .checked_add(byte_size)
-                    .ok_or(ArtifactError::Invalid)?;
-            }
-        }
-        if entry
-            .sha256
-            .as_deref()
-            .is_some_and(|value| !is_sha256(value))
-        {
-            return Err(ArtifactError::Invalid);
-        }
-    }
-    Ok(())
-}
-
-fn load_v1_artifact(bytes: &[u8], org_id: &str) -> Result<V1Artifact, ArtifactError> {
-    let artifact: V1Artifact = serde_json::from_slice(bytes).map_err(|_| ArtifactError::Invalid)?;
-    if artifact.version != 1 || artifact.org_id != org_id {
-        return Err(ArtifactError::Invalid);
-    }
-    validate_v1_entries(&artifact.entries)?;
-    Ok(artifact)
-}
-
 pub(crate) fn load_entries(
     path: &Path,
     org_id: &str,
@@ -446,15 +324,12 @@ pub(crate) fn load_entries(
             serde_json::from_slice(&manifest_bytes).map_err(|_| ArtifactError::Invalid)?;
         validate_manifest(manifest, &inspection.entries, org_id)?
     } else {
-        let artifact = load_v1_artifact(&bytes, org_id)?;
-        artifact
-            .entries
-            .into_iter()
-            .map(|entry| ArtifactEntry {
-                path: entry.path,
-                kind: entry.kind,
-            })
-            .collect()
+        let artifact: V1Artifact =
+            serde_json::from_slice(&bytes).map_err(|_| ArtifactError::Invalid)?;
+        if artifact.version != 1 || artifact.org_id != org_id {
+            return Err(ArtifactError::Invalid);
+        }
+        artifact.entries
     };
 
     for entry in &entries {
@@ -464,88 +339,6 @@ pub(crate) fn load_entries(
         }
     }
     Ok(entries)
-}
-
-pub(crate) fn read_file(
-    path: &Path,
-    org_id: &str,
-    expected_sha256: Option<&str>,
-    file_path: &str,
-) -> Result<Vec<u8>, ArtifactError> {
-    let normalized_path =
-        normalize_directory_path(file_path).map_err(|_| ArtifactError::Invalid)?;
-    if path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
-    {
-        verify_sha256_file(path, expected_sha256)?;
-        let inspection = inspect_manifest(
-            path,
-            ArchiveLimits {
-                max_archive_bytes: MAX_ARCHIVE_BYTES,
-                max_manifest_bytes: MAX_MANIFEST_BYTES,
-            },
-        )
-        .map_err(|_| ArtifactError::Invalid)?;
-        let manifest_bytes = base64::engine::general_purpose::STANDARD
-            .decode(inspection.manifest_base64)
-            .map_err(|_| ArtifactError::Invalid)?;
-        let manifest: V2Manifest =
-            serde_json::from_slice(&manifest_bytes).map_err(|_| ArtifactError::Invalid)?;
-        let root = root_segment(&manifest.identity.root_path);
-        let target = manifest
-            .entries
-            .iter()
-            .find(|entry| entry.path == normalized_path && entry.kind == "file")
-            .cloned()
-            .ok_or(ArtifactError::FileNotFound)?;
-        validate_manifest(manifest, &inspection.entries, org_id)?;
-        let archive_path = format!("{root}/{normalized_path}");
-        let (bytes, extracted) =
-            read_archive_file(path, &archive_path, MAX_ARCHIVE_BYTES, MAX_FILE_BYTES)
-                .map_err(|_| ArtifactError::Invalid)?;
-        if extracted.byte_size != target.byte_size
-            || target.sha256.as_deref() != Some(extracted.sha256.as_str())
-        {
-            return Err(ArtifactError::Invalid);
-        }
-        return Ok(bytes);
-    }
-
-    let bytes = read_bounded(path)?;
-    verify_sha256(&bytes, expected_sha256)?;
-    let artifact = load_v1_artifact(&bytes, org_id)?;
-    let target = artifact
-        .entries
-        .iter()
-        .find(|entry| entry.path == normalized_path && entry.kind == "file")
-        .ok_or(ArtifactError::FileNotFound)?;
-    let Some(data_base64) = target
-        .data_base64
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(ArtifactError::FileNotFound);
-    };
-    let max_base64_length = (MAX_FILE_BYTES as usize).div_ceil(3) * 4;
-    if data_base64.len() > max_base64_length {
-        return Err(ArtifactError::Invalid);
-    }
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64)
-        .map_err(|_| ArtifactError::Invalid)?;
-    if data.len() as u64 > MAX_FILE_BYTES
-        || target
-            .byte_size
-            .is_some_and(|size| size != data.len() as u64)
-        || target
-            .sha256
-            .as_deref()
-            .is_some_and(|sha256| format!("{:x}", Sha256::digest(&data)) != sha256)
-    {
-        return Err(ArtifactError::Invalid);
-    }
-    Ok(data)
 }
 
 fn direct_children(entries: &[ArtifactEntry], directory_path: &str) -> Vec<FileEntry> {
@@ -615,49 +408,6 @@ pub(crate) fn file_list_receipt(
         root_exists: true,
         entries,
         message,
-    }
-}
-
-pub(crate) fn file_read_receipt(
-    bytes: &[u8],
-    file_path: String,
-    backup_id: &str,
-) -> FileReadReceipt {
-    let binary = bytes.contains(&0);
-    let (content, content_type, preview_kind, message, truncated) = if binary {
-        (
-            None,
-            "application/octet-stream",
-            "binary",
-            Some("Binary files are not previewed in workspace backups."),
-            false,
-        )
-    } else {
-        let truncated = bytes.len() > MAX_PREVIEW_BYTES;
-        let preview = &bytes[..bytes.len().min(MAX_PREVIEW_BYTES)];
-        (
-            Some(String::from_utf8_lossy(preview).into_owned()),
-            "text/plain",
-            "text",
-            truncated.then_some("Preview truncated to the first 200 KB."),
-            truncated,
-        )
-    };
-    FileReadReceipt {
-        source: "org_root",
-        root_path: format!("backup:{backup_id}"),
-        repo_url: None,
-        file_path,
-        library_entry_id: None,
-        mention_href: None,
-        markdown_link: None,
-        root_exists: true,
-        content,
-        content_type,
-        preview_kind,
-        content_path: None,
-        message,
-        truncated,
     }
 }
 
@@ -736,33 +486,6 @@ mod tests {
                 "A", "B", "a", "a\u{301}", "b", "file10", "file2", "z", "Å", "á", "â", "ã", "ä",
                 "å", "é", "\u{e000}", "😀"
             ]
-        );
-    }
-
-    #[test]
-    fn file_read_receipt_bounds_text_and_marks_binary_content() {
-        let text = vec![b'a'; MAX_PREVIEW_BYTES + 1];
-        let text_receipt = file_read_receipt(&text, "large.txt".into(), "backup-1");
-        assert_eq!(
-            text_receipt.content.as_deref().map(str::len),
-            Some(MAX_PREVIEW_BYTES)
-        );
-        assert_eq!(text_receipt.content_type, "text/plain");
-        assert_eq!(text_receipt.preview_kind, "text");
-        assert!(text_receipt.truncated);
-        assert_eq!(
-            text_receipt.message,
-            Some("Preview truncated to the first 200 KB.")
-        );
-
-        let binary_receipt = file_read_receipt(b"prefix\0suffix", "data.bin".into(), "backup-1");
-        assert_eq!(binary_receipt.content, None);
-        assert_eq!(binary_receipt.content_type, "application/octet-stream");
-        assert_eq!(binary_receipt.preview_kind, "binary");
-        assert!(!binary_receipt.truncated);
-        assert_eq!(
-            binary_receipt.message,
-            Some("Binary files are not previewed in workspace backups.")
         );
     }
 }

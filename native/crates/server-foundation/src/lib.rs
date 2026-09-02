@@ -22,7 +22,7 @@ mod workspace_backup_files;
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, WorkspaceBackupFilesQuery, file_list_receipt,
-    file_read_receipt, load_entries, normalize_directory_path, read_file as read_backup_file,
+    load_entries, normalize_directory_path,
 };
 
 pub const HEALTH_SCHEMA: &str = "rudder.native.server.health.v1";
@@ -51,11 +51,7 @@ const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUEUE_DEPTH: usize = 1024;
 const MAX_DATABASE_CONNECTIONS: u32 = 64;
 const MAX_WORKERS: usize = 32;
-const READ_ONLY_AUTHORITIES: &[&str] = &[
-    "workspace_backup_list",
-    "workspace_backup_files_list",
-    "workspace_backup_file_read",
-];
+const READ_ONLY_AUTHORITIES: &[&str] = &["workspace_backup_list", "workspace_backup_files_list"];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
 
@@ -800,12 +796,6 @@ impl AppState {
                 return self
                     .json_error(StatusCode::NOT_FOUND, "workspace_backup_artifact_not_found");
             }
-            Ok(Err(BackupArtifactError::FileNotFound)) => {
-                return self.json_error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "workspace_backup_artifact_invalid",
-                );
-            }
             Ok(Err(BackupArtifactError::Invalid)) => {
                 return self.json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -820,83 +810,6 @@ impl AppState {
             }
         };
         let receipt = file_list_receipt(&entries, normalized_directory, backup_id);
-        bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
-    }
-
-    async fn workspace_backup_file(
-        &self,
-        org_id: &str,
-        backup_id: &str,
-        file_path: &str,
-    ) -> HttpResponse {
-        let DatabaseState::Configured(pool) = &self.database else {
-            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
-        };
-
-        let normalized_file_path = match normalize_directory_path(file_path) {
-            Ok(path) => path,
-            Err(reason) => return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, reason),
-        };
-        let row = sqlx::query_as::<_, (String, Option<String>, String)>(WORKSPACE_BACKUP_FILES_SQL)
-            .bind(org_id)
-            .bind(backup_id)
-            .fetch_optional(pool)
-            .await;
-        let (artifact_ref, archive_sha256, status) = match row {
-            Ok(Some(row)) => row,
-            Ok(None) => {
-                return self.json_error(StatusCode::NOT_FOUND, "workspace_backup_not_found");
-            }
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace_backup_file_read_failed",
-                );
-            }
-        };
-        if status == "running" {
-            return self.json_error(StatusCode::CONFLICT, "workspace_backup_running");
-        }
-        if status == "failed" {
-            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "workspace_backup_failed");
-        }
-
-        let org_id = org_id.to_owned();
-        let backup_id = backup_id.to_owned();
-        let artifact_path = PathBuf::from(artifact_ref);
-        let read_path = normalized_file_path.clone();
-        let bytes = tokio::task::spawn_blocking(move || {
-            read_backup_file(
-                &artifact_path,
-                &org_id,
-                archive_sha256.as_deref(),
-                &read_path,
-            )
-        })
-        .await;
-        let bytes = match bytes {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(BackupArtifactError::NotFound)) => {
-                return self
-                    .json_error(StatusCode::NOT_FOUND, "workspace_backup_artifact_not_found");
-            }
-            Ok(Err(BackupArtifactError::FileNotFound)) => {
-                return self.json_error(StatusCode::NOT_FOUND, "workspace_backup_file_not_found");
-            }
-            Ok(Err(BackupArtifactError::Invalid)) => {
-                return self.json_error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "workspace_backup_artifact_invalid",
-                );
-            }
-            Err(_) => {
-                return self.json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace_backup_file_read_failed",
-                );
-            }
-        };
-        let receipt = file_read_receipt(&bytes, normalized_file_path, &backup_id);
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
     }
 }
@@ -987,17 +900,6 @@ async fn workspace_backup_files(
         .await
 }
 
-async fn workspace_backup_file(
-    state: web::Data<AppState>,
-    route: web::Path<(String, String)>,
-    query: web::Query<WorkspaceBackupFilesQuery>,
-) -> HttpResponse {
-    let (org_id, backup_id) = route.into_inner();
-    state
-        .workspace_backup_file(&org_id, &backup_id, &query.path)
-        .await
-}
-
 pub struct ServerRuntime {
     server: Option<actix_web::dev::Server>,
     control: ServerControl,
@@ -1031,10 +933,6 @@ impl ServerRuntime {
                 .route(
                     "/api/orgs/{org_id}/workspace/backups/{backup_id}/files",
                     web::get().to(workspace_backup_files),
-                )
-                .route(
-                    "/api/orgs/{org_id}/workspace/backups/{backup_id}/file",
-                    web::get().to(workspace_backup_file),
                 )
         })
         .workers(config.workers)
