@@ -1,14 +1,21 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { open, readFile, rename, rm } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import postgres from "postgres";
+
+const execFileAsync = promisify(execFile);
 
 export type RunDatabaseBackupOptions = {
   connectionString: string;
   backupDir: string;
   retentionDays: number;
   filenamePrefix?: string;
+  format?: "sql" | "custom";
+  postgresBinDir?: string;
   connectTimeoutSeconds?: number;
   includeMigrationJournal?: boolean;
   excludeTables?: string[];
@@ -52,6 +59,7 @@ export type DatabaseBackupSizeGuardDecision = {
 export type RunDatabaseRestoreOptions = {
   connectionString: string;
   backupFile: string;
+  postgresBinDir?: string;
   connectTimeoutSeconds?: number;
 };
 
@@ -76,6 +84,7 @@ type TableDefinition = {
 
 const DRIZZLE_SCHEMA = "drizzle";
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
+const BASE_APPLICATION_SCHEMAS = ["public", "rudder_analytics"] as const;
 
 const STATEMENT_BREAKPOINT = "-- rudder statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900";
 const BACKUP_ROW_BATCH_SIZE = 4;
@@ -106,7 +115,7 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   let pruned = 0;
 
   for (const name of readdirSync(backupDir)) {
-    if (!name.startsWith(`${filenamePrefix}-`) || !name.endsWith(".sql")) continue;
+    if (!name.startsWith(`${filenamePrefix}-`) || (!name.endsWith(".sql") && !name.endsWith(".dump"))) continue;
     const fullPath = resolve(backupDir, name);
     const stat = statSync(fullPath);
     if (stat.mtimeMs < cutoff) {
@@ -116,6 +125,141 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   }
 
   return pruned;
+}
+
+function pruneStaleTemporaryBackups(backupDir: string, filenamePrefix: string): number {
+  if (!existsSync(backupDir)) return 0;
+  const escapedPrefix = filenamePrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const ownerPattern = new RegExp(`^${escapedPrefix}-\\d{8}-\\d{6}-(\\d+)-`);
+  let pruned = 0;
+
+  for (const name of readdirSync(backupDir)) {
+    if (!name.startsWith(`${filenamePrefix}-`) || (!name.includes(".sql.tmp-") && !name.includes(".dump.tmp-"))) continue;
+    const ownerPid = Number(ownerPattern.exec(name)?.[1]);
+    if (!Number.isInteger(ownerPid) || ownerPid <= 0) continue;
+    try {
+      process.kill(ownerPid, 0);
+    } catch (error) {
+      if (error && typeof error === "object" && (error as NodeJS.ErrnoException).code === "ESRCH") {
+        unlinkSync(resolve(backupDir, name));
+        pruned++;
+      }
+    }
+  }
+  return pruned;
+}
+
+function postgresUtilityPath(binDir: string | undefined, utility: "pg_dump" | "pg_restore"): string {
+  const normalizedBinDir = binDir?.trim() || process.env.RUDDER_POSTGRES_BIN_DIR?.trim();
+  if (!normalizedBinDir) {
+    throw new Error(
+      `${utility} requires a PostgreSQL bin directory; set RUDDER_POSTGRES_BIN_DIR or use the packaged PostgreSQL runtime.`,
+    );
+  }
+  const binaryPath = resolve(normalizedBinDir, process.platform === "win32" ? `${utility}.exe` : utility);
+  if (!existsSync(binaryPath)) {
+    throw new Error(`${utility} is not available at ${binaryPath}.`);
+  }
+  return binaryPath;
+}
+
+type UtilityConnection = {
+  connectionString: string;
+  env?: NodeJS.ProcessEnv;
+  cleanup: () => Promise<void>;
+};
+
+function escapePgpassField(value: string): string {
+  if (/\r|\n/.test(value)) throw new Error("PostgreSQL connection credentials cannot contain newlines");
+  return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:");
+}
+
+async function prepareUtilityConnection(connectionString: string): Promise<UtilityConnection> {
+  let parsed: URL;
+  try {
+    parsed = new URL(connectionString);
+  } catch {
+    throw new Error("PostgreSQL utility operations require a URL connection string to keep credentials out of process arguments");
+  }
+  if (!/^postgres(?:ql)?:$/i.test(parsed.protocol)) {
+    throw new Error("PostgreSQL utility operations require a postgres:// connection string");
+  }
+  if (!parsed.password) {
+    return { connectionString, cleanup: async () => undefined };
+  }
+
+  const password = decodeURIComponent(parsed.password);
+  const user = decodeURIComponent(parsed.username);
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  const passfileDir = await mkdtemp(join(tmpdir(), "rudder-pgpass-"));
+  const passfile = join(passfileDir, "pgpass");
+  await writeFile(
+    passfile,
+    `${escapePgpassField(parsed.hostname || "*")}:${parsed.port || "*"}:${escapePgpassField(database || "*")}:${escapePgpassField(user || "*")}:${escapePgpassField(password)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  parsed.password = "";
+
+  const env = { ...process.env };
+  delete env.PGPASSWORD;
+  delete env.PGPASSFILE;
+  env.PGPASSFILE = passfile;
+
+  return {
+    connectionString: parsed.toString(),
+    env,
+    cleanup: async () => {
+      await rm(passfileDir, { recursive: true, force: true }).catch(() => undefined);
+    },
+  };
+}
+
+function sanitizeUtilityOutput(value: unknown): string {
+  return String(value ?? "")
+    .replace(/(postgres(?:ql)?:\/\/)[^@\s]+@/gi, "$1[REDACTED]@")
+    .split(/\r?\n/, 1)[0]
+    ?.trim() ?? "";
+}
+
+async function runPostgresUtility(
+  binaryPath: string,
+  args: string[],
+  operation: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
+  try {
+    await execFileAsync(binaryPath, args, { maxBuffer: 8 * 1024 * 1024, ...(env ? { env } : {}) });
+  } catch (error) {
+    const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
+    const stderr = sanitizeUtilityOutput(record.stderr);
+    const code = typeof record.code === "number" || typeof record.code === "string"
+      ? ` (exit ${record.code})`
+      : "";
+    throw new Error(`${operation} failed${code}${stderr ? `: ${stderr}` : "."}`);
+  }
+}
+
+export function prepareDatabaseBackupDirectory(
+  backupDir: string,
+  retentionDays: number,
+  filenamePrefix = "rudder",
+): { staleTemporaryBackups: number; expiredBackups: number } {
+  mkdirSync(backupDir, { recursive: true });
+  return {
+    staleTemporaryBackups: pruneStaleTemporaryBackups(backupDir, filenamePrefix),
+    expiredBackups: pruneOldBackups(backupDir, retentionDays, filenamePrefix),
+  };
+}
+
+async function isCustomBackupFile(backupFile: string): Promise<boolean> {
+  const fileHandle = await open(backupFile, "r");
+  try {
+    const header = Buffer.alloc(5);
+    const result = await fileHandle.read(header, 0, header.length, 0);
+    return result.bytesRead === header.length && header.toString("ascii") === "PGDMP";
+  } finally {
+    await fileHandle.close();
+  }
 }
 
 function formatBackupSize(sizeBytes: number): string {
@@ -161,6 +305,25 @@ function normalizeNullifyColumnMap(values: Record<string, string[]> | undefined)
 
 function quoteIdentifier(value: string): string {
   return `"${value.replaceAll("\"", "\"\"")}"`;
+}
+
+function postgresPattern(schemaName: string, objectName?: string): string {
+  return objectName === undefined ? schemaName : `${schemaName}.${objectName}`;
+}
+
+async function discoverApplicationSchemas(sql: ReturnType<typeof postgres>): Promise<string[]> {
+  const rows = await sql<{ schema_name: string }[]>`
+    SELECT n.nspname AS schema_name
+    FROM pg_namespace n
+    WHERE n.nspname = ANY(${BASE_APPLICATION_SCHEMAS})
+      OR (
+        n.nspname NOT LIKE 'pg_%'
+        AND n.nspname NOT IN ('information_schema', ${DRIZZLE_SCHEMA})
+        AND n.nspowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+      )
+    ORDER BY n.nspname
+  `;
+  return [...new Set(rows.map(({ schema_name }) => schema_name).filter((schemaName) => schemaName.length > 0))];
 }
 
 function quoteQualifiedName(schemaName: string, objectName: string): string {
@@ -218,6 +381,7 @@ export async function estimateDatabaseBackupSize(
     const databaseRows = await sql<{ database_size_bytes: string | number }[]>`
       SELECT pg_database_size(current_database()) AS database_size_bytes
     `;
+    const applicationSchemas = await discoverApplicationSchemas(sql);
     const relationRows = await sql<{
       schema_name: string;
       table_name: string;
@@ -233,7 +397,7 @@ export async function estimateDatabaseBackupSize(
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relkind = 'r'
         AND (
-          n.nspname = 'public'
+          n.nspname = ANY(${applicationSchemas})
           OR (${includeMigrationJournal}::boolean AND n.nspname = ${DRIZZLE_SCHEMA} AND c.relname = ${DRIZZLE_MIGRATIONS_TABLE})
         )
       ORDER BY pg_total_relation_size(c.oid) DESC, n.nspname, c.relname
@@ -260,22 +424,70 @@ export async function estimateDatabaseBackupSize(
 
 export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise<RunDatabaseBackupResult> {
   const filenamePrefix = opts.filenamePrefix ?? "rudder";
+  const format = opts.format ?? "sql";
   const retentionDays = Math.max(1, Math.trunc(opts.retentionDays));
   const connectTimeout = Math.max(1, Math.trunc(opts.connectTimeoutSeconds ?? 5));
   const includeMigrationJournal = opts.includeMigrationJournal === true;
   const excludedTableNames = normalizeTableNameSet(opts.excludeTables);
   const nullifiedColumnsByTable = normalizeNullifyColumnMap(opts.nullifyColumns);
-  const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
-  mkdirSync(opts.backupDir, { recursive: true });
+
+  if (format === "custom" && nullifiedColumnsByTable.size > 0) {
+    throw new Error("PostgreSQL custom backups do not support nullified columns; use SQL backup format");
+  }
+
+  const preparedDirectory = prepareDatabaseBackupDirectory(opts.backupDir, retentionDays, filenamePrefix);
   const backupFile = resolve(
     opts.backupDir,
-    `${filenamePrefix}-${timestamp()}-${process.pid}-${randomUUID()}.sql`,
+    `${filenamePrefix}-${timestamp()}-${process.pid}-${randomUUID()}${format === "custom" ? ".dump" : ".sql"}`,
   );
   const temporaryBackupFile = `${backupFile}.tmp-${randomUUID()}`;
+
+  if (format === "custom") {
+    const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
+    const utilityConnection = await prepareUtilityConnection(opts.connectionString);
+    try {
+      await sql`SELECT 1`;
+      const applicationSchemas = await discoverApplicationSchemas(sql);
+      const pgDumpPath = postgresUtilityPath(opts.postgresBinDir, "pg_dump");
+      const dumpArgs = [
+        "--format=custom",
+        "--compress=6",
+        "--no-owner",
+        "--no-privileges",
+        ...applicationSchemas.map((schemaName) => `--schema=${postgresPattern(schemaName)}`),
+        ...(includeMigrationJournal ? [`--schema=${postgresPattern(DRIZZLE_SCHEMA)}`] : []),
+        ...[...excludedTableNames].flatMap((tableName) => [
+          ...applicationSchemas.map((schemaName) => `--exclude-table=${postgresPattern(schemaName, tableName)}`),
+          ...(includeMigrationJournal ? [`--exclude-table=${postgresPattern(DRIZZLE_SCHEMA, tableName)}`] : []),
+        ]),
+        "--file",
+        temporaryBackupFile,
+        utilityConnection.connectionString,
+      ];
+      await runPostgresUtility(
+        pgDumpPath,
+        dumpArgs,
+        "PostgreSQL custom backup",
+        utilityConnection.env,
+      );
+      await rename(temporaryBackupFile, backupFile);
+
+      const sizeBytes = statSync(backupFile).size;
+      const prunedCount = preparedDirectory.expiredBackups + pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
+      return { backupFile, sizeBytes, prunedCount };
+    } finally {
+      await utilityConnection.cleanup();
+      await sql.end();
+      await rm(temporaryBackupFile, { force: true }).catch(() => undefined);
+    }
+  }
+
+  const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
   const backupFileHandle = { current: null as Awaited<ReturnType<typeof open>> | null };
 
   try {
     await sql`SELECT 1`;
+    const applicationSchemas = await discoverApplicationSchemas(sql);
 
     const lines: string[] = [];
     const emit = (line: string) => lines.push(line);
@@ -307,7 +519,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       FROM information_schema.tables
       WHERE table_type = 'BASE TABLE'
         AND (
-          table_schema = 'public'
+          table_schema = ANY(${applicationSchemas})
           OR (${includeMigrationJournal}::boolean AND table_schema = ${DRIZZLE_SCHEMA} AND table_name = ${DRIZZLE_MIGRATIONS_TABLE})
         )
       ORDER BY table_schema, table_name
@@ -316,19 +528,20 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     const includedTableNames = new Set(tables.map(({ schema_name, tablename }) => tableKey(schema_name, tablename)));
 
     // Get all enums
-    const enums = await sql<{ typname: string; labels: string[] }[]>`
-      SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+    const enums = await sql<{ schema_name: string; typname: string; labels: string[] }[]>`
+      SELECT n.nspname AS schema_name, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
       FROM pg_type t
       JOIN pg_enum e ON t.oid = e.enumtypid
       JOIN pg_namespace n ON t.typnamespace = n.oid
-      WHERE n.nspname = 'public'
-      GROUP BY t.typname
-      ORDER BY t.typname
+      WHERE n.nspname = ANY(${applicationSchemas})
+        OR (${includeMigrationJournal}::boolean AND n.nspname = ${DRIZZLE_SCHEMA})
+      GROUP BY n.nspname, t.typname
+      ORDER BY n.nspname, t.typname
     `;
 
     for (const e of enums) {
       const labels = e.labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(", ");
-      emitStatement(`CREATE TYPE "public"."${e.typname}" AS ENUM (${labels});`);
+      emitStatement(`CREATE TYPE ${quoteQualifiedName(e.schema_name, e.typname)} AS ENUM (${labels});`);
     }
     if (enums.length > 0) emit("");
 
@@ -352,7 +565,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       LEFT JOIN pg_class tbl ON tbl.oid = dep.refobjid
       LEFT JOIN pg_namespace tblns ON tblns.oid = tbl.relnamespace
       LEFT JOIN pg_attribute attr ON attr.attrelid = tbl.oid AND attr.attnum = dep.refobjsubid
-      WHERE s.sequence_schema = 'public'
+      WHERE s.sequence_schema = ANY(${applicationSchemas})
          OR (${includeMigrationJournal}::boolean AND s.sequence_schema = ${DRIZZLE_SCHEMA})
       ORDER BY s.sequence_schema, s.sequence_name
     `;
@@ -499,7 +712,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       JOIN pg_attribute sa ON sa.attrelid = src.oid AND sa.attnum = key_columns.source_attnum
       JOIN pg_attribute ta ON ta.attrelid = tgt.oid AND ta.attnum = key_columns.target_attnum
       WHERE c.contype = 'f' AND (
-        srcn.nspname = 'public'
+        srcn.nspname = ANY(${applicationSchemas})
         OR (${includeMigrationJournal}::boolean AND srcn.nspname = ${DRIZZLE_SCHEMA})
       )
       GROUP BY c.conname, srcn.nspname, src.relname, tgtn.nspname, tgt.relname, c.confupdtype, c.confdeltype
@@ -526,7 +739,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       JOIN pg_namespace n ON n.oid = t.relnamespace
       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
       WHERE c.contype = 'u' AND (
-        n.nspname = 'public'
+        n.nspname = ANY(${applicationSchemas})
         OR (${includeMigrationJournal}::boolean AND n.nspname = ${DRIZZLE_SCHEMA})
       )
       GROUP BY c.conname, n.nspname, t.relname
@@ -548,7 +761,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       SELECT schemaname AS schema_name, tablename, indexdef
       FROM pg_indexes
       WHERE (
-          schemaname = 'public'
+          schemaname = ANY(${applicationSchemas})
           OR (${includeMigrationJournal}::boolean AND schemaname = ${DRIZZLE_SCHEMA})
         )
         AND indexname NOT IN (
@@ -647,7 +860,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     await rename(temporaryBackupFile, backupFile);
 
     const sizeBytes = statSync(backupFile).size;
-    const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
+    const prunedCount = preparedDirectory.expiredBackups + pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
 
     return {
       backupFile,
@@ -663,10 +876,39 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
 
 export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promise<void> {
   const connectTimeout = Math.max(1, Math.trunc(opts.connectTimeoutSeconds ?? 5));
-  const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
+  const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout, onnotice: () => {} });
 
   try {
     await sql`SELECT 1`;
+    if (await isCustomBackupFile(opts.backupFile)) {
+      // Table-filtered archives do not contain CREATE SCHEMA entries. The
+      // built-in public schema already exists in a new database, while the
+      // migration journal lives in the separate drizzle schema.
+      await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(DRIZZLE_SCHEMA)}`).execute();
+      const utilityConnection = await prepareUtilityConnection(opts.connectionString);
+      try {
+        const pgRestorePath = postgresUtilityPath(opts.postgresBinDir, "pg_restore");
+        await runPostgresUtility(
+          pgRestorePath,
+          [
+            "--clean",
+            "--if-exists",
+            "--exit-on-error",
+            "--single-transaction",
+            "--no-owner",
+            "--no-privileges",
+            "--dbname",
+            utilityConnection.connectionString,
+            opts.backupFile,
+          ],
+          "PostgreSQL custom restore",
+          utilityConnection.env,
+        );
+        return;
+      } finally {
+        await utilityConnection.cleanup();
+      }
+    }
     const contents = await readFile(opts.backupFile, "utf8");
     const statements = contents
       .split(STATEMENT_BREAKPOINT)

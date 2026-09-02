@@ -23,6 +23,12 @@ describe("migration startup safety contract", () => {
     expect(reconcileIndex).toBeGreaterThan(normalizeIndex);
     expect(migrationIndex).toBeGreaterThan(reconcileIndex);
     expect(startupSource).toContain("return withMigrationAdvisoryLock(");
+    expect(startupSource).toContain("estimateDatabaseBackupSize");
+    expect(startupSource).toContain("statfsSync(backupDir)");
+    expect(startupSource).toContain('format: useCustomFormat ? "custom" : "sql"');
+    expect(startupSource).toContain("MIGRATION_BACKUP_CUSTOM_SPACE_MULTIPLIER");
+    expect(startupSource).toContain("const availableBytes = readAvailableBytes()");
+    expect(startupSource).toContain("recoveryPointMaxEstimatedBytes");
   });
 
   it("asserts invariants even when migration state is already current", () => {

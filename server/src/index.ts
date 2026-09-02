@@ -9,6 +9,7 @@ import {
   createLocalPostgresInstance,
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
+  estimateDatabaseBackupSize,
   getPostgresDataDirectory,
   inspectMigrations,
   instanceUserRoles,
@@ -18,9 +19,11 @@ import {
   normalizeLegacyColumnNames,
   organizationMemberships,
   organizations,
+  prepareDatabaseBackupDirectory,
   readPostmasterPidFile,
   reconcilePendingMigrationHistory,
   removeStalePostmasterPidFile,
+  resolveOfficialPostgresBinDir,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
   runDatabaseBackup,
   withMigrationAdvisoryLock,
@@ -28,6 +31,7 @@ import {
   type LocalPostgresInstance,
 } from "@rudderhq/db";
 import {
+  DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
   type DeploymentExposure,
@@ -36,7 +40,7 @@ import {
 import detectPort from "detect-port";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statfsSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -442,7 +446,13 @@ async function startServerRuntime(
     autoApply?: boolean;
     recoveryPointDir?: string;
     recoveryPointRetentionDays?: number;
+    recoveryPointMaxEstimatedBytes?: number;
+    postgresBinDir?: string;
   };
+
+  const MIGRATION_BACKUP_FREE_SPACE_HEADROOM_BYTES = 512 * 1024 * 1024;
+  const MIGRATION_BACKUP_CUSTOM_SPACE_MULTIPLIER = 2;
+  const MIGRATION_BACKUP_SQL_SPACE_MULTIPLIER = 4;
 
   async function createMigrationRecoveryPoint(
     connectionString: string,
@@ -458,11 +468,60 @@ async function startServerRuntime(
     }
 
     try {
+      const retentionDays = Math.max(1, opts.recoveryPointRetentionDays ?? 30);
+      const cleanedArtifacts = prepareDatabaseBackupDirectory(
+        backupDir,
+        retentionDays,
+        "rudder-pre-migration",
+      );
+      const estimate = await estimateDatabaseBackupSize({
+        connectionString,
+        includeMigrationJournal: true,
+      });
+      const estimatedBytes = Math.max(estimate.databaseSizeBytes, estimate.includedTableTotalBytes);
+      const postgresBinDir = opts.postgresBinDir ?? resolveOfficialPostgresBinDir() ?? undefined;
+      const maxEstimatedBytes = Math.max(
+        1,
+        Math.trunc(opts.recoveryPointMaxEstimatedBytes ?? DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES),
+      );
+      const useCustomFormat = estimatedBytes > maxEstimatedBytes;
+      if (useCustomFormat && !postgresBinDir) {
+        throw new Error(
+          `database is too large for the in-process SQL backup (${estimatedBytes} bytes); ` +
+            "a packaged PostgreSQL pg_dump runtime is required",
+        );
+      }
+      const spaceMultiplier = useCustomFormat
+        ? MIGRATION_BACKUP_CUSTOM_SPACE_MULTIPLIER
+        : MIGRATION_BACKUP_SQL_SPACE_MULTIPLIER;
+      const requiredBytes = estimatedBytes * spaceMultiplier + MIGRATION_BACKUP_FREE_SPACE_HEADROOM_BYTES;
+      const readAvailableBytes = () => {
+        const filesystem = statfsSync(backupDir);
+        return filesystem.bavail * filesystem.bsize;
+      };
+      const availableBytesBeforeDump = readAvailableBytes();
+      if (availableBytesBeforeDump < requiredBytes) {
+        throw new Error(
+          `insufficient free space for a migration recovery point: ` +
+            `estimated database size ${estimatedBytes} bytes, ` +
+            `available ${availableBytesBeforeDump} bytes, required at least ${requiredBytes} bytes`,
+        );
+      }
+      const availableBytes = readAvailableBytes();
+      if (availableBytes < requiredBytes) {
+        throw new Error(
+          `free space changed before creating a migration recovery point: ` +
+            `estimated database size ${estimatedBytes} bytes, ` +
+            `available ${availableBytes} bytes, required at least ${requiredBytes} bytes`,
+        );
+      }
       const result = await runDatabaseBackup({
         connectionString,
         backupDir,
-        retentionDays: Math.max(1, opts.recoveryPointRetentionDays ?? 30),
+        retentionDays,
         filenamePrefix: "rudder-pre-migration",
+        format: useCustomFormat ? "custom" : "sql",
+        ...(useCustomFormat ? { postgresBinDir } : {}),
         includeMigrationJournal: true,
       });
       logger.info(
@@ -471,6 +530,12 @@ async function startServerRuntime(
           backupFile: result.backupFile,
           sizeBytes: result.sizeBytes,
           prunedCount: result.prunedCount,
+          format: useCustomFormat ? "custom" : "sql",
+          estimatedBytes,
+          availableBytes,
+          requiredBytes,
+          spaceMultiplier,
+          cleanedArtifacts,
         },
         `${label} migration recovery point created before schema upgrade`,
       );
@@ -687,6 +752,8 @@ async function startServerRuntime(
     migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL", {
       recoveryPointDir: config.databaseBackupDir,
       recoveryPointRetentionDays: config.databaseBackupRetentionDays,
+      recoveryPointMaxEstimatedBytes: config.databaseBackupMaxEstimatedBytes,
+      postgresBinDir: resolveOfficialPostgresBinDir() ?? undefined,
     });
   
     db = createDb(config.databaseUrl);
@@ -879,6 +946,8 @@ async function startServerRuntime(
       autoApply: shouldAutoApplyFirstRunMigrations,
       recoveryPointDir: config.databaseBackupDir,
       recoveryPointRetentionDays: config.databaseBackupRetentionDays,
+      recoveryPointMaxEstimatedBytes: config.databaseBackupMaxEstimatedBytes,
+      postgresBinDir: localPostgresBinDir ?? resolveOfficialPostgresBinDir() ?? undefined,
     });
   
     db = createDb(embeddedConnectionString);

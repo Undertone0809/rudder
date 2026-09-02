@@ -1,5 +1,6 @@
 export {
   estimateDatabaseBackupSize, formatDatabaseBackupResult, getDatabaseBackupSizeGuardDecision,
+  prepareDatabaseBackupDirectory,
   runDatabaseBackup,
   runDatabaseRestore, type DatabaseBackupSizeEstimate,
   type DatabaseBackupSizeGuardDecision,
