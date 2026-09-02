@@ -385,6 +385,12 @@ describe("rudder org import/export e2e", () => {
         }),
       },
     );
+    const pausedSourceAgent = await api<{ status: string }>(
+      apiBase,
+      `/api/agents/${sourceAgent.id}/pause`,
+      { method: "POST" },
+    );
+    expect(pausedSourceAgent.status).toBe("paused");
 
     const sourceProject = await api<{ id: string; name: string }>(
       apiBase,
@@ -640,6 +646,12 @@ describe("rudder org import/export e2e", () => {
         },
       }),
     });
+    const pausedSourceAgent = await api<{ status: string }>(
+      apiBase,
+      `/api/agents/${sourceAgent.id}/pause`,
+      { method: "POST" },
+    );
+    expect(pausedSourceAgent.status).toBe("paused");
 
     const sourceProject = await api<{
       id: string;

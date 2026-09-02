@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -5,5 +6,6 @@ export default defineConfig({
     environment: "node",
     testTimeout: 180000,
     hookTimeout: 180000,
+    globalSetup: fileURLToPath(new URL("../scripts/vitest-postgres-global-setup.ts", import.meta.url)),
   },
 });
