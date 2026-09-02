@@ -119,6 +119,7 @@ jobs:
           source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
           runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
             -f branch=main \
+            -f head_sha="$SOURCE_SHA" \
             -f status=completed \
             -f per_page=100 \
             --jq '.workflow_runs | map(select(.conclusion == "success" and .head_branch == "main" and ((.event == "push") or (.event == "workflow_dispatch") or (.event == "merge_group")))) | sort_by(.updated_at) | reverse')"
@@ -309,6 +310,7 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
           TAG: ${{ steps.release.outputs.tag }}
           CANDIDATE_EXTERNAL: ${{ steps.release.outputs.candidate_external }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           candidate_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
@@ -319,6 +321,9 @@ jobs:
           [[ "$candidate_head_sha" =~ ^[0-9a-f]{40}$ ]]
           git cat-file -e "$candidate_head_sha^{commit}"
           git merge-base --is-ancestor "$candidate_head_sha" refs/remotes/origin/main
+          git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}"
+          git merge-base --is-ancestor "$TRUSTED_WORKFLOW_SHA" refs/remotes/origin/main
+          echo "workflow_source_sha=$candidate_head_sha" >> "$GITHUB_OUTPUT"
           run_conclusion="$(jq -r '.conclusion' <<< "$candidate_run_json")"
           case "$run_conclusion" in
             success|cancelled|failure) ;;
@@ -1049,6 +1054,7 @@ jobs:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
           SOURCE_REF: ${{ inputs.source_ref }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           candidate_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
@@ -1059,6 +1065,9 @@ jobs:
           [[ "$candidate_head_sha" =~ ^[0-9a-f]{40}$ ]]
           git cat-file -e "$candidate_head_sha^{commit}"
           git merge-base --is-ancestor "$candidate_head_sha" refs/remotes/origin/main
+          git cat-file -e "$TRUSTED_WORKFLOW_SHA^{commit}"
+          git merge-base --is-ancestor "$TRUSTED_WORKFLOW_SHA" refs/remotes/origin/main
+          echo "workflow_source_sha=$candidate_head_sha" >> "$GITHUB_OUTPUT"
           run_conclusion="$(jq -r '.conclusion' <<< "$candidate_run_json")"
           case "$run_conclusion" in
             success|cancelled|failure) ;;

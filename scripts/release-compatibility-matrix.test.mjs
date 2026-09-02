@@ -35,14 +35,57 @@ function manifest(tags, sqlByTag, label) {
 }
 
 describe("release migration compatibility matrix", () => {
+  it("accepts the checked-in 0.7.18 candidate against immutable release fixtures", () => {
+    const result = runCompatibilityPreflight({
+      candidateVersion: "0.7.18",
+      channel: "stable",
+    });
+
+    expect(result.candidateFingerprint).toBe(
+      "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    );
+    expect(result.candidateMigrations).toBe(163);
+    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.16",
+      "0.7.15",
+      "0.7.14",
+    ]);
+  }, 60_000);
+
+  it("accepts the checked-in 0.7.16 candidate against immutable release fixtures", () => {
+    const result = runCompatibilityPreflight({
+      candidateVersion: "0.7.16",
+      channel: "stable",
+    });
+
+    expect(result.candidateFingerprint).toBe(
+      "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    );
+    expect(result.candidateMigrations).toBe(163);
+    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.15",
+      "0.7.14",
+      "0.7.13",
+      "0.7.12",
+      "0.7.11",
+      "0.7.10",
+      "0.7.9",
+      "0.7.1",
+      "0.7.0",
+      "0.6.5",
+    ]);
+  }, 60_000);
+
   it("accepts the checked-in 0.7.15 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
       candidateVersion: "0.7.15",
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(160);
-    expect(result.candidateSqlFiles).toBe(162);
+    expect(result.candidateMigrations).toBe(163);
+    expect(result.candidateSqlFiles).toBe(165);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.14",
       "0.7.13",
@@ -54,7 +97,7 @@ describe("release migration compatibility matrix", () => {
       "0.7.0",
       "0.6.5",
     ]);
-  });
+  }, 60_000);
 
   it("accepts the checked-in 0.7.14 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
@@ -62,8 +105,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(160);
-    expect(result.candidateSqlFiles).toBe(162);
+    expect(result.candidateMigrations).toBe(163);
+    expect(result.candidateSqlFiles).toBe(165);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.13",
       "0.7.12",
@@ -74,7 +117,7 @@ describe("release migration compatibility matrix", () => {
       "0.7.0",
       "0.6.5",
     ]);
-  });
+  }, 60_000);
 
   it("accepts the checked-in 0.7.13 candidate against immutable release fixtures", () => {
     const result = runCompatibilityPreflight({
@@ -82,8 +125,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(160);
-    expect(result.candidateSqlFiles).toBe(162);
+    expect(result.candidateMigrations).toBe(163);
+    expect(result.candidateSqlFiles).toBe(165);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.12",
       "0.7.11",
@@ -93,7 +136,7 @@ describe("release migration compatibility matrix", () => {
       "0.7.0",
       "0.6.5",
     ]);
-  });
+  }, 60_000);
 
   it("retains the 0.7.11 compatibility declaration", () => {
     const declaration = migrationCompatibilityMatrix["0.7.11"];
