@@ -18,6 +18,33 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="September 2, 2026" description="v0.7.18" tags={["New","Improved","Fixed"]}>
+
+## v0.7.18
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.18)
+
+This release makes workspace backups easier to inspect, agent activity easier to scan, and recovery more dependable when local transports, Desktop updates, or Chat file changes go wrong.
+
+### New
+
+- Added native workspace backup file browsing and preview support. Selecting a completed backup lets you browse its file tree and inspect size-limited text previews without restoring the workspace.
+- Added semantic cards for Agent MCP results, bringing Agent entries into the transcript's readable presentation alongside Goal, Issue, Project, Approval, and Automation results.
+
+### Improved
+
+- Refined MCP semantic cards with clearer entity and receipt layouts, status-aware icons, richer Agent identity and runtime details, Markdown-rendered comments, and direct links to related records.
+- When Issue transport is unavailable, CLI and MCP errors now provide a single equivalent fallback command or tool, so work can continue from the other surface.
+
+### Fixed
+
+- Fixed Codex App Server file-change updates dropping diff content from Chat transcripts; file changes now retain their patches.
+- Fixed ordinary Markdown links in live Issue previews requiring a modifier key; they now open with a normal click.
+- Fixed CLI-triggered Desktop updates failing to complete their handoff to the Desktop application.
+- Restored the missing gutter between the Library file browser and workspace content.
+
+</Update>
+
 <Update label="August 31, 2026" description="v0.7.16" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.16
