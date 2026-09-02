@@ -236,7 +236,10 @@ export class IssueTransportBudget {
         const activeReservations = state.activeReservations.filter(
           (id) => id !== reservation.reservationId,
         );
-        if (reservation.attempt === "fallback") {
+        const recoveredOnAlternateSurface = reservation.attempt === "initial"
+          && state.initialSurface !== reservation.surface
+          && ["fallback_available", "fallback_in_flight", "blocked"].includes(state.phase);
+        if (reservation.attempt === "fallback" || recoveredOnAlternateSurface) {
           await cleanupOwnedCommentBodyFile(reservation.filePath, state.fallbackBodyFile);
           await cleanupOwnedCommentBodyFile(reservation.filePath, reservation.scope.fallbackBodyFile);
           await writeState(reservation.filePath, healthyState(state, this.now(), state.generation + 1));

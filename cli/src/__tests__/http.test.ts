@@ -751,6 +751,53 @@ describe("RudderApiClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("clears a failure when an alternate-surface request was already in flight and succeeds", async () => {
+    const stateDir = await transportStateDir();
+    let releaseFailure: (() => void) | undefined;
+    let releaseSuccess: (() => void) | undefined;
+    let markFailureStarted: (() => void) | undefined;
+    let markSuccessStarted: (() => void) | undefined;
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const successGate = new Promise<void>((resolve) => { releaseSuccess = resolve; });
+    const failureStarted = new Promise<void>((resolve) => { markFailureStarted = resolve; });
+    const successStarted = new Promise<void>((resolve) => { markSuccessStarted = resolve; });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        markFailureStarted?.();
+        await failureGate;
+        return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+      })
+      .mockImplementationOnce(async () => {
+        markSuccessStarted?.();
+        await successGate;
+        return new Response(JSON.stringify({ ok: "alternate" }), { status: 200 });
+      })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: "recovered" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const common = {
+      apiBase: "http://localhost:3100",
+      runId: "run-alternate-concurrent-success",
+      transportStateDir: stateDir,
+    };
+    const mcp = new RudderApiClient({ ...common, transportSurface: "mcp" });
+    const cli = new RudderApiClient({ ...common, transportSurface: "cli" });
+
+    const first = captureApiError(mcp.get("/api/issues/iss-1/comments"));
+    await failureStarted;
+    const alternate = cli.get("/api/issues/iss-1/comments");
+    await successStarted;
+    releaseFailure?.();
+    await expect(first).resolves.toMatchObject({
+      status: 500,
+      details: { issueTransport: { state: "fallback_available" } },
+    });
+    releaseSuccess?.();
+    await expect(alternate).resolves.toEqual({ ok: "alternate" });
+    await expect(mcp.get("/api/issues/iss-1/comments")).resolves.toEqual({ ok: "recovered" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("ignores a late fallback failure after expiry starts a fresh generation", async () => {
     const stateDir = await transportStateDir();
     let now = 1_000;
