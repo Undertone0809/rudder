@@ -166,7 +166,7 @@ function semanticTranscript(
     { kind: "tool_result", ts: at(2), toolUseId: "goal-list", content: toolResult(goalRows), isError: false },
     { kind: "assistant", ts: at(3), text: "Adding the requested Issue comment." },
     { kind: "tool_call", ts: at(4), name: "mcp__rudder-tools__rudder_issue_comment", toolUseId: "issue-comment", input: { issueId: entities.issueRef } },
-    { kind: "tool_result", ts: at(5), toolUseId: "issue-comment", content: toolResult({ id: entities.commentId, issueId: entities.issueRef, body: "Card-ready comment", authorAgentId: agentId }), isError: false },
+    { kind: "tool_result", ts: at(5), toolUseId: "issue-comment", content: toolResult({ id: entities.commentId, issueId: entities.issueRef, body: "**Card-ready comment**\n\n- Markdown evidence\n\n<script data-semantic-raw-html-probe>not executable</script>", authorAgentId: agentId }), isError: false },
     { kind: "assistant", ts: at(6), text: "Reading the Project summary." },
     { kind: "tool_call", ts: at(7), name: "mcp__rudder-tools__rudder_project_get", toolUseId: "project-get", input: { projectId: entities.projectId } },
     { kind: "tool_result", ts: at(8), toolUseId: "project-get", content: toolResult({ id: entities.projectId, name: "MCP Cards", status: "in_progress", leadAgentId: agentId }), isError: false },
@@ -209,6 +209,9 @@ function semanticTranscript(
     { kind: "assistant", ts: at(36), text: "Reading one malformed covered result." },
     { kind: "tool_call", ts: at(37), name: "mcp__rudder-tools__rudder_issue_get", toolUseId: "malformed-issue", input: { issueId: `${entities.issueRef}-missing` } },
     { kind: "tool_result", ts: at(38), toolUseId: "malformed-issue", content: "not-json", isError: false },
+    { kind: "assistant", ts: at(39), text: "Reading the authenticated Agent identity." },
+    { kind: "tool_call", ts: at(40), name: "mcp__rudder-tools__rudder_agent_me", toolUseId: "agent-me", input: {} },
+    { kind: "tool_result", ts: at(41), toolUseId: "agent-me", content: toolResult({ id: agentId, name: "Semantic Card Agent", role: "engineer", title: "Runtime engineer", status: "active", agentRuntimeType: "codex_local", agentRuntimeConfig: { model: "gpt-5.4" } }), isError: false },
   ];
 }
 
@@ -219,6 +222,7 @@ async function expandSemanticRows(surface: Locator) {
     /Get project/i,
     /Get approval/i,
     /Rotate automation trigger secret/i,
+    /Get current agent/i,
   ]) {
     const row = surface.getByRole("button", { name: new RegExp(`Expand tool details: .*${name.source}`, "i") });
     await expect(row).toBeVisible();
@@ -226,7 +230,9 @@ async function expandSemanticRows(surface: Locator) {
   }
 }
 
-async function assertFiveDomainPresenters(surface: Locator) {
+async function assertSixDomainPresenters(surface: Locator) {
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_agent_me"]')).toContainText("Runtime engineer");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_agent_me"]')).toContainText("OpenAI · gpt-5.4 · Codex (local)");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_goal_list"]')).toBeVisible();
   const firstGoalCard = surface.locator('[data-rudder-semantic-rail="goal"] [data-rudder-semantic-card-surface="true"]').first();
   await expect(firstGoalCard.locator('[data-rudder-semantic-agent="true"]')).toContainText("Semantic Card Agent");
@@ -234,6 +240,10 @@ async function assertFiveDomainPresenters(surface: Locator) {
   await expect(firstGoalCard).toHaveCSS("width", "352px");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("Comment added");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("Card-ready comment");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"] strong')).toContainText("Card-ready comment");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"] li')).toContainText("Markdown evidence");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toContainText("<script data-semantic-raw-html-probe>not executable</script>");
+  await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"] script[data-semantic-raw-html-probe]')).toHaveCount(0);
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_issue_comment"] [data-rudder-semantic-agent="true"]')).toContainText("Semantic Card Agent");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_project_get"]')).toContainText("MCP Cards");
   await expect(surface.locator('[data-rudder-semantic-presenter="rudder_approval_get"]')).toContainText("pending");
@@ -277,6 +287,8 @@ async function assertOutcomeStates(surface: Locator, routePrefix: string, entiti
 }
 
 test.describe("Built-in Rudder MCP semantic cards", () => {
+  test.describe.configure({ timeout: 120_000 });
+
   test.beforeEach(async ({ page }) => {
     const response = await page.request.patch("/api/instance/settings/general", {
       data: { experimentalGoalsEnabled: true },
@@ -284,7 +296,7 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     expect(response.ok(), await response.text()).toBe(true);
   });
 
-  test("renders all five domains in the real Chat Process with a horizontal incremental rail", async ({ page }) => {
+  test("renders all six domains in the real Chat Process with a horizontal incremental rail", async ({ page }) => {
     const { organization, agent, entities } = await seedOrganizationAndAgent(page, "Chat-MCP-Cards");
     const chatId = randomUUID();
     const startedAt = new Date("2026-08-26T08:00:00.000Z");
@@ -321,7 +333,7 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await process.getByRole("button", { name: /Worked for/i }).click();
     await expandSemanticRows(process);
     await expandOutcomeRows(process);
-    await assertFiveDomainPresenters(process);
+    await assertSixDomainPresenters(process);
     await assertOutcomeStates(process, organization.urlKey, entities);
 
     const rail = process.locator('[data-rudder-semantic-rail="goal"]');
@@ -346,10 +358,31 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await expect(firstGoalLink).toBeVisible();
     const cardSurface = await firstGoalLink.evaluate((element) => {
       const style = window.getComputedStyle(element);
-      return { boxShadow: style.boxShadow, transitionProperty: style.transitionProperty };
+      return {
+        backgroundColor: style.backgroundColor,
+        borderColor: style.borderColor,
+        boxShadow: style.boxShadow,
+        transform: style.transform,
+        transitionProperty: style.transitionProperty,
+      };
     });
     expect(cardSurface.boxShadow).not.toBe("none");
-    expect(cardSurface.transitionProperty).toContain("transform");
+    expect(cardSurface.transitionProperty).toContain("border-color");
+    expect(cardSurface.transitionProperty).not.toContain("transform");
+    await firstGoalLink.hover();
+    await expect.poll(async () => firstGoalLink.evaluate((element) => window.getComputedStyle(element).borderColor))
+      .not.toBe(cardSurface.borderColor);
+    const hoveredCardSurface = await firstGoalLink.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        transform: style.transform,
+      };
+    });
+    expect(hoveredCardSurface.backgroundColor).toBe(cardSurface.backgroundColor);
+    expect(hoveredCardSurface.boxShadow).toBe(cardSurface.boxShadow);
+    expect(hoveredCardSurface.transform).toBe(cardSurface.transform);
     await expect(process.locator(
       `a[href="/${organization.urlKey}/issues/${entities.issueRef}#comment-${entities.commentId}"]`,
     )).toBeVisible();
@@ -359,7 +392,10 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await firstGoalLink.focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/goals/${entities.goalIds[0]}$`));
-    await expect(page.getByText("Goal 1: semantic transcript coverage", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", {
+      name: "Goal 1: semantic transcript coverage",
+      exact: true,
+    })).toBeVisible({ timeout: 15_000 });
     await page.goBack();
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -385,12 +421,16 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
       await expect(currentRail).toBeVisible();
       expect(await currentRail.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
     }).toPass({ timeout: 10_000 });
+    await mobileProcess
+      .locator('[data-rudder-semantic-rail="goal"]')
+      .screenshot({
+        path: "/tmp/rudder-mcp-semantic-cards-chat-dark-mobile.png",
+        animations: "disabled",
+      });
     await expect(async () => {
-      const currentGoal = mobileProcess.getByRole("button", { name: /tool details: .*List goals/i });
-      if (await currentGoal.getAttribute("aria-expanded") !== "true") await currentGoal.click();
-      await mobileProcess
-        .locator('[data-rudder-semantic-rail="goal"]')
-        .screenshot({ path: "/tmp/rudder-mcp-semantic-cards-chat-dark-mobile.png" });
+      const currentComment = mobileProcess.getByRole("button", { name: /tool details: .*Add issue comment/i });
+      if (await currentComment.getAttribute("aria-expanded") !== "true") await currentComment.click();
+      await expect(mobileProcess.locator('[data-rudder-semantic-presenter="rudder_issue_comment"]')).toBeVisible();
     }).toPass({ timeout: 10_000 });
     const mobileComment = mobileProcess.getByRole("button", { name: /tool details: .*Add issue comment/i });
     if (await mobileComment.getAttribute("aria-expanded") !== "true") await mobileComment.click();
@@ -403,7 +443,7 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     expect(await mobileReceipt.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   });
 
-  test("renders the same five-domain presenters in real Run Detail and preserves Raw evidence", async ({ page }) => {
+  test("renders the same six-domain presenters in real Run Detail and preserves Raw evidence", async ({ page }) => {
     const { organization, agent, entities } = await seedOrganizationAndAgent(page, "Run-MCP-Cards");
     const runId = randomUUID();
     const startedAt = new Date("2026-08-26T09:00:00.000Z");
@@ -444,7 +484,7 @@ test.describe("Built-in Rudder MCP semantic cards", () => {
     await expect(detail).toBeVisible({ timeout: 15_000 });
     await expandSemanticRows(detail);
     await expandOutcomeRows(detail);
-    await assertFiveDomainPresenters(detail);
+    await assertSixDomainPresenters(detail);
     await assertOutcomeStates(detail, organization.urlKey, entities);
     const detailRail = detail.locator('[data-rudder-semantic-rail="goal"]');
     await detailRail.evaluate((element) => { element.scrollLeft = element.scrollWidth; element.dispatchEvent(new Event("scroll")); });

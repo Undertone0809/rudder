@@ -1,5 +1,6 @@
 import { adapterLabels } from "@/components/agent-config-primitives";
-import { AgentIdentity } from "@/components/AgentAvatar";
+import { AgentIcon, AgentIdentity } from "@/components/AgentAvatar";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { StatusIcon } from "@/components/StatusIcon";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
@@ -13,6 +14,7 @@ import {
   Goal,
   Repeat,
   ShieldCheck,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -31,7 +33,7 @@ import type { RunTranscriptViewProps, TranscriptAgentDirectoryEntry, TranscriptT
 import { extractMcpToolDetails } from "./RunTranscriptView.semantic";
 
 export type RudderMcpPresenterKind = "rail" | "summary" | "receipt";
-export type RudderMcpDomain = "goal" | "issue" | "project" | "approval" | "automation";
+export type RudderMcpDomain = "agent" | "goal" | "issue" | "project" | "approval" | "automation";
 
 interface RudderMcpPresenterDefinition {
   domain: RudderMcpDomain;
@@ -40,6 +42,8 @@ interface RudderMcpPresenterDefinition {
 }
 
 const registry = {
+  rudder_agent_me: { domain: "agent", kind: "summary", action: "Agent" },
+
   rudder_goal_list: { domain: "goal", kind: "rail", action: "Goals" },
   rudder_goal_context: { domain: "goal", kind: "summary", action: "Goal context" },
   rudder_goal_progress: { domain: "goal", kind: "receipt", action: "Progress recorded" },
@@ -221,6 +225,7 @@ function valueRecord(value: unknown, domain: RudderMcpDomain): JsonRecord | null
 }
 
 const collectionKeys: Record<RudderMcpDomain, string[]> = {
+  agent: ["agents", "members", "items", "results", "data"],
   goal: ["goals", "items", "results", "data"],
   issue: ["issues", "comments", "items", "results", "data"],
   project: ["projects", "items", "results", "data"],
@@ -299,6 +304,11 @@ function targetFor(
   toolName: CoveredRudderMcpToolName,
   triggerAutomationParents: ReadonlyMap<string, string>,
 ): string | null {
+  if (domain === "agent") {
+    const ref = readString(record, ["urlKey", "shortRef", "agentId", "id", "ref"])
+      ?? readString(args, ["agent", "agentId", "agent_id"]);
+    return ref ? `/agents/${encodePath(ref)}` : null;
+  }
   if (domain === "issue") {
     const ref = issueRef(record, args);
     if (!ref) return null;
@@ -363,7 +373,26 @@ interface SemanticCardModel {
   statusValue: string | null;
   target: string | null;
   agentRef: string | null;
+  agentSnapshot: TranscriptAgentDirectoryEntry | null;
   timestamp: string | null;
+}
+
+function agentSnapshotFromRecord(record: JsonRecord, domain: RudderMcpDomain): TranscriptAgentDirectoryEntry | null {
+  if (domain !== "agent") return null;
+  const id = readString(record, ["id", "agentId", "shortRef", "urlKey", "ref"]);
+  const name = readString(record, ["name"]);
+  if (!id || !name) return null;
+  return {
+    id,
+    shortRef: readString(record, ["shortRef", "ref"]) ?? undefined,
+    urlKey: readString(record, ["urlKey"]) ?? undefined,
+    name,
+    icon: readString(record, ["icon"]),
+    role: readString(record, ["role"]) as AgentRole | null,
+    agentRuntimeType: readString(record, ["agentRuntimeType", "runtimeType"]) ?? undefined,
+    agentRuntimeConfig: nestedRecord(record, ["agentRuntimeConfig"]) ?? undefined,
+    runtimeConfig: nestedRecord(record, ["runtimeConfig"]) ?? undefined,
+  };
 }
 
 function cardModel(
@@ -375,27 +404,33 @@ function cardModel(
   index: number,
 ): SemanticCardModel {
   const domain = definition.domain;
-  const title = readString(record, ["title", "name", "summary", "label", "body", "identifier"])
+  const title = readString(record, domain === "agent"
+    ? ["name", "title", "summary", "label", "identifier"]
+    : ["title", "name", "summary", "label", "body", "identifier"])
     ?? (domain === "automation" && toolName === "rudder_automation_runs" ? `Run ${readString(record, ["id"]) ?? index + 1}` : null)
     ?? (domain === "automation" && toolName.includes("triggers")
       ? readString(record, ["kind", "type"])?.replace(/_/g, " ").concat(" trigger") ?? null
       : null)
     ?? readString(record, ["publicId", "shortId", "id"]);
-  const description = readString(record, [
-    "description", "instructions", "body", "summary", "rationale", "riskSummary", "failureReason", "prompt", "decisionNote",
-  ]);
+  const description = readString(record, domain === "agent"
+    ? ["title", "capabilities", "description", "summary"]
+    : ["description", "instructions", "body", "summary", "rationale", "riskSummary", "failureReason", "prompt", "decisionNote"]);
   const commentBody = toolName.includes("comment")
     ? readString(record, ["body", "commentBody", "content", "text"])
     : null;
   const statusValue = readString(record, ["status", "lifecycle", "decision", "state", "kind", "priority"]);
   const status = statusLabel(statusValue);
-  const agentRef = readString(record, [
-    "assigneeAgentId", "ownerAgentId", "authorAgentId", "createdByAgentId", "requestedByAgentId", "agentId", "leadAgentId",
-  ]);
+  const agentRef = domain === "agent"
+    ? readString(record, ["id", "agentId", "shortRef", "urlKey", "ref"])
+    : readString(record, [
+        "assigneeAgentId", "ownerAgentId", "authorAgentId", "createdByAgentId", "requestedByAgentId", "agentId", "leadAgentId",
+      ]);
   const timestamp = readString(record, ["updatedAt", "createdAt", "triggeredAt", "lastRotatedAt", "nextRunAt", "completedAt"]);
   return {
     key: readString(record, ["id", "identifier", "publicId"]) ?? `${toolName}-${index}`,
-    eyebrow: domain === "automation" && toolName === "rudder_automation_runs"
+    eyebrow: domain === "agent"
+      ? `Agent${readString(record, ["shortRef", "ref"]) ? ` · @${readString(record, ["shortRef", "ref"])}` : ""}`
+      : domain === "automation" && toolName === "rudder_automation_runs"
       ? "Automation run"
       : domain === "automation" && toolName.includes("triggers")
         ? "Automation trigger"
@@ -409,6 +444,7 @@ function cardModel(
     statusValue,
     target: targetFor(domain, record, args, toolName, triggerAutomationParents),
     agentRef,
+    agentSnapshot: agentSnapshotFromRecord(record, domain),
     timestamp,
   };
 }
@@ -421,6 +457,7 @@ function formatDate(value: string | null) {
 }
 
 function domainIcon(domain: RudderMcpDomain): LucideIcon {
+  if (domain === "agent") return UsersRound;
   if (domain === "goal") return Goal;
   if (domain === "issue") return CircleDot;
   if (domain === "project") return FolderKanban;
@@ -542,15 +579,19 @@ function SemanticEntityCard({
   agents: TranscriptAgentDirectoryEntry[];
   compact?: boolean;
 }) {
-  const agent = resolveAgent(model.agentRef, agents);
+  const agent = model.agentSnapshot ?? resolveAgent(model.agentRef, agents);
   const target = organizationAwareTarget(model.target);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const interactive = Boolean(target) && (hovered || focused);
   const content = (
     <>
-      <span className="row-span-3 inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/35 text-muted-foreground">
-        <SemanticDomainIcon model={model} domain={domain} />
+      <span className="row-span-3 inline-flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/60 bg-muted/35 text-muted-foreground">
+        {domain === "agent" && agent ? (
+          <AgentIcon icon={agent.icon} role={agent.role} fallbackSeed={agent.name} className="size-full" />
+        ) : (
+          <SemanticDomainIcon model={model} domain={domain} />
+        )}
       </span>
       <span className="flex min-w-0 items-start justify-between gap-3">
         <span className="min-w-0 text-[10px] font-semibold text-muted-foreground">{model.eyebrow}</span>
@@ -567,7 +608,11 @@ function SemanticEntityCard({
         ) : null}
       </span>
       <span className="flex min-w-0 items-end justify-between gap-2 border-t border-border/60 pt-2">
-        {agent ? <SemanticAgentIdentity agent={agent} /> : <span />}
+        {domain === "agent" && agent ? (
+          <span className="min-w-0 truncate text-[10px] text-muted-foreground" title={agentRuntimeSummary(agent)}>
+            {agentRuntimeSummary(agent)}
+          </span>
+        ) : agent ? <SemanticAgentIdentity agent={agent} /> : <span />}
         {formatDate(model.timestamp) ? <span className="shrink-0 text-[10px] text-muted-foreground">{formatDate(model.timestamp)}</span> : null}
       </span>
     </>
@@ -577,12 +622,13 @@ function SemanticEntityCard({
     compact ? "w-full" : "min-h-36 w-[22rem]",
     target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-card hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.38)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-18px_rgba(0,0,0,0.78)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
     interactive && "-translate-y-0.5 border-foreground/30 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.42)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.82)]",
+    target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.38)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-16px_rgba(0,0,0,0.78)] focus-visible:border-primary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
+    interactive && "-translate-y-0.5 border-primary/70 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.42)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.82)]",
   );
   return target ? (
     <a
       href={target}
       className={className}
-      style={interactive ? { transform: "translateY(-2px)" } : undefined}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
@@ -730,9 +776,15 @@ function Receipt({
   const agent = resolveAgent(model.agentRef, agents);
   const target = organizationAwareTarget(model.target);
   const commentScrollRef = useScrollbarActivityRef();
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const interactive = Boolean(target) && (hovered || focused);
+  const actionContent = (
+    <>
+      <span className="block text-[10px] font-semibold text-muted-foreground">{domain[0]!.toUpperCase() + domain.slice(1)}</span>
+      <span className="mt-0.5 block break-words text-sm font-semibold leading-5 text-foreground" data-rudder-semantic-action="true">{action}</span>
+      {!model.commentBody && model.title && model.title !== action ? (
+        <span className="mt-1 block truncate text-xs text-muted-foreground">{model.title}</span>
+      ) : null}
+    </>
+  );
   const content = (
     <>
       <span className={cn(
@@ -741,52 +793,55 @@ function Receipt({
       )}>
         <Icon className="size-4" aria-hidden />
       </span>
-      <span className="col-start-2 row-start-1 min-w-0">
-        <span className="block text-[10px] font-semibold text-muted-foreground">{domain[0]!.toUpperCase() + domain.slice(1)}</span>
-        <span className="mt-0.5 block text-sm font-semibold text-foreground">{action}</span>
-        {!model.commentBody && model.title && model.title !== action ? (
-          <span className="mt-1 block truncate text-xs text-muted-foreground">{model.title}</span>
-        ) : null}
-      </span>
+      {target ? (
+        <a
+          href={target}
+          className="col-start-2 row-start-1 min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+          data-rudder-semantic-receipt-link="true"
+        >
+          {actionContent}
+        </a>
+      ) : (
+        <div className="col-start-2 row-start-1 min-w-0">{actionContent}</div>
+      )}
       {agent || model.status || formatDate(model.timestamp) ? (
-        <span className="col-start-2 row-start-2 flex min-w-0 flex-col items-start gap-1 sm:col-start-3 sm:row-start-1 sm:items-end">
-          {agent ? <SemanticAgentIdentity agent={agent} align="responsive" /> : null}
-          {model.status ? <span className="rounded-sm border border-border/60 px-2 py-0.5 text-[10px] capitalize text-muted-foreground">{model.status}</span> : null}
-          {formatDate(model.timestamp) ? <span className="text-[10px] text-muted-foreground">{formatDate(model.timestamp)}</span> : null}
-        </span>
+        <div
+          className="col-start-2 row-start-2 flex min-w-0 flex-wrap items-end justify-between gap-x-3 gap-y-1.5"
+          data-rudder-semantic-receipt-meta="true"
+        >
+          {agent ? <SemanticAgentIdentity agent={agent} /> : <span />}
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            {model.status ? <span className="rounded-sm border border-border/60 px-2 py-0.5 text-[10px] capitalize text-muted-foreground">{model.status}</span> : null}
+            {formatDate(model.timestamp) ? <span className="text-[10px] text-muted-foreground">{formatDate(model.timestamp)}</span> : null}
+          </span>
+        </div>
       ) : null}
       {model.commentBody ? (
-        <span
+        <div
           ref={commentScrollRef}
-          className="scrollbar-auto-hide col-start-2 col-end-3 row-start-3 block max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words border-l-2 border-foreground/15 pl-2.5 pr-2 text-xs leading-5 text-foreground/80 sm:col-end-4 sm:row-start-2"
+          className="scrollbar-auto-hide col-start-2 row-start-3 min-w-0 max-h-40 overflow-y-auto overscroll-contain break-words border-l-2 border-foreground/15 pl-2.5 pr-2"
           data-rudder-semantic-comment-body="true"
         >
-          {model.commentBody}
-        </span>
+          <MarkdownBody className="text-xs leading-5 text-foreground/80 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_li]:my-0.5 [&_li]:text-xs [&_li]:leading-5 [&_ol]:my-2 [&_p]:my-2 [&_p]:text-xs [&_p]:leading-5 [&_pre]:my-2 [&_ul]:my-2">
+            {model.commentBody}
+          </MarkdownBody>
+        </div>
       ) : null}
     </>
   );
   const className = cn(
     "grid w-full grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.30)] sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.70)]",
-    target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-card hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.36)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-18px_rgba(0,0,0,0.76)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
-    interactive && "-translate-y-0.5 border-foreground/30 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.40)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.80)]",
+    target && "cursor-pointer transition-[transform,box-shadow,border-color] duration-200 hover:border-primary/70 focus-within:border-primary/70",
+    interactive && "-translate-y-0.5 border-primary/70 shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.40)] ring-2 ring-ring/35",
   );
-  return target ? (
-    <a
-      href={target}
+  return (
+    <div
       className={className}
-      style={interactive ? { transform: "translateY(-2px)" } : undefined}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       data-rudder-semantic-card-surface="true"
-      data-rudder-semantic-card-interactive={interactive ? "true" : "false"}
+      data-rudder-semantic-card-interactive={target ? "true" : "false"}
     >
       {content}
-    </a>
-  ) : (
-    <div className={className} data-rudder-semantic-card-surface="true">{content}</div>
+    </div>
   );
 }
 
