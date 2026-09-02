@@ -424,20 +424,24 @@ export function TranscriptLocalFilePreview({
   }, [desktopShell, preview?.canonicalPath, preview?.fileName, preview?.parentPath]);
 
   const file = useMemo(() => preview ? workspacePreviewFile(preview) : null, [preview]);
+  const canOpenDefaultApp = typeof desktopShell?.openPath === "function";
   const openTargets = useMemo(
-    () => launchTargetsDiscovered ? workspaceUnsupportedFileLaunchTargets(launchTargets, {
-      canOpenFile: Boolean(
-        preview?.parentPath
-        && preview.fileName
-        && typeof desktopShell?.openWorkspaceFileInIde === "function",
-      ),
-      canOpenLocation: Boolean(
-        preview?.parentPath
-        && preview.fileName
-        && typeof desktopShell?.openWorkspaceFileLocation === "function",
-      ),
-    }) : [],
-    [desktopShell, launchTargets, launchTargetsDiscovered, preview?.fileName, preview?.parentPath],
+    () => {
+      if (!launchTargetsDiscovered) return [];
+      return workspaceUnsupportedFileLaunchTargets(launchTargets, {
+        canOpenFile: Boolean(
+          preview?.parentPath
+          && preview.fileName
+          && (canOpenDefaultApp || typeof desktopShell?.openWorkspaceFileInIde === "function"),
+        ),
+        canOpenLocation: Boolean(
+          preview?.parentPath
+          && preview.fileName
+          && typeof desktopShell?.openWorkspaceFileLocation === "function",
+        ),
+      }).filter((target) => target.id !== "defaultApp" || canOpenDefaultApp);
+    },
+    [canOpenDefaultApp, desktopShell, launchTargets, launchTargetsDiscovered, preview?.fileName, preview?.parentPath],
   );
   const openPreview = async (target?: WorkspaceUnsupportedFileLaunchTarget) => {
     if (!desktopShell || !preview) return;
@@ -446,10 +450,12 @@ export function TranscriptLocalFilePreview({
       if (target && isWorkspaceFileOpenTarget(target) && target.id !== "defaultApp") {
         await desktopShell.openWorkspaceFileInIde(preview.parentPath, preview.fileName, target.id);
       } else if (target?.id === "defaultApp") {
+        if (!canOpenDefaultApp) throw new Error("Opening this file with the default app is unavailable.");
         await desktopShell.openPath(preview.canonicalPath);
       } else if (target) {
         await desktopShell.openWorkspaceFileLocation?.(preview.parentPath, preview.fileName, target.id);
       } else {
+        if (!canOpenDefaultApp) return;
         await desktopShell.openPath(preview.canonicalPath);
       }
       setError(null);
@@ -498,14 +504,16 @@ export function TranscriptLocalFilePreview({
             testId="chat-side-panel-local-file-open-menu"
           />
         ) : (
-          <button
-            type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            onClick={() => void openPreview()}
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-            Open
-          </button>
+          canOpenDefaultApp ? (
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              onClick={() => void openPreview()}
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+              Open
+            </button>
+          ) : null
         )}
       </div>
       {preview.truncated ? (
