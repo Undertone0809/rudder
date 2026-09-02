@@ -80,4 +80,3 @@ test("keeps App Server file patches attached to their corresponding Messenger ro
   }).toPass({ timeout: 15_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
-
