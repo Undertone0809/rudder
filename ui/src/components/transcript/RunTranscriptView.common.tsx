@@ -177,6 +177,9 @@ export interface TranscriptAgentDirectoryEntry {
   icon?: string | null;
   role?: AgentRole | null;
   urlKey?: string | null;
+  agentRuntimeType?: string;
+  agentRuntimeConfig?: Record<string, unknown>;
+  runtimeConfig?: Record<string, unknown>;
 }
 
 export interface TranscriptRunAnnotationInput {

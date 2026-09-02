@@ -91,6 +91,8 @@ const semanticCardAgents: TranscriptAgentDirectoryEntry[] = [
     name: "Mira Chen",
     icon: null,
     role: "engineer",
+    agentRuntimeType: "codex_local",
+    agentRuntimeConfig: { model: "gpt-5.4" },
   },
 ];
 
@@ -133,17 +135,92 @@ const semanticGoalList = semanticCardBlock("rudder_goal_list", semanticGoalTitle
   updatedAt: `2026-08-${String(27 - index).padStart(2, "0")}T08:30:00.000Z`,
 })));
 
-const semanticLongCommentBody = Array.from({ length: 48 }, (_, index) => (
+const semanticEntityFixtures = [
+  {
+    label: "Agent",
+    block: semanticCardBlock("rudder_agent_me", {
+      id: "agent-semantic-reviewer",
+      shortRef: "agt_review",
+      urlKey: "mira-chen",
+      name: "Mira Chen",
+      role: "engineer",
+      title: "Runtime engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+      updatedAt: "2026-08-27T08:30:00.000Z",
+    }),
+  },
+  {
+    label: "Issue",
+    block: semanticCardBlock("rudder_issue_get", {
+      id: "issue-semantic-1",
+      identifier: "RUD-427",
+      title: "Ship semantic transcript cards",
+      description: "Keep typed evidence readable without opening Raw output.",
+      status: "in_progress",
+      assigneeAgentId: "agent-semantic-reviewer",
+      updatedAt: "2026-08-27T08:30:00.000Z",
+    }),
+  },
+  {
+    label: "Goal",
+    block: semanticCardBlock("rudder_goal_context", {
+      id: "goal-semantic-1",
+      title: "Make every Agent work loop reviewable",
+      description: "Connect work, evidence, and review decisions.",
+      lifecycle: "active",
+      ownerAgentId: "agent-semantic-reviewer",
+      updatedAt: "2026-08-27T08:30:00.000Z",
+    }),
+  },
+  {
+    label: "Project",
+    block: semanticCardBlock("rudder_project_get", {
+      id: "project-semantic-1",
+      name: "Rudder Desktop",
+      description: "Desktop shell, packaged startup, and installer verification.",
+      status: "active",
+      leadAgentId: "agent-semantic-reviewer",
+      updatedAt: "2026-08-27T08:30:00.000Z",
+    }),
+  },
+  {
+    label: "Approval",
+    block: semanticCardBlock("rudder_approval_get", {
+      id: "approval-semantic-1",
+      title: "Publish the reviewed transcript cards",
+      riskSummary: "Requires exact-candidate acceptance evidence.",
+      status: "pending",
+      requestedByAgentId: "agent-semantic-reviewer",
+      createdAt: "2026-08-27T08:30:00.000Z",
+    }),
+  },
+  {
+    label: "Automation",
+    block: semanticCardBlock("rudder_automation_get", {
+      id: "automation-lab-1",
+      name: "Daily growth report",
+      description: "Collect bounded marketing evidence on schedule.",
+      status: "enabled",
+      agentId: "agent-semantic-reviewer",
+      updatedAt: "2026-08-27T08:30:00.000Z",
+    }),
+  },
+];
+
+const semanticLongCommentBody = "### Acceptance notes\n\n" + Array.from({ length: 48 }, (_, index) => (
   `Review note ${index + 1}: verify the semantic card against the exact transcript evidence, preserve the horizontal rail position, and keep the Agent identity visible.`
-)).join("\n\n") + "\n\nEnd of complete long comment fixture.";
+)).join("\n\n") + "\n\nEnd of complete long comment fixture.\n\n<script data-semantic-raw-html-probe>not executable</script>";
 
 const semanticReceiptFixtures = [
   {
     label: "Issue comment",
+    testId: "ui-lab-issue-comment-receipt",
     block: semanticCardBlock("rudder_issue_comment", {
       id: "comment-lab-1",
       issueId: "RUD-427",
-      body: "The horizontal rail reads clearly now. Keep the owner avatar visible and preserve the current scroll position after reopening.",
+      body: "**The horizontal rail reads clearly now.**\n\n- Keep the owner avatar visible.\n- Preserve the current scroll position after reopening.",
       authorAgentId: "agent-semantic-reviewer",
       createdAt: "2026-08-27T08:31:00.000Z",
     }, { issueId: "RUD-427" }),
@@ -185,6 +262,35 @@ const semanticReceiptFixtures = [
       status: "failed",
       failureReason: "The target workspace was unavailable.",
       completedAt: "2026-08-27T08:33:00.000Z",
+    }),
+  },
+  {
+    label: "Goal checkpoint",
+    block: semanticCardBlock("rudder_goal_checkpoint", {
+      id: "checkpoint-lab-1",
+      goalId: "goal-semantic-1",
+      planRevisionAfter: 14,
+      createdAt: "2026-08-27T08:34:00.000Z",
+    }),
+  },
+  {
+    label: "Issue update",
+    block: semanticCardBlock("rudder_issue_update", {
+      id: "issue-semantic-1",
+      identifier: "RUD-427",
+      title: "Ship semantic transcript cards",
+      status: "in_review",
+      assigneeAgentId: "agent-semantic-reviewer",
+      updatedAt: "2026-08-27T08:35:00.000Z",
+    }),
+  },
+  {
+    label: "Project update",
+    block: semanticCardBlock("rudder_project_update", {
+      id: "project-semantic-1",
+      name: "Rudder Desktop",
+      leadAgentId: "agent-semantic-reviewer",
+      updatedAt: "2026-08-27T08:36:00.000Z",
     }),
   },
 ];
@@ -233,6 +339,21 @@ function SemanticCardsPreview() {
       triggerAutomationParents={semanticTriggerAutomationParents}
     >
       <div className="space-y-6" data-testid="ui-lab-rudder-mcp-cards">
+        <section aria-labelledby="semantic-entity-cards-heading">
+          <div className="mb-3">
+            <h3 id="semantic-entity-cards-heading" className="text-sm font-semibold">Entity cards</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Every registered semantic entity type, using the same production presenter.</p>
+          </div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {semanticEntityFixtures.map((fixture) => (
+              <div key={fixture.label} className="min-w-0" data-testid={`ui-lab-${fixture.label.toLowerCase()}-card`}>
+                <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">{fixture.label}</div>
+                <RudderMcpSemanticPresenter block={fixture.block} />
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section aria-labelledby="semantic-card-rail-heading">
           <div className="mb-3">
             <h3 id="semantic-card-rail-heading" className="text-sm font-semibold">Horizontal result rail</h3>
