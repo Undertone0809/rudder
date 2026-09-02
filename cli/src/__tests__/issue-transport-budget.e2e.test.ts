@@ -47,12 +47,17 @@ describe("Issue transport fallback budget CLI workflow", () => {
       expect(firstError).toMatchObject({
         status: "error",
         code: "api_request_error",
+        message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue comments list iss_e2e --order desc --json",
         details: {
           status: 500,
           issueTransport: {
             state: "fallback_available",
             initialSurface: "mcp",
             fallbackBudgetRemaining: 1,
+            fallbackAction: {
+              surface: "cli",
+              command: "rudder issue comments list iss_e2e --order desc --json",
+            },
           },
         },
       });
@@ -70,6 +75,7 @@ describe("Issue transport fallback budget CLI workflow", () => {
             fallbackSurface: "cli",
             fallbackMatchedFingerprint: true,
             fallbackBudgetRemaining: 0,
+            fallbackAction: null,
           },
         },
       });
@@ -84,6 +90,7 @@ describe("Issue transport fallback budget CLI workflow", () => {
           issueTransport: {
             state: "blocked",
             fallbackBudgetRemaining: 0,
+            fallbackAction: null,
             checkpoint: "Issue transport unavailable",
           },
         },

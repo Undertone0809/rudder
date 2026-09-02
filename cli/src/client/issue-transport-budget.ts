@@ -15,6 +15,7 @@ type IssueTransportPhase =
 interface IssueTransportScope {
   operation: string;
   issueId: string;
+  fallbackCommand?: string;
 }
 
 interface IssueTransportFingerprint {
@@ -39,6 +40,12 @@ interface IssueTransportReservation {
   scope: IssueTransportScope;
   surface: RudderToolTransportSurface;
   attempt: "initial" | "fallback";
+}
+
+interface IssueTransportFallbackAction {
+  surface: RudderToolTransportSurface;
+  command?: string;
+  tool?: string;
 }
 
 export interface IssueTransportBudgetOptions {
@@ -98,7 +105,7 @@ export class IssueTransportBudget {
           return { filePath, scope, surface: this.surface, attempt: "fallback" };
         }
 
-        throw issueTransportUnavailable(state, now);
+        throw issueTransportUnavailable(state, now, scope);
       });
     } catch (error) {
       if (error instanceof ApiRequestError) throw error;
@@ -140,7 +147,8 @@ export class IssueTransportBudget {
         expiresAt: now + this.backoffMs,
       };
       await writeState(reservation.filePath, state);
-      attachTransportDiagnostic(error, state, now);
+      attachTransportDiagnostic(error, state, now, reservation.scope);
+      appendFallbackGuidance(error, state, reservation.scope);
       if (budgetExhausted) {
         error.code = "issue_transport_unavailable";
         error.message = "Issue transport unavailable";
@@ -186,7 +194,7 @@ export class IssueTransportBudget {
 
 function issueTransportScope(method: string | undefined, requestPath: string): IssueTransportScope | null {
   const normalizedMethod = String(method ?? "GET").toUpperCase();
-  const pathname = requestPath.split("?", 1)[0] ?? "";
+  const [pathname, queryString] = requestPath.split("?", 2);
   const match = /^\/api\/issues\/([^/]+)(?:\/(heartbeat-context|comments)(?:\/([^/]+))?)?$/.exec(pathname);
   if (!match) return null;
   const issueId = decodeURIComponent(match[1] ?? "");
@@ -198,7 +206,14 @@ function issueTransportScope(method: string | undefined, requestPath: string): I
   if (normalizedMethod === "GET" && resource === "comments" && !commentId) operation = "issue.comments.list";
   if (normalizedMethod === "GET" && resource === "comments" && commentId) operation = "issue.comments.get";
   if (normalizedMethod === "POST" && resource === "comments" && !commentId) operation = "issue.comment";
-  return operation ? { operation, issueId } : null;
+  if (!operation) return null;
+
+  const query = new URLSearchParams(queryString ?? "");
+  return {
+    operation,
+    issueId,
+    fallbackCommand: buildCliFallbackCommand(operation, issueId, commentId, query),
+  };
 }
 
 function buildFingerprint(scope: IssueTransportScope, error: ApiRequestError): IssueTransportFingerprint {
@@ -213,28 +228,62 @@ function buildFingerprint(scope: IssueTransportScope, error: ApiRequestError): I
   };
 }
 
-function issueTransportUnavailable(state: IssueTransportState, now: number): ApiRequestError {
-  const details = { issueTransport: transportDiagnostic(state, now) };
+function issueTransportUnavailable(
+  state: IssueTransportState,
+  now: number,
+  requestScope: IssueTransportScope = state,
+): ApiRequestError {
+  const details = { issueTransport: transportDiagnostic(state, now, requestScope) };
   return new ApiRequestError(
     503,
-    state.phase === "fallback_in_flight"
-      ? "Issue transport probe already in flight"
-      : "Issue transport unavailable",
+    issueTransportErrorMessage(state, requestScope),
     details,
     { error: "Issue transport unavailable", code: "issue_transport_unavailable", details },
     "issue_transport_unavailable",
   );
 }
 
-function attachTransportDiagnostic(error: ApiRequestError, state: IssueTransportState, now: number): void {
+function attachTransportDiagnostic(
+  error: ApiRequestError,
+  state: IssueTransportState,
+  now: number,
+  requestScope: IssueTransportScope = state,
+): void {
   const upstreamDetails = error.details;
   error.details = {
     ...(isRecord(upstreamDetails) ? upstreamDetails : upstreamDetails === undefined ? {} : { upstreamDetails }),
-    issueTransport: transportDiagnostic(state, now),
+    issueTransport: transportDiagnostic(state, now, requestScope),
   };
 }
 
-function transportDiagnostic(state: IssueTransportState, now: number) {
+function appendFallbackGuidance(
+  error: ApiRequestError,
+  state: IssueTransportState,
+  requestScope: IssueTransportScope,
+): void {
+  const fallback = issueTransportFallbackAction(state, requestScope);
+  if (!fallback) return;
+  error.message = `${error.message}; use the equivalent ${fallbackSurfaceLabel(fallback.surface)} fallback once: ${fallbackTarget(fallback)}`;
+}
+
+function issueTransportErrorMessage(
+  state: IssueTransportState,
+  requestScope: IssueTransportScope = state,
+): string {
+  const base = state.phase === "fallback_in_flight"
+    ? "Issue transport probe already in flight"
+    : "Issue transport unavailable";
+  const fallback = issueTransportFallbackAction(state, requestScope);
+  return fallback
+    ? `${base}; use the equivalent ${fallbackSurfaceLabel(fallback.surface)} fallback once: ${fallbackTarget(fallback)}`
+    : base;
+}
+
+function transportDiagnostic(
+  state: IssueTransportState,
+  now: number,
+  requestScope: IssueTransportScope = state,
+) {
   return {
     state: state.phase,
     fingerprint: state.failure?.fingerprint ?? null,
@@ -247,9 +296,81 @@ function transportDiagnostic(state: IssueTransportState, now: number) {
     fallbackSurface: state.fallbackSurface ?? null,
     fallbackMatchedFingerprint: state.fallbackMatchedFingerprint ?? null,
     fallbackBudgetRemaining: state.phase === "fallback_available" ? 1 : 0,
+    fallbackAction: issueTransportFallbackAction(state, requestScope),
     retryAfterMs: Math.max(0, state.expiresAt - now),
     checkpoint: "Issue transport unavailable",
   };
+}
+
+function issueTransportFallbackAction(
+  state: IssueTransportState,
+  requestScope: IssueTransportScope = state,
+): IssueTransportFallbackAction | null {
+  if (state.phase !== "fallback_available") return null;
+  if (state.initialSurface === "mcp") {
+    return {
+      surface: "cli",
+      command: requestScope.fallbackCommand
+        ?? state.fallbackCommand
+        ?? buildCliFallbackCommand(state.operation, state.issueId, undefined, new URLSearchParams()),
+    };
+  }
+  return {
+    surface: "mcp",
+    tool: mcpToolNameForOperation(state.operation),
+  };
+}
+
+function fallbackSurfaceLabel(surface: RudderToolTransportSurface): string {
+  return surface === "cli" ? "Rudder CLI" : "Rudder MCP";
+}
+
+function fallbackTarget(fallback: IssueTransportFallbackAction): string {
+  return fallback.command ?? fallback.tool ?? "the alternate Rudder transport";
+}
+
+function mcpToolNameForOperation(operation: string): string {
+  return `rudder_${operation.replace(/\./g, "_")}`;
+}
+
+function buildCliFallbackCommand(
+  operation: string,
+  issueId: string,
+  commentId: string | undefined,
+  query: URLSearchParams,
+): string {
+  const issue = shellQuote(issueId);
+  switch (operation) {
+    case "issue.get":
+      return `rudder issue get ${issue} --json`;
+    case "issue.context": {
+      const command = [`rudder issue context ${issue}`];
+      appendCliOption(command, "--wake-comment-id", query.get("wakeCommentId"));
+      return `${command.join(" ")} --json`;
+    }
+    case "issue.comments.list": {
+      const command = [`rudder issue comments list ${issue}`];
+      appendCliOption(command, "--after", query.get("after"));
+      appendCliOption(command, "--order", query.get("order"));
+      return `${command.join(" ")} --json`;
+    }
+    case "issue.comments.get":
+      return `rudder issue comments get ${issue} ${shellQuote(commentId ?? "<comment-id>")} --json`;
+    case "issue.comment":
+      return `rudder issue comment ${issue} --body-file ./issue-comment.md --json`;
+    default:
+      return `rudder issue ${shellQuote(operation)} ${issue} --json`;
+  }
+}
+
+function appendCliOption(command: string[], option: string, value: string | null): void {
+  if (value === null || value.trim().length === 0) return;
+  command.push(option, shellQuote(value));
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 async function readState(filePath: string): Promise<IssueTransportState | null> {

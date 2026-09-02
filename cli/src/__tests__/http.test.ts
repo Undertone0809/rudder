@@ -211,6 +211,7 @@ describe("RudderApiClient", () => {
     const first = await captureApiError(mcp.get("/api/issues/iss-1"));
     expect(first).toMatchObject({
       status: 500,
+      message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue get iss-1 --json",
       details: {
         issueTransport: {
           state: "fallback_available",
@@ -218,6 +219,10 @@ describe("RudderApiClient", () => {
           issueId: "iss-1",
           initialSurface: "mcp",
           fallbackBudgetRemaining: 1,
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue get iss-1 --json",
+          },
           checkpoint: "Issue transport unavailable",
         },
       },
@@ -236,6 +241,7 @@ describe("RudderApiClient", () => {
           initialSurface: "mcp",
           fallbackSurface: "cli",
           fallbackBudgetRemaining: 0,
+          fallbackAction: null,
         },
       },
     });
@@ -249,10 +255,149 @@ describe("RudderApiClient", () => {
           fingerprint,
           fallbackBudgetRemaining: 0,
           fallbackMatchedFingerprint: true,
+          fallbackAction: null,
         },
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders an operation-specific CLI fallback with the original Issue arguments", async () => {
+    const stateDir = await transportStateDir();
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const mcp = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId: "run-fallback-command",
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    const listError = await captureApiError(mcp.get(
+      "/api/issues/iss-1/comments?after=cmt_after&order=asc",
+    ));
+    expect(listError).toMatchObject({
+      message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue comments list iss-1 --after cmt_after --order asc --json",
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue comments list iss-1 --after cmt_after --order asc --json",
+          },
+        },
+      },
+    });
+
+    const commentError = await captureApiError(mcp.get(
+      "/api/issues/iss-1/comments/cmt_target",
+    ));
+    expect(commentError).toMatchObject({
+      message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue comments get iss-1 cmt_target --json",
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue comments get iss-1 cmt_target --json",
+          },
+        },
+      },
+    });
+
+    const contextError = await captureApiError(mcp.get(
+      "/api/issues/iss-1/heartbeat-context?wakeCommentId=cmt_wake",
+    ));
+    expect(contextError).toMatchObject({
+      message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue context iss-1 --wake-comment-id cmt_wake --json",
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue context iss-1 --wake-comment-id cmt_wake --json",
+          },
+        },
+      },
+    });
+
+    const writeError = await captureApiError(mcp.post(
+      "/api/issues/iss-1/comments",
+      { body: "preserve this comment", reopen: true },
+    ));
+    expect(writeError).toMatchObject({
+      message: "Internal server error; use the equivalent Rudder CLI fallback once: rudder issue comment iss-1 --body-file ./issue-comment.md --json",
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue comment iss-1 --body-file ./issue-comment.md --json",
+          },
+        },
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("points a CLI-origin failure at the equivalent MCP tool", async () => {
+    const stateDir = await transportStateDir();
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const cli = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId: "run-cli-first",
+      transportSurface: "cli",
+      transportStateDir: stateDir,
+    });
+
+    const error = await captureApiError(cli.get("/api/issues/iss-1/comments"));
+    expect(error).toMatchObject({
+      message: "Internal server error; use the equivalent Rudder MCP fallback once: rudder_issue_comments_list",
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            surface: "mcp",
+            tool: "rudder_issue_comments_list",
+          },
+        },
+      },
+    });
+  });
+
+  it("uses the current arguments when a same-surface read is short-circuited", async () => {
+    const stateDir = await transportStateDir();
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const mcp = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId: "run-current-fallback-arguments",
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    await expect(mcp.get("/api/issues/iss-1/comments/cmt-first")).rejects.toMatchObject({
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            command: "rudder issue comments get iss-1 cmt-first --json",
+          },
+        },
+      },
+    });
+    await expect(mcp.get("/api/issues/iss-1/comments/cmt-second")).rejects.toMatchObject({
+      status: 503,
+      message: "Issue transport unavailable; use the equivalent Rudder CLI fallback once: rudder issue comments get iss-1 cmt-second --json",
+      details: {
+        issueTransport: {
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue comments get iss-1 cmt-second --json",
+          },
+        },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not spend the fallback budget on a repeated call from the same surface", async () => {
@@ -271,11 +416,27 @@ describe("RudderApiClient", () => {
     await expect(mcp.get("/api/issues/iss-1/comments")).rejects.toMatchObject({ status: 500 });
     await expect(mcp.get("/api/issues/iss-1/comments")).rejects.toMatchObject({
       status: 503,
-      details: { issueTransport: { state: "fallback_available", fallbackBudgetRemaining: 1 } },
+      message: "Issue transport unavailable; use the equivalent Rudder CLI fallback once: rudder issue comments list iss-1 --json",
+      details: {
+        issueTransport: {
+          state: "fallback_available",
+          fallbackBudgetRemaining: 1,
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue comments list iss-1 --json",
+          },
+        },
+      },
     });
     await expect(cli.get("/api/issues/iss-1/comments")).rejects.toMatchObject({
       code: "issue_transport_unavailable",
-      details: { issueTransport: { state: "blocked", fallbackBudgetRemaining: 0 } },
+      details: {
+        issueTransport: {
+          state: "blocked",
+          fallbackBudgetRemaining: 0,
+          fallbackAction: null,
+        },
+      },
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

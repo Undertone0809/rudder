@@ -253,7 +253,7 @@ ordinary Chat replies, or non-MCP work.
 | Agent reads an Issue, compact Issue context, or Issue comments through typed MCP | The first-party MCP server dispatches the read directly so 5xx transport diagnostics remain structured and share the run budget with CLI fallback. |
 | Direct dispatch is not implemented for the capability and CLI invocation succeeds with JSON output | MCP result returns structured JSON content. |
 | Direct API dispatch, CLI invocation, or native bridge invocation fails | Tool result is marked error with a stable Rudder diagnostic code or safe error text. |
-| First Issue read/comment 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. |
+| First Issue read/comment 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. When the initial surface is MCP, the diagnostic includes an actionable `fallbackAction` with the equivalent `rudder issue ... --json` command and preserves the Issue arguments available from the request path. |
 | Same surface repeats before fallback/backoff | Return `issue_transport_unavailable` without another backend request; preserve the one different-surface fallback. |
 | Different surface succeeds | Return success and clear the short-circuit state immediately. |
 | Different surface returns a 5xx | Consume the fallback and return `issue_transport_unavailable`; make no additional backend call for that operation/Issue until the retry time. |
@@ -288,6 +288,12 @@ For an Issue read/comment 5xx, the agent also sees a bounded
 `issueTransport` diagnostic: fingerprint, operation, Issue id, upstream
 status/code/message, initial/fallback surface, remaining fallback count,
 retry-after duration, and the `Issue transport unavailable` checkpoint label.
+While the one heterogeneous fallback remains, `fallbackAction` identifies the
+alternate surface. For an MCP-origin failure it includes the exact equivalent
+`rudder issue ... --json` command (including the Issue, comment, and supported
+query arguments available from the request path); for a CLI-origin failure it
+names the equivalent typed MCP tool. Once the budget is consumed,
+`fallbackAction` is `null` and the error does not invite another probe.
 
 ### Operator-Visible Output
 
