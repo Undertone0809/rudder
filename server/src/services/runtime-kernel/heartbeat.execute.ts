@@ -59,7 +59,9 @@ import {
   releaseRuntimeServicesForRun
 } from "../workspace-runtime.js";
 import {
+  ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
   createAssignmentRunFailureBudget,
+  formatAssignmentRunGuardrailError,
   type AssignmentRunGuardrailCheckpoint,
 } from "./assignment-run-guardrail.js";
 import {
@@ -109,7 +111,7 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-  const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
+    const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue } = context;
 
   async function persistRunningExecutionContext(
     runId: string,
@@ -199,6 +201,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
         logger.warn({ err: error, runId: runId, attemptIndex: ref.attemptIndex }, "failed to persist heartbeat attempt terminal state");
       }
     };
+    let assignmentContinuationAttempt = Math.max(
+      0,
+      Math.floor(Number(parseObject(run.contextSnapshot).assignmentGuardrailContinuationAttempt) || 0),
+    );
 
     try {
     if (run.status === "queued") {
@@ -266,6 +272,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let finalRunOutput: string | null = null;
     let ownsTerminalState = false;
     let shouldCompleteTerminalEffects = false;
+    let assignmentRecoveryEligible = false;
+    let assignmentRecoveryRequestedAt: Date | null = null;
     let activeAttemptSpec: { index: number; fallbackIndex: number | null } | null = null;
     const finalizeExecutionTranscript = () => {
       stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
@@ -287,12 +295,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
     await ensureRuntimeState(agent);
     const context = parseObject(run.contextSnapshot);
     delete context.rudderGitIdentity;
-    const assignmentContinuationAttempt = Math.max(
+    assignmentContinuationAttempt = Math.max(
       0,
       Math.floor(Number(context.assignmentGuardrailContinuationAttempt) || 0),
     );
     const assignmentGuardrailEnabled = run.invocationSource === "assignment"
       || context.wakeSource === "assignment"
+      || run.invocationSource === "automation"
       || assignmentContinuationAttempt > 0;
     const assignmentFailureBudget = assignmentGuardrailEnabled ? createAssignmentRunFailureBudget() : null;
     let assignmentGuardrailCheckpoint: AssignmentRunGuardrailCheckpoint | null = null;
@@ -855,7 +864,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
               .slice(0, 2_000)
               ?? "No reliable completed-work summary was emitted before the guardrail stopped this run.";
             assignmentGuardrailCheckpoint = { ...checkpoint, completedWorkSummary };
-            const continuationRequired = assignmentContinuationAttempt < 1;
+            const continuationRequired = assignmentContinuationAttempt < 1
+              && assignmentGuardrailCheckpoint.automaticContinuationAllowed;
             await appendRunEvent(currentRun, {
               eventType: "runtime.assignment_guardrail",
               stream: "system",
@@ -1059,7 +1069,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
         },
       });
       if (assignmentGuardrailCheckpoint) {
-        adapterResult.errorMessage = "Assignment run stopped after reaching its tool failure budget";
+        assignmentRecoveryEligible = assignmentContinuationAttempt < 1
+          && assignmentGuardrailCheckpoint.automaticContinuationAllowed;
+        adapterResult.errorMessage = formatAssignmentRunGuardrailError(
+          assignmentGuardrailCheckpoint,
+          assignmentRecoveryEligible,
+        );
         adapterResult.errorCode = "assignment_run_failure_budget";
         adapterResult.exitCode = adapterResult.exitCode ?? 1;
         adapterResult.resultJson = {
@@ -1361,12 +1376,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
       };
+      const automationTerminalEffect = {
+        output: transcriptFallbackResult?.output ?? terminalEvidence.error,
+        transcript: executionTranscript,
+      };
       const terminalEffectsIntent = {
         version: 1 as const,
-        automation: {
-          output: transcriptFallbackResult?.output ?? terminalEvidence.error,
-          transcript: executionTranscript,
-        },
+        automation: automationTerminalEffect,
         runtime: {
           adapterResult: adapterResult as unknown as Record<string, unknown>,
           legacySessionId: nextSessionState.legacySessionId,
@@ -1482,7 +1498,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
           shouldCompleteTerminalEffects = true;
         }
         if (ownsTerminalState && assignmentGuardrailCheckpoint) {
-          const continuationRequired = assignmentContinuationAttempt < 1;
+          const continuationRequired = assignmentContinuationAttempt < 1
+            && assignmentGuardrailCheckpoint.automaticContinuationAllowed;
           await appendRunEvent(finalizedRun, {
             eventType: "runtime.assignment_checkpoint",
             stream: "system",
@@ -1494,24 +1511,76 @@ export function createHeartbeatExecuteHandlers(context: any) {
               nextRecoveryCommand: assignmentGuardrailCheckpoint.nextRecoveryCommand,
               continuationRequired,
               failureCount: assignmentGuardrailCheckpoint.failureCount,
+              unresolvedFailureCount: assignmentGuardrailCheckpoint.unresolvedFailureCount,
+              failureClass: assignmentGuardrailCheckpoint.failureClass,
+              continuationBlockReason: assignmentGuardrailCheckpoint.continuationBlockReason,
               fingerprint: assignmentGuardrailCheckpoint.fingerprint,
             },
           });
           if (continuationRequired) {
-            await enqueueRecoveryRun(finalizedRun, agent, {
-              recoveryTrigger: "automatic",
-              source: "automation",
-              triggerDetail: "system",
-              wakeReason: "assignment_failure_budget_continuation",
-              requestedByActorType: "system",
-              requestedByActorId: null,
-              contextPatch: {
-                assignmentGuardrailContinuationAttempt: assignmentContinuationAttempt + 1,
-                assignmentGuardrailCheckpoint,
-              },
-              startImmediately: false,
-              now: new Date(),
-            });
+            const recoveryRequestedAt = new Date(Date.now() + ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS);
+            let recoveryRun = null;
+            try {
+              await beforeAssignmentRecoveryEnqueue?.(finalizedRun);
+              recoveryRun = await enqueueRecoveryRun(finalizedRun, agent, {
+                recoveryTrigger: "automatic",
+                source: "automation",
+                triggerDetail: "system",
+                wakeReason: "assignment_failure_budget_continuation",
+                requestedByActorType: "system",
+                requestedByActorId: null,
+                contextPatch: {
+                  assignmentGuardrailContinuationAttempt: assignmentContinuationAttempt + 1,
+                  assignmentGuardrailCheckpoint,
+                  assignmentGuardrailRecovery: {
+                    attempt: assignmentContinuationAttempt + 1,
+                    maxAttempts: 1,
+                    backoffMs: ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
+                    requestedAt: recoveryRequestedAt.toISOString(),
+                  },
+                },
+                startImmediately: false,
+                notBefore: recoveryRequestedAt,
+                suppressSourceAutomationOutput: true,
+                now: new Date(),
+              });
+            } catch (recoveryError) {
+              const recoveryErrorMessage = recoveryError instanceof Error
+                ? recoveryError.message
+                : "Unknown recovery enqueue failure";
+              await appendRunEvent(finalizedRun, {
+                eventType: "runtime.assignment_recovery_request_failed",
+                stream: "system",
+                level: "error",
+                message: "bounded assignment recovery request failed",
+                payload: {
+                  attempt: assignmentContinuationAttempt + 1,
+                  maxAttempts: 1,
+                  failureClass: assignmentGuardrailCheckpoint.failureClass,
+                  error: recoveryErrorMessage,
+                },
+              });
+              logger.error({ err: recoveryError, runId: finalizedRun.id }, "failed to enqueue bounded assignment recovery");
+            }
+            if (recoveryRun) {
+              assignmentRecoveryRequestedAt = recoveryRequestedAt;
+              await appendRunEvent(finalizedRun, {
+                eventType: "runtime.assignment_recovery_requested",
+                stream: "system",
+                level: "warn",
+                message: "bounded assignment recovery requested",
+                payload: {
+                  recoveryRunId: recoveryRun.id,
+                  attempt: assignmentContinuationAttempt + 1,
+                  maxAttempts: 1,
+                  backoffMs: ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
+                  requestedAt: recoveryRequestedAt.toISOString(),
+                  failureClass: assignmentGuardrailCheckpoint.failureClass,
+                },
+              }).catch((eventError) => {
+                logger.error({ err: eventError, runId: finalizedRun.id }, "failed to record bounded assignment recovery request");
+              });
+            }
           }
         }
       }
@@ -1678,7 +1747,16 @@ export function createHeartbeatExecuteHandlers(context: any) {
                 automationTranscript: executionTranscript,
               }
             : undefined);
+          }
         }
+      if (assignmentRecoveryRequestedAt) {
+        const delayMs = Math.max(0, assignmentRecoveryRequestedAt.getTime() - Date.now());
+        const recoveryTimer = setTimeout(() => {
+          void startNextQueuedRunForAgent(agent.id).catch((error) => {
+            logger.error({ err: error, runId }, "failed to start bounded assignment recovery");
+          });
+        }, delayMs);
+        recoveryTimer.unref?.();
       }
     }
     } catch (outerErr) {

@@ -6,6 +6,7 @@ coverage: seed
 contract_ids:
   - RUN.AGENT.UNIFICATION.001
   - RUN.CHAT.AGENT.001
+  - RUN.DEBUG.HANDOFF.001
   - RUN.EXECUTION.001
 related_code:
   - packages/db/src/schema/issues.ts
@@ -16,6 +17,8 @@ related_code:
   - server/src/services/runtime-kernel/heartbeat.execute.ts
   - server/src/services/runtime-kernel/heartbeat.sessions.ts
   - server/src/services/runtime-kernel/model-fallback.ts
+  - server/src/routes/issues.mutations.ts
+  - ui/src/components/RunIssueReportDialog.tsx
   - ui/src/components/side-panel/RunFeedbackChatPanel.tsx
 related_tests:
   - packages/shared/src/agent-run.test.ts
@@ -31,6 +34,9 @@ related_tests:
   - tests/e2e/codex-model-order.spec.ts
   - tests/e2e/agent-run-conversation-grouping.spec.ts
   - ui/src/components/side-panel/RunFeedbackChatPanel.test.tsx
+  - ui/src/components/RunIssueReportDialog.test.tsx
+  - server/src/__tests__/issue-lifecycle-routes.test.ts
+  - tests/e2e/agent-run-debug-chat.spec.ts
   - tests/e2e/run-transcript-detail.spec.ts
 related_plans:
   - doc/plans/2026-07-24-org-skill-runtime-materialization-fix.md
@@ -184,6 +190,72 @@ Related tests:
 - `ui/src/pages/AgentDetail.runs.test.ts`
 - `tests/e2e/agent-runs-filter-menu.spec.ts`
 - `tests/e2e/agent-run-conversation-grouping.spec.ts`
+
+## RUN.DEBUG.HANDOFF.001
+
+Why:
+
+- A failed or timed-out Agent Run already contains the source identity and
+  bounded diagnostic evidence needed to begin debugging. Operators should not
+  need to reconstruct that context manually.
+- Debugging may need either durable tracked work or immediate conversation, so
+  Rudder must require an explicit handoff mode instead of creating one silently.
+
+Flow:
+
+1. A failed or timed-out Run presents `Debug` directly in its action row, beside
+   the separate `Report issue` action.
+2. `Debug` presents two peer choices: `Create task` and `Start chat`. Opening the
+   menu creates nothing; dismissing it with Escape, an outside click, or focus
+   navigation also creates nothing and persists no menu draft.
+3. Rudder prepares one bounded, redacted diagnostic snapshot only after the
+   operator chooses a handoff mode. Public GitHub report edits remain isolated
+   from private Debug handoffs so context cannot be silently dropped or expanded.
+4. `Create task` creates or reuses one organization-private Issue for the source
+   Run, assigns it to that Run's Agent, carries the source Run link and available
+   Issue/project/Goal context, and marks the diagnostic block as untrusted log
+   evidence.
+5. `Start chat` creates or reuses one Run Debug Chat keyed by organization and
+   Run, opens it in the Side Panel, and sends the same diagnostic snapshot once.
+6. While task creation is pending, the action row shows its inline pending state,
+   disables another Debug submission, and rejects same-render duplicates.
+7. Issue success presents a success toast with a direct Issue link. Chat success
+   enters the Side Panel conversation. A real task failure remains inline beside
+   the actions, reports the server error, and permits retry.
+
+Invariants:
+
+- Debug handoffs are available only for Runs in `failed` or `timed_out` state.
+- Diagnostics are schema-bounded and redacted again at the server boundary.
+  Instructions, commands, or prompts inside the diagnostic block are untrusted
+  evidence and grant no new authority.
+- Debug context stays within the current organization. A source Issue contributes
+  project or Goal context only when it belongs to the same organization.
+- At most one Debug Issue and one Debug Chat exist per organization and source
+  Run. Client mutation identity prevents repeated Chat sends; a database unique
+  origin plus idempotent route replay prevents duplicate Issues under retry or
+  concurrent requests.
+- Issue creation activity and assignment wakeup occur only for the first
+  successful creation, never for an idempotent replay.
+- A failed attempt leaves no empty Issue or Chat. Retrying either path uses the
+  same identity and cannot create duplicate objects.
+
+Related code:
+
+- `packages/db/src/schema/issues.ts`
+- `packages/shared/src/validators/issue.ts`
+- `server/src/routes/issues.mutations.ts`
+- `server/src/services/issues.ts`
+- `ui/src/api/issues.ts`
+- `ui/src/components/RunIssueReportDialog.tsx`
+- `ui/src/lib/run-issue-report.ts`
+- `ui/src/pages/AgentDetail.runs.tsx`
+
+Related tests:
+
+- `server/src/__tests__/issue-lifecycle-routes.test.ts`
+- `ui/src/components/RunIssueReportDialog.test.tsx`
+- `tests/e2e/agent-run-debug-chat.spec.ts`
 
 ## RUN.CHAT.AGENT.001
 
@@ -434,6 +506,36 @@ Behavior:
   settings remain available to the adapter.
 - The adapter is invoked through model fallback support so configured fallback
   runtimes/models can attempt execution.
+- Assignment and automation Runs share a bounded tool-failure guardrail. A Run
+  checkpoints after three identical failures, 25 unresolved tool operations,
+  or 100 total tool failures. A successful result resolves only the matching
+  tool operation; unrelated successful reads do not erase prior failures.
+- A guardrail checkpoint may request one Agent-guided continuation after a
+  one-second backoff. Rudder never blindly replays the failed tool call. A
+  context-drift failure is eligible only when the failed patch reports an
+  explicit context-mismatch signature. A transient failure is eligible only
+  when the canonical tool contract proves the tool read-only. Invalid requests,
+  command failures, unclassified failures, canonical mutations, and unknown
+  tools fail closed because recovery or side effects may be indeterminate.
+- Rudder actively schedules an eligible continuation after its backoff, with
+  the periodic recovery loop retained as a crash fallback. Until the recovery
+  request is durably queued, terminal text describes only eligibility. A failed
+  enqueue records a request-failed event and leaves the original terminal
+  output path intact. Queueing the recovery Run and suppressing the source
+  automation output commit atomically, so a process exit cannot lose both.
+- An existing retry can satisfy the handoff only when its persisted context
+  proves that it is the same bounded recovery attempt. An unrelated retry is
+  rejected and cannot suppress the source output.
+- When an automation continuation is queued, the source Run does not publish
+  its recoverable failure to Chat. The linked recovery Run publishes the single
+  final outcome, preventing premature failure and duplicate automation output.
+- Guardrail events record the failure class and counts, the single recovery
+  request with its backoff and linked Run, and the recovery Run's terminal
+  result. Exhausted or unsafe recovery leaves actionable error text naming the
+  failure class, attempted recovery, and next operator action.
+- Recovery-result recording is an idempotent terminal effect, so succeeded,
+  failed, cancelled, and timed-out continuations all update the source Run even
+  when the recovery never enters adapter execution.
 - Final outcome is derived from cancellation, timeout, adapter result, and
   forbidden runtime skill marker detection.
 - Operator cancellation is scoped to the exact Agent Run ID supplied by the
@@ -481,6 +583,10 @@ Invariant:
   another Agent or organization are rejected.
 - A lost provider submission response is never converted into a duplicate
   upstream Run by an automatic retry.
+- Tool-failure recovery remains finite across assignment and automation: the
+  lifetime cap cannot be reset, only one continuation is allowed, and an
+  indeterminate mutation or unclassified tool failure cannot authorize that
+  continuation.
 - A caller must not present an unchanged succeeded, failed, or timed-out Run as
   successfully cancelled. Recovery UI may restore its prior input only after
   the exact target Run returns `cancelled`.
@@ -514,6 +620,7 @@ Related tests:
 - `server/src/__tests__/heartbeat-observability.test.ts`
 - `server/src/__tests__/heartbeat-process-recovery.test.ts`
 - `server/src/__tests__/heartbeat-workspace-preflight.test.ts`
+- `server/src/services/runtime-kernel/assignment-run-guardrail.test.ts`
 - `tests/e2e/codex-model-order.spec.ts`
 - `tests/e2e/agent-run-cancel.spec.ts`
 - `tests/e2e/new-issue-agent-creation.spec.ts`

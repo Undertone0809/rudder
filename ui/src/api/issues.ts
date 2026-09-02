@@ -97,6 +97,11 @@ export const issuesApi = {
   unfollow: (id: string) => api.delete<{ ok: true }>(`/issues/${id}/follow`),
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Issue>(`/orgs/${orgId}/issues`, data),
+  createRunDebugIssue: (orgId: string, runId: string, diagnostics: string) =>
+    api.post<{ issue: Issue; created: boolean }>(
+      `/orgs/${orgId}/agent-runs/${runId}/debug-issue`,
+      { diagnostics },
+    ),
   listAgentIssueCreationRequests: (orgId: string) =>
     api.get<AgentIssueCreationRequest[]>(`/orgs/${orgId}/agent-issue-creation-requests`),
   createAgentIssueRequest: (orgId: string, data: CreateAgentIssueCreationRequest) =>

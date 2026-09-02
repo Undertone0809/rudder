@@ -127,5 +127,11 @@ export const issues = pgTable(
         sql`${table.originKind} = 'agent_issue_creation'
           and ${table.originId} is not null`,
       ),
+    runDebugOriginIdx: uniqueIndex("issues_run_debug_origin_uq")
+      .on(table.orgId, table.originKind, table.originId)
+      .where(
+        sql`${table.originKind} = 'run_debug'
+          and ${table.originId} is not null`,
+      ),
   }),
 );
