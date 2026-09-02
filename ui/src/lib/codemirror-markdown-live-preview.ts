@@ -1,6 +1,8 @@
 import { syntaxTree } from "@codemirror/language";
 import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, WidgetType, type EditorView } from "@codemirror/view";
+import { localFileIconDescriptor } from "./local-file-icons";
+import { resolveLocalFileDisplayTarget } from "./local-file-targets";
 import type {
   AtomicMarkdownReference,
   MarkdownPreviewBlock,
@@ -30,6 +32,38 @@ export function safeInteractiveMarkdownHref(href: string) {
     return null;
   }
   return href;
+}
+
+function interactiveLinkDecoration(href: string, label: string) {
+  const safeHref = safeInteractiveMarkdownHref(href);
+  if (!safeHref) {
+    return Decoration.mark({ class: "rudder-cm-markdown-link" });
+  }
+
+  const localFilePath = resolveLocalFileDisplayTarget(safeHref, label);
+  const localFileIcon = localFilePath ? localFileIconDescriptor(localFilePath) : null;
+  const attributes: Record<string, string> = {
+    "aria-label": `Open ${safeHref}`,
+    contenteditable: "false",
+    "data-markdown-link-href": safeHref,
+    href: safeHref,
+    rel: "noopener noreferrer",
+  };
+  if (HTTP_URL_RE.test(safeHref) || localFileIcon) attributes.target = "_blank";
+  if (localFileIcon) {
+    attributes["data-local-file-icon"] = localFileIcon.kind;
+    if (localFileIcon.mask) {
+      attributes.style = `--rudder-local-file-icon-mask: ${localFileIcon.mask}`;
+    }
+  }
+
+  return Decoration.mark({
+    class: localFileIcon
+      ? "rudder-cm-markdown-link rudder-cm-markdown-local-file-link"
+      : "rudder-cm-markdown-link",
+    tagName: "a",
+    attributes,
+  });
 }
 
 function containedByReference(
@@ -243,17 +277,10 @@ function syntaxDecorationsForBlocks(
           const href = urlRange
             ? unescapeMarkdownPunctuation(state.sliceDoc(urlRange.from, urlRange.to))
             : "";
-          decorations.push(Decoration.mark({
-            class: "rudder-cm-markdown-link",
-            attributes: safeInteractiveMarkdownHref(href)
-              ? {
-                "aria-label": `Open ${href}`,
-                "data-markdown-link-href": href,
-                role: "link",
-                tabindex: "0",
-              }
-              : undefined,
-          }).range(marks[0]!.to, marks[1]!.from));
+          const label = state.sliceDoc(marks[0]!.to, marks[1]!.from);
+          decorations.push(
+            interactiveLinkDecoration(href, label).range(marks[0]!.to, marks[1]!.from),
+          );
         }
         const href = urlRange
           ? unescapeMarkdownPunctuation(state.sliceDoc(urlRange.from, urlRange.to))
@@ -293,17 +320,9 @@ function syntaxDecorationsForBlocks(
         const emailAutolink = Boolean(emailRange)
           || (!EXPLICIT_SCHEME_RE.test(label) && label.includes("@"));
         const href = emailAutolink ? `mailto:${label}` : label;
-        decorations.push(Decoration.mark({
-          class: "rudder-cm-markdown-link",
-          attributes: safeInteractiveMarkdownHref(href)
-            ? {
-              "aria-label": `Open ${href}`,
-              "data-markdown-link-href": href,
-              role: "link",
-              tabindex: "0",
-            }
-            : undefined,
-        }).range(labelRange.from, labelRange.to));
+        decorations.push(
+          interactiveLinkDecoration(href, label).range(labelRange.from, labelRange.to),
+        );
         if (HTTP_URL_RE.test(href)) {
           websiteLinks.push({
             from: node.from,

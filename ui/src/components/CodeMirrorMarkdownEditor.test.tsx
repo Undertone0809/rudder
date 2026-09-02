@@ -772,10 +772,13 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(container?.textContent).toContain("[Section](#target)");
   });
 
-  it("opens an ordinary preview link on a modifier click or keyboard Enter", async () => {
+  it("opens modifier clicks in a new tab and opens an ordinary preview link on keyboard Enter", async () => {
+    const openedLinks: Array<{ href: string; target: string }> = [];
     const anchorClick = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => undefined);
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        openedLinks.push({ href: this.href, target: this.target });
+      });
     act(() => {
       root?.render(
         <CodeMirrorMarkdownEditor
@@ -786,18 +789,31 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const link = container?.querySelector<HTMLElement>("[data-markdown-link-href]");
+    const link = container?.querySelector<HTMLAnchorElement>("[data-markdown-link-href]");
+    expect(link?.tagName).toBe("A");
+    expect(link?.getAttribute("href")).toBe("https://openai.com");
+    expect(link?.getAttribute("target")).toBe("_blank");
     const click = new MouseEvent("click", {
       button: 0,
       bubbles: true,
       cancelable: true,
       ctrlKey: true,
     });
+    const pointerDown = new MouseEvent("mousedown", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    });
     act(() => {
+      expect(link?.dispatchEvent(pointerDown)).toBe(false);
       expect(link?.dispatchEvent(click)).toBe(false);
     });
 
+    expect(pointerDown.defaultPrevented).toBe(true);
+    expect(click.defaultPrevented).toBe(true);
     expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(openedLinks[0]).toMatchObject({ href: "https://openai.com/", target: "_blank" });
     const enter = new KeyboardEvent("keydown", {
       key: "Enter",
       bubbles: true,
@@ -808,6 +824,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
       expect(link?.dispatchEvent(enter)).toBe(false);
     });
     expect(anchorClick).toHaveBeenCalledTimes(2);
+    expect(openedLinks[1]).toMatchObject({ href: "https://openai.com/", target: "_blank" });
     anchorClick.mockRestore();
   });
 
@@ -825,7 +842,7 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     });
     await flushReact();
 
-    const link = container?.querySelector<HTMLElement>("[data-markdown-link-href]");
+    const link = container?.querySelector<HTMLAnchorElement>("[data-markdown-link-href]");
     expect(link?.getAttribute("data-markdown-link-href")).toBe("/r4/messenger");
     const pointerDown = new MouseEvent("mousedown", {
       button: 0,
@@ -849,6 +866,93 @@ describe("CodeMirrorMarkdownEditor live preview", { timeout: 15_000 }, () => {
     expect(anchorClick).toHaveBeenCalledTimes(1);
     expect(container?.querySelector('[data-markdown-preview-state="preview"]')).toBeTruthy();
     expect(container?.querySelector('[data-markdown-preview-state="source"]')).toBeNull();
+    anchorClick.mockRestore();
+  });
+
+  it("delegates ordinary preview link activation to the caller for click and Enter", async () => {
+    const openedLinks: Array<{ href: string; target: string }> = [];
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        openedLinks.push({ href: this.href, target: this.target });
+      });
+    const onLinkClick = vi.fn(() => true);
+    act(() => {
+      root?.render(
+        <CodeMirrorMarkdownEditor
+          value="Read [Proposal](/Users/zeeland/projects/rudder-oss/doc/proposal.md)."
+          onChange={() => undefined}
+          onLinkClick={onLinkClick}
+        />,
+      );
+    });
+    await flushReact();
+
+    const link = container?.querySelector<HTMLAnchorElement>("[data-markdown-link-href]");
+    expect(link?.textContent).toBe("Proposal");
+    expect(link?.tagName).toBe("A");
+    expect(link?.getAttribute("href")).toBe("/Users/zeeland/projects/rudder-oss/doc/proposal.md");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("contenteditable")).toBe("false");
+    expect(link?.getAttribute("data-local-file-icon")).toBe("document");
+    expect(link?.style.getPropertyValue("--rudder-local-file-icon-mask")).toContain("data:image/svg+xml");
+    const modifiedClick = new MouseEvent("click", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+      metaKey: true,
+    });
+    const middleClick = new MouseEvent("auxclick", {
+      button: 1,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      expect(link?.dispatchEvent(modifiedClick)).toBe(false);
+      expect(link?.dispatchEvent(middleClick)).toBe(false);
+    });
+    expect(modifiedClick.defaultPrevented).toBe(true);
+    expect(middleClick.defaultPrevented).toBe(true);
+    expect(onLinkClick).not.toHaveBeenCalled();
+    expect(anchorClick).toHaveBeenCalledTimes(2);
+    expect(openedLinks).toEqual([
+      {
+        href: "http://localhost:3000/Users/zeeland/projects/rudder-oss/doc/proposal.md",
+        target: "_blank",
+      },
+      {
+        href: "http://localhost:3000/Users/zeeland/projects/rudder-oss/doc/proposal.md",
+        target: "_blank",
+      },
+    ]);
+
+    const click = new MouseEvent("click", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      link?.dispatchEvent(click);
+    });
+
+    expect(onLinkClick).toHaveBeenCalledWith(expect.objectContaining({
+      href: "/Users/zeeland/projects/rudder-oss/doc/proposal.md",
+      label: "Proposal",
+    }));
+    expect(anchorClick).toHaveBeenCalledTimes(2);
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      link?.focus();
+      link?.dispatchEvent(enter);
+    });
+
+    expect(onLinkClick).toHaveBeenCalledTimes(2);
+    expect(anchorClick).toHaveBeenCalledTimes(2);
     anchorClick.mockRestore();
   });
 

@@ -1,5 +1,5 @@
 import { buildAgentMentionHref, resolveKnownWebsiteIcon } from "@rudderhq/shared";
-import { Check, Copy, File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText, Globe2 } from "lucide-react";
+import { Check, Copy, Globe2 } from "lucide-react";
 import { isValidElement, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,6 +7,7 @@ import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
 import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
+import { localFileIconDescriptor } from "../lib/local-file-icons";
 import {
   createMarkdownSourceBoundaryMap,
   normalizeRenderedMarkdownSource,
@@ -373,33 +374,8 @@ function useSelectionStableMarkdownSource(source: string) {
   return { renderedSource, rootRef };
 }
 
-function localFileIconKind(filePath: string) {
-  const extension = filePath.split(/[\\/]/u).at(-1)?.toLowerCase().match(/\.([^.]+)$/u)?.[1] ?? "";
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(extension)) return "image";
-  if (["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"].includes(extension)) return "archive";
-  if (["csv", "tsv", "xls", "xlsx", "ods"].includes(extension)) return "spreadsheet";
-  if ([
-    "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "kts",
-    "c", "cc", "cpp", "h", "hpp", "cs", "swift", "php", "sh", "bash", "zsh", "fish", "html",
-    "css", "scss", "less", "json", "jsonc", "yaml", "yml", "toml", "xml", "sql", "vue", "svelte",
-  ].includes(extension)) return "code";
-  if (["md", "mdx", "txt", "pdf", "doc", "docx", "rtf"].includes(extension)) return "document";
-  return "file";
-}
-
 function LocalFileLinkIcon({ filePath }: { filePath: string }) {
-  const kind = localFileIconKind(filePath);
-  const Icon = kind === "image"
-    ? FileImage
-    : kind === "archive"
-      ? FileArchive
-      : kind === "spreadsheet"
-        ? FileSpreadsheet
-        : kind === "code"
-          ? FileCode2
-          : kind === "document"
-            ? FileText
-            : File;
+  const { Icon, kind } = localFileIconDescriptor(filePath);
   return <Icon className="mr-1 inline-block size-[0.95em] align-[-0.12em]" data-local-file-icon={kind} aria-hidden="true" />;
 }
 

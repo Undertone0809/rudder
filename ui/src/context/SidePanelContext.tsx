@@ -115,7 +115,11 @@ function mobileSidePanelTargetHref(target: SidePanelTarget): string {
 
 function openSidePanelTargetOnMobile(target: SidePanelTarget): boolean {
   if (typeof window === "undefined" || window.innerWidth >= 768) return false;
-  if (target.kind === "goal_chat" || target.kind === "run_debug_chat") return false;
+  if (
+    target.kind === "goal_chat"
+    || target.kind === "run_debug_chat"
+    || target.kind === "local_file"
+  ) return false;
   const href = mobileSidePanelTargetHref(target);
   if (/^https?:\/\//i.test(href) && !href.startsWith(window.location.origin)) {
     window.location.assign(href);

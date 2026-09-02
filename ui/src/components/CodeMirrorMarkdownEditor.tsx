@@ -104,7 +104,7 @@ import {
 } from "../lib/mention-menu-position";
 import { cn } from "../lib/utils";
 import { getWebsiteMetadata } from "../lib/website-metadata-cache";
-import { MarkdownBody, WebsiteLinkIcon } from "./MarkdownBody";
+import { MarkdownBody, WebsiteLinkIcon, type MarkdownLinkClickHandler } from "./MarkdownBody";
 import type {
   MarkdownEditorProps,
   MarkdownEditorRef,
@@ -754,8 +754,8 @@ function adjacentAtomicReference(
 
 type MarkdownPortalDescriptor = Exclude<PortalDescriptor, { type: "website" }>;
 
-function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor) {
-  return ({ event }: { event: ReactMouseEvent<HTMLAnchorElement> }) => {
+function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor): MarkdownLinkClickHandler {
+  return ({ event }) => {
     const tokenElement = event.currentTarget.querySelector<HTMLElement>(
       "[data-mention-kind], [data-skill-token='true']",
     ) ?? event.currentTarget;
@@ -770,6 +770,29 @@ function portalLinkClickHandler(descriptor: MarkdownPortalDescriptor) {
     // behavior from competing with that activation.
     return true;
   };
+}
+
+function activateCodeMirrorMarkdownLink(
+  propsRef: { current: CodeMirrorMarkdownEditorProps },
+  event: MouseEvent | KeyboardEvent,
+  href: string,
+  label: string,
+) {
+  event.preventDefault();
+  event.stopPropagation();
+  const handled = propsRef.current.onLinkClick?.({ event, href, label });
+  if (!handled) openDecoratedMarkdownLink(href);
+  return true;
+}
+
+function openCodeMirrorMarkdownLinkInNewTab(
+  event: MouseEvent,
+  href: string,
+) {
+  event.preventDefault();
+  event.stopPropagation();
+  openDecoratedMarkdownLink(href, { newTab: true });
+  return true;
 }
 
 function PortalMarkdownBody({
@@ -788,8 +811,24 @@ function PortalMarkdownBody({
   const descriptorRef = useRef(descriptor);
   descriptorRef.current = descriptor;
   const handleLinkClick = useCallback<NonNullable<ComponentProps<typeof MarkdownBody>["onLinkClick"]>>(
-    (input) => portalLinkClickHandler(descriptorRef.current)(input),
-    [],
+    (input) => {
+      const descriptor = descriptorRef.current;
+      const tokenElement = input.event.currentTarget.querySelector<HTMLElement>(
+        "[data-mention-kind], [data-skill-token='true']",
+      ) ?? input.event.currentTarget;
+      const isToken = tokenElement !== input.event.currentTarget
+        || input.event.currentTarget.matches("[data-mention-kind], [data-skill-token='true']");
+      if (descriptor.type === "block" && !isToken) {
+        return propsRef.current.onLinkClick?.({
+          event: input.event.nativeEvent,
+          href: input.href,
+          label: input.label,
+          sourceHref: input.sourceHref,
+        });
+      }
+      return portalLinkClickHandler(descriptor)(input);
+    },
+    [propsRef],
   );
   const keyboardScopeRef = useRef<HTMLSpanElement | null>(null);
   const tableCellInputRef = useRef<HTMLInputElement | null>(null);
@@ -1902,10 +1941,12 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
             && !event.shiftKey
             && focusedHref
           ) {
-            event.preventDefault();
-            event.stopPropagation();
-            openDecoratedMarkdownLink(focusedHref);
-            return true;
+            return activateCodeMirrorMarkdownLink(
+              propsRef,
+              event,
+              focusedHref,
+              focusedLink?.textContent?.trim() || focusedHref,
+            );
           }
           if (!mentionStateRef.current) return false;
           if (event.key === "Escape") {
@@ -1939,20 +1980,11 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         mousedown: (event, view) => {
           const pointerTarget = event.target instanceof Element ? event.target : null;
           if (
-            isPrimaryPlainMouseEvent(event)
+            (event.button === 0 || event.button === 1)
             && pointerTarget?.closest("[data-markdown-link-href]")
           ) {
-            // Source-driven links are rendered as decorated spans rather than
-            // real anchors. Keep the preview stable so the matching click
-            // handler can open the link instead of activating the source line.
-            event.preventDefault();
-            return true;
-          }
-          if (
-            event.button === 0
-            && (event.metaKey || event.ctrlKey)
-            && pointerTarget?.closest("[data-markdown-link-href]")
-          ) {
+            // Keep CodeMirror pointer selection from revealing the source line.
+            // The following click or auxclick still reaches the real anchor.
             event.preventDefault();
             return true;
           }
@@ -2018,17 +2050,24 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           const target = event.target instanceof HTMLElement ? event.target : null;
           const link = target?.closest<HTMLElement>("[data-markdown-link-href]");
           const href = link?.dataset.markdownLinkHref;
-          if (
-            !href
-            || (
-              !isPrimaryPlainMouseEvent(event)
-              && !(event.button === 0 && (event.metaKey || event.ctrlKey))
-            )
-          ) return false;
-          event.preventDefault();
-          event.stopPropagation();
-          openDecoratedMarkdownLink(href);
-          return true;
+          if (!href) return false;
+          if (event.button === 0 && (event.metaKey || event.ctrlKey)) {
+            return openCodeMirrorMarkdownLinkInNewTab(event, href);
+          }
+          if (!isPrimaryPlainMouseEvent(event)) return false;
+          return activateCodeMirrorMarkdownLink(
+            propsRef,
+            event,
+            href,
+            link?.textContent?.trim() || href,
+          );
+        },
+        auxclick: (event) => {
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const link = target?.closest<HTMLElement>("[data-markdown-link-href]");
+          const href = link?.dataset.markdownLinkHref;
+          if (!href || event.button !== 1) return false;
+          return openCodeMirrorMarkdownLinkInNewTab(event, href);
         },
       })),
       Prec.highest(keymap.of([
