@@ -62,13 +62,16 @@ export function isPrimaryPlainMouseEvent(event: MouseEvent) {
     && !event.shiftKey;
 }
 
-export function openDecoratedMarkdownLink(href: string) {
+export function openDecoratedMarkdownLink(
+  href: string,
+  options: { newTab?: boolean } = {},
+) {
   if (typeof document === "undefined") return;
   if (!safeInteractiveMarkdownHref(href)) return;
   const anchor = document.createElement("a");
   anchor.href = href;
   anchor.rel = "noopener noreferrer";
-  if (/^https?:\/\//iu.test(href)) anchor.target = "_blank";
+  if (options.newTab || /^https?:\/\//iu.test(href)) anchor.target = "_blank";
   anchor.style.display = "none";
   document.body.append(anchor);
   anchor.click();

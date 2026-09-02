@@ -785,6 +785,16 @@ function activateCodeMirrorMarkdownLink(
   return true;
 }
 
+function openCodeMirrorMarkdownLinkInNewTab(
+  event: MouseEvent,
+  href: string,
+) {
+  event.preventDefault();
+  event.stopPropagation();
+  openDecoratedMarkdownLink(href, { newTab: true });
+  return true;
+}
+
 function PortalMarkdownBody({
   descriptor,
   onTableCellCommit,
@@ -1970,20 +1980,11 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
         mousedown: (event, view) => {
           const pointerTarget = event.target instanceof Element ? event.target : null;
           if (
-            isPrimaryPlainMouseEvent(event)
+            (event.button === 0 || event.button === 1)
             && pointerTarget?.closest("[data-markdown-link-href]")
           ) {
-            // Source-driven links are rendered as decorated spans rather than
-            // real anchors. Keep the preview stable so the matching click
-            // handler can open the link instead of activating the source line.
-            event.preventDefault();
-            return true;
-          }
-          if (
-            event.button === 0
-            && (event.metaKey || event.ctrlKey)
-            && pointerTarget?.closest("[data-markdown-link-href]")
-          ) {
+            // Keep CodeMirror pointer selection from revealing the source line.
+            // The following click or auxclick still reaches the real anchor.
             event.preventDefault();
             return true;
           }
@@ -2049,19 +2050,24 @@ const CodeMirrorMarkdownEditorInstance = forwardRef<
           const target = event.target instanceof HTMLElement ? event.target : null;
           const link = target?.closest<HTMLElement>("[data-markdown-link-href]");
           const href = link?.dataset.markdownLinkHref;
-          if (
-            !href
-            || (
-              !isPrimaryPlainMouseEvent(event)
-              && !(event.button === 0 && (event.metaKey || event.ctrlKey))
-            )
-          ) return false;
+          if (!href) return false;
+          if (event.button === 0 && (event.metaKey || event.ctrlKey)) {
+            return openCodeMirrorMarkdownLinkInNewTab(event, href);
+          }
+          if (!isPrimaryPlainMouseEvent(event)) return false;
           return activateCodeMirrorMarkdownLink(
             propsRef,
             event,
             href,
             link?.textContent?.trim() || href,
           );
+        },
+        auxclick: (event) => {
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const link = target?.closest<HTMLElement>("[data-markdown-link-href]");
+          const href = link?.dataset.markdownLinkHref;
+          if (!href || event.button !== 1) return false;
+          return openCodeMirrorMarkdownLinkInNewTab(event, href);
         },
       })),
       Prec.highest(keymap.of([

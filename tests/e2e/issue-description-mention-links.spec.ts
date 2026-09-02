@@ -25,6 +25,7 @@ async function installLocalFilePreviewStub(page: Page, targetPath: string, conte
             writeCapability: null,
           };
         },
+        setBadgeCount: async () => {},
         setSidePanelCloseShortcutActive: async () => {},
       },
     });
@@ -149,6 +150,11 @@ test("ordinary issue description Markdown links open from the live preview", asy
 });
 
 test("opens an absolute local Markdown link from the issue description in the Side Panel", async ({ page }, testInfo) => {
+  const runtimeErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
   const localFilePath = "/Users/zeeland/projects/uranus/rudder/proposals/2026-08-20-rudder-actix-web-backend-migration-proposal.md";
   const originalDescription = `Review [Proposal](${localFilePath}) before continuing.`;
   await installLocalFilePreviewStub(
@@ -172,7 +178,11 @@ test("opens an absolute local Markdown link from the issue description in the Si
     },
   });
   expect(issueRes.ok(), await issueRes.text()).toBe(true);
-  const issue = await issueRes.json() as { id: string; identifier: string | null };
+  const issue = await issueRes.json() as {
+    id: string;
+    identifier: string | null;
+    updatedAt: string;
+  };
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.evaluate((orgId) => {
@@ -185,6 +195,8 @@ test("opens an absolute local Markdown link from the issue description in the Si
   );
   const localFileLink = editor.locator("[data-markdown-link-href]").filter({ hasText: "Proposal" });
   await expect(localFileLink).toBeVisible();
+  await expect(localFileLink).toHaveAttribute("href", localFilePath);
+  await expect(localFileLink).toHaveAttribute("data-local-file-icon", "document");
   const issueUrl = page.url();
   await localFileLink.click();
 
@@ -212,9 +224,27 @@ test("opens an absolute local Markdown link from the issue description in the Si
     "Opened from an absolute local Markdown link in an Issue description.",
   );
   await expect(page).toHaveURL(issueUrl);
+  await expect(editor.locator('[data-markdown-preview-state="preview"]')).toBeVisible();
+  await expect(editor.locator('[data-markdown-preview-state="source"]')).toHaveCount(0);
 
   await sidePanel.getByRole("button", { name: "Close Side Panel" }).click();
   await expect(sidePanel).toBeHidden();
+
+  const modifierPopupPromise = page.waitForEvent("popup");
+  await localFileLink.click({ modifiers: ["Meta"] });
+  const modifierPopup = await modifierPopupPromise;
+  await modifierPopup.waitForLoadState("domcontentloaded");
+  expect(new URL(modifierPopup.url()).pathname).toBe(localFilePath);
+  await modifierPopup.close();
+  await expect(page).toHaveURL(issueUrl);
+
+  const middlePopupPromise = page.waitForEvent("popup");
+  await localFileLink.click({ button: "middle" });
+  const middlePopup = await middlePopupPromise;
+  await middlePopup.waitForLoadState("domcontentloaded");
+  expect(new URL(middlePopup.url()).pathname).toBe(localFilePath);
+  await middlePopup.close();
+  await expect(page).toHaveURL(issueUrl);
   await page.setViewportSize({ width: 390, height: 844 });
   await localFileLink.click();
 
@@ -228,7 +258,11 @@ test("opens an absolute local Markdown link from the issue description in the Si
 
   const issueReadback = await page.request.get(`/api/issues/${issue.id}`);
   expect(issueReadback.ok(), await issueReadback.text()).toBe(true);
-  expect((await issueReadback.json() as { description: string | null }).description).toBe(
-    originalDescription,
-  );
+  const persistedIssue = await issueReadback.json() as {
+    description: string | null;
+    updatedAt: string;
+  };
+  expect(persistedIssue.description).toBe(originalDescription);
+  expect(persistedIssue.updatedAt).toBe(issue.updatedAt);
+  expect(runtimeErrors).toEqual([]);
 });

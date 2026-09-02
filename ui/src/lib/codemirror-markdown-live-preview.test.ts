@@ -31,6 +31,7 @@ function decoratedRanges(source: string, activeIds = new Set<string>()) {
     source: source.slice(range.from, range.to),
     class: range.value.spec.class as string | undefined,
     attributes: range.value.spec.attributes as Record<string, string> | undefined,
+    tagName: range.value.spec.tagName as string | undefined,
   }));
 }
 
@@ -165,7 +166,17 @@ describe("sourceDrivenMarkdownPreview", () => {
       ));
       expect(link?.attributes?.["data-markdown-link-href"]).toBe(href);
       expect(link?.attributes?.contenteditable).toBe("false");
+      expect(link?.attributes?.href).toBe(href);
+      expect(link?.tagName).toBe("a");
     }
+
+    const localFile = decoratedRanges("[Proposal](/Users/zeeland/projects/rudder-oss/proposal.md)").find((range) => (
+      range.attributes?.["data-local-file-icon"] === "document"
+    ));
+    expect(localFile?.class).toContain("rudder-cm-markdown-local-file-link");
+    expect(localFile?.attributes?.href).toBe("/Users/zeeland/projects/rudder-oss/proposal.md");
+    expect(localFile?.attributes?.style).toContain("--rudder-local-file-icon-mask:");
+    expect(localFile?.tagName).toBe("a");
 
     const email = decoratedRanges("<foo@example.com>").find((range) => (
       range.class === "rudder-cm-markdown-link"
