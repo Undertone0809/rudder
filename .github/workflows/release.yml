@@ -155,7 +155,7 @@ jobs:
             if (plan.qualification !== "full" || plan.fullQualification !== true) {
               throw new Error("Release promotion requires full Test qualification");
             }
-            NODE
+          NODE
             then
               selected_run_id="$run_id"
               break
