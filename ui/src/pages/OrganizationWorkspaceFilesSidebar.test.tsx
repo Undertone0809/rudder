@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DialogProvider } from "../context/DialogContext";
 import { OrganizationWorkspaceFilesSidebar } from "./organization-workspaces/OrganizationWorkspaceFilesSidebar";
 
 (
@@ -284,7 +285,11 @@ function renderSidebar(activePath?: string, props?: Parameters<typeof Organizati
   let root: Root | null = null;
   act(() => {
     root = createRoot(container);
-    root.render(<OrganizationWorkspaceFilesSidebar {...props} />);
+    root.render(
+      <DialogProvider>
+        <OrganizationWorkspaceFilesSidebar {...props} />
+      </DialogProvider>,
+    );
   });
   cleanupFn = () => root?.unmount();
 }

@@ -148,6 +148,20 @@ async function setTargetDate(value: string) {
   await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
 
   const dateLabel = date.toLocaleDateString();
+  const currentMonth = newGoalDefaults.targetTime
+    ? new Date(newGoalDefaults.targetTime)
+    : new Date();
+  const monthDelta = (date.getFullYear() - currentMonth.getFullYear()) * 12
+    + date.getMonth() - currentMonth.getMonth();
+  const navigationLabel = monthDelta < 0 ? "Go to the Previous Month" : "Go to the Next Month";
+  for (let month = 0; month < Math.abs(monthDelta); month += 1) {
+    const navigationButton = document.querySelector<HTMLButtonElement>(`button[aria-label="${navigationLabel}"]`);
+    if (!navigationButton) throw new Error(`Missing calendar navigation ${navigationLabel}`);
+    act(() => navigationButton.click());
+    await waitUntil(() => {
+      expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull();
+    });
+  }
   const dateButton = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
     .find((candidate) => candidate.dataset.day === dateLabel);
   if (!dateButton) throw new Error(`Missing calendar day ${dateLabel}`);

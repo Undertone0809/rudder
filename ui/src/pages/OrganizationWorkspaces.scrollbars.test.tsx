@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { organizationsApi } from "../api/orgs";
+import { DialogProvider } from "../context/DialogContext";
 import { __clearLibraryEntryMetadataCacheForTests, __setLibraryEntryMetadataCacheForTests } from "../lib/library-entry-cache";
 import { OrganizationWorkspaces, WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
 import { OrganizationWorkspaceFilesSidebar } from "./organization-workspaces/OrganizationWorkspaceFilesSidebar";
@@ -768,7 +769,11 @@ function renderWorkspacesPage() {
   }
   act(() => {
     currentRoot ??= createRoot(currentContainer!);
-    currentRoot.render(<OrganizationWorkspaces />);
+    currentRoot.render(
+      <DialogProvider>
+        <OrganizationWorkspaces />
+      </DialogProvider>,
+    );
   });
   cleanupFn = () => currentRoot?.unmount();
 }
@@ -1157,10 +1162,10 @@ describe("OrganizationWorkspaces scroll regions", () => {
     act(() => {
       currentRoot ??= createRoot(currentContainer!);
       currentRoot.render(
-        <>
+        <DialogProvider>
           <OrganizationWorkspaceFilesSidebar />
           <OrganizationWorkspaces />
-        </>,
+        </DialogProvider>,
       );
     });
     cleanupFn = () => currentRoot?.unmount();
