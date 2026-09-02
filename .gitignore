@@ -19,6 +19,7 @@ server/resources/bundled-skills/app-builder/assets/scaffold/data/*
 tmp-*
 cli/tmp/
 .artifacts/
+/artifacts/
 
 # Local delivery evidence belongs in the Codex workspace, not the repository.
 evidence/
