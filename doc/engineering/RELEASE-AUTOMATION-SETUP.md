@@ -279,6 +279,38 @@ SHA to have a successful `main` Test run before it can publish.
 The generated post-stable `[skip release]` version commit is also pushed
 directly to `main`, followed by an explicit CI dispatch for its immutable SHA.
 
+## 7.1. Configure progressive qualification and candidate promotion
+
+The `Test` workflow is the qualification boundary for both merge protection
+and release promotion. Ensure the required status check is the aggregate
+`Qualification summary`, not a platform job that is intentionally skipped by
+the impact planner. The planner artifact records the source SHA, comparison
+SHA, changed areas, required families, escalation reasons, and plan digest.
+
+The repository should enable merge queue only after the `merge_group` trigger
+is visible on the default branch. Merge-group candidates use the full
+qualification profile. Pull requests with bounded changes may use the
+affected profile; workflow, release, dependency, shared-contract, database,
+native, Desktop, and unbounded changes must remain fail-closed to the full
+profile.
+
+The Release workflow owns candidate creation and promotion. Candidate artifacts
+are retained for seven days and include one manifest binding the source commit
+and tree, successful qualification run, candidate run, trusted workflow source,
+runtime identity, all 15 npm payloads, all seven fixed Desktop identities, and
+checksums. The same artifact contains the frozen `runtime.json`; consumers
+compare it with the manifest and the expected Node/pnpm/Rust/packaging runtime.
+Stable, canary, and COS mirror jobs must download artifacts from that candidate
+run and pass the manifest check immediately before mutation. Use the manual
+stable `candidate_run_id` input only to promote an existing verified candidate;
+do not copy artifacts into a new run or rebuild them.
+
+For a trusted exact-source qualification, run `Test` from `main` with the full
+source SHA in `source_sha`. Before enabling the merge queue or relying on
+promotion, verify one run in Actions has a successful `Qualification summary`
+and an unexpired candidate manifest whose source, tree, workflow identity,
+qualification run, and artifact digests agree.
+
 ## 8. CODEOWNERS
 
 `.github/CODEOWNERS` remains useful for optional review routing, but the standard
@@ -471,17 +503,22 @@ timeout again.
 Re-run the failed mirror job after fixing credentials or network state. The
 GitHub checksum marker remains absent until COS succeeds. For partial stable
 recovery after the mirror code or credentials changed, dispatch the same
-`release.yml` workflow with `mirror_recovery=true`, the current reviewed main
+`release.yml` workflow with `mirror_recovery=true`, the original stable tag
 commit as `source_ref`, the existing Release tag as `recovery_tag`, and the
 original Release `candidate_run_id`. This path downloads only the frozen
 Desktop artifacts from that run, does not republish npm, retag Git, or rebuild
 Desktop, and publishes the GitHub checksum marker only after COS succeeds.
-The recovery job requires the current source to be an ancestor of `main`, and
-requires the candidate run to be a manual Release from the repository's `main`
-history; a run that was cancelled after publishing the candidate is acceptable
-when all artifacts remain available. The mirror step then verifies every
-downloaded candidate artifact against the existing GitHub Release before COS
-upload. Do not use a branch or a newly generated artifact run for `source_ref`.
+The recovery job requires the released source and the candidate workflow
+revision to be ancestors of `main`, and requires the candidate run to be a
+manual Release from the repository's `main` history; a run that was cancelled
+after publishing the candidate is acceptable when all artifacts remain
+available. The candidate manifest, rather than the dispatch run's own
+`head_sha`, carries and verifies the original `source_ref`, source tree,
+workflow revision, qualification run, and candidate artifacts. The mirror step then verifies every
+downloaded candidate artifact, the frozen runtime, and the fixed Desktop
+identity set against the existing GitHub Release before COS upload. Do not use
+a branch, the current main tip, or a newly generated artifact run for
+`source_ref`.
 
 ### Optional CODEOWNERS routing does not trigger
 

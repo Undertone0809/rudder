@@ -161,6 +161,35 @@ those undeclared areas or the whole repository have zero bypasses. Add a domain
 to enforced scope only after its public entrypoints are stable, and include a
 fixture when changing checker behavior.
 
+## Progressive CI Qualification
+
+The `Test` workflow uses `scripts/ci-impact-plan.mjs` to choose the smallest
+qualification profile that is still safe for the changed paths. The planner
+and the `Qualification summary` job are always present, so the workflow keeps
+one required status check while recording which families actually ran.
+
+- Every pull request runs `architecture`. Docs-only changes also run `docs`.
+- Other bounded pull requests run `affected` and add `docs` when documentation
+  paths are included.
+- Workflow, release, dependency, shared-contract, database, native, Desktop,
+  or unbounded changes fail closed to `architecture`, `docs`, `verify`,
+  `native`, and `desktop`.
+- `merge_group`, trusted `workflow_dispatch`, and pushes to `main` use the full
+  qualification profile. A manual run may provide `source_sha` to qualify an
+  immutable source commit.
+
+The plan records changed paths, comparison SHA, selected families, escalation
+reasons, and a content digest as an artifact. Skipped families are intentional
+and are checked by `Qualification summary`; a required family that fails or is
+silently skipped fails the workflow. Release promotion must use a successful
+`Qualification summary` for the exact source SHA rather than a lower-level job
+or an unrelated successful run.
+
+For an exact-source run from the canonical repository, dispatch `ci.yml` from
+`main` with `-f source_sha=<full-commit-sha>`. The release handoff uses this
+same path for the next patch base. Do not use a branch name as the source when
+the result will authorize a release.
+
 ## Plan Docs
 
 Repo `doc/plans/` is contributor decision memory, not just scratch writing.
