@@ -832,7 +832,6 @@ function Receipt({
   const className = cn(
     "grid w-full grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_2px_4px_rgba(15,23,42,0.04),0_12px_28px_-16px_rgba(15,23,42,0.30)] sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] dark:shadow-[0_2px_6px_rgba(0,0,0,0.28),0_16px_32px_-18px_rgba(0,0,0,0.70)]",
     target && "cursor-pointer transition-[transform,box-shadow,border-color] duration-200 hover:border-primary/70 focus-within:border-primary/70",
-    interactive && "-translate-y-0.5 border-primary/70 shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.40)] ring-2 ring-ring/35",
   );
   return (
     <div
