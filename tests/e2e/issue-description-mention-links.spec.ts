@@ -80,16 +80,20 @@ test("issue description special mention links stay inside the active organizatio
 
   const descriptionLink = page.getByRole("link", { name: targetIssueRef }).first();
   await expect(descriptionLink).toBeVisible();
-  await expect(descriptionLink).toHaveAttribute("href", `issue://${targetIssue.id}`);
-  await expect(page.locator(".rudder-issue-description-surface .rudder-milkdown-scope"))
-    .toHaveAttribute("data-inline-token-click-mode", "plain");
   const activeOrganizationPrefix = new URL(page.url()).pathname.split("/").filter(Boolean)[0];
   expect(activeOrganizationPrefix).toBeTruthy();
+  await expect(descriptionLink).toHaveAttribute(
+    "href",
+    `/${activeOrganizationPrefix}/issues/${targetIssue.id}`,
+  );
+  await expect(page.locator(
+    ".rudder-issue-description-surface [data-editor-engine='codemirror-live-preview']",
+  )).toBeVisible();
 
-  const libraryFileLink = page.getByRole("link", { name: "Reference map" }).first();
+  const libraryFileLink = page.getByRole("link", { name: "reference-map.md" }).first();
   await expect(libraryFileLink).toHaveAttribute(
     "href",
-    "library-file://file?p=docs%2Freference-map.md",
+    `/${activeOrganizationPrefix}/library?path=docs%2Freference-map.md`,
   );
   await libraryFileLink.click();
   await expect(page).toHaveURL(
