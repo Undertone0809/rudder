@@ -110,7 +110,6 @@ export interface TranscriptImageEvidence {
 }
 
 export interface TranscriptToolCardEntry {
-  identity?: string;
   ts: string;
   endTs?: string;
   name: string;
@@ -242,7 +241,7 @@ export interface TranscriptAgentInspection {
 }
 
 export type TranscriptBlock =
-  | ({
+  | {
       type: "message";
       role: "assistant" | "user";
       source?: "steer";
@@ -254,16 +253,16 @@ export type TranscriptBlock =
       streaming: boolean;
       segmentId?: string;
       sourceEntryIds?: string[];
-    } & Partial<TranscriptGenerationProvenance> & TranscriptBlockIdentity)
-  | ({
+    } & Partial<TranscriptGenerationProvenance>
+  | {
       type: "thinking";
       ts: string;
       text: string;
       streaming: boolean;
       segmentId?: string;
       sourceEntryIds?: string[];
-    } & Partial<TranscriptGenerationProvenance> & TranscriptBlockIdentity)
-  | ({
+    } & Partial<TranscriptGenerationProvenance>
+  | {
       type: "tool";
       ts: string;
       endTs?: string;
@@ -274,36 +273,36 @@ export type TranscriptBlock =
       isError?: boolean;
       status: "running" | "completed" | "error";
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity)
-  | ({
+    }
+  | {
       type: "activity";
       ts: string;
       activityId?: string;
       name: string;
       status: "running" | "completed";
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity)
-  | ({
+    }
+  | {
       type: "todo_list";
       ts: string;
       todoListId?: string;
       items: TranscriptTodoListItem[];
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity)
-  | ({
+    }
+  | {
       type: "command_group";
       ts: string;
       endTs?: string;
       items: Array<TranscriptToolCardEntry>;
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity)
-  | ({
+    }
+  | {
       type: "stdout";
       ts: string;
       text: string;
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity)
-  | ({
+    }
+  | {
       type: "memory_update";
       ts: string;
       status: "completed" | "error";
@@ -315,8 +314,8 @@ export type TranscriptBlock =
       rawText: string;
       failureReason?: string;
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity)
-  | ({
+    }
+  | {
       type: "event";
       ts: string;
       label: string;
@@ -325,12 +324,7 @@ export type TranscriptBlock =
       detail?: string;
       collapseByDefault?: boolean;
       sourceEntryIds?: string[];
-    } & TranscriptBlockIdentity);
-
-interface TranscriptBlockIdentity {
-  /** Stable UI identity carried from the first source entry that created a block. */
-  identity?: string;
-}
+    };
 
 export function transcriptBlockStableKey(block: TranscriptBlock, fallbackIndex: number) {
   const sourceEntryId = block.sourceEntryIds?.[0]?.trim() || null;
@@ -375,148 +369,6 @@ export type ChatTranscriptAction =
       type: "stdout";
       entry: Extract<TranscriptBlock, { type: "stdout" }>;
     };
-
-export function transcriptEntryIdentity(
-  entry: TranscriptEntry,
-): string {
-  const identityEntry = entry as TranscriptEntry & Partial<{
-    generationId: string;
-    generationSeqStart: number;
-    streamStartTs: string;
-  }>;
-  const primarySourceEntryId = entry.sourceEntryId?.trim();
-  if (primarySourceEntryId) return `source:${primarySourceEntryId}`;
-
-  const generationId = identityEntry.generationId?.trim();
-  const generationSeqStart = identityEntry.generationSeqStart;
-  const streamStartTs = identityEntry.streamStartTs?.trim();
-  const phase = entry.kind === "assistant" ? entry.phase ?? "" : "";
-  const timestamp = entry.ts.trim();
-
-  switch (entry.kind) {
-    case "assistant":
-    case "thinking":
-      if (generationId && Number.isInteger(generationSeqStart)) {
-        return `${entry.kind}:generation:${generationId}:${generationSeqStart}`;
-      }
-      if (entry.segmentId) return `${entry.kind}:segment:${entry.segmentId}`;
-      if (entry.delta === true) {
-        return `${entry.kind}:stream:${streamStartTs ?? timestamp}:phase:${phase}`;
-      }
-      return `${entry.kind}:timestamp:${timestamp}:phase:${phase}:digest:${transcriptIdentityDigest(entry.text)}`;
-    case "user":
-      if (entry.messageId) return `user:message:${entry.messageId}`;
-      return `user:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.text)}`;
-    case "tool_call":
-      if (entry.toolUseId) return `tool:call:${entry.toolUseId}`;
-      return `tool:call:${entry.name}:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.input)}`;
-    case "tool_result":
-      if (entry.toolUseId) return `tool:result:${entry.toolUseId}`;
-      return `tool:result:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.content)}`;
-    case "todo_list":
-      if (entry.todoListId) return `todo:${entry.todoListId}`;
-      return `todo:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.items)}`;
-    case "init":
-      if (entry.sessionId) return `init:${entry.sessionId}`;
-      return `init:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.model)}`;
-    case "result":
-      return `result:timestamp:${timestamp}:digest:${transcriptIdentityDigest({
-        text: entry.text,
-        errors: entry.errors,
-        subtype: entry.subtype,
-      })}`;
-    case "stderr":
-      return `stderr:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.text)}`;
-    case "system":
-      return `system:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.text)}`;
-    case "stdout":
-      return `stdout:timestamp:${timestamp}:digest:${transcriptIdentityDigest(entry.text)}`;
-  }
-}
-
-function transcriptIdentityDigest(value: unknown): string {
-  const serialized = stableTranscriptIdentityValue(value);
-  let hash = 2166136261;
-  for (let index = 0; index < serialized.length; index += 1) {
-    hash ^= serialized.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function stableTranscriptIdentityValue(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "bigint") return `${value}n`;
-  if (typeof value === "undefined") return "undefined";
-  if (Array.isArray(value)) return `[${value.map(stableTranscriptIdentityValue).join(",")}]`;
-  if (typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, nested]) => `${JSON.stringify(key)}:${stableTranscriptIdentityValue(nested)}`)
-      .join(",")}}`;
-  }
-  return String(value);
-}
-
-export function transcriptToolCardIdentity(entry: TranscriptToolCardEntry): string {
-  if (entry.identity) return entry.identity;
-  const primarySourceEntryId = entry.sourceEntryIds?.[0];
-  if (primarySourceEntryId) return `source:${primarySourceEntryId}`;
-  if (entry.toolUseId) return `tool:${entry.toolUseId}`;
-  return `tool:${entry.name}:timestamp:${entry.ts}:digest:${transcriptIdentityDigest({
-    input: entry.input,
-    result: entry.result,
-  })}`;
-}
-
-export function transcriptBlockIdentity(block: TranscriptBlock): string {
-  if (block.identity) return block.identity;
-  const primarySourceEntryId = block.sourceEntryIds?.[0];
-  if (primarySourceEntryId) return `source:${primarySourceEntryId}`;
-
-  switch (block.type) {
-    case "message":
-      if (block.messageId) return `message:${block.messageId}`;
-      if (block.segmentId) return `message:segment:${block.segmentId}`;
-      if (block.generationId && Number.isInteger(block.generationSeqStart)) {
-        return `message:generation:${block.generationId}:${block.generationSeqStart}`;
-      }
-      break;
-    case "thinking":
-      if (block.segmentId) return `thinking:segment:${block.segmentId}`;
-      if (block.generationId && Number.isInteger(block.generationSeqStart)) {
-        return `thinking:generation:${block.generationId}:${block.generationSeqStart}`;
-      }
-      break;
-    case "tool":
-      if (block.toolUseId) return `tool:${block.toolUseId}`;
-      break;
-    case "command_group": {
-      const firstItem = block.items[0];
-      if (firstItem) return `command-group:${transcriptToolCardIdentity(firstItem)}`;
-      break;
-    }
-    case "activity":
-      if (block.activityId) return `activity:${block.activityId}`;
-      break;
-    case "todo_list":
-      if (block.todoListId) return `todo:${block.todoListId}`;
-      break;
-    case "stdout":
-      return `stdout:timestamp:${block.ts}:digest:${transcriptIdentityDigest(block.text)}`;
-    case "memory_update":
-      return `memory:timestamp:${block.ts}:digest:${transcriptIdentityDigest(block.rawText)}`;
-    case "event":
-      return `event:${block.label}:timestamp:${block.ts}:digest:${transcriptIdentityDigest({
-        text: block.text,
-        detail: block.detail,
-      })}`;
-  }
-
-  return `${block.type}:timestamp:${block.ts}:digest:${transcriptIdentityDigest(block)}`;
-}
 
 export const COMMON_FILENAME_TOKENS = new Set([
   "README",

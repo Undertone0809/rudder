@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Blocks, type LucideIcon } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 export function themedPluginIconUrl(
   iconUrl: string | null | undefined,
@@ -10,25 +10,6 @@ export function themedPluginIconUrl(
   if (!normalized) return null;
   if (!normalized.includes("/api/plugins/catalog/")) return normalized;
   return `${normalized}${normalized.includes("?") ? "&" : "?"}theme=${resolvedTheme}`;
-}
-
-export function PluginIconFrame({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex shrink-0 items-center justify-center rounded-[4px] border border-[color:var(--border-soft)] bg-muted/40",
-        className,
-      )}
-    >
-      {children}
-    </div>
-  );
 }
 
 export function PluginIcon({

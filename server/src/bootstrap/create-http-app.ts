@@ -88,18 +88,12 @@ export async function createHttpApp(
     res.status(404).type("text/plain").send("Not found");
   });
 
-  const preserveRawBody = (req: express.Request, _res: express.Response, buf: Buffer) => {
-    (req as unknown as { rawBody: Buffer }).rawBody = buf;
-  };
-  app.use("/api/orgs/:orgId/plugins", express.json({
-    // A 100 MiB binary Plugin snapshot expands when transported as base64 JSON.
-    limit: "150mb",
-    verify: preserveRawBody,
-  }));
   app.use(express.json({
     // Organization import/export payloads can inline full portable packages.
     limit: "10mb",
-    verify: preserveRawBody,
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody: Buffer }).rawBody = buf;
+    },
   }));
   app.use(markBrowserHttpRequestBodySensitive);
   app.use(httpLogger);

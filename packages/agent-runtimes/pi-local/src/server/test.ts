@@ -77,9 +77,9 @@ function buildProviderAuthHint(provider: string): string {
   const envKeys = PROVIDER_API_KEY_HINTS[normalizedProvider];
   if (envKeys && envKeys.length > 0) {
     const formattedKeys = envKeys.map((key) => `\`${key}\``).join(" or ");
-    return `Configure ${formattedKeys} for provider "${provider}" in the Pi runtime or run Pi /login, then retry.`;
+    return `Set ${formattedKeys} for provider "${provider}" in the agent runtime env or run Pi /login, then retry.`;
   }
-  return `Configure provider "${provider}" in the Pi runtime or run Pi /login, then retry.`;
+  return `Set the API key for provider "${provider}" in the agent runtime env or run Pi /login, then retry.`;
 }
 
 const PI_AUTH_REQUIRED_RE =

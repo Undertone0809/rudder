@@ -3,7 +3,7 @@ import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn, formatTokens } from "../../lib/utils";
 import { formatTranscriptLabel, TranscriptActivityRow, TranscriptEventRow, TranscriptMessageBlock, TranscriptRunAnnotationBlock, TranscriptStdoutRow, TranscriptThinkingBlock, TranscriptTodoListRow, TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatTurn } from "./RunTranscriptView.chat";
-import { isInternalAgentInstructionText, TranscriptBlock, transcriptBlockIdentity, TranscriptDensity, transcriptEntryIdentity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSkillTarget, transcriptToolCardIdentity } from "./RunTranscriptView.common";
+import { isInternalAgentInstructionText, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSkillTarget } from "./RunTranscriptView.common";
 import { formatTodoListRaw, normalizeChatTranscriptTurns, parseClaudeSkillContext } from "./RunTranscriptView.normalize";
 import { formatToolPayload } from "./RunTranscriptView.semantic";
 
@@ -17,11 +17,10 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
   for (const block of blocks) {
     if (block.type === "command_group") {
-      block.items.forEach((item) => {
+      block.items.forEach((item, index) => {
         rows.push({
-          key: `command-${transcriptToolCardIdentity(item)}`,
+          key: `${block.ts}-command-${index}-${item.ts}`,
           block: {
-            identity: item.identity,
             type: "tool",
             ts: item.ts,
             endTs: item.endTs,
@@ -40,7 +39,7 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "message") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
@@ -48,7 +47,7 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "thinking") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
@@ -56,7 +55,7 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "tool") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
@@ -64,7 +63,7 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "todo_list") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
@@ -72,7 +71,7 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "activity") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
@@ -80,7 +79,7 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "memory_update") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
@@ -88,14 +87,14 @@ export function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTim
 
     if (block.type === "event") {
       rows.push({
-        key: transcriptBlockIdentity(block),
+        key: `${block.type}-${block.ts}-${rows.length}`,
         block,
       });
       continue;
     }
 
     rows.push({
-      key: transcriptBlockIdentity(block),
+      key: `${block.type}-${block.ts}-${rows.length}`,
       block,
     });
   }
@@ -219,16 +218,35 @@ export function RawTranscriptView({
   limit?: number;
 }) {
   const compact = density === "compact";
-  const displayEntries = useMemo(() => coalesceRawTranscriptEntries(entries), [entries]);
-  const visibleEntries = useMemo(() => {
-    return limit ? displayEntries.slice(-limit) : displayEntries;
-  }, [displayEntries, limit]);
+  const displayEntries = useMemo(() => {
+    const coalesced: TranscriptEntry[] = [];
+
+    for (const entry of entries) {
+      const previous = coalesced[coalesced.length - 1];
+      if (
+        (entry.kind === "assistant" || entry.kind === "thinking")
+        && entry.delta === true
+        && previous?.kind === entry.kind
+        && previous.delta === true
+      ) {
+        coalesced[coalesced.length - 1] = {
+          ...previous,
+          ts: entry.ts,
+          text: previous.text + entry.text,
+        };
+        continue;
+      }
+      coalesced.push(entry);
+    }
+
+    return limit ? coalesced.slice(-limit) : coalesced;
+  }, [entries, limit]);
 
   return (
     <div className={cn("font-mono", compact ? "space-y-1 text-[11px]" : "space-y-1.5 text-xs")}>
-      {visibleEntries.map((entry) => (
+      {displayEntries.map((entry, idx) => (
         <div
-          key={transcriptEntryIdentity(entry)}
+          key={`${entry.kind}-${entry.ts}-${idx}`}
           className={cn(
             "grid gap-x-3",
             "grid-cols-[auto_1fr]",
@@ -254,31 +272,6 @@ export function RawTranscriptView({
       ))}
     </div>
   );
-}
-
-export function coalesceRawTranscriptEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  const coalesced: TranscriptEntry[] = [];
-
-  for (const entry of entries) {
-    const previous = coalesced[coalesced.length - 1];
-    if (
-      (entry.kind === "assistant" || entry.kind === "thinking")
-      && entry.delta === true
-      && previous?.kind === entry.kind
-      && previous.delta === true
-    ) {
-      coalesced[coalesced.length - 1] = {
-        ...previous,
-        ts: entry.ts,
-        text: previous.text + entry.text,
-        streamStartTs: (previous as TranscriptEntry & { streamStartTs?: string }).streamStartTs ?? previous.ts,
-      } as unknown as TranscriptEntry;
-      continue;
-    }
-    coalesced.push(entry);
-  }
-
-  return coalesced;
 }
 
 function formatRawTranscriptLabel(entry: TranscriptEntry): string {

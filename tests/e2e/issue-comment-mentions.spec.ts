@@ -166,20 +166,6 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   expect(agentRes.ok()).toBe(true);
   const agent = await agentRes.json() as { id: string; name: string };
 
-  const secondAgentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
-    data: {
-      name: "Morgan Reliability Reviewer",
-      role: "engineer",
-      agentRuntimeType: "process",
-      agentRuntimeConfig: {
-        command: process.execPath,
-        args: ["-e", "process.exit(0)"],
-      },
-    },
-  });
-  expect(secondAgentRes.ok()).toBe(true);
-  const secondAgent = await secondAgentRes.json() as { id: string; name: string };
-
   const primaryIssueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
     data: {
       title: "Primary issue for comment mentions",
@@ -261,50 +247,6 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(agentChipLink).toBeVisible();
   await expect(agentChipLink).toContainText("Dylan");
   await expect(composer).toContainText(/before Dylan.*next\s+after/);
-
-  await page.keyboard.type("@morgan");
-  await page.getByTestId(`markdown-mention-option-agent:${secondAgent.id}`).click();
-  await page.keyboard.type(" join ");
-  await expect(composer.locator(`a[href^="agent://${secondAgent.id}"]`).first()).toContainText(secondAgent.name);
-
-  const composerToolbar = page.getByTestId("issue-comment-composer-toolbar").last();
-  const wakeStatus = composerToolbar.getByTestId("comment-agent-wake-status");
-  const wakeStatusButton = wakeStatus.getByTestId("comment-agent-wake-summary");
-  const attachmentButton = composerToolbar.getByTitle("Attach file");
-  await expect(wakeStatusButton).toContainText("2 agents will start when sent");
-  const [attachmentBox, wakeStatusBox] = await Promise.all([
-    attachmentButton.boundingBox(),
-    wakeStatusButton.boundingBox(),
-  ]);
-  expect(attachmentBox).not.toBeNull();
-  expect(wakeStatusBox).not.toBeNull();
-  expect(Math.abs(
-    attachmentBox!.y + attachmentBox!.height / 2
-    - (wakeStatusBox!.y + wakeStatusBox!.height / 2),
-  )).toBeLessThanOrEqual(1);
-  await wakeStatusButton.click();
-  const wakePopover = page.getByTestId("comment-agent-wake-popover");
-  await expect(wakePopover).toBeVisible();
-  await expect(wakePopover).toContainText("Will start when sent");
-  await expect(wakePopover).toContainText("Dylan");
-  await expect(wakePopover).toContainText(secondAgent.name);
-  await wakePopover.getByTestId(`comment-agent-wake-status-${agent.id}`).click();
-  await expect(wakeStatusButton).toContainText("1 of 2 agents will start when sent");
-  await expect(wakePopover.getByTestId(`comment-agent-wake-status-${agent.id}`)).toHaveAttribute("data-wake-state", "skipped");
-  await expect(wakePopover).toContainText("Won't start this time");
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await wakeStatusButton.scrollIntoViewIfNeeded();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
-    .toBeLessThanOrEqual(0);
-  await expect(wakePopover).toBeHidden();
-  await wakeStatusButton.click();
-  await expect(wakePopover).toBeVisible();
-  const mobilePopoverBox = await wakePopover.boundingBox();
-  expect(mobilePopoverBox).not.toBeNull();
-  expect(mobilePopoverBox!.x).toBeGreaterThanOrEqual(8);
-  expect(mobilePopoverBox!.x + mobilePopoverBox!.width).toBeLessThanOrEqual(390 - 8);
-  await page.setViewportSize({ width: 1440, height: 720 });
 
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);

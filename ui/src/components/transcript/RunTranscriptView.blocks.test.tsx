@@ -291,86 +291,6 @@ describe("TranscriptRunAnnotationBlock", () => {
     }
   });
 
-  it("keeps terminal reasoning and tool evidence annotatable when provider state is incomplete", () => {
-    const incompleteProviderBlocks: TranscriptBlock[] = [
-      {
-        type: "thinking",
-        ts: "2026-07-23T12:00:10.000Z",
-        text: "A persisted reasoning delta without a provider completion marker.",
-        streaming: true,
-        sourceEntryIds: ["reasoning-delta"],
-      },
-      {
-        type: "tool",
-        ts: "2026-07-23T12:00:11.000Z",
-        name: "shell",
-        input: { command: "printf pending" },
-        status: "running",
-        sourceEntryIds: ["tool-without-result"],
-      },
-    ];
-    const context = {
-      sourceRunId: "run-1",
-      sourceAgentId: "agent-1",
-      onAnnotate: vi.fn(),
-    };
-    const terminalContainer = render(
-      <>
-        {incompleteProviderBlocks.map((block) => (
-          <TranscriptRunAnnotationBlock
-            key={block.sourceEntryIds?.[0]}
-            block={block}
-            presentation="detail"
-            context={context}
-            streaming={false}
-          >
-            <span>{block.type} evidence</span>
-          </TranscriptRunAnnotationBlock>
-        ))}
-      </>,
-    );
-
-    expect(terminalContainer.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(2);
-    expect(terminalContainer.querySelectorAll("[data-run-transcript-block-stable='true']")).toHaveLength(0);
-
-    const liveContainer = render(
-      <>
-        {incompleteProviderBlocks.map((block) => (
-          <TranscriptRunAnnotationBlock
-            key={block.sourceEntryIds?.[0]}
-            block={block}
-            presentation="detail"
-            context={context}
-            streaming
-          >
-            <span>{block.type} evidence</span>
-          </TranscriptRunAnnotationBlock>
-        ))}
-      </>,
-    );
-    expect(liveContainer.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(0);
-    expect(liveContainer.querySelectorAll("[data-run-transcript-block-stable='true']")).toHaveLength(0);
-
-    const unstableMessageContainer = render(
-      <TranscriptRunAnnotationBlock
-        block={{
-          type: "message",
-          role: "assistant",
-          ts: "2026-07-23T12:00:12.000Z",
-          text: "An assistant response that is still receiving deltas.",
-          streaming: true,
-          sourceEntryIds: ["assistant-delta"],
-        }}
-        presentation="detail"
-        context={context}
-        streaming
-      >
-        <span>assistant evidence</span>
-      </TranscriptRunAnnotationBlock>,
-    );
-    expect(unstableMessageContainer.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(0);
-  });
-
   it("keeps transition annotations bound to adjacent items with identical text", () => {
     const onAnnotate = vi.fn();
     const blocks = [
@@ -481,53 +401,6 @@ describe("TranscriptRunAnnotationBlock", () => {
     expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(0);
   });
 
-  it("does not dismiss an open editor when the pointer crosses another transcript item", () => {
-    function CoordinatedBlocks() {
-      const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
-      const context = {
-        sourceRunId: "run-1",
-        sourceAgentId: "agent-1",
-        activeBlockId,
-        onAnnotationFocus: setActiveBlockId,
-        onAnnotate: vi.fn(),
-      };
-      return (
-        <>
-          {(["first", "second"] as const).map((id) => (
-            <TranscriptRunAnnotationBlock
-              key={id}
-              block={{
-                type: "thinking",
-                ts: `2026-07-23T12:01:0${id === "first" ? "0" : "1"}.000Z`,
-                text: `${id} reasoning`,
-                streaming: false,
-                sourceEntryIds: [id],
-              }}
-              presentation="detail"
-              context={context}
-            >
-              <span>{id} content</span>
-            </TranscriptRunAnnotationBlock>
-          ))}
-        </>
-      );
-    }
-
-    const container = render(<CoordinatedBlocks />);
-    const blocks = Array.from(container.querySelectorAll<HTMLElement>("[data-run-transcript-block='true']"));
-    const triggers = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-run-transcript-annotation-trigger]"));
-    triggers.forEach((trigger) => {
-      trigger.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
-    });
-
-    act(() => triggers[0]?.focus());
-    act(() => triggers[0]?.click());
-    expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(1);
-
-    act(() => blocks[1]?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true })));
-    expect(document.querySelectorAll("[data-testid='chat-response-annotation-editor']")).toHaveLength(1);
-  });
-
   it("adds independent annotation wrappers to expanded action rows", () => {
     const actions: ChatTranscriptAction[] = [
       {
@@ -579,7 +452,7 @@ describe("TranscriptRunAnnotationBlock", () => {
     expect(container.querySelectorAll("[data-run-transcript-annotation-trigger]")).toHaveLength(3);
   });
 
-  it("keeps persisted action row annotation affordances hidden while the run is streaming", () => {
+  it("keeps action row annotation affordances hidden while streaming", () => {
     const actions: ChatTranscriptAction[] = [{
       key: "tool-action-live",
       type: "tool",
@@ -668,7 +541,6 @@ describe("TranscriptRunAnnotationBlock", () => {
       anchorKind: "text",
       text: "Selectable transcript text",
       sourceRunId: "run-1",
-      blockId: "event-1",
       sourceMemberIds: ["event-1"],
       comment: "Needs review",
       pendingFiles: [],

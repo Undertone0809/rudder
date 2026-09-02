@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -366,7 +366,7 @@ describe("Desktop Local Apps native controller", () => {
     const created = await registry.createDefinition(prepared);
     const runtime = {
       start: vi.fn(), stop: vi.fn(), status: vi.fn(async () => ({ status: "stopped" as const })),
-      logs: vi.fn(), attestedTarget: vi.fn(), shutdown: vi.fn(), discardPersistedState: vi.fn(),
+      logs: vi.fn(), attestedTarget: vi.fn(), shutdown: vi.fn(),
     };
     const controller = new LocalAppsController({
       registry, runtime, selectFolder: vi.fn(async () => null), confirmDefinition: vi.fn(async () => false),
@@ -375,51 +375,13 @@ describe("Desktop Local Apps native controller", () => {
     await expect(controller.start(created.id)).rejects.toThrow("canceled");
     await expect(controller.deleteDefinition(created.id)).resolves.toBeUndefined();
     await expect(registry.getDefinition(created.id)).rejects.toThrow("not found");
-    expect(runtime.discardPersistedState).toHaveBeenCalledWith(created.id);
-  });
-
-  it("folds legacy duplicate projects while retaining the safest opaque binding", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-legacy-duplicate-"));
-    const registryPath = path.join(root, "registry.json");
-    const registry = new LocalAppRegistry({ registryPath, installationId: "install-a" });
-    const prepared = await registry.prepareDefinition(draft(root));
-    const first = await registry.createDefinition(prepared);
-    const state = JSON.parse(await readFile(registryPath, "utf8")) as {
-      definitions: Array<Record<string, unknown>>;
-    };
-    const duplicateId = "legacy-duplicate-binding";
-    state.definitions.push({
-      ...state.definitions[0],
-      id: duplicateId,
-      localBindingId: duplicateId,
-      appPublicId: "legacy-duplicate-public",
-      title: "Newest duplicate",
-      updatedAt: "2099-01-01T00:00:00.000Z",
-    });
-    await writeFile(registryPath, JSON.stringify(state), { mode: 0o600 });
-    const reloaded = new LocalAppRegistry({ registryPath, installationId: "install-a" });
-    let activeId: string | null = null;
-    const runtime = {
-      start: vi.fn(), stop: vi.fn(), logs: vi.fn(), attestedTarget: vi.fn(), shutdown: vi.fn(),
-      status: vi.fn(async (id: string) => ({ status: id === activeId ? "running" as const : "failed" as const })),
-    };
-    const controller = new LocalAppsController({
-      registry: reloaded, runtime, selectFolder: vi.fn(async () => null), confirmDefinition: vi.fn(async () => true),
-    });
-
-    await expect(controller.listDefinitions()).resolves.toMatchObject([{ id: duplicateId, title: "Newest duplicate" }]);
-    activeId = first.id;
-    await expect(controller.listDefinitions()).resolves.toMatchObject([{ id: first.id }]);
-    expect(await reloaded.listDefinitions()).toHaveLength(2);
   });
 
   it("does not serialize operations for different bindings", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-distinct-bindings-"));
-    const secondRoot = path.join(root, "second");
-    await mkdir(secondRoot);
     const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
     const firstPrepared = await registry.prepareDefinition({ ...draft(root), title: "First" });
-    const secondPrepared = await registry.prepareDefinition({ ...draft(secondRoot), title: "Second" });
+    const secondPrepared = await registry.prepareDefinition({ ...draft(root), title: "Second" });
     const first = await registry.createDefinition(firstPrepared);
     const second = await registry.createDefinition(secondPrepared);
     const approvalEntered = deferred<void>();
@@ -491,48 +453,6 @@ describe("Desktop Local Apps native controller", () => {
     await controller.start(created.id);
     expect(confirmDefinition).toHaveBeenCalledTimes(2);
     expect(runtime.start).toHaveBeenCalledWith(created.id);
-  });
-
-  it("reuses the existing binding when the same canonical project is registered again", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-deduplicate-"));
-    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
-    const runtime = {
-      start: vi.fn(), stop: vi.fn(), status: vi.fn(async () => ({ status: "stopped" as const })),
-      logs: vi.fn(), attestedTarget: vi.fn(), shutdown: vi.fn(),
-    };
-    const confirmDefinition = vi.fn(async () => true);
-    const controller = new LocalAppsController({
-      registry, runtime, selectFolder: vi.fn(async () => null), confirmDefinition,
-    });
-
-    const first = await controller.createDefinition(draft(root));
-    const second = await controller.createDefinition({ ...draft(root), title: "Updated title" });
-
-    expect(second.id).toBe(first.id);
-    expect(second.title).toBe("Updated title");
-    expect(await registry.listDefinitions()).toHaveLength(1);
-    expect(runtime.status).toHaveBeenCalledWith(first.id);
-    expect(confirmDefinition).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not replace a duplicate project binding whose ownership is still unverified", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "rudder-local-app-controller-deduplicate-active-"));
-    const registry = new LocalAppRegistry({ registryPath: path.join(root, "registry.json"), installationId: "install-a" });
-    const prepared = await registry.prepareDefinition(draft(root));
-    const existing = await registry.createDefinition(prepared);
-    const confirmDefinition = vi.fn(async () => true);
-    const runtime = {
-      start: vi.fn(), stop: vi.fn(), status: vi.fn(async () => ({ status: "orphaned_unverified" as const })),
-      logs: vi.fn(), attestedTarget: vi.fn(), shutdown: vi.fn(),
-    };
-    const controller = new LocalAppsController({
-      registry, runtime, selectFolder: vi.fn(async () => null), confirmDefinition,
-    });
-
-    await expect(controller.createDefinition({ ...draft(root), title: "Replacement" })).rejects.toThrow("unverified");
-    expect(confirmDefinition).not.toHaveBeenCalled();
-    expect((await registry.getDefinition(existing.id)).title).toBe(prepared.title);
-    expect(await registry.listDefinitions()).toHaveLength(1);
   });
 
   it("reviews and approves an unapproved definition before start", async () => {

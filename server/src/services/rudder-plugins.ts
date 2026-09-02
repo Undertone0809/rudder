@@ -43,8 +43,7 @@ import {
   selectedAgentIdsForSkill,
 } from "./rudder-plugin-agent-bindings.js";
 
-export const MAX_PLUGIN_PACKAGE_BYTES = 100 * 1024 * 1024;
-export const MAX_PLUGIN_PACKAGE_MIB = MAX_PLUGIN_PACKAGE_BYTES / (1024 * 1024);
+const MAX_PLUGIN_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ARCHIVE_RATIO = 100;
 const MAX_MCP_UI_HTML_BYTES = 2 * 1024 * 1024;
@@ -95,9 +94,7 @@ function decodeBase64(value: string, label: string): Buffer {
 
 function unzipPackageFiles(content: string, label: string, stripPluginRoot: boolean): RudderPluginPackageFileInput[] {
   const archive = decodeBase64(content, label);
-  if (archive.byteLength > MAX_PLUGIN_PACKAGE_BYTES) {
-    throw unprocessable(`Plugin archive exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
-  }
+  if (archive.byteLength > MAX_PLUGIN_BYTES) throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
   const files: RudderPluginPackageFileInput[] = [];
   let totalBytes = 0;
   let failure: Error | null = null;
@@ -128,10 +125,10 @@ function unzipPackageFiles(content: string, label: string, stripPluginRoot: bool
       }
       entryBytes += data.byteLength;
       totalBytes += data.byteLength;
-      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_PLUGIN_PACKAGE_BYTES) {
+      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_PLUGIN_BYTES) {
         failure = new Error(entryBytes > MAX_FILE_BYTES
           ? `Plugin archive entry exceeds 2 MiB: ${file.name}`
-          : `Plugin archive exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB expansion safety limit`);
+          : "Plugin archive exceeds the 10 MiB V1 expansion limit");
         file.terminate();
         return;
       }
@@ -196,9 +193,7 @@ function normalizeFiles(input: InspectRudderPlugin): {
     const content = decodeInputFile(inputFile);
     if (content.byteLength > MAX_FILE_BYTES) throw unprocessable(`Plugin file exceeds 2 MiB: ${normalized}`);
     totalBytes += content.byteLength;
-    if (totalBytes > MAX_PLUGIN_PACKAGE_BYTES) {
-      throw unprocessable(`Plugin package exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
-    }
+    if (totalBytes > MAX_PLUGIN_BYTES) throw unprocessable("Plugin package exceeds the 10 MiB V1 limit");
     bytes.set(normalized, content);
   }
 
@@ -827,13 +822,11 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
       });
       if (!response.ok) throw unprocessable(`Pinned Git marketplace fetch failed with HTTP ${response.status}`);
       const contentLength = Number(response.headers.get("content-length") ?? "0");
-      if (Number.isFinite(contentLength) && contentLength > MAX_PLUGIN_PACKAGE_BYTES) {
-        throw unprocessable(`Pinned Git marketplace archive exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
+      if (Number.isFinite(contentLength) && contentLength > MAX_PLUGIN_BYTES) {
+        throw unprocessable("Pinned Git marketplace archive exceeds the 10 MiB V1 limit");
       }
       const archive = Buffer.from(await response.arrayBuffer());
-      if (archive.byteLength > MAX_PLUGIN_PACKAGE_BYTES) {
-        throw unprocessable(`Pinned Git marketplace archive exceeds the ${MAX_PLUGIN_PACKAGE_MIB} MiB safety limit`);
-      }
+      if (archive.byteLength > MAX_PLUGIN_BYTES) throw unprocessable("Pinned Git marketplace archive exceeds the 10 MiB V1 limit");
       sourceFiles = unzipPackageFiles(archive.toString("base64"), `${repo}@${input.github.commit}.zip`, true);
       sourceType = "git";
       locator = `${repository.toString().replace(/\/$/, "")}#${input.github.commit}`;

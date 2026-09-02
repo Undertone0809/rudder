@@ -475,13 +475,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         throw notFound("Directory not found inside the organization Library");
       }
 
-      // Agent workspaces are materialized immediately when an Agent is created,
-      // while the native manifest may still be serving its initial ready snapshot.
-      // Read this protected container live so a new workspace is never hidden by
-      // that stale snapshot; nested paths retain the manifest fast path.
-      const nativeManifest = normalizedPath === "agents"
-        ? null
-        : await readNativeWorkspaceManifest(resolvedRoot);
+      const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
       const unsortedEntries: OrganizationWorkspaceFileEntry[] = nativeManifest
         ? nativeManifest
           .filter((entry) => {

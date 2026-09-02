@@ -166,7 +166,6 @@ export function heartbeatService(
   testHooks?: {
     afterIssuePromotionCommitted?: (outcome: unknown) => Promise<void> | void;
     beforeRunClaim?: (run: typeof heartbeatRuns.$inferSelect) => Promise<void> | void;
-    beforeAssignmentRecoveryEnqueue?: (run: typeof heartbeatRuns.$inferSelect) => Promise<void> | void;
     /** Server-owned runners (currently Chat) may reattach a claimed wait run. */
     onNetworkWaitingRun?: (run: typeof heartbeatRuns.$inferSelect & {
       networkRecoveryExhausted?: boolean;
@@ -1993,32 +1992,6 @@ export function heartbeatService(
           clearInterval(renewalTimer);
         }
       };
-      const assignmentContinuationAttempt = Math.max(
-        0,
-        Math.floor(Number(runContext.assignmentGuardrailContinuationAttempt) || 0),
-      );
-      if (assignmentContinuationAttempt > 0 && current.retryOfRunId) {
-        await runClaimedEffect("assignment_recovery_result", async () => {
-          const sourceRun = await getRun(current.retryOfRunId!);
-          if (!sourceRun) throw new Error("Assignment recovery source run was not found");
-          await appendRunEvent(sourceRun, {
-            eventType: "runtime.assignment_recovery_result",
-            idempotencyKey: `assignment-recovery-result:${current.id}`,
-            stream: "system",
-            level: current.status === "succeeded" ? "info" : "error",
-            message: current.status === "succeeded"
-              ? "bounded assignment recovery succeeded"
-              : "bounded assignment recovery failed",
-            payload: {
-              recoveryRunId: current.id,
-              attempt: assignmentContinuationAttempt,
-              maxAttempts: 1,
-              status: current.status,
-              recovered: current.status === "succeeded",
-            },
-          });
-        });
-      }
       if (intent.automation) {
         await runClaimedEffect("automation_chat", () => publishAutomationRunOutputToChat(db, {
           issueId: readNonEmptyString(runContext.issueId),
@@ -2252,7 +2225,6 @@ export function heartbeatService(
     ...recoveryHandlers,
     ...releaseHandlers,
     ...wakeupHandlers,
-    beforeAssignmentRecoveryEnqueue: testHooks?.beforeAssignmentRecoveryEnqueue,
   });
   const miscHandlers = createHeartbeatMiscHandlers({ ...baseContext, ...recoveryHandlers, ...releaseHandlers, ...wakeupHandlers, ...executeHandlers });
   const { enqueueRecoveryRun, enqueueProcessLossRetry, evaluatePassiveIssueClosureForLockedIssue, parseHeartbeatPolicy, warnInactiveRuns } = recoveryHandlers;

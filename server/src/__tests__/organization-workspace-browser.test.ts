@@ -13,11 +13,10 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
-import { ensureAgentWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
-import * as workspaceManifestNative from "../services/workspace-manifest-native.js";
 import { stopNativeWorkspaceManifestWatchersForTests } from "../services/workspace-manifest-native.js";
 
 const ONE_BY_ONE_PNG = Buffer.from(
@@ -207,61 +206,6 @@ describe("organization workspace browser", () => {
         workspaceKey: originalWorkspaceKey,
       }),
     ]);
-  });
-
-  it("lists newly materialized Agent workspaces when the native ready manifest is stale", async () => {
-    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
-    cleanupDirs.add(rudderHome);
-    process.env.RUDDER_HOME = rudderHome;
-    process.env.RUDDER_INSTANCE_ID = "test-instance";
-
-    const orgId = randomUUID();
-    const agentId = randomUUID();
-    const workspaceKey = buildAgentWorkspaceKey("Fresh Agent", agentId);
-    await db.insert(organizations).values({
-      id: orgId,
-      name: "Workspace Browser Fresh Agent Org",
-      urlKey: deriveOrganizationUrlKey("Workspace Browser Fresh Agent Org"),
-      issuePrefix: "WBF",
-      requireBoardApprovalForNewAgents: false,
-    });
-    await db.insert(agents).values({
-      id: agentId,
-      orgId,
-      name: "Fresh Agent",
-      workspaceKey,
-      role: "engineer",
-      status: "active",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {},
-      runtimeConfig: {},
-      permissions: {},
-    });
-
-    await ensureAgentWorkspaceLayout({ orgId, id: agentId, name: "Fresh Agent", workspaceKey });
-    await fs.mkdir(path.join(resolveOrganizationWorkspaceRoot(orgId), "agents", ".cache"), { recursive: true });
-    const manifestSpy = vi.spyOn(workspaceManifestNative, "readNativeWorkspaceManifest").mockResolvedValue([
-      { path: "agents", kind: "directory", byteSize: 0, modifiedMillis: 0 },
-    ]);
-
-    try {
-      const listing = await workspaceBrowser.listFiles(orgId, "agents");
-
-      expect(manifestSpy).not.toHaveBeenCalled();
-      expect(listing.entries).toEqual([
-        expect.objectContaining({
-          name: workspaceKey,
-          path: `agents/${workspaceKey}`,
-          isDirectory: true,
-          entityType: "agent_workspace",
-          agentId,
-          workspaceKey,
-        }),
-      ]);
-      expect(listing.entries.some((entry) => entry.name === ".cache")).toBe(false);
-    } finally {
-      manifestSpy.mockRestore();
-    }
   });
 
   it("classifies deleted-agent workspace folders as orphaned and only deletes them while unregistered", async () => {

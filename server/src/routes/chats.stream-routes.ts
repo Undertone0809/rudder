@@ -43,7 +43,6 @@ import {
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
-import { chatMessageMutationFingerprint } from "../services/chat-message-mutation-fingerprint.js";
 import { logActivity } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
@@ -177,48 +176,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       });
       return;
     }
-    const clientMutationId = parsedBody.data.clientMutationId ?? null;
-    const clientMutationFingerprint = clientMutationId
-      ? chatMessageMutationFingerprint({
-        body: parsedBody.data.body,
-        editUserMessageId: parsedBody.data.editUserMessageId ?? null,
-        inlineAnnotationsProvided,
-        inlineAnnotations: parsedBody.data.inlineAnnotations,
-        modelOverride: parsedBody.data.modelOverride ?? null,
-        effortOverride: parsedBody.data.effortOverride ?? null,
-        files: messageFiles,
-      })
-      : null;
-    if (!atomicFirstTurn && clientMutationId) {
-      const replayedMutation = await svc.getUserMessageMutationByClientMutationId(
-        conversation.orgId,
-        conversation.id,
-        clientMutationId,
-      );
-      if (replayedMutation) {
-        const replayedUserMessage = replayedMutation.message;
-        if (
-          replayedUserMessage.body !== parsedBody.data.body
-          || (
-            replayedMutation.fingerprint !== null
-            && replayedMutation.fingerprint !== clientMutationFingerprint
-          )
-        ) {
-          throw conflict("Chat mutation key was already used for different content");
-        }
-        res.status(200);
-        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("X-Accel-Buffering", "no");
-        writeStreamEvent(res, {
-          type: "ack",
-          userMessage: replayedUserMessage,
-        });
-        writeStreamEvent(res, { type: "final", messages: [] });
-        res.end();
-        return;
-      }
-    }
     const preparedAnnotations = !atomicFirstTurn && inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,
@@ -251,12 +208,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
     const abortController = new AbortController();
-    const releaseGeneration = claimChatGeneration(
-      conversation.id,
-      abortController,
-      null,
-      clientMutationId,
-    );
+    const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
     if (!releaseGeneration) {
       if (parsedBody.data.editUserMessageId) {
         res.status(409).json({ error: "Stop the current response before editing this message" });
@@ -266,14 +218,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
         return;
       }
-      const activeGeneration = getActiveChatGeneration(conversation.id);
-      if (clientMutationId && activeGeneration?.clientMutationId === clientMutationId) {
-        throw conflict("This message is already being sent. Try again shortly.", {
-          code: "chat_send_in_progress",
-          phase: "message_acceptance",
-        });
-      }
-      const queueClientMutationId = clientMutationId ?? `stream:${randomUUID()}`;
+      const clientMutationId = `stream:${randomUUID()}`;
       const storedQueueFiles = await storeQueuedAnnotationFiles(
         conversation as ChatConversation,
         messageFiles,
@@ -283,8 +228,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         queuedResult = await svc.createQueuedMessageWithStagedAttachments({
           orgId: conversation.orgId,
           conversationId: conversation.id,
-          clientMutationId: queueClientMutationId,
-          mutationFingerprint: clientMutationFingerprint ?? undefined,
+          clientMutationId,
           runtimeSnapshotVersion: 1,
           expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
           requestActor: queueRequestActor(req),
@@ -314,14 +258,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       } catch (error) {
         await cleanupUncommittedQueuedAnnotationFiles(
           conversation.orgId,
-          queueClientMutationId,
+          clientMutationId,
           storedQueueFiles,
         );
         throw error;
       }
       await cleanupUncommittedQueuedAnnotationFiles(
         conversation.orgId,
-        queueClientMutationId,
+        clientMutationId,
         queuedResult.cleanupAttachments,
       );
       const item = queuedResult.item;
@@ -380,9 +324,6 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     const startupGate = createStartingChatGenerationGate();
     startingChatGenerationGates.set(conversation.id, startupGate);
-    let persistedUserMessage: ChatMessage | null = atomicFirstTurn?.userMessage ?? null;
-    let userMessagePersisted = Boolean(atomicFirstTurn);
-    let committedUserMessageId = atomicFirstTurn?.userMessage.id ?? null;
     if (queuedMessageId) {
       try {
         await svc.assertQueuedMessageClaimedForDelivery({
@@ -395,82 +336,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         startingChatGenerationGates.delete(conversation.id);
         releaseGeneration();
         await stagedMessageFiles.cleanup();
-        logger.warn({
-          err: chatAssistantErrorForLog(error),
-          conversationId: conversation.id,
-        }, "chat user-message persistence failed before generation");
-        res.status(201);
-        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("X-Accel-Buffering", "no");
-        writeStreamEvent(res, {
-          type: "error",
-          error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
-          messageId: committedUserMessageId,
-        });
-        res.end();
-        return;
-      }
-    }
-
-    if (!atomicFirstTurn) {
-      try {
-        const persistence = await addUserMessage(
-          conversation as ChatConversation,
-          parsedBody.data.body,
-          actor,
-          parsedBody.data.editUserMessageId ?? null,
-          {
-            provided: inlineAnnotationsProvided,
-            prepared: preparedAnnotations,
-            storedAttachments: stagedMessageFiles.files,
-            onPersisted: (messageId: string) => {
-              userMessagePersisted = true;
-              committedUserMessageId = messageId;
-              stagedMessageFiles.markCommitted();
-            },
-            clientMutationId,
-            clientMutationFingerprint,
-          },
-        );
-        persistedUserMessage = persistence.message;
-        if (!persistence.accepted) {
-          startupGate.resolveGeneration(null);
-          startingChatGenerationGates.delete(conversation.id);
-          releaseGeneration();
-          await stagedMessageFiles.cleanup();
-          res.status(200);
-          res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-          res.setHeader("Cache-Control", "no-cache, no-transform");
-          res.setHeader("X-Accel-Buffering", "no");
-          writeStreamEvent(res, { type: "ack", userMessage: persistence.message });
-          writeStreamEvent(res, { type: "final", messages: [] });
-          res.end();
-          return;
-        }
-        userMessagePersisted = true;
-        committedUserMessageId = persistence.message.id;
-        stagedMessageFiles.markCommitted();
-      } catch (error) {
-        startupGate.resolveGeneration(null);
-        startingChatGenerationGates.delete(conversation.id);
-        releaseGeneration();
-        await stagedMessageFiles.cleanup();
-        logger.warn({
-          err: chatAssistantErrorForLog(error),
-          conversationId: conversation.id,
-        }, "chat user-message persistence failed before generation");
-        res.status(201);
-        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("X-Accel-Buffering", "no");
-        writeStreamEvent(res, {
-          type: "error",
-          error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
-          messageId: committedUserMessageId,
-        });
-        res.end();
-        return;
+        throw error;
       }
     }
 
@@ -531,6 +397,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     const transcript: TranscriptEntry[] = [];
     let assistantProgressMessageId: string | null = null;
     let activeChatRunId: string | null = null;
+    let userMessagePersisted = Boolean(atomicFirstTurn);
+    let committedUserMessageId = atomicFirstTurn?.userMessage.id ?? null;
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let generationWaitingForNetwork = false;
     let admittedAssistantBody = "";
@@ -644,7 +512,22 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     res.flushHeaders();
 
     try {
-      let userMessage = persistedUserMessage!;
+      let userMessage = atomicFirstTurn?.userMessage ?? await addUserMessage(
+        conversation as ChatConversation,
+        parsedBody.data.body,
+        actor,
+        parsedBody.data.editUserMessageId ?? null,
+        {
+          provided: inlineAnnotationsProvided,
+          prepared: preparedAnnotations,
+          storedAttachments: stagedMessageFiles.files,
+          onPersisted: (messageId: string) => {
+            userMessagePersisted = true;
+            committedUserMessageId = messageId;
+            stagedMessageFiles.markCommitted();
+          },
+        },
+      );
       userMessagePersisted = true;
       committedUserMessageId = userMessage.id;
       stagedMessageFiles.markCommitted();

@@ -18,6 +18,33 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年9月2日" description="v0.7.18" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.18
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.18)
+
+这个版本让工作区备份更容易检查，让 Agent 运行记录更容易扫描，并改善本地传输、Desktop 更新和 Chat 文件变更的恢复体验。
+
+### 新功能
+
+- 为原生运行时增加工作区备份文件浏览和预览支持。选择已完成的备份后，可以浏览文件树并查看受大小限制的文本预览，无需恢复工作区。
+- 为 Agent 的 MCP 结果增加语义卡片。Agent 条目现在会与 Goal、Issue、Project、Approval 和 Automation 结果一起，以更易读的方式显示在 Transcript 中。
+
+### 改进
+
+- 改进 MCP 语义卡片：实体卡片和回执采用更清晰的布局，按状态显示图标，补充 Agent 身份及运行时信息，评论内容支持 Markdown 渲染，相关记录和回执也支持直接跳转。
+- 当 Issue 传输不可用时，CLI 和 MCP 错误现在会提供一次等价的回退命令或工具提示，便于从另一个入口继续处理。
+
+### 问题修复
+
+- 修复 Codex App Server 的文件变更更新丢失 Chat Transcript 中 diff 内容的问题；文件变更现在会保留补丁。
+- 修复 Issue 实时预览中的普通 Markdown 链接必须按住修饰键才能打开的问题；现在直接点击即可打开。
+- 修复通过 CLI 触发的 Desktop 更新无法完成与 Desktop 应用交接的问题。
+- 恢复 Library 文件浏览器与工作区内容之间缺失的间隔。
+
+</Update>
+
 <Update label="2026年8月31日" description="v0.7.16" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.16

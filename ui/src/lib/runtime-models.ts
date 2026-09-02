@@ -77,11 +77,11 @@ export function modelNameFromProviderModelId(model: string): string | null {
 export function runtimeProviderSetupHint(agentRuntimeType: string, model: string): string | null {
   const provider = providerFromModelId(model);
   if (agentRuntimeType === "claude_local" && isClaudeDeepSeekModel(model)) {
-    return "For Claude Code + DeepSeek, use a DeepSeek model such as deepseek-v4-pro[1m]. Configure DeepSeek authentication in the Claude Code runtime, then use Test now as the source of truth.";
+    return "For Claude Code + DeepSeek, use a DeepSeek model such as deepseek-v4-pro[1m]. Paste DEEPSEEK_API_KEY below or reference the existing organization secret, then use Test now as the source of truth.";
   }
   if (agentRuntimeType === "pi_local") {
     if (provider === "deepseek") {
-      return "For Pi + DeepSeek, use provider/model such as deepseek/deepseek-chat. Configure DeepSeek authentication in the Pi runtime or use pi /login. If Pi routes through OpenRouter, configure that provider in the runtime. Test now is the source of truth.";
+      return "For Pi + DeepSeek, use provider/model such as deepseek/deepseek-chat. Paste DEEPSEEK_API_KEY below, or use pi /login if DeepSeek is already configured locally. If Pi routes through OpenRouter, use openrouter/deepseek/deepseek-chat and paste OPENROUTER_API_KEY. Test now is the source of truth.";
     }
     if (provider) {
       return `For Pi, authenticate provider "${provider}" with pi /login, auth.json, or provider env, then use Test now to prove the selected model can answer.`;
@@ -95,6 +95,23 @@ export function runtimeProviderSetupHint(agentRuntimeType: string, model: string
     return "OpenCode models use provider/model format. Use opencode models, or enter a custom provider/model and run Test now.";
   }
   return null;
+}
+
+export function runtimeProviderCredentialEnvKey(agentRuntimeType: string, model: string): string | null {
+  const provider = providerFromModelId(model);
+  if (agentRuntimeType === "claude_local" && isClaudeDeepSeekModel(model)) return "DEEPSEEK_API_KEY";
+  if (agentRuntimeType === "pi_local") {
+    if (provider === "deepseek") return "DEEPSEEK_API_KEY";
+    if (provider === "openrouter") return "OPENROUTER_API_KEY";
+    if (provider === "kimi-coding" || provider === "kimi") return "KIMI_API_KEY";
+  }
+  return null;
+}
+
+export function runtimeProviderCredentialLabel(agentRuntimeType: string, model: string): string | null {
+  const envKey = runtimeProviderCredentialEnvKey(agentRuntimeType, model);
+  if (!envKey) return null;
+  return `${envKey} for ${model.trim() || "this provider"}`;
 }
 
 export function runtimeManualProbeCommand(agentRuntimeType: string, command: string, model: string): string {
@@ -123,14 +140,14 @@ export function runtimeManualProbeCommand(agentRuntimeType: string, command: str
 export function runtimeAuthRecoveryHint(agentRuntimeType: string, model: string): string {
   const provider = providerFromModelId(model);
   if (agentRuntimeType === "claude_local" && isClaudeDeepSeekModel(model)) {
-    return "If auth fails, configure DEEPSEEK_API_KEY in the Claude Code runtime or authenticate the runtime, then retry Test now.";
+    return "If auth fails, set DEEPSEEK_API_KEY in the runtime env or organization secret binding, then retry Claude Code Test now.";
   }
   if (agentRuntimeType === "cursor") return "If auth fails, set CURSOR_API_KEY in env or run cursor-agent login.";
   if (agentRuntimeType === "codex_local") return "If auth fails, run codex login or configure the OpenAI credentials Codex already uses locally.";
   if (agentRuntimeType === "gemini_local") return "If auth fails, set GEMINI_API_KEY in env or run gemini auth.";
   if (agentRuntimeType === "opencode_local") return "If auth fails, run opencode auth login or set the provider API key in env.";
   if (agentRuntimeType === "pi_local" && provider === "deepseek") {
-    return "If auth fails, configure DEEPSEEK_API_KEY in the Pi runtime or run pi /login. If Pi asks for OpenRouter, configure that provider in the runtime or add a native DeepSeek provider/model in ~/.pi/agent/models.json.";
+    return "If auth fails, set DEEPSEEK_API_KEY for native Pi DeepSeek or run pi /login. If Pi asks for openrouter, set OPENROUTER_API_KEY or add a native DeepSeek provider/model in ~/.pi/agent/models.json.";
   }
   if (agentRuntimeType === "pi_local" && provider) {
     return `If auth fails, authenticate provider "${provider}" with pi /login, ~/.pi/agent/auth.json, or provider env.`;

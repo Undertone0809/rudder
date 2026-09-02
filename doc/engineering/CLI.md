@@ -20,28 +20,6 @@ CI and local validation use `pnpm mcp-contract:check` to reject stale outputs.
 Only JSON Pointers listed in a fixture's normalization profile may be replaced
 during Node/Rust comparisons; all other fields remain semantic.
 
-## Rust CLI and MCP Foundation
-
-The migration workspace builds two behavior-neutral first-party foundations:
-
-- `rudder-cli-foundation` reports the generated Agent V1 capability manifest
-  and a binary identity receipt.
-- `rudder-mcp-foundation` owns bounded newline and `Content-Length` stdio
-  framing, MCP initialization, generated `tools/list`, runtime-context checks,
-  reserved-identity rejection, request-ID cancellation that terminates the
-  matching compatibility child, and structured protocol errors for the core
-  and Browser surfaces.
-
-These binaries do not yet own product authorization, queries, or mutations.
-Accepted `tools/call` requests cross the explicit compatibility boundary named
-by `RUDDER_NODE_CLI_BIN`, which must resolve to the current Node Rudder CLI and
-is invoked as `mcp-server --server core|browser`. If it is unset, the Rust MCP
-server fails the call with
-`rudder_mcp_node_compatibility_not_configured`; it does not silently select a
-Node executable or another runtime. Binary identity receipts record the
-contract version, generated manifest hash, target triple, product authority,
-and this compatibility variable so later authority transfers are observable.
-
 ## Base Usage
 
 Use repo script in development:

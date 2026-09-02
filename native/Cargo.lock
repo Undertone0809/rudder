@@ -1311,26 +1311,14 @@ dependencies = [
 
 [[package]]
 name = "rudder-agent-contract-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "serde_json",
-]
-
-[[package]]
-name = "rudder-agent-tools-foundation"
-version = "0.7.17"
-dependencies = [
- "base64",
- "rudder-agent-contract-core",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "rudder-archive-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "base64",
  "crc32fast",
@@ -1341,24 +1329,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rudder-cli-foundation"
-version = "0.7.17"
-dependencies = [
- "rudder-agent-tools-foundation",
- "serde_json",
-]
-
-[[package]]
-name = "rudder-mcp-foundation"
-version = "0.7.17"
-dependencies = [
- "rudder-agent-tools-foundation",
- "serde_json",
-]
-
-[[package]]
 name = "rudder-native"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "crc32fast",
  "rudder-archive-core",
@@ -1373,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-protocol"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "serde",
  "serde_json",
@@ -1381,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-host"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "libc",
  "portable-pty",
@@ -1393,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-tree-sampler"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "libc",
  "serde_json",
@@ -1401,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-run-evidence-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "serde",
  "serde_json",
@@ -1411,7 +1383,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-payload-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "flate2",
  "sha2",
@@ -1423,31 +1395,23 @@ dependencies = [
 
 [[package]]
 name = "rudder-server-foundation"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "libc",
- "rudder-archive-core",
  "rudder-server-foundation-core",
  "serde_json",
- "sha2",
- "sqlx",
- "tempfile",
  "tokio",
 ]
 
 [[package]]
 name = "rudder-server-foundation-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "actix-web",
- "base64",
- "rudder-archive-core",
  "serde",
  "serde_json",
- "sha2",
  "sqlx",
  "thiserror 2.0.20",
- "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1455,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "libc",
  "rudder-update-helper-core",
@@ -1464,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "libc",
  "serde",
@@ -1474,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-workspace-manifest-core"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "notify",
  "serde",

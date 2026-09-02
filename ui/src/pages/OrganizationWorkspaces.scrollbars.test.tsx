@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { organizationsApi } from "../api/orgs";
+import { DialogProvider } from "../context/DialogContext";
 import { __clearLibraryEntryMetadataCacheForTests, __setLibraryEntryMetadataCacheForTests } from "../lib/library-entry-cache";
 import { OrganizationWorkspaces, WorkspaceLaunchTargetIcon } from "./OrganizationWorkspaces";
 import { OrganizationWorkspaceFilesSidebar } from "./organization-workspaces/OrganizationWorkspaceFilesSidebar";
@@ -558,22 +559,12 @@ vi.mock("../context/BreadcrumbContext", () => ({
   }),
 }));
 
-vi.mock("../context/DialogContext", () => ({
-  useDialog: () => ({ confirm: vi.fn(async () => true) }),
-}));
-
 vi.mock("../context/ToastContext", () => ({
   useOptionalToast: () => ({
     pushToast: mockState.pushToast,
   }),
   useToast: () => ({
     pushToast: mockState.pushToast,
-  }),
-}));
-
-vi.mock("../context/DialogContext", () => ({
-  useDialog: () => ({
-    confirm: vi.fn(async () => true),
   }),
 }));
 
@@ -778,7 +769,11 @@ function renderWorkspacesPage() {
   }
   act(() => {
     currentRoot ??= createRoot(currentContainer!);
-    currentRoot.render(<OrganizationWorkspaces />);
+    currentRoot.render(
+      <DialogProvider>
+        <OrganizationWorkspaces />
+      </DialogProvider>,
+    );
   });
   cleanupFn = () => currentRoot?.unmount();
 }
@@ -1167,10 +1162,10 @@ describe("OrganizationWorkspaces scroll regions", () => {
     act(() => {
       currentRoot ??= createRoot(currentContainer!);
       currentRoot.render(
-        <>
+        <DialogProvider>
           <OrganizationWorkspaceFilesSidebar />
           <OrganizationWorkspaces />
-        </>,
+        </DialogProvider>,
       );
     });
     cleanupFn = () => currentRoot?.unmount();
@@ -1314,58 +1309,6 @@ describe("OrganizationWorkspaces scroll regions", () => {
 
     expect(sourceRow?.getAttribute("data-dragging-workspace-entry")).toBeNull();
     expect(sourceRow?.className).toContain("bg-accent");
-  });
-
-  it("selects only the open file while keeping its expanded folders unselected", async () => {
-    mockState.searchParams = "path=artifacts/chat-ui-review/README.md";
-    renderWorkspacesPage();
-
-    const artifactsRow = document.querySelector(
-      '[data-workspace-entry-path="artifacts"]',
-    ) as HTMLElement | null;
-    const folderRow = document.querySelector(
-      '[data-workspace-entry-path="artifacts/chat-ui-review"]',
-    ) as HTMLElement | null;
-    const readmeRow = document.querySelector(
-      '[data-workspace-entry-path="artifacts/chat-ui-review/README.md"]',
-    ) as HTMLElement | null;
-
-    expect(artifactsRow?.classList.contains("bg-accent")).toBe(false);
-    expect(artifactsRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("false");
-    expect(folderRow?.classList.contains("bg-accent")).toBe(false);
-    expect(folderRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("false");
-    expect(readmeRow?.className).toContain("bg-accent");
-    expect(readmeRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("true");
-
-    const notesButton = Array.from(document.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "notes.md",
-    );
-    expect(notesButton).toBeTruthy();
-
-    await act(async () => {
-      notesButton?.focus();
-    });
-
-    const notesRowBeforeOpen = document.querySelector(
-      '[data-workspace-entry-path="artifacts/chat-ui-review/notes.md"]',
-    ) as HTMLElement | null;
-    expect(notesRowBeforeOpen?.classList.contains("bg-accent")).toBe(false);
-    expect(notesRowBeforeOpen?.querySelector("button")?.getAttribute("aria-selected")).toBe("false");
-    expect(readmeRow?.className).toContain("bg-accent");
-    expect(readmeRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("true");
-
-    await act(async () => {
-      notesButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-
-    const notesRow = document.querySelector(
-      '[data-workspace-entry-path="artifacts/chat-ui-review/notes.md"]',
-    ) as HTMLElement | null;
-    expect(folderRow?.classList.contains("bg-accent")).toBe(false);
-    expect(folderRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("false");
-    expect(readmeRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("false");
-    expect(notesRow?.className).toContain("bg-accent");
-    expect(notesRow?.querySelector("button")?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("uses the project-specific icon for Rudder project folders in the Library tree", () => {

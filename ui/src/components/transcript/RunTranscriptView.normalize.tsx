@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
-import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockIdentity, TranscriptDensity, transcriptEntryIdentity, TranscriptTodoListItem, transcriptToolCardIdentity, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
+import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
 
@@ -379,7 +379,6 @@ export function collapseNetworkDisconnectBlocks(blocks: TranscriptBlock[]): Tran
     const last = pending[pending.length - 1];
     const sourceEntryIds = pending.flatMap((block) => block.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index);
     collapsed.push({
-      identity: transcriptBlockIdentity(first!),
       type: "event",
       ts: first?.ts ?? last?.ts ?? new Date(0).toISOString(),
       label: "network",
@@ -425,7 +424,6 @@ export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[]
     if (pending.length === 0 || !groupTs) return;
     const sourceEntryIds = pending.flatMap((item) => item.sourceEntryIds ?? []).filter((id, index, ids) => ids.indexOf(id) === index);
     grouped.push({
-      identity: pending[0] ? `command-group:${transcriptToolCardIdentity(pending[0])}` : undefined,
       type: "command_group",
       ts: groupTs,
       endTs: groupEndTs,
@@ -444,7 +442,6 @@ export function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[]
       }
       groupEndTs = block.endTs ?? block.ts;
       pending.push({
-        identity: transcriptBlockIdentity(block),
         ts: block.ts,
         endTs: block.endTs,
         name: block.name,
@@ -651,7 +648,6 @@ export function normalizeTranscript(
         }
       } else {
         blocks.push({
-          identity: transcriptEntryIdentity(entry),
           type: "message",
           role: entry.kind,
           ...(entry.kind === "user" && entry.source ? {
@@ -706,7 +702,6 @@ export function normalizeTranscript(
         }
       } else {
         blocks.push({
-          identity: transcriptEntryIdentity(entry),
           type: "thinking",
           ts: entry.ts,
           text: entry.text,
@@ -726,7 +721,6 @@ export function normalizeTranscript(
 
     if (entry.kind === "tool_call") {
       const toolBlock: Extract<TranscriptBlock, { type: "tool" }> = {
-        identity: transcriptEntryIdentity(entry),
         type: "tool",
         ts: entry.ts,
         name: entry.name,
@@ -760,7 +754,6 @@ export function normalizeTranscript(
       } else {
         const artifactInput = trustedArtifactResultInput(entry.toolName, entry.content);
         blocks.push({
-          identity: transcriptEntryIdentity(entry),
           type: "tool",
           ts: entry.ts,
           endTs: entry.ts,
@@ -786,7 +779,6 @@ export function normalizeTranscript(
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
       } else {
         const block: Extract<TranscriptBlock, { type: "todo_list" }> = {
-          identity: transcriptEntryIdentity(entry),
           type: "todo_list",
           ts: entry.ts,
           todoListId: entry.todoListId,
@@ -801,7 +793,6 @@ export function normalizeTranscript(
 
     if (entry.kind === "init") {
       blocks.push({
-        identity: transcriptEntryIdentity(entry),
         type: "event",
         ts: entry.ts,
         label: "init",
@@ -814,7 +805,6 @@ export function normalizeTranscript(
 
     if (entry.kind === "result") {
       blocks.push({
-        identity: transcriptEntryIdentity(entry),
         type: "event",
         ts: entry.ts,
         label: "result",
@@ -830,7 +820,6 @@ export function normalizeTranscript(
         continue;
       }
       blocks.push({
-        identity: transcriptEntryIdentity(entry),
         type: "event",
         ts: entry.ts,
         label: "stderr",
@@ -848,14 +837,12 @@ export function normalizeTranscript(
       }
       const memoryUpdate = parseMemoryUpdateSystemText(entry.text, entry.ts);
       if (memoryUpdate) {
-        memoryUpdate.identity = transcriptEntryIdentity(entry);
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(memoryUpdate, sourceEntryId);
         replacePendingFileChangeActivity(memoryUpdate);
         continue;
       }
       const fileChange = parseFileChangeSystemText(entry.text, entry.ts);
       if (fileChange) {
-        fileChange.identity = transcriptEntryIdentity(entry);
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(fileChange, sourceEntryId);
         replacePendingFileChangeActivity(fileChange);
         continue;
@@ -872,7 +859,6 @@ export function normalizeTranscript(
           }
         } else {
           const block: Extract<TranscriptBlock, { type: "activity" }> = {
-            identity: transcriptEntryIdentity(entry),
             type: "activity",
             ts: entry.ts,
             activityId: activity.activityId,
@@ -888,7 +874,6 @@ export function normalizeTranscript(
         continue;
       }
       blocks.push({
-        identity: transcriptEntryIdentity(entry),
         type: "event",
         ts: entry.ts,
         label: "system",
@@ -922,7 +907,6 @@ export function normalizeTranscript(
       for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(previous, sourceEntryId);
     } else {
       blocks.push({
-        identity: transcriptEntryIdentity(entry),
         type: "stdout",
         ts: entry.ts,
         text: filteredStdout,
@@ -1023,7 +1007,7 @@ export function normalizeChatTranscriptTurns(
       });
 
       return {
-        key: `turn-${transcriptBlockIdentity(blocks[0]!)}`,
+        key: `turn-${index + 1}-${blocks[0] ? transcriptBlockStableKey(blocks[0], 0) : index}`,
         index: index + 1,
         ts: blocks[0]?.ts ?? new Date().toISOString(),
         blocks,

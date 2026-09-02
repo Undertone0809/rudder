@@ -187,6 +187,7 @@ export function withQueuedAnnotationAssetState(input: {
   stagedAttachments: readonly StagedQueuedAnnotationAttachment[];
   attachmentFileIndexesByAnnotationId: ReadonlyMap<string, readonly number[]>;
 }) {
+  if (input.stagedAttachments.length === 0) return { ...input.payload };
   const annotationIdByFileIndex = fileAnnotationBindings(
     input.stagedAttachments,
     input.attachmentFileIndexesByAnnotationId,
@@ -332,8 +333,6 @@ export async function materializeQueuedUserMessage(
       status: "completed",
       body,
       structuredPayload: stripChatMetadataFromPayload(structuredPayload),
-      clientMutationId: input.item.clientMutationId,
-      clientMutationFingerprint: privateState?.fingerprint ?? null,
       chatTurnId: randomUUID(),
       turnVariant: 0,
       createdAt: input.now,

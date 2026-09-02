@@ -87,12 +87,6 @@ const mockPreflight = vi.hoisted(() => ({
   calls: [] as unknown[],
 }));
 
-const mockPublishAutomationRunOutputToChat = vi.hoisted(() => vi.fn(async () => null));
-
-vi.mock("../services/automation-chat-output.ts", () => ({
-  publishAutomationRunOutputToChat: mockPublishAutomationRunOutputToChat,
-}));
-
 vi.mock("../services/budgets.ts", async () => {
   const actual = await vi.importActual("../services/budgets.ts");
   return {
@@ -115,21 +109,23 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../agent-runtimes/index.ts", async () => {
   const actual = await vi.importActual("../agent-runtimes/index.ts");
   const parseTestToolResult = (line: string, ts: string) => {
-    if (!line.startsWith("TEST_TOOL_ERROR:")) return [];
+    const isPatchDrift = line.startsWith("TEST_PATCH_DRIFT:");
+    if (!isPatchDrift && !line.startsWith("TEST_TOOL_ERROR:")) return [];
     const [, toolUseId, ...contentParts] = line.split(":");
+    const toolName = isPatchDrift ? "apply_patch" : "exec_command";
     return [
       {
         kind: "tool_call" as const,
         ts,
-        name: "apply_patch",
+        name: toolName,
         toolUseId,
-        input: { cmd: "pnpm test" },
+        input: { cmd: isPatchDrift ? "apply patch" : "pnpm test" },
       },
       {
         kind: "tool_result" as const,
         ts,
         toolUseId,
-        toolName: "apply_patch",
+        toolName,
         content: contentParts.join(":"),
         isError: true,
       },
@@ -294,7 +290,7 @@ describe("heartbeat managed workspace preflight", () => {
     db = createDb(started.connectionString);
     instance = started.instance;
     dataDir = started.dataDir;
-  }, 60_000);
+  }, 20_000);
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -769,11 +765,10 @@ describe("heartbeat managed workspace preflight", () => {
 
   it("checkpoints repeated assignment failures and queues one continuation", async () => {
     const { agentId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db);
     mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-1:Invalid Context /tmp/a\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-2:Invalid Context /tmp/b\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-3:Invalid Context /tmp/c\n");
       return {
         summary: "adapter returned after abort",
         resultJson: null,
@@ -783,7 +778,7 @@ describe("heartbeat managed workspace preflight", () => {
       };
     });
 
-    const run = await heartbeat.wakeup(agentId, {
+    const run = await heartbeatService(db).wakeup(agentId, {
       source: "assignment",
       triggerDetail: "system",
       reason: "issue_assigned",
@@ -794,12 +789,11 @@ describe("heartbeat managed workspace preflight", () => {
       const source = await getRun(run!.id);
       const continuations = await db.select().from(heartbeatRuns);
       const continuation = continuations.find((candidate) => candidate.retryOfRunId === run!.id);
-      return source?.status === "failed" && source.terminalEffectsPending === false && continuation?.status === "queued";
-    }, 20_000);
-    await waitForCondition(async () => {
-      const continuation = (await db.select().from(heartbeatRuns)).find((candidate) => candidate.retryOfRunId === run!.id);
-      return continuation?.status === "succeeded" && continuation.terminalEffectsPending === false;
-    }, 20_000);
+      return source?.status === "failed"
+        && source.terminalEffectsPending === false
+        && continuation?.status === "succeeded"
+        && continuation.terminalEffectsPending === false;
+    });
     const source = await getRun(run!.id);
     expect(source).toMatchObject({
       status: "failed",
@@ -809,252 +803,21 @@ describe("heartbeat managed workspace preflight", () => {
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ eventType: "runtime.assignment_guardrail" }),
       expect.objectContaining({ eventType: "runtime.assignment_checkpoint" }),
-      expect.objectContaining({ eventType: "runtime.assignment_recovery_requested" }),
-      expect.objectContaining({ eventType: "runtime.assignment_recovery_result" }),
     ]));
     const continuations = (await db.select().from(heartbeatRuns)).filter((candidate) => candidate.retryOfRunId === run!.id);
     expect(continuations).toHaveLength(1);
     expect(continuations[0]?.contextSnapshot).toMatchObject({
       assignmentGuardrailContinuationAttempt: 1,
-      assignmentGuardrailRecovery: expect.objectContaining({ attempt: 1, maxAttempts: 1, backoffMs: 1_000 }),
       recovery: expect.objectContaining({ originalRunId: run!.id }),
-    });
-    expect(continuations[0]?.processLossRetryCount).toBe(0);
-  });
-
-  it("applies the same bounded recovery to automation runs without an issue", async () => {
-    const { agentId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db);
-    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
-      return {
-        summary: "adapter returned after abort",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      };
-    });
-
-    const run = await heartbeat.wakeup(agentId, {
-      source: "automation",
-      triggerDetail: "system",
-      reason: "automation_issue_dispatch",
-      contextSnapshot: {
-        taskKey: "automation:issue-failure-budget",
-      },
-    });
-
-    await waitForCondition(async () => {
-      const source = await getRun(run!.id);
-      const runs = await db.select().from(heartbeatRuns);
-      const continuation = runs.find((candidate) => candidate.retryOfRunId === run!.id);
-      return source?.status === "failed" && source.terminalEffectsPending === false && continuation?.status === "queued";
-    }, 20_000);
-    await waitForCondition(async () => {
-      const continuation = (await db.select().from(heartbeatRuns)).find((candidate) => candidate.retryOfRunId === run!.id);
-      return continuation?.status === "succeeded" && continuation.terminalEffectsPending === false;
-    }, 20_000);
-    const source = await getRun(run!.id);
-    expect(source).toMatchObject({
-      status: "failed",
-      errorCode: "assignment_run_failure_budget",
-      error: expect.stringContaining("eligible for recovery attempt 1 of 1"),
-    });
-    const events = await getRunEvents(run!.id);
-    expect(events.find((event) => event.eventType === "runtime.assignment_checkpoint")?.payload).toMatchObject({
-      continuationRequired: true,
-      failureClass: "context_drift",
-      unresolvedFailureCount: 1,
-    });
-    expect(events.find((event) => event.eventType === "runtime.assignment_recovery_requested")?.payload).toMatchObject({
-      attempt: 1,
-      maxAttempts: 1,
-      backoffMs: 1_000,
-    });
-    const continuations = (await db.select().from(heartbeatRuns))
-      .filter((candidate) => candidate.retryOfRunId === run!.id);
-    expect(continuations).toHaveLength(1);
-    expect(mockPublishAutomationRunOutputToChat).toHaveBeenCalledTimes(1);
-    expect(mockPublishAutomationRunOutputToChat.mock.calls[0]?.[1]).toMatchObject({ status: "succeeded" });
-  });
-
-  it("records a failed recovery request and restores the original automation output", async () => {
-    const { agentId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db, {
-      beforeAssignmentRecoveryEnqueue: () => {
-        throw new Error("synthetic recovery enqueue failure");
-      },
-    });
-    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
-      return {
-        summary: "adapter returned after abort",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      };
-    });
-
-    const run = await heartbeat.wakeup(agentId, {
-      source: "automation",
-      triggerDetail: "system",
-      reason: "automation_issue_dispatch",
-      contextSnapshot: { taskKey: "automation:failed-recovery-request" },
-    });
-
-    await waitForCondition(async () => {
-      const source = await getRun(run!.id);
-      return source?.status === "failed" && source.terminalEffectsPending === false;
-    }, 20_000);
-    const source = await getRun(run!.id);
-    const events = await getRunEvents(run!.id);
-    const continuations = (await db.select().from(heartbeatRuns))
-      .filter((candidate) => candidate.retryOfRunId === run!.id);
-    expect(source).toMatchObject({
-      errorCode: "assignment_run_failure_budget",
-      error: expect.stringContaining("eligible for recovery attempt 1 of 1"),
-    });
-    expect(mockPublishAutomationRunOutputToChat).toHaveBeenCalledTimes(1);
-    expect(mockPublishAutomationRunOutputToChat.mock.calls[0]?.[1]).toMatchObject({ status: "failed" });
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ eventType: "runtime.assignment_recovery_request_failed" }),
-    ]));
-    expect(events).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ eventType: "runtime.assignment_recovery_requested" }),
-    ]));
-    expect(continuations).toHaveLength(0);
-  });
-
-  it("rejects an unrelated existing retry without suppressing the source output", async () => {
-    const { agentId, orgId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db, {
-      beforeAssignmentRecoveryEnqueue: async (sourceRun) => {
-        await db.insert(heartbeatRuns).values({
-          orgId,
-          agentId,
-          invocationSource: "automation",
-          triggerDetail: "system",
-          status: "running",
-          retryOfRunId: sourceRun.id,
-          contextSnapshot: { recovery: { originalRunId: sourceRun.id } },
-          updatedAt: new Date(),
-        });
-      },
-    });
-    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
-      return {
-        summary: "adapter returned after abort",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      };
-    });
-
-    const run = await heartbeat.wakeup(agentId, {
-      source: "automation",
-      triggerDetail: "system",
-      reason: "automation_issue_dispatch",
-      contextSnapshot: { taskKey: "automation:unrelated-existing-retry" },
-    });
-
-    await waitForCondition(async () => {
-      const source = await getRun(run!.id);
-      return source?.status === "failed" && source.terminalEffectsPending === false;
-    }, 20_000);
-    const events = await getRunEvents(run!.id);
-    const retries = (await db.select().from(heartbeatRuns))
-      .filter((candidate) => candidate.retryOfRunId === run!.id);
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ eventType: "runtime.assignment_recovery_request_failed" }),
-    ]));
-    expect(retries).toHaveLength(1);
-    expect(retries[0]?.contextSnapshot).not.toHaveProperty("assignmentGuardrailContinuationAttempt");
-    expect(mockPublishAutomationRunOutputToChat).toHaveBeenCalledTimes(1);
-    expect(mockPublishAutomationRunOutputToChat.mock.calls[0]?.[1]).toMatchObject({ status: "failed" });
-  });
-
-  it("records a cancelled result when a queued continuation is cancelled during backoff", async () => {
-    const { agentId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db);
-    mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
-      return {
-        summary: "adapter returned after abort",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      };
-    });
-
-    const run = await heartbeat.wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      contextSnapshot: { taskKey: "assignment:cancelled-continuation", wakeSource: "assignment" },
-    });
-    let continuationId: string | null = null;
-    await waitForCondition(async () => {
-      const continuation = (await db.select().from(heartbeatRuns))
-        .find((candidate) => candidate.retryOfRunId === run!.id);
-      continuationId = continuation?.id ?? null;
-      return continuation?.status === "queued";
-    }, 20_000);
-    await db.insert(heartbeatRunEvents).values({
-      orgId: run!.orgId,
-      runId: run!.id,
-      agentId,
-      seq: 999_999,
-      eventType: "runtime.assignment_recovery_result",
-      stream: "system",
-      level: "error",
-      message: "preexisting recovery result before terminal-effect checkpoint",
-      payload: {
-        recoveryRunId: continuationId,
-        attempt: 1,
-        status: "cancelled",
-        recovered: false,
-      },
-      idempotencyKey: `assignment-recovery-result:${continuationId}`,
-    });
-    await heartbeat.cancelRun(continuationId!);
-    await waitForCondition(async () => {
-      const events = await getRunEvents(run!.id);
-      const continuation = await getRun(continuationId!);
-      return continuation?.terminalEffectsPending === false
-        && events.some((event) => event.eventType === "runtime.assignment_recovery_result");
-    }, 20_000);
-
-    const events = await getRunEvents(run!.id);
-    const recoveryResultEvents = events.filter((event) => event.eventType === "runtime.assignment_recovery_result");
-    expect(recoveryResultEvents).toHaveLength(1);
-    expect(recoveryResultEvents[0]?.payload).toMatchObject({
-      recoveryRunId: continuationId,
-      attempt: 1,
-      status: "cancelled",
-      recovered: false,
     });
   });
 
   it("does not recursively queue another continuation after the guarded recovery fails", async () => {
     const { agentId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db);
     const failWithRepeatedTools = async (ctx: any) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-1:Invalid Context /tmp/a\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-2:Invalid Context /tmp/b\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-3:Invalid Context /tmp/c\n");
       return {
         summary: "guarded failure",
         resultJson: null,
@@ -1067,7 +830,7 @@ describe("heartbeat managed workspace preflight", () => {
       .mockImplementationOnce(failWithRepeatedTools)
       .mockImplementationOnce(failWithRepeatedTools);
 
-    const run = await heartbeat.wakeup(agentId, {
+    const run = await heartbeatService(db).wakeup(agentId, {
       source: "assignment",
       triggerDetail: "system",
       reason: "issue_assigned",
@@ -1076,13 +839,8 @@ describe("heartbeat managed workspace preflight", () => {
     await waitForCondition(async () => {
       const runs = await db.select().from(heartbeatRuns);
       const continuation = runs.find((candidate) => candidate.retryOfRunId === run!.id);
-      return continuation?.status === "queued";
-    }, 20_000);
-    await waitForCondition(async () => {
-      const runs = await db.select().from(heartbeatRuns);
-      const continuation = runs.find((candidate) => candidate.retryOfRunId === run!.id);
       return continuation?.status === "failed" && continuation.terminalEffectsPending === false;
-    }, 20_000);
+    });
 
     const runs = await db.select().from(heartbeatRuns);
     const continuation = runs.find((candidate) => candidate.retryOfRunId === run!.id);
@@ -1091,49 +849,6 @@ describe("heartbeat managed workspace preflight", () => {
     const continuationEvents = await getRunEvents(continuation!.id);
     expect(continuationEvents.find((event) => event.eventType === "runtime.assignment_checkpoint")?.payload).toMatchObject({
       continuationRequired: false,
-    });
-  });
-
-  it("records a failed recovery result when the continuation adapter throws", async () => {
-    const { agentId } = await seedAgentFixture();
-    const heartbeat = heartbeatService(db);
-    mockRuntimeAdapter.execute
-      .mockImplementationOnce(async (ctx) => {
-        await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Invalid Context 42\n");
-        await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Invalid Context 42\n");
-        await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Invalid Context 42\n");
-        return {
-          summary: "adapter returned after abort",
-          resultJson: null,
-          timedOut: false,
-          exitCode: 0,
-          errorMessage: null,
-        };
-      })
-      .mockImplementationOnce(async () => {
-        throw new Error("synthetic continuation adapter crash");
-      });
-
-    const run = await heartbeat.wakeup(agentId, {
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "issue_assigned",
-      contextSnapshot: { taskKey: "assignment:throwing-continuation", wakeSource: "assignment" },
-    });
-
-    await waitForCondition(async () => {
-      const events = await getRunEvents(run!.id);
-      const continuation = (await db.select().from(heartbeatRuns))
-        .find((candidate) => candidate.retryOfRunId === run!.id);
-      return continuation?.terminalEffectsPending === false
-        && events.some((event) => event.eventType === "runtime.assignment_recovery_result");
-    }, 20_000);
-    const events = await getRunEvents(run!.id);
-    expect(events.find((event) => event.eventType === "runtime.assignment_recovery_result")?.payload).toMatchObject({
-      attempt: 1,
-      maxAttempts: 1,
-      status: "failed",
-      recovered: false,
     });
   });
 

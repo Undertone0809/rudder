@@ -575,99 +575,19 @@ function placeCaretAtAtomicInlineTokenEdge(token: HTMLElement, edge: "before" | 
   selection.addRange(range);
 }
 
-function placeCaretNearInlineToken(token: HTMLElement) {
-  // The icon and label are one atomic reference. Browsers can still expose a
-  // caret between the generated icon and label, so collapse every pointer-
-  // driven or recovered internal position to the leading token boundary.
-  placeCaretAtAtomicInlineTokenEdge(token, "before");
-}
-
-type DomSelectionPoint = {
-  node: Node;
-  offset: number;
-};
-
-function atomicInlineTokenBoundary(
-  token: HTMLElement,
-  edge: "before" | "after",
-): DomSelectionPoint | null {
-  const parent = token.parentNode;
-  if (!parent) return null;
-  const tokenIndex = Array.prototype.indexOf.call(parent.childNodes, token);
-  if (tokenIndex < 0) return null;
-  return {
-    node: parent,
-    offset: edge === "before" ? tokenIndex : tokenIndex + 1,
-  };
-}
-
-function compareDomPoints(first: DomSelectionPoint, second: DomSelectionPoint) {
-  const firstRange = document.createRange();
-  firstRange.setStart(first.node, first.offset);
-  firstRange.collapse(true);
-  const secondRange = document.createRange();
-  secondRange.setStart(second.node, second.offset);
-  secondRange.collapse(true);
-  return firstRange.compareBoundaryPoints(Range.START_TO_START, secondRange);
-}
-
-function compareDomPointToToken(point: DomSelectionPoint, token: HTMLElement) {
-  const tokenRange = document.createRange();
-  tokenRange.selectNode(token);
-  return tokenRange.comparePoint(point.node, point.offset);
-}
-
-function normalizeSelectionAroundAtomicInlineTokens(selection: Selection, editable: HTMLElement) {
-  const anchorNode = selection.anchorNode;
-  const focusNode = selection.focusNode;
-  if (!anchorNode || !focusNode) return false;
-  if (!editable.contains(anchorNode) || !editable.contains(focusNode)) return false;
-
-  const anchorToken = readAtomicInlineTokenElement(anchorNode);
-  const focusToken = readAtomicInlineTokenElement(focusNode);
-  const internalAnchorToken = anchorToken?.element.contains(anchorNode) ? anchorToken.element : null;
-  const internalFocusToken = focusToken?.element.contains(focusNode) ? focusToken.element : null;
-  if (!internalAnchorToken && !internalFocusToken) return false;
-
-  const anchor = { node: anchorNode, offset: selection.anchorOffset };
-  const focus = { node: focusNode, offset: selection.focusOffset };
-  if (selection.isCollapsed) {
-    const token = internalAnchorToken ?? internalFocusToken;
-    const boundary = token ? atomicInlineTokenBoundary(token, "before") : null;
-    if (!boundary) return false;
-    selection.setBaseAndExtent(boundary.node, boundary.offset, boundary.node, boundary.offset);
-    return true;
+function placeCaretNearInlineToken(token: HTMLElement, clientX?: number) {
+  if (typeof clientX === "number") {
+    const rect = token.getBoundingClientRect();
+    if (rect.width > 0) {
+      placeCaretAtAtomicInlineTokenEdge(token, clientX < rect.left + rect.width / 2 ? "before" : "after");
+      return;
+    }
   }
 
-  const isForward = compareDomPoints(anchor, focus) <= 0;
-  const boundaryForInternalPoint = (
-    token: HTMLElement,
-    otherPoint: DomSelectionPoint,
-    endpoint: "anchor" | "focus",
-  ) => {
-    const otherRelation = compareDomPointToToken(otherPoint, token);
-    if (otherRelation < 0) return atomicInlineTokenBoundary(token, "after");
-    if (otherRelation > 0) return atomicInlineTokenBoundary(token, "before");
-    const edge = endpoint === "anchor"
-      ? (isForward ? "before" : "after")
-      : (isForward ? "after" : "before");
-    return atomicInlineTokenBoundary(token, edge);
-  };
-
-  const normalizedAnchor = internalAnchorToken
-    ? boundaryForInternalPoint(internalAnchorToken, focus, "anchor")
-    : anchor;
-  const normalizedFocus = internalFocusToken
-    ? boundaryForInternalPoint(internalFocusToken, anchor, "focus")
-    : focus;
-  if (!normalizedAnchor || !normalizedFocus) return false;
-  selection.setBaseAndExtent(
-    normalizedAnchor.node,
-    normalizedAnchor.offset,
-    normalizedFocus.node,
-    normalizedFocus.offset,
-  );
-  return true;
+  // Contenteditable=false inline chips are a brittle selection boundary for
+  // Lexical. Default to the useful editing position after the chip, where
+  // Backspace can remove it and typing can continue normally.
+  placeCaretAtAtomicInlineTokenEdge(token, "after");
 }
 
 function getVisibleTextOffsetBeforeNode(editable: HTMLElement, node: Node) {
@@ -886,8 +806,8 @@ function stopAtomicInlineTokenEvent(
   event.preventDefault();
   event.stopPropagation();
   event.nativeEvent.stopImmediatePropagation?.();
-  if (options.placeCaret) {
-    placeCaretNearInlineToken(token);
+  if (options.placeCaret && typeof event.clientX === "number") {
+    placeCaretNearInlineToken(token, event.clientX);
   }
   return true;
 }
@@ -1965,17 +1885,24 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
   useEffect(() => {
     if (!plainText) return;
 
-    const keepSelectionOutsideAtomicInlineTokens = () => {
+    const keepCaretOutsideAtomicInlineTokens = () => {
       const editable = containerRef.current?.querySelector('[contenteditable="true"]');
       if (!(editable instanceof HTMLElement)) return;
       const selection = window.getSelection();
-      if (!selection || !normalizeSelectionAroundAtomicInlineTokens(selection, editable)) return;
-      clearPendingMentionInput();
+      if (!selection || !selection.isCollapsed || !selection.anchorNode) return;
+      if (!editable.contains(selection.anchorNode)) return;
+
+      const token = readAtomicInlineTokenElement(selection.anchorNode);
+      if (!token || !editable.contains(token.element)) return;
+      if (selection.anchorNode !== token.element && !token.element.contains(selection.anchorNode)) return;
+
+      placeCaretAtAtomicInlineTokenEdge(token.element, "after");
+      armPendingMentionInputFromToken(token);
     };
 
-    document.addEventListener("selectionchange", keepSelectionOutsideAtomicInlineTokens);
-    return () => document.removeEventListener("selectionchange", keepSelectionOutsideAtomicInlineTokens);
-  }, [clearPendingMentionInput, plainText]);
+    document.addEventListener("selectionchange", keepCaretOutsideAtomicInlineTokens);
+    return () => document.removeEventListener("selectionchange", keepCaretOutsideAtomicInlineTokens);
+  }, [armPendingMentionInputFromToken, plainText]);
 
   useEffect(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
@@ -2203,21 +2130,21 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     if (!token) return false;
     if (plainText && !event.ctrlKey && !event.metaKey) {
       stopAtomicInlineTokenEvent(event, { placeCaret: true });
-      clearPendingMentionInput();
+      armPendingMentionInputFromToken(token);
       return true;
     }
     stopAtomicInlineTokenEvent(event);
     (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token, event);
     return true;
-  }, [clearPendingMentionInput, handleDefaultInlineTokenClick, onInlineTokenClick, plainText]);
+  }, [armPendingMentionInputFromToken, handleDefaultInlineTokenClick, onInlineTokenClick, plainText]);
 
   const placeAtomicInlineTokenCaret = useCallback((event: AtomicInlineTokenEvent) => {
     const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
     if (!token) return false;
     stopAtomicInlineTokenEvent(event, { placeCaret: true });
-    clearPendingMentionInput();
+    armPendingMentionInputFromToken(token);
     return true;
-  }, [clearPendingMentionInput]);
+  }, [armPendingMentionInputFromToken]);
 
   return (
     <div
@@ -2272,27 +2199,6 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         }
         if (pendingMentionInputRef.current && !hasPlainTextKey) {
           clearPendingMentionInput();
-        }
-
-        if (
-          plainText
-          && !e.altKey
-          && !e.ctrlKey
-          && !e.metaKey
-          && !e.shiftKey
-          && (e.key === "ArrowLeft" || e.key === "ArrowRight")
-        ) {
-          const direction = e.key === "ArrowLeft" ? "backward" : "forward";
-          const token = findAdjacentAtomicInlineTokenElement(window.getSelection(), direction);
-          if (token) {
-            e.preventDefault();
-            e.stopPropagation();
-            placeCaretAtAtomicInlineTokenEdge(
-              token.element,
-              direction === "backward" ? "before" : "after",
-            );
-            return;
-          }
         }
 
         const shouldSubmitOnModEnter =

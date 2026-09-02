@@ -37,10 +37,6 @@ describe("resolveActivityActorName", () => {
     ).toBe("Board");
   });
 
-  it("labels the internal local board principal as System", () => {
-    expect(resolveBoardActorLabel("user", "local-board", "user-1")).toBe("System");
-  });
-
   it("uses You for the current board user in generic actor labels", () => {
     expect(resolveBoardActorLabel("user", "user-1", "user-1")).toBe("You");
   });

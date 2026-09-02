@@ -1,5 +1,4 @@
 import type { Agent } from "@rudderhq/shared";
-import { isSystemUserId } from "./assignees";
 import { resolveOperatorDisplayName } from "./operator-display";
 
 export function resolveBoardActorLabel(
@@ -10,7 +9,6 @@ export function resolveBoardActorLabel(
 ): string {
   if (actorType === "system") return "System";
   if (actorType === "user") {
-    if (isSystemUserId(actorId)) return "System";
     return currentBoardUserId && actorId === currentBoardUserId
       ? resolveOperatorDisplayName(operatorDisplayName)
       : "Board";

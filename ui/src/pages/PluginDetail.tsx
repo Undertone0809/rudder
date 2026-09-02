@@ -1,6 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
-import { PluginIcon, PluginIconFrame, themedPluginIconUrl } from "@/components/PluginIcon";
+import { PluginIcon, themedPluginIconUrl } from "@/components/PluginIcon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -448,7 +448,7 @@ export function PluginDetail() {
   if (!selectedOrganizationId) return <div className="p-6 text-sm text-muted-foreground">Select an Organization.</div>;
   if (detailQuery.isLoading) {
     return (
-      <main className="h-full overflow-y-auto px-4 py-6 md:px-8 md:py-8" data-testid="plugin-detail-loading">
+      <main className="h-full overflow-y-auto bg-[color:var(--surface-page)] px-4 py-6 md:px-8 md:py-8" data-testid="plugin-detail-loading">
         <div className="mx-auto max-w-[860px] animate-pulse">
           <Button variant="ghost" size="sm" className="-ml-2 text-muted-foreground" onClick={() => navigate("/hub?tab=plugins")}>
             <ArrowLeft className="h-4 w-4" />Plugins
@@ -461,7 +461,7 @@ export function PluginDetail() {
   }
   if (detailQuery.error || !detail) {
     return (
-      <main className="flex h-full items-center justify-center p-6" data-testid="plugin-detail-error">
+      <main className="flex h-full items-center justify-center bg-[color:var(--surface-page)] p-6">
         <div className="max-w-md text-center">
           <CircleAlert className="mx-auto h-6 w-6 text-destructive" />
           <h1 className="mt-3 text-base font-semibold">Plugin unavailable</h1>
@@ -476,7 +476,7 @@ export function PluginDetail() {
   }
 
   return (
-    <main className="h-full overflow-y-auto px-4 py-5 md:px-8 md:py-7" data-testid="plugin-detail-page">
+    <main className="h-full overflow-y-auto bg-[color:var(--surface-page)] px-4 py-5 md:px-8 md:py-7" data-testid="plugin-detail-page">
       <div className="mx-auto max-w-[860px] pb-16">
         <Button variant="ghost" size="sm" className="-ml-2 text-muted-foreground" onClick={() => navigate("/hub?tab=plugins")}>
           <ArrowLeft className="h-4 w-4" />Plugins
@@ -484,7 +484,7 @@ export function PluginDetail() {
 
         <header className="mt-8 flex flex-col gap-5 border-b border-[color:var(--border-soft)] pb-8 sm:flex-row sm:items-start">
           <div className="flex min-w-0 flex-1 items-start gap-4 sm:gap-5">
-            <PluginIconFrame className="h-16 w-16 bg-[color:var(--surface-elevated)] shadow-sm">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] shadow-sm">
               <PluginIcon
                 src={themedIconUrl}
                 fallback={Package}
@@ -492,7 +492,7 @@ export function PluginDetail() {
                 fallbackClassName="h-7 w-7 text-muted-foreground"
                 testId="plugin-detail-icon"
               />
-            </PluginIconFrame>
+            </div>
             <div className="min-w-0 pt-0.5">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="break-words text-2xl font-semibold leading-tight">{detail.displayName}</h1>

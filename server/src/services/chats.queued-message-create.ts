@@ -28,7 +28,6 @@ export async function createQueuedMessageWithStagedAttachments(
     clientMutationId: string;
     payload: ChatQueuedMessagePayload;
     idempotencyPayload?: ChatQueuedMessagePayload;
-    mutationFingerprint?: string;
     runtimeSnapshotVersion?: 1 | null;
     expectedGenerationId?: string | null;
     requestActor?: ChatQueueRequestActor | null;
@@ -43,7 +42,7 @@ export async function createQueuedMessageWithStagedAttachments(
   if (!payload.body.trim() && (payload.inlineAnnotations?.length ?? 0) === 0) {
     throw unprocessable("Queued message body or at least one inline annotation is required");
   }
-  const fingerprint = input.mutationFingerprint ?? queuedMessageMutationFingerprint({
+  const fingerprint = queuedMessageMutationFingerprint({
     payload,
     stagedAttachments: input.stagedAttachments,
     attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,
@@ -78,7 +77,7 @@ export async function createQueuedMessageWithStagedAttachments(
               attachmentFileIndexesByAnnotationId: new Map(),
               runtimeSnapshotVersion: existing.runtimeSnapshotVersion,
             });
-          const replayFingerprint = input.mutationFingerprint ?? queuedMessageMutationFingerprint({
+          const replayFingerprint = queuedMessageMutationFingerprint({
             payload: replayPayload,
             stagedAttachments: input.stagedAttachments,
             attachmentFileIndexesByAnnotationId: input.attachmentFileIndexesByAnnotationId,

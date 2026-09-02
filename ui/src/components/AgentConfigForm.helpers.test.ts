@@ -9,6 +9,8 @@ import {
   runtimeModelEmptyLabel,
   runtimeModelEmptyMessage,
   runtimeModelSearchPlaceholder,
+  runtimeProviderCredentialEnvKey,
+  runtimeProviderCredentialLabel,
   runtimeProviderSetupHint,
 } from "../lib/runtime-models";
 import {
@@ -195,16 +197,21 @@ describe("AgentConfigForm runtime defaults", () => {
     expect(isProviderModelFormat("deepseek/")).toBe(false);
   });
 
-  it("gives provider-specific runtime setup guidance without collecting credentials", () => {
-    expect(runtimeProviderSetupHint("pi_local", "deepseek/deepseek-chat")).toContain("Pi runtime");
-    expect(runtimeProviderSetupHint("pi_local", "deepseek/deepseek-chat")).not.toContain("Paste");
-    expect(runtimeProviderSetupHint("pi_local", "deepseek/deepseek-chat")).not.toContain("organization secret");
+  it("gives Pi and OpenCode provider-specific onboarding commands", () => {
+    expect(runtimeProviderSetupHint("pi_local", "deepseek/deepseek-chat")).toContain("DEEPSEEK_API_KEY");
+    expect(runtimeProviderSetupHint("pi_local", "deepseek/deepseek-chat")).toContain("Paste");
+    expect(runtimeProviderSetupHint("pi_local", "deepseek/deepseek-chat")).not.toContain("Advanced options");
+    expect(runtimeProviderCredentialEnvKey("pi_local", "deepseek/deepseek-chat")).toBe("DEEPSEEK_API_KEY");
+    expect(runtimeProviderCredentialLabel("pi_local", "deepseek/deepseek-chat")).toContain("DEEPSEEK_API_KEY");
     expect(runtimeManualProbeCommand("pi_local", "pi", "deepseek/deepseek-chat"))
       .toBe('pi -p "Respond with hello." --mode json --provider deepseek --model deepseek-chat --tools read');
-    expect(runtimeProviderSetupHint("claude_local", "deepseek-v4-pro[1m]")).toContain("Claude Code runtime");
-    expect(runtimeProviderSetupHint("claude_local", "deepseek-v4-pro[1m]")).not.toContain("Paste");
+    expect(runtimeProviderCredentialEnvKey("pi_local", "openrouter/deepseek/deepseek-chat")).toBe("OPENROUTER_API_KEY");
+    expect(runtimeProviderSetupHint("claude_local", "deepseek-v4-pro[1m]")).toContain("DEEPSEEK_API_KEY");
+    expect(runtimeProviderCredentialEnvKey("claude_local", "deepseek-v4-pro[1m]")).toBe("DEEPSEEK_API_KEY");
+    expect(runtimeProviderCredentialLabel("claude_local", "deepseek-v4-pro[1m]")).toContain("DEEPSEEK_API_KEY");
     expect(runtimeManualProbeCommand("pi_local", "pi", "openrouter/deepseek/deepseek-chat"))
       .toBe('pi -p "Respond with hello." --mode json --provider openrouter --model deepseek/deepseek-chat --tools read');
+    expect(runtimeProviderCredentialEnvKey("opencode_local", "opencode/deepseek-v4-flash-free")).toBeNull();
     expect(runtimeAuthRecoveryHint("pi_local", "deepseek/deepseek-chat")).toContain("DEEPSEEK_API_KEY");
     expect(runtimeAuthRecoveryHint("pi_local", "deepseek/deepseek-chat")).not.toContain("claude auth login");
 

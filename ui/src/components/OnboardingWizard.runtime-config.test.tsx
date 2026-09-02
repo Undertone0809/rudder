@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { agentsApi } from "@/api/agents";
+import { secretsApi } from "@/api/secrets";
 import type { Organization } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactElement } from "react";
@@ -44,6 +45,12 @@ vi.mock("@/api/agents", () => ({
     testEnvironment: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+  },
+}));
+
+vi.mock("@/api/secrets", () => ({
+  secretsApi: {
+    create: vi.fn(),
   },
 }));
 
@@ -200,6 +207,20 @@ describe("OnboardingWizard runtime config", () => {
       testedAt: "2026-06-18T00:00:00.000Z",
       checks: [{ code: "pi_hello_probe_passed", level: "info", message: "Pi hello probe succeeded." }],
     });
+    vi.mocked(secretsApi.create).mockResolvedValue({
+      id: "secret-1",
+      orgId: "org-1",
+      name: "onboarding-deepseek-api-key",
+      purpose: "user_managed",
+      provider: "local_encrypted",
+      externalRef: null,
+      latestVersion: 1,
+      description: null,
+      createdByAgentId: null,
+      createdByUserId: null,
+      createdAt: new Date("2026-06-18T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-18T00:00:00.000Z"),
+    });
     vi.mocked(agentsApi.create).mockResolvedValue({
       id: "agent-1",
       orgId: "org-1",
@@ -303,7 +324,7 @@ describe("OnboardingWizard runtime config", () => {
     });
   }, 15_000);
 
-  it("keeps Pi DeepSeek credentials in the runtime instead of onboarding config", async () => {
+  it("stores a Pi DeepSeek onboarding key as a secret ref in Test now and created agent config", async () => {
     const { OnboardingWizard } = await import("./OnboardingWizard");
     await render(<OnboardingWizard />);
     const surface = document.body;
@@ -355,8 +376,16 @@ describe("OnboardingWizard runtime config", () => {
       await flush();
     });
 
-    expect(surface.querySelector<HTMLInputElement>("input[placeholder='Paste DEEPSEEK_API_KEY']")).toBeNull();
-    expect(surface.textContent).toContain("Configure DeepSeek authentication in the Pi runtime");
+    const keyInput = await vi.waitFor(() => {
+      const input = surface.querySelector<HTMLInputElement>("input[placeholder='Paste DEEPSEEK_API_KEY']");
+      expect(input).toBeTruthy();
+      return input!;
+    });
+
+    await act(async () => {
+      inputValue(keyInput, "test-deepseek-key");
+      await flush();
+    });
 
     await act(async () => {
       click(findButton(surface, "Test now"));
@@ -367,6 +396,13 @@ describe("OnboardingWizard runtime config", () => {
       expect(agentsApi.testEnvironment).toHaveBeenCalledWith("org-1", "pi_local", {
         agentRuntimeConfig: expect.objectContaining({
           model: "deepseek/deepseek-chat",
+          env: {
+            DEEPSEEK_API_KEY: {
+              type: "secret_ref",
+              secretId: "secret-1",
+              version: "latest",
+            },
+          },
         }),
       });
     });
@@ -381,89 +417,22 @@ describe("OnboardingWizard runtime config", () => {
         agentRuntimeType: "pi_local",
         agentRuntimeConfig: expect.objectContaining({
           model: "deepseek/deepseek-chat",
+          env: {
+            DEEPSEEK_API_KEY: {
+              type: "secret_ref",
+              secretId: "secret-1",
+              version: "latest",
+            },
+          },
         }),
       }));
     });
 
+    expect(secretsApi.create).toHaveBeenCalledTimes(1);
+    expect(secretsApi.create).toHaveBeenCalledWith("org-1", expect.objectContaining({
+      value: "test-deepseek-key",
+    }));
     const createdPayload = vi.mocked(agentsApi.create).mock.calls[0]?.[1];
-    expect(createdPayload?.agentRuntimeConfig).not.toHaveProperty("env");
-  }, 15_000);
-
-  it("ignores a runtime test result after the selected model changes", async () => {
-    let resolvePendingTest: ((value: Awaited<ReturnType<typeof agentsApi.testEnvironment>>) => void) | undefined;
-    vi.mocked(agentsApi.testEnvironment).mockImplementationOnce(
-      () => new Promise((resolve) => {
-        resolvePendingTest = resolve;
-      }),
-    );
-
-    const { OnboardingWizard } = await import("./OnboardingWizard");
-    await render(<OnboardingWizard />);
-    const surface = document.body;
-
-    await act(async () => {
-      click(findButton(surface, "More Agent Runtime Types"));
-      await flush();
-      click(findButton(surface, "Pi"));
-      await flush();
-    });
-
-    await vi.waitFor(() => {
-      expect(findButton(surface, "Kimi for Coding")).toBeTruthy();
-    });
-
-    await act(async () => {
-      click(findButton(surface, "Kimi for Coding"));
-      await flush();
-      inputValue(
-        document.querySelector<HTMLInputElement>(
-          "input[placeholder='Search or enter provider/model...']",
-        )!,
-        "deepseek/deepseek-chat",
-      );
-      await flush();
-    });
-
-    const deepSeekModelOption = Array.from(document.querySelectorAll("span[title='deepseek/deepseek-chat']"))
-      .map((span) => span.closest("button"))
-      .find(Boolean);
-    expect(deepSeekModelOption).toBeTruthy();
-
-    await act(async () => {
-      click(deepSeekModelOption!);
-      await flush();
-      click(findButton(surface, "Test now"));
-      await flush();
-    });
-
-    expect(findButton(surface, "Testing...")).toBeTruthy();
-
-    await act(async () => {
-      click(findButton(surface, "DeepSeek Chat"));
-      await flush();
-      inputValue(
-        document.querySelector<HTMLInputElement>(
-          "input[placeholder='Search or enter provider/model...']",
-        )!,
-        "kimi-for-coding",
-      );
-      await flush();
-      click(findButton(surface, "kimi-for-coding"));
-      await flush();
-    });
-
-    await act(async () => {
-      resolvePendingTest?.({
-        agentRuntimeType: "pi_local",
-        status: "pass",
-        testedAt: "2026-06-18T00:00:00.000Z",
-        checks: [{ code: "pi_hello_probe_passed", level: "info", message: "Pi hello probe succeeded." }],
-      });
-      await flush();
-    });
-
-    expect(surface.textContent).not.toContain("Runtime environment check passed");
-    expect(findButton(surface, "Test now")).toBeTruthy();
-    expect(vi.mocked(agentsApi.create)).not.toHaveBeenCalled();
+    expect(JSON.stringify(createdPayload)).not.toContain("test-deepseek-key");
   }, 15_000);
 });

@@ -79,6 +79,25 @@ early.
   `[skip release]` unless canary publication is explicitly required. Confirm CI
   for the repair SHA and confirm the automatic Release workflow was skipped.
 
+## Progressive Qualification And Candidate Identity
+
+`Test` uses `scripts/ci-impact-plan.mjs` and always exposes the aggregate
+`Qualification summary` job. Bounded pull requests use affected families;
+docs-only changes add docs qualification; workflow, release, dependency,
+shared-contract, database, native, Desktop, and unbounded changes escalate to
+the full family set. `merge_group`, exact-source manual runs, and pushes to
+`main` are full qualification profiles. Release promotion requires the
+successful aggregate receipt for the exact source SHA.
+
+The Release workflow creates one immutable candidate manifest for the 15 npm
+and seven Desktop artifacts. It binds source commit and tree, qualification
+run, candidate run, release workflow source, runtime identity, sizes, SHA-256
+digests, checksums, and a seven-day expiry. `candidate-verify` and each publish
+job re-verify the downloaded candidate from the recorded run ID. A stable
+promotion with `candidate_run_id` may reuse those bytes, but an expired or
+mismatched manifest must fail before npm, Git, GitHub Release, Desktop, COS,
+or docs mutation.
+
 ## Convergence Budget
 
 - Do not dispatch stable while exact-source CI is still running. One candidate

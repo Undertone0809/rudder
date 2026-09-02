@@ -4,7 +4,7 @@ import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
-import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockIdentity, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
+import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
@@ -213,7 +213,7 @@ function RunTranscriptViewContent({
     <div className={cn("space-y-3", className)}>
       {visibleBlocks.map((block, index) => (
         <div
-          key={transcriptBlockIdentity(block)}
+          key={transcriptBlockStableKey(block, index)}
           className={cn(index === visibleBlocks.length - 1 && streaming && "animate-in fade-in slide-in-from-bottom-1 duration-300")}
         >
           {renderTranscriptBlock({

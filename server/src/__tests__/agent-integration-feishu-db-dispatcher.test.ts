@@ -2597,13 +2597,10 @@ describe("Feishu inbound dispatcher DB deps", () => {
       chatMessageId: messages[1]?.id,
       runId: failedRunId,
     });
-    await waitUntil(async () => {
-      expect(failedRunId).toBeTruthy();
-      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, failedRunId!));
-      expect(run?.contextSnapshot).toMatchObject({
-        assistantMessageId: messages[1]?.id,
-        messageId: messages[1]?.id,
-      });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, failedRunId!));
+    expect(run?.contextSnapshot).toMatchObject({
+      assistantMessageId: messages[1]?.id,
+      messageId: messages[1]?.id,
     });
   });
 

@@ -66,7 +66,7 @@ async function readInvocationPrompt(page: Page, organizationId: string, agentId:
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organizationId);
   await page.goto(`/agents/${agentId}/runs/${runId}`);
-  await page.getByRole("tab", { name: "Invocation" }).click();
+  await page.getByRole("tab", { name: "Metadata" }).click();
   const prompt = page.getByTestId("invocation-prompt");
   await expect(prompt).toBeVisible({ timeout: 15_000 });
   return { prompt, text: (await prompt.textContent()) ?? "" };

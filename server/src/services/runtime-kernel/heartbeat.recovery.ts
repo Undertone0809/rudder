@@ -108,8 +108,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       requestedByActorId: string | null;
       contextPatch?: Record<string, unknown>;
       startImmediately?: boolean;
-      notBefore?: Date;
-      suppressSourceAutomationOutput?: boolean;
       now: Date;
     },
   ) {
@@ -191,29 +189,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
 
     const outcome = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-retry:${run.id}`}))`);
-      const suppressSourceAutomationOutput = async (required: boolean) => {
-        const source = await tx
-          .select({ terminalEffectsPending: heartbeatRuns.terminalEffectsPending })
-          .from(heartbeatRuns)
-          .where(eq(heartbeatRuns.id, run.id))
-          .then((rows) => rows[0] ?? null);
-        if (!source?.terminalEffectsPending) {
-          if (required) {
-            throw new Error("Source run terminal effects were unavailable for atomic recovery handoff");
-          }
-          return;
-        }
-        await tx
-          .update(heartbeatRuns)
-          .set({
-            terminalEffectsJson: sql`coalesce(${heartbeatRuns.terminalEffectsJson}, '{}'::jsonb) - 'automation'`,
-            updatedAt: opts.now,
-          })
-          .where(and(
-            eq(heartbeatRuns.id, run.id),
-            eq(heartbeatRuns.terminalEffectsPending, true),
-          ));
-      };
       const existingRetry = await tx
         .select()
         .from(heartbeatRuns)
@@ -228,26 +203,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
         .orderBy(asc(heartbeatRuns.createdAt))
         .limit(1)
         .then((rows) => rows[0] ?? null);
-      if (existingRetry) {
-        if (opts.suppressSourceAutomationOutput) {
-          const expectedAttempt = Math.max(
-            0,
-            Math.floor(Number(parseObject(opts.contextPatch).assignmentGuardrailContinuationAttempt) || 0),
-          );
-          const existingAttempt = Math.max(
-            0,
-            Math.floor(Number(parseObject(existingRetry.contextSnapshot).assignmentGuardrailContinuationAttempt) || 0),
-          );
-          if (expectedAttempt === 0 || existingAttempt !== expectedAttempt) {
-            throw conflict("Existing retry is not the requested bounded assignment recovery", {
-              sourceRunId: run.id,
-              existingRetryRunId: existingRetry.id,
-            });
-          }
-          await suppressSourceAutomationOutput(false);
-        }
-        return { kind: "existing" as const, run: existingRetry };
-      }
+      if (existingRetry) return { kind: "existing" as const, run: existingRetry };
 
       let issueRow:
         | {
@@ -338,7 +294,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           reason: opts.wakeReason,
           payload: requestPayload,
           status: "queued",
-          requestedAt: opts.notBefore ?? opts.now,
           requestedByActorType: opts.requestedByActorType ?? null,
           requestedByActorId: opts.requestedByActorId ?? null,
           updatedAt: opts.now,
@@ -383,7 +338,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
             suppressSessionReuse ? "none" : explicitResumeSession ? "explicit" : sessionBefore ? "task" : "none",
           retryOfRunId: run.id,
           processLossRetryCount:
-            opts.wakeReason === "process_lost_retry"
+            opts.recoveryTrigger === "automatic"
               ? (run.processLossRetryCount ?? 0) + 1
               : (run.processLossRetryCount ?? 0),
           updatedAt: opts.now,
@@ -434,10 +389,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
             updatedAt: opts.now,
           })
           .where(eq(issues.id, issueRow.id));
-      }
-
-      if (opts.suppressSourceAutomationOutput) {
-        await suppressSourceAutomationOutput(true);
       }
 
       return { kind: "queued" as const, run: recoveryRun };

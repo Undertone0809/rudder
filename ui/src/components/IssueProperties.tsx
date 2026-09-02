@@ -17,7 +17,7 @@ import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "../lib/agent-labels";
-import { formatAssigneeUserLabel, isSystemUserId } from "../lib/assignees";
+import { formatAssigneeUserLabel } from "../lib/assignees";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { timeAgo } from "../lib/timeAgo";
@@ -455,11 +455,7 @@ export function IssueProperties({
       className="w-full"
     />
   ) : assigneeUserLabel ? (
-    <AssigneeLabel
-      kind={isSystemUserId(issue.assigneeUserId) ? "system" : "user"}
-      label={assigneeUserLabel}
-      avatarUrl={avatarForUser(issue.assigneeUserId)}
-    />
+    <AssigneeLabel kind="user" label={assigneeUserLabel} avatarUrl={avatarForUser(issue.assigneeUserId)} />
   ) : (
     <AssigneeLabel kind="unassigned" label="Unassigned" muted />
   );
@@ -490,7 +486,7 @@ export function IssueProperties({
         >
           <AssigneeLabel kind="unassigned" label="No assignee" />
         </button>
-        {currentUserId && !isSystemUserId(currentUserId) && (
+        {currentUserId && (
           <button
             className={cn(
               "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
@@ -504,7 +500,7 @@ export function IssueProperties({
             <AssigneeSelfActionLabel avatarUrl={currentUserAvatarUrl} />
           </button>
         )}
-        {issue.createdByUserId && !isSystemUserId(issue.createdByUserId) && issue.createdByUserId !== currentUserId && (
+        {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
           <button
             className={cn(
               "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
@@ -571,11 +567,7 @@ export function IssueProperties({
       className="w-full"
     />
   ) : reviewerUserLabel ? (
-    <AssigneeLabel
-      kind={isSystemUserId(issue.reviewerUserId) ? "system" : "user"}
-      label={reviewerUserLabel}
-      avatarUrl={avatarForUser(issue.reviewerUserId)}
-    />
+    <AssigneeLabel kind="user" label={reviewerUserLabel} avatarUrl={avatarForUser(issue.reviewerUserId)} />
   ) : (
     <AssigneeLabel kind="unassigned" label="No reviewer" muted />
   );
@@ -603,7 +595,7 @@ export function IssueProperties({
         >
           <AssigneeLabel kind="unassigned" label="No reviewer" />
         </button>
-        {currentUserId && !isSystemUserId(currentUserId) && (
+        {currentUserId && (
           <button
             className={cn(
               "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
@@ -1075,7 +1067,7 @@ export function IssueProperties({
                   </Link>
                 ) : (
                   <AssigneeLabel
-                    kind={isSystemUserId(issue.createdByUserId) ? "system" : "user"}
+                    kind="user"
                     label={creatorUserLabel ?? "User"}
                     avatarUrl={avatarForUser(issue.createdByUserId)}
                   />

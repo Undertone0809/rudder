@@ -148,17 +148,22 @@ async function setTargetDate(value: string) {
   await waitUntil(() => expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull());
 
   const dateLabel = date.toLocaleDateString();
-  let dateButton: HTMLButtonElement | undefined;
-  for (let monthOffset = 0; monthOffset < 24 && !dateButton; monthOffset += 1) {
-    dateButton = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
-      .find((candidate) => candidate.dataset.day === dateLabel);
-    if (dateButton) break;
-    const previousMonthButton = document.querySelector<HTMLButtonElement>(
-      '[aria-label="Go to the Previous Month"]',
-    );
-    if (!previousMonthButton) break;
-    act(() => previousMonthButton.click());
+  const currentMonth = newGoalDefaults.targetTime
+    ? new Date(newGoalDefaults.targetTime)
+    : new Date();
+  const monthDelta = (date.getFullYear() - currentMonth.getFullYear()) * 12
+    + date.getMonth() - currentMonth.getMonth();
+  const navigationLabel = monthDelta < 0 ? "Go to the Previous Month" : "Go to the Next Month";
+  for (let month = 0; month < Math.abs(monthDelta); month += 1) {
+    const navigationButton = document.querySelector<HTMLButtonElement>(`button[aria-label="${navigationLabel}"]`);
+    if (!navigationButton) throw new Error(`Missing calendar navigation ${navigationLabel}`);
+    act(() => navigationButton.click());
+    await waitUntil(() => {
+      expect(document.querySelector('[data-slot="calendar"]')).not.toBeNull();
+    });
   }
+  const dateButton = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-day]"))
+    .find((candidate) => candidate.dataset.day === dateLabel);
   if (!dateButton) throw new Error(`Missing calendar day ${dateLabel}`);
   act(() => dateButton.click());
   act(() => button("Done")?.click());

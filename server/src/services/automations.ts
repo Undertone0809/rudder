@@ -629,7 +629,11 @@ export function automationService(db: Db, deps: AutomationServiceDeps = {}) {
     let assistantProgressMessage: ChatMessage | null = null;
     let assistantProgressMessageId: string | null = null;
     let userMessage: ChatMessage | null = run.startedChatMessageId
-      ? await chatSvc.getMessage(conversation.id, run.startedChatMessageId)
+      ? await db.select().from(chatMessages).where(and(
+        eq(chatMessages.id, run.startedChatMessageId),
+        eq(chatMessages.conversationId, conversation.id),
+        eq(chatMessages.orgId, conversation.orgId),
+      )).then((rows) => rows[0] as ChatMessage | undefined ?? null)
       : null;
     let lastRunProgressTouchMs = 0;
 

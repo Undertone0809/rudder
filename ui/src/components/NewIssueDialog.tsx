@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/popover";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useI18n } from "@/context/I18nContext";
-import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
@@ -240,7 +239,7 @@ export function NewIssueDialog() {
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
   const queryClient = useQueryClient();
   const { pushToast, updateToast } = useToast();
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
@@ -1744,7 +1743,7 @@ export function NewIssueDialog() {
                   if (!isCreatingOrRedirecting) setDescription(value);
                 }}
                 readOnly={isCreatingOrRedirecting}
-                ariaLabel={translateLegacyString(locale, "Issue Description")}
+                ariaLabel="Issue Description"
                 placeholder="Add description..."
                 bordered={false}
                 mentions={mentionOptions}
@@ -1765,7 +1764,7 @@ export function NewIssueDialog() {
         <div className="px-4 pt-4 pb-2 shrink-0">
           <textarea
             className="w-full text-lg font-semibold bg-transparent outline-none resize-none overflow-hidden placeholder:text-muted-foreground/50"
-            placeholder={translateLegacyString(locale, "Issue title")}
+            placeholder="Issue title"
             rows={1}
             value={title}
             onChange={(e) => {
@@ -2018,7 +2017,7 @@ export function NewIssueDialog() {
               engine="codemirror" documentIdentity={`new-issue:${effectiveCompanyId ?? "none"}:${activeSavedIssueDraftId ?? documentSessionId}`}
               value={description}
               onChange={setDescription}
-              ariaLabel={translateLegacyString(locale, "Issue Description")}
+              ariaLabel="Issue Description"
               placeholder="Add description..."
               bordered={false}
               mentions={mentionOptions}

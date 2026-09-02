@@ -55,42 +55,6 @@ const READ_ONLY_AUTHORITIES: &[&str] = &["workspace_backup_list", "workspace_bac
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
 
-const WORKSPACE_BACKUP_LIST_SQL: &str = r#"
-SELECT jsonb_build_object(
-  'id', id::text,
-  'orgId', org_id::text,
-  'status', status,
-  'triggerSource', trigger_source,
-  'artifactProvider', 'local_file',
-  'artifactRef', artifact_ref,
-  'archiveSha256', archive_sha256,
-  'treeSha256', tree_sha256,
-  'fileCount', file_count,
-  'byteSize', byte_size,
-  'compressedSize', compressed_size,
-  'manifest', manifest,
-  'warnings', CASE WHEN jsonb_typeof(warnings) = 'array' THEN warnings ELSE '[]'::jsonb END,
-  'error', error,
-  'startedAt', CASE WHEN started_at IS NULL THEN NULL ELSE to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
-  'finishedAt', CASE WHEN finished_at IS NULL THEN NULL ELSE to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
-  'expiresAt', to_char(COALESCE(expires_at, created_at + interval '30 days') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'restoredFromBackupId', restored_from_backup_id::text,
-  'createdByUserId', created_by_user_id,
-  'createdAt', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'updatedAt', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-)::text
-FROM workspace_backups
-WHERE org_id::text = $1 AND status <> 'deleted'
-ORDER BY created_at DESC
-"#;
-
-const WORKSPACE_BACKUP_FILES_SQL: &str = r#"
-SELECT artifact_ref, archive_sha256, status
-FROM workspace_backups
-WHERE org_id::text = $1 AND id::text = $2 AND status <> 'deleted'
-LIMIT 1
-"#;
-
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub listen_addr: SocketAddr,
@@ -372,7 +336,6 @@ pub struct StartupReceipt {
     pub public_listener: bool,
     pub product_write_authority: bool,
     pub database_authority: &'static str,
-    pub read_only_authorities: &'static [&'static str],
     pub limits: LimitsReceipt,
 }
 
@@ -434,14 +397,7 @@ struct CapabilitiesReceipt {
     public_listener: bool,
     product_write_authority: bool,
     websocket_supported: bool,
-    read_only_authorities: &'static [&'static str],
     limits: LimitsReceipt,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceBackupListReceipt {
-    backups: Vec<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -689,12 +645,10 @@ impl AppState {
             public_listener: false,
             product_write_authority: false,
             websocket_supported: false,
-            read_only_authorities: READ_ONLY_AUTHORITIES,
             limits: self.config.limits(),
         };
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
     }
-
     async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
@@ -974,8 +928,7 @@ impl ServerRuntime {
             bound_addr: self.bound_addr,
             public_listener: false,
             product_write_authority: false,
-            database_authority: "read-only-product-data",
-            read_only_authorities: READ_ONLY_AUTHORITIES,
+            database_authority: "pool-boundary-only",
             limits: self.control.state.config.limits(),
         }
     }
@@ -1192,37 +1145,5 @@ mod tests {
         let state = AppState::new(ServerConfig::default()).unwrap();
         assert_eq!(state.health().status(), StatusCode::OK);
         assert_eq!(state.capabilities().status(), StatusCode::OK);
-    }
-
-    #[actix_web::test]
-    async fn workspace_backup_list_fails_closed_without_database() {
-        let state = AppState::new(ServerConfig::default()).unwrap();
-        let response = state.workspace_backups("organization-1").await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = actix_web::body::to_bytes(response.into_body())
-            .await
-            .unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("database_disabled"));
-    }
-
-    #[test]
-    fn workspace_backup_list_query_is_organization_scoped_and_read_only() {
-        let normalized = WORKSPACE_BACKUP_LIST_SQL.to_ascii_lowercase();
-        assert!(normalized.contains("where org_id::text = $1"));
-        assert!(normalized.contains("status <> 'deleted'"));
-        assert!(normalized.contains("order by created_at desc"));
-        for mutation in ["insert ", "update ", "delete ", "truncate "] {
-            assert!(!normalized.contains(mutation), "query contains {mutation}");
-        }
-    }
-
-    #[test]
-    fn workspace_backup_files_query_is_organization_scoped_and_read_only() {
-        let normalized = WORKSPACE_BACKUP_FILES_SQL.to_ascii_lowercase();
-        assert!(normalized.contains("where org_id::text = $1 and id::text = $2"));
-        assert!(normalized.contains("status <> 'deleted'"));
-        for mutation in ["insert ", "update ", "delete ", "truncate "] {
-            assert!(!normalized.contains(mutation), "query contains {mutation}");
-        }
     }
 }
