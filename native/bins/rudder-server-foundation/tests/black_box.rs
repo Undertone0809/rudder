@@ -41,7 +41,11 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(startup["databaseAuthority"], "read-only-product-data");
     assert_eq!(
         startup["readOnlyAuthorities"],
-        serde_json::json!(["workspace_backup_list", "workspace_backup_files_list"])
+        serde_json::json!([
+            "workspace_backup_list",
+            "workspace_backup_files_list",
+            "workspace_backup_file_read"
+        ])
     );
 
     let health = get_with_retry(bound_addr, "/healthz");
@@ -59,6 +63,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("maxDatabaseConnections"));
     assert!(capabilities.contains("workspace_backup_list"));
     assert!(capabilities.contains("workspace_backup_files_list"));
+    assert!(capabilities.contains("workspace_backup_file_read"));
 
     let backup_list = get_with_retry(
         bound_addr,
@@ -221,6 +226,7 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         serde_json::json!([
             {"name":"docs","path":"docs","isDirectory":true},
             {"name":"nested","path":"nested","isDirectory":true},
+            {"name":"binary.bin","path":"binary.bin","isDirectory":false},
             {"name":"root.txt","path":"root.txt","isDirectory":false}
         ])
     );
@@ -240,6 +246,70 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     ));
     assert_eq!(empty["entries"], serde_json::json!([]));
     assert_eq!(empty["message"], "This backup folder is empty.");
+
+    let file_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/file?path=docs%2Freadme.md";
+    let readme_response = get_with_retry(bound_addr, file_route);
+    assert!(
+        readme_response.starts_with("HTTP/1.1 200"),
+        "{readme_response}"
+    );
+    let readme = response_json(&readme_response);
+    assert_eq!(readme["source"], "org_root");
+    assert_eq!(
+        readme["rootPath"],
+        "backup:10000000-0000-0000-0000-000000000002"
+    );
+    assert_eq!(readme["filePath"], "docs/readme.md");
+    assert_eq!(readme["content"], "readme");
+    assert_eq!(readme["contentType"], "text/plain");
+    assert_eq!(readme["previewKind"], "text");
+    assert_eq!(readme["truncated"], false);
+    assert_eq!(readme["message"], Value::Null);
+
+    let binary_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/file?path=binary.bin";
+    let binary_response = get_with_retry(bound_addr, binary_route);
+    assert!(
+        binary_response.starts_with("HTTP/1.1 200"),
+        "{binary_response}"
+    );
+    let binary = response_json(&binary_response);
+    assert_eq!(binary["content"], Value::Null);
+    assert_eq!(binary["contentType"], "application/octet-stream");
+    assert_eq!(binary["previewKind"], "binary");
+    assert_eq!(
+        binary["message"],
+        "Binary files are not previewed in workspace backups."
+    );
+    assert_eq!(binary["truncated"], false);
+
+    let missing_file = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/file?path=missing.txt",
+    );
+    assert!(missing_file.starts_with("HTTP/1.1 404"), "{missing_file}");
+    assert!(missing_file.contains("workspace_backup_file_not_found"));
+
+    let invalid_file_path = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/file?path=..%2Fsecret",
+    );
+    assert!(
+        invalid_file_path.starts_with("HTTP/1.1 422"),
+        "{invalid_file_path}"
+    );
+    assert!(invalid_file_path.contains("workspace_backup_path_invalid"));
+
+    let cross_org_file = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000002/workspace/backups/10000000-0000-0000-0000-000000000002/file?path=docs%2Freadme.md",
+    );
+    assert!(
+        cross_org_file.starts_with("HTTP/1.1 404"),
+        "{cross_org_file}"
+    );
+
+    let post_file = http_request(bound_addr, "POST", file_route).expect("POST backup file route");
+    assert!(post_file.starts_with("HTTP/1.1 404"), "{post_file}");
 
     let invalid_path = get_with_retry(bound_addr, &format!("{route}?path=..%2Fsecret"));
     assert!(invalid_path.starts_with("HTTP/1.1 422"), "{invalid_path}");
@@ -314,12 +384,24 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     let legacy = response_json(&get_with_retry(bound_addr, legacy_route));
     assert_eq!(legacy["entries"], docs["entries"]);
 
+    let legacy_file_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000001/file?path=root.txt";
+    let legacy_file_response = get_with_retry(bound_addr, legacy_file_route);
+    assert!(
+        legacy_file_response.starts_with("HTTP/1.1 200"),
+        "{legacy_file_response}"
+    );
+    let legacy_file = response_json(&legacy_file_response);
+    assert_eq!(legacy_file["filePath"], "root.txt");
+    assert_eq!(legacy_file["content"], "root");
+    assert_eq!(legacy_file["contentType"], "text/plain");
+    assert_eq!(legacy_file["previewKind"], "text");
+
     sqlx::query("UPDATE workspace_backups SET status = 'running' WHERE id = $1::uuid")
         .bind("10000000-0000-0000-0000-000000000001")
         .execute(&pool)
         .await
         .expect("mark backup running");
-    let running = get_with_retry(bound_addr, legacy_route);
+    let running = get_with_retry(bound_addr, legacy_file_route);
     assert!(running.starts_with("HTTP/1.1 409"), "{running}");
     assert!(running.contains("workspace_backup_running"));
 
@@ -328,7 +410,7 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         .execute(&pool)
         .await
         .expect("mark backup failed");
-    let failed = get_with_retry(bound_addr, legacy_route);
+    let failed = get_with_retry(bound_addr, legacy_file_route);
     assert!(failed.starts_with("HTTP/1.1 422"), "{failed}");
     assert!(failed.contains("workspace_backup_failed"));
 
@@ -338,7 +420,7 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         .execute(&pool)
         .await
         .expect("corrupt recorded checksum");
-    let checksum_mismatch = get_with_retry(bound_addr, route);
+    let checksum_mismatch = get_with_retry(bound_addr, file_route);
     assert!(
         checksum_mismatch.starts_with("HTTP/1.1 422"),
         "{checksum_mismatch}"
@@ -857,16 +939,19 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
     let docs_readme = root.path().join("readme.md");
     let docs_alpha = root.path().join("alpha.txt");
     let root_file = root.path().join("root.txt");
+    let binary_file = root.path().join("binary.bin");
     let nested_file = root.path().join("deep.txt");
     fs::write(&docs_readme, b"readme").expect("write readme fixture");
     fs::write(&docs_alpha, b"alpha").expect("write alpha fixture");
     fs::write(&root_file, b"root").expect("write root fixture");
+    fs::write(&binary_file, b"\0binary").expect("write binary fixture");
     fs::write(&nested_file, b"nested").expect("write nested fixture");
 
     let entries = vec![
         serde_json::json!({"path":"docs","kind":"directory","byteSize":0,"mtimeMs":null,"mode":null,"sha256":null}),
         serde_json::json!({"path":"docs/readme.md","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"readme"))}),
         serde_json::json!({"path":"docs/alpha.txt","kind":"file","byteSize":5,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"alpha"))}),
+        serde_json::json!({"path":"binary.bin","kind":"file","byteSize":7,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"\0binary"))}),
         serde_json::json!({"path":"root.txt","kind":"file","byteSize":4,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"root"))}),
         serde_json::json!({"path":"nested/deep.txt","kind":"file","byteSize":6,"mtimeMs":null,"mode":null,"sha256":format!("{:x}", Sha256::digest(b"nested"))}),
     ];
@@ -875,6 +960,7 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         serde_json::json!({"kind":"directory","archivePath":"workspace/docs/"}),
         serde_json::json!({"kind":"file","archivePath":"workspace/docs/readme.md","sourcePath":docs_readme}),
         serde_json::json!({"kind":"file","archivePath":"workspace/docs/alpha.txt","sourcePath":docs_alpha}),
+        serde_json::json!({"kind":"file","archivePath":"workspace/binary.bin","sourcePath":binary_file}),
         serde_json::json!({"kind":"file","archivePath":"workspace/root.txt","sourcePath":root_file}),
         serde_json::json!({"kind":"file","archivePath":"workspace/nested/deep.txt","sourcePath":nested_file}),
     ];
@@ -1019,13 +1105,18 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         );
 
     let legacy_artifact = root.path().join("workspace.json");
+    let mut legacy_entries = entries.clone();
+    legacy_entries
+        .iter_mut()
+        .find(|entry| entry["path"] == "root.txt")
+        .expect("legacy root entry")["dataBase64"] = serde_json::json!("cm9vdA==");
     let legacy_bytes = serde_json::to_vec(&serde_json::json!({
         "version": 1,
         "orgId": "00000000-0000-0000-0000-000000000001",
         "instanceId": "black-box",
         "createdAt": "2026-09-01T00:00:00.000Z",
         "rootPath": "/fixture/workspace",
-        "entries": entries,
+        "entries": legacy_entries,
         "warnings": []
     }))
     .expect("serialize legacy artifact");
