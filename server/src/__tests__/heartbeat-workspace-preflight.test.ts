@@ -109,21 +109,23 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../agent-runtimes/index.ts", async () => {
   const actual = await vi.importActual("../agent-runtimes/index.ts");
   const parseTestToolResult = (line: string, ts: string) => {
-    if (!line.startsWith("TEST_TOOL_ERROR:")) return [];
+    const isPatchDrift = line.startsWith("TEST_PATCH_DRIFT:");
+    if (!isPatchDrift && !line.startsWith("TEST_TOOL_ERROR:")) return [];
     const [, toolUseId, ...contentParts] = line.split(":");
+    const toolName = isPatchDrift ? "apply_patch" : "exec_command";
     return [
       {
         kind: "tool_call" as const,
         ts,
-        name: "exec_command",
+        name: toolName,
         toolUseId,
-        input: { cmd: "pnpm test" },
+        input: { cmd: isPatchDrift ? "apply patch" : "pnpm test" },
       },
       {
         kind: "tool_result" as const,
         ts,
         toolUseId,
-        toolName: "exec_command",
+        toolName,
         content: contentParts.join(":"),
         isError: true,
       },
@@ -764,9 +766,9 @@ describe("heartbeat managed workspace preflight", () => {
   it("checkpoints repeated assignment failures and queues one continuation", async () => {
     const { agentId } = await seedAgentFixture();
     mockRuntimeAdapter.execute.mockImplementationOnce(async (ctx) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Cannot find module /tmp/a\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Cannot find module /tmp/b\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Cannot find module /tmp/c\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-1:Invalid Context /tmp/a\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-2:Invalid Context /tmp/b\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-3:Invalid Context /tmp/c\n");
       return {
         summary: "adapter returned after abort",
         resultJson: null,
@@ -813,9 +815,9 @@ describe("heartbeat managed workspace preflight", () => {
   it("does not recursively queue another continuation after the guarded recovery fails", async () => {
     const { agentId } = await seedAgentFixture();
     const failWithRepeatedTools = async (ctx: any) => {
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-1:Cannot find module /tmp/a\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-2:Cannot find module /tmp/b\n");
-      await ctx.onLog("stdout", "TEST_TOOL_ERROR:tool-3:Cannot find module /tmp/c\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-1:Invalid Context /tmp/a\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-2:Invalid Context /tmp/b\n");
+      await ctx.onLog("stdout", "TEST_PATCH_DRIFT:tool-3:Invalid Context /tmp/c\n");
       return {
         summary: "guarded failure",
         resultJson: null,
