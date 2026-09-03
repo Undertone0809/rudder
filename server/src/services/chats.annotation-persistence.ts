@@ -51,6 +51,32 @@ export type AddUserChatMessageOptions = {
   onTransactionCommitted?: (messageId: string) => void;
 };
 
+export function createChatMessageMutationLookup(
+  db: Db,
+  getMessage: (conversationId: string, messageId: string) => Promise<ChatMessage | null>,
+) {
+  return async function getUserMessageMutationByClientMutationId(
+    orgId: string,
+    conversationId: string,
+    clientMutationId: string,
+  ) {
+    const row = await db
+      .select({ id: chatMessages.id, fingerprint: chatMessages.clientMutationFingerprint })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, orgId),
+        eq(chatMessages.conversationId, conversationId),
+        eq(chatMessages.role, "user"),
+        eq(chatMessages.clientMutationId, clientMutationId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!row) return null;
+    const message = await getMessage(conversationId, row.id);
+    return message ? { message, fingerprint: row.fingerprint } : null;
+  };
+}
+
 function remapInlineAnnotationAttachmentIds(
   structuredPayload: Record<string, unknown> | null | undefined,
   attachmentIdMap: Map<string, string>,

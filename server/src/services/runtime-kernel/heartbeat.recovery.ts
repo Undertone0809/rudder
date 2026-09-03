@@ -31,6 +31,29 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 const HEARTBEAT_RUN_INACTIVITY_WARNING_MS = 24 * 60 * 60 * 1000;
 const HEARTBEAT_RUN_INACTIVITY_WARNING_KEY = "run-inactivity-warning:24h:v1";
 
+export async function recordAssignmentRecoveryResult(input: any) {
+  await input.runClaimedEffect("assignment_recovery_result", async () => {
+    const sourceRun = await input.getRun(input.current.retryOfRunId);
+    if (!sourceRun) throw new Error("Assignment recovery source run was not found");
+    await input.appendRunEvent(sourceRun, {
+      eventType: "runtime.assignment_recovery_result",
+      idempotencyKey: `assignment-recovery-result:${input.current.id}`,
+      stream: "system",
+      level: input.current.status === "succeeded" ? "info" : "error",
+      message: input.current.status === "succeeded"
+        ? "bounded assignment recovery succeeded"
+        : "bounded assignment recovery failed",
+      payload: {
+        recoveryRunId: input.current.id,
+        attempt: input.attempt,
+        maxAttempts: 1,
+        status: input.current.status,
+        recovered: input.current.status === "succeeded",
+      },
+    });
+  });
+}
+
 export function createHeartbeatRecoveryHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, withHeartbeatRecoveryLock, formatDurationMs } = context;
 

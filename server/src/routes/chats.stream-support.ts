@@ -164,6 +164,85 @@ export function createChatStreamFileStaging(input: {
   };
 }
 
+export async function persistChatStreamUserMessageBeforeGeneration(input: {
+  atomicFirstTurn?: AtomicChatFirstTurn;
+  queuedMessageId: string | null;
+  conversation: ChatConversation;
+  body: string;
+  editUserMessageId: string | null;
+  preparedAnnotations: any;
+  inlineAnnotationsProvided: boolean;
+  clientMutationId: string | null;
+  clientMutationFingerprint: string | null;
+  svc: any;
+  addUserMessage: any;
+  actor: any;
+  startupGate: StartingChatGenerationGate;
+  releaseGeneration: () => void;
+  stagedMessageFiles: ReturnType<typeof createChatStreamFileStaging>;
+}) {
+  let persistedUserMessage: ChatMessage | null = input.atomicFirstTurn?.userMessage ?? null;
+  let userMessagePersisted = Boolean(input.atomicFirstTurn);
+  let committedUserMessageId = input.atomicFirstTurn?.userMessage.id ?? null;
+  const abortBeforeGeneration = async () => {
+    input.startupGate.resolveGeneration(null);
+    startingChatGenerationGates.delete(input.conversation.id);
+    input.releaseGeneration();
+    await input.stagedMessageFiles.cleanup();
+  };
+  if (input.queuedMessageId) {
+    try {
+      await input.svc.assertQueuedMessageClaimedForDelivery({
+        conversationId: input.conversation.id,
+        itemId: input.queuedMessageId,
+        body: input.body,
+      });
+    } catch (error) {
+      await abortBeforeGeneration();
+      return { kind: "error" as const, error, messageId: committedUserMessageId };
+    }
+  }
+  if (!input.atomicFirstTurn) {
+    try {
+      const persistence = await input.addUserMessage(
+        input.conversation,
+        input.body,
+        input.actor,
+        input.editUserMessageId,
+        {
+          provided: input.inlineAnnotationsProvided,
+          prepared: input.preparedAnnotations,
+          storedAttachments: input.stagedMessageFiles.files,
+          onPersisted: (messageId: string) => {
+            userMessagePersisted = true;
+            committedUserMessageId = messageId;
+            input.stagedMessageFiles.markCommitted();
+          },
+          clientMutationId: input.clientMutationId,
+          clientMutationFingerprint: input.clientMutationFingerprint,
+        },
+      );
+      persistedUserMessage = persistence.message;
+      if (!persistence.accepted) {
+        await abortBeforeGeneration();
+        return { kind: "replayed" as const, message: persistence.message };
+      }
+      userMessagePersisted = true;
+      committedUserMessageId = persistence.message.id;
+      input.stagedMessageFiles.markCommitted();
+    } catch (error) {
+      await abortBeforeGeneration();
+      return { kind: "error" as const, error, messageId: committedUserMessageId };
+    }
+  }
+  return {
+    kind: "ready" as const,
+    userMessage: persistedUserMessage!,
+    userMessagePersisted,
+    committedUserMessageId,
+  };
+}
+
 export function resolveStoppedAssistantState(input: {
   stopCutoff: { body: string; transcript: TranscriptEntry[] } | null;
   admittedAssistantBody: string;

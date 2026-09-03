@@ -56,7 +56,7 @@ import {
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
-import { chatMessageMutationFingerprint } from "../services/chat-message-mutation-fingerprint.js";
+import { chatMessageMutationFingerprint, replayChatMessageMutation } from "../services/chat-message-mutation-fingerprint.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
@@ -104,11 +104,11 @@ import {
 import { attachGeneratedChatFiles } from "./chats.generated-attachments.js";
 import {
   isMultipartRequest,
-  paginateChatMessages,
   positiveIntegerQuery,
   uploadedMessageFiles,
   validateUploadedMessageFiles,
 } from "./chats.helpers.js";
+import { registerChatMessageQueryRoutes } from "./chats.message-query-routes.js";
 import { createChatDraftPreflight } from "./chats.preflight.js";
 import {
   chatRuntimeInvocationSnapshot,
@@ -3160,50 +3160,7 @@ export function chatRoutes(
       transcriptEventId: null,
     });
   });
-
-
-  router.get("/chats/:id/messages", async (req, res) => {
-    const requestedOrgId = typeof req.query.orgId === "string"
-      ? req.query.orgId.trim()
-      : undefined;
-    if (req.query.orgId !== undefined && requestedOrgId === undefined) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const conversation = await assertConversationAccess(
-      req,
-      req.params.id as string,
-      requestedOrgId,
-    );
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    if (conversation.mutability !== "external_bound_chat" && !hasActiveChatGeneration(conversation.id)) {
-      await svc.markInterruptedStreamingMessages(conversation.id);
-    }
-    const includeTranscript = req.query.includeTranscript === "true";
-    const messages = await svc.listMessages(conversation.id, { includeTranscript });
-    if (req.query.envelope === "true") {
-      res.json(paginateChatMessages(messages, req.query));
-      return;
-    }
-    res.json(messages);
-  });
-
-  router.get("/chats/:id/messages/:messageId/transcript", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const transcript = await svc.getMessageTranscript(conversation.id, req.params.messageId as string);
-    if (!transcript) {
-      res.status(404).json({ error: "Chat message not found" });
-      return;
-    }
-    res.json(transcript);
-  });
+  registerChatMessageQueryRoutes({ router, svc, assertConversationAccess });
 
   router.post(
     "/chats/:id/messages",
@@ -3245,36 +3202,18 @@ export function chatRoutes(
 
     const inlineAnnotationsProvided = res.locals.inlineAnnotationsProvided === true;
     const clientMutationFingerprint = req.body.clientMutationId
-      ? chatMessageMutationFingerprint({
-        body: req.body.body,
-        editUserMessageId: req.body.editUserMessageId ?? null,
-        inlineAnnotationsProvided,
-        inlineAnnotations: req.body.inlineAnnotations,
-        modelOverride: req.body.modelOverride ?? null,
-        effortOverride: req.body.effortOverride ?? null,
-        files: [],
-      })
+      ? chatMessageMutationFingerprint({ body: req.body.body, editUserMessageId: req.body.editUserMessageId ?? null, inlineAnnotationsProvided, inlineAnnotations: req.body.inlineAnnotations, modelOverride: req.body.modelOverride ?? null, effortOverride: req.body.effortOverride ?? null, files: [] })
       : null;
-    if (req.body.clientMutationId) {
-      const replayedMutation = await svc.getUserMessageMutationByClientMutationId(
-        conversation.orgId,
-        conversation.id,
-        req.body.clientMutationId,
-      );
-      if (replayedMutation) {
-        const replayedUserMessage = replayedMutation.message;
-        if (
-          replayedUserMessage.body !== req.body.body
-          || (
-            replayedMutation.fingerprint !== null
-            && replayedMutation.fingerprint !== clientMutationFingerprint
-          )
-        ) {
-          throw conflict("Chat mutation key was already used for different content");
-        }
-        res.status(200).json({ messages: [replayedUserMessage] });
-        return;
-      }
+    const replayedUserMessage = await replayChatMessageMutation(svc.getUserMessageMutationByClientMutationId, {
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      clientMutationId: req.body.clientMutationId,
+      body: req.body.body,
+      fingerprint: clientMutationFingerprint,
+    });
+    if (replayedUserMessage) {
+      res.status(200).json({ messages: [replayedUserMessage] });
+      return;
     }
 
     const preparedAnnotations = inlineAnnotationsProvided

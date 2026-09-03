@@ -76,3 +76,49 @@ export function clearPendingChatSendMutation(
   if (Object.keys(mutations).length === 0) target?.removeItem(CHAT_SEND_MUTATIONS_STORAGE_KEY);
   else target?.setItem(CHAT_SEND_MUTATIONS_STORAGE_KEY, JSON.stringify(mutations));
 }
+
+export function preparePendingChatSendMutation(input: {
+  orgId: string;
+  conversationId: string;
+  editUserMessageId?: string | null;
+  body: string;
+  files: readonly Pick<File, "name" | "size" | "type" | "lastModified">[];
+  inlineAnnotations: unknown;
+  modelOverride?: string | null;
+  effortOverride?: string | null;
+}) {
+  const mutationFingerprint = JSON.stringify({
+    body: input.body,
+    editUserMessageId: input.editUserMessageId ?? null,
+    files: input.files.map((file) => ({
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: file.lastModified,
+    })),
+    inlineAnnotations: input.inlineAnnotations,
+    modelOverride: input.modelOverride ?? null,
+    effortOverride: input.effortOverride ?? null,
+  });
+  const retainedMutation = readPendingChatSendMutation(
+    input.orgId,
+    input.conversationId,
+    input.editUserMessageId,
+  );
+  const clientMutationId = retainedMutation?.fingerprint === mutationFingerprint
+    ? retainedMutation.id
+    : globalThis.crypto.randomUUID();
+  savePendingChatSendMutation(input.orgId, input.conversationId, input.editUserMessageId, {
+    fingerprint: mutationFingerprint,
+    id: clientMutationId,
+  });
+  return {
+    clientMutationId,
+    settle: () => clearPendingChatSendMutation(
+      input.orgId,
+      input.conversationId,
+      input.editUserMessageId,
+      clientMutationId,
+    ),
+  };
+}

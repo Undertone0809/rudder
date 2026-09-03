@@ -260,7 +260,7 @@ describe("Feishu inbound dispatcher DB deps", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   async function seedIntegration(options: {
     bindUser?: boolean;

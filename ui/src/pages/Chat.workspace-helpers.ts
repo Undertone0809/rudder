@@ -33,6 +33,13 @@ export const CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD = 5;
 export const CHAT_DRAFT_PREFLIGHT_STALE_TIME_MS = 5 * 60_000;
 export const CHAT_DRAFT_PREFLIGHT_GC_TIME_MS = 30 * 60_000;
 
+export function localAppRecoveryDraftStorageScope(value: string | null): string | null {
+  const id = value?.trim() ?? "";
+  return /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)
+    ? `local-app-recovery:${id}`
+    : null;
+}
+
 export type ChatQueueDeliveryProjection =
   | { state: "hidden" }
   | { state: "queued"; label: "Queued" }
