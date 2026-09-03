@@ -41,7 +41,11 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(startup["databaseAuthority"], "read-only-product-data");
     assert_eq!(
         startup["readOnlyAuthorities"],
-        serde_json::json!(["workspace_backup_list", "workspace_backup_files_list"])
+        serde_json::json!([
+            "workspace_backup_list",
+            "workspace_backup_files_list",
+            "workspace_backup_file_read"
+        ])
     );
 
     let health = get_with_retry(bound_addr, "/healthz");
@@ -59,6 +63,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("maxDatabaseConnections"));
     assert!(capabilities.contains("workspace_backup_list"));
     assert!(capabilities.contains("workspace_backup_files_list"));
+    assert!(capabilities.contains("workspace_backup_file_read"));
 
     let backup_list = get_with_retry(
         bound_addr,
