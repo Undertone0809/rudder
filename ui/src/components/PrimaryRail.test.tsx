@@ -397,6 +397,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     expect(rail?.getAttribute("data-desktop-shell")).toBe("true");
     expect(rail?.getAttribute("data-desktop-platform")).toBe("windows");
+    expect(rail?.className).toContain("primary-rail-shell");
     expect(rail?.className).toContain("w-[52px]");
     expect(rail?.className).toContain("[--primary-rail-item-width:52px]");
     expect(rail?.className).toContain("[--primary-rail-item-shift:0px]");

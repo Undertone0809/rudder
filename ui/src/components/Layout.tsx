@@ -28,6 +28,7 @@ import { useToast } from "../context/ToastContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { readDesktopShell } from "../lib/desktop-shell";
 import {
   normalizeRememberedSettingsPath,
   resolveDefaultSettingsPath,
@@ -364,9 +365,7 @@ export function DesktopSettingsModalFrame({
 }
 
 function isMacDesktopShell(): boolean {
-  if (typeof window === "undefined") return false;
-  if (!("desktopShell" in window) || !window.desktopShell) return false;
-  return /Mac/i.test(window.navigator.userAgent);
+  return readDesktopShell()?.platform === "darwin";
 }
 
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
@@ -1639,7 +1638,7 @@ export function Layout() {
             isMobile ? "w-full" : desktopContentShellInsetClass,
           )}
         >
-          {!isMobile && macDesktopShell ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
+          {!isMobile && (macDesktopShell || readDesktopShell()?.platform === "win32") ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
           {showDesktopSettingsModal ? (
             <DesktopSettingsModalFrame onClose={closeSettingsModal}>
               {hasUnknownOrganizationPrefix ? (
@@ -1666,7 +1665,7 @@ export function Layout() {
                     isMobile && "sticky top-0 z-20 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/65",
                   )}
                 >
-                  <BreadcrumbBar desktopChrome={macDesktopShell} />
+                  <BreadcrumbBar desktopChrome={macDesktopShell || readDesktopShell()?.platform === "win32"} />
                 </div>
               ) : null}
               <div className={cn(isMobile ? "block" : "flex min-h-0 min-w-0 flex-1")}>
@@ -1745,7 +1744,7 @@ export function Layout() {
                       >
                         {!useFramelessWorkspaceMain ? (
                           <div data-testid="workspace-main-header" className="shrink-0">
-                            <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                            <BreadcrumbBar desktopChrome={macDesktopShell || readDesktopShell()?.platform === "win32"} variant="card" />
                           </div>
                         ) : null}
                         <main

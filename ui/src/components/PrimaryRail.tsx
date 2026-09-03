@@ -458,7 +458,7 @@ export function PrimaryRail({
       data-desktop-shell={isDesktopShell ? "true" : undefined}
       data-desktop-platform={desktopRailPlatform ?? undefined}
       className={cn(
-        "my-2 flex h-[calc(100%-1rem)] shrink-0 flex-col items-center py-1.5 text-[color:color-mix(in_oklab,var(--foreground)_78%,white)]",
+        "primary-rail-shell my-2 flex h-[calc(100%-1rem)] shrink-0 flex-col items-center py-1.5 text-[color:color-mix(in_oklab,var(--foreground)_78%,white)]",
         desktopRailPlatform === "windows"
           ? "ml-1 mr-1 w-[52px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:52px]"
           : isDesktopShell
