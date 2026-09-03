@@ -131,9 +131,10 @@ describe("Windows browser-app compatibility", () => {
   it("opens Edge when available and falls back to the default browser", () => {
     const unref = vi.fn();
     const spawnImpl = vi.fn(() => ({ unref }));
-    const edge = String.raw`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`;
+    const programFilesX86 = String.raw`C:\Program Files (x86)`;
+    const edge = path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe");
     expect(launchBrowserAppWindow("http://127.0.0.1:3200", {
-      env: { "PROGRAMFILES(X86)": String.raw`C:\Program Files (x86)` },
+      env: { "PROGRAMFILES(X86)": programFilesX86 },
       pathExists: (candidate) => candidate === edge,
       spawnImpl: spawnImpl as never,
     })).toBe("edge");
