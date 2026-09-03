@@ -290,14 +290,6 @@
       "expiry": "2027-03-31"
     },
     {
-      "path": "server/src/routes/chats.stream-routes.ts",
-      "lines": 1501,
-      "owner": "collaboration-server",
-      "rationale": "Chat streaming transport currently coordinates transcript annotations, workbench events, and compatibility responses in one route module.",
-      "target": "Extract annotation and workbench stream handlers and reduce the transport module below 1500 lines.",
-      "expiry": "2027-03-31"
-    },
-    {
       "path": "server/src/services/chat-assistant.helpers.ts",
       "lines": 1501,
       "owner": "collaboration-server",
