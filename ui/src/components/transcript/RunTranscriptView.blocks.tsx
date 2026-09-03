@@ -46,6 +46,7 @@ import {
   TranscriptActionIconStatus,
   TranscriptAnnotationSourceContext,
   TranscriptBlock,
+  transcriptBlockIdentity,
   TranscriptDensity,
   TranscriptMarkdownLinkClickHandler,
   TranscriptPresentation,
@@ -153,43 +154,6 @@ function TranscriptAnnotationSource({
       />
     </div>
   );
-}
-
-function transcriptBlockIdentity(block: TranscriptBlock): string {
-  const primarySourceEntryId = block.sourceEntryIds?.[0];
-  if (primarySourceEntryId) return primarySourceEntryId;
-  switch (block.type) {
-    case "message":
-      return [
-        block.type,
-        block.messageId ?? block.segmentId ?? block.generationId ?? "block",
-        block.generationSeqStart ?? block.ts,
-        block.generationSeqEnd ?? block.ts,
-      ].join(":");
-    case "thinking":
-      return [
-        block.type,
-        block.segmentId ?? block.generationId ?? "block",
-        block.generationSeqStart ?? block.ts,
-        block.generationSeqEnd ?? block.ts,
-      ].join(":");
-    case "tool":
-      return [block.type, block.toolUseId ?? block.name, block.ts].join(":");
-    case "command_group":
-      return [
-        block.type,
-        block.items[0]?.toolUseId ?? block.items[0]?.name ?? "group",
-        block.ts,
-      ].join(":");
-    case "activity":
-      return [block.type, block.activityId ?? block.name, block.ts].join(":");
-    case "todo_list":
-      return [block.type, block.todoListId ?? block.ts].join(":");
-    case "stdout":
-    case "memory_update":
-    case "event":
-      return [block.type, block.ts].join(":");
-  }
 }
 
 function isStableTranscriptBlock(block: TranscriptBlock): boolean {

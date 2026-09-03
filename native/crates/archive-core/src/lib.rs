@@ -33,6 +33,14 @@ pub struct ManifestInspection {
     pub byte_size: u64,
     pub sha256: String,
     pub entry_count: usize,
+    pub entries: Vec<ArchiveEntryInspection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchiveEntryInspection {
+    pub archive_path: String,
+    pub byte_size: u64,
+    pub is_directory: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -279,7 +287,8 @@ fn preflight<R: Read + Seek>(
         }
         let dos_directory = external_attributes == 0x10;
         let name = validate_name(raw_name, dos_directory)?;
-        if !exact_names.insert(name.clone()) || !folded_names.insert(name.to_ascii_lowercase()) {
+        let folded_name: String = name.chars().flat_map(char::to_lowercase).collect();
+        if !exact_names.insert(name.clone()) || !folded_names.insert(folded_name) {
             return Err(ArchiveError::new("duplicate_entry_name"));
         }
         entries.push(CentralEntry {
@@ -463,12 +472,50 @@ pub fn inspect_manifest(
         (validated.entries[index].size as u64).min(limits.max_manifest_bytes) as usize,
     );
     let result = read_entry(&mut validated, index, limits.max_manifest_bytes, &mut bytes)?;
+    let entries = validated
+        .entries
+        .iter()
+        .map(|entry| ArchiveEntryInspection {
+            archive_path: entry.name.clone(),
+            byte_size: entry.size as u64,
+            is_directory: entry.name.ends_with('/'),
+        })
+        .collect();
     Ok(ManifestInspection {
         manifest_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
         byte_size: result.byte_size,
         sha256: result.sha256,
         entry_count: validated.entries.len(),
+        entries,
     })
+}
+
+pub fn read_file(
+    input: &Path,
+    entry_name: &str,
+    max_archive_bytes: u64,
+    max_file_bytes: u64,
+) -> Result<(Vec<u8>, ExtractedFile), ArchiveError> {
+    if !input.is_absolute() {
+        return Err(ArchiveError::new("absolute_existing_paths_required"));
+    }
+    let file = File::open(input).map_err(|error| ArchiveError::io("archive_open_failed", error))?;
+    let mut validated = validated_archive(file, max_archive_bytes)?;
+    let index = validated
+        .entries
+        .iter()
+        .position(|entry| entry.name == entry_name)
+        .ok_or_else(|| ArchiveError::new("entry_missing"))?;
+    if entry_name.ends_with('/') {
+        return Err(ArchiveError::new("target_not_file"));
+    }
+    let expected_size = validated.entries[index].size as u64;
+    if expected_size > max_file_bytes {
+        return Err(ArchiveError::new("entry_size_limit"));
+    }
+    let mut bytes = Vec::with_capacity(expected_size as usize);
+    let result = read_entry(&mut validated, index, max_file_bytes, &mut bytes)?;
+    Ok((bytes, result))
 }
 
 pub fn extract_file(
@@ -1279,6 +1326,59 @@ mod tests {
                 .all(|(start, end)| *end <= unrelated_start || *start >= unrelated_end),
             "manifest inspection read unrelated file body at {unrelated_start}..{unrelated_end}; reads={:?}",
             reads.borrow()
+        );
+    }
+
+    #[test]
+    fn read_file_returns_bytes_and_enforces_target_boundaries() {
+        use tempfile::tempdir;
+
+        let root = tempdir().unwrap();
+        let manifest = root.path().join("manifest.json");
+        let source = root.path().join("readme.txt");
+        let plan = root.path().join("plan.json");
+        let archive = root.path().join("archive.zip");
+        fs::write(&manifest, b"{}").unwrap();
+        fs::write(&source, b"hello").unwrap();
+        fs::write(
+            &plan,
+            serde_json::to_vec(&serde_json::json!({
+                "protocolVersion": CREATE_PROTOCOL_VERSION,
+                "manifestSource": manifest,
+                "treeSha256": "a".repeat(64),
+                "entries": [
+                    {"kind": "directory", "archivePath": "workspace/"},
+                    {"kind": "file", "archivePath": "workspace/readme.txt", "sourcePath": source},
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let created = create_archive(&plan, &archive, 8 * 1024 * 1024, 5, 5).unwrap();
+
+        let (bytes, extracted) =
+            read_file(&archive, "workspace/readme.txt", created.byte_size, 5).unwrap();
+        assert_eq!(bytes, b"hello");
+        assert_eq!(extracted.byte_size, 5);
+        assert_eq!(extracted.sha256, format!("{:x}", Sha256::digest(b"hello")));
+
+        assert_eq!(
+            read_file(&archive, "workspace/missing.txt", created.byte_size, 5)
+                .unwrap_err()
+                .code(),
+            "entry_missing"
+        );
+        assert_eq!(
+            read_file(&archive, "workspace/", created.byte_size, 5)
+                .unwrap_err()
+                .code(),
+            "target_not_file"
+        );
+        assert_eq!(
+            read_file(&archive, "workspace/readme.txt", created.byte_size, 4)
+                .unwrap_err()
+                .code(),
+            "entry_size_limit"
         );
     }
 
