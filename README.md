@@ -77,11 +77,21 @@ Rudder is the coordination layer, not the model provider. Run agents with the lo
 
 ### Try Rudder
 
-The fastest path installs the per-user portable Rudder Desktop app and prepares the matching persistent CLI:
+The fastest path prepares the matching persistent CLI/runtime and opens Rudder
+as a per-user app:
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
+
+On Windows, `start` reads (but never changes) Smart App Control. When enforcement
+is on and the Rudder Desktop channel is still unsigned, it creates a Start Menu
+shortcut and opens the same local workspace in Microsoft Edge app mode instead
+of installing an executable that Windows may block. Use
+`--desktop-mode native` to explicitly retain the portable Electron path or
+`--desktop-mode browser` to select the compatibility path yourself. This
+loopback-only fallback is an un-packaged `local_trusted` client and does not use
+the packaged Desktop Account Gate.
 
 For a server or headless host where the Desktop app should not be installed,
 prepare only the server runtime and persistent CLI:

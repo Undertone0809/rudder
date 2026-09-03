@@ -25,11 +25,20 @@ import {
   CLI_NPM_PACKAGE_NAME,
   getGlobalInstalledPackageVersion,
   installPersistentCli,
+  resolveGlobalInstalledCliEntry,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
 import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError, type RuntimeInstallResult } from "../runtime/install.js";
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
+import {
+  createWindowsBrowserAppShortcut,
+  detectSmartAppControlState,
+  launchDetachedBrowserApp,
+  parseDesktopLaunchMode,
+  resolveDesktopLaunchMode,
+  resolveEdgeExecutable,
+} from "./browser-app.js";
 import { buildWindowsZipExtractCommand, powershellQuote } from "./start-windows.js";
 
 export { parseChecksumFile } from "../checksum-manifest.js";
@@ -89,6 +98,7 @@ interface StartCommandOptions {
   downloadSource?: string;
   outputDir?: string;
   desktopInstallDir?: string;
+  desktopMode?: string;
   open?: boolean;
   waitForActiveRuns?: boolean;
   desktopProgressJson?: boolean;
@@ -1746,10 +1756,33 @@ async function runStartPhase<T>(
 }
 
 export async function startCommand(opts: StartCommandOptions): Promise<void> {
-  const installCli = opts.cli !== false;
   const serverOnly = opts.serverOnly === true;
-  const installDesktop = !serverOnly && opts.desktop !== false;
-  const installRuntime = opts.runtime !== false;
+  const installApp = !serverOnly && opts.desktop !== false;
+  const requestedDesktopMode = parseDesktopLaunchMode(opts.desktopMode);
+  const desktopTarget = installApp ? resolveDesktopAssetTarget() : null;
+  // Commander supplies the explicit default `auto`. Direct programmatic calls
+  // that predate desktop-mode keep their native behavior unless they opt in.
+  const automaticCompatibilityCheck = requestedDesktopMode === "auto" && opts.desktopMode !== undefined;
+  const smartAppControlState = desktopTarget?.platform === "windows" && automaticCompatibilityCheck
+    ? detectSmartAppControlState()
+    : "unknown";
+  const desktopMode = installApp
+    ? resolveDesktopLaunchMode({
+        requested: requestedDesktopMode,
+        platform: process.platform,
+        smartAppControlState,
+      })
+    : "native";
+  if (desktopMode === "browser" && desktopTarget?.platform !== "windows") {
+    throw new Error("Rudder browser-app compatibility mode is currently available only on Windows.");
+  }
+  const installDesktop = installApp && desktopMode === "native";
+  const installBrowserApp = installApp && desktopMode === "browser";
+  // Browser-app mode depends on the persistent CLI and matching server runtime;
+  // internal Desktop update flags must not leave the compatibility handoff on
+  // the soon-to-be-obsolete packaged CLI/runtime.
+  const installCli = opts.cli !== false || installBrowserApp;
+  const installRuntime = opts.runtime !== false || installBrowserApp;
   const repo = opts.repo?.trim() || DEFAULT_DESKTOP_RELEASE_REPO;
   const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
@@ -1778,11 +1811,24 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     });
   }
 
-  if (!installCli && !installDesktop && !installRuntime) {
+  if (!installCli && !installApp && !installRuntime) {
     throw new Error("Nothing to start. Remove --no-cli, --no-runtime, --no-desktop, or --server-only.");
   }
 
   p.intro(pc.bgCyan(pc.black(serverOnly ? " rudder start --server-only " : " rudder start ")));
+
+  if (installBrowserApp) {
+    p.log.warn(
+      requestedDesktopMode === "browser"
+        ? "Using the requested Windows browser-app compatibility mode."
+        : "Windows Smart App Control is on, so Rudder will use browser-app compatibility mode instead of the unsigned Desktop executable.",
+    );
+    p.log.message(
+      pc.dim(
+        "This is a loopback-only local_trusted client without the packaged Desktop Account Gate. Local data stays in place; Electron-only Browser and App Builder bridges are unavailable.",
+      ),
+    );
+  }
 
   if (opts.versionCheck !== false) {
     const updateNotice = await getCliUpdateNotice(version);
@@ -1884,11 +1930,85 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     }
   }
 
+  if (installBrowserApp) {
+    const target = desktopTarget!;
+    const installRoot = opts.desktopInstallDir
+      ? path.resolve(opts.desktopInstallDir)
+      : resolveDefaultDesktopInstallRoot(target);
+    const installPaths = resolveDesktopInstallPaths(target, installRoot);
+    const runtimeVersion = version;
+    p.log.step("Preparing Windows browser app");
+    p.log.message(`Runtime: ${pc.cyan(runtimeVersion)}`);
+    p.log.message(`Workspace: ${pc.cyan("prod_local/default")}`);
+
+    if (dryRun) {
+      p.log.message(
+        `[dry-run] Would create a Rudder Start Menu shortcut backed by Node and open the local workspace in Microsoft Edge app mode.`,
+      );
+      p.outro(pc.green("Dry run complete."));
+      return;
+    }
+
+    const cliEntryPath = resolveGlobalInstalledCliEntry();
+    if (!(await pathExists(cliEntryPath))) {
+      throw new Error(`Persistent Rudder CLI entry was not found at ${cliEntryPath}.`);
+    }
+    await mkdir(installRoot, { recursive: true });
+    const edgePath = resolveEdgeExecutable();
+    const nativeIconPath = await pathExists(installPaths.executablePath)
+      ? installPaths.executablePath
+      : null;
+    const shortcutPath = createWindowsBrowserAppShortcut({
+      nodePath: process.execPath,
+      cliEntryPath,
+      runtimeVersion,
+      workingDirectory: installRoot,
+      iconPath: nativeIconPath ?? edgePath,
+    });
+    p.log.success(`Rudder browser-app shortcut is ready at ${pc.cyan(shortcutPath)}.`);
+
+    let applySignalController: ReturnType<typeof createDesktopApplySignalController> | null = null;
+    if (desktopProgressJson && opts.desktopWaitForApply === true) {
+      writeDesktopProgress({
+        phase: "ready_to_install",
+        message: "Windows browser-app compatibility mode is ready.",
+        percent: 100,
+      });
+      applySignalController = createDesktopApplySignalController();
+      await applySignalController.waitForInitialSignal();
+      applySignalController.close();
+      writeDesktopProgress({
+        phase: "preparing_restart",
+        message: "Starting the Windows browser app...",
+        percent: 100,
+      });
+    }
+
+    if (opts.open !== false) {
+      const launch = await launchDetachedBrowserApp({
+        cliEntryPath,
+        runtimeVersion,
+        open: true,
+      });
+      p.log.success(`Rudder browser app opened at ${pc.cyan(launch.boardUrl)}.`);
+      p.log.message(pc.dim(`Background runtime log: ${launch.logPath}`));
+      if (desktopProgressJson) {
+        writeDesktopProgress({
+          phase: "closing",
+          message: "Rudder browser app is ready. You can close the native Desktop window.",
+          percent: 100,
+        });
+      }
+    }
+    p.outro(pc.green("Rudder start complete."));
+    return;
+  }
+
   if (installDesktop) {
     const downloadSource = resolveDesktopDownloadSource(opts.downloadSource);
     const mirrorBaseUrl = resolveDesktopReleaseMirrorBaseUrl(repo);
     const smokeReleaseBaseUrls = resolveDesktopSmokeReleaseBaseUrls();
-    const target = resolveDesktopAssetTarget();
+    const target = desktopTarget!;
     const tag = resolveDesktopReleaseTag(version);
     const installRoot = opts.desktopInstallDir
       ? path.resolve(opts.desktopInstallDir)

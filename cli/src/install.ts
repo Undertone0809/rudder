@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import path from "node:path";
 import { resolveNpmCommandInvocation } from "./npm-command.js";
 
 export const CLI_NPM_PACKAGE_NAME = "@rudderhq/cli";
@@ -98,6 +99,29 @@ export function getGlobalInstalledPackageVersion(
   } catch {
     return null;
   }
+}
+
+export function resolveGlobalInstalledCliEntry(
+  execFileSyncImpl: typeof execFileSync = execFileSync,
+): string {
+  let globalRoot: string;
+  try {
+    const npm = resolveNpmCommandInvocation();
+    globalRoot = execFileSyncImpl(
+      npm.command,
+      [...npm.args, "root", "--global"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+  } catch {
+    throw new Error("Could not resolve the global npm package directory for the Rudder browser app.");
+  }
+  if (!globalRoot) {
+    throw new Error("npm returned an empty global package directory for the Rudder browser app.");
+  }
+  return path.join(globalRoot, "@rudderhq", "cli", "dist", "index.js");
 }
 
 export function hasPersistentBinaryOnPath(
