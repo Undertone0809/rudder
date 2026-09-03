@@ -80,10 +80,13 @@ describe("RudderApiClient", () => {
   it("does not reject concurrent healthy Issue reads before a 5xx is observed", async () => {
     const stateDir = await transportStateDir();
     let releaseFirst: (() => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => {
+        markFirstStarted?.();
         await firstGate;
         return new Response(JSON.stringify({ request: "first" }), { status: 200 });
       })
@@ -97,6 +100,7 @@ describe("RudderApiClient", () => {
     });
 
     const first = client.get("/api/issues/iss-1");
+    await firstStarted;
     await expect(client.get("/api/issues/iss-1")).resolves.toEqual({ request: "second" });
     releaseFirst?.();
     await expect(first).resolves.toEqual({ request: "first" });
