@@ -407,42 +407,39 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       startingChatGenerationGates.delete(conversation.id);
       releaseGeneration();
       await stagedMessageFiles.cleanup();
-      if (atomicFirstTurn) {
-        const failurePayload = recoverableFailurePayload(error, null);
-        const failureBody = recoverableFailureBody(failurePayload) || CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
-        const failedMessage = await svc.addMessage(conversation.id, {
-          orgId: conversation.orgId,
-          role: "assistant",
-          kind: "message",
-          status: "failed",
-          body: failureBody,
-          structuredPayload: failurePayload,
-          replyingAgentId: conversation.preferredAgentId,
-          chatTurnId: atomicFirstTurn.userMessage.chatTurnId,
-        });
-        await logChatMessagesAdded(conversation, [failedMessage], {
-          actorType: "system",
-          actorId: "chat-assistant",
-          agentId: conversation.preferredAgentId,
-        });
-        res.status(201);
-        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("X-Accel-Buffering", "no");
-        writeStreamEvent(res, {
-          type: "ack",
-          conversation: atomicFirstTurn.conversation,
-          userMessage: atomicFirstTurn.userMessage,
-        });
-        writeStreamEvent(res, {
-          type: "error",
-          error: failureBody,
-          messageId: failedMessage.id,
-        });
-        res.end();
-        return;
-      }
-      throw error;
+      const failurePayload = recoverableFailurePayload(error, null);
+      const failureBody = recoverableFailureBody(failurePayload) || CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
+      const failedMessage = await svc.addMessage(conversation.id, {
+        orgId: conversation.orgId,
+        role: "assistant",
+        kind: "message",
+        status: "failed",
+        body: failureBody,
+        structuredPayload: failurePayload,
+        replyingAgentId: conversation.preferredAgentId,
+        chatTurnId: persistedUserMessage!.chatTurnId,
+      });
+      await logChatMessagesAdded(conversation, [failedMessage], {
+        actorType: "system",
+        actorId: "chat-assistant",
+        agentId: conversation.preferredAgentId,
+      });
+      res.status(201);
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("X-Accel-Buffering", "no");
+      writeStreamEvent(res, {
+        type: "ack",
+        ...(atomicFirstTurn ? { conversation: atomicFirstTurn.conversation } : {}),
+        userMessage: persistedUserMessage,
+      });
+      writeStreamEvent(res, {
+        type: "error",
+        error: failureBody,
+        messageId: failedMessage.id,
+      });
+      res.end();
+      return;
     }
     if (abortController.signal.aborted && startupGate.stopRequested) {
       await startupGate.stopApplied;

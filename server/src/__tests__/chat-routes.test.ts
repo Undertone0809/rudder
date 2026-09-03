@@ -2066,6 +2066,63 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({ role: "assistant", status: "failed" }));
   });
 
+  it("keeps a non-first-turn startup failure visible when the same send mutation is retried", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Retry after startup failure");
+    const failedMessage = {
+      ...createMessage("message-failed", "assistant", "message", "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready."),
+      status: "failed",
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getUserMessageMutationByClientMutationId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ message: userMessage, fingerprint: null, failure: failedMessage });
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.createGeneration.mockRejectedValueOnce(new Error("generation insert failed"));
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+
+    const firstResponse = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "startup-failure-retry" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(firstResponse.status).toBe(201);
+    expect(String(firstResponse.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ type: "ack", userMessage: expect.objectContaining({ id: userMessage.id }) }),
+      expect.objectContaining({ type: "error", messageId: failedMessage.id, error: failedMessage.body }),
+    ]);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      role: "assistant",
+      status: "failed",
+      chatTurnId: userMessage.chatTurnId,
+    }));
+
+    const retryResponse = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "startup-failure-retry" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(retryResponse.status).toBe(200);
+    expect(String(retryResponse.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ type: "ack", userMessage: expect.objectContaining({ id: userMessage.id }) }),
+      expect.objectContaining({ type: "error", messageId: failedMessage.id, error: failedMessage.body }),
+    ]);
+    expect(mockChatService.createGeneration).toHaveBeenCalledOnce();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
   it("rejects chat creation when the organization has no available agent", async () => {
     mockAgentService.list.mockResolvedValueOnce([]);
 

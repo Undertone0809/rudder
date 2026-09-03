@@ -11,7 +11,7 @@ import {
   sanitizeChatStructuredPayload,
   type ChatMessage,
 } from "@rudderhq/shared";
-import { and, eq, gt, gte, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
@@ -61,7 +61,11 @@ export function createChatMessageMutationLookup(
     clientMutationId: string,
   ) {
     const row = await db
-      .select({ id: chatMessages.id, fingerprint: chatMessages.clientMutationFingerprint })
+      .select({
+        id: chatMessages.id,
+        chatTurnId: chatMessages.chatTurnId,
+        fingerprint: chatMessages.clientMutationFingerprint,
+      })
       .from(chatMessages)
       .where(and(
         eq(chatMessages.orgId, orgId),
@@ -73,7 +77,27 @@ export function createChatMessageMutationLookup(
       .then((rows) => rows[0] ?? null);
     if (!row) return null;
     const message = await getMessage(conversationId, row.id);
-    return message ? { message, fingerprint: row.fingerprint } : null;
+    if (!message) return null;
+    const failedAssistantId = row.chatTurnId
+      ? await db
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(and(
+          eq(chatMessages.orgId, orgId),
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.role, "assistant"),
+          eq(chatMessages.status, "failed"),
+          eq(chatMessages.chatTurnId, row.chatTurnId),
+          isNull(chatMessages.supersededAt),
+        ))
+        .orderBy(desc(chatMessages.createdAt))
+        .limit(1)
+        .then((rows) => rows[0]?.id ?? null)
+      : null;
+    const failure = failedAssistantId
+      ? await getMessage(conversationId, failedAssistantId)
+      : null;
+    return { message, fingerprint: row.fingerprint, failure };
   };
 }
 

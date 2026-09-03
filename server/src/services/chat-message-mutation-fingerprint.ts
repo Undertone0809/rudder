@@ -9,6 +9,12 @@ type MutationFile = {
   size?: number;
 };
 
+export type ChatMessageMutationLookupResult = {
+  message: ChatMessage;
+  fingerprint: string | null;
+  failure?: ChatMessage | null;
+};
+
 export function chatMessageMutationFingerprint(input: {
   body: string;
   editUserMessageId?: string | null;
@@ -39,10 +45,11 @@ export function chatMessageMutationFingerprint(input: {
 }
 
 export async function replayChatMessageMutation(
-  lookup: (orgId: string, conversationId: string, clientMutationId: string) => Promise<{
-    message: ChatMessage;
-    fingerprint: string | null;
-  } | null>,
+  lookup: (
+    orgId: string,
+    conversationId: string,
+    clientMutationId: string,
+  ) => Promise<ChatMessageMutationLookupResult | null>,
   input: {
     orgId: string;
     conversationId: string;
@@ -94,20 +101,36 @@ export async function replayChatStreamMessage(input: {
     })
     : null;
   if (input.atomicFirstTurn || !input.clientMutationId) return fingerprint;
-  const replayedUserMessage = await replayChatMessageMutation(input.lookup, {
-    orgId: input.orgId,
-    conversationId: input.conversationId,
-    clientMutationId: input.clientMutationId,
-    body: input.body,
-    fingerprint,
-  });
-  if (!replayedUserMessage) return fingerprint;
+  const replayedMutation = await input.lookup(
+    input.orgId,
+    input.conversationId,
+    input.clientMutationId,
+  );
+  if (!replayedMutation) return fingerprint;
+  if (
+    replayedMutation.message.body !== input.body
+    || (
+      replayedMutation.fingerprint !== null
+      && replayedMutation.fingerprint !== (fingerprint ?? null)
+    )
+  ) {
+    throw conflict("Chat mutation key was already used for different content");
+  }
+  const replayedUserMessage = replayedMutation.message;
   input.response.status(200);
   input.response.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   input.response.setHeader("Cache-Control", "no-cache, no-transform");
   input.response.setHeader("X-Accel-Buffering", "no");
   input.writeStreamEvent(input.response, { type: "ack", userMessage: replayedUserMessage });
-  input.writeStreamEvent(input.response, { type: "final", messages: [] });
+  if (replayedMutation.failure) {
+    input.writeStreamEvent(input.response, {
+      type: "error",
+      error: replayedMutation.failure.body,
+      messageId: replayedMutation.failure.id,
+    });
+  } else {
+    input.writeStreamEvent(input.response, { type: "final", messages: [] });
+  }
   input.response.end();
   return undefined;
 }
