@@ -1,0 +1,123 @@
+{
+  "schema": "rudder.workspace-backup-read-parity.v1",
+  "ordering": {
+    "input": [
+      "A",
+      "a",
+      "B",
+      "b",
+      "\u00e1",
+      "\u00e2",
+      "\u00e5",
+      "\u00e4",
+      "\u00e3",
+      "\u00e9",
+      "z",
+      "file2",
+      "file10",
+      "\u00c5",
+      "a\u0301",
+      "\ue000",
+      "\ud83d\ude00"
+    ],
+    "expected": [
+      "A",
+      "B",
+      "a",
+      "a\u0301",
+      "b",
+      "file10",
+      "file2",
+      "z",
+      "\u00c5",
+      "\u00e1",
+      "\u00e2",
+      "\u00e3",
+      "\u00e4",
+      "\u00e5",
+      "\u00e9",
+      "\ue000",
+      "\ud83d\ude00"
+    ],
+    "publicInput": [
+      "z",
+      "file2",
+      "file10",
+      "\u00c5",
+      "a\u0301",
+      "\ue000",
+      "\ud83d\ude00",
+      "\u00e1"
+    ],
+    "publicExpected": [
+      "a\u0301",
+      "file10",
+      "file2",
+      "z",
+      "\u00c5",
+      "\u00e1",
+      "\ue000",
+      "\ud83d\ude00"
+    ]
+  },
+  "preview": {
+    "text": {
+      "contentType": "text/plain",
+      "previewKind": "text",
+      "message": null,
+      "truncated": false
+    },
+    "binary": {
+      "contentType": "application/octet-stream",
+      "previewKind": "binary",
+      "message": "Binary files are not previewed in workspace backups.",
+      "truncated": false
+    },
+    "truncatedText": {
+      "contentType": "text/plain",
+      "previewKind": "text",
+      "message": "Preview truncated to the first 200 KB.",
+      "truncated": true
+    }
+  },
+  "limits": {
+    "maxArchiveBytes": 121634816,
+    "maxManifestBytes": 8388608,
+    "maxFileBytes": 5242880,
+    "maxTotalFileBytes": 104857600,
+    "maxPreviewBytes": 200000
+  },
+  "apiErrors": {
+    "databaseDisabled": {
+      "status": 503,
+      "reason": "database_disabled"
+    },
+    "backupNotFound": {
+      "status": 404,
+      "reason": "workspace_backup_not_found"
+    },
+    "fileNotFound": {
+      "status": 404,
+      "reason": "workspace_backup_file_not_found"
+    },
+    "pathInvalid": {
+      "status": 422,
+      "reason": "workspace_backup_path_invalid"
+    },
+    "backupRunning": {
+      "status": 409,
+      "reason": "workspace_backup_running"
+    },
+    "backupFailed": {
+      "status": 422,
+      "reason": "workspace_backup_failed"
+    },
+    "artifactInvalid": {
+      "status": 422,
+      "reason": "workspace_backup_artifact_invalid"
+    },
+    "mutationRouteMissing": {
+      "status": 404
+    }
+  }
+}

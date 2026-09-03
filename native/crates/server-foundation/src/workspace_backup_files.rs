@@ -665,6 +665,9 @@ pub(crate) fn file_read_receipt(
 mod tests {
     use super::*;
 
+    const READ_PARITY_FIXTURE: &str =
+        include_str!("../../../fixtures/workspace-backup-read-parity.json");
+
     #[test]
     fn children_match_node_directory_projection() {
         let entries = vec![
@@ -717,52 +720,121 @@ mod tests {
 
     #[test]
     fn filename_order_uses_portable_unicode_scalar_contract() {
-        let entries = [
-            "A", "a", "B", "b", "á", "â", "å", "ä", "ã", "é", "z", "file2", "file10", "Å",
-            "a\u{301}", "\u{e000}", "😀",
-        ]
-        .into_iter()
-        .map(|path| ArtifactEntry {
-            path: path.into(),
-            kind: "file".into(),
-        })
-        .collect::<Vec<_>>();
-        assert_eq!(
-            direct_children(&entries, "")
-                .into_iter()
-                .map(|entry| entry.name)
-                .collect::<Vec<_>>(),
-            [
-                "A", "B", "a", "a\u{301}", "b", "file10", "file2", "z", "Å", "á", "â", "ã", "ä",
-                "å", "é", "\u{e000}", "😀"
-            ]
-        );
+        let fixture: serde_json::Value = serde_json::from_str(READ_PARITY_FIXTURE)
+            .expect("workspace backup read parity fixture");
+        let entries = fixture["ordering"]["input"]
+            .as_array()
+            .expect("ordering input")
+            .iter()
+            .map(|path| ArtifactEntry {
+                path: path.as_str().expect("ordering filename").to_owned(),
+                kind: "file".into(),
+            })
+            .collect::<Vec<_>>();
+        let expected = fixture["ordering"]["expected"]
+            .as_array()
+            .expect("ordering expected")
+            .iter()
+            .map(|path| path.as_str().expect("expected filename").to_owned())
+            .collect::<Vec<_>>();
+        let actual = direct_children(&entries, "")
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 
     #[test]
-    fn file_read_receipt_bounds_text_and_marks_binary_content() {
-        let text = vec![b'a'; MAX_PREVIEW_BYTES + 1];
+    fn preview_projection_uses_shared_limits_and_messages() {
+        let fixture: serde_json::Value = serde_json::from_str(READ_PARITY_FIXTURE)
+            .expect("workspace backup read parity fixture");
+        let max_preview_bytes = fixture["limits"]["maxPreviewBytes"]
+            .as_u64()
+            .expect("max preview bytes") as usize;
+        assert_eq!(
+            MAX_ARCHIVE_BYTES,
+            fixture["limits"]["maxArchiveBytes"]
+                .as_u64()
+                .expect("max archive bytes")
+        );
+        assert_eq!(
+            MAX_MANIFEST_BYTES,
+            fixture["limits"]["maxManifestBytes"]
+                .as_u64()
+                .expect("max manifest bytes")
+        );
+        assert_eq!(
+            MAX_FILE_BYTES,
+            fixture["limits"]["maxFileBytes"]
+                .as_u64()
+                .expect("max file bytes")
+        );
+        assert_eq!(
+            MAX_TOTAL_FILE_BYTES,
+            fixture["limits"]["maxTotalFileBytes"]
+                .as_u64()
+                .expect("max total file bytes")
+        );
+        assert_eq!(MAX_PREVIEW_BYTES, max_preview_bytes);
+
+        let text = vec![b'a'; max_preview_bytes + 1];
         let text_receipt = file_read_receipt(&text, "large.txt".into(), "backup-1");
         assert_eq!(
             text_receipt.content.as_deref().map(str::len),
-            Some(MAX_PREVIEW_BYTES)
+            Some(max_preview_bytes)
         );
-        assert_eq!(text_receipt.content_type, "text/plain");
-        assert_eq!(text_receipt.preview_kind, "text");
-        assert!(text_receipt.truncated);
+        assert_eq!(
+            text_receipt.content_type,
+            fixture["preview"]["truncatedText"]["contentType"]
+                .as_str()
+                .expect("truncated content type")
+        );
+        assert_eq!(
+            text_receipt.preview_kind,
+            fixture["preview"]["truncatedText"]["previewKind"]
+                .as_str()
+                .expect("truncated preview kind")
+        );
         assert_eq!(
             text_receipt.message,
-            Some("Preview truncated to the first 200 KB.")
+            fixture["preview"]["truncatedText"]["message"]
+                .as_str()
+                .map(Some)
+                .expect("truncated message")
+        );
+        assert_eq!(
+            text_receipt.truncated,
+            fixture["preview"]["truncatedText"]["truncated"]
+                .as_bool()
+                .expect("truncated flag")
         );
 
         let binary_receipt = file_read_receipt(b"prefix\0suffix", "data.bin".into(), "backup-1");
         assert_eq!(binary_receipt.content, None);
-        assert_eq!(binary_receipt.content_type, "application/octet-stream");
-        assert_eq!(binary_receipt.preview_kind, "binary");
-        assert!(!binary_receipt.truncated);
+        assert_eq!(
+            binary_receipt.content_type,
+            fixture["preview"]["binary"]["contentType"]
+                .as_str()
+                .expect("binary content type")
+        );
+        assert_eq!(
+            binary_receipt.preview_kind,
+            fixture["preview"]["binary"]["previewKind"]
+                .as_str()
+                .expect("binary preview kind")
+        );
         assert_eq!(
             binary_receipt.message,
-            Some("Binary files are not previewed in workspace backups.")
+            fixture["preview"]["binary"]["message"]
+                .as_str()
+                .map(Some)
+                .expect("binary message")
+        );
+        assert_eq!(
+            binary_receipt.truncated,
+            fixture["preview"]["binary"]["truncated"]
+                .as_bool()
+                .expect("binary truncated flag")
         );
     }
 }

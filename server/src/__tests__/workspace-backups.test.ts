@@ -19,11 +19,19 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveDefaultBackupDir, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
+import { compareWorkspaceBackupFilenames } from "../services/workspace-backup-v2.js";
 import {
   reconcileWorkspaceBackupArtifactStorage,
   reconcileWorkspaceRestoreReceipts,
   workspaceBackupService,
 } from "../services/workspace-backups.js";
+
+import workspaceBackupReadParity from "../../../native/fixtures/workspace-backup-read-parity.json";
+
+it("uses the portable Unicode scalar filename order shared with native browsing", () => {
+  expect([...workspaceBackupReadParity.ordering.input].sort(compareWorkspaceBackupFilenames))
+    .toEqual(workspaceBackupReadParity.ordering.expected);
+});
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -235,11 +243,15 @@ describe("workspace backup service", () => {
     await fs.mkdir(path.join(workspaceRoot, "projects", "roadmap"), { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "projects", "roadmap", "roadmap.md"), "# Roadmap\n", "utf8");
     await fs.writeFile(path.join(workspaceRoot, "projects", "roadmap", "logo.bin"), Buffer.from([0, 1, 2, 255]));
+    await fs.writeFile(
+      path.join(workspaceRoot, "preview.txt"),
+      Buffer.alloc(workspaceBackupReadParity.limits.maxPreviewBytes + 1, "a"),
+    );
 
     const backup = await service.create({ orgId });
 
     expect(backup.status).toBe("succeeded");
-    expect(backup.fileCount).toBe(2);
+    expect(backup.fileCount).toBe(3);
     expect(backup.byteSize).toBeGreaterThan(0);
     expect(backup.expiresAt).not.toBeNull();
     expect(backup.artifactRef).toContain(path.join("workspaces", resolveOrganizationStorageKey(orgId)));
@@ -259,7 +271,16 @@ describe("workspace backup service", () => {
     ]));
 
     const file = await service.readFile(orgId, backup.id, "projects/roadmap/roadmap.md");
+    expect(file).toMatchObject(workspaceBackupReadParity.preview.text);
     expect(file.content).toBe("# Roadmap\n");
+
+    const binary = await service.readFile(orgId, backup.id, "projects/roadmap/logo.bin");
+    expect(binary).toMatchObject(workspaceBackupReadParity.preview.binary);
+    expect(binary.content).toBeNull();
+
+    const truncated = await service.readFile(orgId, backup.id, "preview.txt");
+    expect(truncated).toMatchObject(workspaceBackupReadParity.preview.truncatedText);
+    expect(truncated.content).toHaveLength(workspaceBackupReadParity.limits.maxPreviewBytes);
 
     const download = await service.getDownload(orgId, backup.id);
     expect(download).toEqual(expect.objectContaining({
@@ -289,6 +310,66 @@ describe("workspace backup service", () => {
     } finally {
       await fs.rm(unzipRoot, { recursive: true, force: true });
     }
+  });
+
+  it("projects the shared filename corpus through the public list-files service", async () => {
+    const orgId = await createOrganization();
+    const backupId = randomUUID();
+    const createdAt = new Date("2026-09-03T12:00:00.000Z");
+    const artifactRef = path.join(resolveDefaultBackupDir(), `ordering-${backupId}.json`);
+    const entries = workspaceBackupReadParity.ordering.publicInput.map((filePath) => ({
+      path: filePath,
+      kind: "file" as const,
+      byteSize: 1,
+      sha256: sha256("x"),
+      dataBase64: "eA==",
+    }));
+    const artifact = {
+      version: 1 as const,
+      orgId,
+      instanceId: "test-instance",
+      createdAt: createdAt.toISOString(),
+      rootPath: `/fixture/${orgId}`,
+      entries,
+      warnings: [],
+    };
+    const serialized = JSON.stringify(artifact);
+    await fs.mkdir(path.dirname(artifactRef), { recursive: true });
+    await fs.writeFile(artifactRef, serialized, "utf8");
+    await db.insert(workspaceBackups).values({
+      id: backupId,
+      orgId,
+      status: "succeeded",
+      triggerSource: "manual",
+      artifactProvider: "local_file",
+      artifactRef,
+      archiveSha256: sha256(serialized),
+      treeSha256: "ordering-fixture",
+      manifest: {
+        version: 1,
+        orgId,
+        instanceId: "test-instance",
+        rootPath: artifact.rootPath,
+        createdAt: createdAt.toISOString(),
+        entryCount: entries.length,
+        fileCount: entries.length,
+        byteSize: entries.length,
+        treeSha256: "ordering-fixture",
+        activeRunCount: 0,
+        warnings: [],
+      },
+      startedAt: createdAt,
+      finishedAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const root = await service.listFiles(orgId, backupId);
+    expect(root.entries).toEqual(workspaceBackupReadParity.ordering.publicExpected.map((name) => ({
+      name,
+      path: name,
+      isDirectory: false,
+    })));
   });
 
   it("uses the bounded v2 file-backed path by default", async () => {
