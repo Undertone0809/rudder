@@ -446,11 +446,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare Windows PostgreSQL test runtime
-        if: matrix.target == 'x86_64-pc-windows-msvc'
+      - name: Prepare PostgreSQL test runtime
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         run: |
           bin_dir="$(node desktop/scripts/prepare-postgres-runtime.mjs | tail -n 1)"
           echo "RUDDER_POSTGRES_BIN_DIR=${bin_dir}" >> "$GITHUB_ENV"
+
+      - name: Install Linux PostgreSQL test runtime
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql
+          bin_dir="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
+          test -n "$bin_dir"
+          echo "$bin_dir" >> "$GITHUB_PATH"
 
       - name: Rust formatting
         if: matrix.target == 'x86_64-unknown-linux-gnu'
