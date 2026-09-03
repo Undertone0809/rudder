@@ -131,8 +131,10 @@ export function applyChatStreamProgressEvent(
   ) {
     return current;
   }
+  const isStateEvent = event.type === "assistant_state" || event.type === "waiting_for_network";
   if (
-    eventGenerationSeq !== undefined
+    !isStateEvent
+    && eventGenerationSeq !== undefined
     && current.lastCommittedRenderSeq !== undefined
     && eventGenerationSeq <= current.lastCommittedRenderSeq
   ) {

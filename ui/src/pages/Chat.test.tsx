@@ -287,6 +287,26 @@ describe("chat stream stop cutoff", () => {
     });
   });
 
+  it("accepts a network-wait state after the initial ACK sequence", () => {
+    const generationId = "generation-network-wait";
+    const current = draft({ generationId, lastCommittedRenderSeq: 0 });
+
+    const waiting = applyChatStreamProgressEvent(current, "stream-1", {
+      type: "waiting_for_network",
+      generationId,
+      attemptEpoch: 1,
+      generationSeq: 0,
+      bodyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    });
+
+    expect(waiting).toMatchObject({
+      state: "waiting_for_network",
+      generationId,
+      lastCommittedRenderSeq: 0,
+    });
+    expect(waiting).not.toBe(current);
+  });
+
   it("rejects progress from another generation instead of replacing the active identity", () => {
     const current = draft({ generationId: "generation-1", lastCommittedRenderSeq: 3 });
     const stale = applyChatStreamProgressEvent(current, "stream-1", {
