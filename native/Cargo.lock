@@ -1398,8 +1398,12 @@ name = "rudder-server-foundation"
 version = "0.7.18"
 dependencies = [
  "libc",
+ "rudder-archive-core",
  "rudder-server-foundation-core",
  "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
  "tokio",
 ]
 
