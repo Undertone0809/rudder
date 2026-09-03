@@ -191,14 +191,27 @@ If a corner case is too expensive or impossible to cover in E2E, document why an
 
 ## 5.1 Release And Deployment Authorization
 
-Implementation authority is not release authority. Treat local implementation,
-branch push/PR, shared staging, stable publication, and production deployment as
-separate transitions.
+Implementation authority includes completing the standard pull-request lifecycle,
+but it is not release authority. Treat merged source, shared staging, stable
+publication, and production deployment as separate transitions.
 
 - `start`, `continue`, `proceed`, `implement`, `finish`, or approval of a plan
-  authorizes implementation and verification only. The default stopping point
-  is Review Ready: validated changes committed and pushed on the current branch,
-  a PR when appropriate, review evidence, and a release-risk summary.
+  authorizes implementation, verification, branch push, PR creation, CI, and
+  merging the PR for ordinary feature and bug-fix development, including tests
+  and documentation that are part of that work. The default stopping point is
+  Merged: after reviewer `accept`, verifier `PASS`, every applicable PR CI check
+  completes successfully, and no blocking review finding remains, merge the PR
+  without asking for another approval. Use a merge method allowed by repository
+  policy, then verify that the target branch contains the merged change. Do not
+  bypass branch protection, required checks, or blocking reviews. If permissions,
+  unresolved conflicts, failed checks, blocking reviews, or branch policy prevent
+  the merge, stop and report the exact blocker.
+- Resolve PR conflicts on the PR branch, rerun all invalidated review,
+  verification, and CI gates, and then merge. Do not leave completed work parked
+  indefinitely in a local worktree when the standard PR path remains available.
+- Merging a PR does not authorize publishing packages, creating a stable release,
+  promoting a shared environment, or deploying to production. Those transitions
+  still require an explicit release or publish request.
 - An explicit imperative to release or publish, including `release`, `publish`,
   `ship this version`, `发版`, or `发布`, authorizes the complete standard release
   lifecycle. This includes committing and pushing the reviewed source directly
@@ -323,6 +336,12 @@ The gate order is:
    verdict.
 5. Commit and push only after reviewer `accept` and verifier `PASS` both apply
    to the same unchanged candidate.
+6. Open or update the PR, wait for every applicable CI check and review, and
+   resolve any blockers. A relevant source change invalidates the earlier
+   candidate verdicts; rerun the verifier and final reviewer before continuing.
+7. When every applicable PR CI check for the exact accepted candidate has
+   completed successfully and no blocking review finding remains, merge the PR
+   and verify the target branch contains the change.
 
 `FAIL`, `QUESTION`, `conditional accept`, `needs more evidence`, and `reject`
 all block final handoff. Any relevant code, build, runtime, organization/data,
@@ -351,6 +370,6 @@ A change is done when all are true:
 5. Please provide screenshots if there are any UI-related changes.
 6. Git commit rules
 
-- After completing a feature, small functionality, test change, or bug fix, and after the necessary validation passes, default to running `git commit` and `git push` to the current remote branch.
+- After completing a feature, small functionality, or bug fix, including its associated tests and documentation, and after the necessary validation passes, default to committing, pushing, opening or updating the PR, waiting for every applicable CI check, and merging the PR as defined in section 5.1.
 - Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).
 - If there are unrelated dirty changes in the working tree, default to committing only the files changed for the current task instead of asking for confirmation. YOU MUST COMMIT AFTER YOU WORK.
