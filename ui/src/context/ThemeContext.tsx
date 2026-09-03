@@ -176,7 +176,7 @@ function applyTheme(theme: Theme, designStyle: DesignStyle, baseColor: BaseColor
   root.dataset.baseColor = baseColor;
   root.dataset.themeColor = accentTheme;
   root.style.colorScheme = isDark ? "dark" : "light";
-  root.style.backgroundColor = root.classList.contains("desktop-shell-macos")
+  root.style.backgroundColor = root.classList.contains("desktop-shell-glass")
     ? "transparent"
     : themeColor;
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');

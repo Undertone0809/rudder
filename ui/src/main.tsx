@@ -1,4 +1,5 @@
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import { DesktopWindowControls } from "@/components/DesktopWindowControls";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConsoleRingBuffer } from "@/lib/console-ring-buffer";
 import { BrowserRouter } from "@/lib/router";
@@ -21,6 +22,7 @@ import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
 import "./index.css";
+import { readDesktopShell } from "./lib/desktop-shell";
 import "./motion.css";
 
 const E2E_CHILDREN_ONLY_ERROR_MESSAGE = "React.Children.only expected to receive a single React element child.";
@@ -42,19 +44,26 @@ declare global {
 ConsoleRingBuffer.install();
 
 function isDesktopShellWindow() {
-  return typeof window !== "undefined"
-    && "desktopShell" in window
-    && Boolean((window as typeof window & { desktopShell?: unknown }).desktopShell);
+  return readDesktopShell() !== null;
 }
 
 function syncDesktopShellClass() {
+  const isDesktopShell = isDesktopShellWindow();
+  const desktopPlatform = readDesktopShell()?.platform;
   const isMacDesktopShell =
-    isDesktopShellWindow()
-    && /Mac/i.test(window.navigator.userAgent);
+    isDesktopShell
+    && desktopPlatform === "darwin";
+  const isWindowsDesktopShell =
+    isDesktopShell
+    && desktopPlatform === "win32";
 
+  document.documentElement.classList.toggle("desktop-shell-glass", isDesktopShell);
   document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
+  document.documentElement.classList.toggle("desktop-shell-windows", isWindowsDesktopShell);
   if (document.body) {
+    document.body.classList.toggle("desktop-shell-glass", isDesktopShell);
     document.body.classList.toggle("desktop-shell-macos", isMacDesktopShell);
+    document.body.classList.toggle("desktop-shell-windows", isWindowsDesktopShell);
   }
 }
 
@@ -82,7 +91,7 @@ syncDesktopShellClass();
 
 if (typeof document !== "undefined") {
   const root = document.documentElement;
-  root.style.backgroundColor = root.classList.contains("desktop-shell-macos")
+  root.style.backgroundColor = root.classList.contains("desktop-shell-glass")
     ? "transparent"
     : "";
 }
@@ -119,6 +128,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AppErrorBoundary>
+        <DesktopWindowControls />
         <I18nProvider>
           <ThemeProvider>
             <BrowserRouter>

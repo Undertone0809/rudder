@@ -172,10 +172,26 @@ Platform behavior:
 - Windows: resident control lives in the notification area
 - Linux: resident control uses tray/AppIndicator support when the current desktop environment is likely to support it; otherwise Desktop safely falls back to windowed quit-on-close behavior
 
+## Desktop glass
+
+Rudder Desktop uses a transparent, tinted shell by default on Windows to keep
+the same paper-glass workspace character without relying on platform vibrancy.
+Windows uses a transparent frameless application window with Rudder-owned
+caption controls and rounded restored-window clipping. macOS and Linux keep the
+opaque default for compositor stability, but can opt into a transparent mode;
+macOS transparent-vibrant mode additionally uses native vibrancy.
+
+Use `RUDDER_DESKTOP_WINDOW_EFFECT_MODE=opaque` as the escape hatch when a
+platform, GPU driver, virtual machine, remote-desktop session, or compositor
+renders transparent windows poorly. Supported values are `opaque`,
+`transparent`, and `transparent_vibrant`. The legacy
+`RUDDER_DESKTOP_MAC_WINDOW_MODE` variable remains accepted for compatibility.
+
 ## Window chrome contract
 
 On macOS, Rudder Desktop keeps the native traffic-light window controls while hiding the default window title text.
 The app uses Electron's `titleBarStyle: "hiddenInset"` so the top chrome remains a real macOS window region instead of a fake in-app replacement.
+The ready application window is frameless on Windows so the transparent shell reaches the outer edge; Rudder renders accessible minimize, maximize/restore, and close controls at the top-right while retaining a framed startup/recovery window for safe fallback handling.
 
 This means the top row of the app is treated as shared chrome:
 

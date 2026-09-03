@@ -103,7 +103,12 @@ import {
 } from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
 import { resolveDesktopUpdateTrustKeys } from "./desktop-update-trust.js";
-import { resolveMacWindowMode as resolveMacWindowModeSetting, type MacWindowMode } from "./desktop-window-mode.js";
+import {
+  resolveDesktopWindowChromeOptions,
+  resolveDesktopWindowEffectMode,
+  resolveDesktopWindowEffects,
+  resolveRoundedWindowShapeRects,
+} from "./desktop-window-effects.js";
 import {
   toWorkspaceLaunchTargetPayload,
   type DesktopWorkspaceLaunchTargetPayload,
@@ -851,45 +856,6 @@ const {
 applyPreparedAutomaticCandidateForQuit = prepareAutomaticCandidateForQuit;
 handoffPreparedAutomaticCandidateForQuit = handoffPreparedAutomaticCandidate;
 
-function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
-  return DESKTOP_WINDOW_BACKGROUND[appearance];
-}
-
-function resolveTransparentWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
-  return TRANSPARENT_DESKTOP_WINDOW_BACKGROUND[appearance];
-}
-
-function resolveMacWindowMode(): MacWindowMode {
-  return resolveMacWindowModeSetting(process.env.RUDDER_DESKTOP_MAC_WINDOW_MODE);
-}
-
-function resolveMacWindowEffects(): Pick<BrowserWindowConstructorOptions,
-  "backgroundColor" | "titleBarStyle" | "transparent" | "vibrancy" | "visualEffectState"> {
-  const mode = resolveMacWindowMode();
-  if (mode === "transparent") {
-    return {
-      titleBarStyle: "hiddenInset",
-      transparent: true,
-      backgroundColor: resolveTransparentWindowBackgroundColor(currentAppearance),
-    };
-  }
-  if (mode === "transparent_vibrant") {
-    return {
-      titleBarStyle: "hiddenInset",
-      transparent: true,
-      backgroundColor: resolveTransparentWindowBackgroundColor(currentAppearance),
-      vibrancy: "under-window",
-      visualEffectState: "active",
-    };
-  }
-  return {
-    titleBarStyle: "hiddenInset",
-    backgroundColor: resolveDesktopWindowBackgroundColor(),
-    vibrancy: "under-window",
-    visualEffectState: "active",
-  };
-}
-
 function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferences {
   return {
     preload: preloadPath,
@@ -913,9 +879,13 @@ function createBootWebPreferences(preloadPath: string): Electron.WebPreferences 
 function applyDesktopAppearance(appearance: DesktopAppearance): void {
   currentAppearance = appearance;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const backgroundColor = process.platform === "darwin" && resolveMacWindowMode() !== "opaque"
-      ? resolveTransparentWindowBackgroundColor(appearance)
-      : resolveDesktopWindowBackgroundColor(appearance);
+    const backgroundColor = resolveDesktopWindowEffects({
+      platform: process.platform,
+      mode: resolveDesktopWindowEffectMode(process.env, process.platform),
+      appearance,
+      desktopWindowBackground: DESKTOP_WINDOW_BACKGROUND,
+      transparentWindowBackground: TRANSPARENT_DESKTOP_WINDOW_BACKGROUND,
+    }).backgroundColor;
     mainWindow.setBackgroundColor(backgroundColor);
   }
 }
@@ -1728,13 +1698,39 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   });
 }
 
+function syncWindowsRoundedWindowShape(window: BrowserWindow): void {
+  if (process.platform !== "win32" || window.isDestroyed()) return;
+  if (window.isMaximized() || window.isFullScreen()) {
+    window.setShape([]);
+    return;
+  }
+
+  const { width, height } = window.getContentBounds();
+  window.setShape(resolveRoundedWindowShapeRects(width, height));
+}
+
+function installWindowsRoundedWindowShape(window: BrowserWindow): void {
+  if (process.platform !== "win32") return;
+
+  const sync = () => syncWindowsRoundedWindowShape(window);
+  window.once("ready-to-show", sync);
+  window.on("resize", sync);
+  window.on("maximize", sync);
+  window.on("unmaximize", sync);
+  window.on("enter-full-screen", sync);
+  window.on("leave-full-screen", sync);
+}
+
 async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
-  const macWindowEffects = process.platform === "darwin"
-    ? resolveMacWindowEffects()
-    : {
-        backgroundColor: resolveDesktopWindowBackgroundColor(),
-      };
+  const desktopWindowEffects: Pick<BrowserWindowConstructorOptions,
+    "backgroundColor" | "titleBarStyle" | "transparent" | "vibrancy" | "visualEffectState"> = resolveDesktopWindowEffects({
+      platform: process.platform,
+      mode: resolveDesktopWindowEffectMode(process.env, process.platform),
+      appearance: currentAppearance,
+      desktopWindowBackground: DESKTOP_WINDOW_BACKGROUND,
+      transparentWindowBackground: TRANSPARENT_DESKTOP_WINDOW_BACKGROUND,
+    });
   const initialWindowSize = resolveInitialDesktopWindowSize(
     screen.getPrimaryDisplay().workAreaSize,
   );
@@ -1743,7 +1739,8 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
     title: APP_NAME,
     show: false,
     autoHideMenuBar: process.platform !== "darwin",
-    ...macWindowEffects,
+    ...(kind === "app" ? resolveDesktopWindowChromeOptions(process.platform) : {}),
+    ...desktopWindowEffects,
     ...(desktopWindowIcon ? { icon: desktopWindowIcon } : {}),
     webPreferences: kind === "boot"
       ? createBootWebPreferences(preloadPath)
@@ -1752,6 +1749,9 @@ async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Pr
 
   if (process.platform !== "darwin") {
     window.setMenuBarVisibility(false);
+  }
+  if (kind === "app") {
+    installWindowsRoundedWindowShape(window);
   }
 
   if (kind === "app") {
@@ -2777,6 +2777,29 @@ function registerIpc(): void {
     assertCurrentMainFrame(event, "Desktop restart");
     await restartFromResidentControls();
   });
+  ipcMain.handle("desktop:minimize-window", async (event) => {
+    assertCurrentMainFrame(event, "Desktop window minimize");
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("desktop:toggle-maximize-window", async (event): Promise<boolean> => {
+    assertCurrentMainFrame(event, "Desktop window maximize");
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return false;
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+    return window.isMaximized();
+  });
+  ipcMain.handle("desktop:close-window", async (event) => {
+    assertCurrentMainFrame(event, "Desktop window close");
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle("desktop:is-window-maximized", async (event): Promise<boolean> => {
+    assertCurrentMainFrame(event, "Desktop window maximize state");
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+  });
   ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
   ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));
   ipcMain.handle("desktop:apply-update", async (_event, updateId: string, options?: { force?: boolean }) =>
@@ -2989,7 +3012,7 @@ async function bootstrap(): Promise<void> {
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:start", {
       profile: profile.name,
-      macWindowMode: process.platform === "darwin" ? resolveMacWindowMode() : "opaque",
+      windowEffectMode: resolveDesktopWindowEffectMode(process.env, process.platform),
       bootOnly: desktopBootOnlyMode(),
     });
   }

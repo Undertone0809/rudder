@@ -484,25 +484,25 @@ describe("index.css motion rules", () => {
     expect(reducedMotion).toContain(".morph-popover[data-state=\"open\"]");
   });
 
-  it("keeps the macOS desktop shell translucent in light mode", () => {
-    const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
+  it("keeps the desktop glass shell translucent in light mode", () => {
+    const lightDesktopBackdrop = cssBlock("html.desktop-shell-glass .app-shell-backdrop");
 
     expect(lightDesktopBackdrop).toContain("rgb(250 248 245 / 0.34)");
     expect(lightDesktopBackdrop).toContain("rgb(244 240 234 / 0.22)");
     expect(lightDesktopBackdrop).toContain("backdrop-filter: blur(38px) saturate(122%)");
   });
 
-  it("keeps macOS desktop glass on the app backdrop and active Chat header without adding a workspace wash", () => {
-    const lightDesktopBackdrop = cssBlock("html.desktop-shell-macos .app-shell-backdrop");
-    const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-macos .app-shell-backdrop");
-    const lightPrimaryRail = cssBlock("html.desktop-shell-macos .primary-rail-shell");
-    const lightWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell");
-    const darkWorkspaceShell = cssBlock("html.dark.desktop-shell-macos .workspace-shell");
-    const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
-    const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-macos :is(.workspace-context-card, .workspace-main-card)");
-    const activeChatCardSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
-    const chatHeaderSelector = 'html.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
-    const darkChatHeaderSelector = 'html.dark.desktop-shell-macos [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+  it("keeps cross-platform desktop glass on the app backdrop and active Chat header without adding a workspace wash", () => {
+    const lightDesktopBackdrop = cssBlock("html.desktop-shell-glass .app-shell-backdrop");
+    const darkDesktopBackdrop = cssBlock("html.dark.desktop-shell-glass .app-shell-backdrop");
+    const lightPrimaryRail = cssBlock("html.desktop-shell-glass .primary-rail-shell");
+    const lightWorkspaceShell = cssBlock("html.desktop-shell-glass .workspace-shell");
+    const darkWorkspaceShell = cssBlock("html.dark.desktop-shell-glass .workspace-shell");
+    const lightDesktopWorkspaceCards = cssBlock("html.desktop-shell-glass :is(.workspace-context-card, .workspace-main-card)");
+    const darkDesktopWorkspaceCards = cssBlock("html.dark.desktop-shell-glass :is(.workspace-context-card, .workspace-main-card)");
+    const activeChatCardSelector = 'html.desktop-shell-glass [data-testid="chat-main-workspace-card"]:has(> [data-testid="chat-desktop-toolbar-clearance"])';
+    const chatHeaderSelector = 'html.desktop-shell-glass [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
+    const darkChatHeaderSelector = 'html.dark.desktop-shell-glass [data-testid="chat-main-workspace-card"] > [data-testid="chat-desktop-toolbar-clearance"]';
     const activeChatCard = cssBlock(activeChatCardSelector);
     const lightChatHeader = cssBlock(chatHeaderSelector);
     const darkChatHeader = cssBlock(darkChatHeaderSelector);
@@ -534,7 +534,7 @@ describe("index.css motion rules", () => {
     expect(chatLoadErrorOffset).toContain("margin-top: 1.5rem");
     expect(chatLoadingOffset).toContain("padding-top: 1rem");
     expect(chatLoadingOffset).toContain("padding-bottom: 1rem");
-    expect(indexCss).not.toContain("html.desktop-shell-macos :is(.workspace-context-header, .workspace-main-header)");
+    expect(indexCss).not.toContain("html.desktop-shell-glass :is(.workspace-context-header, .workspace-main-header)");
   });
 
   it("keeps frameless Library work surfaces transparent over the desktop shell", () => {
@@ -544,11 +544,11 @@ describe("index.css motion rules", () => {
     expect(framelessWorkspaceCard).toContain("box-shadow: none");
   });
 
-  it("keeps the Library workspace shell transparent on macOS desktop", () => {
-    const libraryWorkspaceShell = cssBlock("html.desktop-shell-macos .workspace-shell--library-transparent");
-    const darkLibraryWorkspaceShell = cssBlock("html.dark.desktop-shell-macos .workspace-shell--library-transparent");
+  it("keeps the Library workspace shell transparent in the desktop glass shell", () => {
+    const libraryWorkspaceShell = cssBlock("html.desktop-shell-glass .workspace-shell--library-transparent");
+    const darkLibraryWorkspaceShell = cssBlock("html.dark.desktop-shell-glass .workspace-shell--library-transparent");
 
-    expect(indexCss).toContain("html.dark.desktop-shell-macos .workspace-shell--library-transparent");
+    expect(indexCss).toContain("html.dark.desktop-shell-glass .workspace-shell--library-transparent");
     expect(libraryWorkspaceShell).toContain("background: transparent");
     expect(darkLibraryWorkspaceShell).toContain("background: transparent");
     expect(libraryWorkspaceShell).not.toContain("desktop-content-surface");
@@ -634,6 +634,39 @@ describe("index.css motion rules", () => {
     expect(rootTokens).toContain("--desktop-workspace-radius: calc(var(--radius-sm) - 1px)");
     expect(workspaceShell).toContain("border-radius: var(--desktop-workspace-radius)");
     expect(workspaceCards).toContain("border-radius: var(--desktop-workspace-radius)");
+  });
+
+  it("clips the Windows desktop shell to rounded transparent outer corners", () => {
+    const rootTokens = cssBlock(":root");
+    const windowsRootClip = cssBlock("html.desktop-shell-windows,");
+    const windowsBackdropClip = cssBlock("html.desktop-shell-windows .app-shell-backdrop");
+    const maximizedBackdropClip = cssBlock("html.desktop-shell-windows.desktop-shell-window-maximized .app-shell-backdrop");
+    const captionControls = cssBlock(".desktop-caption-controls");
+
+    expect(rootTokens).toContain("--desktop-window-radius: 0.625rem");
+    expect(windowsRootClip).toContain("border-radius: var(--desktop-window-radius)");
+    expect(windowsRootClip).toContain("overflow: hidden");
+    expect(indexCss).toMatch(/html\.desktop-shell-windows body\s*\{\s*clip-path: inset\(0 round var\(--desktop-window-radius\)\);/);
+    expect(indexCss).toMatch(/html\.desktop-shell-windows #root\s*\{\s*position: fixed;/);
+    expect(indexCss).toMatch(/html\.desktop-shell-windows\.desktop-shell-window-maximized body,\s*html\.desktop-shell-windows\.desktop-shell-window-maximized #root\s*\{\s*clip-path: none;/);
+    expect(windowsBackdropClip).toContain("border-radius: var(--desktop-window-radius)");
+    expect(maximizedBackdropClip).toContain("border-radius: 0");
+    expect(captionControls).toContain("border-top-right-radius: var(--desktop-window-radius)");
+    expect(captionControls).toContain("z-index: 2147483647");
+  });
+
+  it("keeps Windows glass tinted enough to prevent readable background bleed", () => {
+    const lightShell = cssBlock("html.desktop-shell-windows.desktop-shell-glass .app-shell-backdrop");
+    const darkShell = cssBlock("html.dark.desktop-shell-windows.desktop-shell-glass .app-shell-backdrop");
+    const lightRail = cssBlock("html.desktop-shell-windows.desktop-shell-glass .primary-rail-shell");
+    const darkRail = cssBlock("html.dark.desktop-shell-windows.desktop-shell-glass .primary-rail-shell");
+
+    expect(lightShell).toContain("rgb(250 248 245 / 0.9)");
+    expect(lightShell).toContain("rgb(244 240 234 / 0.84)");
+    expect(darkShell).toContain("rgb(17 18 21 / 0.9)");
+    expect(darkShell).toContain("rgb(12 14 17 / 0.86)");
+    expect(lightRail).toContain("rgb(244 242 239 / 0.74)");
+    expect(darkRail).toContain("rgb(18 20 23 / 0.72)");
   });
 
   it("keeps dashboard run previews compact even when transcripts contain markdown headings", () => {

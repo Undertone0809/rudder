@@ -78,15 +78,19 @@
           document.documentElement.style.colorScheme = "dark";
         }
 
-        const isMacDesktopShell =
+        const isDesktopShell =
           typeof window !== "undefined"
-          && Boolean(window.desktopShell)
-          && /Mac/i.test(window.navigator.userAgent);
+          && Boolean(window.desktopShell);
+        const desktopPlatform = window.desktopShell?.platform;
+        const isMacDesktopShell = isDesktopShell && desktopPlatform === "darwin";
+        const isWindowsDesktopShell = isDesktopShell && desktopPlatform === "win32";
+        document.documentElement.classList.toggle("desktop-shell-glass", isDesktopShell);
         document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
-        document.documentElement.style.backgroundColor = isMacDesktopShell
+        document.documentElement.classList.toggle("desktop-shell-windows", isWindowsDesktopShell);
+        document.documentElement.style.backgroundColor = isDesktopShell
           ? "transparent"
           : (isDark ? darkBaseThemeColors[baseColor] : lightBaseThemeColors[baseColor]);
-        if (isMacDesktopShell && typeof window.desktopShell?.setAppearance === "function") {
+        if (isDesktopShell && typeof window.desktopShell?.setAppearance === "function") {
           void window.desktopShell.setAppearance(theme);
         }
       })();

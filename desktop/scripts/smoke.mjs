@@ -2655,6 +2655,53 @@ function resolveMacPackagedSmokeHomeEnv() {
     : {};
 }
 
+async function assertDesktopGlassShell(electronApp, page, context) {
+  const rendererState = await page.evaluate(() => {
+    const shellProbe = document.createElement("div");
+    const primaryRailProbe = document.createElement("div");
+    shellProbe.className = "app-shell-backdrop";
+    primaryRailProbe.className = "primary-rail-shell";
+    document.body.append(shellProbe, primaryRailProbe);
+    const result = {
+      platform: window.desktopShell?.platform ?? null,
+      glass: document.documentElement.classList.contains("desktop-shell-glass"),
+      macos: document.documentElement.classList.contains("desktop-shell-macos"),
+      windows: document.documentElement.classList.contains("desktop-shell-windows"),
+      captionControls: document.querySelectorAll(".desktop-caption-control").length,
+      shellBackground: getComputedStyle(shellProbe).backgroundImage,
+      primaryRailBackground: getComputedStyle(primaryRailProbe).backgroundImage,
+    };
+    shellProbe.remove();
+    primaryRailProbe.remove();
+    return result;
+  });
+
+  assert.equal(rendererState.glass, true, `${context} should enable the cross-platform glass shell class`);
+  if (process.platform === "win32") {
+    assert.equal(rendererState.platform, "win32", `${context} should expose the Windows desktop platform`);
+    assert.equal(rendererState.windows, true, `${context} should enable Windows shell styling`);
+    assert.equal(rendererState.macos, false, `${context} should not enable macOS-only styling on Windows`);
+    assert.equal(rendererState.captionControls, 3, `${context} should render minimize, maximize, and close controls`);
+    assert.match(
+      rendererState.shellBackground,
+      /rgba\(250,\s*248,\s*245,\s*0\.9\)/,
+      `${context} should tint the Windows shell enough to prevent readable background bleed`,
+    );
+    assert.match(
+      rendererState.primaryRailBackground,
+      /rgba\(244,\s*242,\s*239,\s*0\.74\)/,
+      `${context} should keep the Windows navigation rail translucent but readable`,
+    );
+    const cornerAlpha = await electronApp.evaluate(async ({ BrowserWindow }) => {
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!window) return null;
+      const image = await window.capturePage({ x: 0, y: 0, width: 1, height: 1 });
+      return image.toBitmap()[3] ?? null;
+    });
+    assert.equal(cornerAlpha, 0, `${context} should keep the rounded Windows corner fully transparent`);
+  }
+}
+
 async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, executableOverride = null) {
   console.log(`[desktop-smoke] launching ${mode} desktop app`);
   const paths = resolveInstancePaths(userDataDir);
@@ -3773,6 +3820,7 @@ async function launchDesktop(userDataDir, mode, ports, extraEnv = {}, executable
   // hands off to the application window. The shared tolerance stays strict
   // enough to reject the former 1440px default.
   await assertFreshDesktopWindowSize(electronApp, "the ready application window");
+  await assertDesktopGlassShell(electronApp, page, "the ready application window");
   const baseUrl = new URL(page.url()).origin;
   console.log(`[desktop-smoke] board loaded at ${baseUrl}`);
   return { electronApp, page, baseUrl };
