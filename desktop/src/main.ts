@@ -107,7 +107,6 @@ import {
   resolveDesktopWindowChromeOptions,
   resolveDesktopWindowEffectMode,
   resolveDesktopWindowEffects,
-  resolveRoundedWindowShapeRects,
 } from "./desktop-window-effects.js";
 import {
   toWorkspaceLaunchTargetPayload,
@@ -186,6 +185,10 @@ import {
   type DesktopUpdateChannel
 } from "./update-check.js";
 import { resolveInitialDesktopWindowSize } from "./window-size.js";
+import {
+  installWindowsRoundedWindowShape,
+  registerWindowsWindowIpcHandlers,
+} from "./windows-window-shell.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_BUILDER_RUNNER_PATH = path.join(MODULE_DIR, "app-builder-runner.mjs");
 type BootState = {
@@ -1698,29 +1701,6 @@ function installMainWindowSidePanelCloseShortcutHandler(window: BrowserWindow): 
   });
 }
 
-function syncWindowsRoundedWindowShape(window: BrowserWindow): void {
-  if (process.platform !== "win32" || window.isDestroyed()) return;
-  if (window.isMaximized() || window.isFullScreen()) {
-    window.setShape([]);
-    return;
-  }
-
-  const { width, height } = window.getContentBounds();
-  window.setShape(resolveRoundedWindowShapeRects(width, height));
-}
-
-function installWindowsRoundedWindowShape(window: BrowserWindow): void {
-  if (process.platform !== "win32") return;
-
-  const sync = () => syncWindowsRoundedWindowShape(window);
-  window.once("ready-to-show", sync);
-  window.on("resize", sync);
-  window.on("maximize", sync);
-  window.on("unmaximize", sync);
-  window.on("enter-full-screen", sync);
-  window.on("leave-full-screen", sync);
-}
-
 async function createDesktopWindow(initialUrl: string, kind: "app" | "boot"): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, kind === "boot" ? "boot-preload.js" : "preload.js");
   const desktopWindowEffects: Pick<BrowserWindowConstructorOptions,
@@ -2777,29 +2757,7 @@ function registerIpc(): void {
     assertCurrentMainFrame(event, "Desktop restart");
     await restartFromResidentControls();
   });
-  ipcMain.handle("desktop:minimize-window", async (event) => {
-    assertCurrentMainFrame(event, "Desktop window minimize");
-    BrowserWindow.fromWebContents(event.sender)?.minimize();
-  });
-  ipcMain.handle("desktop:toggle-maximize-window", async (event): Promise<boolean> => {
-    assertCurrentMainFrame(event, "Desktop window maximize");
-    const window = BrowserWindow.fromWebContents(event.sender);
-    if (!window) return false;
-    if (window.isMaximized()) {
-      window.unmaximize();
-    } else {
-      window.maximize();
-    }
-    return window.isMaximized();
-  });
-  ipcMain.handle("desktop:close-window", async (event) => {
-    assertCurrentMainFrame(event, "Desktop window close");
-    BrowserWindow.fromWebContents(event.sender)?.close();
-  });
-  ipcMain.handle("desktop:is-window-maximized", async (event): Promise<boolean> => {
-    assertCurrentMainFrame(event, "Desktop window maximize state");
-    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
-  });
+  registerWindowsWindowIpcHandlers(assertCurrentMainFrame);
   ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
   ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));
   ipcMain.handle("desktop:apply-update", async (_event, updateId: string, options?: { force?: boolean }) =>

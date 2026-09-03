@@ -368,11 +368,6 @@ function isMacDesktopShell(): boolean {
   return readDesktopShell()?.platform === "darwin";
 }
 
-function isDesktopChromeShell(): boolean {
-  const platform = readDesktopShell()?.platform;
-  return platform === "darwin" || platform === "win32";
-}
-
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
   if (/^\/apps(?:\/|$)/.test(relativePath)) return "apps";
   if (/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return "backups";
@@ -977,7 +972,6 @@ export function Layout() {
   const navigationType = useNavigationType();
   const inAppBackStackRef = useRef<string[]>([]);
   const macDesktopShell = useMemo(() => isMacDesktopShell(), []);
-  const desktopChromeShell = useMemo(() => isDesktopChromeShell(), []);
   const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
   const relativeBoardPath = useMemo(
     () => toOrganizationRelativePath(location.pathname),
@@ -1644,7 +1638,7 @@ export function Layout() {
             isMobile ? "w-full" : desktopContentShellInsetClass,
           )}
         >
-          {!isMobile && desktopChromeShell ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
+          {!isMobile && (macDesktopShell || readDesktopShell()?.platform === "win32") ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
           {showDesktopSettingsModal ? (
             <DesktopSettingsModalFrame onClose={closeSettingsModal}>
               {hasUnknownOrganizationPrefix ? (
@@ -1671,7 +1665,7 @@ export function Layout() {
                     isMobile && "sticky top-0 z-20 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/65",
                   )}
                 >
-                  <BreadcrumbBar desktopChrome={desktopChromeShell} />
+                  <BreadcrumbBar desktopChrome={macDesktopShell || readDesktopShell()?.platform === "win32"} />
                 </div>
               ) : null}
               <div className={cn(isMobile ? "block" : "flex min-h-0 min-w-0 flex-1")}>
@@ -1750,7 +1744,7 @@ export function Layout() {
                       >
                         {!useFramelessWorkspaceMain ? (
                           <div data-testid="workspace-main-header" className="shrink-0">
-                            <BreadcrumbBar desktopChrome={desktopChromeShell} variant="card" />
+                            <BreadcrumbBar desktopChrome={macDesktopShell || readDesktopShell()?.platform === "win32"} variant="card" />
                           </div>
                         ) : null}
                         <main
