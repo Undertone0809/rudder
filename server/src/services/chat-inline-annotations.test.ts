@@ -36,6 +36,7 @@ import {
   chatInlineAnnotationService,
 } from "./chat-inline-annotations.js";
 import { createChatAnnotationMessagePersistence } from "./chats.annotation-persistence.js";
+import { chatService } from "./chats.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

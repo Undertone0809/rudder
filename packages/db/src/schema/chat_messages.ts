@@ -1,4 +1,5 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { approvals } from "./approvals.js";
 import { chatConversations } from "./chat_conversations.js";
@@ -40,5 +41,8 @@ export const chatMessages = pgTable(
     ),
     approvalIdx: index("chat_messages_approval_idx").on(table.approvalId),
     runIdx: index("chat_messages_run_idx").on(table.runId),
+    conversationMutationIdx: uniqueIndex("chat_messages_conversation_mutation_uq")
+      .on(table.conversationId, table.clientMutationId)
+      .where(sql`${table.clientMutationId} is not null`),
   }),
 );

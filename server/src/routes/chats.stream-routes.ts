@@ -251,7 +251,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
     const abortController = new AbortController();
-    const releaseGeneration = claimChatGeneration(conversation.id, abortController, null);
+    const releaseGeneration = claimChatGeneration(
+      conversation.id,
+      abortController,
+      null,
+      clientMutationId,
+    );
     if (!releaseGeneration) {
       if (parsedBody.data.editUserMessageId) {
         res.status(409).json({ error: "Stop the current response before editing this message" });
@@ -261,7 +266,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
         return;
       }
-      const clientMutationId = `stream:${randomUUID()}`;
+      const activeGeneration = getActiveChatGeneration(conversation.id);
+      if (clientMutationId && activeGeneration?.clientMutationId === clientMutationId) {
+        throw conflict("This message is already being sent. Try again shortly.", {
+          code: "chat_send_in_progress",
+          phase: "message_acceptance",
+        });
+      }
+      const queueClientMutationId = clientMutationId ?? `stream:${randomUUID()}`;
       const storedQueueFiles = await storeQueuedAnnotationFiles(
         conversation as ChatConversation,
         messageFiles,
@@ -302,14 +314,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       } catch (error) {
         await cleanupUncommittedQueuedAnnotationFiles(
           conversation.orgId,
-          clientMutationId,
+          queueClientMutationId,
           storedQueueFiles,
         );
         throw error;
       }
       await cleanupUncommittedQueuedAnnotationFiles(
         conversation.orgId,
-        clientMutationId,
+        queueClientMutationId,
         queuedResult.cleanupAttachments,
       );
       const item = queuedResult.item;

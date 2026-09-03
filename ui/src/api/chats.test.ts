@@ -111,6 +111,44 @@ describe("chat stream timeouts", () => {
   });
 });
 
+describe("chat stream mutation identity", () => {
+  it("includes the mutation identity in JSON requests", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      '{"type":"final","messages":[]}\n',
+      { status: 200, headers: { "Content-Type": "application/x-ndjson" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendMessageStream("chat-1", "Retry safely", {
+      clientMutationId: "mutation-json-1",
+      onEvent: vi.fn(),
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      body: "Retry safely",
+      clientMutationId: "mutation-json-1",
+    });
+  });
+
+  it("includes the mutation identity beside multipart attachments", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      '{"type":"final","messages":[]}\n',
+      { status: 200, headers: { "Content-Type": "application/x-ndjson" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatsApi.sendMessageStream("chat-1", "Retry with proof", {
+      clientMutationId: "mutation-multipart-1",
+      files: [new File(["proof"], "proof.txt", { type: "text/plain" })],
+      onEvent: vi.fn(),
+    });
+
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("clientMutationId")).toBe("mutation-multipart-1");
+    expect(form.get("body")).toBe("Retry with proof");
+  });
+});
+
 describe("chat message history API", () => {
   it("scopes message history requests to the selected organization", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response("[]", {

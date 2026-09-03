@@ -652,7 +652,7 @@ export function chatService(db: Db, storage?: StorageService) {
     return map;
   }
 
-  async function listApprovalsForMessages(rows: MessageRow[]) {
+  async function listApprovalsForMessages(rows: Array<Pick<MessageRow, "approvalId">>) {
     const approvalIds = rows.map((row) => row.approvalId).filter((id): id is string => Boolean(id));
     if (approvalIds.length === 0) return new Map<string, ApprovalRow>();
     const approvalRows = await db
@@ -3533,7 +3533,7 @@ export function chatService(db: Db, storage?: StorageService) {
           ?? null;
       const structuredPayload = effectiveStructuredPayload(row);
       return {
-        ...row,
+        ...publicRow,
         ...(messageShortRef(row.id) ? { shortRef: messageShortRef(row.id) } : {}),
         generationId,
         generationTerminalReason: generationId ? (generationsById.get(generationId)?.terminalReason ?? null) : null,

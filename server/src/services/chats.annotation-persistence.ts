@@ -13,12 +13,23 @@ import {
 } from "@rudderhq/shared";
 import { and, eq, gt, gte, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { notFound, unprocessable } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { listDetachedChatTranscripts, replaceDetachedChatTranscript, selectChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 
 type MessageRow = typeof chatMessages.$inferSelect;
+
+function postgresErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const direct = "code" in error ? (error as { code?: unknown }).code : null;
+  if (typeof direct === "string") return direct;
+  const cause = "cause" in error ? (error as { cause?: unknown }).cause : null;
+  return cause && typeof cause === "object" && "code" in cause
+    && typeof (cause as { code?: unknown }).code === "string"
+    ? (cause as { code: string }).code
+    : null;
+}
 
 export type AddUserChatMessageOptions = {
   structuredPayload?: Record<string, unknown> | null;
@@ -100,7 +111,7 @@ export function createChatAnnotationMessagePersistence(
     editUserMessageId?: string | null,
     options: AddUserChatMessageOptions = {},
   ) {
-    const messageId = await db.transaction(async (tx) => {
+    const persist = () => db.transaction(async (tx) => {
       const now = new Date();
       let target: MessageRow | null = null;
       let turnId: string = randomUUID();
@@ -340,7 +351,7 @@ export function createChatAnnotationMessagePersistence(
           eq(chatConversations.id, conversationId),
           eq(chatConversations.orgId, orgId),
         ));
-      return message.id;
+      return { messageId: message.id, replayed: false };
     });
     let persisted: { messageId: string; replayed: boolean };
     try {
