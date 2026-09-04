@@ -3457,7 +3457,10 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -3496,6 +3499,11 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const shellAssetName = `Rudder-${candidateVersion}-macos-arm64-shell.zip`;
   const fullAssetPath = path.join(scenarioRoot, "release", fullAssetName);
   const shellAssetPath = path.join(scenarioRoot, "release", shellAssetName);
+  await preparePackagedExternalRuntimeFixture(scenarioRoot, {
+    authBypass: true,
+    runtimeVersion: candidateVersion,
+    verifyProcessHost: false,
+  });
   await clonePackagedAppForUpdateSmoke(sourceAppPath, installPath);
   const installedBaseline = JSON.parse(await readFile(path.join(installPath, "Contents", "Resources", "app", "package.json"), "utf8"));
   assert.equal(installedBaseline.version, expectedReleaseVersion, "public update must replace the current installed bundle");
@@ -3529,11 +3537,6 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   await rm(path.join(candidateAppPath, "Contents", "Resources", "postgres-18.4"), { recursive: true, force: true });
   const shellArchiveResult = await runCapturedProcess("ditto", macPortableZipArgs(candidateAppPath, shellAssetPath, { compressionLevel: 1 }), { timeoutMs: 120_000 });
   assert.equal(shellArchiveResult.code, 0, `public shell update candidate archive failed: ${shellArchiveResult.stderr}`);
-  await preparePackagedExternalRuntimeFixture(scenarioRoot, {
-    authBypass: true,
-    runtimeVersion: candidateVersion,
-    verifyProcessHost: false,
-  });
   const helperDigest = createHash("sha256").update(await readFile(helperPath)).digest("hex");
   const fullAssetChecksum = createHash("sha256").update(await readFile(fullAssetPath)).digest("hex");
   const shellAssetChecksum = createHash("sha256").update(await readFile(shellAssetPath)).digest("hex");
@@ -3712,7 +3715,10 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -3747,7 +3753,10 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -4039,6 +4048,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   let page = initialPage;
   let boardReady = false;
   let lastBridgeError = null;
+  let lastBootState = null;
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const openWindows = electronApp.windows().filter((candidate) => !candidate.isClosed());
@@ -4101,6 +4111,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
         }
         return null;
       });
+      lastBootState = bootState;
       if (!bootState) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;
@@ -4126,7 +4137,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   assert.equal(
     boardReady,
     true,
-    `expected exactly one ready Desktop board window with an active IPC bridge, got ${page?.url() ?? "no window"}${lastBridgeError ? `; last IPC error: ${lastBridgeError}` : ""}`,
+    `expected exactly one ready Desktop board window with an active IPC bridge, got ${page?.url().slice(0, 240) ?? "no window"}${page?.url().length > 240 ? "..." : ""}${lastBridgeError ? `; last IPC error: ${lastBridgeError}` : ""}${lastBootState ? `; last boot state: ${JSON.stringify(lastBootState)}` : ""}`,
   );
   assert.ok(page.url().startsWith("http"), `expected desktop window to reach board UI, got ${page.url()}`);
   if (expectedUrlPattern) {
