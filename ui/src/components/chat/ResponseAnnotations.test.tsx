@@ -46,6 +46,23 @@ const annotation: ChatInlineAnnotation = {
   attachmentIds: ["40000000-0000-4000-8000-000000000001"],
 };
 
+const workspaceFileAnnotation: ChatInlineAnnotation = {
+  id: "10000000-0000-4000-8000-000000000010",
+  selectedText: "The saved file excerpt remains useful after editing.",
+  comment: "Keep the saved snapshot visible.",
+  sourceConversationId: annotation.sourceConversationId,
+  surface: "workspace_file",
+  sourceFilePath: "notes/example.md",
+  sourceLibraryEntryId: "90000000-0000-4000-8000-000000000001",
+  sourceRenderMode: "markdown",
+  sourceHash: "c".repeat(64),
+  start: 0,
+  end: 48,
+  prefix: "",
+  suffix: "",
+  attachmentIds: [],
+};
+
 const attachment: ChatAttachment = {
   id: "40000000-0000-4000-8000-000000000001",
   orgId: "50000000-0000-4000-8000-000000000001",
@@ -86,6 +103,11 @@ beforeEach(() => {
     ...URL,
     createObjectURL: vi.fn(() => "blob:preview"),
     revokeObjectURL: vi.fn(),
+  });
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
   });
 });
 
@@ -141,6 +163,59 @@ describe("response annotation components", () => {
     click(marker);
     expect(onActivate).toHaveBeenCalledWith(marker);
     expect(marker.getAttribute("data-annotation-id")).toBe(annotation.id);
+  });
+
+  it("shows chat annotation details on marker hover", async () => {
+    render(
+      <ResponseAnnotationMarker
+        annotationId={annotation.id}
+        annotation={annotation}
+        ordinal={1}
+        excerpt={annotation.selectedText}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const marker = host.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-response-annotation-marker']",
+    )!;
+    act(() => {
+      marker.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    const tooltip = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    );
+    expect(tooltip).not.toBeNull();
+    expect(tooltip?.textContent).toContain(annotation.selectedText);
+    expect(tooltip?.textContent).toContain(annotation.comment);
+  });
+
+  it("shows chat annotation details when a marker receives keyboard focus", async () => {
+    render(
+      <ResponseAnnotationMarker
+        annotationId={annotation.id}
+        annotation={annotation}
+        ordinal={1}
+        excerpt={annotation.selectedText}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const marker = host.querySelector<HTMLButtonElement>(
+      "[data-testid='chat-response-annotation-marker']",
+    )!;
+    act(() => marker.focus());
+
+    const tooltip = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    );
+    expect(document.activeElement).toBe(marker);
+    expect(tooltip?.textContent).toContain(annotation.selectedText);
+    expect(tooltip?.textContent).toContain(annotation.comment);
   });
 
   it("places a selection marker after the complete visual line instead of over following text", () => {
@@ -720,5 +795,123 @@ describe("response annotation components", () => {
     expect(document.body.querySelector("[data-testid='chat-response-annotation-unlocatable']")?.textContent)
       .toBe("Source is no longer available.");
     expect(document.body.textContent).toContain(annotation.selectedText);
+  });
+
+  it("keeps file annotations display-only without source actions or hover details", () => {
+    const onSelect = vi.fn();
+    render(
+      <SentResponseAnnotationsCard
+        annotations={[workspaceFileAnnotation]}
+        attachments={[]}
+        onSelect={onSelect}
+      />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 1 annotation']",
+    )!;
+    act(() => {
+      chip.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    expect(document.body.querySelector(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    )).toBeNull();
+
+    click(chip);
+    const entry = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-sent-card-entry']",
+    )!;
+    expect(entry.dataset.annotationSurface).toBe("workspace_file");
+    expect(entry.textContent).toContain(workspaceFileAnnotation.selectedText);
+    expect(entry.querySelector("button")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("preserves canonical ordinals when file annotations are omitted from hover details", async () => {
+    render(
+      <SentResponseAnnotationsCard
+        annotations={[workspaceFileAnnotation, annotation]}
+        attachments={[]}
+      />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 2 annotations']",
+    )!;
+    act(() => {
+      chip.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    const tooltip = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    );
+    expect(tooltip?.textContent).toContain("2. Selected excerpt");
+    expect(tooltip?.textContent).not.toContain("1. Selected excerpt");
+    expect(tooltip?.textContent).toContain(annotation.selectedText);
+    expect(tooltip?.textContent).not.toContain(workspaceFileAnnotation.selectedText);
+  });
+
+  it("scrolls dense hover details from the focused trigger without intercepting clicks", async () => {
+    const annotations = Array.from({ length: 10 }, (_, index) => ({
+      ...annotation,
+      id: `10000000-0000-4000-8000-${String(index + 20).padStart(12, "0")}`,
+      selectedText: `${annotation.selectedText} ${"More evidence. ".repeat(20)}`,
+    }));
+    render(
+      <SentResponseAnnotationsCard annotations={annotations} attachments={[]} />,
+    );
+
+    const chip = host.querySelector<HTMLButtonElement>(
+      "[aria-label='Show 10 annotations']",
+    )!;
+    act(() => {
+      chip.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+
+    const details = document.body.querySelector<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-details']",
+    )!;
+    expect(details.classList.contains("scrollbar-auto-hide")).toBe(true);
+    expect(details.closest("[data-testid='chat-response-annotation-hover-tooltip']")?.className)
+      .toContain("pointer-events-none");
+    expect(details.closest("[data-radix-popper-content-wrapper]")?.getAttribute("style"))
+      .toContain("pointer-events: none");
+    Object.defineProperty(details, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(details, "scrollHeight", { configurable: true, value: 800 });
+    const tooltip = details.closest<HTMLElement>(
+      "[data-testid='chat-response-annotation-hover-tooltip']",
+    )!;
+    tooltip.getBoundingClientRect = () => ({
+      bottom: 300,
+      height: 200,
+      left: 100,
+      right: 400,
+      top: 100,
+      width: 300,
+      x: 100,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    act(() => {
+      document.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        clientX: 200,
+        clientY: 200,
+        deltaY: 120,
+      }));
+    });
+    expect(details.scrollTop).toBe(120);
+    act(() => chip.focus());
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    });
+    expect(details.scrollTop).toBe(800);
+    expect(details.classList.contains("is-scrolling")).toBe(true);
   });
 });
