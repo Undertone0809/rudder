@@ -776,9 +776,21 @@ async function startServerRuntime(
     const clusterVersionFile = resolve(dataDir, "PG_VERSION");
     const clusterAlreadyInitialized = existsSync(clusterVersionFile);
     const postmasterPidFile = resolve(dataDir, "postmaster.pid");
-    const runningPostmaster = readLivePostmasterPidFile(postmasterPidFile);
+    const runningPostmaster = readLivePostmasterPidFile(postmasterPidFile, {
+      expectedDataDir: dataDir,
+    });
     if (runningPostmaster?.pid) {
       port = runningPostmaster.port ?? configuredPort;
+      const runningAdminConnectionString = await resolveEmbeddedAdminConnectionString(port);
+      const runningDataDir = await getPostgresDataDirectory(runningAdminConnectionString);
+      if (
+        typeof runningDataDir !== "string"
+        || resolve(runningDataDir) !== resolve(dataDir)
+      ) {
+        throw new Error(
+          `Embedded PostgreSQL pid ${runningPostmaster.pid} on port ${port} does not use the expected data directory ${dataDir}`,
+        );
+      }
       logger.warn(`Embedded PostgreSQL already running; reusing existing process (pid=${runningPostmaster.pid}, port=${port})`);
     } else {
       try {

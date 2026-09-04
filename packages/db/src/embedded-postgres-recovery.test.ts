@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
@@ -41,9 +41,10 @@ describe("PostgreSQL postmaster pid recovery", () => {
   });
 
   it("returns the actual port for a live postmaster even when startup configuration changes", () => {
+    const dataDir = "/tmp/rudder-live-db";
     const file = createPidFile([
       String(process.pid),
-      "/tmp/rudder-live-db",
+      dataDir,
       "0",
       "54339",
       "",
@@ -53,17 +54,64 @@ describe("PostgreSQL postmaster pid recovery", () => {
       "",
     ].join("\n"));
 
-    expect(readLivePostmasterPidFile(file)).toEqual({
+    expect(readLivePostmasterPidFile(file, {
+      expectedDataDir: dataDir,
+      processMatches: () => true,
+    })).toEqual({
       pid: process.pid,
-      dataDir: "/tmp/rudder-live-db",
+      dataDir,
       port: 54339,
     });
+  });
+
+  it("rejects a live PID that is not the expected PostgreSQL postmaster", () => {
+    const dataDir = "/tmp/rudder-live-db";
+    const file = createPidFile([
+      String(process.pid),
+      dataDir,
+      "0",
+      "54339",
+      "",
+      "127.0.0.1",
+      "",
+      "ready",
+      "",
+    ].join("\n"));
+
+    expect(readLivePostmasterPidFile(file, {
+      expectedDataDir: dataDir,
+      processMatches: () => false,
+    })).toBeNull();
+  });
+
+  it("rejects a live postmaster pid file for another data directory", () => {
+    const file = createPidFile([
+      String(process.pid),
+      "/tmp/another-rudder-db",
+      "0",
+      "54339",
+      "",
+      "127.0.0.1",
+      "",
+      "ready",
+      "",
+    ].join("\n"));
+    const processMatches = vi.fn(() => true);
+
+    expect(readLivePostmasterPidFile(file, {
+      expectedDataDir: "/tmp/rudder-live-db",
+      processMatches,
+    })).toBeNull();
+    expect(processMatches).not.toHaveBeenCalled();
   });
 
   it("rejects a dead postmaster instead of reusing its port", () => {
     const file = createPidFile(stalePidFileContents("/tmp/rudder-dead-db", 54339));
 
-    expect(readLivePostmasterPidFile(file)).toBeNull();
+    expect(readLivePostmasterPidFile(file, {
+      expectedDataDir: "/tmp/rudder-dead-db",
+      processMatches: () => true,
+    })).toBeNull();
   });
 
   it("removes a dead pid file without touching the database cluster", () => {

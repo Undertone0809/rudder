@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
@@ -35,6 +35,29 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function isExpectedPostmasterProcess(pid: number, expectedDataDir: string): boolean {
+  try {
+    if (process.platform === "win32") {
+      const output = execFileSync(
+        "tasklist",
+        ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+        { encoding: "utf8", windowsHide: true },
+      );
+      return /^"?postgres\.exe"?(?:,|$)/iu.test(output.trim());
+    }
+
+    const command = execFileSync(
+      "ps",
+      ["-p", String(pid), "-o", "command="],
+      { encoding: "utf8" },
+    ).trim();
+    return /(?:^|[/\s])postgres(?:\s|$)/u.test(command)
+      && command.includes(path.resolve(expectedDataDir));
+  } catch {
+    return false;
+  }
+}
+
 export function readPostmasterPidFile(postmasterPidFile: string): PostmasterPidFile | null {
   if (!existsSync(postmasterPidFile)) return null;
   try {
@@ -52,11 +75,25 @@ export function readPostmasterPidFile(postmasterPidFile: string): PostmasterPidF
   }
 }
 
-export function readLivePostmasterPidFile(postmasterPidFile: string): PostmasterPidFile | null {
+export function readLivePostmasterPidFile(
+  postmasterPidFile: string,
+  options: {
+    expectedDataDir: string;
+    processMatches?: (pid: number, expectedDataDir: string) => boolean;
+  },
+): PostmasterPidFile | null {
   const parsed = readPostmasterPidFile(postmasterPidFile);
-  return parsed?.pid !== null && parsed?.pid !== undefined && isProcessAlive(parsed.pid)
-    ? parsed
-    : null;
+  if (
+    parsed?.pid === null
+    || parsed?.pid === undefined
+    || parsed.dataDir === null
+    || path.resolve(parsed.dataDir) !== path.resolve(options.expectedDataDir)
+    || !isProcessAlive(parsed.pid)
+  ) {
+    return null;
+  }
+  const processMatches = options.processMatches ?? isExpectedPostmasterProcess;
+  return processMatches(parsed.pid, options.expectedDataDir) ? parsed : null;
 }
 
 /** Remove only a dead PostgreSQL lock file; the database cluster is untouched. */
