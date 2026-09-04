@@ -45,11 +45,16 @@ The current Windows Electron release is unsigned. When Windows Smart App
 Control is enforcing its signed-or-reputable policy, `start` automatically uses
 browser-app compatibility mode: it skips the unsigned Desktop download, creates
 a per-user Rudder Start Menu shortcut backed by the current Node executable,
-starts the same `prod_local/default` runtime in the background, and opens its UI
-in Microsoft Edge's standalone app window. Rudder only reads the policy state;
+starts the selected local profile and data directory in the background (default
+`prod_local/default` under `~/.rudder`), and opens its UI in Microsoft Edge's
+standalone app window. Rudder only reads the policy state;
 it does not disable or modify Windows security settings. The local data path and
 core board workflows are unchanged, while Electron-only Browser and App Builder
 bridges are unavailable. An existing native Desktop install is left in place.
+The browser-app refuses a version-mismatched native runtime without sending it
+`SIGTERM`; close the native Desktop and retry after it exits. Same-version
+launches can still attach to the native runtime and wait for its exit before
+the browser-app runtime takes ownership.
 The fallback is an un-packaged, loopback-only `local_trusted` client, so it does
 not present the packaged Canary/Stable Desktop Account Gate and must not be
 represented as a packaged Desktop session.

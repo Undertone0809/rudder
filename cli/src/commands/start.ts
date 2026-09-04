@@ -9,7 +9,9 @@ import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import pc from "picocolors";
 import { parseChecksumFile } from "../checksum-manifest.js";
+import { applyDataDirOverride, type DataDirOptionLike } from "../config/data-dir.js";
 import { resolveRudderHomeDir } from "../config/home.js";
+import { applyLocalEnvProfile, resolveActiveLocalEnvProfile } from "../config/local-env.js";
 import {
   DEFAULT_DESKTOP_RELEASE_REPO,
   downloadAsset,
@@ -94,6 +96,7 @@ export type ChecksummedDesktopAssetCandidate = DesktopAssetCandidate & {
 };
 
 interface StartCommandOptions {
+  dataDir?: string;
   cli?: boolean;
   desktop?: boolean;
   serverOnly?: boolean;
@@ -105,6 +108,7 @@ interface StartCommandOptions {
   outputDir?: string;
   desktopInstallDir?: string;
   desktopMode?: string;
+  localEnv?: string;
   open?: boolean;
   waitForActiveRuns?: boolean;
   desktopProgressJson?: boolean;
@@ -1561,6 +1565,8 @@ async function runStartPhase<T>(
 }
 
 export async function startCommand(opts: StartCommandOptions): Promise<void> {
+  applyLocalEnvProfile(opts);
+  applyDataDirOverride(opts as DataDirOptionLike);
   const serverOnly = opts.serverOnly === true;
   const installApp = !serverOnly && opts.desktop !== false;
   const requestedDesktopMode = parseDesktopLaunchMode(opts.desktopMode);
@@ -1583,6 +1589,9 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   }
   const installDesktop = installApp && desktopMode === "native";
   const installBrowserApp = installApp && desktopMode === "browser";
+  const browserLocalProfile = installBrowserApp
+    ? resolveActiveLocalEnvProfile() ?? applyLocalEnvProfile({ localEnv: "prod_local" })
+    : null;
   // Browser-app mode depends on the persistent CLI and matching server runtime;
   // internal Desktop update flags must not leave the compatibility handoff on
   // the soon-to-be-obsolete packaged CLI/runtime.
@@ -1742,9 +1751,11 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       : resolveDefaultDesktopInstallRoot(target);
     const installPaths = resolveDesktopInstallPaths(target, installRoot);
     const runtimeVersion = version;
+    if (!browserLocalProfile) throw new Error("Rudder browser-app requires a local environment profile.");
+    const dataDir = resolveRudderHomeDir();
     p.log.step("Preparing Windows browser app");
     p.log.message(`Runtime: ${pc.cyan(runtimeVersion)}`);
-    p.log.message(`Workspace: ${pc.cyan("prod_local/default")}`);
+    p.log.message(`Workspace: ${pc.cyan(`${browserLocalProfile.name}/${browserLocalProfile.instanceId}`)}`);
 
     if (dryRun) {
       p.log.message(
@@ -1766,6 +1777,8 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     const shortcutPath = createWindowsBrowserAppShortcut({
       nodePath: process.execPath,
       cliEntryPath,
+      localEnv: browserLocalProfile.name,
+      dataDir,
       runtimeVersion,
       workingDirectory: installRoot,
       iconPath: nativeIconPath ?? edgePath,
@@ -1792,6 +1805,8 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     if (opts.open !== false) {
       const launch = await launchDetachedBrowserApp({
         cliEntryPath,
+        localEnv: browserLocalProfile.name,
+        dataDir,
         runtimeVersion,
         open: true,
       });

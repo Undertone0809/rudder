@@ -477,13 +477,16 @@ non-native compatibility path on that machine while the Windows release remains
 unsigned. It does not write the registry or weaken the policy.
 
 The compatibility path installs the same versioned CLI and server runtime,
-keeps `~/.rudder/instances/default/` as the persistent local instance, creates a
-per-user `Rudder.lnk`, runs the local server under the Node executable that
+keeps the selected local profile and data directory as the persistent local
+instance (default `~/.rudder/instances/default/`), creates a per-user
+`Rudder.lnk`, runs the local server under the Node executable that
 already ran `npx`, and opens `http://127.0.0.1:3200` in the installed Microsoft
-Edge `--app` window. A second launch attaches to the existing runtime; if a
-native Desktop still owns that runtime, the hidden browser-app monitor takes
-ownership after the native runtime exits. Existing native app files and all
-instance data are preserved.
+Edge `--app` window. A same-version second launch attaches to the existing
+runtime; if a native Desktop still owns that runtime, the hidden browser-app
+monitor takes ownership after the native runtime exits. When the native
+runtime is healthy but its version differs, browser-app refuses the takeover
+without sending `SIGTERM`; close the native Desktop and retry after it exits.
+Existing native app files and all instance data are preserved.
 
 This is an availability fallback rather than an Electron emulation layer.
 It is an un-packaged, loopback-only `local_trusted` client and therefore does

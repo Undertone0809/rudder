@@ -46,6 +46,8 @@ function startBrowserApp(label) {
     "--local-env",
     "e2e",
     "browser-app",
+    "--data-dir",
+    testHome,
     "--child",
     "--no-open",
     "--ready-file",
@@ -55,7 +57,6 @@ function startBrowserApp(label) {
   ], {
     env: {
       ...process.env,
-      RUDDER_HOME: testHome,
       RUDDER_POSTGRES_BIN_DIR: postgresBinDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -77,13 +78,14 @@ function startBrowserAppParent() {
     "--local-env",
     "e2e",
     "browser-app",
+    "--data-dir",
+    testHome,
     "--no-open",
     "--runtime-version",
     version,
   ], {
     env: {
       ...process.env,
-      RUDDER_HOME: testHome,
       RUDDER_POSTGRES_BIN_DIR: postgresBinDir,
     },
     stdio: ["ignore", "pipe", "pipe"],

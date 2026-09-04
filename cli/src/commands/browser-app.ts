@@ -5,7 +5,8 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { describeLocalInstancePaths, resolveRudderInstanceId } from "../config/home.js";
+import { applyDataDirOverride } from "../config/data-dir.js";
+import { describeLocalInstancePaths, resolveRudderHomeDir, resolveRudderInstanceId } from "../config/home.js";
 import { applyLocalEnvProfile, resolveActiveLocalEnvProfile } from "../config/local-env.js";
 import { startManagedServerFromRuntime, type StartedServer } from "../runtime/server-entry.js";
 import { resolveCliVersion } from "../version.js";
@@ -23,6 +24,8 @@ export interface BrowserAppLaunchResult {
 
 interface BrowserAppCommandOptions {
   child?: boolean;
+  dataDir?: string;
+  localEnv?: string;
   open?: boolean;
   readyFile?: string;
   runtimeVersion?: string;
@@ -132,13 +135,19 @@ export function buildWindowsBrowserAppShortcutScript(options: {
   shortcutPath: string;
   nodePath: string;
   cliEntryPath: string;
+  localEnv: string;
+  dataDir: string;
   runtimeVersion: string;
   workingDirectory: string;
   iconPath?: string | null;
 }): string {
   const args = [
     options.cliEntryPath,
+    "--local-env",
+    options.localEnv,
     "browser-app",
+    "--data-dir",
+    options.dataDir,
     "--runtime-version",
     options.runtimeVersion,
   ].map(quoteWindowsArgument).join(" ");
@@ -157,6 +166,8 @@ export function buildWindowsBrowserAppShortcutScript(options: {
 export function createWindowsBrowserAppShortcut(options: {
   nodePath: string;
   cliEntryPath: string;
+  localEnv: string;
+  dataDir: string;
   runtimeVersion: string;
   workingDirectory: string;
   iconPath?: string | null;
@@ -174,6 +185,8 @@ export function createWindowsBrowserAppShortcut(options: {
       shortcutPath,
       nodePath: options.nodePath,
       cliEntryPath: options.cliEntryPath,
+      localEnv: options.localEnv,
+      dataDir: path.resolve(options.dataDir),
       runtimeVersion: options.runtimeVersion,
       workingDirectory: options.workingDirectory,
       iconPath: options.iconPath,
@@ -210,7 +223,9 @@ export function launchBrowserAppWindow(
   return "default";
 }
 
-function applyBrowserAppEnvironment(): void {
+function applyBrowserAppEnvironment(options: BrowserAppCommandOptions = {}): void {
+  applyLocalEnvProfile(options);
+  applyDataDirOverride(options);
   const profile = resolveActiveLocalEnvProfile() ?? applyLocalEnvProfile({ localEnv: "prod_local" });
   if (!profile) throw new Error("Rudder browser-app requires a local environment profile.");
   process.env.RUDDER_LOCAL_ENV = profile.name;
@@ -347,14 +362,19 @@ export function acquireDesktopTakeoverLease(instanceId: string): (() => void) | 
 }
 
 async function runBrowserAppChild(options: BrowserAppCommandOptions): Promise<void> {
-  applyBrowserAppEnvironment();
+  applyBrowserAppEnvironment(options);
   const runtimeVersion = options.runtimeVersion?.trim() || resolveBrowserAppRuntimeVersion();
   let startedServer: StartedServer | null = null;
   let readyWritten = false;
   let releaseDesktopTakeoverLease: (() => void) | null = null;
   try {
     while (true) {
-      startedServer = await startManagedServerFromRuntime({ version: runtimeVersion });
+      startedServer = await startManagedServerFromRuntime({
+        version: runtimeVersion,
+        // A native Desktop runtime owns the process while it is alive. Never
+        // terminate it just to replace a mismatched browser-app version.
+        takeoverOnVersionMismatch: false,
+      });
       const boardUrl = boardUrlFromServer(startedServer);
       if (!readyWritten) {
         await writeReadyRecord(options.readyFile, {
@@ -452,12 +472,17 @@ async function waitForReadyRecord(options: {
 
 export async function launchDetachedBrowserApp(options: {
   cliEntryPath: string;
+  localEnv?: string;
+  dataDir?: string;
   runtimeVersion: string;
   open?: boolean;
   nodePath?: string;
 }): Promise<BrowserAppLaunchResult> {
+  applyLocalEnvProfile(options);
+  applyDataDirOverride(options);
   const localProfile = resolveActiveLocalEnvProfile() ?? applyLocalEnvProfile({ localEnv: "prod_local" });
   if (!localProfile) throw new Error("Rudder browser-app requires a local environment profile.");
+  const dataDir = resolveRudderHomeDir();
   const instanceId = resolveRudderInstanceId(localProfile.instanceId);
   const paths = describeLocalInstancePaths(instanceId);
   const logDir = path.join(paths.instanceRoot, "logs");
@@ -472,6 +497,8 @@ export async function launchDetachedBrowserApp(options: {
       "--local-env",
       localProfile.name,
       "browser-app",
+      "--data-dir",
+      dataDir,
       "--child",
       "--no-open",
       "--ready-file",
@@ -521,6 +548,8 @@ export async function browserAppCommand(options: BrowserAppCommandOptions): Prom
   }
   const result = await launchDetachedBrowserApp({
     cliEntryPath: process.argv[1],
+    localEnv: options.localEnv,
+    dataDir: options.dataDir,
     runtimeVersion,
     open: options.open !== false,
   });

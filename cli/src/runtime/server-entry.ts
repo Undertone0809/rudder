@@ -27,6 +27,7 @@ export interface LoadServerRuntimeOptions {
   version: string;
   homeDir?: string;
   onRuntimeInstalled?: (result: Awaited<ReturnType<typeof ensureRuntimeInstalled>>) => void;
+  takeoverOnVersionMismatch?: boolean;
 }
 
 const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
@@ -84,13 +85,16 @@ export async function startManagedServerFromRuntime(
 ): Promise<StartedServer> {
   try {
     const mod = await loadServerRuntimeModule(options);
-    return await startServerFromModule(mod);
+    return await startServerFromModule(mod, options);
   } catch (err) {
     throw new Error(`Rudder server failed to start.\n${formatError(err)}`);
   }
 }
 
-async function startServerFromModule(mod: unknown): Promise<StartedServer> {
+export async function startServerFromModule(
+  mod: unknown,
+  options: Pick<LoadServerRuntimeOptions, "takeoverOnVersionMismatch"> = {},
+): Promise<StartedServer> {
   const startManagedLocalServer = (mod as {
     startManagedLocalServer?: (options: {
       ownerKind: "cli";
@@ -102,6 +106,6 @@ async function startServerFromModule(mod: unknown): Promise<StartedServer> {
   }
   return await startManagedLocalServer({
     ownerKind: "cli",
-    takeoverOnVersionMismatch: true,
+    takeoverOnVersionMismatch: options.takeoverOnVersionMismatch ?? true,
   });
 }
