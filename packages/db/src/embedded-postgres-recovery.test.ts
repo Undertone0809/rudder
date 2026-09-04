@@ -6,6 +6,7 @@ import {
   createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
   parseSysvSharedMemorySegments,
+  readLivePostmasterPidFile,
   readPostmasterPidFile,
   removeStalePostmasterPidFile,
 } from "./embedded-postgres-recovery.js";
@@ -37,6 +38,32 @@ describe("PostgreSQL postmaster pid recovery", () => {
       dataDir: "C:/rudder/db",
       port: 54339,
     });
+  });
+
+  it("returns the actual port for a live postmaster even when startup configuration changes", () => {
+    const file = createPidFile([
+      String(process.pid),
+      "/tmp/rudder-live-db",
+      "0",
+      "54339",
+      "",
+      "127.0.0.1",
+      "",
+      "ready",
+      "",
+    ].join("\n"));
+
+    expect(readLivePostmasterPidFile(file)).toEqual({
+      pid: process.pid,
+      dataDir: "/tmp/rudder-live-db",
+      port: 54339,
+    });
+  });
+
+  it("rejects a dead postmaster instead of reusing its port", () => {
+    const file = createPidFile(stalePidFileContents("/tmp/rudder-dead-db", 54339));
+
+    expect(readLivePostmasterPidFile(file)).toBeNull();
   });
 
   it("removes a dead pid file without touching the database cluster", () => {

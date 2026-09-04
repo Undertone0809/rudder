@@ -18,7 +18,7 @@ import {
   normalizeLegacyColumnNames,
   organizationMemberships,
   organizations,
-  readPostmasterPidFile,
+  readLivePostmasterPidFile,
   reconcilePendingMigrationHistory,
   removeStalePostmasterPidFile,
   RUDDER_PRODUCTION_POSTGRES_VERSION,
@@ -776,20 +776,10 @@ async function startServerRuntime(
     const clusterVersionFile = resolve(dataDir, "PG_VERSION");
     const clusterAlreadyInitialized = existsSync(clusterVersionFile);
     const postmasterPidFile = resolve(dataDir, "postmaster.pid");
-    const getRunningPid = (): number | null => {
-      const postmaster = readPostmasterPidFile(postmasterPidFile);
-      if (!postmaster?.pid) return null;
-      try {
-        process.kill(postmaster.pid, 0);
-        return postmaster.pid;
-      } catch {
-        return null;
-      }
-    };
-  
-    const runningPid = getRunningPid();
-    if (runningPid) {
-      logger.warn(`Embedded PostgreSQL already running; reusing existing process (pid=${runningPid}, port=${port})`);
+    const runningPostmaster = readLivePostmasterPidFile(postmasterPidFile);
+    if (runningPostmaster?.pid) {
+      port = runningPostmaster.port ?? configuredPort;
+      logger.warn(`Embedded PostgreSQL already running; reusing existing process (pid=${runningPostmaster.pid}, port=${port})`);
     } else {
       try {
         const configuredAdminConnectionString = await resolveEmbeddedAdminConnectionString(configuredPort);

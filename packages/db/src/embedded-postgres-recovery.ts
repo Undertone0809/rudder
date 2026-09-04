@@ -52,6 +52,13 @@ export function readPostmasterPidFile(postmasterPidFile: string): PostmasterPidF
   }
 }
 
+export function readLivePostmasterPidFile(postmasterPidFile: string): PostmasterPidFile | null {
+  const parsed = readPostmasterPidFile(postmasterPidFile);
+  return parsed?.pid !== null && parsed?.pid !== undefined && isProcessAlive(parsed.pid)
+    ? parsed
+    : null;
+}
+
 /** Remove only a dead PostgreSQL lock file; the database cluster is untouched. */
 export function removeStalePostmasterPidFile(options: {
   postmasterPidFile: string;
