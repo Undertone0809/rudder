@@ -74,6 +74,21 @@ pub struct ManifestSummary {
     pub state: ManifestState,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListResult {
+    pub directory_path: String,
+    pub entries: Vec<DirectoryListEntry>,
+}
+
 #[derive(Debug)]
 pub struct ManifestError {
     code: &'static str,
@@ -172,6 +187,86 @@ fn modified_millis(metadata: &fs::Metadata) -> u64 {
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
         .unwrap_or(0)
+}
+
+pub fn list_directory(
+    root: &Path,
+    requested_path: &Path,
+    limits: ManifestLimits,
+) -> Result<DirectoryListResult, ManifestError> {
+    validate_limits(limits)?;
+    if requested_path.is_absolute()
+        || requested_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(ManifestError::safe("unsafe_workspace_path"));
+    }
+
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(ManifestError::safe("workspace_not_directory"));
+    }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    let requested_target = root.join(requested_path);
+    let canonical_target = fs::canonicalize(&requested_target).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            ManifestError::safe_source("workspace_directory_not_found", error)
+        } else {
+            ManifestError::safe_source("workspace_read_failed", error)
+        }
+    })?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(ManifestError::safe("workspace_path_escape"));
+    }
+    if !canonical_target.is_dir() {
+        return Err(ManifestError::safe("workspace_directory_not_found"));
+    }
+
+    let directory_path = portable_path(requested_path)?;
+    let mut entries = Vec::new();
+    let mut path_bytes = 0_u64;
+    let children = fs::read_dir(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?;
+    for child in children {
+        let child =
+            child.map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?;
+        let name = child
+            .file_name()
+            .into_string()
+            .map_err(|_| ManifestError::safe("non_utf8_workspace_path"))?;
+        if name.contains('\0') {
+            return Err(ManifestError::safe("unsafe_workspace_path"));
+        }
+        let entry_path = if directory_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{directory_path}/{name}")
+        };
+        path_bytes = path_bytes
+            .checked_add(entry_path.len() as u64)
+            .ok_or_else(|| ManifestError::safe("manifest_path_limit"))?;
+        if path_bytes > limits.max_path_bytes {
+            return Err(ManifestError::safe("manifest_path_limit"));
+        }
+        if entries.len() as u64 >= limits.max_entries {
+            return Err(ManifestError::safe("manifest_entry_limit"));
+        }
+        let metadata = fs::symlink_metadata(child.path())
+            .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+        entries.push(DirectoryListEntry {
+            name,
+            path: entry_path,
+            is_directory: metadata.is_dir() && !metadata.file_type().is_symlink(),
+        });
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(DirectoryListResult {
+        directory_path,
+        entries,
+    })
 }
 
 fn collect_entries(
@@ -734,6 +829,83 @@ mod tests {
             max_entries: 10_000,
             max_path_bytes: 1024 * 1024,
         }
+    }
+
+    #[test]
+    fn lists_one_directory_with_stable_portable_paths() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("projects")).unwrap();
+        fs::create_dir(root.path().join("projects/zeta")).unwrap();
+        fs::write(root.path().join("projects/alpha.md"), b"alpha").unwrap();
+
+        let result = list_directory(root.path(), Path::new("projects"), limits()).unwrap();
+
+        assert_eq!(result.directory_path, "projects");
+        assert_eq!(
+            result.entries,
+            vec![
+                DirectoryListEntry {
+                    name: "alpha.md".into(),
+                    path: "projects/alpha.md".into(),
+                    is_directory: false,
+                },
+                DirectoryListEntry {
+                    name: "zeta".into(),
+                    path: "projects/zeta".into(),
+                    is_directory: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_missing_and_oversized_directory_requests() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("one"), b"one").unwrap();
+        fs::write(root.path().join("two"), b"two").unwrap();
+
+        assert_eq!(
+            list_directory(root.path(), Path::new("../outside"), limits())
+                .unwrap_err()
+                .code(),
+            "unsafe_workspace_path"
+        );
+        assert_eq!(
+            list_directory(root.path(), Path::new("missing"), limits())
+                .unwrap_err()
+                .code(),
+            "workspace_directory_not_found"
+        );
+        assert_eq!(
+            list_directory(
+                root.path(),
+                Path::new(""),
+                ManifestLimits {
+                    max_entries: 1,
+                    max_path_bytes: 1024,
+                },
+            )
+            .unwrap_err()
+            .code(),
+            "manifest_entry_limit"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_directory_symlinks_that_escape_the_canonical_root() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let outside = outer.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("secret"), b"secret").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("leak")).unwrap();
+
+        let error = list_directory(&root, Path::new("leak"), limits()).unwrap_err();
+
+        assert_eq!(error.code(), "workspace_path_escape");
+        assert!(error.fallback_safe());
     }
 
     #[test]

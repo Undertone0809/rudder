@@ -11,6 +11,7 @@ import type {
 import {
   buildLibraryEntryMentionHref,
   buildLibraryEntryMentionMarkdown,
+  resolveRudderNativeCapability,
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import fs from "node:fs/promises";
@@ -20,6 +21,10 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
+import {
+  listWorkspaceDirectoryNative,
+  WorkspaceFilesNativeError,
+} from "./workspace-files-native.js";
 import { readNativeWorkspaceManifest } from "./workspace-manifest-native.js";
 
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
@@ -455,7 +460,11 @@ export function organizationWorkspaceBrowserService(db: Db) {
   }
 
   return {
-    async listFiles(orgId: string, directoryPath = ""): Promise<OrganizationWorkspaceFileList> {
+    async listFiles(
+      orgId: string,
+      directoryPath = "",
+      signal?: AbortSignal,
+    ): Promise<OrganizationWorkspaceFileList> {
       const root = await resolveWorkspaceRoot(orgId);
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, directoryPath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
@@ -475,29 +484,52 @@ export function organizationWorkspaceBrowserService(db: Db) {
         throw notFound("Directory not found inside the organization Library");
       }
 
-      const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
-      const unsortedEntries: OrganizationWorkspaceFileEntry[] = nativeManifest
-        ? nativeManifest
-          .filter((entry) => {
-            const entryName = workspaceFileLabel(entry.path);
-            const parentPath = entry.path.slice(0, Math.max(0, entry.path.length - entryName.length)).replace(/\/$/, "");
-            return parentPath === normalizedPath && !shouldHideWorkspaceEntry(entryName);
-          })
-          .map((entry) => ({
-            name: workspaceFileLabel(entry.path),
-            path: entry.path,
-            isDirectory: entry.kind === "directory",
-          }))
-        : (await fs.readdir(resolvedTarget, { withFileTypes: true }))
-          .filter((entry) => !shouldHideWorkspaceEntry(entry.name))
-          .map((entry) => {
-            const entryPath = toPortableRelativePath(path.relative(resolvedRoot, path.join(resolvedTarget, entry.name)));
-            return {
-              name: entry.name,
-              path: entryPath,
-              isDirectory: entry.isDirectory(),
-            };
-          });
+      const policy = resolveRudderNativeCapability({
+        capability: "workspace-files",
+        env: process.env,
+        legacyToggleEnvs: ["RUDDER_NATIVE_WORKSPACE_FILES"],
+      });
+      let unsortedEntries: OrganizationWorkspaceFileEntry[] | null = null;
+      if (policy.enabled) {
+        try {
+          unsortedEntries = (await listWorkspaceDirectoryNative(resolvedRoot, normalizedPath, signal))
+            .filter((entry) => !shouldHideWorkspaceEntry(entry.name));
+        } catch (error) {
+          if (error instanceof WorkspaceFilesNativeError && error.pathRejected) {
+            if (error.code === "workspace_directory_not_found") {
+              throw notFound("Directory not found inside the organization Library");
+            }
+            throw unprocessable("Requested path must stay inside the organization Library root");
+          }
+          if (!policy.fallbackAllowed || signal?.aborted) throw error;
+        }
+      }
+      if (!unsortedEntries) {
+        const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
+        unsortedEntries = nativeManifest
+          ? nativeManifest
+            .filter((entry) => {
+              const entryName = workspaceFileLabel(entry.path);
+              const parentPath = entry.path.slice(0, Math.max(0, entry.path.length - entryName.length)).replace(/\/$/, "");
+              return parentPath === normalizedPath && !shouldHideWorkspaceEntry(entryName);
+            })
+            .map((entry) => ({
+              name: workspaceFileLabel(entry.path),
+              path: entry.path,
+              isDirectory: entry.kind === "directory",
+            }))
+          : (await fs.readdir(resolvedTarget, { withFileTypes: true }))
+            .filter((entry) => !shouldHideWorkspaceEntry(entry.name))
+            .map((entry) => {
+              const entryPath = toPortableRelativePath(path.relative(resolvedRoot, path.join(resolvedTarget, entry.name)));
+              return {
+                name: entry.name,
+                path: entryPath,
+                isDirectory: entry.isDirectory(),
+              };
+            });
+      }
+      signal?.throwIfAborted();
       const decoratedEntries = await attachLibraryEntryIds(
         orgId,
         await decorateWorkspaceEntries(orgId, normalizedPath, unsortedEntries),

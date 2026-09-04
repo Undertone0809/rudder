@@ -9,6 +9,7 @@ export const RUDDER_NATIVE_CAPABILITIES = [
   "runtime-payload",
   "run-evidence",
   "workspace-manifest",
+  "workspace-files",
   "plugin-archive",
 ] as const;
 

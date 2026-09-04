@@ -17,6 +17,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import { resolveNativeWorkspaceFilesBinary } from "../services/workspace-files-native.js";
 import { stopNativeWorkspaceManifestWatchersForTests } from "../services/workspace-manifest-native.js";
 
 const ONE_BY_ONE_PNG = Buffer.from(
@@ -98,6 +99,8 @@ describe("organization workspace browser", () => {
   const cleanupDirs = new Set<string>();
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
+  const originalNativeMode = process.env.RUDDER_NATIVE_MODE;
+  const originalNativeWorkspaceFilesPath = process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -119,6 +122,10 @@ describe("organization workspace browser", () => {
     else process.env.RUDDER_HOME = originalRudderHome;
     if (originalRudderInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
     else process.env.RUDDER_INSTANCE_ID = originalRudderInstanceId;
+    if (originalNativeMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
+    else process.env.RUDDER_NATIVE_MODE = originalNativeMode;
+    if (originalNativeWorkspaceFilesPath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH;
+    else process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = originalNativeWorkspaceFilesPath;
   });
 
   afterAll(async () => {
@@ -155,6 +162,66 @@ describe("organization workspace browser", () => {
     const listing = await workspaceBrowser.listFiles(orgId, "agents/ceo--example");
 
     expect(listing.entries.map((entry) => entry.name)).toEqual(["instructions"]);
+  });
+
+  it("uses required native directory listing without widening mutation authority", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = resolveNativeWorkspaceFilesBinary();
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Native Workspace Browser Org",
+      urlKey: deriveOrganizationUrlKey("Native Workspace Browser Org"),
+      issuePrefix: "NWB",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const projects = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects");
+    await fs.mkdir(path.join(projects, "zeta"), { recursive: true });
+    await fs.writeFile(path.join(projects, "alpha.md"), "alpha", "utf8");
+    await fs.writeFile(path.join(projects, ".DS_Store"), "hidden", "utf8");
+
+    const listing = await workspaceBrowser.listFiles(orgId, "projects");
+
+    expect(listing).toMatchObject({
+      directoryPath: "projects",
+      rootExists: true,
+      message: null,
+    });
+    expect(listing.entries).toEqual([
+      expect.objectContaining({ name: "zeta", path: "projects/zeta", isDirectory: true }),
+      expect.objectContaining({ name: "alpha.md", path: "projects/alpha.md", isDirectory: false }),
+    ]);
+  });
+
+  it.runIf(process.platform !== "win32")("fails closed when a listed directory symlink escapes the Library root", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "auto";
+    process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = resolveNativeWorkspaceFilesBinary();
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Native Workspace Escape Org",
+      urlKey: deriveOrganizationUrlKey("Native Workspace Escape Org"),
+      issuePrefix: "NWE",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const outside = path.join(rudderHome, "outside");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+    await fs.writeFile(path.join(outside, "secret.md"), "secret", "utf8");
+    await fs.symlink(outside, path.join(workspaceRoot, "leak"));
+
+    await expect(workspaceBrowser.listFiles(orgId, "leak")).rejects.toMatchObject({ status: 422 });
   });
 
   it("shows the current agent name for agent workspace directories while preserving workspaceKey paths", async () => {
