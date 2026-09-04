@@ -6405,16 +6405,18 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     initialLayout.screenWidth >= initialLayout.hostWidth - 32,
     `Agent Terminal screen should fit its host (${JSON.stringify(initialLayout)})`,
   );
-  await xtermInput.pressSequentially("printf 'RUDDER_AGENT_HOME=%s\\n' \"$AGENT_HOME\"; pwd", { delay: 2 });
+  await xtermInput.pressSequentially(
+    "printf 'RUDDER_AGENT_%s=%s\\n' HOME \"$AGENT_HOME\"; if [ \"$PWD\" = \"$AGENT_HOME\" ]; then printf 'RUDDER_AGENT_HOME_%s=yes\\n' MATCH; else printf 'RUDDER_AGENT_HOME_%s=no\\n' MATCH; fi",
+    { delay: 2 },
+  );
   await xtermInput.press("Enter");
-  await waitForSmokeCondition("Agent Terminal command output", async () => {
+  const output = await waitForSmokeCondition("Agent Terminal command output", async () => {
     const text = await terminal.locator(".xterm-rows").innerText();
-    return text.includes("RUDDER_AGENT_HOME=") ? text : null;
+    return text.includes("RUDDER_AGENT_HOME_MATCH=") ? text : null;
   });
-  const output = await terminal.locator(".xterm-rows").innerText();
   const agentHome = output.match(/RUDDER_AGENT_HOME=([^\r\n]+)/u)?.[1]?.trim();
   assert.ok(agentHome, "Terminal should print its trusted AGENT_HOME");
-  assert.ok(output.includes(agentHome), "pwd should resolve to the same Agent workspace root");
+  assert.ok(output.includes("RUDDER_AGENT_HOME_MATCH=yes"), "pwd should resolve to the same Agent workspace root");
 
   await sidePanel.getByTestId("chat-side-panel-collapse").click();
   await sidePanel.waitFor({ state: "hidden", timeout: 5_000 });
