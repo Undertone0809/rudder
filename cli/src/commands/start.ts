@@ -25,11 +25,26 @@ import {
   CLI_NPM_PACKAGE_NAME,
   getGlobalInstalledPackageVersion,
   installPersistentCli,
+  resolveGlobalInstalledCliEntry,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
 import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError, type RuntimeInstallResult } from "../runtime/install.js";
 import { createByteProgress, formatBytes, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
+import {
+  createWindowsBrowserAppShortcut,
+  detectSmartAppControlState,
+  launchDetachedBrowserApp,
+  parseDesktopLaunchMode,
+  resolveDesktopLaunchMode,
+  resolveEdgeExecutable,
+} from "./browser-app.js";
+import {
+  createDesktopApplySignalController,
+  createDesktopProgressFactory,
+  writeDesktopProgress,
+  type DesktopUpdateProgressPhase,
+} from "./desktop-update-progress.js";
 import { buildWindowsZipExtractCommand, powershellQuote } from "./start-windows.js";
 
 export { parseChecksumFile } from "../checksum-manifest.js";
@@ -89,6 +104,7 @@ interface StartCommandOptions {
   downloadSource?: string;
   outputDir?: string;
   desktopInstallDir?: string;
+  desktopMode?: string;
   open?: boolean;
   waitForActiveRuns?: boolean;
   desktopProgressJson?: boolean;
@@ -144,38 +160,6 @@ type UpdateQuitResponse =
 
 export type ProgressReporterFactory = (label: string) => ByteProgressReporter;
 
-type DesktopUpdateProgressPhase =
-  | "starting"
-  | "preparing_runtime"
-  | "resolving_release"
-  | "downloading_checksums"
-  | "downloading_asset"
-  | "verifying_checksum"
-  | "prepared"
-  | "ready_to_install"
-  | "waiting_for_active_runs"
-  | "preparing_restart"
-  | "closing"
-  | "failed";
-
-type DesktopUpdateProgressEvent = {
-  source: "rudder-desktop-update";
-  phase: DesktopUpdateProgressPhase;
-  message: string;
-  percent?: number;
-  transferredBytes?: number;
-  totalBytes?: number;
-  totalRuns?: number;
-  error?: string;
-  assetName?: string;
-  assetChecksum?: string;
-  assetKind?: "full" | "shell";
-  releaseDigest?: string;
-  stagedArtifactPath?: string;
-  stagedArtifactDigest?: string;
-  at: string;
-};
-
 const STABLE_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const CANARY_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$/;
 const CLI_REGISTRY_LATEST_URL = "https://registry.npmjs.org/@rudderhq%2fcli/latest";
@@ -202,175 +186,6 @@ async function waitForDesktopRuntimeSmokeEvidence(envName: string): Promise<void
 }
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const DEFAULT_GITHUB_DOWNLOAD_BASE_URL = "https://github.com";
-
-function normalizeProgressTotal(totalBytes: number | null | undefined): number | null {
-  return typeof totalBytes === "number" && Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
-}
-
-function writeDesktopProgress(event: Omit<DesktopUpdateProgressEvent, "source" | "at">): void {
-  const payload: DesktopUpdateProgressEvent = {
-    source: "rudder-desktop-update",
-    ...event,
-    at: new Date().toISOString(),
-  };
-  try {
-    process.stdout.write(`${JSON.stringify(payload)}\n`);
-  } catch (error) {
-    const code = typeof error === "object" && error && "code" in error
-      ? String((error as { code?: unknown }).code)
-      : "";
-    if (code !== "EPIPE") throw error;
-  }
-}
-
-function desktopDownloadPhase(label: string): DesktopUpdateProgressPhase {
-  return label.toLowerCase().includes("shasums")
-    ? "downloading_checksums"
-    : "downloading_asset";
-}
-
-function createDesktopProgressFactory(): ProgressReporterFactory {
-  return (label: string) => {
-    const phase = desktopDownloadPhase(label);
-    let latestReceivedBytes = 0;
-    let latestTotalBytes: number | null | undefined = null;
-
-    function emitByteProgress(
-      message: string,
-      receivedBytes: number,
-      totalBytes: number | null | undefined,
-    ): void {
-      const total = normalizeProgressTotal(totalBytes);
-      writeDesktopProgress({
-        phase,
-        message,
-        transferredBytes: Math.max(0, receivedBytes),
-        ...(total === null
-          ? {}
-          : {
-            totalBytes: total,
-            percent: Math.max(0, Math.min(100, Math.floor((Math.max(0, receivedBytes) / total) * 100))),
-          }),
-      });
-    }
-
-    return {
-      start(totalBytes?: number | null) {
-        latestReceivedBytes = 0;
-        latestTotalBytes = totalBytes;
-        emitByteProgress(label, 0, totalBytes);
-      },
-      update(receivedBytes: number, totalBytes?: number | null) {
-        latestReceivedBytes = receivedBytes;
-        latestTotalBytes = totalBytes;
-        emitByteProgress(label, receivedBytes, totalBytes);
-      },
-      finish(receivedBytes = latestReceivedBytes, totalBytes = latestTotalBytes) {
-        latestReceivedBytes = receivedBytes;
-        latestTotalBytes = totalBytes;
-        emitByteProgress(`${label} complete`, receivedBytes, totalBytes);
-      },
-      fail() {
-        writeDesktopProgress({
-          phase,
-          message: `${label} failed`,
-          transferredBytes: Math.max(0, latestReceivedBytes),
-          error: `${label} failed`,
-        });
-      },
-    };
-  };
-}
-
-function createDesktopApplySignalController(): {
-  waitForInitialSignal: () => Promise<{ force: boolean }>;
-  waitForForceRequest: (timeoutMs: number) => Promise<boolean>;
-  close: () => void;
-} {
-  process.stdin.setEncoding("utf8");
-  process.stdin.resume();
-  let buffer = "";
-  let closed = false;
-  let initialSettled = false;
-  let forceRequested = false;
-  let resolveInitial!: (value: { force: boolean }) => void;
-  let rejectInitial!: (error: Error) => void;
-  const forceWaiters = new Set<(force: boolean) => void>();
-  const initialSignal = new Promise<{ force: boolean }>((resolve, reject) => {
-    resolveInitial = resolve;
-    rejectInitial = reject;
-  });
-
-  const settleForceWaiters = (force: boolean) => {
-    for (const resolve of forceWaiters) resolve(force);
-    forceWaiters.clear();
-  };
-  const cleanup = () => {
-    if (closed) return;
-    closed = true;
-    process.stdin.off("data", onData);
-    process.stdin.off("end", onEnd);
-    process.stdin.off("error", onError);
-    settleForceWaiters(false);
-  };
-  const onData = (chunk: string) => {
-    buffer += chunk;
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const command of lines.map((line) => line.trim())) {
-      if (command === "force-apply") {
-        forceRequested = true;
-        if (!initialSettled) {
-          initialSettled = true;
-          resolveInitial({ force: true });
-        }
-        settleForceWaiters(true);
-      } else if (command === "apply" && !initialSettled) {
-        initialSettled = true;
-        resolveInitial({ force: false });
-      }
-    }
-  };
-  const onEnd = () => {
-    if (!initialSettled) {
-      initialSettled = true;
-      rejectInitial(new Error("Desktop update apply signal ended before confirmation."));
-    }
-    cleanup();
-  };
-  const onError = (error: Error) => {
-    if (!initialSettled) {
-      initialSettled = true;
-      rejectInitial(error);
-    }
-    cleanup();
-  };
-
-  process.stdin.on("data", onData);
-  process.stdin.on("end", onEnd);
-  process.stdin.on("error", onError);
-  return {
-    waitForInitialSignal: () => initialSignal,
-    waitForForceRequest: async (timeoutMs: number) => {
-      if (forceRequested) return true;
-      if (closed) return false;
-      return await new Promise<boolean>((resolve) => {
-        let settled = false;
-        const finish = (force: boolean) => {
-          if (settled) return;
-          settled = true;
-          forceWaiters.delete(finish);
-          clearTimeout(timer);
-          resolve(force);
-        };
-        const timer = setTimeout(() => finish(false), timeoutMs);
-        timer.unref?.();
-        forceWaiters.add(finish);
-      });
-    },
-    close: cleanup,
-  };
-}
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
   const version = resolveCliVersion(import.meta.url, env);
@@ -1746,10 +1561,33 @@ async function runStartPhase<T>(
 }
 
 export async function startCommand(opts: StartCommandOptions): Promise<void> {
-  const installCli = opts.cli !== false;
   const serverOnly = opts.serverOnly === true;
-  const installDesktop = !serverOnly && opts.desktop !== false;
-  const installRuntime = opts.runtime !== false;
+  const installApp = !serverOnly && opts.desktop !== false;
+  const requestedDesktopMode = parseDesktopLaunchMode(opts.desktopMode);
+  const desktopTarget = installApp ? resolveDesktopAssetTarget() : null;
+  // Commander supplies the explicit default `auto`. Direct programmatic calls
+  // that predate desktop-mode keep their native behavior unless they opt in.
+  const automaticCompatibilityCheck = requestedDesktopMode === "auto" && opts.desktopMode !== undefined;
+  const smartAppControlState = desktopTarget?.platform === "windows" && automaticCompatibilityCheck
+    ? detectSmartAppControlState()
+    : "unknown";
+  const desktopMode = installApp
+    ? resolveDesktopLaunchMode({
+        requested: requestedDesktopMode,
+        platform: process.platform,
+        smartAppControlState,
+      })
+    : "native";
+  if (desktopMode === "browser" && desktopTarget?.platform !== "windows") {
+    throw new Error("Rudder browser-app compatibility mode is currently available only on Windows.");
+  }
+  const installDesktop = installApp && desktopMode === "native";
+  const installBrowserApp = installApp && desktopMode === "browser";
+  // Browser-app mode depends on the persistent CLI and matching server runtime;
+  // internal Desktop update flags must not leave the compatibility handoff on
+  // the soon-to-be-obsolete packaged CLI/runtime.
+  const installCli = opts.cli !== false || installBrowserApp;
+  const installRuntime = opts.runtime !== false || installBrowserApp;
   const repo = opts.repo?.trim() || DEFAULT_DESKTOP_RELEASE_REPO;
   const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
@@ -1778,11 +1616,24 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     });
   }
 
-  if (!installCli && !installDesktop && !installRuntime) {
+  if (!installCli && !installApp && !installRuntime) {
     throw new Error("Nothing to start. Remove --no-cli, --no-runtime, --no-desktop, or --server-only.");
   }
 
   p.intro(pc.bgCyan(pc.black(serverOnly ? " rudder start --server-only " : " rudder start ")));
+
+  if (installBrowserApp) {
+    p.log.warn(
+      requestedDesktopMode === "browser"
+        ? "Using the requested Windows browser-app compatibility mode."
+        : "Windows Smart App Control is on, so Rudder will use browser-app compatibility mode instead of the unsigned Desktop executable.",
+    );
+    p.log.message(
+      pc.dim(
+        "This is a loopback-only local_trusted client without the packaged Desktop Account Gate. Local data stays in place; Electron-only Browser and App Builder bridges are unavailable.",
+      ),
+    );
+  }
 
   if (opts.versionCheck !== false) {
     const updateNotice = await getCliUpdateNotice(version);
@@ -1884,11 +1735,85 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     }
   }
 
+  if (installBrowserApp) {
+    const target = desktopTarget!;
+    const installRoot = opts.desktopInstallDir
+      ? path.resolve(opts.desktopInstallDir)
+      : resolveDefaultDesktopInstallRoot(target);
+    const installPaths = resolveDesktopInstallPaths(target, installRoot);
+    const runtimeVersion = version;
+    p.log.step("Preparing Windows browser app");
+    p.log.message(`Runtime: ${pc.cyan(runtimeVersion)}`);
+    p.log.message(`Workspace: ${pc.cyan("prod_local/default")}`);
+
+    if (dryRun) {
+      p.log.message(
+        `[dry-run] Would create a Rudder Start Menu shortcut backed by Node and open the local workspace in Microsoft Edge app mode.`,
+      );
+      p.outro(pc.green("Dry run complete."));
+      return;
+    }
+
+    const cliEntryPath = resolveGlobalInstalledCliEntry();
+    if (!(await pathExists(cliEntryPath))) {
+      throw new Error(`Persistent Rudder CLI entry was not found at ${cliEntryPath}.`);
+    }
+    await mkdir(installRoot, { recursive: true });
+    const edgePath = resolveEdgeExecutable();
+    const nativeIconPath = await pathExists(installPaths.executablePath)
+      ? installPaths.executablePath
+      : null;
+    const shortcutPath = createWindowsBrowserAppShortcut({
+      nodePath: process.execPath,
+      cliEntryPath,
+      runtimeVersion,
+      workingDirectory: installRoot,
+      iconPath: nativeIconPath ?? edgePath,
+    });
+    p.log.success(`Rudder browser-app shortcut is ready at ${pc.cyan(shortcutPath)}.`);
+
+    let applySignalController: ReturnType<typeof createDesktopApplySignalController> | null = null;
+    if (desktopProgressJson && opts.desktopWaitForApply === true) {
+      writeDesktopProgress({
+        phase: "ready_to_install",
+        message: "Windows browser-app compatibility mode is ready.",
+        percent: 100,
+      });
+      applySignalController = createDesktopApplySignalController();
+      await applySignalController.waitForInitialSignal();
+      applySignalController.close();
+      writeDesktopProgress({
+        phase: "preparing_restart",
+        message: "Starting the Windows browser app...",
+        percent: 100,
+      });
+    }
+
+    if (opts.open !== false) {
+      const launch = await launchDetachedBrowserApp({
+        cliEntryPath,
+        runtimeVersion,
+        open: true,
+      });
+      p.log.success(`Rudder browser app opened at ${pc.cyan(launch.boardUrl)}.`);
+      p.log.message(pc.dim(`Background runtime log: ${launch.logPath}`));
+      if (desktopProgressJson) {
+        writeDesktopProgress({
+          phase: "closing",
+          message: "Rudder browser app is ready. You can close the native Desktop window.",
+          percent: 100,
+        });
+      }
+    }
+    p.outro(pc.green("Rudder start complete."));
+    return;
+  }
+
   if (installDesktop) {
     const downloadSource = resolveDesktopDownloadSource(opts.downloadSource);
     const mirrorBaseUrl = resolveDesktopReleaseMirrorBaseUrl(repo);
     const smokeReleaseBaseUrls = resolveDesktopSmokeReleaseBaseUrls();
-    const target = resolveDesktopAssetTarget();
+    const target = desktopTarget!;
     const tag = resolveDesktopReleaseTag(version);
     const installRoot = opts.desktopInstallDir
       ? path.resolve(opts.desktopInstallDir)

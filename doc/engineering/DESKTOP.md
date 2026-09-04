@@ -50,7 +50,9 @@ Recommended defaults:
 - `npx @rudderhq/cli@latest start` is the public first-run form; after the
   persistent CLI exists, `rudder start` is the equivalent direct form. Both
   check for newer CLI releases and install/launch the matching portable Desktop
-  asset from the GitHub Release when needed.
+  asset from the GitHub Release when needed. On Windows with Smart App Control
+  enforcement, auto mode uses the browser-app compatibility path described
+  below while releases remain unsigned.
 - `npx @rudderhq/cli@latest start --server-only` is the public server-only
   install form. It prepares the matching persistent CLI and server runtime cache
   without resolving, downloading, installing, or launching Desktop assets.
@@ -464,6 +466,34 @@ the appropriate GitHub Release asset for the current platform, verifies
 `SHASUMS256.txt`, installs the app into a per-user location, and launches it.
 The CLI `start --server-only` path deliberately skips this Desktop asset flow
 and only prepares the npm-backed CLI/server runtime side.
+
+### Windows Smart App Control compatibility
+
+Smart App Control has no per-application allow rule. When its enforcement state
+is `on`, an unsigned Desktop binary can be blocked again after any release
+changes its hash. Public `start` therefore reads
+`HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` and automatically selects a
+non-native compatibility path on that machine while the Windows release remains
+unsigned. It does not write the registry or weaken the policy.
+
+The compatibility path installs the same versioned CLI and server runtime,
+keeps `~/.rudder/instances/default/` as the persistent local instance, creates a
+per-user `Rudder.lnk`, runs the local server under the Node executable that
+already ran `npx`, and opens `http://127.0.0.1:3200` in the installed Microsoft
+Edge `--app` window. A second launch attaches to the existing runtime; if a
+native Desktop still owns that runtime, the hidden browser-app monitor takes
+ownership after the native runtime exits. Existing native app files and all
+instance data are preserved.
+
+This is an availability fallback rather than an Electron emulation layer.
+It is an un-packaged, loopback-only `local_trusted` client and therefore does
+not present the packaged Canary/Stable Desktop Account Gate. It must not be
+represented as a packaged Desktop session or used with non-loopback exposure.
+Core browser-accessible Rudder workflows remain available; Electron-only native
+bridges, including the embedded Rudder Browser and Desktop App Builder runtime,
+are withheld. Use `--desktop-mode native` for explicit native Desktop testing,
+or `--desktop-mode browser` to force the compatibility path without relying on
+policy detection.
 On macOS and Windows, `start` prefers the layered `shell` asset when the release
 publishes one. Shell assets keep the Electron shell and packaged desktop CLI,
 but load the server from the already prepared `~/.rudder/runtimes/<version>`
@@ -528,9 +558,10 @@ changes. Incomplete runtime directories are removed only after a grace period
 and only when no install lock or live descriptor protects them. Payload
 retention keeps PostgreSQL 18.4, one recent previous PostgreSQL version for 14
 days, and every version referenced by a live runtime.
-The current Desktop channel is an unsigned portable alpha; signed/notarized
-installer distribution can be restored after Apple and Windows code signing are
-available.
+The current Desktop channel is an unsigned portable alpha. Windows Smart App
+Control enforcement uses the browser-app compatibility path instead of asking
+the operator to disable the policy. Signed/notarized installer distribution can
+be restored after Apple and Windows code signing are available.
 
 Packaged Desktop checks for updates on startup against GitHub Releases. The
 local Desktop update channel defaults to stable, so update checks compare

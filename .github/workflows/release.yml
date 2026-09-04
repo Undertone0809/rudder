@@ -576,6 +576,10 @@ jobs:
             pnpm desktop:dist
           fi
 
+      - name: Smoke Windows Smart App Control browser fallback
+        if: matrix.platform == 'windows'
+        run: pnpm --filter @rudderhq/cli smoke:browser-app
+
       - name: Smoke packaged App Builder
         if: matrix.platform != 'windows'
         run: |

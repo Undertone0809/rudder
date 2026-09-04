@@ -62,6 +62,7 @@ import {
   installPersistentCli,
   isLikelyNpxExecutionContext,
   isTransientBinaryPath,
+  resolveGlobalInstalledCliEntry,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
 import { resolveNpmCommandInvocation } from "../npm-command.js";
@@ -273,6 +274,13 @@ describe("persistent CLI install helpers", () => {
     expect(resolvePersistentCliInstallSpec({})).toBe(CLI_NPM_PACKAGE_NAME);
   });
 
+  it("resolves the persistent CLI entry from the global npm package root", () => {
+    const execFileSyncImpl = vi.fn(() => `${path.join("C:\\Users\\test", "AppData", "Roaming", "npm", "node_modules")}\r\n`);
+    expect(resolveGlobalInstalledCliEntry(execFileSyncImpl as never)).toBe(
+      path.join("C:\\Users\\test", "AppData", "Roaming", "npm", "node_modules", "@rudderhq", "cli", "dist", "index.js"),
+    );
+  });
+
   it("reads the global install state from npm list output", () => {
     const execFileSyncImpl = vi.fn(() =>
       JSON.stringify({
@@ -448,6 +456,8 @@ describe("desktop start command helpers", () => {
         process.execPath,
         "rudder",
         "start",
+        "--desktop-mode",
+        "native",
         "--no-cli",
         "--target-version",
         "0.3.1",
@@ -476,6 +486,8 @@ describe("desktop start command helpers", () => {
         process.execPath,
         "rudder",
         "start",
+        "--desktop-mode",
+        "native",
         "--no-cli",
         "--target-version",
         "0.3.1",
@@ -547,6 +559,42 @@ describe("desktop start command helpers", () => {
       stdout.mockRestore();
       stderr.mockRestore();
     }
+  });
+
+  it("supports an explicit Windows browser-app compatibility dry run", async () => {
+    if (process.platform !== "win32") return;
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let output = "";
+    try {
+      await expect(runCli([
+        process.execPath,
+        "rudder",
+        "start",
+        "--desktop-mode",
+        "browser",
+        "--no-cli",
+        "--no-runtime",
+        "--target-version",
+        "0.3.1",
+        "--dry-run",
+        "--no-open",
+        "--no-version-check",
+      ])).resolves.toBe(0);
+      output = [
+        ...stdout.mock.calls.map((call) => String(call[0])),
+        ...stderr.mock.calls.map((call) => String(call[0])),
+      ].join("");
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+
+    expect(output).toContain("browser-app compatibility mode");
+    expect(output).toContain("Preparing Rudder runtime");
+    expect(output).toContain("Preparing persistent CLI");
+    expect(output).toContain("Would create a Rudder Start Menu shortcut");
+    expect(output).not.toContain("Would resolve, download, verify, install");
   });
 
   it("uses the explicit desktop target version before the legacy start version option", async () => {
