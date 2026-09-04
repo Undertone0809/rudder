@@ -1,7 +1,7 @@
 use base64::Engine;
 use rudder_archive_core::{
     ArchiveEntryInspection, ArchiveLimits, MANIFEST_PATH, inspect_manifest,
-    read_file as read_archive_file,
+    inspect_manifest_reader, read_file as read_archive_file,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,10 +9,11 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
     fs::File,
-    io::Read,
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
 };
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
 const MAX_ARCHIVE_BYTES: u64 = 116 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
@@ -73,6 +74,8 @@ struct V2Manifest {
 struct V1Artifact {
     version: u32,
     org_id: String,
+    created_at: String,
+    root_path: String,
     entries: Vec<V1ArtifactEntry>,
 }
 
@@ -87,6 +90,20 @@ struct V1ArtifactEntry {
     sha256: Option<String>,
     #[serde(default)]
     data_base64: Option<String>,
+    #[serde(default)]
+    mtime_ms: Option<f64>,
+}
+
+pub(crate) enum DownloadArtifact {
+    File {
+        file: File,
+        byte_size: u64,
+        sha256: Option<String>,
+    },
+    Bytes {
+        bytes: Vec<u8>,
+        sha256: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -133,6 +150,7 @@ pub(crate) enum ArtifactError {
     NotFound,
     FileNotFound,
     Invalid,
+    Cancelled,
 }
 
 pub(crate) fn normalize_directory_path(value: &str) -> Result<String, &'static str> {
@@ -158,6 +176,10 @@ fn validate_entry_path(value: &str) -> Result<(), ArtifactError> {
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>, ArtifactError> {
+    read_bounded_with_cancel(path, &AtomicBool::new(false))
+}
+
+fn read_bounded_with_cancel(path: &Path, cancelled: &AtomicBool) -> Result<Vec<u8>, ArtifactError> {
     let metadata = path.metadata().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactError::NotFound
@@ -169,11 +191,22 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, ArtifactError> {
         return Err(ArtifactError::Invalid);
     }
     let capacity = usize::try_from(metadata.len()).map_err(|_| ArtifactError::Invalid)?;
-    let file = File::open(path).map_err(|_| ArtifactError::Invalid)?;
+    let mut file = File::open(path).map_err(|_| ArtifactError::Invalid)?;
     let mut bytes = Vec::with_capacity(capacity);
-    file.take(MAX_ARCHIVE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ArtifactError::Invalid)?;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if cancelled.load(AtomicOrdering::Relaxed) {
+            return Err(ArtifactError::Cancelled);
+        }
+        let read = file.read(&mut buffer).map_err(|_| ArtifactError::Invalid)?;
+        if read == 0 {
+            break;
+        }
+        if bytes.len().saturating_add(read) > MAX_ARCHIVE_BYTES as usize {
+            return Err(ArtifactError::Invalid);
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+    }
     if bytes.len() as u64 != metadata.len() {
         return Err(ArtifactError::Invalid);
     }
@@ -418,6 +451,185 @@ fn load_v1_artifact(bytes: &[u8], org_id: &str) -> Result<V1Artifact, ArtifactEr
     }
     validate_v1_entries(&artifact.entries)?;
     Ok(artifact)
+}
+
+fn legacy_download_root(artifact: &V1Artifact) -> String {
+    let root = root_segment(&artifact.root_path);
+    if root == "workspaces" {
+        let storage_key = if artifact.org_id.len() == 36
+            && artifact.org_id.bytes().enumerate().all(|(index, value)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    value == b'-'
+                } else if index == 14 {
+                    matches!(value, b'1'..=b'5')
+                } else if index == 19 {
+                    matches!(value.to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b')
+                } else {
+                    value.is_ascii_hexdigit()
+                }
+            }) {
+            artifact.org_id.replace('-', "")[..12].to_ascii_lowercase()
+        } else {
+            artifact.org_id.clone()
+        };
+        format!("workspace-{storage_key}")
+    } else {
+        root.replace(['/', '\\'], "-")
+    }
+}
+
+fn zip_datetime(value: OffsetDateTime) -> zip::DateTime {
+    zip_datetime_at_offset(
+        value,
+        UtcOffset::local_offset_at(value).unwrap_or(UtcOffset::UTC),
+    )
+}
+
+fn zip_datetime_at_offset(value: OffsetDateTime, offset: UtcOffset) -> zip::DateTime {
+    let local = value.to_offset(offset);
+    zip::DateTime::from_date_and_time(
+        local.year().clamp(1980, 2107) as u16,
+        local.month() as u8,
+        local.day(),
+        local.hour(),
+        local.minute(),
+        local.second(),
+    )
+    .unwrap_or_default()
+}
+
+fn legacy_zip(artifact: &V1Artifact, cancelled: &AtomicBool) -> Result<Vec<u8>, ArtifactError> {
+    let cursor = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    let created_at = OffsetDateTime::parse(&artifact.created_at, &Rfc3339)
+        .map_err(|_| ArtifactError::Invalid)?;
+    let root_options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .last_modified_time(zip_datetime(created_at));
+    let root = legacy_download_root(artifact);
+    writer
+        .add_directory(format!("{root}/"), root_options)
+        .map_err(|_| ArtifactError::Invalid)?;
+
+    let mut entries: Vec<_> = artifact.entries.iter().collect();
+    entries.sort_by(|left, right| compare_js_strings(&left.path, &right.path));
+    for entry in entries {
+        if cancelled.load(AtomicOrdering::Relaxed) {
+            return Err(ArtifactError::Cancelled);
+        }
+        let archive_path = format!(
+            "{root}/{}{}",
+            entry.path,
+            if entry.kind == "directory" { "/" } else { "" }
+        );
+        let modified_at = entry
+            .mtime_ms
+            .and_then(|value| {
+                OffsetDateTime::from_unix_timestamp_nanos((value * 1_000_000.0) as i128).ok()
+            })
+            .unwrap_or(created_at);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .last_modified_time(zip_datetime(modified_at));
+        if entry.kind == "directory" {
+            writer
+                .add_directory(archive_path, options)
+                .map_err(|_| ArtifactError::Invalid)?;
+            continue;
+        }
+        let data_base64 = entry.data_base64.as_deref().unwrap_or("");
+        let max_base64_length = (MAX_FILE_BYTES as usize).div_ceil(3) * 4;
+        if data_base64.len() > max_base64_length {
+            return Err(ArtifactError::Invalid);
+        }
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data_base64)
+            .map_err(|_| ArtifactError::Invalid)?;
+        if data.len() as u64 > MAX_FILE_BYTES {
+            return Err(ArtifactError::Invalid);
+        }
+        writer
+            .start_file(archive_path, options)
+            .map_err(|_| ArtifactError::Invalid)?;
+        writer
+            .write_all(&data)
+            .map_err(|_| ArtifactError::Invalid)?;
+    }
+    writer
+        .finish()
+        .map(|cursor| cursor.into_inner())
+        .map_err(|_| ArtifactError::Invalid)
+}
+
+pub(crate) fn prepare_download(
+    path: &Path,
+    org_id: &str,
+    expected_sha256: Option<&str>,
+    cancelled: &AtomicBool,
+) -> Result<DownloadArtifact, ArtifactError> {
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+    {
+        let mut file = File::open(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ArtifactError::NotFound
+            } else {
+                ArtifactError::Invalid
+            }
+        })?;
+        let metadata = file.metadata().map_err(|_| ArtifactError::Invalid)?;
+        if !metadata.is_file() || metadata.len() > MAX_ARCHIVE_BYTES {
+            return Err(ArtifactError::Invalid);
+        }
+        if let Some(expected) = expected_sha256 {
+            let mut hash = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                if cancelled.load(AtomicOrdering::Relaxed) {
+                    return Err(ArtifactError::Cancelled);
+                }
+                let read = file.read(&mut buffer).map_err(|_| ArtifactError::Invalid)?;
+                if read == 0 {
+                    break;
+                }
+                hash.update(&buffer[..read]);
+            }
+            if format!("{:x}", hash.finalize()) != expected {
+                return Err(ArtifactError::Invalid);
+            }
+            file.seek(SeekFrom::Start(0))
+                .map_err(|_| ArtifactError::Invalid)?;
+        }
+        let inspection = inspect_manifest_reader(
+            &mut file,
+            ArchiveLimits {
+                max_archive_bytes: MAX_ARCHIVE_BYTES,
+                max_manifest_bytes: MAX_MANIFEST_BYTES,
+            },
+        )
+        .map_err(|_| ArtifactError::Invalid)?;
+        let manifest_bytes = base64::engine::general_purpose::STANDARD
+            .decode(inspection.manifest_base64)
+            .map_err(|_| ArtifactError::Invalid)?;
+        let manifest: V2Manifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|_| ArtifactError::Invalid)?;
+        validate_manifest(manifest, &inspection.entries, org_id)?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|_| ArtifactError::Invalid)?;
+        return Ok(DownloadArtifact::File {
+            file,
+            byte_size: metadata.len(),
+            sha256: expected_sha256.map(str::to_owned),
+        });
+    }
+
+    let bytes = read_bounded_with_cancel(path, cancelled)?;
+    verify_sha256(&bytes, expected_sha256)?;
+    let artifact = load_v1_artifact(&bytes, org_id)?;
+    let bytes = legacy_zip(&artifact, cancelled)?;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    Ok(DownloadArtifact::Bytes { bytes, sha256 })
 }
 
 pub(crate) fn load_entries(
@@ -754,6 +966,155 @@ mod tests {
         assert_eq!(root_segment(r"\\server\share\workspace"), "workspace");
         assert_eq!(root_segment("/"), "workspace");
         assert_eq!(root_segment(r"C:\"), "workspace");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_download_stream_keeps_the_validated_file_descriptor() {
+        let root = tempfile::tempdir().expect("download fixture root");
+        let source = root.path().join("root.txt");
+        std::fs::write(&source, b"old").expect("write source");
+        let file_sha256 = format!("{:x}", Sha256::digest(b"old"));
+        let tree_sha256 = {
+            let mut hash = Sha256::new();
+            hash.update(b"root.txt");
+            hash.update(b"\0");
+            hash.update(b"file");
+            hash.update(b"\0");
+            hash.update(b"3");
+            hash.update(b"\0");
+            hash.update(file_sha256.as_bytes());
+            hash.update(b"\n");
+            format!("{:x}", hash.finalize())
+        };
+        let manifest_path = root.path().join("manifest.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 2,
+                "policyVersion": V2_POLICY_VERSION,
+                "identity": {
+                    "orgId": "organization-1",
+                    "instanceId": "test",
+                    "rootPath": "/fixture/workspace"
+                },
+                "createdAt": "2026-09-04T00:00:00.000Z",
+                "entries": [{
+                    "path": "root.txt",
+                    "kind": "file",
+                    "byteSize": 3,
+                    "mtimeMs": null,
+                    "mode": null,
+                    "sha256": file_sha256
+                }],
+                "treeSha256": tree_sha256,
+                "warnings": []
+            }))
+            .expect("serialize manifest"),
+        )
+        .expect("write manifest");
+        let plan_path = root.path().join("plan.json");
+        std::fs::write(
+            &plan_path,
+            serde_json::to_vec(&serde_json::json!({
+                "protocolVersion": 1,
+                "manifestSource": manifest_path,
+                "treeSha256": tree_sha256,
+                "entries": [
+                    {"kind":"directory", "archivePath":"workspace/"},
+                    {"kind":"file", "archivePath":"workspace/root.txt", "sourcePath":source}
+                ]
+            }))
+            .expect("serialize plan"),
+        )
+        .expect("write plan");
+        let archive_path = root.path().join("workspace.zip");
+        let created = rudder_archive_core::create_archive(
+            &plan_path,
+            &archive_path,
+            MAX_ARCHIVE_BYTES,
+            MAX_FILE_BYTES,
+            MAX_TOTAL_FILE_BYTES,
+        )
+        .expect("create archive");
+        let expected = std::fs::read(&archive_path).expect("read original archive");
+        let download = prepare_download(
+            &archive_path,
+            "organization-1",
+            Some(&created.sha256),
+            &AtomicBool::new(false),
+        )
+        .expect("prepare download");
+        std::fs::rename(&archive_path, root.path().join("old.zip"))
+            .expect("replace validated path");
+        std::fs::write(&archive_path, b"replacement").expect("write replacement path");
+        let DownloadArtifact::File { mut file, .. } = download else {
+            panic!("expected file-backed download");
+        };
+        let mut actual = Vec::new();
+        file.read_to_end(&mut actual).expect("read validated file");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn download_preflight_honors_cancellation_before_reading() {
+        let root = tempfile::tempdir().expect("download fixture root");
+        let artifact = root.path().join("workspace.json");
+        std::fs::write(&artifact, b"{}").expect("write artifact");
+        let cancelled = AtomicBool::new(true);
+        assert!(matches!(
+            prepare_download(&artifact, "organization-1", None, &cancelled),
+            Err(ArtifactError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn download_preflight_stops_after_cancellation_during_hashing() {
+        let root = tempfile::tempdir().expect("download fixture root");
+        let artifact = root.path().join("workspace.zip");
+        std::fs::File::create(&artifact)
+            .and_then(|file| file.set_len(MAX_ARCHIVE_BYTES))
+            .expect("write bounded sparse archive");
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let cancellation = cancelled.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            cancellation.store(true, AtomicOrdering::Relaxed);
+        });
+        let result = prepare_download(
+            &artifact,
+            "organization-1",
+            Some(&"0".repeat(64)),
+            &cancelled,
+        );
+        canceller.join().expect("join canceller");
+        assert!(matches!(result, Err(ArtifactError::Cancelled)));
+    }
+
+    #[test]
+    fn legacy_zip_dos_time_matches_shared_timezone_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(READ_PARITY_FIXTURE)
+            .expect("workspace backup read parity fixture");
+        let timestamp = OffsetDateTime::from_unix_timestamp_nanos(
+            fixture["download"]["legacyMtimeMs"]
+                .as_i64()
+                .expect("legacy timestamp") as i128
+                * 1_000_000,
+        )
+        .expect("legacy timestamp range");
+        let utc = zip_datetime_at_offset(timestamp, UtcOffset::UTC);
+        let asia_shanghai = zip_datetime_at_offset(
+            timestamp,
+            UtcOffset::from_hms(8, 0, 0).expect("Asia/Shanghai offset"),
+        );
+        assert_eq!(
+            utc.hour(),
+            fixture["download"]["utcHour"].as_u64().unwrap() as u8
+        );
+        assert_eq!(
+            asia_shanghai.hour(),
+            fixture["download"]["asiaShanghaiHour"].as_u64().unwrap() as u8
+        );
     }
 
     #[test]
