@@ -6268,6 +6268,8 @@ async function runTerminalScenario(mode) {
   const run = await launchDesktop(scenarioRoot, mode, ports);
   try {
     const company = await createCompany(run.baseUrl);
+    const primedAgentListing = await fetch(`${run.baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
+    assert.equal(primedAgentListing.ok, true, "Agent workspace listing should be readable before Agent creation");
     const agent = await createCeo(run.baseUrl, company.id);
     await verifyAgentWorkspaceTerminal(run.electronApp, run.page, run.baseUrl, company, agent);
     await closeDesktop(run.electronApp);
@@ -6316,10 +6318,47 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   await target.click();
   const terminal = sidePanel.getByTestId("terminal-panel-view");
   await terminal.waitFor({ state: "visible", timeout: 15_000 });
-  await page.waitForFunction(() => {
-    const panel = document.querySelector("[data-testid='terminal-panel-view']");
-    return Boolean(panel && !panel.textContent?.includes("Starting terminal") && !panel.textContent?.includes("Terminal unavailable"));
-  }, null, { timeout: 15_000 });
+  try {
+    await page.waitForFunction(() => {
+      const panel = document.querySelector("[data-testid='terminal-panel-view']");
+      return Boolean(panel && !panel.textContent?.includes("Starting terminal") && !panel.textContent?.includes("Terminal unavailable"));
+    }, null, { timeout: 15_000 });
+  } catch (cause) {
+    const renderer = await terminal.evaluate((panel) => {
+      const host = panel.querySelector("[data-testid='terminal-xterm-host']");
+      const xterm = panel.querySelector(".xterm");
+      const screen = panel.querySelector(".xterm-screen");
+      const rect = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height, display: getComputedStyle(element).display };
+      };
+      return {
+        status: panel.querySelector("h3")?.textContent ?? null,
+        message: panel.querySelector("h3 + p")?.textContent ?? null,
+        panel: rect(panel),
+        host: rect(host),
+        xterm: rect(xterm),
+        screen: rect(screen),
+        supported: window.desktopShell?.terminal?.supported ?? null,
+      };
+    });
+    const directCreate = await page.evaluate(async ({ orgId, agentId }) => {
+      const sessionId = `terminal-smoke-probe-${Date.now()}`;
+      try {
+        const result = await Promise.race([
+          window.desktopShell.terminal.create({ orgId, agentId, sessionId, cols: 80, rows: 24 })
+            .then((value) => ({ status: "resolved", value })),
+          new Promise((resolve) => setTimeout(() => resolve({ status: "timeout" }), 5_000)),
+        ]);
+        if (result.status === "resolved") await window.desktopShell.terminal.close(sessionId);
+        return result;
+      } catch (error) {
+        return { status: "rejected", error: error instanceof Error ? error.message : String(error) };
+      }
+    }, { orgId: company.id, agentId: agent.id });
+    throw new Error(`Agent Terminal did not become ready: ${JSON.stringify({ renderer, directCreate })}`, { cause });
+  }
 
   const xtermInput = terminal.locator(".xterm-helper-textarea");
   await xtermInput.waitFor({ state: "attached", timeout: 10_000 });
@@ -6405,12 +6444,13 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     await rename(unavailablePath, workspacePath);
   };
   await rename(workspacePath, unavailablePath);
+  await writeFile(workspacePath, "terminal smoke obstruction\n", "utf8");
   try {
     const recoveredSidePanel = await openSmokeSidePanel(page);
     await recoveredSidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
     const failedTerminal = recoveredSidePanel.getByTestId("terminal-panel-view");
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "visible", timeout: 15_000 });
-    await failedTerminal.getByText(/Agent workspace is unavailable/u).waitFor({ state: "visible", timeout: 15_000 });
+    await failedTerminal.getByText("Could not validate the selected Agent.", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
     await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
     console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
     await restoreWorkspace();
