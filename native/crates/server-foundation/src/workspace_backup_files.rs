@@ -256,16 +256,17 @@ fn tree_sha256(entries: &[V2Entry]) -> String {
 }
 
 fn root_segment(root_path: &str) -> String {
-    root_path
-        .trim_end_matches('/')
-        .rsplit('/')
+    let trimmed = root_path.trim_end_matches(['/', '\\']);
+    let basename = trimmed
+        .rsplit(['/', '\\'])
         .next()
-        .unwrap_or(root_path)
-        .replace('\\', "/")
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
+        .filter(|value| !value.is_empty())
+        .unwrap_or("workspace");
+    if basename.ends_with(':') {
+        "workspace".to_owned()
+    } else {
+        basename.to_owned()
+    }
 }
 
 fn validate_manifest(
@@ -742,6 +743,17 @@ mod tests {
             .map(|entry| entry.name)
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn archive_root_uses_the_last_segment_across_platform_path_styles() {
+        assert_eq!(root_segment("/fixture/workspace"), "workspace");
+        assert_eq!(root_segment("/fixture/workspace/"), "workspace");
+        assert_eq!(root_segment(r"C:\Users\Zeeland\workspace"), "workspace");
+        assert_eq!(root_segment(r"C:\Users\Zeeland\workspace\"), "workspace");
+        assert_eq!(root_segment(r"\\server\share\workspace"), "workspace");
+        assert_eq!(root_segment("/"), "workspace");
+        assert_eq!(root_segment(r"C:\"), "workspace");
     }
 
     #[test]

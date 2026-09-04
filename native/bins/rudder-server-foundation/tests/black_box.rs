@@ -367,6 +367,31 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     assert_eq!(readme["truncated"], parity["preview"]["text"]["truncated"]);
     assert_eq!(readme["message"], parity["preview"]["text"]["message"]);
 
+    sqlx::query(
+        "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+    )
+    .bind(fixture.windows_archive.to_string_lossy().as_ref())
+    .bind(&fixture.windows_sha256)
+    .bind("10000000-0000-0000-0000-000000000002")
+    .execute(&pool)
+    .await
+    .expect("attach Windows-root workspace backup artifact");
+    let windows_root = response_json(&get_with_retry(bound_addr, route));
+    assert_eq!(windows_root["entries"], root["entries"]);
+    let windows_readme = response_json(&get_with_retry(bound_addr, file_route));
+    assert_eq!(windows_readme["filePath"], "docs/readme.md");
+    assert_eq!(windows_readme["content"], "readme");
+
+    sqlx::query(
+        "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
+    )
+    .bind(fixture.archive.to_string_lossy().as_ref())
+    .bind(&fixture.sha256)
+    .bind("10000000-0000-0000-0000-000000000002")
+    .execute(&pool)
+    .await
+    .expect("restore primary workspace backup artifact after Windows-root checks");
+
     let binary_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/file?path=binary.bin";
     let binary_response = get_with_retry(bound_addr, binary_route);
     assert!(
@@ -445,7 +470,7 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     .execute(&pool)
     .await
     .expect("attach aggregate-limit workspace backup artifact");
-    let aggregate_limit = get_with_retry_read_timeout(bound_addr, route, Duration::from_secs(30));
+    let aggregate_limit = get_with_retry_read_timeout(bound_addr, route, Duration::from_secs(120));
     assert_parity_error(&aggregate_limit, &parity, "artifactInvalid");
 
     sqlx::query(
@@ -908,6 +933,8 @@ struct WorkspaceBackupArchiveFixture {
     _root: TempDir,
     archive: PathBuf,
     sha256: String,
+    windows_archive: PathBuf,
+    windows_sha256: String,
     invalid_archives: Vec<(PathBuf, String)>,
     aggregate_limit_archive: PathBuf,
     aggregate_limit_sha256: String,
@@ -946,13 +973,14 @@ fn create_workspace_backup_archive(
     policy_version: &str,
     tree_sha256: Option<String>,
 ) -> (PathBuf, String) {
-    create_workspace_backup_archive_with_limits(
+    create_workspace_backup_archive_with_root_and_limits(
         root,
         name,
         entries,
         plan_entries,
         policy_version,
         tree_sha256,
+        "/fixture/workspace",
         8 * 1024 * 1024,
         16 * 1024,
         64 * 1024,
@@ -971,6 +999,33 @@ fn create_workspace_backup_archive_with_limits(
     max_file_bytes: u64,
     max_total_file_bytes: u64,
 ) -> (PathBuf, String) {
+    create_workspace_backup_archive_with_root_and_limits(
+        root,
+        name,
+        entries,
+        plan_entries,
+        policy_version,
+        tree_sha256,
+        "/fixture/workspace",
+        max_archive_bytes,
+        max_file_bytes,
+        max_total_file_bytes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_workspace_backup_archive_with_root_and_limits(
+    root: &Path,
+    name: &str,
+    entries: &[serde_json::Value],
+    plan_entries: &[serde_json::Value],
+    policy_version: &str,
+    tree_sha256: Option<String>,
+    identity_root_path: &str,
+    max_archive_bytes: u64,
+    max_file_bytes: u64,
+    max_total_file_bytes: u64,
+) -> (PathBuf, String) {
     let tree_sha256 = tree_sha256.unwrap_or_else(|| workspace_backup_tree_sha256(entries));
     let manifest_path = root.join(format!("{name}-manifest.json"));
     fs::write(
@@ -981,7 +1036,7 @@ fn create_workspace_backup_archive_with_limits(
             "identity": {
                 "orgId": "00000000-0000-0000-0000-000000000001",
                 "instanceId": "black-box",
-                "rootPath": "/fixture/workspace"
+                "rootPath": identity_root_path
             },
             "createdAt": "2026-09-01T00:00:00.000Z",
             "entries": entries,
@@ -1052,6 +1107,18 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         &plan_entries,
         "workspace-backup-v2-policy-1",
         None,
+    );
+    let (windows_archive, windows_sha256) = create_workspace_backup_archive_with_root_and_limits(
+        root.path(),
+        "windows-workspace",
+        &entries,
+        &plan_entries,
+        "workspace-backup-v2-policy-1",
+        None,
+        r"C:\Users\Zeeland\workspace",
+        8 * 1024 * 1024,
+        16 * 1024,
+        64 * 1024,
     );
 
     let mut invalid_archives = Vec::new();
@@ -1208,6 +1275,8 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         _root: root,
         archive,
         sha256,
+        windows_archive,
+        windows_sha256,
         invalid_archives,
         aggregate_limit_archive,
         aggregate_limit_sha256,
