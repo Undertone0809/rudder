@@ -190,6 +190,25 @@ async function waitForSmokeCondition(label, check, options = {}) {
   throw new Error(`Timed out waiting for ${label}.${detail}`);
 }
 
+function isSmokeProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function stopSmokeProcess(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 2 || !isSmokeProcessAlive(pid)) return;
+  process.kill(pid, "SIGTERM");
+  await waitForSmokeCondition(
+    `smoke-owned process ${pid} to exit`,
+    () => !isSmokeProcessAlive(pid),
+    { timeoutMs: 10_000 },
+  );
+}
+
 async function runCapturedProcess(executable, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -4146,8 +4165,8 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   return page;
 }
 
-async function closeDesktop(electronApp) {
-  await desktopShutdownRegistry.close(electronApp);
+async function closeDesktop(electronApp, options) {
+  await desktopShutdownRegistry.close(electronApp, options);
 }
 
 async function dismissReleaseNotesDialogIfVisible(page) {
@@ -7491,9 +7510,24 @@ async function runAgentBrowserScenario(mode) {
 async function runPostgresRuntimeHandoffScenario(mode) {
   assert.equal(mode, "packaged", "PostgreSQL runtime handoff requires a packaged Desktop app");
   const scenarioRoot = path.join(tmpRoot, "postgres-runtime-handoff");
-  const ports = await allocateSmokePorts();
-  const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot);
-  const run = await launchDesktop(scenarioRoot, mode, ports, packagedRuntime.env);
+  const firstPorts = await allocateSmokePorts();
+  let secondPorts = await allocateSmokePorts();
+  while (
+    secondPorts.appPort === firstPorts.appPort
+    || secondPorts.appPort === firstPorts.dbPort
+    || secondPorts.dbPort === firstPorts.appPort
+    || secondPorts.dbPort === firstPorts.dbPort
+  ) {
+    secondPorts = await allocateSmokePorts();
+  }
+  const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot, { authBypass: true });
+  const launchEnv = {
+    ...packagedRuntime.env,
+    RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+  };
+  const firstRun = await launchDesktop(scenarioRoot, mode, firstPorts, launchEnv);
+  let secondRun = null;
+  let postmasterPid = null;
   try {
     const packagedShareDir = path.join(packagedRuntime.postgresBinDir, "..", "share");
     assert.equal(
@@ -7519,6 +7553,14 @@ async function runPostgresRuntimeHandoffScenario(mode) {
       descriptor.postgresRuntimeKey,
       `postgres-18.4/${process.platform}-${process.arch}`,
     );
+    const postmasterPidLines = (await readFile(
+      resolveInstancePaths(scenarioRoot).postmasterPidPath,
+      "utf8",
+    )).split(/\r?\n/u);
+    postmasterPid = Number(postmasterPidLines[0]?.trim());
+    const actualPostgresPort = Number(postmasterPidLines[3]?.trim());
+    assert.equal(Number.isSafeInteger(postmasterPid) && postmasterPid >= 2, true);
+    assert.equal(actualPostgresPort, firstPorts.dbPort);
     if (process.platform === "win32") {
       assert.equal(
         await realpath(packagedRuntime.runtimePostgresRoot),
@@ -7536,9 +7578,49 @@ async function runPostgresRuntimeHandoffScenario(mode) {
         path.join("..", "..", "runtime-payloads", "postgres-18.4"),
       );
     }
-    await closeDesktop(run.electronApp);
+    const firstDesktopProcess = firstRun.electronApp.process();
+    assert.ok(firstDesktopProcess, "packaged Desktop should expose its owned process");
+    const firstDesktopExit = new Promise((resolve) => firstDesktopProcess.once("exit", resolve));
+    assert.equal(firstDesktopProcess.kill("SIGKILL"), true, "crash fixture should terminate only Desktop");
+    await firstDesktopExit;
+    desktopShutdownRegistry.releaseExited(firstRun.electronApp, firstDesktopProcess);
+
+    secondRun = await launchDesktop(scenarioRoot, mode, secondPorts, launchEnv);
+    const relaunchedPidLines = (await readFile(
+      resolveInstancePaths(scenarioRoot).postmasterPidPath,
+      "utf8",
+    )).split(/\r?\n/u);
+    assert.equal(
+      Number(relaunchedPidLines[0]?.trim()),
+      postmasterPid,
+      "rapid relaunch should reuse the live embedded PostgreSQL process",
+    );
+    assert.equal(
+      Number(relaunchedPidLines[3]?.trim()),
+      firstPorts.dbPort,
+      "rapid relaunch should keep the live postmaster's actual port",
+    );
+    assert.notEqual(
+      secondPorts.dbPort,
+      firstPorts.dbPort,
+      "rapid relaunch fixture should supply a different configured database port",
+    );
+    assert.equal(
+      new URL(secondRun.baseUrl).port,
+      String(secondPorts.appPort),
+      "rapid relaunch should start the new Desktop API on its newly configured app port",
+    );
+    await closeDesktop(secondRun.electronApp, { expectDatabaseRelease: false });
+    secondRun = null;
+    await stopSmokeProcess(postmasterPid);
+    console.log(
+      `[desktop-smoke] rapid relaunch reused PostgreSQL pid=${postmasterPid} port=${firstPorts.dbPort} while ignoring configured port=${secondPorts.dbPort}`,
+    );
   } catch (error) {
-    await closeDesktop(run.electronApp).catch(() => {});
+    if (secondRun) {
+      await closeDesktop(secondRun.electronApp, { expectDatabaseRelease: false }).catch(() => {});
+    }
+    if (postmasterPid) await stopSmokeProcess(postmasterPid).catch(() => {});
     throw error;
   }
 }
