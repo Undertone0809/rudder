@@ -1,6 +1,11 @@
 import type { InspectRudderPlugin } from "@rudderhq/shared";
 import { strToU8, zipSync } from "fflate";
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
+import {
+  inspectPluginArchiveNative,
+  PluginArchiveNativeError,
+} from "./plugin-archive-native.js";
 import { inspectRudderPluginArchivePackage, inspectRudderPluginPackage } from "./rudder-plugins.js";
 
 function manifest(overrides: Record<string, unknown> = {}) {
@@ -18,6 +23,16 @@ function manifest(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+
+const archiveParityFixture = JSON.parse(fs.readFileSync(new URL(
+  "../../../native/fixtures/plugin-archive-read-parity.json",
+  import.meta.url,
+), "utf8")) as {
+  sourceLabel: string;
+  outerRoot: string;
+  files: Array<{ path: string; contentUtf8: string }>;
+  expectedPaths: string[];
+};
 
 function input(
   files: Array<{ path: string; content: string; encoding?: "utf8" | "base64" }>,
@@ -227,5 +242,56 @@ describe("inspectRudderPluginArchivePackage", () => {
       ".codex-plugin/plugin.json": manifest(),
       "assets/compression-bomb.txt": "0".repeat(512 * 1024),
     }))).toThrow(/expansion limit/);
+    expect(() => inspectRudderPluginArchivePackage(archive({
+      ".codex-plugin/plugin.json": manifest(),
+      [`${"a".repeat(1_025)}.txt`]: "oversize path",
+    }))).toThrow(/path is invalid/);
+    expect(() => inspectRudderPluginArchivePackage(archive({
+      ".codex-plugin/plugin.json": manifest(),
+      "bad\npath.txt": "control path",
+    }))).toThrow(/path is invalid/);
+  });
+
+  it("keeps Rust ZIP projection differential with the Node semantic comparator", async () => {
+    const candidate = archive(Object.fromEntries(archiveParityFixture.files.map((file) => [
+      `${archiveParityFixture.outerRoot}/${file.path}`,
+      file.contentUtf8,
+    ])));
+    const nativeFiles = await inspectPluginArchiveNative(candidate);
+    expect(nativeFiles.map((file) => file.path)).toEqual(archiveParityFixture.expectedPaths);
+    const native = inspectRudderPluginPackage({
+      sourceType: "local_upload",
+      sourceLabel: candidate.sourceLabel,
+      files: nativeFiles.map((file) => ({ ...file, encoding: file.encoding ?? "base64" })),
+    });
+    const node = inspectRudderPluginArchivePackage(candidate);
+    expect(native.identity).toEqual(node.identity);
+    expect(native.report).toEqual(node.report);
+    expect(native.normalized.files).toEqual(node.normalized.files);
+    expect(native.normalized.digest).toEqual(node.normalized.digest);
+    expect(native.normalized.totalBytes).toEqual(node.normalized.totalBytes);
+  });
+
+  it("fails closed on invalid input and propagates cancellation without Node fallback", async () => {
+    const invalid = {
+      sourceLabel: "broken.zip",
+      filename: "broken.zip",
+      content: Buffer.from("not a zip").toString("base64"),
+      encoding: "base64" as const,
+    };
+    await expect(inspectPluginArchiveNative(invalid)).rejects.toMatchObject({
+      code: "plugin_archive_invalid",
+      inputRejected: true,
+      fallbackAllowed: false,
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(inspectPluginArchiveNative(archive({
+      ".codex-plugin/plugin.json": manifest(),
+    }), controller.signal)).rejects.toEqual(expect.objectContaining<Partial<PluginArchiveNativeError>>({
+      code: "plugin_archive_cancelled",
+      fallbackAllowed: false,
+    }));
   });
 });

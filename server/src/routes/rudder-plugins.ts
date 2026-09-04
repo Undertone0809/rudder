@@ -10,7 +10,7 @@ import {
   previewRudderPluginSourceSchema,
   updateRudderPluginEnablementSchema,
 } from "@rudderhq/shared";
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { accessService, logActivity } from "../services/index.js";
@@ -18,6 +18,21 @@ import type { ManagedMcpConnectionServiceOptions } from "../services/mcp/managed
 import { rudderPluginCatalogService } from "../services/rudder-plugin-catalog.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+
+export function createRequestAbortGuard(req: Request, res: Response) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  req.once("aborted", abort);
+  res.once("close", abort);
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      req.removeListener("aborted", abort);
+      res.removeListener("close", abort);
+    },
+  };
+}
 
 export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServiceOptions) {
   const router = Router();
@@ -150,7 +165,13 @@ export function rudderPluginRoutes(db: Db, mcpOptions: ManagedMcpConnectionServi
     async (req, res) => {
       const orgId = req.params.orgId as string;
       await assertCanManage(req, orgId);
-      const report = await plugins.inspectArchive(orgId, req.body);
+      const cancellation = createRequestAbortGuard(req, res);
+      let report;
+      try {
+        report = await plugins.inspectArchive(orgId, req.body, cancellation.signal);
+      } finally {
+        cancellation.dispose();
+      }
       await record(req, orgId, "plugin.archive_inspected", report.id, {
         filename: req.body.filename,
         packageId: report.packageId,

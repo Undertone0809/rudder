@@ -1,6 +1,9 @@
 use rudder_archive_core::{
     ArchiveLimits, CREATE_PROTOCOL_VERSION, create_archive, extract_file, inspect_manifest,
 };
+use rudder_plugin_archive_core::{
+    PLUGIN_ARCHIVE_PROTOCOL_VERSION, PluginArchiveLimits, inspect_plugin_archive,
+};
 use rudder_run_evidence_core::{
     INDEX_PROTOCOL_VERSION, IndexLimits, index_run_log, read_run_log_range,
 };
@@ -28,6 +31,7 @@ const CAPABILITIES: &[&str] = &[
     "payload.extract",
     "payload.probeVersion",
     "payload.publish",
+    "plugin.inspectArchive",
 ];
 
 fn native_target() -> &'static str {
@@ -84,6 +88,7 @@ fn capability_for_args(namespace: Option<&str>, operation: Option<&str>) -> Opti
         (Some("payload"), Some("extract")) => Some("payload.extract"),
         (Some("payload"), Some("probe-version")) => Some("payload.probeVersion"),
         (Some("payload"), Some("publish")) => Some("payload.publish"),
+        (Some("plugin"), Some("inspect-archive")) => Some("plugin.inspectArchive"),
         _ => None,
     }
 }
@@ -184,7 +189,7 @@ fn run() -> Result<serde_json::Value, NativeFailure> {
     let operation = args.next();
     if !matches!(
         namespace.as_deref(),
-        Some("archive") | Some("evidence") | Some("workspace") | Some("payload")
+        Some("archive") | Some("evidence") | Some("workspace") | Some("payload") | Some("plugin")
     ) {
         return Err("usage".into());
     }
@@ -201,6 +206,56 @@ fn run() -> Result<serde_json::Value, NativeFailure> {
                 "effectiveEngine": "rust",
                 "capabilities": CAPABILITIES,
                 "binaryVersion": env!("CARGO_PKG_VERSION")
+            }))
+        }
+        (Some("plugin"), Some("capabilities")) => {
+            if args.next().is_some() {
+                return Err("usage".into());
+            }
+            Ok(json!({
+                "ok": true,
+                "operation": "capabilities",
+                "protocolVersion": PLUGIN_ARCHIVE_PROTOCOL_VERSION,
+                "target": native_target(),
+                "effectiveEngine": "rust",
+                "capabilities": CAPABILITIES,
+                "binaryVersion": env!("CARGO_PKG_VERSION")
+            }))
+        }
+        (Some("plugin"), Some("inspect-archive")) => {
+            let input = absolute(required(&mut args, "input_required")?)?;
+            let max_archive_bytes = number(required(&mut args, "max_archive_bytes_required")?)?;
+            let max_file_bytes = number(required(&mut args, "max_file_bytes_required")?)?;
+            let max_total_bytes = number(required(&mut args, "max_total_bytes_required")?)?;
+            let max_files = number(required(&mut args, "max_files_required")?)?;
+            let max_expansion_ratio = number(required(&mut args, "max_expansion_ratio_required")?)?;
+            if args.next().is_some() || max_files > usize::MAX as u64 {
+                return Err("usage".into());
+            }
+            let result = inspect_plugin_archive(
+                &input,
+                PluginArchiveLimits {
+                    max_archive_bytes,
+                    max_file_bytes,
+                    max_total_bytes,
+                    max_files: max_files as usize,
+                    max_expansion_ratio,
+                },
+                true,
+            )
+            .map_err(|error| error.code())?;
+            Ok(json!({
+                "ok": true,
+                "capability": "plugin.inspectArchive",
+                "operation": "inspectPluginArchive",
+                "protocolVersion": PLUGIN_ARCHIVE_PROTOCOL_VERSION,
+                "target": native_target(),
+                "binaryVersion": env!("CARGO_PKG_VERSION"),
+                "accepted": false,
+                "files": result.files,
+                "archiveBytes": result.archive_bytes,
+                "totalBytes": result.total_bytes,
+                "strippedRoot": result.stripped_root,
             }))
         }
         (Some("workspace"), Some("capabilities")) => {
@@ -494,6 +549,8 @@ fn main() {
             let mut response = response_metadata(
                 if capability.is_some_and(|value| value.starts_with("payload.")) {
                     PAYLOAD_PROTOCOL_VERSION
+                } else if capability.is_some_and(|value| value.starts_with("plugin.")) {
+                    PLUGIN_ARCHIVE_PROTOCOL_VERSION
                 } else {
                     CREATE_PROTOCOL_VERSION
                 },

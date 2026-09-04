@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 rudder-archive-core = { path = "../../crates/archive-core" }
+rudder-plugin-archive-core = { path = "../../crates/plugin-archive-core" }
 rudder-run-evidence-core = { path = "../../crates/run-evidence-core" }
 rudder-runtime-payload-core = { path = "../../crates/runtime-payload-core" }
 rudder-workspace-manifest-core = { path = "../../crates/workspace-manifest-core" }
