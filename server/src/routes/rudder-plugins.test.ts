@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
 import type { Request, Response } from "express";
+import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { createRequestAbortGuard } from "./rudder-plugins.js";
 
