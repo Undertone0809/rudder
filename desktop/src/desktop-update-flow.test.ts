@@ -457,6 +457,10 @@ describe("desktop update flow", () => {
 
       await flow.runAutomaticUpdateCheck();
       expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+        "--desktop-mode",
+        "native",
+      ]));
       expect(spawnMock.mock.calls[0]?.[1]).toContain("--desktop-runtime-best-effort");
       expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--no-runtime");
       child.stdout.emit("data", `${JSON.stringify({
@@ -531,6 +535,10 @@ describe("desktop update flow", () => {
       await flow.runAutomaticUpdateCheck();
 
       expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+        "--desktop-mode",
+        "native",
+      ]));
       expect(spawnMock.mock.calls[0]?.[1]).toContain("--no-runtime");
       expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--desktop-runtime-best-effort");
     } finally {
@@ -1229,6 +1237,31 @@ describe("desktop update flow", () => {
     expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
+  it("forces native mode for a SAC-on Windows normal update child", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow } = createFlow({ platform: "win32" });
+
+    await expect(flow.installUpdate("0.3.5-canary.8")).resolves.toMatchObject({
+      status: "started",
+      version: "0.3.5-canary.8",
+    });
+
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+      "--desktop-cli",
+      "--desktop-mode",
+      "native",
+    ]));
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    })}\n`);
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+  });
+
   it("does not spawn the Node installer for a direct automatic update request", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
@@ -1664,6 +1697,30 @@ describe("desktop update flow", () => {
 
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
     expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--wait-for-active-runs");
+  });
+
+  it("forces native mode for a SAC-on Windows force update child", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow } = createFlow({
+      platform: "win32",
+      listRunningRunsForUpdate: vi.fn(async () => createRunSummary([
+        createBlocker("run-1"),
+      ])),
+      promptForDeferredUpdate: vi.fn(async () => "force"),
+    });
+
+    await expect(flow.installUpdate("0.3.5-canary.8")).resolves.toMatchObject({
+      status: "started",
+      version: "0.3.5-canary.8",
+    });
+
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+      "--desktop-cli",
+      "--desktop-mode",
+      "native",
+    ]));
+    expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
   });
 
   it("reuses the waiting result when an update is deferred for active runs", async () => {
