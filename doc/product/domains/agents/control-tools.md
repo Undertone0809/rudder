@@ -132,12 +132,13 @@ ordinary Chat replies, or non-MCP work.
 - Issue transport budget: run-scoped temporary state shared by the typed MCP
   server and CLI client for scoped Issue and run-collection 5xx fingerprints.
   Item reads/comments use the operation and Issue id as their scope. Issue list
-  and search use organization plus project (or `*` when project is omitted),
-  ignoring query text and other list filters. `runs.list` uses organization,
-  optionally combined with its linked Issue. The state records operation,
-  normalized `scopeKey`, optional Issue id, status/code, normalized message,
-  transport surface, remaining heterogeneous fallback, and bounded retry time
-  without changing the Issue or Run record.
+  and search share one `issue.collection` budget operation and use organization
+  plus project (or `*` when project is omitted), ignoring query text and other
+  list filters. `runs.list` uses organization, optionally combined with its
+  linked Issue. The state records the requested operation, normalized
+  `scopeKey`, optional Issue id, status/code, normalized message, transport
+  surface, remaining heterogeneous fallback, and bounded retry time without
+  changing the Issue or Run record.
 - Collection readiness gate: for `issue.list`, `issue.search`, and `runs.list`,
   the first concurrent request for a scope is the bounded readiness probe.
   Same-scope requests arriving while the probe is in flight wait for its
@@ -212,11 +213,14 @@ ordinary Chat replies, or non-MCP work.
     `runs.list` collection reads share one run-scoped 5xx budget across the
     typed MCP and CLI surfaces. Item scopes use operation plus Issue id; Issue
     collections use organization plus project, ignoring query and other list
-    filters; run collections use organization plus linked Issue when present.
-    Each first 5xx records a fingerprint and permits one different-surface
-    fallback. A same-surface repeat is short-circuited without spending that
-    fallback. For collection scopes, concurrent fanout waits behind one
-    readiness probe and does not issue more requests after a failed probe.
+    filters; `issue.list` and `issue.search` share this collection scope and
+    fingerprint operation; run collections use organization plus linked Issue
+    when present. Each first 5xx records a fingerprint and permits one
+    different-surface fallback. A same-surface repeat is short-circuited without
+    spending that fallback. For collection scopes, concurrent fanout waits
+    behind one readiness probe and does not issue more requests after a failed
+    probe; a probe that remains unresolved is extended to the configured
+    backoff before another probe can start.
     After the heterogeneous fallback returns a 5xx, all matching scoped calls
     are short-circuited with `issue_transport_unavailable` until a success
     clears the state or the bounded backoff expires.
@@ -267,9 +271,9 @@ ordinary Chat replies, or non-MCP work.
 | Agent reads an Issue, compact Issue context, or Issue comments through typed MCP | The first-party MCP server dispatches the read directly so 5xx transport diagnostics remain structured and share the run budget with CLI fallback. |
 | Direct dispatch is not implemented for the capability and CLI invocation succeeds with JSON output | MCP result returns structured JSON content. |
 | Direct API dispatch, CLI invocation, or native bridge invocation fails | Tool result is marked error with a stable Rudder diagnostic code or safe error text. |
-| First scoped Issue or collection 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. For an MCP-origin item read/comment failure, `fallbackAction` includes the equivalent `rudder issue ... --json` command and preserves the Issue arguments available from the request path. |
+| First scoped Issue or collection 5xx in a Run | Return the upstream failure with an `issueTransport` diagnostic and one remaining heterogeneous fallback. For an MCP-origin item or collection failure, `fallbackAction` includes the equivalent `rudder ... --json` command and preserves the supported arguments available from the request path. |
 | Same scoped surface repeats before fallback/backoff | Return `issue_transport_unavailable` without another backend request; preserve the one different-surface fallback. Query text and other collection filters do not change the scope. |
-| Concurrent collection request arrives while the readiness probe is in flight | Wait for the bounded probe; continue only after success, and short-circuit without a backend request after probe failure. |
+| Concurrent collection request arrives while the readiness probe is in flight | Wait for the bounded probe; continue only after success, and short-circuit without a backend request after probe failure. If the probe remains unresolved at its probe deadline, atomically extend its state to the configured backoff before allowing a new probe. |
 | Different surface succeeds | Return success and clear the scoped short-circuit state immediately. |
 | Different surface returns a 5xx | Consume the fallback and return `issue_transport_unavailable`; make no additional backend call for that scoped operation until the retry time. |
 | Scoped transport budget is exhausted while local work remains possible | Agent records `Issue transport unavailable`, continues local work when safe, and does not mutate ownership, reviewer, or lifecycle as a recovery action. |

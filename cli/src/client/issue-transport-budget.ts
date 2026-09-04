@@ -36,6 +36,7 @@ interface IssueTransportState extends IssueTransportScope {
   activeReservations: string[];
   phase: IssueTransportPhase;
   initialSurface: RudderToolTransportSurface;
+  probeBackoff?: boolean;
   fallbackSurface?: RudderToolTransportSurface;
   fallbackMatchedFingerprint?: boolean;
   failure?: IssueTransportFingerprint;
@@ -106,7 +107,17 @@ export class IssueTransportBudget {
           const now = this.now();
           let state = await readState(filePath);
           if (state && state.phase !== "healthy" && state.expiresAt <= now) {
-            state = await retireExpiredState(filePath, state, now);
+            if (state.phase === "probe_in_flight" && !state.probeBackoff) {
+              state = {
+                ...state,
+                probeBackoff: true,
+                observedAt: now,
+                expiresAt: now + this.backoffMs,
+              };
+              await writeState(filePath, state);
+            } else {
+              state = await retireExpiredState(filePath, state, now);
+            }
           }
 
           if (!state || state.phase === "healthy") {
@@ -128,6 +139,7 @@ export class IssueTransportBudget {
                 activeReservations: [reservationId],
                 phase,
                 initialSurface: this.surface,
+                ...(phase === "probe_in_flight" ? { probeBackoff: false } : {}),
                 observedAt: now,
                 expiresAt: now + PROBE_TIMEOUT_MS,
               });
@@ -193,8 +205,12 @@ export class IssueTransportBudget {
               filePath,
               scope: {
                 ...scope,
-                ...(state.fallbackCommand ? { fallbackCommand: state.fallbackCommand } : {}),
-                ...(state.fallbackBodyFile ? { fallbackBodyFile: state.fallbackBodyFile } : {}),
+                ...(scope.fallbackCommand === undefined && state.fallbackCommand
+                  ? { fallbackCommand: state.fallbackCommand }
+                  : {}),
+                ...(scope.fallbackBodyFile === undefined && state.fallbackBodyFile
+                  ? { fallbackBodyFile: state.fallbackBodyFile }
+                  : {}),
               },
               surface: this.surface,
               attempt: "fallback",
@@ -323,6 +339,15 @@ export class IssueTransportBudget {
             observedAt: now,
             expiresAt: now + this.backoffMs,
           };
+        } else if (reservation.attempt === "initial" && matchesCurrentFailure) {
+          // A second initial reservation was admitted before the first one
+          // observed the failure. It must not spend the alternate-surface
+          // fallback or cancel one that is already in flight.
+          state = {
+            ...current,
+            activeReservations,
+            observedAt: now,
+          };
         } else if (matchesCurrentFailure) {
           state = {
             ...current,
@@ -361,18 +386,35 @@ export class IssueTransportBudget {
     // Issue scopes keep the legacy file key so state written by the previous
     // implementation remains visible after the scope schema expands.
     const legacyIssueKey = isLegacyIssueScope(scope) ? scope.issueId : undefined;
-    const key = [this.runId, scope.operation, legacyIssueKey ?? scope.scopeKey].join("\n");
+    const key = [this.runId, transportBudgetOperation(scope), legacyIssueKey ?? scope.scopeKey].join("\n");
     const digest = createHash("sha256").update(key).digest("hex");
     return path.join(this.stateDir, "issue-transport-budget", `${digest}.json`);
   }
 
   private async waitForProbe(filePath: string, expiresAt: number): Promise<void> {
-    const waitDeadline = Date.now() + Math.max(0, Math.min(PROBE_TIMEOUT_MS, expiresAt - this.now()));
+    const waitDeadline = Date.now() + Math.max(0, expiresAt - this.now());
     while (true) {
       const state = await readState(filePath);
       const now = this.now();
       if (!state || state.phase !== "probe_in_flight" || state.expiresAt <= now) return;
-      if (Date.now() >= waitDeadline) throw issueTransportUnavailable(state, now);
+      if (Date.now() >= waitDeadline) {
+        await this.withLock(filePath, async () => {
+          const current = await readState(filePath);
+          const lockNow = this.now();
+          if (current
+            && current.phase === "probe_in_flight"
+            && !current.probeBackoff
+            && (current.expiresAt <= lockNow || current.expiresAt === expiresAt)) {
+            await writeState(filePath, {
+              ...current,
+              probeBackoff: true,
+              observedAt: lockNow,
+              expiresAt: lockNow + this.backoffMs,
+            });
+          }
+        });
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, PROBE_POLL_MS));
     }
   }
@@ -440,6 +482,13 @@ function issueTransportScope(method: string | undefined, requestPath: string): I
     return {
       operation,
       scopeKey: `org:${orgId}|project:${projectId ?? "*"}`,
+      fallbackCommand: buildCliFallbackCommand(
+        operation,
+        undefined,
+        undefined,
+        url.searchParams,
+        { orgId },
+      ),
     };
   }
 
@@ -452,6 +501,13 @@ function issueTransportScope(method: string | undefined, requestPath: string): I
       operation: "runs.list",
       scopeKey: issueId ? `org:${orgId}|issue:${issueId}` : `org:${orgId}`,
       ...(issueId ? { issueId } : {}),
+      fallbackCommand: buildCliFallbackCommand(
+        "runs.list",
+        undefined,
+        undefined,
+        url.searchParams,
+        { orgId },
+      ),
     };
   }
 
@@ -461,7 +517,7 @@ function issueTransportScope(method: string | undefined, requestPath: string): I
 function buildFingerprint(scope: IssueTransportScope, error: ApiRequestError): IssueTransportFingerprint {
   const normalizedMessage = error.message.trim().replace(/\s+/g, " ").toLowerCase().slice(0, 256);
   const code = error.code?.trim() || "api_request_error";
-  const value = [scope.operation, scope.scopeKey, error.status, code, normalizedMessage].join("\n");
+  const value = [transportBudgetOperation(scope), scope.scopeKey, error.status, code, normalizedMessage].join("\n");
   return {
     fingerprint: createHash("sha256").update(value).digest("hex"),
     status: error.status,
@@ -543,7 +599,7 @@ function transportDiagnostic(
   return {
     state: state.phase,
     fingerprint: state.failure?.fingerprint ?? null,
-    operation: state.operation,
+    operation: requestScope.operation,
     scopeKey: state.scopeKey,
     issueId: state.issueId ?? null,
     upstreamStatus: state.failure?.status ?? null,
@@ -577,7 +633,7 @@ function issueTransportFallbackAction(
   }
   return {
     surface: "mcp",
-    tool: mcpToolNameForOperation(state.operation),
+    tool: mcpToolNameForOperation(requestScope.operation),
   };
 }
 
@@ -595,12 +651,12 @@ function mcpToolNameForOperation(operation: string): string {
 
 function buildCliFallbackCommand(
   operation: string,
-  issueId: string,
+  issueId: string | undefined,
   commentId: string | undefined,
   query: URLSearchParams,
-  options: { bodyFile?: string; reopen?: boolean } = {},
+  options: { bodyFile?: string; orgId?: string; reopen?: boolean } = {},
 ): string {
-  const issue = shellQuote(issueId);
+  const issue = shellQuote(issueId ?? "<issue-id>");
   switch (operation) {
     case "issue.get":
       return `rudder issue get ${issue} --json`;
@@ -623,6 +679,44 @@ function buildCliFallbackCommand(
       if (options.reopen) command.push("--reopen");
       command.push("--json");
       return command.join(" ");
+    }
+    case "issue.list": {
+      if (!options.orgId) return "";
+      const command = ["rudder issue list"];
+      appendCliOption(command, "--org-id", options.orgId);
+      appendCliOption(command, "--status", query.get("status"));
+      appendCliOption(command, "--assignee-agent-id", query.get("assigneeAgentId"));
+      appendCliOption(command, "--project-id", query.get("projectId"));
+      return `${command.join(" ")} --json`;
+    }
+    case "issue.search": {
+      if (!options.orgId) return "";
+      const searchQuery = normalizeScopeValue(query.get("q"));
+      if (!searchQuery) return "";
+      const command = ["rudder issue search", shellQuote(searchQuery)];
+      appendCliOption(command, "--org-id", options.orgId);
+      appendCliOption(command, "--status", query.get("status"));
+      appendCliOption(command, "--assignee-agent-id", query.get("assigneeAgentId"));
+      appendCliOption(command, "--project-id", query.get("projectId"));
+      return `${command.join(" ")} --json`;
+    }
+    case "runs.list": {
+      if (!options.orgId) return "";
+      const command = ["rudder runs list"];
+      appendCliOption(command, "--org-id", options.orgId);
+      if (query.get("projection") === "full") command.push("--full");
+      appendCliOption(command, "--updated-after", query.get("updatedAfter"));
+      appendCliOption(command, "--run-id-prefix", query.get("runIdPrefix"));
+      appendCliOption(command, "--agent-id", query.get("agentId"));
+      appendCliOption(command, "--status", query.get("status"));
+      appendCliOption(command, "--runtime", query.get("runtime"));
+      appendCliOption(command, "--issue-id", query.get("issueId"));
+      appendCliOption(command, "--used-skill", query.get("usedSkill"));
+      appendCliOption(command, "--loaded-skill", query.get("loadedSkill"));
+      appendCliOption(command, "--created-before", query.get("createdBefore"));
+      appendCliOption(command, "--cursor", query.get("cursor"));
+      appendCliOption(command, "--limit", query.get("limit"));
+      return `${command.join(" ")} --json`;
     }
     default:
       return `rudder issue ${shellQuote(operation)} ${issue} --json`;
@@ -686,13 +780,19 @@ function normalizeIssueTransportState(value: unknown): IssueTransportState | nul
     )
       ? value.activeReservations as string[]
       : null;
+  const probeBackoff = value.probeBackoff === undefined
+    ? false
+    : typeof value.probeBackoff === "boolean"
+      ? value.probeBackoff
+      : null;
   if (!operation || !scopeKey
     || !["request_in_flight", "fallback_available", "fallback_in_flight", "probe_in_flight", "blocked", "healthy"].includes(String(phase))
     || !initialSurface
     || observedAt === null
     || expiresAt === null
     || generation === null
-    || activeReservations === null) {
+    || activeReservations === null
+    || probeBackoff === null) {
     return null;
   }
   const fallbackCommand = value.fallbackCommand === undefined
@@ -706,6 +806,7 @@ function normalizeIssueTransportState(value: unknown): IssueTransportState | nul
       ? value.fallbackBodyFile
       : null;
   if (fallbackCommand === null || fallbackBodyFile === null) return null;
+  const hasCommentFallbackBody = operation !== "issue.comment" || fallbackBodyFile !== undefined;
   const failure = normalizeFingerprint(value.failure);
   if (value.failure !== undefined && !failure) return null;
   if (["fallback_available", "fallback_in_flight", "blocked"].includes(String(phase)) && !failure) {
@@ -715,12 +816,13 @@ function normalizeIssueTransportState(value: unknown): IssueTransportState | nul
     operation,
     scopeKey,
     ...(issueId ? { issueId } : {}),
-    ...(fallbackCommand ? { fallbackCommand } : {}),
+    ...(fallbackCommand && hasCommentFallbackBody ? { fallbackCommand } : {}),
     ...(fallbackBodyFile ? { fallbackBodyFile } : {}),
     generation,
     activeReservations,
     phase: phase as IssueTransportPhase,
     initialSurface,
+    probeBackoff,
     ...(value.fallbackSurface === "cli" || value.fallbackSurface === "mcp"
       ? { fallbackSurface: value.fallbackSurface }
       : {}),
@@ -864,6 +966,12 @@ function normalizeFingerprint(value: unknown): IssueTransportFingerprint | undef
 
 function shouldGateConcurrent(scope: IssueTransportScope): boolean {
   return scope.operation === "issue.list" || scope.operation === "issue.search" || scope.operation === "runs.list";
+}
+
+function transportBudgetOperation(scope: IssueTransportScope): string {
+  return scope.operation === "issue.list" || scope.operation === "issue.search"
+    ? "issue.collection"
+    : scope.operation;
 }
 
 function isLegacyIssueScope(scope: IssueTransportScope): scope is IssueTransportScope & { issueId: string } {

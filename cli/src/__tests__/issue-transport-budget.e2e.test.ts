@@ -145,6 +145,10 @@ describe("Issue transport fallback budget CLI workflow", () => {
             scopeKey: "org:org_e2e",
             initialSurface: "mcp",
             fallbackBudgetRemaining: 1,
+            fallbackAction: {
+              surface: "cli",
+              command: "rudder runs list --org-id org_e2e --agent-id agent-e2e --limit 20 --json",
+            },
           },
         },
       });

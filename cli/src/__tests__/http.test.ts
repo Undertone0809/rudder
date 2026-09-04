@@ -108,7 +108,7 @@ describe("RudderApiClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("uses two concurrent matching 5xx responses as the complete backend budget", async () => {
+  it("preserves the heterogeneous fallback after concurrent matching initial 5xx responses", async () => {
     const stateDir = await transportStateDir();
     let started = 0;
     let releaseFailures: (() => void) | undefined;
@@ -135,13 +135,20 @@ describe("RudderApiClient", () => {
     await bothStarted;
     releaseFailures?.();
     const errors = await Promise.all([first, second]);
-    expect(errors.some((error) => error.code === "issue_transport_unavailable")).toBe(true);
+    expect(errors).toHaveLength(2);
+    expect(errors.every((error) => error.status === 500 && error.code === null)).toBe(true);
     await expect(cli.get("/api/issues/iss-1/comments")).rejects.toMatchObject({
-      status: 503,
+      status: 500,
       code: "issue_transport_unavailable",
-      details: { issueTransport: { state: "blocked", fallbackBudgetRemaining: 0 } },
+      details: {
+        issueTransport: {
+          state: "blocked",
+          fallbackBudgetRemaining: 0,
+          fallbackMatchedFingerprint: true,
+        },
+      },
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("returns null on ignoreNotFound", async () => {
@@ -428,12 +435,40 @@ describe("RudderApiClient", () => {
           issueId: null,
           initialSurface: "mcp",
           fallbackBudgetRemaining: 1,
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue list --org-id org-1 --status todo --project-id project-1 --json",
+          },
         },
       },
     });
-    await expect(cli.get("/api/orgs/org-1/issues?projectId=project-1&status=in_progress")).rejects.toMatchObject({
+    const sharedSearch = await captureApiError(
+      mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=first-search&status=done"),
+    );
+    expect(sharedSearch).toMatchObject({
+      status: 503,
       code: "issue_transport_unavailable",
-      details: { issueTransport: { scopeKey: "org:org-1|project:project-1" } },
+      details: {
+        issueTransport: {
+          operation: "issue.search",
+          scopeKey: "org:org-1|project:project-1",
+          fallbackBudgetRemaining: 1,
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue search first-search --org-id org-1 --status done --project-id project-1 --json",
+          },
+        },
+      },
+    });
+    await expect(cli.get("/api/orgs/org-1/issues?projectId=project-1&q=different-search&status=in_progress")).rejects.toMatchObject({
+      code: "issue_transport_unavailable",
+      details: {
+        issueTransport: {
+          operation: "issue.search",
+          scopeKey: "org:org-1|project:project-1",
+          fallbackMatchedFingerprint: true,
+        },
+      },
     });
     await expect(mcp.get("/api/orgs/org-1/issues?projectId=project-1&status=done")).rejects.toMatchObject({
       status: 503,
@@ -441,30 +476,35 @@ describe("RudderApiClient", () => {
     });
 
     const firstSearch = await captureApiError(
-      mcp.get("/api/orgs/org-1/issues?projectId=project-1&q=first-search"),
+      mcp.get("/api/orgs/org-1/issues?projectId=project-2&q=first-search&assigneeAgentId=agent-1"),
     );
     expect(firstSearch).toMatchObject({
       details: {
         issueTransport: {
           operation: "issue.search",
-          scopeKey: "org:org-1|project:project-1",
+          scopeKey: "org:org-1|project:project-2",
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder issue search first-search --org-id org-1 --assignee-agent-id agent-1 --project-id project-2 --json",
+          },
         },
       },
     });
-    await expect(cli.get("/api/orgs/org-1/issues?projectId=project-1&q=different-search")).rejects.toMatchObject({
+    await expect(cli.get("/api/orgs/org-1/issues?projectId=project-2&q=different-search&assigneeAgentId=agent-2")).rejects.toMatchObject({
       code: "issue_transport_unavailable",
-      details: { issueTransport: { scopeKey: "org:org-1|project:project-1" } },
+      details: { issueTransport: { scopeKey: "org:org-1|project:project-2" } },
     });
 
     await expect(mcp.get("/api/orgs/org-1/issues?projectId=project-2&q=different-search")).rejects.toMatchObject({
-      status: 500,
+      status: 503,
+      code: "issue_transport_unavailable",
       details: { issueTransport: { scopeKey: "org:org-1|project:project-2" } },
     });
     await expect(mcp.get("/api/orgs/org-2/issues?projectId=project-1&q=different-search")).rejects.toMatchObject({
       status: 500,
       details: { issueTransport: { scopeKey: "org:org-2|project:project-1" } },
     });
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("scopes runs list budgets by organization or linked Issue, ignoring list filters", async () => {
@@ -489,6 +529,10 @@ describe("RudderApiClient", () => {
           operation: "runs.list",
           scopeKey: "org:org-1",
           issueId: null,
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder runs list --org-id org-1 --agent-id rowan --limit 50 --json",
+          },
         },
       },
     });
@@ -509,6 +553,10 @@ describe("RudderApiClient", () => {
         issueTransport: {
           scopeKey: "org:org-1|issue:issue-1",
           issueId: "issue-1",
+          fallbackAction: {
+            surface: "cli",
+            command: "rudder runs list --org-id org-1 --agent-id rowan --issue-id issue-1 --limit 50 --json",
+          },
         },
       },
     });
@@ -557,6 +605,56 @@ describe("RudderApiClient", () => {
       code: "issue_transport_unavailable",
       details: { issueTransport: { state: "fallback_available" } },
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("extends an unresolved collection probe to the backoff before retrying", async () => {
+    const stateDir = await transportStateDir();
+    const runId = "run-collection-probe-timeout";
+    const scopeKey = "org:org-1|project:project-1";
+    const stateFile = path.join(
+      stateDir,
+      "issue-transport-budget",
+      `${createHash("sha256").update([runId, "issue.collection", scopeKey].join("\n")).digest("hex")}.json`,
+    );
+    const startedAt = Date.now();
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(stateFile, `${JSON.stringify({
+      operation: "issue.list",
+      scopeKey,
+      phase: "probe_in_flight",
+      initialSurface: "mcp",
+      probeBackoff: false,
+      generation: 1,
+      activeReservations: ["probe-owner"],
+      observedAt: startedAt,
+      expiresAt: startedAt + 20,
+    })}\n`);
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId,
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+      transportBackoffMs: 150,
+    });
+
+    const request = client.get("/api/orgs/org-1/issues?projectId=project-1&q=probe");
+    await new Promise((resolve) => setTimeout(resolve, 45));
+    expect(fetchMock).not.toHaveBeenCalled();
+    const extended = JSON.parse(await fs.readFile(stateFile, "utf8")) as {
+      phase: string;
+      probeBackoff: boolean;
+      expiresAt: number;
+    };
+    expect(extended).toMatchObject({ phase: "probe_in_flight", probeBackoff: true });
+    expect(extended.expiresAt).toBeGreaterThan(startedAt + 100);
+
+    await expect(request).resolves.toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -643,6 +741,59 @@ describe("RudderApiClient", () => {
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose legacy comment fallback guidance without a preserved body", async () => {
+    const stateDir = await transportStateDir();
+    const runId = "run-legacy-comment-state";
+    const issueId = "iss-legacy-comment";
+    const normalizedMessage = "internal server error";
+    const legacyFingerprint = createHash("sha256")
+      .update(["issue.comment", issueId, 500, "api_request_error", normalizedMessage].join("\n"))
+      .digest("hex");
+    const stateFile = path.join(
+      stateDir,
+      "issue-transport-budget",
+      `${createHash("sha256").update([runId, "issue.comment", issueId].join("\n")).digest("hex")}.json`,
+    );
+    await fs.mkdir(path.dirname(stateFile), { recursive: true });
+    await fs.writeFile(stateFile, `${JSON.stringify({
+      operation: "issue.comment",
+      issueId,
+      phase: "fallback_available",
+      initialSurface: "mcp",
+      fallbackCommand: "rudder issue comment iss-legacy-comment --body-file ./issue-comment.md --json",
+      failure: {
+        fingerprint: legacyFingerprint,
+        status: 500,
+        code: "api_request_error",
+        normalizedMessage,
+      },
+      observedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    })}\n`);
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mcp = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      runId,
+      transportSurface: "mcp",
+      transportStateDir: stateDir,
+    });
+
+    await expect(mcp.post(`/api/issues/${issueId}/comments`, { body: "new body" })).rejects.toMatchObject({
+      status: 503,
+      code: "issue_transport_unavailable",
+      message: "Issue transport unavailable",
+      details: {
+        issueTransport: {
+          fallbackAction: null,
+          fallbackBudgetRemaining: 1,
+        },
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fails closed when the budget lock cannot be acquired", async () => {
