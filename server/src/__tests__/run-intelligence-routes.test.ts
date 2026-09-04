@@ -275,7 +275,7 @@ describe("run intelligence routes", () => {
     expect(res.body.page).toEqual({ offset: 100, limitBytes: 12, endOffset: 112, eof: false, nextOffset: 112 });
     expect(mockGetObservedRunLog).toHaveBeenCalledWith(expect.anything(), "run-1", {
       orgIds: ["org-1"],
-    }, { offset: 100, limitBytes: 12 });
+    }, { offset: 100, limitBytes: 12, signal: expect.any(AbortSignal) });
   });
 
   it("enforces org access on bounded evidence", async () => {

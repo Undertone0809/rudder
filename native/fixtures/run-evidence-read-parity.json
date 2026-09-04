@@ -1,0 +1,12 @@
+{
+  "contract": "RUN.RESULT.001",
+  "surface": "runs.log",
+  "source": "Aé🙂Z",
+  "cases": [
+    { "offset": 0, "limitBytes": 4, "content": "Aé", "endOffset": 3, "eof": false, "nextOffset": 3 },
+    { "offset": 3, "limitBytes": 4, "content": "🙂", "endOffset": 7, "eof": false, "nextOffset": 7 },
+    { "offset": 4, "limitBytes": 4, "content": "Z", "endOffset": 8, "eof": true, "nextOffset": null },
+    { "offset": 8, "limitBytes": 4, "content": "", "endOffset": 8, "eof": true, "nextOffset": null },
+    { "offset": 99, "limitBytes": 4, "content": "", "endOffset": 8, "eof": true, "nextOffset": null }
+  ]
+}

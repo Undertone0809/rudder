@@ -2678,7 +2678,7 @@ export function heartbeatService(
         .where(and(eq(heartbeatRunEvents.runId, runId), gt(heartbeatRunEvents.seq, afterSeq), ne(heartbeatRunEvents.eventType, ISSUE_EXECUTION_RELEASED_EVENT_TYPE)))
         .orderBy(asc(heartbeatRunEvents.seq))
         .limit(Math.max(1, Math.min(limit, 1000))),
-    readLog: async (runId: string, opts?: { offset?: number; limitBytes?: number }) => {
+    readLog: async (runId: string, opts?: { offset?: number; limitBytes?: number; signal?: AbortSignal }) => {
       const run = await db
         .select({
           id: heartbeatRuns.id,
