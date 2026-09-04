@@ -1,7 +1,9 @@
 use rudder_archive_core::{
     ArchiveLimits, CREATE_PROTOCOL_VERSION, create_archive, extract_file, inspect_manifest,
 };
-use rudder_run_evidence_core::{INDEX_PROTOCOL_VERSION, IndexLimits, index_run_log};
+use rudder_run_evidence_core::{
+    INDEX_PROTOCOL_VERSION, IndexLimits, index_run_log, read_run_log_range,
+};
 use rudder_runtime_payload_core::{
     ArchiveFormat, ExtractLimits, PAYLOAD_PROTOCOL_VERSION, extract_payload, probe_version,
     publish_payload, verify_payload,
@@ -20,6 +22,7 @@ const CAPABILITIES: &[&str] = &[
     "archive.inspectManifest",
     "archive.extractFile",
     "evidence.index",
+    "evidence.read",
     "workspace.watch",
     "payload.verify",
     "payload.extract",
@@ -75,6 +78,7 @@ fn capability_for_args(namespace: Option<&str>, operation: Option<&str>) -> Opti
         (Some("archive"), Some("inspect-manifest")) => Some("archive.inspectManifest"),
         (Some("archive"), Some("extract-file")) => Some("archive.extractFile"),
         (Some("evidence"), Some("index")) => Some("evidence.index"),
+        (Some("evidence"), Some("read")) => Some("evidence.read"),
         (Some("workspace"), Some("watch")) => Some("workspace.watch"),
         (Some("payload"), Some("verify")) => Some("payload.verify"),
         (Some("payload"), Some("extract")) => Some("payload.extract"),
@@ -305,6 +309,27 @@ fn run() -> Result<serde_json::Value, NativeFailure> {
                 "sourceSha256": result.source_sha256,
                 "indexPath": result.index_path,
             }))
+        }
+        (Some("evidence"), Some("read")) => {
+            let input = absolute(required(&mut args, "input_required")?)?;
+            let offset = nonnegative_number(required(&mut args, "offset_required")?)?;
+            let limit_bytes = number(required(&mut args, "limit_bytes_required")?)?;
+            if args.next().is_some() {
+                return Err("usage".into());
+            }
+            let result =
+                read_run_log_range(&input, offset, limit_bytes).map_err(|error| NativeFailure {
+                    code: error.code(),
+                    accepted: false,
+                })?;
+            let mut response = response_metadata(INDEX_PROTOCOL_VERSION, "evidence.read");
+            response["ok"] = json!(true);
+            response["operation"] = json!("readEvidence");
+            response["content"] = json!(result.content);
+            response["endOffset"] = json!(result.end_offset);
+            response["eof"] = json!(result.eof);
+            response["nextOffset"] = json!(result.next_offset);
+            Ok(response)
         }
         (Some("payload"), Some("capabilities")) => {
             if args.next().is_some() {

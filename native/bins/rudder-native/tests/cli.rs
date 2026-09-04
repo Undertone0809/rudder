@@ -135,6 +135,7 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "archive.inspectManifest",
             "archive.extractFile",
             "evidence.index",
+            "evidence.read",
             "workspace.watch",
             "payload.verify",
             "payload.extract",
@@ -260,6 +261,40 @@ fn indexes_run_evidence_without_materializing_the_source() {
     assert_eq!(lines.lines().count(), 2);
     assert!(lines.contains("\"sourceOffset\":0"));
     assert!(lines.contains("\"stream\":\"stderr\""));
+}
+
+#[test]
+fn reads_bounded_run_evidence_from_shared_fixture() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/run-evidence-read-parity.json"
+    ))
+    .unwrap();
+    let root = tempdir().unwrap();
+    let input = root.path().join("run.log");
+    fs::write(&input, fixture["source"].as_str().unwrap()).unwrap();
+
+    for case in fixture["cases"].as_array().unwrap() {
+        let (code, result, stderr) = run(&[
+            "evidence",
+            "read",
+            input.to_str().unwrap(),
+            &case["offset"].to_string(),
+            &case["limitBytes"].to_string(),
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(result["capability"], "evidence.read");
+        assert_eq!(result["operation"], "readEvidence");
+        assert_eq!(result["content"], case["content"]);
+        assert_eq!(result["endOffset"], case["endOffset"]);
+        assert_eq!(result["eof"], case["eof"]);
+        assert_eq!(result["nextOffset"], case["nextOffset"]);
+        assert!(
+            result["target"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert_eq!(result["binaryVersion"], env!("CARGO_PKG_VERSION"));
+    }
 }
 
 #[test]

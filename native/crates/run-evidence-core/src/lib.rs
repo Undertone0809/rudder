@@ -3,11 +3,12 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const INDEX_PROTOCOL_VERSION: u32 = 1;
+pub const MAX_READ_BYTES: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndexLimits {
@@ -42,6 +43,110 @@ pub struct IndexSummary {
     pub record_count: u64,
     pub source_sha256: String,
     pub index_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceReadPage {
+    pub content: String,
+    pub end_offset: u64,
+    pub eof: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<u64>,
+}
+
+#[derive(Debug)]
+pub struct ReadError {
+    code: &'static str,
+    source: Option<io::Error>,
+}
+
+impl ReadError {
+    fn new(code: &'static str) -> Self {
+        Self { code, source: None }
+    }
+
+    fn io(code: &'static str, source: io::Error) -> Self {
+        Self {
+            code,
+            source: Some(source),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.code)
+    }
+}
+
+impl std::error::Error for ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|error| error as _)
+    }
+}
+
+/// Read one bounded UTF-8 byte range without splitting a code point.
+pub fn read_run_log_range(
+    input: &Path,
+    offset: u64,
+    limit_bytes: u64,
+) -> Result<EvidenceReadPage, ReadError> {
+    if limit_bytes == 0 || limit_bytes > MAX_READ_BYTES {
+        return Err(ReadError::new("evidence_read_limit_invalid"));
+    }
+    let metadata = fs::symlink_metadata(input)
+        .map_err(|error| ReadError::io("evidence_read_not_found", error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(ReadError::new("evidence_read_input_invalid"));
+    }
+    let file_size = metadata.len();
+    let start = offset.min(file_size);
+    if start >= file_size {
+        return Ok(EvidenceReadPage {
+            content: String::new(),
+            end_offset: start,
+            eof: true,
+            next_offset: None,
+        });
+    }
+
+    let read_len = limit_bytes.max(4).min(file_size - start);
+    let mut file =
+        File::open(input).map_err(|error| ReadError::io("evidence_read_failed", error))?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| ReadError::io("evidence_read_failed", error))?;
+    let mut bytes = vec![0; read_len as usize];
+    file.read_exact(&mut bytes)
+        .map_err(|error| ReadError::io("evidence_read_failed", error))?;
+
+    let leading = bytes
+        .iter()
+        .take_while(|byte| (**byte & 0xc0) == 0x80)
+        .count();
+    let decodable = &bytes[leading..];
+    let mut decoded = None;
+    for trim in 0..=3.min(decodable.len()) {
+        let candidate = &decodable[..decodable.len() - trim];
+        if let Ok(content) = std::str::from_utf8(candidate) {
+            decoded = Some((content.to_owned(), candidate.len()));
+            break;
+        }
+    }
+    let (content, decoded_bytes) =
+        decoded.ok_or_else(|| ReadError::new("evidence_read_invalid_utf8"))?;
+    let end_offset = start + leading as u64 + decoded_bytes as u64;
+    let eof = end_offset >= file_size;
+    Ok(EvidenceReadPage {
+        content,
+        end_offset,
+        eof,
+        next_offset: (!eof).then_some(end_offset),
+    })
 }
 
 #[derive(Debug)]
@@ -214,12 +319,95 @@ fn validate_record(record: &RunLogRecord) -> Result<(), IndexError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use tempfile::tempdir;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReadFixture {
+        source: String,
+        cases: Vec<ReadFixtureCase>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReadFixtureCase {
+        offset: u64,
+        limit_bytes: u64,
+        content: String,
+        end_offset: u64,
+        eof: bool,
+        next_offset: Option<u64>,
+    }
 
     fn limits() -> IndexLimits {
         IndexLimits {
             max_record_bytes: 1024,
             max_records: 10,
+        }
+    }
+
+    #[test]
+    fn reads_shared_utf8_byte_range_fixture() {
+        let fixture: ReadFixture = serde_json::from_str(include_str!(
+            "../../../fixtures/run-evidence-read-parity.json"
+        ))
+        .unwrap();
+        let root = tempdir().unwrap();
+        let input = root.path().join("run.log");
+        std::fs::write(&input, fixture.source).unwrap();
+
+        for case in fixture.cases {
+            assert_eq!(
+                read_run_log_range(&input, case.offset, case.limit_bytes).unwrap(),
+                EvidenceReadPage {
+                    content: case.content,
+                    end_offset: case.end_offset,
+                    eof: case.eof,
+                    next_offset: case.next_offset,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_inputs_limits_and_invalid_utf8() {
+        let root = tempdir().unwrap();
+        let input = root.path().join("run.log");
+        std::fs::write(&input, [0xff, 0xfe, 0xfd, 0xfc]).unwrap();
+        assert_eq!(
+            read_run_log_range(&input, 0, 4).unwrap_err().code(),
+            "evidence_read_invalid_utf8"
+        );
+        assert_eq!(
+            read_run_log_range(&input, 0, 0).unwrap_err().code(),
+            "evidence_read_limit_invalid"
+        );
+        assert_eq!(
+            read_run_log_range(&input, 0, MAX_READ_BYTES + 1)
+                .unwrap_err()
+                .code(),
+            "evidence_read_limit_invalid"
+        );
+        assert_eq!(
+            read_run_log_range(root.path(), 0, 4).unwrap_err().code(),
+            "evidence_read_input_invalid"
+        );
+        assert_eq!(
+            read_run_log_range(&root.path().join("missing.log"), 0, 4)
+                .unwrap_err()
+                .code(),
+            "evidence_read_not_found"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&input, root.path().join("run-link.log")).unwrap();
+            assert_eq!(
+                read_run_log_range(&root.path().join("run-link.log"), 0, 4)
+                    .unwrap_err()
+                    .code(),
+                "evidence_read_input_invalid"
+            );
         }
     }
 

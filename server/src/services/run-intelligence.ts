@@ -945,7 +945,7 @@ export async function getObservedRunLog(
   db: Db,
   runId: string,
   scope: RunIdResolutionScope = {},
-  input: { offset?: number; limitBytes?: number } = {},
+  input: { offset?: number; limitBytes?: number; signal?: AbortSignal } = {},
 ) {
   const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
   const orgId = await loadRunOrgId(db, resolvedRunId);
@@ -954,7 +954,7 @@ export async function getObservedRunLog(
   const heartbeat = heartbeatService(db);
   const offset = Math.max(0, Math.floor(input.offset ?? 0));
   const limitBytes = Math.max(4, Math.min(1_000_000, Math.floor(input.limitBytes ?? 256_000)));
-  const result = await heartbeat.readLog(resolvedRunId, { offset, limitBytes });
+  const result = await heartbeat.readLog(resolvedRunId, { offset, limitBytes, signal: input.signal });
   return {
     orgId,
     response: {

@@ -335,9 +335,17 @@ export function runIntelligenceRoutes(db: Db) {
   router.get("/run-intelligence/runs/:runId/log", async (req, res) => {
     const runId = req.params.runId as string;
     const scope = { orgIds: getAuthorizedOrgScope(req) };
+    const cancellation = new AbortController();
+    const abort = () => cancellation.abort();
+    req.once("aborted", abort);
+    res.once("close", abort);
     const result = await getObservedRunLog(db, runId, scope, {
       offset: asNonNegativeInteger(req.query.offset, 0),
       limitBytes: Math.max(4, asPositiveInteger(req.query.limitBytes, 256_000, 500_000)),
+      signal: cancellation.signal,
+    }).finally(() => {
+      req.removeListener("aborted", abort);
+      res.removeListener("close", abort);
     });
     assertCompanyAccess(req, result.orgId);
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");

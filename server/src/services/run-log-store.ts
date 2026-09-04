@@ -22,6 +22,7 @@ export interface RunLogHandle {
 export interface RunLogReadOptions {
   offset?: number;
   limitBytes?: number;
+  signal?: AbortSignal;
 }
 
 export interface RunLogReadResult {
@@ -74,7 +75,9 @@ function resolveWithin(basePath: string, relativePath: string) {
 
 const NATIVE_EVIDENCE_PROTOCOL_VERSION = 1;
 const NATIVE_EVIDENCE_OUTPUT_LIMIT_BYTES = 256 * 1024;
+const NATIVE_EVIDENCE_READ_OUTPUT_LIMIT_BYTES = 2_100_000;
 const NATIVE_EVIDENCE_TIMEOUT_MS = 30_000;
+const NATIVE_EVIDENCE_MAX_READ_BYTES = 1_000_000;
 const NATIVE_EVIDENCE_MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const NATIVE_EVIDENCE_MAX_RECORDS = 10_000_000;
 
@@ -86,6 +89,11 @@ type NativeEvidenceIndexResponse = {
   recordCount?: unknown;
   sourceSha256?: unknown;
   indexPath?: unknown;
+  capability?: unknown;
+  content?: unknown;
+  endOffset?: unknown;
+  eof?: unknown;
+  nextOffset?: unknown;
   errorCode?: unknown;
   target?: unknown;
   binaryVersion?: unknown;
@@ -143,6 +151,11 @@ function boundedNativeReason(value: unknown) {
   return text.slice(0, 180) || "unknown";
 }
 
+function nativeEvidenceReadTimeoutMs() {
+  const configured = Number(process.env.RUDDER_NATIVE_EVIDENCE_READ_TIMEOUT_MS ?? NATIVE_EVIDENCE_TIMEOUT_MS);
+  return Number.isFinite(configured) ? Math.max(10, Math.min(NATIVE_EVIDENCE_TIMEOUT_MS, Math.floor(configured))) : NATIVE_EVIDENCE_TIMEOUT_MS;
+}
+
 async function runNativeEvidenceIndex(binary: string, inputPath: string, outputPath: string): Promise<NativeEvidenceIndexResponse> {
   let result: { stdout: string; stderr: string };
   try {
@@ -178,6 +191,92 @@ async function runNativeEvidenceIndex(binary: string, inputPath: string, outputP
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("native index response envelope is invalid");
   return parsed as NativeEvidenceIndexResponse;
+}
+
+async function runNativeEvidenceRead(
+  binary: string,
+  inputPath: string,
+  offset: number,
+  limitBytes: number,
+  signal?: AbortSignal,
+): Promise<RunLogReadResult> {
+  let result: { stdout: string; stderr: string };
+  try {
+    const command = resolveNativeCommand(binary, [
+      "evidence",
+      "read",
+      inputPath,
+      String(offset),
+      String(limitBytes),
+    ]);
+    result = await execFileAsync(command.command, command.args, {
+      encoding: "utf8",
+      timeout: nativeEvidenceReadTimeoutMs(),
+      maxBuffer: NATIVE_EVIDENCE_READ_OUTPUT_LIMIT_BYTES,
+      windowsHide: true,
+      signal,
+    });
+  } catch (error) {
+    const details = error as { stdout?: unknown; stderr?: unknown; code?: unknown; killed?: unknown; signal?: unknown };
+    if (signal?.aborted) throw new Error("native evidence read cancelled");
+    const receipt = parseNativeEvidenceFailureReceipt(details.stdout);
+    if (receipt === "evidence_read_not_found") throw notFound("Run log not found");
+    if (receipt) throw new Error(receipt);
+    throw new Error(boundedNativeReason(
+      details.stderr
+      || (details.killed || details.signal === "SIGTERM" || details.code === "ETIMEDOUT" ? "native read timeout" : details.code ?? "native read failed"),
+    ));
+  }
+  if (result.stderr.trim()) throw new Error(boundedNativeReason(result.stderr));
+  const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length !== 1) throw new Error(`native read response line count ${lines.length}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lines[0]!);
+  } catch {
+    throw new Error("native read response is not JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("native read response envelope is invalid");
+  }
+  const response = parsed as NativeEvidenceIndexResponse;
+  const clampedPastEof = response.eof === true && response.content === ""
+    && Number.isSafeInteger(response.endOffset) && Number(response.endOffset) < offset
+    && response.nextOffset == null;
+  if (response.ok !== true || response.operation !== "readEvidence"
+    || response.capability !== "evidence.read" || response.protocolVersion !== NATIVE_EVIDENCE_PROTOCOL_VERSION
+    || typeof response.content !== "string" || !Number.isSafeInteger(response.endOffset)
+    || (!clampedPastEof && Number(response.endOffset) < offset)
+    || Number(response.endOffset) > offset + Math.max(4, limitBytes)
+    || typeof response.eof !== "boolean"
+    || (!response.eof && (!Number.isSafeInteger(response.nextOffset) || response.nextOffset !== response.endOffset))
+    || (response.eof && response.nextOffset != null)) {
+    throw new Error("native evidence read envelope mismatch");
+  }
+  const contentBytes = Buffer.byteLength(response.content, "utf8");
+  const consumedBytes = clampedPastEof ? 0 : Number(response.endOffset) - offset;
+  if (contentBytes > consumedBytes || consumedBytes - contentBytes > 3) {
+    throw new Error("native evidence read byte accounting mismatch");
+  }
+  return {
+    content: response.content,
+    endOffset: Number(response.endOffset),
+    eof: response.eof,
+    ...(response.eof ? {} : { nextOffset: Number(response.nextOffset) }),
+  };
+}
+
+function parseNativeEvidenceFailureReceipt(value: unknown) {
+  const text = typeof value === "string" ? value : Buffer.isBuffer(value) ? value.toString("utf8") : "";
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length !== 1) return null;
+  try {
+    const parsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+    return parsed.ok === false && parsed.capability === "evidence.read"
+      && typeof parsed.errorCode === "string" ? parsed.errorCode : null;
+  } catch {
+    return null;
+  }
 }
 
 async function validateEvidenceSidecar(indexPath: string, metadataPath: string, sourcePath: string, expected: {
@@ -318,7 +417,13 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
     await fs.mkdir(dir, { recursive: true });
   }
 
-  async function readFileRange(filePath: string, offset: number, limitBytes: number): Promise<RunLogReadResult> {
+  async function readFileRange(
+    filePath: string,
+    offset: number,
+    limitBytes: number,
+    signal?: AbortSignal,
+  ): Promise<RunLogReadResult> {
+    if (signal?.aborted) throw new Error("run log read cancelled");
     const stat = await fs.stat(filePath).catch(() => null);
     if (!stat) throw notFound("Run log not found");
 
@@ -339,11 +444,19 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
     const chunks: Buffer[] = [];
     await new Promise<void>((resolve, reject) => {
       const stream = createReadStream(filePath, { start, end });
+      const abort = () => stream.destroy(new Error("run log read cancelled"));
+      signal?.addEventListener("abort", abort, { once: true });
       stream.on("data", (chunk) => {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
-      stream.on("error", reject);
-      stream.on("end", () => resolve());
+      stream.on("error", (error) => {
+        signal?.removeEventListener("abort", abort);
+        reject(error);
+      });
+      stream.on("end", () => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      });
     });
 
     const bytes = Buffer.concat(chunks);
@@ -460,7 +573,28 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
       const absPath = resolveWithin(basePath, handle.logRef);
       const offset = opts?.offset ?? 0;
       const limitBytes = opts?.limitBytes ?? 256_000;
-      return readFileRange(absPath, offset, limitBytes);
+      const policy = resolveRudderNativeCapability({
+        capability: "run-evidence",
+        env: process.env,
+        legacyToggleEnvs: ["RUDDER_NATIVE_RUN_EVIDENCE_INDEX"],
+      });
+      // Larger internal readers are outside the bounded runs.log surface and
+      // retain Node authority until they adopt explicit paging.
+      if (policy.enabled && limitBytes <= NATIVE_EVIDENCE_MAX_READ_BYTES) {
+        try {
+          return await runNativeEvidenceRead(
+            resolveNativeEvidenceIndexBinary(),
+            absPath,
+            offset,
+            Math.max(4, limitBytes),
+            opts?.signal,
+          );
+        } catch (error) {
+          if (opts?.signal?.aborted) throw error;
+          if (!policy.fallbackAllowed) throw error;
+        }
+      }
+      return readFileRange(absPath, offset, limitBytes, opts?.signal);
     },
   };
 }
