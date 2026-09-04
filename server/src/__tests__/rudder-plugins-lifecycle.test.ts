@@ -242,7 +242,7 @@ describe("Rudder Plugin V1 lifecycle", () => {
         orgId: org.id,
         sourceType: "local_upload",
         sourceLabel: "Archive upload",
-        status: "review_required",
+        status: "preview",
       });
       expect(report.components).toEqual(expect.arrayContaining([
         expect.objectContaining({ key: "skill:research", status: "ready" }),
