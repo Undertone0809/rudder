@@ -102,6 +102,120 @@ describe("Issue transport fallback budget CLI workflow", () => {
       });
     }
   }, 20_000);
+
+  it("shares a scoped runs-list budget across MCP and CLI processes", async () => {
+    let requestCount = 0;
+    const requestUrls: string[] = [];
+    const server = createServer((request, response) => {
+      requestCount += 1;
+      requestUrls.push(request.url ?? "");
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "Internal server error" }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind a TCP port");
+
+    const runtimeTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-issue-budget-runs-e2e-"));
+    tempDirs.push(runtimeTmpDir);
+    const commonEnv = {
+      ...process.env,
+      RUDDER_API_URL: `http://127.0.0.1:${address.port}`,
+      RUDDER_API_KEY: "test-agent-key",
+      RUDDER_ORG_ID: "org_e2e",
+      RUDDER_AGENT_ID: "agent-e2e",
+      RUDDER_RUN_ID: "run-runs-list-budget-e2e",
+      RUDDER_RUNTIME_TMPDIR: runtimeTmpDir,
+    };
+
+    try {
+      const first = await runMcpTool(commonEnv, "rudder_runs_list", {
+        relatedAgentId: "agent-e2e",
+        limit: 20,
+      });
+      const firstError = (first.result as { structuredContent: Record<string, unknown> }).structuredContent;
+      expect(firstError).toMatchObject({
+        status: "error",
+        code: "api_request_error",
+        details: {
+          status: 500,
+          issueTransport: {
+            state: "fallback_available",
+            operation: "runs.list",
+            scopeKey: "org:org_e2e",
+            initialSurface: "mcp",
+            fallbackBudgetRemaining: 1,
+            fallbackAction: {
+              surface: "cli",
+              command: "rudder runs list --org-id org_e2e --agent-id agent-e2e --limit 20 --json",
+            },
+          },
+        },
+      });
+
+      const fallback = await runCli(commonEnv, [
+        "runs",
+        "list",
+        "--org-id",
+        "org_e2e",
+        "--agent-id",
+        "other-agent",
+        "--limit",
+        "50",
+        "--json",
+      ]);
+      const fallbackError = JSON.parse(fallback.stderr) as Record<string, unknown>;
+      expect(fallback.exitCode).toBe(1);
+      expect(fallbackError).toMatchObject({
+        status: 500,
+        code: "issue_transport_unavailable",
+        details: {
+          issueTransport: {
+            state: "blocked",
+            operation: "runs.list",
+            scopeKey: "org:org_e2e",
+            initialSurface: "mcp",
+            fallbackSurface: "cli",
+            fallbackMatchedFingerprint: true,
+            fallbackBudgetRemaining: 0,
+          },
+        },
+      });
+
+      const stopped = await runCli(commonEnv, [
+        "runs",
+        "list",
+        "--org-id",
+        "org_e2e",
+        "--status",
+        "failed",
+        "--json",
+      ]);
+      const stoppedError = JSON.parse(stopped.stderr) as Record<string, unknown>;
+      expect(stopped.exitCode).toBe(1);
+      expect(stoppedError).toMatchObject({
+        status: 503,
+        code: "issue_transport_unavailable",
+        details: {
+          issueTransport: {
+            state: "blocked",
+            operation: "runs.list",
+            scopeKey: "org:org_e2e",
+            fallbackBudgetRemaining: 0,
+            checkpoint: "Issue transport unavailable",
+          },
+        },
+      });
+      expect(requestCount).toBe(2);
+      expect(requestUrls).toHaveLength(2);
+      expect(requestUrls[0]).toContain("/api/run-intelligence/orgs/org_e2e/runs");
+      expect(requestUrls[1]).toContain("/api/run-intelligence/orgs/org_e2e/runs");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  }, 20_000);
 });
 
 function runCli(
@@ -128,6 +242,14 @@ function runCli(
 }
 
 function runMcpCommentsList(env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  return runMcpTool(env, "rudder_issue_comments_list", { issue: "iss_e2e" });
+}
+
+function runMcpTool(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  toolArguments: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -159,7 +281,7 @@ function runMcpCommentsList(env: NodeJS.ProcessEnv): Promise<Record<string, unkn
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name: "rudder_issue_comments_list", arguments: { issue: "iss_e2e" } },
+      params: { name, arguments: toolArguments },
     })}\n`);
   });
 }

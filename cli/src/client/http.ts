@@ -103,7 +103,7 @@ export class RudderApiClient {
     hasRetriedAuth = false,
   ): Promise<T | null> {
     const url = buildUrl(this.apiBase, path);
-    const reservation = await this.issueTransportBudget.reserve(init.method, path);
+    const reservation = await this.issueTransportBudget.reserve(init.method, path, init.body);
 
     const headers: Record<string, string> = {
       accept: "application/json",
