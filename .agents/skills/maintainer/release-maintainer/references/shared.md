@@ -169,4 +169,6 @@ Before completion, record:
 - install/update proof appropriate to the changed area;
 - obsolete canary cleanup and retained active line;
 - next-version main handoff and its CI;
+- stable Discord announcement server, channel, direct message URL, ping state,
+  follower cross-post state, and rendered readback;
 - preserved unrelated work or remaining blockers.

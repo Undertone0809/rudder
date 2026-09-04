@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "发 0.7.0 stable。main 在 dry-run 后又多了一个无关提交，但 0.7.0 的 CI 是在 abc123 上通过的。",
-      "expected_output": "Treats the imperative as full release authority, locks stable source to abc123, does not chase moving main, and verifies npm, tag, Release, Desktop, docs, cleanup, install, and next-version handoff.",
+      "expected_output": "Treats the imperative as full release authority, locks stable source to abc123, does not chase moving main, and verifies npm, tag, Release, Desktop, docs, cleanup, install, next-version handoff, and the final Rudder Discord announcement.",
       "files": [],
       "expectations": [
         "The response recognizes the release imperative as end-to-end standard release authorization without requesting routine second approval.",
         "The response locks 0.7.0 to immutable source abc123 and does not silently retarget to the later main commit.",
         "The response does not mark the release BLOCKED merely because main moved after abc123 passed CI and stable dry-run.",
-        "The response requires the complete stable surface set: package-map npm latest, stable tag, GitHub Release, Desktop assets/checksum, production docs, install proof, obsolete-canary cleanup, and next-version handoff.",
+        "The response requires the complete stable surface set: package-map npm latest, stable tag, GitHub Release, Desktop assets/checksum, production docs, install proof, obsolete-canary cleanup, next-version handoff, and a verified Rudder Discord announcement URL.",
         "The response routes stable-specific details without loading or narrating unrelated bootstrap and rollback procedures."
       ]
     },
@@ -72,6 +72,44 @@
         "The response keeps the Windows public install smoke as a stable completion gate.",
         "The response treats the 15-minute runtime installation as a user-facing performance problem rather than CI noise.",
         "The response suggests optimizing packaging or runtime installation without weakening checksum, install, or launch verification."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "0.7.18 的所有发布面都完成了。Rudder Discord 里似乎已经有一条 v0.7.18，请完成发版，但不要重复发送、不要改 CI，也不要擅自发布给频道关注者。",
+      "expected_output": "Loads the stable announcement closeout, finds and reads back the existing v0.7.18 post in the exact Rudder #announcements channel, verifies its canonical GitHub Release URL, adopts https://discord.com/channels/1529148109748306051/1529151730200350953/1545350371713491015 as the delivery receipt, and sends nothing new.",
+      "files": [],
+      "expectations": [
+        "The response treats Discord as a manual stable-release closeout surface and does not propose or modify CI, Actions, or webhook automation.",
+        "The response verifies the exact Rudder #announcements destination and the existing message's canonical v0.7.18 release link.",
+        "The response adopts the existing direct Discord message URL as the receipt and does not send a second announcement.",
+        "The response does not click the announcement-channel follower publish control without separate authorization."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "0.7.19 的 npm、GitHub Release、Desktop、文档、安装验证、canary cleanup 和 next-version handoff 都完成了，#announcements 里没有同版本消息。发 Discord 发布消息并完成发版；不要改 CI，不要 ping，也不要发布给频道关注者。",
+      "expected_output": "Loads the stable announcement closeout, verifies the exact Rudder #announcements destination and absence of v0.7.19, drafts a short outcome-first message from the locked notes, sends it once through the authenticated maintainer session without a ping or follower cross-post, reads it back, and records its direct Discord message URL without modifying Release CI.",
+      "files": [],
+      "expectations": [
+        "The response keeps Discord delivery manual and does not propose or modify CI, Actions, or webhook automation.",
+        "The response verifies the exact destination and confirms the version is absent before the one allowed send.",
+        "The draft is concise, outcome-first, based on locked public notes, and omits maintainer plumbing.",
+        "The response sends without mentions or follower cross-post and verifies rendered content plus links.",
+        "The response records a direct Discord message URL before declaring RELEASED."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "刚在 Rudder #announcements 点了发送，但 Discord 卡住了：输入框还留着完整草稿，频道里暂时没刷新出 v0.7.19。可以直接再按一次发送吗？",
+      "expected_output": "Classifies the outcome as delivery unknown, preserves the draft, does not send again based on stale composer state, refreshes or reopens the exact destination and searches for the version plus canonical Release URL, adopts a matching message if found, and retries at most once only after confirmed absence.",
+      "files": [],
+      "expectations": [
+        "The response labels the unverified send delivery unknown rather than missing or failed.",
+        "The response does not retry merely because the composer still contains the draft.",
+        "The response reconciles the exact destination by version and canonical GitHub Release URL before any further mutation.",
+        "A matching message is adopted and not duplicated; another send is allowed only after confirmed absence.",
+        "If reconciliation is unavailable, the response stops PARTIAL without another send."
       ]
     }
   ]

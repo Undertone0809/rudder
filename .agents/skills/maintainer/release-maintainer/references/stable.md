@@ -107,8 +107,9 @@ Stable is complete only when:
 
 - npm `latest`, tag, Release, Desktop assets/checksum, docs, and public install
   resolve to the locked version;
-- the GitHub Release plus localized public changelogs cover the standard public
-  announcement surface, or any separately requested announcement is recorded;
+- the GitHub Release plus localized public changelogs are live, and the manual
+  Rudder Discord announcement has been posted and read back according to
+  `announcement.md`;
 - post-stable cleanup is verified;
 - next-version `main` handoff and CI are verified;
 - unrelated later canaries are reported as separate overwrite risk rather than

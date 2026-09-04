@@ -1,6 +1,6 @@
 ---
 name: release-maintainer
-description: "Use when inspecting, preparing, executing, recovering, or verifying Rudder releases across npm, GitHub Releases, Desktop assets, tags, dist-tags, changelogs, install smoke, stable/canary promotion, rollback, and release workflow failures. Use for both hands-on publish requests and read-only release readiness questions; route to the smallest relevant release reference instead of loading every release branch."
+description: "Use when inspecting, preparing, executing, recovering, or verifying Rudder releases across npm, GitHub Releases, Desktop assets, tags, dist-tags, changelogs, Discord announcements, install smoke, stable/canary promotion, rollback, and release workflow failures. Use for both hands-on publish requests and read-only release readiness questions; route to the smallest relevant release reference instead of loading every release branch."
 ---
 
 # Release Maintainer
@@ -13,7 +13,8 @@ or public-surface completeness.
 Read `references/shared.md`, then exactly one primary branch:
 
 - `references/stable.md`: stable readiness, publish, public notes, Desktop
-  update drill, post-stable cleanup, and next-version handoff.
+  update drill, post-stable cleanup, next-version handoff, and the gate before
+  public announcement.
 - `references/canary.md`: automatic canary publication, first npm bootstrap,
   Desktop prerelease assets, and temporary pre-stable `latest` behavior.
 - `references/rollback.md`: move npm dist-tags to an already published version
@@ -23,10 +24,18 @@ Read `references/shared.md`, then exactly one primary branch:
   returns misleading errors.
 - `references/setup.md`: one-time GitHub environment, npm trusted-publishing,
   and workflow setup.
+- `references/announcement.md`: manual Rudder Discord announcement after a
+  stable release has converged. This is a stable closeout add-on, not a primary
+  release branch.
 
 Use a second branch only when the observed state genuinely crosses branches,
 such as a stable publish that needs partial recovery. Do not preload every
 reference for a readiness question.
+
+For every hands-on stable release, also read `references/announcement.md` after
+the public surfaces, cleanup, and next-version handoff are verified. Keep this
+as an authenticated maintainer action; do not add it to Release CI or create a
+webhook unless the user explicitly asks for announcement automation.
 
 ## Authorization Boundary
 
@@ -37,8 +46,9 @@ An explicit imperative such as `release`, `publish`, `ship this version`,
 2. land reviewed release source on `main` when needed;
 3. run required exact-source CI, preflight, and package validation once;
 4. publish npm, tag, GitHub Release, Desktop, and production-docs surfaces;
-5. verify public installation and clean obsolete canary Releases/tags;
-6. advance the next-version base.
+5. verify public installation, clean obsolete canary Releases/tags, and advance
+   the next-version base;
+6. publish and read back the stable release announcement in Rudder Discord.
 
 Do not create a release PR or ask for routine second approval after validation.
 Ask only when channel, version, source, or destination is materially ambiguous.
@@ -70,7 +80,10 @@ exposing secrets, or expanding to another product/environment.
 - Partial publication is repaired from its first missing surface; immutable
   npm versions are not republished.
 - Public completion requires applicable npm, tag, GitHub Release, Desktop,
-  changelog/docs, install smoke, and next-version handoff evidence.
+  changelog/docs, install smoke, next-version handoff evidence, and for stable
+  releases a verified Rudder Discord announcement URL.
+- Canary releases do not receive Discord announcements. Do not add announcement
+  delivery to Release CI as part of ordinary release execution.
 - Cleanup removes obsolete GitHub Releases and `canary/*` tags, not published
   npm canary versions.
 - A stable release takes priority over an in-flight canary for the same or an
@@ -103,8 +116,11 @@ exposing secrets, or expanding to another product/environment.
 6. Execute one stable publish path whose machine gates run before mutation; do
    not introduce a separate preview dispatch or second human hand-off.
 7. Verify every applicable public surface from the same locked source.
-8. Report version/ref, workflow runs, npm tags, Release assets, install proof,
-   changelog/docs state, cleanup, and remaining manual work.
+8. For stable only, follow `references/announcement.md`: check for an existing
+   version post, publish the bounded announcement with no default ping, read it
+   back, and record its direct message URL.
+9. Report version/ref, workflow runs, npm tags, Release assets, install proof,
+   changelog/docs state, announcement URL, cleanup, and remaining manual work.
 
 ## Output
 
@@ -127,6 +143,7 @@ Locked source:
 Checks:
 Published surfaces:
 Install proof:
+Announcement:
 Cleanup/handoff:
 Remaining blocker:
 ```
