@@ -67,6 +67,22 @@ function expectZipContains(buffer: Buffer, value: string) {
   expect(buffer.toString("utf8")).toContain(value);
 }
 
+function zipEntryDosHour(buffer: Buffer, expectedName: string) {
+  for (let offset = 0; offset + 46 <= buffer.byteLength;) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) {
+      offset += 1;
+      continue;
+    }
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    if (name === expectedName) return buffer.readUInt16LE(offset + 12) >> 11;
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  throw new Error(`ZIP entry not found: ${expectedName}`);
+}
+
 async function readDownloadContent(download: {
   content?: Buffer;
   contentStream?: AsyncIterable<Buffer | string>;
@@ -370,6 +386,64 @@ describe("workspace backup service", () => {
       path: name,
       isDirectory: false,
     })));
+  });
+
+  it("projects legacy download timestamps through the shared timezone fixture", async () => {
+    const orgId = await createOrganization();
+    const backupId = randomUUID();
+    const createdAt = new Date("2026-09-03T12:00:00.000Z");
+    const artifactRef = path.join(resolveDefaultBackupDir(), `workspace-${backupId}.json`);
+    const fileBytes = Buffer.from("root");
+    const artifact = {
+      version: 1 as const,
+      orgId,
+      instanceId: "test-instance",
+      createdAt: createdAt.toISOString(),
+      rootPath: "/fixture/workspace",
+      entries: [{
+        path: "root.txt",
+        kind: "file" as const,
+        byteSize: fileBytes.byteLength,
+        mtimeMs: workspaceBackupReadParity.download.legacyMtimeMs,
+        sha256: sha256(fileBytes.toString("utf8")),
+        dataBase64: fileBytes.toString("base64"),
+      }],
+      warnings: [],
+    };
+    const serialized = JSON.stringify(artifact);
+    await fs.mkdir(path.dirname(artifactRef), { recursive: true });
+    await fs.writeFile(artifactRef, serialized, "utf8");
+    await db.insert(workspaceBackups).values({
+      id: backupId,
+      orgId,
+      status: "succeeded",
+      triggerSource: "manual",
+      artifactProvider: "local_file",
+      artifactRef,
+      archiveSha256: sha256(serialized),
+      treeSha256: "legacy-download-fixture",
+      manifest: { version: 1 },
+      startedAt: createdAt,
+      finishedAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const originalTimezone = process.env.TZ;
+    try {
+      process.env.TZ = "UTC";
+      const utc = await readDownloadContent(await service.getDownload(orgId, backupId));
+      expect(zipEntryDosHour(utc, "workspace/root.txt"))
+        .toBe(workspaceBackupReadParity.download.utcHour);
+
+      process.env.TZ = "Asia/Shanghai";
+      const asiaShanghai = await readDownloadContent(await service.getDownload(orgId, backupId));
+      expect(zipEntryDosHour(asiaShanghai, "workspace/root.txt"))
+        .toBe(workspaceBackupReadParity.download.asiaShanghaiHour);
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
   });
 
   it("uses the bounded v2 file-backed path by default", async () => {

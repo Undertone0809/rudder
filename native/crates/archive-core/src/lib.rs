@@ -462,7 +462,14 @@ pub fn inspect_manifest(
     limits: ArchiveLimits,
 ) -> Result<ManifestInspection, ArchiveError> {
     let file = File::open(input).map_err(|error| ArchiveError::io("archive_open_failed", error))?;
-    let mut validated = validated_archive(file, limits.max_archive_bytes)?;
+    inspect_manifest_reader(file, limits)
+}
+
+pub fn inspect_manifest_reader<R: Read + Seek>(
+    reader: R,
+    limits: ArchiveLimits,
+) -> Result<ManifestInspection, ArchiveError> {
+    let mut validated = validated_archive(reader, limits.max_archive_bytes)?;
     let index = validated
         .entries
         .iter()

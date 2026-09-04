@@ -2,7 +2,7 @@ use actix_web::{
     App, Error, HttpResponse, HttpServer,
     body::MessageBody,
     dev::ServiceRequest,
-    http::{StatusCode, header::ContentType},
+    http::{StatusCode, header},
     middleware::{self, Next},
     web,
 };
@@ -11,18 +11,26 @@ use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::{sync::Notify, time::timeout};
+use tokio::{
+    sync::{Notify, Semaphore},
+    time::timeout,
+};
+use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
 mod workspace_backup_files;
 
 use workspace_backup_files::{
-    ArtifactError as BackupArtifactError, WorkspaceBackupFilesQuery, file_list_receipt,
-    file_read_receipt, load_entries, normalize_directory_path, read_file as read_backup_file,
+    ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
+    file_list_receipt, file_read_receipt, load_entries, normalize_directory_path, prepare_download,
+    read_file as read_backup_file,
 };
 
 pub const HEALTH_SCHEMA: &str = "rudder.native.server.health.v1";
@@ -55,6 +63,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_list",
     "workspace_backup_files_list",
     "workspace_backup_file_read",
+    "workspace_backup_download",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -459,7 +468,16 @@ struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
     admission: Arc<RequestAdmission>,
+    download_admission: Arc<Semaphore>,
     started_at: Instant,
+}
+
+struct DownloadCancellation(Arc<AtomicBool>);
+
+impl Drop for DownloadCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, AtomicOrdering::Relaxed);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -605,6 +623,7 @@ impl AppState {
                 config.workers,
                 config.max_queue_depth,
             )),
+            download_admission: Arc::new(Semaphore::new(config.workers)),
             config: Arc::new(config),
             database,
             started_at: Instant::now(),
@@ -812,6 +831,12 @@ impl AppState {
                     "workspace_backup_artifact_invalid",
                 );
             }
+            Ok(Err(BackupArtifactError::Cancelled)) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_files_list_failed",
+                );
+            }
             Err(_) => {
                 return self.json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -889,6 +914,12 @@ impl AppState {
                     "workspace_backup_artifact_invalid",
                 );
             }
+            Ok(Err(BackupArtifactError::Cancelled)) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_file_read_failed",
+                );
+            }
             Err(_) => {
                 return self.json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -899,12 +930,123 @@ impl AppState {
         let receipt = file_read_receipt(&bytes, normalized_file_path, &backup_id);
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
     }
+
+    async fn workspace_backup_download(&self, org_id: &str, backup_id: &str) -> HttpResponse {
+        let DatabaseState::Configured(pool) = &self.database else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+        let row = sqlx::query_as::<_, (String, Option<String>, String)>(WORKSPACE_BACKUP_FILES_SQL)
+            .bind(org_id)
+            .bind(backup_id)
+            .fetch_optional(pool)
+            .await;
+        let (artifact_ref, archive_sha256, status) = match row {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                return self.json_error(StatusCode::NOT_FOUND, "workspace_backup_not_found");
+            }
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_download_failed",
+                );
+            }
+        };
+        if status == "running" {
+            return self.json_error(StatusCode::CONFLICT, "workspace_backup_running");
+        }
+        if status == "failed" {
+            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "workspace_backup_failed");
+        }
+
+        let artifact_path = PathBuf::from(&artifact_ref);
+        let path_for_validation = artifact_path.clone();
+        let org_id = org_id.to_owned();
+        let permit = match self.download_admission.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "workspace_backup_download_unavailable",
+                );
+            }
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancellation = DownloadCancellation(cancelled.clone());
+        let download = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            prepare_download(
+                &path_for_validation,
+                &org_id,
+                archive_sha256.as_deref(),
+                &cancelled,
+            )
+        })
+        .await;
+        drop(cancellation);
+        let download = match download {
+            Ok(Ok(download)) => download,
+            Ok(Err(BackupArtifactError::NotFound)) => {
+                return self
+                    .json_error(StatusCode::NOT_FOUND, "workspace_backup_artifact_not_found");
+            }
+            Ok(Err(BackupArtifactError::FileNotFound | BackupArtifactError::Invalid)) => {
+                return self.json_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "workspace_backup_artifact_invalid",
+                );
+            }
+            Ok(Err(BackupArtifactError::Cancelled)) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "workspace_backup_download_cancelled",
+                );
+            }
+            Err(_) => {
+                return self.json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "workspace_backup_download_failed",
+                );
+            }
+        };
+        let stem = artifact_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("workspace-backup")
+            .replace('"', "");
+        let disposition = format!("attachment; filename=\"{stem}.zip\"");
+        let response = |byte_size: u64, sha256: Option<&str>| {
+            let mut builder = HttpResponse::Ok();
+            builder
+                .insert_header((header::CONTENT_TYPE, "application/zip"))
+                .insert_header((header::CONTENT_LENGTH, byte_size.to_string()))
+                .insert_header((header::CACHE_CONTROL, "private, max-age=60"))
+                .insert_header((header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
+                .insert_header((header::CONTENT_DISPOSITION, disposition.clone()));
+            if let Some(sha256) = sha256 {
+                builder.insert_header(("x-rudder-archive-sha256", sha256));
+            }
+            builder
+        };
+        match download {
+            DownloadArtifact::File {
+                file,
+                byte_size,
+                sha256,
+            } => response(byte_size, sha256.as_deref())
+                .streaming(ReaderStream::new(tokio::fs::File::from_std(file))),
+            DownloadArtifact::Bytes { bytes, sha256 } => {
+                response(bytes.len() as u64, Some(&sha256)).body(bytes)
+            }
+        }
+    }
 }
 
 fn bounded_json<T: Serialize>(status: StatusCode, value: &T, max_bytes: usize) -> HttpResponse {
     match serde_json::to_vec(value) {
         Ok(body) if body.len() <= max_bytes => HttpResponse::build(status)
-            .insert_header(ContentType::json())
+            .insert_header(header::ContentType::json())
             .body(body),
         Ok(_) | Err(_) => {
             let body = if FALLBACK_ERROR_BODY.len() <= max_bytes {
@@ -913,7 +1055,7 @@ fn bounded_json<T: Serialize>(status: StatusCode, value: &T, max_bytes: usize) -
                 Vec::new()
             };
             HttpResponse::InternalServerError()
-                .insert_header(ContentType::json())
+                .insert_header(header::ContentType::json())
                 .body(body)
         }
     }
@@ -998,6 +1140,14 @@ async fn workspace_backup_file(
         .await
 }
 
+async fn workspace_backup_download(
+    state: web::Data<AppState>,
+    route: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (org_id, backup_id) = route.into_inner();
+    state.workspace_backup_download(&org_id, &backup_id).await
+}
+
 pub struct ServerRuntime {
     server: Option<actix_web::dev::Server>,
     control: ServerControl,
@@ -1035,6 +1185,10 @@ impl ServerRuntime {
                 .route(
                     "/api/orgs/{org_id}/workspace/backups/{backup_id}/file",
                     web::get().to(workspace_backup_file),
+                )
+                .route(
+                    "/api/orgs/{org_id}/workspace/backups/{backup_id}/download",
+                    web::get().to(workspace_backup_download),
                 )
         })
         .workers(config.workers)
@@ -1265,6 +1419,33 @@ mod tests {
         first_waiter.await.unwrap();
         second_waiter.await.unwrap();
         assert_eq!(admission.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn download_work_has_dedicated_bounded_capacity() {
+        let state = AppState::new(ServerConfig {
+            workers: 1,
+            ..ServerConfig::default()
+        })
+        .unwrap();
+        let first = state
+            .download_admission
+            .clone()
+            .try_acquire_owned()
+            .expect("first download permit");
+        assert!(
+            state
+                .download_admission
+                .clone()
+                .try_acquire_owned()
+                .is_err(),
+            "abandoned blocking work must retain the dedicated capacity permit"
+        );
+        drop(first);
+        assert!(
+            state.download_admission.clone().try_acquire_owned().is_ok(),
+            "capacity must recover when the blocking work ends"
+        );
     }
 
     #[actix_web::test]

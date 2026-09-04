@@ -87,6 +87,11 @@
     "maxTotalFileBytes": 104857600,
     "maxPreviewBytes": 200000
   },
+  "download": {
+    "legacyMtimeMs": 1704067200000,
+    "utcHour": 0,
+    "asiaShanghaiHour": 8
+  },
   "apiErrors": {
     "databaseDisabled": {
       "status": 503,
@@ -115,6 +120,10 @@
     "artifactInvalid": {
       "status": 422,
       "reason": "workspace_backup_artifact_invalid"
+    },
+    "artifactNotFound": {
+      "status": 404,
+      "reason": "workspace_backup_artifact_not_found"
     },
     "mutationRouteMissing": {
       "status": 404

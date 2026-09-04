@@ -66,7 +66,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         serde_json::json!([
             "workspace_backup_list",
             "workspace_backup_files_list",
-            "workspace_backup_file_read"
+            "workspace_backup_file_read",
+            "workspace_backup_download"
         ])
     );
 
@@ -86,6 +87,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("workspace_backup_list"));
     assert!(capabilities.contains("workspace_backup_files_list"));
     assert!(capabilities.contains("workspace_backup_file_read"));
+    assert!(capabilities.contains("workspace_backup_download"));
 
     let parity = parity_fixture();
 
@@ -100,6 +102,11 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000001/files",
     );
     assert_parity_error(&backup_files, &parity, "databaseDisabled");
+    let backup_download = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000001/download",
+    );
+    assert_parity_error(&backup_download, &parity, "databaseDisabled");
 
     let pid = child.id() as i32;
     let signal_result = unsafe { libc::kill(pid, libc::SIGTERM) };
@@ -234,8 +241,54 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
         ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
         ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "4096"),
+        ("TZ", "Asia/Shanghai"),
     ]);
     let route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/files";
+    let download_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000002/download";
+
+    let download = get_bytes_with_retry(bound_addr, download_route);
+    let (download_headers, download_body) = response_parts(&download);
+    let expected_archive = fs::read(&fixture.archive).expect("read expected v2 archive");
+    assert!(
+        download_headers.starts_with("HTTP/1.1 200"),
+        "{download_headers}"
+    );
+    assert!(
+        download_headers
+            .to_ascii_lowercase()
+            .contains("content-type: application/zip")
+    );
+    assert!(download_headers.contains(&format!("content-length: {}", expected_archive.len())));
+    assert!(download_headers.contains(&format!("x-rudder-archive-sha256: {}", fixture.sha256)));
+    assert!(
+        download_headers.contains("content-disposition: attachment; filename=\"workspace.zip\"")
+    );
+    assert_eq!(download_body, expected_archive);
+
+    sqlx::query("UPDATE workspace_backups SET archive_sha256 = NULL WHERE id = $1::uuid")
+        .bind("10000000-0000-0000-0000-000000000002")
+        .execute(&pool)
+        .await
+        .expect("clear optional archive checksum");
+    let unhashed_download = get_bytes_with_retry(bound_addr, download_route);
+    let (unhashed_headers, unhashed_body) = response_parts(&unhashed_download);
+    assert!(!unhashed_headers.contains("x-rudder-archive-sha256"));
+    assert_eq!(unhashed_body, expected_archive);
+    sqlx::query("UPDATE workspace_backups SET archive_sha256 = $1 WHERE id = $2::uuid")
+        .bind(&fixture.sha256)
+        .bind("10000000-0000-0000-0000-000000000002")
+        .execute(&pool)
+        .await
+        .expect("restore optional archive checksum");
+
+    let cross_org_download = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000002/workspace/backups/10000000-0000-0000-0000-000000000002/download",
+    );
+    assert_parity_error(&cross_org_download, &parity, "backupNotFound");
+    let post_download =
+        http_request(bound_addr, "POST", download_route).expect("POST backup download route");
+    assert_parity_error(&post_download, &parity, "mutationRouteMissing");
 
     let root = response_json(&get_with_retry(bound_addr, route));
     assert_eq!(root["source"], "org_root");
@@ -459,6 +512,8 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         .expect("attach invalid workspace backup artifact");
         let invalid = get_with_retry(bound_addr, route);
         assert_parity_error(&invalid, &parity, "artifactInvalid");
+        let invalid_download = get_with_retry(bound_addr, download_route);
+        assert_parity_error(&invalid_download, &parity, "artifactInvalid");
     }
 
     sqlx::query(
@@ -472,6 +527,9 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     .expect("attach aggregate-limit workspace backup artifact");
     let aggregate_limit = get_with_retry_read_timeout(bound_addr, route, Duration::from_secs(120));
     assert_parity_error(&aggregate_limit, &parity, "artifactInvalid");
+    let aggregate_download =
+        get_with_retry_read_timeout(bound_addr, download_route, Duration::from_secs(120));
+    assert_parity_error(&aggregate_download, &parity, "artifactInvalid");
 
     sqlx::query(
         "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = $2 WHERE id = $3::uuid",
@@ -508,6 +566,43 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
     assert_eq!(legacy_file["contentType"], "text/plain");
     assert_eq!(legacy_file["previewKind"], "text");
 
+    let legacy_download_route = "/api/orgs/00000000-0000-0000-0000-000000000001/workspace/backups/10000000-0000-0000-0000-000000000001/download";
+    let legacy_download = get_bytes_with_retry(bound_addr, legacy_download_route);
+    let (legacy_headers, legacy_body) = response_parts(&legacy_download);
+    assert!(
+        legacy_headers.starts_with("HTTP/1.1 200"),
+        "{legacy_headers}"
+    );
+    assert!(legacy_headers.contains("content-disposition: attachment; filename=\"workspace.zip\""));
+    assert!(legacy_body.starts_with(b"PK\x03\x04"));
+    let legacy_download_sha256 = format!("{:x}", Sha256::digest(legacy_body));
+    assert!(legacy_headers.contains(&format!(
+        "x-rudder-archive-sha256: {legacy_download_sha256}"
+    )));
+    let mut legacy_zip =
+        zip::ZipArchive::new(std::io::Cursor::new(legacy_body)).expect("open legacy download ZIP");
+    assert!(legacy_zip.by_name("workspace/").is_ok());
+    assert!(legacy_zip.by_name("workspace/docs/").is_ok());
+    let mut legacy_root = legacy_zip
+        .by_name("workspace/root.txt")
+        .expect("legacy root file");
+    assert_eq!(legacy_root.size(), 4);
+    assert_eq!(
+        legacy_root
+            .last_modified()
+            .expect("legacy root modified time")
+            .hour(),
+        parity["download"]["asiaShanghaiHour"]
+            .as_u64()
+            .expect("Asia/Shanghai fixture hour") as u8,
+        "2024-01-01T00:00:00Z must use the Node process timezone"
+    );
+    let mut legacy_root_content = String::new();
+    legacy_root
+        .read_to_string(&mut legacy_root_content)
+        .expect("read legacy root file");
+    assert_eq!(legacy_root_content, "root");
+
     sqlx::query("UPDATE workspace_backups SET status = 'running' WHERE id = $1::uuid")
         .bind("10000000-0000-0000-0000-000000000001")
         .execute(&pool)
@@ -515,6 +610,8 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         .expect("mark backup running");
     let running = get_with_retry(bound_addr, legacy_file_route);
     assert_parity_error(&running, &parity, "backupRunning");
+    let running_download = get_with_retry(bound_addr, legacy_download_route);
+    assert_parity_error(&running_download, &parity, "backupRunning");
 
     sqlx::query("UPDATE workspace_backups SET status = 'failed' WHERE id = $1::uuid")
         .bind("10000000-0000-0000-0000-000000000001")
@@ -523,6 +620,8 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         .expect("mark backup failed");
     let failed = get_with_retry(bound_addr, legacy_file_route);
     assert_parity_error(&failed, &parity, "backupFailed");
+    let failed_download = get_with_retry(bound_addr, legacy_download_route);
+    assert_parity_error(&failed_download, &parity, "backupFailed");
 
     sqlx::query("UPDATE workspace_backups SET archive_sha256 = $1 WHERE id = $2::uuid")
         .bind("0".repeat(64))
@@ -532,6 +631,26 @@ async fn workspace_backup_files_list_validates_artifact_and_preserves_scope() {
         .expect("corrupt recorded checksum");
     let checksum_mismatch = get_with_retry(bound_addr, file_route);
     assert_parity_error(&checksum_mismatch, &parity, "artifactInvalid");
+    let checksum_download = get_with_retry(bound_addr, download_route);
+    assert_parity_error(&checksum_download, &parity, "artifactInvalid");
+
+    sqlx::query(
+        "UPDATE workspace_backups SET artifact_ref = $1, archive_sha256 = NULL WHERE id = $2::uuid",
+    )
+    .bind(
+        fixture
+            ._root
+            .path()
+            .join("missing.zip")
+            .to_string_lossy()
+            .as_ref(),
+    )
+    .bind("10000000-0000-0000-0000-000000000002")
+    .execute(&pool)
+    .await
+    .expect("attach missing workspace backup artifact");
+    let missing_download = get_with_retry(bound_addr, download_route);
+    assert_parity_error(&missing_download, &parity, "artifactNotFound");
 
     stop_server(child, stdout);
     pool.close().await;
@@ -750,6 +869,48 @@ fn http_request_with_read_timeout(
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
     Ok(response)
+}
+
+fn get_bytes_with_retry(addr: SocketAddr, path: &str) -> Vec<u8> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match http_request_bytes(addr, "GET", path, Duration::from_secs(2)) {
+            Ok(response) => return response,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => panic!("GET {path} failed: {error}"),
+        }
+    }
+}
+
+fn http_request_bytes(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    read_timeout: Duration,
+) -> io::Result<Vec<u8>> {
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
+    stream.set_read_timeout(Some(read_timeout))?;
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )?;
+    stream.flush()?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+    Ok(response)
+}
+
+fn response_parts(response: &[u8]) -> (String, &[u8]) {
+    let offset = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("HTTP response separator");
+    (
+        String::from_utf8_lossy(&response[..offset]).into_owned(),
+        &response[offset + 4..],
+    )
 }
 
 fn response_json(response: &str) -> Value {
@@ -1258,6 +1419,10 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         .iter_mut()
         .find(|entry| entry["path"] == "root.txt")
         .expect("legacy root entry")["dataBase64"] = serde_json::json!("cm9vdA==");
+    legacy_entries
+        .iter_mut()
+        .find(|entry| entry["path"] == "root.txt")
+        .expect("legacy root entry")["mtimeMs"] = serde_json::json!(1_704_067_200_000_i64);
     let legacy_bytes = serde_json::to_vec(&serde_json::json!({
         "version": 1,
         "orgId": "00000000-0000-0000-0000-000000000001",
