@@ -219,6 +219,11 @@ function GenerationProbe() {
 
 beforeAll(() => {
   notifyManager.setNotifyFunction((callback) => act(callback));
+  vi.stubGlobal("ResizeObserver", class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
 });
 
 afterAll(() => {
