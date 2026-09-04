@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { AppBuilderDataManager } from "./app-builder-data.js";
 import {
   AppBuilderController,
@@ -173,7 +172,7 @@ import {
   resolveSystemPermissionSettingsUrl,
   type DesktopSystemPermissions,
 } from "./system-permissions.js";
-import { createTerminalController, registerTerminalIpcHandlers, resolveTerminalWorkspaceFromApi } from "./terminal-ipc.js";
+import { createTerminalController, registerTerminalIpcHandlers, resolveTerminalWorkspaceFromDesktopApi } from "./terminal-ipc.js";
 import {
   applyThemePreferenceToNativeTheme,
   resolveAppearanceForThemePreference,
@@ -645,30 +644,11 @@ const terminalController = createTerminalController({
   resolveWorkspace: async (orgId, agentId) => {
     const apiUrl = serverHandle?.apiUrl;
     if (!apiUrl) throw new Error("The local Rudder runtime is not ready.");
-    // The Agent detail request materializes its canonical workspace before the
-    // directory listing starts the native manifest watcher.
-    const agentResponse = await session.defaultSession.fetch(
-      buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`),
-      { credentials: "include", cache: "no-store" },
-    );
-    if (!agentResponse.ok) throw new Error(agentResponse.status === 404 ? "The selected Agent no longer exists." : "Could not validate the selected Agent.");
-    const agent = await agentResponse.json() as { id?: unknown; orgId?: unknown; name?: unknown };
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const filesResponse = await session.defaultSession.fetch(
-        buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`),
-        { credentials: "include", cache: "no-store" },
-      );
-      if (!filesResponse.ok) throw new Error("The Agent workspace is unavailable on this machine.");
-      const listing = await filesResponse.json() as { rootPath?: unknown; directoryPath?: unknown; rootExists?: unknown; entries?: unknown };
-      try {
-        const workspace = resolveTerminalWorkspaceFromApi(orgId, agentId, agent, listing);
-        if (fs.statSync(workspace.cwd, { throwIfNoEntry: false })?.isDirectory()) return workspace;
-      } catch (cause) {
-        if (!(cause instanceof Error) || cause.message !== "The Agent workspace is unavailable on this machine.") throw cause;
-      }
-      if (attempt < 39) await new Promise((resolve) => setTimeout(resolve, 125));
-    }
-    throw new Error("The Agent workspace is unavailable on this machine.");
+    return resolveTerminalWorkspaceFromDesktopApi({
+      apiUrl, orgId, agentId,
+      fetch: (url, init) => session.defaultSession.fetch(url, init),
+      workspaceExists: (cwd) => fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory() === true,
+    });
   },
 });
 let desktopIdentityRuntime: ReturnType<typeof createDesktopIdentityRuntime> | null = null;
