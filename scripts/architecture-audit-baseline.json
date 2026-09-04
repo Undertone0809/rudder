@@ -386,6 +386,14 @@
       "expiry": "2027-03-31"
     },
     {
+      "path": "ui/src/components/chat/ResponseAnnotations.tsx",
+      "lines": 1501,
+      "owner": "collaboration-ui",
+      "rationale": "Response annotation rendering still combines selection, disclosure, editing, attachment, and source-navigation state after the initial interaction delivery.",
+      "target": "Extract annotation disclosure and editor controllers and reduce the component below 1500 lines.",
+      "expiry": "2026-12-31"
+    },
+    {
       "path": "server/src/services/runtime-kernel/heartbeat.execute.ts",
       "lines": 1501,
       "owner": "runtime-server",

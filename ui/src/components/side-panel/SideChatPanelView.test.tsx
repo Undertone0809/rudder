@@ -217,11 +217,21 @@ function GenerationProbe() {
   return null;
 }
 
+class ResizeObserverMock {
+  observe() {}
+
+  unobserve() {}
+
+  disconnect() {}
+}
+
 beforeAll(() => {
   notifyManager.setNotifyFunction((callback) => act(callback));
+  vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 });
 
 afterAll(() => {
+  vi.unstubAllGlobals();
   notifyManager.setNotifyFunction((callback) => callback());
 });
 
