@@ -1343,6 +1343,7 @@ version = "0.7.19"
 dependencies = [
  "crc32fast",
  "rudder-archive-core",
+ "rudder-plugin-archive-core",
  "rudder-run-evidence-core",
  "rudder-runtime-payload-core",
  "rudder-workspace-manifest-core",
@@ -1358,6 +1359,17 @@ version = "0.7.19"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rudder-plugin-archive-core"
+version = "0.7.19"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

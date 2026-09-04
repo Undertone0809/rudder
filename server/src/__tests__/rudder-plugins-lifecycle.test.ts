@@ -16,7 +16,7 @@ import {
   pluginPackages,
   pluginSources,
 } from "@rudderhq/db";
-import type { InspectRudderPlugin } from "@rudderhq/shared";
+import type { InspectRudderPlugin, InspectRudderPluginArchive } from "@rudderhq/shared";
 import { eq, sql } from "drizzle-orm";
 import { strToU8, zipSync } from "fflate";
 import fs from "node:fs";
@@ -125,6 +125,20 @@ function pluginInput(sourceLabel: string, options: { mcpCommand?: string; mcpCwd
   return { sourceLabel, sourceType: "local_upload", files };
 }
 
+function pluginArchiveInput(sourceLabel: string): InspectRudderPluginArchive {
+  const source = pluginInput(sourceLabel);
+  const entries = Object.fromEntries(source.files.map((file) => [
+    `research-kit/${file.path}`,
+    file.encoding === "base64" ? Buffer.from(file.content, "base64") : strToU8(file.content),
+  ]));
+  return {
+    sourceLabel,
+    filename: "research-kit.zip",
+    content: Buffer.from(zipSync(entries)).toString("base64"),
+    encoding: "base64",
+  };
+}
+
 describe("Rudder Plugin V1 lifecycle", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -209,6 +223,39 @@ describe("Rudder Plugin V1 lifecycle", () => {
     };
     return rudderPluginCatalogService(db, options, { fetch: fetcher });
   }
+
+  it("persists a native-inspected archive Preview within one Organization", async () => {
+    const { org } = await seedOrg("Archive", "ARC");
+    const { org: otherOrg } = await seedOrg("Other", "OTH");
+    const previousMode = process.env.RUDDER_NATIVE_MODE;
+    process.env.RUDDER_NATIVE_MODE = "required";
+    try {
+      const plugins = service();
+      const input = pluginArchiveInput("Archive upload");
+      const abort = new AbortController();
+      abort.abort();
+      await expect(plugins.inspectArchive(org.id, input, abort.signal)).rejects.toMatchObject({ name: "AbortError" });
+      expect(await db.select().from(pluginImportReports)).toHaveLength(0);
+
+      const report = await plugins.inspectArchive(org.id, input);
+      expect(report).toMatchObject({
+        orgId: org.id,
+        sourceType: "local_upload",
+        sourceLabel: "Archive upload",
+        status: "review_required",
+      });
+      expect(report.components).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: "skill:research", status: "ready" }),
+      ]));
+      await expect(plugins.getImportReport(org.id, report.id)).resolves.toMatchObject({ id: report.id });
+      await expect(plugins.getImportReport(otherOrg.id, report.id)).resolves.toBeNull();
+      expect(await db.select().from(pluginPackages)).toHaveLength(1);
+      expect(await db.select().from(pluginImportReports)).toHaveLength(1);
+    } finally {
+      if (previousMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
+      else process.env.RUDDER_NATIVE_MODE = previousMode;
+    }
+  });
 
   it("installs a managed Skill, restores Agent assignment, and supports uninstall/reinstall", async () => {
     const { org, agent } = await seedOrg("Acme", "ACM");

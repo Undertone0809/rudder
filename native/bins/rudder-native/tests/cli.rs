@@ -140,7 +140,8 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "payload.verify",
             "payload.extract",
             "payload.probeVersion",
-            "payload.publish"
+            "payload.publish",
+            "plugin.inspectArchive"
         ])
     );
     assert!(stderr.is_empty());
@@ -157,6 +158,42 @@ fn reports_version_protocol_and_capabilities_metadata() {
             .is_some_and(|target| !target.is_empty())
     );
     assert_eq!(archive_capabilities["effectiveEngine"], "rust");
+}
+
+#[test]
+fn inspects_bounded_plugin_archive_without_executing_content() {
+    let root = tempdir().unwrap();
+    let archive = root.path().join("plugin.zip");
+    fs::write(
+        &archive,
+        fixture(&[
+            (
+                "research-kit/.codex-plugin/plugin.json",
+                br#"{"name":"research-kit","version":"1.2.0"}"#,
+            ),
+            (
+                "research-kit/skills/research/SKILL.md",
+                b"---\nname: Research\n---\n",
+            ),
+        ]),
+    )
+    .unwrap();
+    let (code, result, stderr) = run(&[
+        "plugin",
+        "inspect-archive",
+        archive.to_str().unwrap(),
+        "10485760",
+        "2097152",
+        "10485760",
+        "500",
+        "100",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(result["capability"], "plugin.inspectArchive");
+    assert_eq!(result["operation"], "inspectPluginArchive");
+    assert_eq!(result["strippedRoot"], "research-kit");
+    assert_eq!(result["files"][0]["path"], ".codex-plugin/plugin.json");
+    assert_eq!(result["files"][1]["path"], "skills/research/SKILL.md");
 }
 
 #[test]

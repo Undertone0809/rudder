@@ -9,6 +9,7 @@ export const RUDDER_NATIVE_CAPABILITIES = [
   "runtime-payload",
   "run-evidence",
   "workspace-manifest",
+  "plugin-archive",
 ] as const;
 
 export type RudderNativeCapability = (typeof RUDDER_NATIVE_CAPABILITIES)[number];

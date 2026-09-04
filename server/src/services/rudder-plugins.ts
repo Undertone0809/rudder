@@ -26,8 +26,8 @@ import type {
   RudderPluginPackageFileInput,
   RudderPluginSkillConflictStrategy,
 } from "@rudderhq/shared";
+import { resolveRudderNativeCapability } from "@rudderhq/shared";
 import { and, asc, eq, inArray, ne } from "drizzle-orm";
-import { Unzip, UnzipInflate, UnzipPassThrough } from "fflate";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -36,6 +36,11 @@ import type { ManagedMcpConnectionServiceOptions } from "./mcp/managed-connectio
 import { managedMcpConnectionService } from "./mcp/managed-connections.js";
 import { organizationSkillService } from "./organization-skills.js";
 import {
+  inspectPluginArchiveNative,
+  PluginArchiveNativeError,
+} from "./plugin-archive-native.js";
+import { unzipPluginPackageNode } from "./plugin-archive-node.js";
+import {
   enabledAgentIdsFromMetadata,
   inheritedPluginSkillAgentIds,
   organizationSkillSelectionKey,
@@ -43,9 +48,8 @@ import {
   selectedAgentIdsForSkill,
 } from "./rudder-plugin-agent-bindings.js";
 
-const MAX_PLUGIN_BYTES = 10 * 1024 * 1024;
+const MAX_PLUGIN_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_ARCHIVE_RATIO = 100;
 const MAX_MCP_UI_HTML_BYTES = 2 * 1024 * 1024;
 const SENSITIVE_KEY = /(?:authorization|api[_-]?key|password|secret|token|cookie)/i;
 
@@ -84,82 +88,6 @@ function decodeInputFile(file: InspectRudderPlugin["files"][number]): Buffer {
   return Buffer.from(compact, "base64");
 }
 
-function decodeBase64(value: string, label: string): Buffer {
-  const compact = value.replace(/\s/g, "");
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(compact)) {
-    throw unprocessable(`Invalid base64 content for ${label}`);
-  }
-  return Buffer.from(compact, "base64");
-}
-
-function unzipPackageFiles(content: string, label: string, stripPluginRoot: boolean): RudderPluginPackageFileInput[] {
-  const archive = decodeBase64(content, label);
-  if (archive.byteLength > MAX_PLUGIN_BYTES) throw unprocessable("Plugin archive exceeds the 10 MiB V1 limit");
-  const files: RudderPluginPackageFileInput[] = [];
-  let totalBytes = 0;
-  let failure: Error | null = null;
-  const unzip = new Unzip((file) => {
-    if (failure || file.name.endsWith("/")) return;
-    if (files.length >= 500) {
-      failure = new Error("Plugin archive exceeds the 500-file V1 limit");
-      file.terminate();
-      return;
-    }
-    if (file.originalSize !== undefined && file.originalSize > MAX_FILE_BYTES) {
-      failure = new Error(`Plugin archive entry exceeds 2 MiB: ${file.name}`);
-      file.terminate();
-      return;
-    }
-    if (file.size && file.originalSize && file.originalSize / file.size > MAX_ARCHIVE_RATIO) {
-      failure = new Error(`Plugin archive entry exceeds the ${MAX_ARCHIVE_RATIO}:1 expansion limit: ${file.name}`);
-      file.terminate();
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let entryBytes = 0;
-    file.ondata = (error, data, final) => {
-      if (failure) return;
-      if (error) {
-        failure = error;
-        return;
-      }
-      entryBytes += data.byteLength;
-      totalBytes += data.byteLength;
-      if (entryBytes > MAX_FILE_BYTES || totalBytes > MAX_PLUGIN_BYTES) {
-        failure = new Error(entryBytes > MAX_FILE_BYTES
-          ? `Plugin archive entry exceeds 2 MiB: ${file.name}`
-          : "Plugin archive exceeds the 10 MiB V1 expansion limit");
-        file.terminate();
-        return;
-      }
-      chunks.push(Buffer.from(data));
-      if (final) {
-        files.push({ path: file.name, content: Buffer.concat(chunks).toString("base64"), encoding: "base64" });
-      }
-    };
-    file.start();
-  });
-  unzip.register(UnzipInflate);
-  unzip.register(UnzipPassThrough);
-  try {
-    unzip.push(archive, true);
-  } catch (error) {
-    throw unprocessable(`Invalid ZIP Plugin archive: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const archiveFailure = failure as Error | null;
-  if (archiveFailure) throw unprocessable(archiveFailure.message);
-  if (files.length === 0) throw unprocessable("Invalid ZIP Plugin archive: archive contains no files");
-  if (totalBytes > archive.byteLength * MAX_ARCHIVE_RATIO) {
-    throw unprocessable(`Plugin archive exceeds the ${MAX_ARCHIVE_RATIO}:1 expansion limit`);
-  }
-  if (!stripPluginRoot || files.some((file) => file.path === ".codex-plugin/plugin.json")) return files;
-  const manifests = files.filter((file) => file.path.endsWith("/.codex-plugin/plugin.json"));
-  if (manifests.length !== 1) return files;
-  const prefix = manifests[0]!.path.slice(0, -".codex-plugin/plugin.json".length);
-  if (!files.every((file) => file.path.startsWith(prefix))) return files;
-  return files.map((file) => ({ ...file, path: file.path.slice(prefix.length) }));
-}
-
 function normalizeFiles(input: InspectRudderPlugin): {
   files: SnapshotFile[];
   bytes: Map<string, Buffer>;
@@ -193,7 +121,7 @@ function normalizeFiles(input: InspectRudderPlugin): {
     const content = decodeInputFile(inputFile);
     if (content.byteLength > MAX_FILE_BYTES) throw unprocessable(`Plugin file exceeds 2 MiB: ${normalized}`);
     totalBytes += content.byteLength;
-    if (totalBytes > MAX_PLUGIN_BYTES) throw unprocessable("Plugin package exceeds the 10 MiB V1 limit");
+    if (totalBytes > MAX_PLUGIN_BYTES) throw unprocessable("Plugin package exceeds the 100 MiB limit");
     bytes.set(normalized, content);
   }
 
@@ -641,9 +569,30 @@ export function inspectRudderPluginArchivePackage(input: InspectRudderPluginArch
   return inspectRudderPluginPackage({
     sourceType: "local_upload",
     sourceLabel: input.sourceLabel,
-    files: unzipPackageFiles(input.content, input.filename, true)
+    files: unzipPluginPackageNode(input.content, input.filename, true)
       .map((file) => ({ ...file, encoding: file.encoding ?? "utf8" })),
   });
+}
+
+function pluginArchiveInputError(error: PluginArchiveNativeError) {
+  switch (error.code) {
+    case "plugin_archive_size_limit":
+      return unprocessable("Plugin archive exceeds the 10 MiB transport limit");
+    case "plugin_archive_file_count_limit":
+      return unprocessable("Plugin archive exceeds the 500-file V1 limit");
+    case "plugin_archive_file_size_limit":
+      return unprocessable("Plugin archive entry exceeds 2 MiB");
+    case "plugin_archive_expansion_limit":
+      return unprocessable("Plugin archive exceeds the 100:1 expansion limit");
+    case "plugin_archive_total_size_limit":
+      return unprocessable("Plugin archive exceeds the 100 MiB expansion limit");
+    case "plugin_archive_path_unsafe":
+      return unprocessable("Unsafe Plugin file path in archive");
+    case "plugin_archive_duplicate_path":
+      return unprocessable("Plugin package contains duplicate or case-colliding path");
+    default:
+      return unprocessable(`Invalid ZIP Plugin archive: ${error.code}`);
+  }
 }
 
 export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServiceOptions) {
@@ -788,8 +737,28 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
     return inspectFromSource(orgId, input, source ?? { type: "local_upload", label: input.sourceLabel });
   }
 
-  async function inspectArchive(orgId: string, input: InspectRudderPluginArchive) {
-    const files = unzipPackageFiles(input.content, input.filename, true);
+  async function inspectArchive(orgId: string, input: InspectRudderPluginArchive, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const policy = resolveRudderNativeCapability({
+      capability: "plugin-archive",
+      env: process.env,
+      legacyToggleEnvs: ["RUDDER_NATIVE_PLUGIN_ARCHIVE"],
+    });
+    let files: RudderPluginPackageFileInput[];
+    if (policy.enabled) {
+      try {
+        files = await inspectPluginArchiveNative(input, signal);
+      } catch (error) {
+        if (error instanceof PluginArchiveNativeError && error.inputRejected) {
+          throw pluginArchiveInputError(error);
+        }
+        if (!policy.fallbackAllowed || signal?.aborted) throw error;
+        files = unzipPluginPackageNode(input.content, input.filename, true);
+      }
+    } else {
+      files = unzipPluginPackageNode(input.content, input.filename, true);
+    }
+    signal?.throwIfAborted();
     return inspectFromSource(orgId, {
       sourceType: "local_upload",
       sourceLabel: input.sourceLabel,
@@ -823,11 +792,11 @@ export function rudderPluginService(db: Db, mcpOptions: ManagedMcpConnectionServ
       if (!response.ok) throw unprocessable(`Pinned Git marketplace fetch failed with HTTP ${response.status}`);
       const contentLength = Number(response.headers.get("content-length") ?? "0");
       if (Number.isFinite(contentLength) && contentLength > MAX_PLUGIN_BYTES) {
-        throw unprocessable("Pinned Git marketplace archive exceeds the 10 MiB V1 limit");
+        throw unprocessable("Pinned Git marketplace archive exceeds the 100 MiB limit");
       }
       const archive = Buffer.from(await response.arrayBuffer());
-      if (archive.byteLength > MAX_PLUGIN_BYTES) throw unprocessable("Pinned Git marketplace archive exceeds the 10 MiB V1 limit");
-      sourceFiles = unzipPackageFiles(archive.toString("base64"), `${repo}@${input.github.commit}.zip`, true);
+      if (archive.byteLength > MAX_PLUGIN_BYTES) throw unprocessable("Pinned Git marketplace archive exceeds the 100 MiB limit");
+      sourceFiles = unzipPluginPackageNode(archive.toString("base64"), `${repo}@${input.github.commit}.zip`, true);
       sourceType = "git";
       locator = `${repository.toString().replace(/\/$/, "")}#${input.github.commit}`;
       provenance = { repository: repository.toString(), commit: input.github.commit, immutable: true };

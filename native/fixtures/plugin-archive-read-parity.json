@@ -1,0 +1,23 @@
+{
+  "sourceLabel": "research-kit.zip",
+  "outerRoot": "research-kit",
+  "files": [
+    {
+      "path": ".codex-plugin/plugin.json",
+      "contentUtf8": "{\"name\":\"research-kit\",\"version\":\"1.2.0\",\"description\":\"Research with repeatable evidence.\",\"author\":{\"name\":\"Acme\"},\"interface\":{\"displayName\":\"Research Kit\",\"shortDescription\":\"Research with repeatable evidence.\",\"developerName\":\"Acme\",\"category\":\"Productivity\"}}"
+    },
+    {
+      "path": "skills/research/SKILL.md",
+      "contentUtf8": "---\nname: Research\n---\n"
+    },
+    {
+      "path": "skills/research/references/guide.md",
+      "contentUtf8": "Guide"
+    }
+  ],
+  "expectedPaths": [
+    ".codex-plugin/plugin.json",
+    "skills/research/SKILL.md",
+    "skills/research/references/guide.md"
+  ]
+}
