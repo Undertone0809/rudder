@@ -518,6 +518,9 @@ export async function launchDetachedBrowserApp(options: {
   nodePath?: string;
   readyTimeoutMs?: number;
   spawnImpl?: typeof spawn;
+  platform?: NodeJS.Platform;
+  processKill?: (pid: number, signal: NodeJS.Signals) => void;
+  spawnSyncImpl?: typeof spawnSync;
 }): Promise<BrowserAppLaunchResult> {
   applyLocalEnvProfile(options);
   applyDataDirOverride(options);
@@ -587,7 +590,13 @@ export async function launchDetachedBrowserApp(options: {
     };
   } finally {
     await rm(readyFile, { force: true });
-    if (!launchSucceeded && child) terminateDetachedBrowserAppProcess(child);
+    if (!launchSucceeded && child) {
+      terminateDetachedBrowserAppProcess(child, {
+        platform: options.platform,
+        processKill: options.processKill,
+        spawnSyncImpl: options.spawnSyncImpl,
+      });
+    }
   }
 }
 

@@ -13,6 +13,7 @@ import {
   detectSmartAppControlState,
   launchBrowserAppWindow,
   launchDetachedBrowserApp,
+  terminateDetachedBrowserAppProcess,
   parseDesktopLaunchMode,
   parseSmartAppControlState,
   resolveDesktopLaunchMode,
@@ -272,6 +273,7 @@ describe("Windows browser-app compatibility", () => {
         open: false,
         readyTimeoutMs: 0,
         spawnImpl: spawnImpl as never,
+        platform: "darwin",
       })).rejects.toThrow("did not become ready in time");
       expect(kill).toHaveBeenCalledWith("SIGKILL");
     } finally {
@@ -301,6 +303,7 @@ describe("Windows browser-app compatibility", () => {
         open: false,
         readyTimeoutMs: 1_000,
         spawnImpl: spawnImpl as never,
+        platform: "darwin",
       })).rejects.toThrow("failed before it was ready");
       expect(kill).toHaveBeenCalledWith("SIGKILL");
     } finally {
@@ -308,6 +311,26 @@ describe("Windows browser-app compatibility", () => {
       else process.env.RUDDER_HOME = previousHome;
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  it("uses taskkill to terminate a detached browser-app tree on Windows", () => {
+    const child = {
+      pid: 42_427,
+      kill: vi.fn(),
+    };
+    const spawnSyncImpl = vi.fn();
+
+    terminateDetachedBrowserAppProcess(child, {
+      platform: "win32",
+      spawnSyncImpl: spawnSyncImpl as never,
+    });
+
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "taskkill.exe",
+      ["/PID", "42427", "/T", "/F"],
+      expect.objectContaining({ stdio: "ignore", windowsHide: true }),
+    );
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("kills a detached browser-app child when spawn reports an error before readiness", async () => {
@@ -329,6 +352,7 @@ describe("Windows browser-app compatibility", () => {
         open: false,
         readyTimeoutMs: 1_000,
         spawnImpl: spawnImpl as never,
+        platform: "darwin",
       })).rejects.toThrow("synthetic spawn failure");
       expect(kill).toHaveBeenCalledWith("SIGKILL");
     } finally {
