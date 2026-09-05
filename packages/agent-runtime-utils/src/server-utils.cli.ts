@@ -17,10 +17,17 @@ const RETIRED_RUDDER_CREATION_SKILL_SLUGS = new Set([
   "rudder-create-plugin",
 ]);
 export const OPERATOR_INTERRUPT_ABORT_REASON_KIND = "operator_interrupt" as const;
+export const TERMINAL_FAILURE_ABORT_REASON_KIND = "terminal_failure" as const;
 
 export interface OperatorInterruptAbortReason {
   kind: typeof OPERATOR_INTERRUPT_ABORT_REASON_KIND;
   /** Maximum milliseconds from abort until the process group receives SIGKILL. */
+  hardDeadlineMs: number;
+}
+
+export interface TerminalFailureAbortReason {
+  kind: typeof TERMINAL_FAILURE_ABORT_REASON_KIND;
+  /** Maximum milliseconds from terminal failure detection until SIGKILL. */
   hardDeadlineMs: number;
 }
 
@@ -34,10 +41,23 @@ export function createOperatorInterruptAbortReason(hardDeadlineMs: number): Oper
   };
 }
 
-function operatorInterruptHardDeadlineMs(reason: unknown): number | null {
+export function createTerminalFailureAbortReason(hardDeadlineMs: number): TerminalFailureAbortReason {
+  if (!Number.isFinite(hardDeadlineMs) || hardDeadlineMs <= 0) {
+    throw new RangeError("terminal failure hardDeadlineMs must be a positive finite number");
+  }
+  return {
+    kind: TERMINAL_FAILURE_ABORT_REASON_KIND,
+    hardDeadlineMs: Math.max(1, Math.floor(hardDeadlineMs)),
+  };
+}
+
+function abortHardDeadlineMs(reason: unknown): number | null {
   if (!reason || typeof reason !== "object" || Array.isArray(reason)) return null;
-  const candidate = reason as Partial<OperatorInterruptAbortReason>;
-  if (candidate.kind !== OPERATOR_INTERRUPT_ABORT_REASON_KIND) return null;
+  const candidate = reason as Partial<OperatorInterruptAbortReason | TerminalFailureAbortReason>;
+  if (
+    candidate.kind !== OPERATOR_INTERRUPT_ABORT_REASON_KIND
+    && candidate.kind !== TERMINAL_FAILURE_ABORT_REASON_KIND
+  ) return null;
   if (typeof candidate.hardDeadlineMs !== "number" || !Number.isFinite(candidate.hardDeadlineMs)) return null;
   if (candidate.hardDeadlineMs <= 0) return null;
   return Math.max(1, Math.floor(candidate.hardDeadlineMs));
@@ -1489,10 +1509,15 @@ export async function runChildProcess(
         if (opts.abortSignal) {
           const onAbort = () => {
             aborted = true;
-            const operatorHardDeadlineMs = operatorInterruptHardDeadlineMs(opts.abortSignal?.reason);
-            operatorInterrupted = operatorHardDeadlineMs !== null;
+            const reason = opts.abortSignal?.reason;
+            const hardDeadlineMs = abortHardDeadlineMs(reason);
+            operatorInterrupted = Boolean(
+              reason
+              && typeof reason === "object"
+              && (reason as { kind?: unknown }).kind === OPERATOR_INTERRUPT_ABORT_REASON_KIND
+            );
             killChildProcessTree(child, false);
-            scheduleForceKill(operatorHardDeadlineMs ?? Math.max(1, opts.graceSec) * 1000);
+            scheduleForceKill(hardDeadlineMs ?? Math.max(1, opts.graceSec) * 1000);
           };
 
           if (opts.abortSignal.aborted) {

@@ -520,6 +520,11 @@ export interface ProviderQuotaResult {
 export interface ServerAgentRuntimeModule {
   type: string;
   execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult>;
+  /**
+   * Return an opaque provider/endpoint/credential readiness scope for one
+   * execution attempt. Model selection must not affect this fingerprint.
+   */
+  getProviderReadinessFingerprint?: (ctx: AgentRuntimeExecutionContext) => Promise<string | null>;
   testEnvironment(ctx: AgentRuntimeEnvironmentTestContext): Promise<AgentRuntimeEnvironmentTestResult>;
   parseStdoutLine?: StdoutLineParser;
   listSkills?: (ctx: AgentRuntimeSkillContext) => Promise<AgentRuntimeSkillSnapshot>;

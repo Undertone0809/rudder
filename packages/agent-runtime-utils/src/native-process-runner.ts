@@ -707,16 +707,18 @@ export async function runNativeChildProcess(
       const onAbort = () => {
         aborted = true;
         const reason = opts.abortSignal?.reason;
-        operatorInterrupted = Boolean(reason
+        const reasonKind = reason
           && typeof reason === "object"
-          && (reason as { kind?: unknown }).kind === "operator_interrupt");
-        const operatorDeadline = operatorInterrupted
+          ? (reason as { kind?: unknown }).kind
+          : null;
+        operatorInterrupted = reasonKind === "operator_interrupt";
+        const hardDeadline = (operatorInterrupted || reasonKind === "terminal_failure")
           && typeof reason === "object"
           && reason !== null
           && typeof (reason as { hardDeadlineMs?: unknown }).hardDeadlineMs === "number"
           ? (reason as { hardDeadlineMs: number }).hardDeadlineMs
           : null;
-        sendStop(operatorDeadline ?? Math.max(1, opts.graceSec) * 1_000);
+        sendStop(hardDeadline ?? Math.max(1, opts.graceSec) * 1_000);
       };
       if (opts.abortSignal.aborted) onAbort();
       else {

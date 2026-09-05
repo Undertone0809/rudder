@@ -11,6 +11,7 @@ import { parseClaudeStdoutLine } from "@rudderhq/agent-runtime-claude-local/ui";
 import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels } from "@rudderhq/agent-runtime-codex-local";
 import {
   execute as codexExecute,
+  getProviderReadinessFingerprint as codexGetProviderReadinessFingerprint,
   getQuotaWindows as codexGetQuotaWindows,
   sessionCodec as codexSessionCodec,
   testEnvironment as codexTestEnvironment,
@@ -159,6 +160,7 @@ const claudeLocalAdapter: ServerAgentRuntimeModule = {
 const codexLocalAdapter: ServerAgentRuntimeModule = {
   type: "codex_local",
   execute: codexExecute,
+  getProviderReadinessFingerprint: codexGetProviderReadinessFingerprint,
   testEnvironment: codexTestEnvironment,
   parseStdoutLine: parseCodexStdoutLine,
   listSkills: listCodexSkills,

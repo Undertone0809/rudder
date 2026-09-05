@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCodexTransportDisconnectError, parseCodexJsonl } from "./parse.js";
+import { isCodexProviderAuthFailure, isCodexTransportDisconnectError, parseCodexJsonl } from "./parse.js";
 
 describe("parseCodexJsonl", () => {
   it("does not promote incomplete assistant progress to a final summary", () => {
@@ -45,6 +45,31 @@ describe("parseCodexJsonl", () => {
       "",
       "stream disconnected before completion: error sending request for url (https://sub.zeeland.studio/v1/models)",
     )).toBe(false);
+  });
+
+  it("recognizes structured provider authentication failures without matching retryable failures", () => {
+    expect(isCodexProviderAuthFailure(
+      'unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED","message":"API key is required"}',
+    )).toBe(true);
+    expect(isCodexProviderAuthFailure("unexpected status 401 Unauthorized")).toBe(true);
+    expect(isCodexProviderAuthFailure("unexpected status 429 Too Many Requests: API key rate limit exceeded")).toBe(false);
+    expect(isCodexProviderAuthFailure("unexpected status 503: authentication service unavailable")).toBe(false);
+    expect(isCodexProviderAuthFailure(
+      "MCP returned status 401",
+      "credential required for separate integration",
+    )).toBe(false);
+    expect(isCodexProviderAuthFailure(
+      "MCP returned status 401\ncredential required for separate integration",
+    )).toBe(false);
+    expect(isCodexProviderAuthFailure(
+      "MCP returned status 401: credential required for separate integration",
+    )).toBe(false);
+    expect(isCodexProviderAuthFailure(
+      'MCP request failed: {"status":401,"code":"INVALID_API_KEY"}',
+    )).toBe(false);
+    expect(isCodexProviderAuthFailure(
+      'provider request failed for https://provider.test/v1/responses: {"status":401,"code":"INVALID_API_KEY"}',
+    )).toBe(true);
   });
 
   it("treats explicit error and failed-turn events as terminal", () => {

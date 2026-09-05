@@ -180,6 +180,17 @@ rl.on("line", (line) => {
   }
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: "turn-default-app-server" } } });
+    if (process.env.RUDDER_TEST_AUTH_FAILURE === "1") {
+      send({ method: "error", params: {
+        threadId: "thread-default-app-server",
+        turnId: "turn-default-app-server",
+        willRetry: true,
+        error: {
+          message: 'unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED","message":"API key is required"}',
+        },
+      } });
+      return;
+    }
     send({ method: "item/agentMessage/delta", params: {
       threadId: "thread-default-app-server",
       turnId: "turn-default-app-server",
@@ -396,6 +407,34 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeTransportDisconnectThenAuthFailureCodexCommand(
+  commandPath: string,
+  invocationPath: string,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(invocationPath)}, JSON.stringify(args) + "\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-transport-auth" }));
+  if (args.includes("resume")) {
+    console.error(
+      'WARN codex_core::responses_retry: retrying sampling request (1/5) ' +
+      'sampling_error=unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED","message":"API key is required"}',
+    );
+    setInterval(() => {}, 250);
+    return;
+  }
+
+  console.error("stream disconnected before completion: error sending request for url (https://provider.test/v1/responses)");
+  process.exit(1);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeNonRetryableCodexFailureCommand(commandPath: string, invocationPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -404,6 +443,68 @@ process.stdin.resume();
 process.stdin.on("end", () => {
   console.error("authentication failed: invalid credentials");
   process.exit(1);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeUnrelatedIntegration401Command(
+  commandPath: string,
+  invocationPath: string,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(invocationPath)}, "invoked\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.error('MCP request failed: {"status":401,"code":"INVALID_API_KEY"}');
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-integration-401" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "completed" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeRetryingAuthFailureCodexCommand(commandPath: string, attemptPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-auth" }));
+  let attempt = 0;
+  const retry = () => {
+    attempt += 1;
+    fs.appendFileSync(${JSON.stringify(attemptPath)}, String(attempt) + "\\n", "utf8");
+    console.error(
+      "2026-09-05T00:00:00.000Z WARN codex_core::responses_retry: " +
+      "stream disconnected - retrying sampling request (" + attempt + "/5) " +
+      'sampling_error=unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED","message":"API key is required"}, ' +
+      "url: https://provider.test/v1/responses",
+    );
+  };
+  retry();
+  setInterval(retry, 250);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeSigtermIgnoringAuthFailureCodexCommand(
+  commandPath: string,
+  attemptPath: string,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+process.on("SIGTERM", () => undefined);
+process.stdin.resume();
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(attemptPath)}, "1\\n", "utf8");
+  console.error('unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED","message":"API key is required"}');
+  setInterval(() => undefined, 1_000);
 });
 `;
   await fs.writeFile(commandPath, script, "utf8");
@@ -711,6 +812,70 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const argv = JSON.parse(await fs.readFile(capturePath, "utf8")) as string[];
       expect(argv).toContain("app-server");
       expect(argv).not.toContain("exec");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a stable non-retryable auth failure from the App Server chat path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-server-auth-"));
+    const workspace = path.join(root, "workspace");
+    const binDir = path.join(root, "bin");
+    const commandPath = path.join(binDir, "codex");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await writeFakeCodexAppServerCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-chat-app-server-auth",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: "codex",
+          cwd: workspace,
+          env: {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            RUDDER_TEST_AUTH_FAILURE: "1",
+          },
+          promptTemplate: "Reply in chat.",
+          dangerouslyBypassApprovalsAndSandbox: true,
+        },
+        context: {
+          rudderScene: "chat",
+          chatMode: true,
+        },
+        onLog: async () => undefined,
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 1,
+        errorCode: "codex_provider_auth_required",
+        errorMessage: expect.stringContaining("401 Unauthorized"),
+        resultJson: {
+          transport: "codex_app_server",
+          providerFailure: {
+            classification: "authentication",
+            retryable: false,
+            shortCircuited: true,
+          },
+        },
+      });
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -3701,6 +3866,75 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
+  it("preserves the auth terminal code when transport continuation encounters a 401", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-transport-auth-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeTransportDisconnectThenAuthFailureCodexCommand(commandPath, invocationPath);
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-transport-auth-failure",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { RUDDER_OPERATOR_HOME: path.join(root, "operator-home") },
+          promptTemplate: "Continue the assigned work.",
+          graceSec: 1,
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        resultJson: {
+          providerFailure: {
+            classification: "authentication",
+            retryable: false,
+            shortCircuited: true,
+          },
+          transportRecovery: {
+            kind: "codex_transport_disconnect",
+            outcome: "failed",
+            sessionId: "codex-session-transport-auth",
+          },
+        },
+      });
+      expect(result.errorMessage).toContain("401 Unauthorized");
+      expect(result.resultJson?.stderr).not.toContain("responses_retry");
+      expect(logs.some((entry) => entry.chunk.includes("responses_retry"))).toBe(false);
+      const invocations = (await fs.readFile(invocationPath, "utf8"))
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as string[]);
+      expect(invocations).toHaveLength(2);
+      expect(invocations[1]).toContain("resume");
+      expect(invocations[1]).toContain("codex-session-transport-auth");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not retry authentication failures as transport recovery", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-no-transport-recovery-"));
     const workspace = path.join(root, "workspace");
@@ -3742,6 +3976,317 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toContain("authentication failed");
       expect(result.resultJson).not.toHaveProperty("transportRecovery");
       expect((await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u)).toHaveLength(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not abort or persist a readiness gate for an unrelated integration 401", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-integration-401-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeUnrelatedIntegration401Command(commandPath, invocationPath);
+
+    const run = (runId: string) => execute({
+      runId,
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: { RUDDER_OPERATOR_HOME: path.join(root, "operator-home") },
+        promptTemplate: "Continue the assigned work.",
+      },
+      context: { rudderWorkspace: { agentHome } },
+      authToken: "run-jwt-token",
+      onLog: async () => {},
+    });
+
+    try {
+      const first = await run("run-integration-401-first");
+      const second = await run("run-integration-401-second");
+
+      expect(first).toMatchObject({ exitCode: 0, summary: "completed" });
+      expect(second).toMatchObject({ exitCode: 0, summary: "completed" });
+      expect(first.errorCode).toBeUndefined();
+      expect(second.errorCode).toBeUndefined();
+      expect((await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u)).toHaveLength(2);
+      await expect(fs.access(path.join(agentHome, ".rudder", "provider-readiness", "codex")))
+        .rejects.toThrow();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["heartbeat", "issue"] as const)(
+    "stops Codex exec after the first structured provider authentication failure in the %s scene",
+    async (rudderScene) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-short-circuit-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const attemptPath = path.join(root, "attempts.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeRetryingAuthFailureCodexCommand(commandPath, attemptPath);
+
+    try {
+      const startedAt = Date.now();
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-auth-short-circuit",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { RUDDER_OPERATOR_HOME: path.join(root, "operator-home") },
+          promptTemplate: "Continue the assigned work.",
+          graceSec: 1,
+        },
+        context: { rudderScene },
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(result).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        signal: "SIGTERM",
+        timedOut: false,
+        resultJson: {
+          providerFailure: {
+            classification: "authentication",
+            retryable: false,
+            shortCircuited: true,
+          },
+        },
+      });
+      expect(result.errorMessage).toContain("401 Unauthorized");
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1"]);
+      expect(result.resultJson?.stderr).not.toContain("responses_retry");
+      expect(logs.some((entry) => entry.chunk.includes("responses_retry"))).toBe(false);
+      expect(result.resultJson).not.toHaveProperty("transportRecovery");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+    },
+  );
+
+  it("hard-kills an auth-failed child within five seconds even when it ignores SIGTERM", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-hard-deadline-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const attemptPath = path.join(root, "attempts.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeSigtermIgnoringAuthFailureCodexCommand(commandPath, attemptPath);
+
+    try {
+      const startedAt = Date.now();
+      const result = await execute({
+        runId: "run-auth-hard-deadline",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { RUDDER_OPERATOR_HOME: path.join(root, "operator-home") },
+          promptTemplate: "Continue the assigned work.",
+          graceSec: 20,
+        },
+        context: { rudderScene: "issue" },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(result).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        timedOut: false,
+      });
+      expect((await fs.readFile(attemptPath, "utf8")).trim()).toBe("1");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("blocks a later Run with the same auth readiness fingerprint and retries after it changes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-readiness-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const commandPath = path.join(root, "codex");
+    const attemptPath = path.join(root, "attempts.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"subscription-auth"}\n', "utf8");
+    await writeRetryingAuthFailureCodexCommand(commandPath, attemptPath);
+
+    const run = (runId: string, openAiApiKey?: string) => execute({
+      runId,
+      agent: {
+        id: "agent-readiness",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: {
+          CODEX_HOME: sharedCodexHome,
+          RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          ...(openAiApiKey ? { OPENAI_API_KEY: openAiApiKey } : {}),
+        },
+        promptTemplate: "Continue the assigned work.",
+        graceSec: 1,
+      },
+      context: {
+        rudderScene: "issue",
+        rudderWorkspace: { agentHome },
+      },
+      authToken: "run-jwt-token",
+      onLog: async () => {},
+    });
+
+    try {
+      const first = await run("run-auth-readiness-first");
+      expect(first).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        resultJson: {
+          providerFailure: {
+            readinessState: "failed",
+            readinessFingerprint: expect.any(String),
+          },
+        },
+      });
+
+      const second = await run("run-auth-readiness-second");
+      expect(second).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        signal: null,
+        resultJson: {
+          providerFailure: {
+            readinessState: "unchanged",
+            readinessFingerprint: first.resultJson?.providerFailure?.readinessFingerprint,
+          },
+        },
+      });
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1"]);
+
+      const third = await run("run-auth-readiness-changed", "replacement-api-key");
+      expect(third).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        resultJson: {
+          providerFailure: { readinessState: "failed" },
+        },
+      });
+      expect(third.resultJson?.providerFailure?.readinessFingerprint)
+        .not.toBe(first.resultJson?.providerFailure?.readinessFingerprint);
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1", "1"]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("atomically gates concurrent Runs sharing a provider readiness scope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-concurrent-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const commandPath = path.join(root, "codex");
+    const attemptPath = path.join(root, "attempts.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"subscription-auth"}\n', "utf8");
+    await writeSigtermIgnoringAuthFailureCodexCommand(commandPath, attemptPath);
+
+    const run = (runId: string) => execute({
+      runId,
+      agent: {
+        id: "agent-readiness",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: {
+          CODEX_HOME: sharedCodexHome,
+          RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+        },
+        promptTemplate: "Continue the assigned work.",
+      },
+      context: { rudderScene: "issue", rudderWorkspace: { agentHome } },
+      authToken: "run-jwt-token",
+      onLog: async () => {},
+    });
+
+    try {
+      const firstPromise = run("run-auth-concurrent-first");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (await fs.stat(attemptPath).then(() => true).catch(() => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const second = await run("run-auth-concurrent-second");
+      const first = await firstPromise;
+      expect([first, second]).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          errorCode: "codex_provider_auth_required",
+          resultJson: expect.objectContaining({
+            providerFailure: expect.objectContaining({ readinessState: "failed" }),
+          }),
+        }),
+        expect.objectContaining({
+          errorCode: "codex_provider_auth_required",
+          resultJson: expect.objectContaining({
+            providerFailure: expect.objectContaining({ readinessState: "unchanged" }),
+          }),
+        }),
+      ]));
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1"]);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

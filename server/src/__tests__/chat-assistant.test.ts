@@ -3696,6 +3696,51 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it("preserves Codex authentication terminal evidence in the durable Chat run", async () => {
+    const svc = chatAssistantService({} as any);
+    const providerFailure = {
+      classification: "authentication",
+      retryable: false,
+      shortCircuited: true,
+      reason: "codex_provider_auth_required",
+      readinessFingerprint: "opaque-readiness-fingerprint",
+      readinessState: "failed",
+    };
+    mockAdapter.execute.mockResolvedValueOnce({
+      summary: "",
+      resultJson: { providerFailure, stdout: "sensitive output is not forwarded" },
+      timedOut: false,
+      exitCode: 1,
+      signal: "SIGTERM",
+      errorCode: "codex_provider_auth_required",
+      errorMessage: "Codex provider authentication failed",
+    });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      errorCode: "codex_provider_auth_required",
+      retryable: false,
+      failurePhase: "runtime_boot",
+      action: "repair_runtime",
+      providerFailure,
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "codex_provider_auth_required",
+        resultJson: expect.objectContaining({
+          recoverable: false,
+          retryable: false,
+          providerFailure,
+        }),
+      }),
+    );
+  });
+
   it("keeps a completed result body visible when the runtime fails after emitting the result envelope", async () => {
     const svc = chatAssistantService({} as any);
 

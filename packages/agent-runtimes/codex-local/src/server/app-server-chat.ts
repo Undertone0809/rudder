@@ -13,6 +13,7 @@ import {
   type CodexAppServerNotification,
   type CodexAppServerServerRequestHandler,
 } from "./app-server-client.js";
+import { isCodexProviderAuthFailure } from "./parse.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines } from "./stderr-filter.js";
 
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
@@ -46,6 +47,7 @@ export interface CodexAppServerChatOptions {
   onSpawn?: AgentRuntimeExecutionContext["onSpawn"];
   abortSignal?: AbortSignal;
   controlAttempt?: AgentRuntimeExecutionContext["controlAttempt"];
+  onProviderAuthFailure?: (message: string) => Promise<void> | void;
 }
 
 export interface CodexAppServerChatResult {
@@ -585,6 +587,10 @@ export async function executeCodexAppServerChat(
       if (notification.method === "error") {
         const message = asString(asRecord(params.error)?.message) || asString(params.message) || "Codex App Server error";
         await emit({ type: "error", message });
+        if (isCodexProviderAuthFailure(message)) {
+          await options.onProviderAuthFailure?.(message);
+          rejectTurn(new Error(message));
+        }
       }
     },
     onCapabilityGateClosed: (error) => {

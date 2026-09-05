@@ -195,6 +195,31 @@ function describeFailure(failure: AgentRuntimeExecutionResult | Error | null): s
   return `exit code ${failure.exitCode ?? -1}`;
 }
 
+function isTerminalProviderAuthFailure(result: AgentRuntimeExecutionResult): boolean {
+  const providerFailure = result.resultJson?.providerFailure;
+  return result.errorCode === "codex_provider_auth_required"
+    || Boolean(
+      providerFailure
+      && typeof providerFailure === "object"
+      && !Array.isArray(providerFailure)
+      && (providerFailure as Record<string, unknown>).classification === "authentication"
+      && (providerFailure as Record<string, unknown>).retryable === false,
+    );
+}
+
+function providerAuthFailureFingerprint(result: AgentRuntimeExecutionResult): string | null {
+  const providerFailure = result.resultJson?.providerFailure;
+  if (!providerFailure || typeof providerFailure !== "object" || Array.isArray(providerFailure)) {
+    return null;
+  }
+  const fingerprint = (providerFailure as Record<string, unknown>).readinessFingerprint;
+  return typeof fingerprint === "string" && fingerprint.length > 0 ? fingerprint : null;
+}
+
+function readinessScopeKey(runtimeType: string, fingerprint: string): string {
+  return `${runtimeType}\0${fingerprint}`;
+}
+
 function buildAttemptConfig(
   baseConfig: Record<string, unknown>,
   attempt: ModelAttemptSpec,
@@ -275,6 +300,8 @@ export async function executeAdapterWithModelFallbacks(
   // Resolve once so per-attempt config cannot escalate instance-level Browser eligibility.
   const browserCapabilitySource = resolveBrowserCapabilitySource(ctx.config);
   let previousFailure: AgentRuntimeExecutionResult | Error | null = null;
+  const authFailedReadinessScopes = new Set<string>();
+  const authFailedRuntimeTypes = new Set<string>();
   const requestedStartIndex = Number.isFinite(options.startAttemptIndex)
     ? Math.max(0, Math.floor(options.startAttemptIndex as number))
     : 0;
@@ -291,13 +318,6 @@ export async function executeAdapterWithModelFallbacks(
       continue;
     }
 
-    if (attempt.isFallback) {
-      await ctx.onLog(
-        "stdout",
-        `[rudder] ${describeFailure(previousFailure)}; retrying with fallback model ${attempt.fallbackIndex}/${attempt.totalFallbacks}: ${attemptRuntimeType}/${attempt.model}\n`,
-      );
-    }
-
     let controlAttempt: Awaited<ReturnType<NonNullable<typeof ctx.controlCoordinator>["beginAttempt"]>> | null = null;
     let networkSuspended = false;
     try {
@@ -308,14 +328,7 @@ export async function executeAdapterWithModelFallbacks(
         attemptRuntimeType,
         browserCapabilitySource,
       );
-      controlAttempt = await ctx.controlCoordinator?.beginAttempt({
-        attemptIndex: attempt.index,
-        runtimeType: attemptRuntimeType,
-        model: attempt.model,
-        isFallback: attempt.isFallback,
-      }) ?? null;
-      await options.onAttemptStart?.(attempt, attemptAdapter);
-      const result = await attemptAdapter.execute({
+      const attemptContext: AgentRuntimeExecutionContext = {
         ...ctx,
         agent: {
           ...ctx.agent,
@@ -326,6 +339,33 @@ export async function executeAdapterWithModelFallbacks(
         context: buildAttemptContext(ctx.context, attempt),
         runtime: attempt.isFallback ? clearRuntimeSession(ctx.runtime) : ctx.runtime,
         authToken: options.createAuthToken?.(attemptRuntimeType) ?? ctx.authToken,
+      };
+      const readinessFingerprint = await attemptAdapter.getProviderReadinessFingerprint?.(
+        attemptContext,
+      ) ?? null;
+      if (
+        (readinessFingerprint
+          && authFailedReadinessScopes.has(readinessScopeKey(attemptRuntimeType, readinessFingerprint)))
+        || (!readinessFingerprint && authFailedRuntimeTypes.has(attemptRuntimeType))
+      ) {
+        continue;
+      }
+
+      if (attempt.isFallback) {
+        await ctx.onLog(
+          "stdout",
+          `[rudder] ${describeFailure(previousFailure)}; retrying with fallback model ${attempt.fallbackIndex}/${attempt.totalFallbacks}: ${attemptRuntimeType}/${attempt.model}\n`,
+        );
+      }
+      controlAttempt = await ctx.controlCoordinator?.beginAttempt({
+        attemptIndex: attempt.index,
+        runtimeType: attemptRuntimeType,
+        model: attempt.model,
+        isFallback: attempt.isFallback,
+      }) ?? null;
+      await options.onAttemptStart?.(attempt, attemptAdapter);
+      const result = await attemptAdapter.execute({
+        ...attemptContext,
         controlAttempt: controlAttempt ?? undefined,
         onMeta: ctx.onMeta
           ? async (meta) => {
@@ -333,6 +373,19 @@ export async function executeAdapterWithModelFallbacks(
           }
           : undefined,
       });
+
+      if (isTerminalProviderAuthFailure(result)) {
+        const failureFingerprint = providerAuthFailureFingerprint(result) ?? readinessFingerprint;
+        if (failureFingerprint) {
+          authFailedReadinessScopes.add(readinessScopeKey(attemptRuntimeType, failureFingerprint));
+        } else {
+          authFailedRuntimeTypes.add(attemptRuntimeType);
+        }
+        if (attempt.index === attempts.length - 1) return result;
+        await options.onAttemptFailure?.(attempt, result);
+        previousFailure = result;
+        continue;
+      }
 
       // A provider transport suspension is non-terminal. Keep the current
       // attempt/fallback cursor pinned so recovery can resume the same model
