@@ -251,6 +251,33 @@ export function resolveCodexAgentHome(input: {
   return resolveFallbackAgentHome(input.effectiveCodexHome, input.agentId);
 }
 
+export async function getProviderReadinessFingerprint(
+  ctx: AgentRuntimeExecutionContext,
+): Promise<string> {
+  const envConfig = parseObject(ctx.config.env);
+  const envConfigStrings = envStrings(envConfig);
+  const operatorHome = resolveTrustedOperatorHome();
+  const sharedCodexHomeOverride =
+    typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
+      ? path.resolve(envConfig.CODEX_HOME.trim())
+      : null;
+  const sharedCodexHome = sharedCodexHomeOverride ?? (
+    typeof process.env.CODEX_HOME === "string" && process.env.CODEX_HOME.trim().length > 0
+      ? path.resolve(process.env.CODEX_HOME.trim())
+      : path.join(operatorHome, ".codex")
+  );
+
+  return buildCodexReadinessFingerprint({
+    env: Object.fromEntries(
+      Object.entries({ ...process.env, ...envConfigStrings }).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+    sharedCodexHome,
+    model: asString(ctx.config.model, ""),
+  });
+}
+
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 

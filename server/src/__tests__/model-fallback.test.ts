@@ -45,6 +45,7 @@ describe("executeAdapterWithModelFallbacks", () => {
     const adapter: ServerAgentRuntimeModule = {
       type: "codex_local",
       testEnvironment: vi.fn(),
+      getProviderReadinessFingerprint: vi.fn(async () => "same-provider-credential"),
       execute: vi.fn(async () => result({
         exitCode: 1,
         errorCode: "codex_provider_auth_required",
@@ -71,6 +72,48 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(executed.errorCode).toBe("codex_provider_auth_required");
     expect(repeated.errorCode).toBe("codex_provider_auth_required");
     expect(adapter.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains a same-runtime fallback with a different readiness fingerprint", async () => {
+    const calls: string[] = [];
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      getProviderReadinessFingerprint: vi.fn(async (ctx) => (
+        String((ctx.config.env as Record<string, unknown>)?.OPENAI_BASE_URL)
+      )),
+      execute: vi.fn(async (ctx) => {
+        const endpoint = String((ctx.config.env as Record<string, unknown>)?.OPENAI_BASE_URL);
+        calls.push(endpoint);
+        if (endpoint === "https://primary.test/v1") {
+          return result({
+            exitCode: 1,
+            errorCode: "codex_provider_auth_required",
+            resultJson: {
+              providerFailure: {
+                classification: "authentication",
+                retryable: false,
+                readinessFingerprint: endpoint,
+              },
+            },
+          });
+        }
+        return result({ model: "gpt-fallback" });
+      }),
+    };
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, baseContext({
+      model: "gpt-primary",
+      env: { OPENAI_BASE_URL: "https://primary.test/v1" },
+      modelFallbacks: [{
+        agentRuntimeType: "codex_local",
+        model: "gpt-fallback",
+        config: { env: { OPENAI_BASE_URL: "https://fallback.test/v1" } },
+      }],
+    }));
+
+    expect(executed.model).toBe("gpt-fallback");
+    expect(calls).toEqual(["https://primary.test/v1", "https://fallback.test/v1"]);
   });
 
   it("retains a cross-provider fallback after Codex authentication failure", async () => {

@@ -449,6 +449,25 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeUnrelatedIntegration401Command(
+  commandPath: string,
+  invocationPath: string,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(invocationPath)}, "invoked\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  console.error('MCP request failed: {"status":401,"code":"INVALID_API_KEY"}');
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-integration-401" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "completed" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeRetryingAuthFailureCodexCommand(commandPath: string, attemptPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -3957,6 +3976,57 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(result.errorMessage).toContain("authentication failed");
       expect(result.resultJson).not.toHaveProperty("transportRecovery");
       expect((await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u)).toHaveLength(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not abort or persist a readiness gate for an unrelated integration 401", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-integration-401-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const commandPath = path.join(root, "codex");
+    const invocationPath = path.join(root, "invocations.log");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeUnrelatedIntegration401Command(commandPath, invocationPath);
+
+    const run = (runId: string) => execute({
+      runId,
+      agent: {
+        id: "agent-1",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: { RUDDER_OPERATOR_HOME: path.join(root, "operator-home") },
+        promptTemplate: "Continue the assigned work.",
+      },
+      context: { rudderWorkspace: { agentHome } },
+      authToken: "run-jwt-token",
+      onLog: async () => {},
+    });
+
+    try {
+      const first = await run("run-integration-401-first");
+      const second = await run("run-integration-401-second");
+
+      expect(first).toMatchObject({ exitCode: 0, summary: "completed" });
+      expect(second).toMatchObject({ exitCode: 0, summary: "completed" });
+      expect(first.errorCode).toBeUndefined();
+      expect(second.errorCode).toBeUndefined();
+      expect((await fs.readFile(invocationPath, "utf8")).trim().split(/\r?\n/u)).toHaveLength(2);
+      await expect(fs.access(path.join(agentHome, ".rudder", "provider-readiness", "codex")))
+        .rejects.toThrow();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
