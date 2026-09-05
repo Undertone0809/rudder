@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import {
   createWindowsBrowserAppShortcut,
   detectSmartAppControlState,
   launchBrowserAppWindow,
+  launchDetachedBrowserApp,
   parseDesktopLaunchMode,
   parseSmartAppControlState,
   resolveDesktopLaunchMode,
@@ -249,5 +251,62 @@ describe("Windows browser-app compatibility", () => {
       expect.objectContaining({ detached: true, windowsHide: true }),
     );
     expect(unref).toHaveBeenCalledTimes(2);
+  });
+
+  it("kills a detached browser-app child when readiness times out", async () => {
+    const previousHome = process.env.RUDDER_HOME;
+    const home = await mkdtemp(path.join(tmpdir(), "rudder-browser-app-timeout."));
+    const child = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
+    const kill = vi.fn(() => true);
+    Object.assign(child, { pid: 42_424, kill, unref: vi.fn() });
+    const spawnImpl = vi.fn(() => {
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    });
+    process.env.RUDDER_HOME = home;
+    try {
+      await expect(launchDetachedBrowserApp({
+        cliEntryPath: path.join(home, "rudder.js"),
+        localEnv: "e2e",
+        runtimeVersion: "0.7.19",
+        open: false,
+        readyTimeoutMs: 0,
+        spawnImpl: spawnImpl as never,
+      })).rejects.toThrow("did not become ready in time");
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      if (previousHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("kills a detached browser-app child when it reports a startup error", async () => {
+    const previousHome = process.env.RUDDER_HOME;
+    const home = await mkdtemp(path.join(tmpdir(), "rudder-browser-app-error."));
+    const child = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
+    const kill = vi.fn(() => true);
+    Object.assign(child, { pid: 42_425, kill, unref: vi.fn() });
+    const spawnImpl = vi.fn(() => {
+      queueMicrotask(() => child.emit("spawn"));
+      setTimeout(() => child.emit("error", new Error("synthetic startup failure")), 0);
+      return child;
+    });
+    process.env.RUDDER_HOME = home;
+    try {
+      await expect(launchDetachedBrowserApp({
+        cliEntryPath: path.join(home, "rudder.js"),
+        localEnv: "e2e",
+        runtimeVersion: "0.7.19",
+        open: false,
+        readyTimeoutMs: 1_000,
+        spawnImpl: spawnImpl as never,
+      })).rejects.toThrow("failed before it was ready");
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      if (previousHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

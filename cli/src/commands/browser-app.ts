@@ -223,6 +223,45 @@ export function launchBrowserAppWindow(
   return "default";
 }
 
+export function terminateDetachedBrowserAppProcess(
+  child: Pick<ReturnType<typeof spawn>, "pid" | "kill">,
+  options: {
+    platform?: NodeJS.Platform;
+    processKill?: (pid: number, signal: NodeJS.Signals) => void;
+    spawnSyncImpl?: typeof spawnSync;
+  } = {},
+): void {
+  const pid = child.pid;
+  if (!Number.isSafeInteger(pid) || !pid || pid <= 0) {
+    child.kill?.("SIGKILL");
+    return;
+  }
+
+  if ((options.platform ?? process.platform) === "win32") {
+    (options.spawnSyncImpl ?? spawnSync)("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+
+  const processKill = options.processKill ?? ((targetPid: number, signal: NodeJS.Signals) => {
+    process.kill(targetPid, signal);
+  });
+  try {
+    // Detached children become process-group leaders on Unix; kill the group
+    // so a browser-app server cannot leave PostgreSQL or other descendants.
+    processKill(-pid, "SIGKILL");
+  } catch {
+    try {
+      processKill(pid, "SIGKILL");
+    } catch {
+      // The child may have exited between readiness failure and cleanup.
+    }
+  }
+  child.kill?.("SIGKILL");
+}
+
 function applyBrowserAppEnvironment(options: BrowserAppCommandOptions = {}): void {
   applyLocalEnvProfile(options);
   applyDataDirOverride(options);
@@ -477,6 +516,8 @@ export async function launchDetachedBrowserApp(options: {
   runtimeVersion: string;
   open?: boolean;
   nodePath?: string;
+  readyTimeoutMs?: number;
+  spawnImpl?: typeof spawn;
 }): Promise<BrowserAppLaunchResult> {
   applyLocalEnvProfile(options);
   applyDataDirOverride(options);
@@ -490,9 +531,11 @@ export async function launchDetachedBrowserApp(options: {
   const logPath = path.join(logDir, "browser-app.log");
   const readyFile = path.join(tmpdir(), `rudder-browser-app-${process.pid}-${randomUUID()}.json`);
   const logFd = openSync(logPath, "a");
-  let child: ReturnType<typeof spawn>;
+  const spawnImpl = options.spawnImpl ?? spawn;
+  let child: ReturnType<typeof spawn> | null = null;
+  let launchSucceeded = false;
   try {
-    child = spawn(options.nodePath ?? process.execPath, [
+    const spawnedChild = spawnImpl(options.nodePath ?? process.execPath, [
       options.cliEntryPath,
       "--local-env",
       localProfile.name,
@@ -510,21 +553,28 @@ export async function launchDetachedBrowserApp(options: {
       windowsHide: true,
       stdio: ["ignore", logFd, logFd],
     });
+    child = spawnedChild;
     await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
+      spawnedChild.once("spawn", resolve);
+      spawnedChild.once("error", reject);
     });
-    child.unref();
+    spawnedChild.unref();
   } finally {
     closeSync(logFd);
   }
 
   try {
-    const ready = await waitForReadyRecord({ readyFile, child, logPath });
+    const ready = await waitForReadyRecord({
+      readyFile,
+      child: child as ReturnType<typeof spawn>,
+      logPath,
+      timeoutMs: options.readyTimeoutMs,
+    });
     if (!ready.ok || !ready.apiUrl || !ready.boardUrl || !ready.runtimeMode) {
       throw new Error(ready.error || `Rudder browser-app failed to start. See ${logPath}.`);
     }
     const browser = options.open === false ? null : launchBrowserAppWindow(ready.boardUrl);
+    launchSucceeded = true;
     return {
       apiUrl: ready.apiUrl,
       boardUrl: ready.boardUrl,
@@ -534,6 +584,7 @@ export async function launchDetachedBrowserApp(options: {
     };
   } finally {
     await rm(readyFile, { force: true });
+    if (!launchSucceeded && child) terminateDetachedBrowserAppProcess(child);
   }
 }
 
