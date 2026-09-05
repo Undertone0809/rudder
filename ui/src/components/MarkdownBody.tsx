@@ -6,8 +6,8 @@ import remarkGfm from "remark-gfm";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
-import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
 import { localFileIconDescriptor } from "../lib/local-file-icons";
+import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
 import {
   createMarkdownSourceBoundaryMap,
   normalizeRenderedMarkdownSource,

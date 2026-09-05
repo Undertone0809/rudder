@@ -36,10 +36,35 @@ npx @rudderhq/cli@latest start
 
 This is the Desktop-first install path. It checks for newer Rudder CLI releases,
 prepares the matching persistent `rudder` CLI, installs the matching server
-runtime cache, and installs the per-user portable Rudder Desktop app from the
-fastest healthy release transport when needed. GitHub Releases remain the
-version and SHA-256 authority; Desktop assets are checksum-verified before
-installation.
+runtime cache, and, on macOS, Linux, and Windows without enforced Smart App
+Control, installs the per-user portable Rudder Desktop app from the fastest
+healthy release transport. GitHub Releases remain the version and SHA-256
+authority; Desktop assets are checksum-verified before installation.
+
+The current Windows Electron release is unsigned. When Windows Smart App
+Control is enforcing its signed-or-reputable policy, `start` automatically uses
+browser-app compatibility mode: it skips the unsigned Desktop download, creates
+a per-user Rudder Start Menu shortcut backed by the current Node executable,
+starts the selected local profile and data directory in the background (default
+`prod_local/default` under `~/.rudder`), and opens its UI in Microsoft Edge's
+standalone app window. Rudder only reads the policy state;
+it does not disable or modify Windows security settings. The local data path and
+core board workflows are unchanged, while Electron-only Browser and App Builder
+bridges are unavailable. An existing native Desktop install is left in place.
+The browser-app refuses a version-mismatched native runtime without sending it
+`SIGTERM`; close the native Desktop and retry after it exits. Same-version
+launches can still attach to the native runtime and wait for its exit before
+the browser-app runtime takes ownership.
+The fallback is an un-packaged, loopback-only `local_trusted` client, so it does
+not present the packaged Canary/Stable Desktop Account Gate and must not be
+represented as a packaged Desktop session.
+
+Override automatic selection when diagnosing either path:
+
+```sh
+rudder start --desktop-mode native
+rudder start --desktop-mode browser
+```
 
 Server-only install for hosts where the Desktop app should not be installed:
 
@@ -53,15 +78,18 @@ launcher setup, and Desktop launch. Start the server with `rudder run` and open
 the printed local URL in a browser.
 
 Once the Rudder CLI process starts, `rudder start` shows progress for the
-Rudder-managed install stages, including Desktop checksum download, Desktop
+Rudder-managed install stages. Native mode includes Desktop checksum download,
 asset download, verification, replacement, portable app installation, launcher
-setup, and launch. The first `npx` package fetch and its "Ok to proceed?"
+setup, and launch. Windows browser-app mode includes runtime/CLI preparation,
+Start Menu shortcut creation, background runtime readiness, and app-window
+launch. The first `npx` package fetch and its "Ok to proceed?"
 prompt are controlled by npm itself, so Rudder progress output starts after
 npm has handed execution to the CLI.
 
-First-run speed depends on three separate network paths: npm for the thin CLI,
-npm for the cached server runtime, and Tencent COS or GitHub Releases for the
-portable Desktop asset. On Windows, the Desktop zip is usually the largest asset. If the initial
+Native-mode first-run speed depends on three separate network paths: npm for the
+thin CLI, npm for the cached server runtime, and Tencent COS or GitHub Releases
+for the portable Desktop asset. Browser-app mode skips the third path. On
+Windows, the native Desktop zip is usually the largest asset. If the initial
 `npx` phase is slow before Rudder prints its banner, check npm's active registry
 and proxy settings with `npm config get registry`, `npm config get proxy`, and
 `npm config get https-proxy`. If the slowdown starts at `Downloading

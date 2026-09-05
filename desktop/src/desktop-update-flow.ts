@@ -633,11 +633,12 @@ export function createDesktopUpdateFlow(context: {
     };
     const childLaunch = resolveDesktopUpdateChildLaunch({
       cliArgs: [
-        "start", "--no-cli", shellAuthorized ? "--desktop-runtime-best-effort" : "--no-runtime", "--no-open", "--target-version", version,
+        "start", "--desktop-mode", "native", "--no-cli", shellAuthorized ? "--desktop-runtime-best-effort" : "--no-runtime", "--no-open", "--target-version", version,
         "--repo", DESKTOP_GITHUB_REPO, "--no-version-check", "--desktop-progress-json", "--desktop-prepare-only",
       ],
       childEnv: createDesktopUpdateChildEnvironment({ resourcesPath: process.resourcesPath }),
       resourcesPath: process.resourcesPath,
+      platform,
     });
     let child: ReturnType<typeof spawn>;
     try {
@@ -1423,8 +1424,7 @@ export function createDesktopUpdateFlow(context: {
       const profileName = context.getBootState().runtime?.localEnv;
       const cliArgs = [
         ...(profileName ? ["--local-env", profileName] : []),
-        "start",
-        "--no-cli",
+        "start", "--desktop-mode", "native", "--no-cli",
         ...(options.automatic === true ? ["--no-runtime"] : ["--desktop-runtime-best-effort"]),
         ...(options.automatic === true ? ["--no-open"] : []),
         ...(options.automatic === true
@@ -1450,7 +1450,7 @@ export function createDesktopUpdateFlow(context: {
         childEnv: createDesktopUpdateChildEnvironment({
           resourcesPath: process.resourcesPath,
         }),
-        resourcesPath: process.resourcesPath,
+        resourcesPath: process.resourcesPath, platform,
       });
       const child = spawn(childLaunch.command, childLaunch.args, {
         detached: true,

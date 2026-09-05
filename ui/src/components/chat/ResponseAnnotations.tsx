@@ -9,11 +9,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import {
   CHAT_ANNOTATION_IGNORE_ATTRIBUTE,
   restoreChatAnnotationRange,
 } from "@/lib/chat-response-annotation-selection";
-import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isImageContentType } from "@/lib/image-actions";
 import { cn } from "@/lib/utils";
 import type {

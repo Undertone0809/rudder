@@ -2,6 +2,7 @@ import { Command, CommanderError, Option } from "commander";
 import { runMcpStdioServer, type RudderMcpServerSurface } from "./agent-v1-mcp-server.js";
 import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
+import { browserAppCommand } from "./commands/browser-app.js";
 import { registerActivityCommands } from "./commands/client/activity.js";
 import { registerAgentCommands } from "./commands/client/agent.js";
 import { registerApprovalCommands } from "./commands/client/approval.js";
@@ -95,6 +96,8 @@ export function createProgram(): Command {
     .option("--download-source <source>", "Desktop download source: auto, cn, or global")
     .option("--output-dir <path>", "Directory for downloaded desktop release assets")
     .option("--desktop-install-dir <path>", "Directory for the portable Desktop install")
+    .option("--desktop-mode <mode>", "Desktop launch mode: auto, native, or browser", "auto")
+    .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
     .option("--no-open", "Install Desktop without launching it")
     .option("--wait-for-active-runs", "Wait for active Rudder runs to finish before replacing Desktop", false)
     .option("--desktop-progress-json", "Emit newline-delimited Desktop update progress events")
@@ -109,6 +112,16 @@ export function createProgram(): Command {
     .option("--no-version-check", "Skip checking npm for a newer Rudder CLI version")
     .option("--dry-run", "Print the start actions without changing the machine", false)
     .action(startCommand);
+
+  program
+    .command("browser-app")
+    .description("Open Rudder in a system browser app window")
+    .option("--runtime-version <version>", "Rudder server runtime version")
+    .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
+    .option("--child", "Run the hidden browser-app server child", false)
+    .option("--ready-file <path>", "Internal startup handoff file")
+    .option("--no-open", "Start or attach to the local runtime without opening the app window")
+    .action(browserAppCommand);
 
   program
     .command("onboard")

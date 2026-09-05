@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 
-import { getRunLogStore } from "../../../../server/src/services/run-log-store.ts";
 import { getObservedRunLog } from "../../../../server/src/services/run-intelligence.ts";
+import { getRunLogStore } from "../../../../server/src/services/run-log-store.ts";
 
 function queryFor(rows) {
   const query = {

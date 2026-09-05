@@ -2,8 +2,8 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildMcpServerEnv, runAgentV1McpJsonRpcMessage } from "../agent-v1-mcp-server.js";
