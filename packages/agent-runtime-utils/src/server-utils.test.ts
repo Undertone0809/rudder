@@ -1118,7 +1118,10 @@ describe("loadAgentInstructionsPrefix", () => {
     expect(loaded.prefix).toContain("<rudder_agent_operating_contract>");
     expect(loaded.prefix).toContain("<rudder_heartbeat_instruction>");
     expect(loaded.prefix).toContain(RUDDER_AGENT_HEARTBEAT_INSTRUCTION);
-    expect(loaded.prefix).toContain("platform-owned heartbeat/self-check pipeline");
+    expect(loaded.prefix).toContain(
+      "task-dispatch heartbeat: attempt to advance at most one assignee or reviewer Issue",
+    );
+    expect(loaded.prefix).not.toContain("platform-owned heartbeat/self-check pipeline");
     expect(loaded.commandNotes).toEqual([
       "Loaded Rudder agent operating contract from runtime code",
       "Loaded Rudder heartbeat instructions from runtime code",

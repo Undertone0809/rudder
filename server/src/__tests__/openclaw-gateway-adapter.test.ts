@@ -550,9 +550,9 @@ describe("openclaw gateway adapter execute", () => {
       expect(payload?.idempotencyKey).toBe("run-123");
       expect(payload?.sessionKey).toBe("rudder:issue:issue-123");
       expect(String(payload?.message ?? "")).toContain("wake now");
-      expect(String(payload?.message ?? "")).toContain("<rudder_heartbeat_instruction>");
+      expect(String(payload?.message ?? "")).not.toContain("<rudder_heartbeat_instruction>");
       expect(String(payload?.message ?? "")).toContain("HTTP compatibility mode: this runtime has not migrated to the CLI contract yet.");
-      expect(String(payload?.message ?? "")).toContain("The listed HTTP endpoints override any CLI command guidance.");
+      expect(String(payload?.message ?? "")).not.toContain("The listed HTTP endpoints override any CLI command guidance.");
       expect(String(payload?.message ?? "")).toContain("RUDDER_RUN_ID=run-123");
       expect(String(payload?.message ?? "")).toContain("RUDDER_TASK_ID=task-123");
       expect(String(payload?.message ?? "")).toContain("GET /api/approvals/{approvalId}/issues");
@@ -564,6 +564,44 @@ describe("openclaw gateway adapter execute", () => {
       expect(String(payload?.message ?? "")).toContain("Do not leave only a free-form accept/reject comment.");
 
       expect(logs.some((entry) => entry.includes("[openclaw-gateway:event] run=run-123 stream=assistant"))).toBe(true);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("includes the task-dispatch instruction for heartbeat scenes", async () => {
+    const gateway = await createMockGatewayServer();
+
+    try {
+      const result = await execute(
+        buildContext(
+          {
+            url: gateway.url,
+            headers: {
+              "x-openclaw-token": "gateway-token",
+            },
+            payloadTemplate: {
+              message: "heartbeat now",
+            },
+            waitTimeoutMs: 2000,
+          },
+          {
+            context: {
+              scene: "heartbeat",
+              wakeReason: "heartbeat_timer",
+            },
+          },
+        ),
+      );
+
+      expect(result.exitCode).toBe(0);
+      const message = String(gateway.getAgentPayload()?.message ?? "");
+      expect(message).toContain("<rudder_heartbeat_instruction>");
+      expect(message).toContain(
+        "task-dispatch heartbeat: attempt to advance at most one assignee or reviewer Issue",
+      );
+      expect(message).toContain("HTTP compatibility mode: this runtime has not migrated to the CLI contract yet.");
+      expect(message).toContain("The listed HTTP endpoints override any CLI command guidance.");
     } finally {
       await gateway.close();
     }

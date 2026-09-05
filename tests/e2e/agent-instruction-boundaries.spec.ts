@@ -211,6 +211,10 @@ test("renders semantic Agent Instruction boundaries across chat, heartbeat, and 
   expectSharedInstructionFrame(heartbeatInvocation.text, "Heartbeat");
   expect(heartbeatInvocation.text).toContain("<rudder_heartbeat_instruction>");
   expect(heartbeatInvocation.text).toContain("</rudder_heartbeat_instruction>");
+  expect(heartbeatInvocation.text).toContain(
+    "task-dispatch heartbeat: attempt to advance at most one assignee or reviewer Issue",
+  );
+  expect(heartbeatInvocation.text).not.toContain("platform-owned heartbeat/self-check pipeline");
   expect(heartbeatInvocation.text.indexOf("<rudder_heartbeat_instruction>"))
     .toBeGreaterThan(heartbeatInvocation.text.indexOf("<MEMORY.md>"));
   expect(heartbeatInvocation.text.indexOf("</rudder_heartbeat_instruction>"))
