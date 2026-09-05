@@ -563,7 +563,13 @@ export async function launchDetachedBrowserApp(options: {
     });
     spawnedChild.unref();
   } catch (error) {
-    if (child) terminateDetachedBrowserAppProcess(child);
+    if (child) {
+      terminateDetachedBrowserAppProcess(child, {
+        platform: options.platform,
+        processKill: options.processKill,
+        spawnSyncImpl: options.spawnSyncImpl,
+      });
+    }
     throw error;
   } finally {
     closeSync(logFd);

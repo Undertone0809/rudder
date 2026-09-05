@@ -13,11 +13,11 @@ import {
   detectSmartAppControlState,
   launchBrowserAppWindow,
   launchDetachedBrowserApp,
-  terminateDetachedBrowserAppProcess,
   parseDesktopLaunchMode,
   parseSmartAppControlState,
   resolveDesktopLaunchMode,
   resolveEdgeExecutable,
+  terminateDetachedBrowserAppProcess,
 } from "./browser-app.js";
 
 vi.mock("../runtime/server-entry.js", () => ({
