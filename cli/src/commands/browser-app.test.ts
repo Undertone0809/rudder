@@ -309,4 +309,32 @@ describe("Windows browser-app compatibility", () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  it("kills a detached browser-app child when spawn reports an error before readiness", async () => {
+    const previousHome = process.env.RUDDER_HOME;
+    const home = await mkdtemp(path.join(tmpdir(), "rudder-browser-app-spawn-error."));
+    const child = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
+    const kill = vi.fn(() => true);
+    Object.assign(child, { pid: 42_426, kill, unref: vi.fn() });
+    const spawnImpl = vi.fn(() => {
+      queueMicrotask(() => child.emit("error", new Error("synthetic spawn failure")));
+      return child;
+    });
+    process.env.RUDDER_HOME = home;
+    try {
+      await expect(launchDetachedBrowserApp({
+        cliEntryPath: path.join(home, "rudder.js"),
+        localEnv: "e2e",
+        runtimeVersion: "0.7.19",
+        open: false,
+        readyTimeoutMs: 1_000,
+        spawnImpl: spawnImpl as never,
+      })).rejects.toThrow("synthetic spawn failure");
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      if (previousHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });

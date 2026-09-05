@@ -559,6 +559,9 @@ export async function launchDetachedBrowserApp(options: {
       spawnedChild.once("error", reject);
     });
     spawnedChild.unref();
+  } catch (error) {
+    if (child) terminateDetachedBrowserAppProcess(child);
+    throw error;
   } finally {
     closeSync(logFd);
   }
