@@ -783,10 +783,7 @@ async function startServerRuntime(
       port = runningPostmaster.port ?? configuredPort;
       const runningAdminConnectionString = await resolveEmbeddedAdminConnectionString(port);
       const runningDataDir = await getPostgresDataDirectory(runningAdminConnectionString);
-      if (
-        typeof runningDataDir !== "string"
-        || resolve(runningDataDir) !== resolve(dataDir)
-      ) {
+      if (typeof runningDataDir !== "string" || resolve(runningDataDir) !== resolve(dataDir)) {
         throw new Error(
           `Embedded PostgreSQL pid ${runningPostmaster.pid} on port ${port} does not use the expected data directory ${dataDir}`,
         );
