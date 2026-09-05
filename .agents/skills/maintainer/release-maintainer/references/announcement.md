@@ -1,8 +1,13 @@
 # Stable Discord Announcement
 
-Treat the Rudder Discord post as the final manual closeout surface for a stable
-release. It does not belong in Release CI. Canary releases do not get a Discord
-announcement.
+Use this reference when the user has explicitly authorized the stable Discord
+announcement, including earlier in the same conversation. Do not seek renewed
+approval for the same message scope. A release imperative alone does not grant
+messaging authority. Without an announcement request, complete the release and
+record `Announcement: not requested`; do not block it or ask a routine question.
+
+An authorized announcement is a manual closeout surface, outside Release CI.
+Canary releases do not get a Discord announcement.
 
 ## Destination
 
@@ -116,7 +121,8 @@ distribution or approves it as standing release policy.
 
 ## Completion Evidence
 
-Record all of the following before returning `RELEASED`:
+When announcement delivery is in scope, record the following before claiming
+that the full requested release-and-announcement task is complete:
 
 ```text
 Announcement:

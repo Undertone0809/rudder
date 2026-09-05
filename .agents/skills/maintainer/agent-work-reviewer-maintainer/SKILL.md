@@ -1,6 +1,6 @@
 ---
 name: agent-work-reviewer-maintainer
-description: "Use for independent review of Rudder implementations, UI workflows, proposals, agent work, or final handoffs. Judges first-principles intent, raw-request and correction adherence, functional trust, adversarial risk, product taste, and evidence integrity; requires traceable acceptance-packet alignment and comparative rendered evidence, and blocks packet mismatch. Returns accept, conditional accept, needs more evidence, or reject without implementing fixes."
+description: "Independently review Rudder changes or proposals for intent, correctness, product quality, and evidence. Use review depth from AGENTS.md; return accept, needs more evidence, or reject with actionable findings. Does not implement fixes or replace required black-box acceptance."
 ---
 
 # Agent Work Reviewer Maintainer
@@ -8,6 +8,18 @@ description: "Use for independent review of Rudder implementations, UI workflows
 Judge whether the work solved the right problem, produced a coherent Rudder
 experience, and earned the claimed level of acceptance. This is a read-only
 review role, not an implementation or black-box-verifier role.
+
+## Proportional Scope
+
+Follow `AGENTS.md` section 9.1. Review the requested artifact and risks; do not
+turn a docs or skill review into a product-release workflow. For instructions,
+evaluate realistic decisions and conflicting rules. Runtime/data identity and
+black-box product evidence apply only to claims that depend on them.
+
+A short requirement-to-evidence mapping is sufficient for a bounded task.
+Use a formal packet or state matrix when multiple requirements, corrections,
+workflow states, or integration risks make it useful. Do not manufacture missing
+packet fields for facts that cannot affect the requested outcome.
 
 ## Role Boundary
 
@@ -18,7 +30,7 @@ review role, not an implementation or black-box-verifier role.
   evidence until this reviewer independently inspects or reruns them.
 - Use `product-acceptance-verifier-maintainer` for final black-box acceptance.
   Reviewer inspection can challenge or refine acceptance criteria, but cannot
-  replace the verifier's terminal verdict.
+  replace the verifier's terminal verdict when AGENTS.md requires that gate.
 
 ## Verdicts
 
@@ -26,13 +38,14 @@ Return exactly one reviewer verdict and name its level:
 
 - `accept`: no blocking product, implementation, evidence, or handoff gap
   remains for this level.
-- `conditional accept`: no blocker remains for this level, but explicitly
-  non-blocking follow-up is still worthwhile. Never pair this verdict with a
-  `P0`/`P1` finding or list an item under `Blocking conditions`.
 - `needs more evidence`: the available artifact or proof is insufficient for a
   trustworthy judgment.
 - `reject`: the work solves the wrong problem, creates a blocking regression,
   or requires a different product or implementation direction.
+
+Use `accept` with clearly non-blocking suggestions when the task is ready.
+Do not emit `conditional accept`: it conflates a pass with an unmet condition.
+For older receipts, inspect the actual conditions before deciding applicability.
 
 Use `stage verdict` for a proposal, design, or implementation slice. Use `final
 handoff verdict` only for the exact candidate that is ready to commit, merge,
@@ -53,14 +66,15 @@ Lock the review target before judging it:
 
 Review the named artifact, not the whole shared dirty worktree. Unrelated dirty
 files matter only when they contaminate the diff, candidate, build, or handoff.
-If the candidate or artifact changes after inspection, the old verdict does not
-apply to the new candidate.
+If relevant content changes, review the changed risks again. Unrelated work or
+commit metadata alone does not invalidate observations of unchanged content;
+record the equivalence when rebinding the receipt.
 
 ## Intent And Packet Alignment
 
 Make the user's source request and later corrections machine-visible before
 judging implementation quality. Do not let an implementer summary replace the
-request baseline. Build a compact ledger with one row per material requirement:
+request baseline. For complex or corrected requests, use a compact ledger:
 
 | Raw source | Exact phrase or correction | Observable acceptance criterion | Packet field/evidence | Status |
 | --- | --- | --- | --- | --- |
@@ -130,11 +144,10 @@ Judge the product as an operational tool, not as isolated CSS:
 - interaction feedback, continuity, icons, and keyboard behavior
 - consistency with the nearest shipped Rudder surface
 
-For every changed visible surface, require a comparative frame or equivalent
-side-by-side evidence that includes the changed surface and its nearest shipped
-sibling or named reference. An isolated crop cannot establish that `same as`
-or `matching` requirements were met. The packet should name the comparison
-surface and the dimensions, data, and theme used for the comparison.
+When visual consistency or a named reference is part of the claim, inspect a
+comparative frame or equivalent evidence with the shipped sibling/reference.
+An isolated crop cannot establish `same as` or `matching`. For other UI changes,
+inspect enough surrounding context to judge hierarchy and regressions.
 
 When labels, cards, or status treatments change, trace the user-facing language
 through open, submitting, completed, failed, cancelled/superseded, refresh,
@@ -145,11 +158,9 @@ anchor, focus, hidden-item discoverability, and stable filter/sort state across
 refresh or polling; deep links or search must not silently target an unmounted
 row. These are packet and product-quality criteria for the reviewer to surface;
 the verifier remains responsible for black-box observation of the final packet.
-For these surfaces, write the applicable acceptance matrix explicitly rather
-than referring to a generic state matrix. Include `open`, `submitting`,
-`resolved/completed`, `failed`, `cancelled/superseded`, `refresh`, `reopen`,
-`Find/search`, `deep-link`, and `load-more/reveal`, or state why a named state is
-not applicable. This makes omissions reviewable before verifier execution.
+For these surfaces, name the relevant acceptance states explicitly, including
+the transitions most likely to fail. Do not enumerate unrelated states only to
+mark them not applicable.
 
 Apply a decision-load gate before visual polish:
 
@@ -210,10 +221,11 @@ Map each claim to actual evidence:
 - black-box verifier evidence establishes terminal acceptance
 - commit, CI, and release evidence establish handoff or publication state
 
-For final handoff, verify that `product-acceptance-verifier-maintainer` returned
+When independent product acceptance is required, verify that `product-acceptance-verifier-maintainer` returned
 `PASS` for the same candidate fingerprint, runtime, organization/data identity,
 and acceptance packet. `FAIL`, `QUESTION`, missing proof, or candidate drift
-blocks final `accept`. Reviewer approval never upgrades a missing verifier pass.
+blocks final `accept` for that claim. Reviewer approval never upgrades a missing
+required verifier pass. Artifact-only review can finish without a product verifier.
 
 ## Findings And Convergence
 
@@ -230,7 +242,7 @@ from the current artifact to acceptance. Avoid a broad wishlist.
 ## Output Contract
 
 ```markdown
-Verdict: accept | conditional accept | needs more evidence | reject
+Verdict: accept | needs more evidence | reject
 Level: stage verdict | final handoff verdict
 
 Candidate and evidence baseline:
@@ -275,13 +287,14 @@ their ranges tight.
 
 A final handoff verdict can be `accept` only when all are true:
 
-1. The implementation solves the stated user job and matches current contracts.
+1. The artifact or implementation solves the stated user job and matches applicable contracts.
 2. No blocking functional, adversarial, UI-quality, or scope finding remains.
-3. Required checks and current rendered evidence passed.
-4. A distinct verifier returned `PASS` for the exact current candidate.
-5. No relevant code, artifact, build, runtime, organization, or data drift
-   occurred after that verification.
+3. Applicable checks passed, with current rendered evidence for UI claims.
+4. When AGENTS.md section 9.1 requires product acceptance, a distinct verifier
+   returned `PASS` for the current candidate. Artifact-only review needs no
+   product verifier; review its content and relevant decision scenarios instead.
+5. Relevant evidence still applies to the current candidate.
 
-If review requests any implementation change, the verifier lease becomes stale.
-After the fix, rebuild or restart as needed, rerun the verifier on the new
-candidate, then run the final reviewer round again.
+After a fix, recheck the affected evidence. On the high-risk path, rebuild or
+restart as needed, rerun the affected verifier journeys, then run final review.
+Do not repeat unchanged artifact or product observations for unrelated edits.

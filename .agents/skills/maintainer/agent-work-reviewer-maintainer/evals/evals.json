@@ -27,7 +27,7 @@
     {
       "id": 3,
       "prompt": "Review this new Rudder dashboard. It is implemented correctly and all tests pass, but it opens with a marketing-style hero, six decorative cards, sparse oversized metrics, and explanatory copy above every control. There is no evidence that the design was compared with an existing Rudder operator surface.",
-      "expected_output": "Separates functional correctness from product correctness, rejects or conditionally accepts the UI direction under Rudder's operational design principles, and recommends a denser comparison-oriented work surface anchored to an existing sibling.",
+      "expected_output": "Separates functional correctness from product correctness, rejects a blocking UI direction under Rudder's operational design principles, and recommends a denser comparison-oriented work surface anchored to an existing sibling. Non-blocking suggestions alone use accept.",
       "files": [],
       "expectations": [
         "The review asks whether the UI solves the operator's scanning and intervention job rather than judging only implementation quality.",

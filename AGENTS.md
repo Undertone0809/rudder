@@ -2,6 +2,31 @@
 
 Guidance for human and AI contributors working in this repository.
 
+## 0. Operating Contract
+
+Use judgment appropriate to GPT-6 Astra. Optimize for a complete, verified
+outcome within the user's authority; process is a means to that outcome.
+
+- An action request authorizes investigation, scoped implementation, repair,
+  verification, and the Git handoff in section 10. Read-only questions and
+  requests for a plan or review alone do not authorize implementation.
+- Carry forward the user's objective and authorization across retries, skill
+  handoffs, status questions, and context compaction. Do not ask again merely
+  because a workflow enters another stage.
+- Resolve ordinary choices from repository context. Clarify only a material
+  ambiguity about behavior, scope, authority, or irreversible consequences.
+  Prepare the reviewable result first where possible, ask once, and continue
+  independent work while waiting. Missing permission blocks its dependent
+  action, not the entire task.
+- Fix recoverable failures within scope. A failing test or reviewer finding is
+  work to resolve, not a reason to hand the task back. Stop with a partial result
+  only when a named external dependency or decision prevents useful progress.
+- These project-wide rules own authorization, review depth, and completion.
+  Maintainer skills supply specialized procedures; their templates and examples
+  do not create additional universal gates. Preserve concrete safety constraints.
+- Read canonical skills only. Historical `*-workspace/skill-snapshot*` copies
+  are evaluation evidence, not competing instructions.
+
 ## 1. Purpose
 
 Rudder is open-source software for assigning, running, reviewing, and improving agent work. It connects goals, tasks, knowledge, runs, reviews, budgets, and workflows so agents can work within clear boundaries, collaborate, and move work forward.
@@ -27,10 +52,13 @@ Documentation folders have different audiences:
 When the task is to improve website docs, edit `docs/`. When the task is to
 change contributor/product-development guidance, edit `doc/`.
 
-Start here for almost every task:
+For product behavior or architecture work, start here:
 
 1. `doc/product/PRODUCT.md`
 2. `doc/product/README.md`
+
+For narrow docs, tooling, or skill edits, read the affected guidance and its
+callers directly. Expand only when product behavior or another boundary is affected.
 
 Then choose the route that matches the work:
 
@@ -100,12 +128,9 @@ curl http://localhost:3100/api/health
 curl http://localhost:3100/api/orgs
 ```
 
-Reset local dev instance:
-
-```sh
-rm -rf ~/.rudder/instances/dev
-pnpm dev
-```
+Do not reset or delete an existing instance to diagnose startup. Preserve its
+data; use the Desktop recovery skill or a disposable instance. Deleting user
+data requires explicit authorization for that target.
 
 ## 4.1 Desktop Validation Workflow
 
@@ -166,7 +191,10 @@ Repository-based agent skills for local development, maintenance, release, debug
 1. Keep plan docs dated and centralized.
 
 New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.
-When using plan mode, write the plan in `doc/plans/` before starting implementation work.
+Persist a plan when the user requests one or when cross-module decisions need a
+durable record. Ordinary implementation does not require a plan document. In
+read-only plan mode, present the plan without writing files; persist it once
+implementation is authorized if it remains useful.
 New plan docs should start with the standard YAML frontmatter described in `doc/engineering/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
 
 1. Treat `doc/product/` as the guarded Product Logic Registry.
@@ -175,19 +203,30 @@ New plan docs should start with the standard YAML frontmatter described in `doc/
 
 Do not infer `doc/product/**` edit permission from implementation approval. User phrases such as "start", "proceed", "implement it", "fix it", "optimize it", "ship it", "add tests", "sync contracts", or similar task approval do not authorize guarded Product Logic Registry edits by themselves. Approval must explicitly mention updating `doc/product/**`, updating the Product Logic Contract/Registry, or approving a concrete product-doc delta.
 
-When changing product logic, state the affected contract IDs before implementation when practical, keep code/tests aligned with those contracts, and run `pnpm product-logic:check` before hand-off. If a behavior change needs a product doc update but the agent lacks authorization, stop with a proposed product logic delta instead of silently editing the registry or claiming the change is complete.
+When changing product logic, identify the affected contract IDs and run
+`pnpm product-logic:check` before handoff. Distinguish restoring existing behavior
+from changing the contract. A compatible fix needs no routine registry approval.
 
-After finishing a feature, workflow, or product-behavior change, proactively remind the user that the implemented logic can be synchronized back into `doc/product/**` and ask whether they want the agent to add that Product Logic Contract update. This reminder must be explicit in the hand-off. The question does not grant edit permission by itself; only update the registry after the user explicitly approves the product doc delta.
+If a requested behavior needs a registry delta without edit authorization,
+prepare the concrete proposed delta outside `doc/product/**`, complete independent
+authorized implementation and verification, and ask once for that delta. Do not
+edit the registry or claim the overall contract change complete while it remains
+pending. An existing approval for that exact delta remains valid. Do not ask a
+generic registry-sync question after every feature or ask again after approval.
 
 1. Require end-to-end coverage for feature work.
 
-Any shipped feature or user-visible workflow change must add or update automated E2E coverage for the path being introduced or changed.
-If no suitable E2E suite exists yet for that area, create it as part of the feature work.
-Do not treat unit, integration, or smoke coverage as a substitute unless the user explicitly approves that exception.
+New or changed user-visible workflows need automated E2E coverage. Reuse adequate
+existing coverage; add or update cases for new behavior and regression risks.
+When no suite exists, add a focused workflow test. Do not build a broad framework
+for a small change. Copy-only, styling-only, docs, and skill edits do not require
+new product E2E cases unless they change workflow behavior.
 E2E coverage must exercise the real user-visible workflow plus the highest-risk corner cases for that workflow.
 Do not stop at a happy-path fixture when the behavior depends on data volume, date windows, permissions, organization boundaries, persistence, async runtime state, database aggregation, or external-process results.
 Include at least one representative edge case or production-shaped failure mode whenever that is where the implementation is likely to break.
-If a corner case is too expensive or impossible to cover in E2E, document why and add the closest lower-level regression test instead.
+If an edge case cannot reasonably be automated end-to-end, document the concrete
+limitation and add the closest meaningful regression test. This does not replace
+the primary workflow E2E or any required real-environment acceptance.
 
 ## 5.1 Release And Deployment Authorization
 
@@ -196,12 +235,16 @@ branch push/PR, shared staging, stable publication, and production deployment as
 separate transitions.
 
 - `start`, `continue`, `proceed`, `implement`, `finish`, or approval of a plan
-  authorizes implementation and verification only. The default stopping point
+  authorizes implementation, verification, and the section 10 Git handoff. The default stopping point
   is Review Ready: validated changes committed and pushed on the current branch,
   a PR when appropriate, review evidence, and a release-risk summary.
-- An explicit imperative to release or publish, including `release`, `publish`,
-  `ship this version`, `发版`, or `发布`, authorizes the complete standard release
-  lifecycle. This includes committing and pushing the reviewed source directly
+- An explicit imperative to release a Rudder version, such as `release vX.Y.Z`,
+  `ship this version`, or `发版`, authorizes the complete standard release
+  lifecycle when the conversation identifies that version release as the target.
+  Publishing only named docs, a package, or another surface stays limited to
+  that surface. A bare `publish` is interpreted from context, not as automatic
+  authority for every release target. The version lifecycle includes committing
+  and pushing the reviewed source directly
   to `main`, running CI and the release dry-run, publishing npm/GitHub/Desktop/
   production-docs surfaces, verifying them, cleaning obsolete canary
   Releases/tags, and completing the direct next-version handoff. Do not create a
@@ -215,8 +258,9 @@ separate transitions.
   request.
 - Machine validation remains mandatory: the exact `main` source must pass CI,
   stable preflight, immutable-version checks, and public-surface verification.
-  Stop only when credentials or permissions are unavailable or a material
-  target decision is genuinely ambiguous.
+  Diagnose and repair failed gates within scope. Missing platform access,
+  credentials, permissions, or a material target decision can block publication;
+  preserve a partial receipt and complete independent work before handoff.
 - Destructive or nonstandard operations still require separate authority:
   unpublishing npm versions, force-pushing or retargeting published tags,
   deleting the active canary line, or expanding beyond the requested
@@ -251,7 +295,17 @@ Notes:
 
 ## 7. Verification Before Hand-off
 
-Run this full check before claiming done:
+Choose checks by the changed surface and explain material omissions:
+
+- Docs and instruction-only changes: check the diff, links/frontmatter, relevant
+  validators, and representative instruction scenarios. No product build or
+  browser ceremony is needed for a claim confined to those artifacts.
+- Localized code changes: run focused tests, affected-package typechecks, and
+  lint/build checks that can expose the changed behavior.
+- Shared contracts, runtime, dependencies, cross-package changes, and releases:
+  run the full repository baseline below, plus applicable task-specific checks.
+
+Full repository baseline:
 
 ```sh
 pnpm lint
@@ -262,18 +316,20 @@ pnpm build
 
 If anything cannot be run, explicitly report what was not run and why.
 
-Use `pnpm lint:fix` to automatically organize TypeScript and JavaScript imports.
+Use scoped formatting/import fixes; avoid whole-repository `lint:fix` churn in a
+shared dirty checkout. Do not repeat passing checks without a relevant change,
+failure, or unresolved risk. Attribute unrelated baseline failures explicitly.
 
 Task-specific additions:
 
-- Desktop or packaged-app changes:
+- Changes affecting packaged boot, profiles, migrations, packaging, or installed behavior:
   - `pnpm desktop:verify`
 - Feature work or workflow changes:
-  - add or update the relevant automated E2E test coverage before hand-off
+  - apply section 5's E2E coverage rule: reuse adequate existing coverage, or add/update the cases needed for changed behavior
   - run the relevant E2E suite (`pnpm test:e2e`, `pnpm test:release-smoke`, or another feature-specific E2E path) when that area is affected
 - Visible UI changes:
   - verify the rendered result in a browser or desktop shell, not just by tests
-  - when browser verification is needed, prefer `@browser-use` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
+  - use `$ego-browser` by default; when it is unavailable or unsuitable, use an authorized available alternative and explain the reason
   - store temporary screenshots and other ad-hoc verification artifacts outside the repository tree (for example under `/tmp` or the system temp dir), not in the project root
 
 ## 8. API and Auth Expectations
@@ -301,15 +357,26 @@ When adding endpoints:
 - For visible UI changes, verify the rendered result before hand-off using a browser, screenshot, or equivalent visual inspection. Do not rely on code review, typecheck, or tests alone for layout-sensitive changes.
 - If a change affects user-visible functionality, include the relevant final screenshots in the hand-off response so the reviewer can see the shipped result, not just read about it.
 
-## 9. Review and verify
+## 9.1 Review And Verification Depth
 
-For every non-trivial task, spawn distinct reviewer and verifier agents. Use
+Choose independent review by risk, not task length. Use
 `.agents/skills/maintainer/agent-work-reviewer-maintainer` for first-principles,
 functional, adversarial, product-taste, and evidence-integrity review. Use
 `.agents/skills/maintainer/product-acceptance-verifier-maintainer` for read-only
 black-box acceptance in the real local or otherwise named terminal environment.
 
-The gate order is:
+- Mechanical edits: self-review and relevant checks are sufficient.
+- Bounded docs, skills, tooling, and localized low-risk fixes: use one independent
+  review when it adds confidence. Verify the actual artifact; a product runtime,
+  organization identity, or delivery packet is not required for unrelated claims.
+- User-visible workflows, security/organization boundaries, persistence/migrations,
+  agent execution, Desktop startup/packaging, releases, and shared-state integration:
+  use distinct reviewer and verifier agents with the gate order below.
+- Use subagents within the current task. Do not create user-visible tasks without
+  an explicit request. Keep delegation bounded; routine tasks may use `luna_worker`
+  with `gpt-5.6-luna` / `max`, while complex judgment may use the selected model.
+
+For the high-risk path, the gate order is:
 
 1. Before acceptance testing, the reviewer returns a stage verdict on intent,
    implementation, product taste, risk, and the proposed acceptance packet.
@@ -321,15 +388,17 @@ The gate order is:
 4. Only after verifier `PASS`, the reviewer runs a final round, reads the
    verifier evidence, inspects the exact candidate, and returns a final handoff
    verdict.
-5. Commit and push only after reviewer `accept` and verifier `PASS` both apply
-   to the same unchanged candidate.
+5. Publish the commit and push only after reviewer `accept` and verifier `PASS`
+   both apply to the same candidate. A local checkpoint commit is allowed before
+   acceptance to create an immutable candidate; it is not a completion claim.
 
-`FAIL`, `QUESTION`, `conditional accept`, `needs more evidence`, and `reject`
-all block final handoff. Any relevant code, build, runtime, organization/data,
-or acceptance-criteria change invalidates prior verdicts. Fix the blocker, rerun
-the verifier on the new candidate, then rerun final review. Spawning an agent is
-not proof that either gate completed; the parent must read and reconcile each
-terminal verdict.
+`FAIL`, `QUESTION`, `needs more evidence`, and `reject` block the affected
+acceptance or publication claim. Non-blocking suggestions belong under `accept`,
+not `conditional accept`. Resolve findings locally and rerun affected checks.
+Invalidate observations when relevant behavior, build, runtime, data, or criteria
+change; unrelated dirty files and a new commit ID with identical tested content
+do not alone require replay. Record content equivalence and recheck Git/CI identity
+where required. The parent must read and reconcile every terminal verdict.
 
 For visible UI changes, the reviewer must inspect current rendered evidence
 against `doc/engineering/DESIGN.md`, including cognitive load and decision
@@ -337,20 +406,28 @@ sequencing. The verifier must black-box the primary journey plus the highest-ris
 decision-flow, content, async, interaction, continuity, viewport, and theme
 states. Include current final screenshots in the handoff.
 
-Simple mechanical changes such as correcting one README typo may omit spawned
-agents when no product behavior, runtime, release, or layout claim is involved.
+When a required agent is unavailable, complete independent preparation and
+report the missing gate. Do not relabel self-review as independent acceptance.
 
 ## 10. Definition of Done
 
 A change is done when all are true:
 
-1. Behavior matches affected `doc/product/**` contracts, or the product logic delta has been explicitly proposed when the registry cannot be edited yet
-2. Typecheck, tests, and build pass
-3. Contracts are synced across db/shared/server/ui
-4. Docs updated when behavior or commands change
-5. Please provide screenshots if there are any UI-related changes.
-6. Git commit rules
+1. The requested result exists and has been verified at the level claimed.
+2. Applicable checks and section 9.1 review gates pass; material limits are explicit.
+3. Affected code/API contracts and documentation agree. A pending guarded product
+   delta is reported as pending, not as a completed contract change.
+4. UI changes include current screenshots; other artifacts include useful evidence.
+5. The authorized Git handoff is complete, or a concrete external blocker is reported.
 
-- After completing a feature, small functionality, test change, or bug fix, and after the necessary validation passes, default to running `git commit` and `git push` to the current remote branch.
+- After scoped edits and applicable validation, commit and push the task's changes
+  to the current remote branch, including instruction/doc fixes. This standing
+  authority does not authorize merging another branch, release, or deployment.
+  Honor a user request for local-only work or no commit/push.
 - Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).
-- If there are unrelated dirty changes in the working tree, default to committing only the files changed for the current task instead of asking for confirmation. YOU MUST COMMIT AFTER YOU WORK.
+- Preserve unrelated worktree and staged changes. Inspect the index immediately
+  before committing and include only this task's changes; use an isolated index
+  or checkout if needed. Do not ask just because unrelated work is dirty.
+- Do not create an empty commit for read-only work or retry a rejected push
+  unchanged. Resolve recoverable Git issues within scope, and report the exact
+  committed/pushed state when external access or another concrete gate blocks it.

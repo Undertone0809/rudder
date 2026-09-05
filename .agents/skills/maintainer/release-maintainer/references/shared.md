@@ -169,6 +169,7 @@ Before completion, record:
 - install/update proof appropriate to the changed area;
 - obsolete canary cleanup and retained active line;
 - next-version main handoff and its CI;
-- stable Discord announcement server, channel, direct message URL, ping state,
-  follower cross-post state, and rendered readback;
+- when announcement delivery is requested, its server, channel, direct message
+  URL, ping state, follower cross-post state, and rendered readback; otherwise
+  `Announcement: not requested`;
 - preserved unrelated work or remaining blockers.

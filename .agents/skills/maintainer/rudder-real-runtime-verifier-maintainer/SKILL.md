@@ -22,8 +22,9 @@ Default to verification and diagnosis only:
 - Create disposable orgs, agents, issues, and runs when needed for proof.
 - Separate provider/model failure from Rudder adapter failure.
 - Report exact blockers and smallest likely fixes.
-- Do not edit source files, configs, git state, or product docs unless the user
-  explicitly asks for a mutation after the verification request.
+- As an independent verifier, do not edit source, configs, Git state, or product
+  docs. Return findings to the implementer. The parent retains any existing
+  fix authority; verification does not require that authority to be repeated.
 
 If the user asks to fix the issue, hand back to the lifecycle implementation
 route or make the smallest explicit patch, then require this skill's real
@@ -51,14 +52,16 @@ a fix.
 
 ## Runtime Matrix
 
-Default required matrix:
+Select the runtime matrix from the user's request and the changed integration.
+Test one runtime for a runtime-specific claim. Use the full supported matrix for
+an explicit all-runtime claim or a shared adapter/tool change that affects it:
 
 - Codex
 - Claude
 - OpenCode
 - Pi
 
-Extend the matrix when the user names additional runtimes such as Cursor or
+Extend the matrix when the user names additional supported runtimes such as Cursor or
 Gemini. Do not treat a Codex pass as proof for another runtime.
 
 Read only the relevant reference files:
@@ -136,6 +139,9 @@ Use the smallest probe that answers the question, then escalate only as needed:
 
 Use `references/reporting.md` for the full shape. At minimum include:
 
+- overall verdict: `PASS`, `FAIL`, or `QUESTION` for the requested matrix;
+  observed required behavior failure yields `FAIL`; otherwise missing required
+  proof or provider access yields `QUESTION`; complete required proof yields `PASS`
 - verdict per runtime: `PASS`, `FAIL`, `BLOCKED_PROVIDER`, `PARTIAL`, or
   `NOT_RUN`
 - run IDs, issue IDs, org IDs when disposable data was created
@@ -148,4 +154,3 @@ Use `references/reporting.md` for the full shape. At minimum include:
 
 Do not say "all green" if any runtime is blocked, substituted, partial, or only
 covered by simple `agent_me`.
-

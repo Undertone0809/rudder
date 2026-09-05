@@ -1,6 +1,6 @@
 ---
 name: delivery-lifecycle-maintainer
-description: "Use for Rudder's root-level delivery lifecycle when work spans implementation, review, black-box acceptance, integration, or handoff and candidate/source/runtime/data identity can drift. It captures raw intent and corrections, freezes an acceptance packet, coordinates reviewer/verifier/final-review receipts, records target/base/remote/patch-tree identities, preserves unrelated dirty paths and index state, invalidates stale receipts, and drives refreeze/reverify to a terminal delivered-ref receipt. It does not replace reviewer, verifier, release, or Git judgment; use main-first and isolate only when conflict or risk requires it."
+description: "Coordinate complex Rudder delivery when concurrent integration, runtime/data identity, or release gates require a machine-readable evidence packet. Follow AGENTS.md for authorization and review depth. Ordinary docs, skills, localized fixes, and simple Git handoffs do not need this lifecycle."
 ---
 
 # Delivery Lifecycle Maintainer
@@ -13,15 +13,20 @@ general Git skill.
 
 ## Scope and boundaries
 
-Use this skill when a task crosses two or more of these transitions:
+Use this skill when a high-risk task under `AGENTS.md` section 9.1 needs a shared
+ledger to keep source, runtime, acceptance, and integration evidence consistent:
 
 ```text
 intent -> implementation -> review -> black-box acceptance -> integration -> delivered ref
 ```
 
-It is especially useful for shared `main`, multiple branches, dirty paths,
+It is especially useful for concurrent shared `main` integration, multiple branches,
 long-running agents, candidate replacement, budget/deadline changes, or a
 handoff that needs exact source and receipt identity.
+
+Crossing two routine stages or encountering unrelated dirty paths alone is not
+a trigger. Keep ordinary tasks in a concise change/check/Git handoff. Once a full
+packet is warranted, its required identities and validation remain mandatory.
 
 - Preserve the user's raw request, later corrections, non-goals, and explicit
   authorization. Never replace the request with a convenient summary.
@@ -35,6 +40,9 @@ handoff that needs exact source and receipt identity.
 - Do not create a worktree as ceremony. Start from the named checkout/main;
   isolate only after a real conflict, concurrent-write risk, destructive
   operation, or independent build/runtime requirement is observed.
+- Reuse the user's existing authorization. A specialist handoff or new workflow
+  stage is not another permission boundary. Recoverable failures and stale
+  receipts require repair, not an automatic final blocked response.
 
 ## Delivery packet
 
@@ -106,16 +114,18 @@ transition; it never becomes a soft warning.
 ### 4. Detect drift and invalidate
 
 Re-capture the tuple immediately before integration and handoff. Invalidate
-all affected receipts when any relevant source SHA, dirty/diff fingerprint,
+affected receipts when any relevant source SHA, dirty/diff fingerprint,
 changed path, build/artifact, runtime/process, organization/data,
 acceptance-packet criterion, workload, budget, deadline, target, base, or
 remote ref changes. Append a drift event explaining the before/after identity
 and mark the old receipts `invalidated`; do not reuse an old `PASS` or
 `accept`.
 
-Refreeze the new candidate, rebuild/restart where needed, rerun the verifier,
-and rerun final review. A replacement or continuation is a new lease unless
-the packet proves the exact prior tuple is unchanged.
+Record the new identities. Rebuild/restart and rerun verification only for
+affected behavior, then obtain final review for the current candidate. For
+content-equivalent metadata/ref changes, document equivalence and rebind the
+receipt with the issuing agent; do not copy mismatched identities into a packet
+or replay unrelated product journeys. Recheck exact-source CI for releases.
 
 ### 5. Integrate main-first, then recheck
 
@@ -168,8 +178,9 @@ Legal states are `draft`, `in_progress`, `review_ready`,
   checked; or
 - the delivered ref/SHA/tree receipt is absent.
 
-When blocked, preserve the packet and evidence, state the exact external
-decision or resource needed, and do not “finish” by changing status to ready.
+When a transition is blocked, repair it within scope and continue independent
+work. Return a blocked handoff only when a specific external decision or resource
+prevents useful progress. Preserve the packet and evidence; do not claim readiness.
 
 ## Handoff format
 

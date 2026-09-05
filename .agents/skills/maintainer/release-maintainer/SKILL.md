@@ -32,15 +32,19 @@ Use a second branch only when the observed state genuinely crosses branches,
 such as a stable publish that needs partial recovery. Do not preload every
 reference for a readiness question.
 
-For every hands-on stable release, also read `references/announcement.md` after
-the public surfaces, cleanup, and next-version handoff are verified. Keep this
-as an authenticated maintainer action; do not add it to Release CI or create a
-webhook unless the user explicitly asks for announcement automation.
+When the user explicitly requests a Discord announcement, or has already
+authorized that exact announcement in the conversation, read
+`references/announcement.md` after the release surfaces are verified. A release
+request alone does not authorize sending messages. Do not add announcements to
+Release CI or create a webhook unless explicitly requested.
 
 ## Authorization Boundary
 
-An explicit imperative such as `release`, `publish`, `ship this version`,
-`发版`, or `发布` authorizes the complete standard release lifecycle:
+An explicit request to release a Rudder version, such as `release vX.Y.Z`,
+`ship this version`, or `发版` in a version-release context, authorizes the
+complete standard release lifecycle below. A request to publish only named docs,
+a package, or another surface authorizes that surface and its prerequisites.
+Resolve a bare `publish` from context; do not expand it into a full version release.
 
 1. resolve and lock the single consistent version and source SHA;
 2. land reviewed release source on `main` when needed;
@@ -48,7 +52,7 @@ An explicit imperative such as `release`, `publish`, `ship this version`,
 4. publish npm, tag, GitHub Release, Desktop, and production-docs surfaces;
 5. verify public installation, clean obsolete canary Releases/tags, and advance
    the next-version base;
-6. publish and read back the stable release announcement in Rudder Discord.
+6. when explicitly authorized, publish and read back the stable Discord announcement.
 
 Do not create a release PR or ask for routine second approval after validation.
 Ask only when channel, version, source, or destination is materially ambiguous.
@@ -80,8 +84,8 @@ exposing secrets, or expanding to another product/environment.
 - Partial publication is repaired from its first missing surface; immutable
   npm versions are not republished.
 - Public completion requires applicable npm, tag, GitHub Release, Desktop,
-  changelog/docs, install smoke, next-version handoff evidence, and for stable
-  releases a verified Rudder Discord announcement URL.
+  changelog/docs, install smoke, and next-version handoff evidence. A Discord
+  announcement URL is required only when announcement delivery is in scope.
 - Canary releases do not receive Discord announcements. Do not add announcement
   delivery to Release CI as part of ordinary release execution.
 - Cleanup removes obsolete GitHub Releases and `canary/*` tags, not published
@@ -116,9 +120,11 @@ exposing secrets, or expanding to another product/environment.
 6. Execute one stable publish path whose machine gates run before mutation; do
    not introduce a separate preview dispatch or second human hand-off.
 7. Verify every applicable public surface from the same locked source.
-8. For stable only, follow `references/announcement.md`: check for an existing
+8. For an authorized stable announcement, follow `references/announcement.md`: check for an existing
    version post, publish the bounded announcement with no default ping, read it
    back, and record its direct message URL.
+   Otherwise report the announcement as not requested; do not make it a new
+   permission question or a blocker for a release-only task.
 9. Report version/ref, workflow runs, npm tags, Release assets, install proof,
    changelog/docs state, announcement URL, cleanup, and remaining manual work.
 

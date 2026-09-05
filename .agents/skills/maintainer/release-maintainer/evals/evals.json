@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "发 0.7.0 stable。main 在 dry-run 后又多了一个无关提交，但 0.7.0 的 CI 是在 abc123 上通过的。",
-      "expected_output": "Treats the imperative as full release authority, locks stable source to abc123, does not chase moving main, and verifies npm, tag, Release, Desktop, docs, cleanup, install, next-version handoff, and the final Rudder Discord announcement.",
+      "expected_output": "Treats the imperative as full release authority, locks stable source to abc123, does not chase moving main, and verifies npm, tag, Release, Desktop, docs, cleanup, install, and next-version handoff. Reports Discord announcement as not requested without sending or asking a routine follow-up.",
       "files": [],
       "expectations": [
         "The response recognizes the release imperative as end-to-end standard release authorization without requesting routine second approval.",
         "The response locks 0.7.0 to immutable source abc123 and does not silently retarget to the later main commit.",
         "The response does not mark the release BLOCKED merely because main moved after abc123 passed CI and stable dry-run.",
-        "The response requires the complete stable surface set: package-map npm latest, stable tag, GitHub Release, Desktop assets/checksum, production docs, install proof, obsolete-canary cleanup, next-version handoff, and a verified Rudder Discord announcement URL.",
+        "The response requires package-map npm latest, stable tag, GitHub Release, Desktop assets/checksum, production docs, install proof, obsolete-canary cleanup, and next-version handoff. It does not add an unrequested messaging action or gate.",
         "The response routes stable-specific details without loading or narrating unrelated bootstrap and rollback procedures."
       ]
     },
