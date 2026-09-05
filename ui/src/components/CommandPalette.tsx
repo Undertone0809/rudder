@@ -625,7 +625,7 @@ export function CommandPalette() {
                 return (
                   <CommandItem
                     key={chat.id}
-                    value={`${searchQuery} ${chat.title} ${preview ?? ""}`}
+                    value={`${chat.id} ${searchQuery} ${chat.title} ${preview ?? ""}`}
                     onSelect={() => go(`/messenger/chat/${chat.id}`)}
                   >
                     <MessagesSquare className="mr-2 h-4 w-4" />

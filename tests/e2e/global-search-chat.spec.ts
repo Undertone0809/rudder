@@ -328,6 +328,49 @@ test.describe("Global search results", () => {
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`));
   });
 
+  test("highlights only the hovered chat when search results have identical content", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Duplicate Search Chats ${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Duplicate Search Agent" });
+
+    for (let index = 0; index < 2; index += 1) {
+      const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title: "Repeated review title",
+          preferredAgentId: agent.id,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+          initialMessage: {
+            body: "The same duplicate-hover-token appears in both conversations.",
+          },
+        },
+      });
+      expect(chatRes.ok()).toBe(true);
+    }
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger`);
+
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Search" }).click();
+    const searchInput = page.getByPlaceholder("Search issues, chats, agents, projects, skills, library...");
+    await searchInput.fill("duplicate-hover-token");
+
+    const chatResults = page.getByRole("option", { name: /Repeated review title/i });
+    await expect(chatResults).toHaveCount(2, { timeout: 15_000 });
+    await chatResults.nth(1).hover();
+
+    await expect(page.locator('[role="option"][data-selected="true"]')).toHaveCount(1);
+    await expect(chatResults.nth(0)).toHaveAttribute("data-selected", "false");
+    await expect(chatResults.nth(1)).toHaveAttribute("data-selected", "true");
+    await page.screenshot({ path: testInfo.outputPath("duplicate-chat-hover-selection.png"), fullPage: true });
+  });
+
   test("finds an issue by description text from the command palette", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Search Issues ${Date.now()}` },
