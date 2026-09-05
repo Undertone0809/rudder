@@ -100,3 +100,12 @@ export function isCodexTransportDisconnectError(stdout: string, stderr: string):
     `${stdout}\n${stderr}`,
   );
 }
+
+const CODEX_PROVIDER_AUTH_STATUS_RE = /\b(?:status\s+)?401\b|\b401\s+Unauthorized\b/i;
+const CODEX_PROVIDER_AUTH_REASON_RE =
+  /\b(?:API_KEY_REQUIRED|INVALID_API_KEY|AUTHENTICATION_REQUIRED|UNAUTHORIZED|invalid\s+(?:api[-_ ]?key|credential)|api[-_ ]?key\s+(?:is\s+)?required|authentication\s+(?:failed|required)|credential\s+(?:rejected|required))\b/i;
+
+export function isCodexProviderAuthFailure(...values: Array<string | null | undefined>): boolean {
+  const evidence = values.filter(Boolean).join("\n");
+  return CODEX_PROVIDER_AUTH_STATUS_RE.test(evidence) && CODEX_PROVIDER_AUTH_REASON_RE.test(evidence);
+}

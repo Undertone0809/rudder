@@ -41,6 +41,96 @@ function baseContext(config: Record<string, unknown>): AgentRuntimeExecutionCont
 }
 
 describe("executeAdapterWithModelFallbacks", () => {
+  it("stops same-provider model fallbacks after terminal authentication failure", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({
+        exitCode: 1,
+        errorCode: "codex_provider_auth_required",
+        errorMessage: "401 Unauthorized",
+        resultJson: {
+          providerFailure: {
+            classification: "authentication",
+            retryable: false,
+            readinessFingerprint: "same-provider-credential",
+          },
+        },
+      })),
+    };
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-fallback" }],
+    }));
+    const repeated = await executeAdapterWithModelFallbacks(adapter, baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-fallback" }],
+    }));
+
+    expect(executed.errorCode).toBe("codex_provider_auth_required");
+    expect(repeated.errorCode).toBe("codex_provider_auth_required");
+    expect(adapter.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains a cross-provider fallback after Codex authentication failure", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({
+        exitCode: 1,
+        errorCode: "codex_provider_auth_required",
+        resultJson: { providerFailure: { classification: "authentication", retryable: false } },
+      })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "claude_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "claude-sonnet" })),
+    };
+
+    const executed = await executeAdapterWithModelFallbacks(primaryAdapter, baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "claude_local", model: "claude-sonnet" }],
+    }), {
+      resolveAdapter: () => fallbackAdapter,
+    });
+
+    expect(executed.model).toBe("claude-sonnet");
+    expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips same-provider models before a cross-provider auth fallback", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({
+        exitCode: 1,
+        errorCode: "codex_provider_auth_required",
+        resultJson: { providerFailure: { classification: "authentication", retryable: false } },
+      })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "claude_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "claude-sonnet" })),
+    };
+
+    const executed = await executeAdapterWithModelFallbacks(primaryAdapter, baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [
+        { agentRuntimeType: "codex_local", model: "gpt-fallback" },
+        { agentRuntimeType: "claude_local", model: "claude-sonnet" },
+      ],
+    }), {
+      resolveAdapter: (runtimeType) => runtimeType === "claude_local" ? fallbackAdapter : null,
+    });
+
+    expect(executed.model).toBe("claude-sonnet");
+    expect(primaryAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
+  });
+
   it("retries failed model attempts with ordered fallback models", async () => {
     const calls: Array<{ model: unknown; sessionId: string | null; fallback: unknown }> = [];
     const adapter: ServerAgentRuntimeModule = {

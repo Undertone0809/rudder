@@ -195,6 +195,18 @@ function describeFailure(failure: AgentRuntimeExecutionResult | Error | null): s
   return `exit code ${failure.exitCode ?? -1}`;
 }
 
+function isTerminalProviderAuthFailure(result: AgentRuntimeExecutionResult): boolean {
+  const providerFailure = result.resultJson?.providerFailure;
+  return result.errorCode === "codex_provider_auth_required"
+    || Boolean(
+      providerFailure
+      && typeof providerFailure === "object"
+      && !Array.isArray(providerFailure)
+      && (providerFailure as Record<string, unknown>).classification === "authentication"
+      && (providerFailure as Record<string, unknown>).retryable === false,
+    );
+}
+
 function buildAttemptConfig(
   baseConfig: Record<string, unknown>,
   attempt: ModelAttemptSpec,
@@ -275,6 +287,7 @@ export async function executeAdapterWithModelFallbacks(
   // Resolve once so per-attempt config cannot escalate instance-level Browser eligibility.
   const browserCapabilitySource = resolveBrowserCapabilitySource(ctx.config);
   let previousFailure: AgentRuntimeExecutionResult | Error | null = null;
+  const authFailedRuntimeTypes = new Set<string>();
   const requestedStartIndex = Number.isFinite(options.startAttemptIndex)
     ? Math.max(0, Math.floor(options.startAttemptIndex as number))
     : 0;
@@ -285,6 +298,8 @@ export async function executeAdapterWithModelFallbacks(
     const attemptAdapter = attempt.isFallback && attemptRuntimeType !== adapter.type
       ? options.resolveAdapter?.(attemptRuntimeType) ?? null
       : adapter;
+
+    if (authFailedRuntimeTypes.has(attemptRuntimeType)) continue;
 
     if (!attemptAdapter) {
       previousFailure = new Error(`No adapter found for fallback runtime ${attemptRuntimeType}`);
@@ -333,6 +348,21 @@ export async function executeAdapterWithModelFallbacks(
           }
           : undefined,
       });
+
+      if (isTerminalProviderAuthFailure(result)) {
+        const hasCrossProviderFallback = attempts
+          .slice(attempt.index + 1)
+          .some((candidate) => (
+            candidate.agentRuntimeType
+            ?? ctx.agent.agentRuntimeType
+            ?? adapter.type
+          ) !== attemptRuntimeType);
+        if (!hasCrossProviderFallback) return result;
+        authFailedRuntimeTypes.add(attemptRuntimeType);
+        await options.onAttemptFailure?.(attempt, result);
+        previousFailure = result;
+        continue;
+      }
 
       // A provider transport suspension is non-terminal. Keep the current
       // attempt/fallback cursor pinned so recovery can resume the same model

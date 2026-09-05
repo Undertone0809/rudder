@@ -147,6 +147,17 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_AUTH_FAILURE === "1") {
+      send({ method: "error", params: {
+        threadId,
+        turnId,
+        willRetry: true,
+        error: {
+          message: 'unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED","message":"API key is required"}',
+        },
+      } });
+      return;
+    }
     if (process.env.RUDDER_TEST_USER_MESSAGE_TRANSCRIPT === "1") {
       const item = {
         type: "userMessage",
@@ -383,6 +394,35 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
+  it("stops an App Server turn when its first provider auth error says it will retry", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_AUTH_FAILURE: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: false,
+      errorMessage: expect.stringContaining("401 Unauthorized"),
+    });
+    expect(result.stdout).toContain('"type":"error"');
+    expect(result.stdout).not.toContain('"type":"turn.completed"');
+  });
+
   it("propagates a read-only sandbox to new and resumed threads and their turns", async () => {
     const capturePath = path.join(root, "protocol.ndjson");
     const executeWithSession = (sessionId: string | null) => executeCodexAppServerChat({

@@ -1206,10 +1206,31 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           || rawResultText
           || rawAssistantText,
         );
-        const errorCode: ChatRecoverableFailureCode = hasModelOutputEvidence
-          ? "chat_adapter_failed"
-          : "chat_runtime_boot_failed";
-        const retryable = errorCode !== "chat_runtime_boot_failed";
+        const rawProviderFailure = asRecord(result.resultJson?.providerFailure);
+        const authProviderFailure = result.errorCode === "codex_provider_auth_required"
+          && rawProviderFailure?.classification === "authentication"
+          && rawProviderFailure.retryable === false
+          ? {
+            classification: "authentication",
+            retryable: false,
+            shortCircuited: rawProviderFailure.shortCircuited === true,
+            reason: "codex_provider_auth_required",
+            ...(typeof rawProviderFailure.readinessFingerprint === "string"
+              ? { readinessFingerprint: rawProviderFailure.readinessFingerprint }
+              : {}),
+            ...(typeof rawProviderFailure.readinessState === "string"
+              ? { readinessState: rawProviderFailure.readinessState }
+              : {}),
+          }
+          : null;
+        const errorCode: ChatRecoverableFailureCode = authProviderFailure
+          ? "codex_provider_auth_required"
+          : hasModelOutputEvidence
+            ? "chat_adapter_failed"
+            : "chat_runtime_boot_failed";
+        const retryable = authProviderFailure ? false : errorCode !== "chat_runtime_boot_failed";
+        const failurePhase = errorCode === "chat_adapter_failed" ? "model_generation" : "runtime_boot";
+        const action = errorCode === "chat_adapter_failed" ? "retry" : "repair_runtime";
         const adapterErrorMessage = redactChatInlineVisualDiagnosticText(
           result.errorMessage,
           "Chat adapter execution failed while handling private presentation data",
@@ -1223,10 +1244,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             recoverable: retryable,
             fallbackEnvelope: true,
             retryable,
-            failurePhase: errorCode === "chat_runtime_boot_failed" ? "runtime_boot" : "model_generation",
-            action: errorCode === "chat_runtime_boot_failed" ? "repair_runtime" : "retry",
+            failurePhase,
+            action,
             exitCode: result.exitCode ?? null,
             partialBody: finalPartialBody,
+            ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
           },
         });
         throw new ChatAssistantStreamError(
@@ -1237,8 +1259,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             errorCode,
             partialBodyUserVisible: Boolean(finalPartialBody),
             retryable,
-            failurePhase: errorCode === "chat_runtime_boot_failed" ? "runtime_boot" : "model_generation",
-            action: errorCode === "chat_runtime_boot_failed" ? "repair_runtime" : "retry",
+            failurePhase,
+            action,
+            ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
           },
         );
       }

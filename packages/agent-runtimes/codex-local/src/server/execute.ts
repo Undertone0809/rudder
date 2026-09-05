@@ -30,6 +30,7 @@ import {
   asString,
   asStringArray,
   buildRudderEnv,
+  createTerminalFailureAbortReason,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensurePathInEnv,
@@ -64,14 +65,22 @@ import { estimateCodexCostUsd } from "./cost.js";
 import { captureCodexInlineVisuals, codexInlineVisualDirectiveBody } from "./inline-visuals.js";
 import { buildCodexLoadedMcpServers } from "./mcp-evidence.js";
 import {
+  isCodexProviderAuthFailure,
   isCodexTransportDisconnectError,
   isCodexUnknownSessionError,
   parseCodexJsonl,
 } from "./parse.js";
+import {
+  buildCodexReadinessFingerprint,
+  clearMatchingCodexAuthFailure,
+  hasMatchingCodexAuthFailure,
+  recordCodexAuthFailure,
+} from "./readiness-gate.js";
 import { resolveCodexCommand } from "./resolve-command.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const CODEX_AUTH_FAILURE_HARD_DEADLINE_MS = 2_000;
 const CODEX_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "CODEX_HOME",
@@ -484,6 +493,58 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveCodexBillingType(effectiveEnv);
+  const readinessFingerprint = agentHome
+    ? await buildCodexReadinessFingerprint({
+        env: effectiveEnv,
+        sharedCodexHome,
+        model,
+      })
+    : null;
+  const persistAuthFailureGate = async () => {
+    if (!readinessFingerprint) return;
+    await recordCodexAuthFailure(effectiveAgentHome, readinessFingerprint).catch(async () => {
+      await onLog(
+        "stderr",
+        "[rudder] Failed to persist the Codex provider readiness failure gate.\n",
+      ).catch(() => undefined);
+    });
+  };
+  const clearAuthFailureGate = async () => {
+    if (!readinessFingerprint) return;
+    await clearMatchingCodexAuthFailure(effectiveAgentHome, readinessFingerprint).catch(async () => {
+      await onLog(
+        "stderr",
+        "[rudder] Failed to clear the Codex provider readiness failure gate.\n",
+      ).catch(() => undefined);
+    });
+  };
+  if (
+    readinessFingerprint
+    && await hasMatchingCodexAuthFailure(effectiveAgentHome, readinessFingerprint)
+  ) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorCode: "codex_provider_auth_required",
+      errorMessage: "Codex provider authentication remains unavailable for the current readiness fingerprint.",
+      provider: "openai",
+      biller: resolveCodexBiller(effectiveEnv, billingType),
+      model,
+      billingType,
+      resultJson: {
+        providerFailure: {
+          classification: "authentication",
+          retryable: false,
+          shortCircuited: true,
+          reason: "codex_provider_auth_required",
+          readinessFingerprint,
+          readinessState: "unchanged",
+        },
+      },
+      clearSession: false,
+    };
+  }
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
   let rudderMcpCommand: RudderMcpCliCommand | undefined;
   let rudderMcpPreflight: RudderMcpPreflightResult;
@@ -781,8 +842,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         onSpawn,
         abortSignal: ctx.abortSignal,
         controlAttempt: ctx.controlAttempt,
+        onProviderAuthFailure: persistAuthFailureGate,
       });
       const appEndedAt = new Date();
+      const providerAuthFailure = isCodexProviderAuthFailure(
+        appResult.errorMessage,
+        appResult.stdout,
+        appResult.stderr,
+      );
+      if (providerAuthFailure && readinessFingerprint) {
+        await persistAuthFailureGate();
+      } else if (!providerAuthFailure && appResult.exitCode === 0 && readinessFingerprint) {
+        await clearAuthFailureGate();
+      }
       const inlineVisuals = appResult.sessionId
         && appResult.exitCode === 0
         && appResult.signal === null
@@ -815,6 +887,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         signal: appResult.signal,
         timedOut: appResult.timedOut,
         errorMessage: appResult.errorMessage,
+        ...(providerAuthFailure ? { errorCode: "codex_provider_auth_required" } : {}),
         usage: appResult.usage,
         sessionId: appResult.sessionId,
         sessionParams: resolvedSessionParams,
@@ -834,6 +907,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           providerThreadId: appResult.sessionId,
           providerTurnId: appResult.providerTurnId,
           transport: "codex_app_server",
+          ...(providerAuthFailure
+            ? {
+              providerFailure: {
+                classification: "authentication",
+                retryable: false,
+                shortCircuited: true,
+                reason: "codex_provider_auth_required",
+                ...(readinessFingerprint
+                  ? { readinessFingerprint, readinessState: "failed" }
+                  : {}),
+              },
+            }
+            : {}),
           ...(inlineVisuals.length > 0 ? { inlineVisuals } : {}),
         },
         summary: appResult.summary,
@@ -911,6 +997,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     let stderrBuffer = "";
+    let authScanBuffer = "";
+    let providerAuthFailure: string | null = null;
+    const attemptAbortController = new AbortController();
+    const forwardExternalAbort = () => attemptAbortController.abort(ctx.abortSignal?.reason);
+    if (ctx.abortSignal?.aborted) forwardExternalAbort();
+    else ctx.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
     const isBenignStderrLine = createCodexStderrLineFilter();
     const flushBufferedStderr = async (force: boolean) => {
       if (!stderrBuffer) return;
@@ -919,6 +1011,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       const emittedLines = force ? [...lines, ...(remainder ? [remainder] : [])] : lines;
       for (const line of emittedLines) {
         if (isBenignStderrLine(line)) continue;
+        if (providerAuthFailure && isCodexProviderAuthFailure(line)) continue;
         await onLog("stderr", line);
       }
     };
@@ -930,11 +1023,23 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       timeoutSec,
       graceSec,
       onSpawn,
-      abortSignal: ctx.abortSignal,
+      abortSignal: attemptAbortController.signal,
       onLog: async (stream, chunk) => {
         if (stream !== "stderr") {
           await onLog(stream, chunk);
           return;
+        }
+        authScanBuffer = (authScanBuffer + chunk).slice(-CODEX_STDERR_LINE_BUFFER_LIMIT);
+        if (!providerAuthFailure && isCodexProviderAuthFailure(authScanBuffer)) {
+          providerAuthFailure = authScanBuffer
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find((line) => isCodexProviderAuthFailure(line))
+            ?? firstMeaningfulErrorLine(authScanBuffer);
+          await persistAuthFailureGate();
+          attemptAbortController.abort(
+            createTerminalFailureAbortReason(CODEX_AUTH_FAILURE_HARD_DEADLINE_MS),
+          );
         }
         stderrBuffer += chunk;
         if (stderrBuffer.length > CODEX_STDERR_LINE_BUFFER_LIMIT) {
@@ -944,9 +1049,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         }
         await flushBufferedStderr(false);
       },
+    }).finally(() => {
+      ctx.abortSignal?.removeEventListener("abort", forwardExternalAbort);
     });
     await flushBufferedStderr(true);
-    const cleanedStderr = stripCodexBenignStderr(proc.stderr);
+    const cleanedStderr = stripCodexBenignStderr(proc.stderr)
+      .split(/(?<=\n)/u)
+      .filter((line) => !isCodexProviderAuthFailure(line))
+      .join("");
     return {
       proc: {
         ...proc,
@@ -954,13 +1064,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
       rawStderr: proc.stderr,
       parsed: parseCodexJsonl(proc.stdout),
+      providerAuthFailure,
       startedAt,
       endedAt: new Date(),
     };
   };
 
   const toResult = async (
-    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; startedAt: Date; endedAt: Date },
+    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; providerAuthFailure: string | null; startedAt: Date; endedAt: Date },
     clearSessionOnMissingSession = false,
     transportRecovery?: {
       kind: "codex_transport_disconnect";
@@ -969,6 +1080,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       initialError: string;
     },
   ): Promise<AgentRuntimeExecutionResult> => {
+    if (attempt.providerAuthFailure && readinessFingerprint) {
+      await persistAuthFailureGate();
+    } else if (
+      attempt.proc.exitCode === 0
+      && attempt.proc.signal === null
+      && !attempt.proc.timedOut
+      && readinessFingerprint
+    ) {
+      await clearAuthFailureGate();
+    }
     if (attempt.proc.timedOut) {
       return {
         exitCode: attempt.proc.exitCode,
@@ -994,6 +1115,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstMeaningfulErrorLine(attempt.proc.stderr);
     const fallbackErrorMessage =
+      attempt.providerAuthFailure ||
       parsedError ||
       stderrLine ||
       `Codex exited with code ${attempt.proc.exitCode ?? -1}`;
@@ -1041,17 +1163,31 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       stderr: attempt.proc.stderr,
       ...(inlineVisuals.length > 0 ? { inlineVisuals } : {}),
       ...(transportRecovery ? { transportRecovery } : {}),
+      ...(attempt.providerAuthFailure
+        ? {
+          providerFailure: {
+            classification: "authentication",
+            retryable: false,
+            shortCircuited: true,
+            reason: "codex_provider_auth_required",
+            ...(readinessFingerprint
+              ? { readinessFingerprint, readinessState: "failed" }
+              : {}),
+          },
+        }
+        : {}),
     };
     return {
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
       errorMessage:
-        attempt.proc.exitCode === 0 && attempt.proc.signal === null
+        attempt.proc.exitCode === 0 && attempt.proc.signal === null && !attempt.providerAuthFailure
           ? null
           : fallbackErrorMessage,
+      ...(attempt.providerAuthFailure ? { errorCode: "codex_provider_auth_required" } : {}),
       ...(networkSuspension ? { networkSuspension } : {}),
-      ...(transportRecovery && (attempt.proc.exitCode ?? 0) !== 0
+      ...(!attempt.providerAuthFailure && transportRecovery && (attempt.proc.exitCode ?? 0) !== 0
         ? { errorCode: "codex_transport_continuation_failed" }
         : {}),
       usage: attempt.parsed.usage,
@@ -1105,6 +1241,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       && !initial.parsed.terminalEventObserved
       && !initial.parsed.terminalCompleted
       && !initial.parsed.modelOutputObserved
+      && !initial.providerAuthFailure
       && isCodexTransportDisconnectError(initial.proc.stdout, initial.rawStderr)
     ) {
       const initialError = initial.parsed.errorMessage?.trim() || firstMeaningfulErrorLine(initial.proc.stderr);

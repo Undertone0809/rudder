@@ -68,6 +68,7 @@ export type ChatRecoverableFailureCode =
   | "chat_runtime_preparation_failed"
   | "chat_runtime_boot_failed"
   | "chat_runtime_exception"
+  | "codex_provider_auth_required"
   | "network_retry_exhausted"
   | "network_resume_unsafe";
 
@@ -197,6 +198,7 @@ export class ChatAssistantStreamError extends Error {
   retryable?: boolean;
   failurePhase?: ChatFailurePhase;
   action?: ChatFailureAction;
+  providerFailure?: Record<string, unknown>;
 
   constructor(
     message: string,
@@ -209,6 +211,7 @@ export class ChatAssistantStreamError extends Error {
       retryable?: boolean;
       failurePhase?: ChatFailurePhase;
       action?: ChatFailureAction;
+      providerFailure?: Record<string, unknown>;
     } = {},
   ) {
     super(message);
@@ -226,6 +229,7 @@ export class ChatAssistantStreamError extends Error {
     this.retryable = options.retryable;
     this.failurePhase = options.failurePhase;
     this.action = options.action;
+    this.providerFailure = options.providerFailure;
   }
 }
 
@@ -247,6 +251,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "chat_runtime_boot_failed") {
     return "The assistant runtime did not start successfully. Fix the runtime command or environment, then run again.";
+  }
+  if (code === "codex_provider_auth_required") {
+    return "The configured Codex provider credentials are not ready. Update provider authentication before retrying.";
   }
   if (code === "network_retry_exhausted") {
     return "Network recovery retries were exhausted. Check connectivity, then retry this reply.";

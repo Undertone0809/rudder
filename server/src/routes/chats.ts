@@ -1136,6 +1136,7 @@ export function chatRoutes(
     if (!retryable) failure.retryable = false;
     if (error.failurePhase) failure.phase = error.failurePhase;
     if (error.action) failure.action = error.action;
+    if (error.providerFailure) failure.providerFailure = error.providerFailure;
     return {
       recoverableFailure: failure,
     };

@@ -226,6 +226,7 @@ vi.mock("../services/chat-assistant.js", () => ({
     retryable?: boolean;
     failurePhase?: string;
     action?: string;
+    providerFailure?: Record<string, unknown>;
 
     constructor(message: string, partialBody = "", generatedAttachments: unknown[] = [], options: {
       partialBodyUserVisible?: boolean;
@@ -234,6 +235,7 @@ vi.mock("../services/chat-assistant.js", () => ({
       retryable?: boolean;
       failurePhase?: string;
       action?: string;
+      providerFailure?: Record<string, unknown>;
     } = {}) {
       super(message);
       this.partialBody = partialBody;
@@ -244,6 +246,7 @@ vi.mock("../services/chat-assistant.js", () => ({
       this.retryable = options.retryable;
       this.failurePhase = options.failurePhase;
       this.action = options.action;
+      this.providerFailure = options.providerFailure;
     }
   },
   chatAssistantService: () => mockChatAssistantService,
@@ -5894,6 +5897,65 @@ describe("chat routes", { retry: 2 }, () => {
         role: "assistant",
         status: "failed",
         body: failurePayload.recoverableFailure.message,
+        structuredPayload: failurePayload,
+      }),
+    );
+  });
+
+  it("persists Codex authentication evidence in failed Chat messages", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const providerFailure = {
+      classification: "authentication",
+      retryable: false,
+      shortCircuited: true,
+      reason: "codex_provider_auth_required",
+      readinessFingerprint: "opaque-readiness-fingerprint",
+      readinessState: "failed",
+    };
+    const failurePayload = {
+      recoverableFailure: {
+        recoverable: false,
+        retryable: false,
+        phase: "runtime_boot",
+        action: "repair_runtime",
+        code: "codex_provider_auth_required",
+        message: "The configured Codex provider credentials are not ready.",
+        runId: null,
+        providerFailure,
+      },
+    };
+    const failedMessage = {
+      ...createMessage("message-assistant", "assistant", "message", failurePayload.recoverableFailure.message),
+      status: "failed",
+      structuredPayload: failurePayload,
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async () => {
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError("Codex provider authentication failed", "", [], {
+        errorCode: "codex_provider_auth_required",
+        userMessage: failurePayload.recoverableFailure.message,
+        retryable: false,
+        failurePhase: "runtime_boot",
+        action: "repair_runtime",
+        providerFailure,
+      });
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need help" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        status: "failed",
         structuredPayload: failurePayload,
       }),
     );
