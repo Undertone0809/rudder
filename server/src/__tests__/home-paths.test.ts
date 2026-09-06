@@ -626,6 +626,52 @@ describe("home paths", () => {
     await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
   });
 
+  it("fails closed before cleanup when an individual workspace map record is malformed", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-remove-malformed-record-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-remove-malformed-record-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const workspaceRoot = path.join(workspaceHome, "malformed-record-org");
+    const sentinel = path.join(workspaceRoot, "keep.txt");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+    await fs.writeFile(
+      path.join(workspaceRoot, ".rudder-workspace.json"),
+      `${JSON.stringify({ version: 1, orgId }, null, 2)}\n`,
+      "utf8",
+    );
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [
+          {
+            instanceId: "test-instance",
+            orgId,
+            folderName: "malformed-record-org",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            instanceId: "test-instance",
+            orgId: "another-org",
+            folderName: "another-org",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(removeOrganizationStorage(orgId)).rejects.toThrow(/Invalid organization workspace mapping/);
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
+    await expect(fs.readFile(resolveOrganizationWorkspaceMapPath(), "utf8")).resolves.toContain("another-org");
+  });
+
   it("serializes direct organization storage migrations across processes", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-storage-migration-lock-");
     cleanupDirs.add(rudderHome);

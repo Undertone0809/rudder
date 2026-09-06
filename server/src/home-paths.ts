@@ -1114,12 +1114,23 @@ function isOrganizationWorkspaceMapInternalDirectoryName(name: string): boolean 
     || name.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_RECOVERY_PREFIX);
 }
 
+function isOrganizationWorkspaceMapRecord(value: unknown): value is OrganizationWorkspaceMapRecord {
+  return typeof value === "object"
+    && value !== null
+    && typeof (value as { instanceId?: unknown }).instanceId === "string"
+    && typeof (value as { orgId?: unknown }).orgId === "string"
+    && typeof (value as { folderName?: unknown }).folderName === "string"
+    && typeof (value as { createdAt?: unknown }).createdAt === "string"
+    && typeof (value as { updatedAt?: unknown }).updatedAt === "string";
+}
+
 async function readOrganizationWorkspaceMapFileState(): Promise<OrganizationWorkspaceMapFileState> {
   const mapPath = resolveOrganizationWorkspaceMapPath();
   try {
     const raw = await fs.readFile(mapPath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) {
+    const parsed = JSON.parse(raw) as { version?: unknown; organizations?: unknown };
+    if (parsed.version !== 1 || !Array.isArray(parsed.organizations)
+      || !parsed.organizations.every(isOrganizationWorkspaceMapRecord)) {
       throw new Error(
         `Invalid organization workspace mapping file at ${mapPath}. Restore the mapping file or restore organizations from workspace backups before starting Rudder.`,
       );
@@ -1128,15 +1139,7 @@ async function readOrganizationWorkspaceMapFileState(): Promise<OrganizationWork
       exists: true,
       map: {
         version: 1,
-        organizations: parsed.organizations.filter((entry): entry is OrganizationWorkspaceMapRecord =>
-          typeof entry === "object"
-          && entry !== null
-          && typeof entry.instanceId === "string"
-          && typeof entry.orgId === "string"
-          && typeof entry.folderName === "string"
-          && typeof entry.createdAt === "string"
-          && typeof entry.updatedAt === "string"
-        ),
+        organizations: parsed.organizations,
       },
     };
   } catch (error) {
@@ -1177,20 +1180,18 @@ function readOrganizationWorkspaceFolderName(orgId: string): string | null {
     if (errorCode(error) === "ENOENT") return null;
     throw new Error(`Rudder could not read the organization workspace mapping at ${mapPath}.`, { cause: error });
   }
-  let parsed: Partial<OrganizationWorkspaceMapFile>;
+  let parsed: { version?: unknown; organizations?: unknown };
   try {
-    parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
+    parsed = JSON.parse(raw) as { version?: unknown; organizations?: unknown };
   } catch (error) {
     throw new Error(`Invalid organization workspace mapping file at ${mapPath}.`, { cause: error });
   }
-  if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) {
+  if (parsed.version !== 1 || !Array.isArray(parsed.organizations)
+    || !parsed.organizations.every(isOrganizationWorkspaceMapRecord)) {
     throw new Error(`Invalid organization workspace mapping file at ${mapPath}.`);
   }
   const record = parsed.organizations.find((entry) =>
-      typeof entry === "object"
-      && entry !== null
-      && entry.instanceId === resolveRudderInstanceId()
-      && entry.orgId === orgId,
+    entry.instanceId === resolveRudderInstanceId() && entry.orgId === orgId,
   );
   if (!record) return null;
   try {
