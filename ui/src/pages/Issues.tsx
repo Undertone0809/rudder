@@ -1,7 +1,7 @@
 import { useCurrentUserAvatar } from "@/hooks/useCurrentUserAvatar";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { useLocation, useSearchParams } from "@/lib/router";
-import type { Agent, Issue, IssueSearchField, Project, ReorderIssue } from "@rudderhq/shared";
+import type { Agent, Issue, IssueSearchField, IssueStatus, Project, ReorderIssue } from "@rudderhq/shared";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleDot, Clock3, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
@@ -21,8 +21,10 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
+import { ISSUE_BOARD_STATUSES, type IssuePaginationState } from "../lib/issue-pagination";
 import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import { getIssueScopeFilters } from "../lib/issue-scope-filters";
+import type { IssueSortState } from "../lib/issue-sort";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import {
   deleteIssueDraft,
@@ -68,6 +70,22 @@ function resolveDraftAssigneeLabel(
 const DRAFT_ISSUE_DELETE_EXIT_MS = 220;
 const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
 const ISSUE_LIST_INITIAL_LIMIT = 200;
+
+type BoardLanePaginationState = IssuePaginationState & {
+  offset: number;
+};
+
+function mergeIssueLists(existing: Issue[], nextPage: Issue[]): Issue[] {
+  const byId = new Map(existing.map((issue) => [issue.id, issue]));
+  for (const issue of nextPage) byId.set(issue.id, issue);
+  return [...byId.values()];
+}
+
+function asPaginationError(cause: unknown): Error {
+  return cause instanceof Error
+    ? cause
+    : new Error(typeof cause === "string" ? cause : "Unable to load more issues");
+}
 
 function parseIssueSearchFieldsParam(raw: string | null): IssueSearchField[] {
   if (!raw) return ["title"];
@@ -390,6 +408,42 @@ export function Issues() {
     () => getIssueScopeFilters(effectiveIssueScope, currentUserId),
     [currentUserId, effectiveIssueScope],
   );
+  const [issueSortState, setIssueSortState] = useState<IssueSortState>({
+    sortField: "updated",
+    sortDir: "desc",
+  });
+  const handleIssueSortChange = useCallback((next: IssueSortState) => {
+    setIssueSortState((previous) => (
+      previous.sortField === next.sortField && previous.sortDir === next.sortDir
+        ? previous
+        : next
+    ));
+  }, []);
+  const [issuePaginationRevision, setIssuePaginationRevision] = useState(0);
+  const [boardLaneIssues, setBoardLaneIssues] = useState<Issue[]>([]);
+  const [boardLanePagination, setBoardLanePagination] = useState<
+    Partial<Record<IssueStatus, BoardLanePaginationState>>
+  >({});
+  const boardLaneIssuesRef = useRef<Issue[]>([]);
+  const boardLanePaginationRef = useRef<Partial<Record<IssueStatus, BoardLanePaginationState>>>({});
+  const boardPaginationEpochRef = useRef(0);
+
+  const clearBoardPagination = useCallback(() => {
+    boardPaginationEpochRef.current += 1;
+    boardLaneIssuesRef.current = [];
+    boardLanePaginationRef.current = {};
+    setBoardLaneIssues([]);
+    setBoardLanePagination({});
+  }, []);
+
+  const resetIssuePagination = useCallback(() => {
+    setIssuePaginationRevision((revision) => revision + 1);
+    clearBoardPagination();
+  }, [clearBoardPagination]);
+
+  useEffect(() => {
+    clearBoardPagination();
+  }, [clearBoardPagination, issueFilters, participantAgentId, projectId, selectedOrganizationId]);
 
   const {
     data: issuePages,
@@ -400,6 +454,7 @@ export function Issues() {
     hasNextPage: hasMoreIssues,
     fetchNextPage: fetchMoreIssues,
     isFetchingNextPage: isLoadingMoreIssues,
+    isFetchNextPageError,
   } = useInfiniteQuery({
     queryKey: [
       ...queryKeys.issues.list(selectedOrganizationId!),
@@ -413,6 +468,12 @@ export function Issues() {
       projectId ?? "__all__",
       "limit",
       ISSUE_LIST_INITIAL_LIMIT,
+      "sort-field",
+      issueSortState.sortField,
+      "sort-dir",
+      issueSortState.sortDir,
+      "pagination-revision",
+      issuePaginationRevision,
     ],
     queryFn: ({ pageParam = 0 }) =>
       issuesApi.list(selectedOrganizationId!, {
@@ -421,6 +482,8 @@ export function Issues() {
         ...issueFilters,
         limit: ISSUE_LIST_INITIAL_LIMIT,
         offset: pageParam,
+        sortField: issueSortState.sortField,
+        sortDir: issueSortState.sortDir,
       }),
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) =>
@@ -428,13 +491,116 @@ export function Issues() {
     enabled: !!selectedOrganizationId && !isDraftScope,
     ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
+
+  useEffect(() => {
+    if (!isFetching || isLoadingMoreIssues) return;
+    clearBoardPagination();
+  }, [clearBoardPagination, isFetching, isLoadingMoreIssues]);
+
   const issues = useMemo(() => {
     const byId = new Map<string, Issue>();
+    for (const issue of boardLaneIssues) {
+      byId.set(issue.id, issue);
+    }
     for (const issue of issuePages?.pages.flat() ?? []) {
       byId.set(issue.id, issue);
     }
     return [...byId.values()];
-  }, [issuePages]);
+  }, [boardLaneIssues, issuePages]);
+  const issuesForPaginationRef = useRef<Issue[]>([]);
+  issuesForPaginationRef.current = issues;
+
+  const loadMoreBoardLane = useCallback((status: string) => {
+    const laneStatus = ISSUE_BOARD_STATUSES.find((candidate) => candidate === status);
+    if (!selectedOrganizationId || !laneStatus) return Promise.resolve();
+
+    const current = boardLanePaginationRef.current[laneStatus];
+    const offset = current?.offset ?? issuesForPaginationRef.current.filter((issue) => issue.status === laneStatus).length;
+    const hasMore = current?.hasMore ?? Boolean(hasMoreIssues);
+    if (!hasMore || current?.isLoading) return Promise.resolve();
+
+    const epoch = boardPaginationEpochRef.current;
+    const loadingState: BoardLanePaginationState = {
+      offset,
+      hasMore: true,
+      isLoading: true,
+      error: null,
+      hasLoaded: current?.hasLoaded ?? false,
+    };
+    boardLanePaginationRef.current = {
+      ...boardLanePaginationRef.current,
+      [laneStatus]: loadingState,
+    };
+    setBoardLanePagination({ ...boardLanePaginationRef.current });
+
+    return issuesApi.list(selectedOrganizationId, {
+      ...issueFilters,
+      status: laneStatus,
+      projectId,
+      participantAgentId,
+      limit: ISSUE_LIST_INITIAL_LIMIT,
+      offset,
+      sortField: issueSortState.sortField,
+      sortDir: issueSortState.sortDir,
+    }).then((nextPage) => {
+      if (boardPaginationEpochRef.current !== epoch) return;
+      const merged = mergeIssueLists(boardLaneIssuesRef.current, nextPage);
+      boardLaneIssuesRef.current = merged;
+      setBoardLaneIssues(merged);
+      const nextState: BoardLanePaginationState = {
+        offset: offset + nextPage.length,
+        hasMore: nextPage.length === ISSUE_LIST_INITIAL_LIMIT,
+        isLoading: false,
+        error: null,
+        hasLoaded: true,
+      };
+      boardLanePaginationRef.current = {
+        ...boardLanePaginationRef.current,
+        [laneStatus]: nextState,
+      };
+      setBoardLanePagination({ ...boardLanePaginationRef.current });
+    }).catch((cause) => {
+      if (boardPaginationEpochRef.current !== epoch) return;
+      const errorState: BoardLanePaginationState = {
+        ...(boardLanePaginationRef.current[laneStatus] ?? loadingState),
+        isLoading: false,
+        error: asPaginationError(cause),
+      };
+      boardLanePaginationRef.current = {
+        ...boardLanePaginationRef.current,
+        [laneStatus]: errorState,
+      };
+      setBoardLanePagination({ ...boardLanePaginationRef.current });
+    });
+  }, [hasMoreIssues, issueFilters, issueSortState, participantAgentId, projectId, selectedOrganizationId]);
+
+  const boardPaginationByStatus = useMemo(() => {
+    const pagination = {} as Record<IssueStatus, IssuePaginationState>;
+    const globalPaginationExhausted = issuePages !== undefined && !hasMoreIssues;
+    for (const status of ISSUE_BOARD_STATUSES) {
+      const lane = boardLanePagination[status];
+      if (lane) {
+        pagination[status] = globalPaginationExhausted
+          ? { ...lane, hasMore: false, error: null, hasLoaded: true }
+          : lane;
+      } else {
+        pagination[status] = {
+          hasMore: globalPaginationExhausted ? false : Boolean(hasMoreIssues),
+          isLoading: false,
+          error: null,
+          hasLoaded: globalPaginationExhausted,
+        };
+      }
+    }
+    return pagination;
+  }, [boardLanePagination, hasMoreIssues, issuePages]);
+
+  const loadMoreIssues = useCallback((target?: string) => {
+    if (target && ISSUE_BOARD_STATUSES.includes(target as IssueStatus)) {
+      return loadMoreBoardLane(target);
+    }
+    return fetchMoreIssues();
+  }, [fetchMoreIssues, loadMoreBoardLane]);
   const visibleIssues = useMemo(() => {
     return issues;
   }, [issues]);
@@ -443,6 +609,7 @@ export function Issues() {
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
       issuesApi.update(id, data),
     onSuccess: () => {
+      resetIssuePagination();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedOrganizationId!) });
     },
   });
@@ -451,6 +618,7 @@ export function Issues() {
     mutationFn: (data: ReorderIssue) =>
       issuesApi.reorder(selectedOrganizationId!, data),
     onSuccess: () => {
+      resetIssuePagination();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedOrganizationId!) });
     },
   });
@@ -504,7 +672,7 @@ export function Issues() {
       <IssuesList
         issues={visibleIssues}
         isLoading={isLoading}
-        error={error as Error | null}
+        error={isFetchNextPageError ? null : (error as Error | null)}
         hasData={issuePages !== undefined}
         isFetching={isFetching}
         onRetry={() => void refetchIssues()}
@@ -533,9 +701,11 @@ export function Issues() {
         searchFilters={participantAgentId ? { participantAgentId } : undefined}
         hasMoreIssues={Boolean(hasMoreIssues)}
         isLoadingMoreIssues={isLoadingMoreIssues}
-        onLoadMoreIssues={() => {
-          void fetchMoreIssues();
-        }}
+        loadMoreError={isFetchNextPageError ? (error as Error) : null}
+        onResetIssuePagination={resetIssuePagination}
+        paginationByStatus={boardPaginationByStatus}
+        onSortChange={handleIssueSortChange}
+        onLoadMoreIssues={loadMoreIssues}
       />
     </div>
   );

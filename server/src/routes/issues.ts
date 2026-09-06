@@ -37,6 +37,8 @@ import {
   projectService,
   runWorkspaceService,
   workProductService,
+  type IssueSortDir,
+  type IssueSortField,
 } from "../services/index.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { StorageService } from "../storage/types.js";
@@ -48,6 +50,7 @@ import { registerIssueMutationRoutes } from "./issues.mutations.js";
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const MAX_ISSUE_LIST_LIMIT = 500;
 const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
+const ISSUE_SORT_FIELDS = new Set<IssueSortField>(["manual", "status", "priority", "title", "created", "updated"]);
 
 function positiveIntegerQuery(value: unknown, max: number): number | undefined {
   if (typeof value !== "string" || value.trim().length === 0) return undefined;
@@ -61,6 +64,16 @@ function nonNegativeIntegerQuery(value: unknown): number | undefined {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return undefined;
   return parsed;
+}
+
+function issueSortFieldQuery(value: unknown): IssueSortField | undefined {
+  return typeof value === "string" && ISSUE_SORT_FIELDS.has(value as IssueSortField)
+    ? value as IssueSortField
+    : undefined;
+}
+
+function issueSortDirQuery(value: unknown): IssueSortDir | undefined {
+  return value === "asc" || value === "desc" ? value : undefined;
 }
 
 export function issueRoutes(db: Db, storage: StorageService) {
@@ -493,6 +506,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       searchFields: parseIssueSearchFields(req.query.searchFields),
       limit: positiveIntegerQuery(req.query.limit, MAX_ISSUE_LIST_LIMIT),
       offset: nonNegativeIntegerQuery(req.query.offset),
+      sortField: issueSortFieldQuery(req.query.sortField),
+      sortDir: issueSortDirQuery(req.query.sortDir),
     });
     res.json(result);
   });

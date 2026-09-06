@@ -45,10 +45,12 @@ describe("list API query parameters", () => {
       searchFields: ["title", "description", "comment"],
       limit: 20,
       offset: 40,
+      sortField: "updated",
+      sortDir: "desc",
     });
 
     expect(getMock).toHaveBeenCalledWith(
-      "/orgs/org-1/issues?q=skill&searchFields=title%2Cdescription%2Ccomment&limit=20&offset=40",
+      "/orgs/org-1/issues?q=skill&searchFields=title%2Cdescription%2Ccomment&limit=20&offset=40&sortField=updated&sortDir=desc",
     );
   });
 

@@ -11,6 +11,7 @@ import type {
   IssueWorkProduct,
   ReorderIssue,
 } from "@rudderhq/shared";
+import type { IssueSortDir, IssueSortField } from "../lib/issue-sort";
 import { api } from "./client";
 
 export interface AgentIssueCreationRequest extends CreateAgentIssueCreationRequest {
@@ -54,6 +55,8 @@ export const issuesApi = {
       searchFields?: IssueSearchField[];
       limit?: number;
       offset?: number;
+      sortField?: IssueSortField;
+      sortDir?: IssueSortDir;
     },
   ) => {
     const params = new URLSearchParams();
@@ -81,6 +84,8 @@ export const issuesApi = {
     if (typeof filters?.offset === "number" && Number.isFinite(filters.offset) && filters.offset > 0) {
       params.set("offset", String(Math.floor(filters.offset)));
     }
+    if (filters?.sortField) params.set("sortField", filters.sortField);
+    if (filters?.sortDir) params.set("sortDir", filters.sortDir);
     const qs = params.toString();
     return api.get<Issue[]>(`/orgs/${orgId}/issues${qs ? `?${qs}` : ""}`);
   },

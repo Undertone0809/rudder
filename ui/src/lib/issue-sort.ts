@@ -30,6 +30,25 @@ function timestamp(value: Date | string | null | undefined): number {
   return new Date(value).getTime();
 }
 
+const utf8Encoder = new TextEncoder();
+
+/**
+ * Keep issue text ordering aligned with the server's PostgreSQL C collation.
+ * C collation compares the encoded database bytes, so compare UTF-8 bytes
+ * instead of JavaScript's UTF-16 code units.
+ */
+export function compareIssueText(a: string, b: string): number {
+  if (a === b) return 0;
+  const aBytes = utf8Encoder.encode(a);
+  const bBytes = utf8Encoder.encode(b);
+  const length = Math.min(aBytes.length, bBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = aBytes[index] - bBytes[index];
+    if (difference !== 0) return difference;
+  }
+  return aBytes.length - bBytes.length;
+}
+
 function compareIssueField(a: Issue, b: Issue, field: IssueSortField): number {
   switch (field) {
     case "manual":
@@ -39,7 +58,7 @@ function compareIssueField(a: Issue, b: Issue, field: IssueSortField): number {
     case "priority":
       return orderedIndex(issuePriorityOrder, a.priority) - orderedIndex(issuePriorityOrder, b.priority);
     case "title":
-      return a.title.localeCompare(b.title);
+      return compareIssueText(a.title, b.title);
     case "created":
       return timestamp(a.createdAt) - timestamp(b.createdAt);
     case "updated":
@@ -59,6 +78,6 @@ export function sortIssues(issues: Issue[], state: IssueSortState): Issue[] {
     const created = timestamp(b.createdAt) - timestamp(a.createdAt);
     if (created !== 0) return created;
 
-    return (a.identifier ?? a.id).localeCompare(b.identifier ?? b.id);
+    return compareIssueText(a.identifier ?? a.id, b.identifier ?? b.id);
   });
 }

@@ -245,6 +245,243 @@ describe("IssuesList", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it("loads the next page when the list sentinel intersects and coalesces repeats", () => {
+    window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    let callback: IntersectionObserverCallback | null = null;
+    class MockIntersectionObserver {
+      constructor(nextCallback: IntersectionObserverCallback) {
+        callback = nextCallback;
+      }
+
+      observe() {}
+
+      disconnect() {}
+    }
+
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    try {
+      const onLoadMoreIssues = vi.fn(() => Promise.resolve());
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      cleanupFn = () => {
+        act(() => root.unmount());
+        container.remove();
+      };
+
+      act(() => {
+        root.render(
+          <IssuesList
+            issues={[baseIssue]}
+            hasData
+            hasMoreIssues
+            onLoadMoreIssues={onLoadMoreIssues}
+            viewStateKey="test:issues"
+            toolbarMode="hidden"
+            onUpdateIssue={vi.fn()}
+          />,
+        );
+      });
+
+      expect(container.querySelector('[data-testid="issues-list-load-more-sentinel"]')).toBeTruthy();
+      expect(
+        Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.includes("Load more")),
+      ).toBe(false);
+      act(() => {
+        callback?.(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+        callback?.(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+
+      expect(onLoadMoreIssues).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalIntersectionObserver) {
+        vi.stubGlobal("IntersectionObserver", originalIntersectionObserver);
+      } else {
+        vi.unstubAllGlobals();
+      }
+    }
+  });
+
+  it("keeps the list and exposes a retry when loading another page fails", async () => {
+    window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    let callback: IntersectionObserverCallback | null = null;
+    class MockIntersectionObserver {
+      constructor(nextCallback: IntersectionObserverCallback) {
+        callback = nextCallback;
+      }
+
+      observe() {}
+
+      disconnect() {}
+    }
+
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    try {
+      const onLoadMoreIssues = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error("temporary pagination outage"))
+        .mockResolvedValueOnce(undefined);
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      cleanupFn = () => {
+        act(() => root.unmount());
+        container.remove();
+      };
+
+      act(() => {
+        root.render(
+          <IssuesList
+            issues={[baseIssue]}
+            hasData
+            hasMoreIssues
+            onLoadMoreIssues={onLoadMoreIssues}
+            viewStateKey="test:issues"
+            toolbarMode="hidden"
+            onUpdateIssue={vi.fn()}
+          />,
+        );
+      });
+
+      await act(async () => {
+        callback?.(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+        await Promise.resolve();
+      });
+
+      expect(container.querySelector('[data-testid="issues-load-more-error"]')).toBeTruthy();
+      expect(container.textContent).toContain("Could not load more issues.");
+      const retryButton = container.querySelector<HTMLButtonElement>('[data-testid="issues-load-more-error"] button');
+      expect(retryButton?.textContent).toContain("Retry");
+
+      await act(async () => {
+        retryButton?.click();
+        await Promise.resolve();
+      });
+
+      expect(onLoadMoreIssues).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[data-testid="issues-load-more-error"]')).toBeNull();
+      expect(container.textContent).toContain(baseIssue.title);
+    } finally {
+      if (originalIntersectionObserver) {
+        vi.stubGlobal("IntersectionObserver", originalIntersectionObserver);
+      } else {
+        vi.unstubAllGlobals();
+      }
+    }
+  });
+
+  it("shows a terminal state after the final page", () => {
+    window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          hasData
+          onLoadMoreIssues={() => undefined}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="issues-end-state"]')?.textContent).toBe("All issues loaded");
+  });
+
+  it("keeps a button fallback when IntersectionObserver is unavailable", () => {
+    window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
+    vi.stubGlobal("IntersectionObserver", undefined);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          hasData
+          hasMoreIssues
+          onLoadMoreIssues={vi.fn()}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.includes("Load more"))).toBe(true);
+  });
+
+  it("resets pagination when a filter or sort changes", () => {
+    window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
+    const onResetIssuePagination = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          hasData
+          onResetIssuePagination={onResetIssuePagination}
+          viewStateKey="test:issues"
+          toolbarMode="full"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const sortButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Sort",
+    );
+    act(() => sortButton?.click());
+    const titleOption = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Title",
+    );
+    act(() => titleOption?.click());
+    expect(onResetIssuePagination).toHaveBeenCalledTimes(1);
+
+    const filterButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Filter",
+    );
+    act(() => filterButton?.click());
+    const doneFilter = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Done",
+    );
+    act(() => doneFilter?.click());
+    expect(onResetIssuePagination).toHaveBeenCalledTimes(2);
+  });
+
   it("defaults to board mode when no saved issue view preference exists", () => {
     const onUpdateIssue = vi.fn();
     const container = renderIssuesList(onUpdateIssue);
