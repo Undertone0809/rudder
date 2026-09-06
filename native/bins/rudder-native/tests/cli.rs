@@ -137,6 +137,7 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "evidence.index",
             "evidence.read",
             "workspace.watch",
+            "workspace.list",
             "payload.verify",
             "payload.extract",
             "payload.probeVersion",
@@ -158,6 +159,39 @@ fn reports_version_protocol_and_capabilities_metadata() {
             .is_some_and(|target| !target.is_empty())
     );
     assert_eq!(archive_capabilities["effectiveEngine"], "rust");
+}
+
+#[test]
+fn lists_bounded_workspace_directories_and_rejects_escape() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("projects")).unwrap();
+    fs::create_dir(root.path().join("projects/zeta")).unwrap();
+    fs::write(root.path().join("projects/alpha.md"), b"alpha").unwrap();
+    let root_value = root.path().to_str().unwrap();
+
+    let (code, response, stderr) =
+        run(&["workspace", "list", root_value, "projects", "100", "4096"]);
+
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.is_empty());
+    assert_eq!(response["capability"], "workspace.list");
+    assert_eq!(response["operation"], "listWorkspaceDirectory");
+    assert_eq!(response["directoryPath"], "projects");
+    assert_eq!(
+        response["entries"],
+        serde_json::json!([
+            { "name": "alpha.md", "path": "projects/alpha.md", "isDirectory": false },
+            { "name": "zeta", "path": "projects/zeta", "isDirectory": true }
+        ])
+    );
+
+    let (code, response, stderr) =
+        run(&["workspace", "list", root_value, "../outside", "100", "4096"]);
+    assert_eq!(code, 2);
+    assert_eq!(response["capability"], "workspace.list");
+    assert_eq!(response["errorCode"], "unsafe_workspace_path");
+    assert_eq!(response["accepted"], false);
+    assert!(!stderr.is_empty());
 }
 
 #[test]

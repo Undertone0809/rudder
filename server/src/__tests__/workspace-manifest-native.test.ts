@@ -73,4 +73,76 @@ describe("native workspace manifest public command", () => {
       expect.arrayContaining(["alpha.txt", "nested", "nested/beta.txt"]),
     );
   });
+
+  it.runIf(process.platform !== "win32")("rejects a manifest containing invalid UTF-8", async () => {
+    rememberEnvironment();
+    const fixture = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-native-manifest-invalid-utf8-"));
+    activeFixture = fixture;
+    const workspace = path.join(fixture, "workspace");
+    await fs.mkdir(workspace);
+    const fakeBinary = path.join(fixture, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "const rootPath = process.argv[4];",
+        "const manifestPath = process.argv[5];",
+        "const manifest = JSON.stringify({ protocolVersion: 1, state: 'ready', rootPath, entries: [] });",
+        "fs.writeFileSync(manifestPath, Buffer.concat([Buffer.from(manifest), Buffer.from([0xff])]));",
+        "process.stdout.write(JSON.stringify({ ok: true, capability: 'workspace.watch', protocolVersion: 1, state: 'ready' }) + '\\n');",
+        "process.stdin.resume();",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    process.env.RUDDER_HOME = fixture;
+    process.env.RUDDER_INSTANCE_ID = "manifest-invalid-utf8";
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH = fakeBinary;
+
+    await expect(readNativeWorkspaceManifest(workspace)).rejects.toMatchObject({
+      diagnostic: { fallbackCode: "invalid_manifest" },
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("rejects duplicate and NUL-containing manifest paths", async () => {
+    rememberEnvironment();
+    const fixture = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-native-manifest-invalid-paths-"));
+    activeFixture = fixture;
+    const workspace = path.join(fixture, "workspace");
+    await fs.mkdir(workspace);
+    const fakeBinary = path.join(fixture, "fake-native");
+    const entries = [
+      { path: "duplicate.md", kind: "file", byteSize: 1, modifiedMillis: 1 },
+      { path: "duplicate.md", kind: "file", byteSize: 1, modifiedMillis: 1 },
+      { path: "bad\0name.md", kind: "file", byteSize: 1, modifiedMillis: 1 },
+    ];
+    const manifest = JSON.stringify({ protocolVersion: 1, state: "ready", rootPath: workspace, entries });
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "const rootPath = process.argv[4];",
+        "const manifestPath = process.argv[5];",
+        `const manifest = ${JSON.stringify(manifest)};`,
+        "fs.writeFileSync(manifestPath, manifest);",
+        "process.stdout.write(JSON.stringify({ ok: true, capability: 'workspace.watch', protocolVersion: 1, state: 'ready' }) + '\\n');",
+        "process.stdin.resume();",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    process.env.RUDDER_HOME = fixture;
+    process.env.RUDDER_INSTANCE_ID = "manifest-invalid-paths";
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH = fakeBinary;
+
+    await expect(readNativeWorkspaceManifest(workspace)).rejects.toMatchObject({
+      diagnostic: { fallbackCode: "invalid_manifest" },
+    });
+  });
 });
