@@ -5,6 +5,7 @@ import { access, chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Writable } from "node:stream";
+import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { powershellQuote } from "../commands/start-windows.js";
@@ -17,6 +18,7 @@ import {
   buildWindowsZipExtractCommand,
   compareStableSemver,
   copyPortableAppBundle,
+  createDesktopApplySignalController,
   downloadAsset,
   downloadChecksums,
   downloadDesktopAssetWithCache,
@@ -440,6 +442,21 @@ describe("persistent CLI install helpers", () => {
 });
 
 describe("desktop start command helpers", () => {
+  it("receives a split explicit apply signal from the Desktop parent", async () => {
+    const input = new PassThrough();
+    const controller = createDesktopApplySignalController(input);
+    try {
+      const signal = controller.waitForInitialSignal();
+      input.write("ap");
+      input.write("ply\n");
+
+      await expect(signal).resolves.toEqual({ force: false });
+    } finally {
+      controller.close();
+      input.destroy();
+    }
+  });
+
   it("parses an explicit desktop target version without invoking the root CLI version flag", async () => {
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

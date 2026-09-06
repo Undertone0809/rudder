@@ -282,13 +282,16 @@ function createDesktopProgressFactory(): ProgressReporterFactory {
   };
 }
 
-function createDesktopApplySignalController(): {
+export function createDesktopApplySignalController(input: NodeJS.ReadableStream & {
+  setEncoding: (encoding: BufferEncoding) => void;
+  resume: () => void;
+} = process.stdin): {
   waitForInitialSignal: () => Promise<{ force: boolean }>;
   waitForForceRequest: (timeoutMs: number) => Promise<boolean>;
   close: () => void;
 } {
-  process.stdin.setEncoding("utf8");
-  process.stdin.resume();
+  input.setEncoding("utf8");
+  input.resume();
   let buffer = "";
   let closed = false;
   let initialSettled = false;
@@ -308,9 +311,9 @@ function createDesktopApplySignalController(): {
   const cleanup = () => {
     if (closed) return;
     closed = true;
-    process.stdin.off("data", onData);
-    process.stdin.off("end", onEnd);
-    process.stdin.off("error", onError);
+    input.off("data", onData);
+    input.off("end", onEnd);
+    input.off("error", onError);
     settleForceWaiters(false);
   };
   const onData = (chunk: string) => {
@@ -346,9 +349,9 @@ function createDesktopApplySignalController(): {
     cleanup();
   };
 
-  process.stdin.on("data", onData);
-  process.stdin.on("end", onEnd);
-  process.stdin.on("error", onError);
+  input.on("data", onData);
+  input.on("end", onEnd);
+  input.on("error", onError);
   return {
     waitForInitialSignal: () => initialSignal,
     waitForForceRequest: async (timeoutMs: number) => {

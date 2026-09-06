@@ -1206,7 +1206,7 @@ describe("desktop update flow", () => {
   it("applies automatically after ready when no running blockers exist", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
-    const { flow } = createFlow();
+    const { flow, sentProgressEvents } = createFlow();
 
     await expect(flow.installUpdate("0.3.5-canary.8")).resolves.toMatchObject({
       status: "started",
@@ -1226,6 +1226,10 @@ describe("desktop update flow", () => {
       expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function));
     });
     expect(child.stdin.write).toHaveBeenCalledTimes(1);
+    expect(sentProgressEvents).toContainEqual(expect.objectContaining({
+      phase: "ready_to_install",
+      automaticApply: true,
+    }));
     expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
