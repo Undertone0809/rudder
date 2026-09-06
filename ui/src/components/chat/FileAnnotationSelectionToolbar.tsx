@@ -1,5 +1,7 @@
+import { useOptionalToast } from "@/context/ToastContext";
 import {
   CHAT_FILE_ANNOTATION_LOCATE_EVENT,
+  chatFileAnnotationRouteConversationId,
   consumePendingChatFileAnnotationLocation,
   readPendingChatFileAnnotationLocation,
   requestChatFileAnnotation,
@@ -124,6 +126,7 @@ export function FileAnnotationSelectionToolbar({
   sourceRenderMode,
   renderedSource = source,
   renderedSourceOffset = 0,
+  onPendingChange,
 }: {
   containerRef: RefObject<HTMLElement | null>;
   conversationId: string | null;
@@ -134,9 +137,16 @@ export function FileAnnotationSelectionToolbar({
   sourceRenderMode: "markdown" | "text";
   renderedSource?: string;
   renderedSourceOffset?: number;
+  onPendingChange?: (pending: boolean) => void;
 }) {
+  const toast = useOptionalToast();
   const selectionSequenceRef = useRef(0);
   const [pending, setPending] = useState<PendingFileSelection | null>(null);
+
+  useEffect(() => {
+    onPendingChange?.(Boolean(pending));
+    return () => onPendingChange?.(false);
+  }, [onPendingChange, pending]);
 
   useEffect(() => {
     if (sourceRenderMode !== "markdown") return undefined;
@@ -183,7 +193,11 @@ export function FileAnnotationSelectionToolbar({
     }
     const sequence = ++selectionSequenceRef.current;
     if (!explicitSelection || !explicitSelection.selectedText.trim()) {
-      setPending(null);
+      setPending((current) => {
+        if (!current) return null;
+        const root = containerRef.current;
+        return root?.contains(document.activeElement) ? null : current;
+      });
       return;
     }
     void hashChatAnnotationSource(source).then((sourceHash) => {
@@ -191,6 +205,24 @@ export function FileAnnotationSelectionToolbar({
       setPending({ ...explicitSelection, sourceHash, autoFocus: false });
     });
   }, [conversationId, explicitSelection, saved, source]);
+
+  useEffect(() => {
+    if (explicitSelection === undefined) return undefined;
+    const dismissOutside = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        target?.closest(
+          '[role="toolbar"][aria-label="Response annotation actions"], '
+          + '[data-testid="chat-response-annotation-editor"], '
+          + '[data-testid="chat-response-annotation-card"]',
+        )
+      ) return;
+      const root = containerRef.current;
+      if (!root?.contains(target)) setPending(null);
+    };
+    document.addEventListener("mousedown", dismissOutside);
+    return () => document.removeEventListener("mousedown", dismissOutside);
+  }, [containerRef, explicitSelection]);
 
   useEffect(() => {
     if (explicitSelection !== undefined) return undefined;
@@ -206,6 +238,9 @@ export function FileAnnotationSelectionToolbar({
         return;
       }
       const root = containerRef.current;
+      if (event instanceof KeyboardEvent && eventTarget && root && !root.contains(eventTarget)) {
+        return;
+      }
       const selection = window.getSelection();
       if (!conversationId || !saved || !root || !selection || selection.rangeCount !== 1 || selection.isCollapsed) {
         setPending(null);
@@ -258,6 +293,19 @@ export function FileAnnotationSelectionToolbar({
   if (!pending || !conversationId) return null;
   const boundaryRect = containerRef.current?.getBoundingClientRect() ?? null;
   const request = (action: "add_to_chat" | "ask_in_side_chat") => {
+    const routeConversationId = chatFileAnnotationRouteConversationId(window.location.pathname);
+    if (routeConversationId !== conversationId) {
+      toast?.pushToast({
+        title: routeConversationId
+          ? "File selection belongs to another chat"
+          : "Chat is not ready for annotations",
+        body: routeConversationId
+          ? "Reopen the file from this chat before adding its excerpt."
+          : "Open the source chat again before adding this file excerpt.",
+        tone: "info",
+      });
+      return;
+    }
     const annotation: ChatInlineAnnotationInput = {
       id: globalThis.crypto.randomUUID(),
       comment: null,
@@ -278,13 +326,24 @@ export function FileAnnotationSelectionToolbar({
       sourceRenderMode,
       ...sourceIdentity,
     };
-    requestChatFileAnnotation({
+    const result = requestChatFileAnnotation({
       action,
       annotation,
       anchorRect: pending.anchorRect,
       boundaryRect,
+      getBoundaryRect: () => containerRef.current?.getBoundingClientRect() ?? null,
     });
-    setPending(null);
+    if (result.status === "accepted") {
+      setPending(null);
+      return;
+    }
+    if (result.status === "unhandled") {
+      toast?.pushToast({
+        title: "Annotation action is not available",
+        body: "Chat is not ready to receive this file excerpt. Keep the selection open and try again.",
+        tone: "info",
+      });
+    }
   };
 
   return (

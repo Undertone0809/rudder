@@ -1946,20 +1946,30 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   useEffect(() => {
     const handleFileAnnotationRequest = (event: Event) => {
       const detail = (event as CustomEvent<ChatFileAnnotationRequestDetail>).detail;
+      if (!detail) return;
       if (
-        !detail
-        || !selectedConversation
-        || detail.annotation.sourceConversationId !== selectedConversation.id
-      ) return;
+        !conversationId
+        || detail.annotation.sourceConversationId !== conversationId
+      ) {
+        detail.respond?.({ status: "rejected", reason: "conversation_mismatch" });
+        pushToast({
+          title: "File selection belongs to another chat",
+          body: "Reopen the file from this chat before adding its excerpt.",
+          tone: "info",
+        });
+        return;
+      }
       const existingAnnotation = responseAnnotationState.annotations.find((annotation) => (
         chatResponseAnnotationRangeKey(annotation)
         === chatResponseAnnotationRangeKey(detail.annotation)
       ));
       if (existingAnnotation && detail.action === "add_to_chat") {
+        detail.respond?.({ status: "accepted" });
         setResponseAnnotationsExpanded(false);
         responseAnnotationEditor.openFromSelection(existingAnnotation.id, {
           anchorRect: detail.anchorRect,
           boundaryRect: detail.boundaryRect,
+          getBoundaryRect: detail.getBoundaryRect,
         });
         window.getSelection()?.removeAllRanges();
         return;
@@ -1969,6 +1979,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         detail.annotation,
       );
       if (validationError) {
+        detail.respond?.({ status: "rejected", reason: "validation_failed" });
         pushToast({
           title: t("chat.annotations.couldNotAdd"),
           body: validationError,
@@ -1977,6 +1988,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         return;
       }
       if (detail.action === "ask_in_side_chat") {
+        if (!selectedConversation || selectedConversation.id !== conversationId) {
+          detail.respond?.({ status: "rejected", reason: "conversation_not_ready" });
+          pushToast({
+            title: "Chat is still loading",
+            body: "Keep the file selection open and try Side Chat again when this chat is ready.",
+            tone: "info",
+          });
+          return;
+        }
+        const sidePanelContextKey = resolveCurrentSidePanelChatContextKey();
+        if (sidePanelContextKey !== `chat:${conversationId}`) {
+          detail.respond?.({ status: "rejected", reason: "conversation_mismatch" });
+          pushToast({
+            title: "File selection belongs to another chat",
+            body: "Reopen the file from this chat before starting Side Chat.",
+            tone: "info",
+          });
+          return;
+        }
         const sourceMessage = [...rawMessages].reverse().find((message) => (
           message.role === "assistant"
           && message.kind === "message"
@@ -1984,6 +2014,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           && !message.supersededAt
         ));
         if (!sourceMessage) {
+          detail.respond?.({ status: "rejected", reason: "side_chat_unavailable" });
           pushToast({
             title: "Side Chat is not available",
             body: "This chat needs a completed assistant response before a file excerpt can open in Side Chat.",
@@ -1991,18 +2022,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           });
           return;
         }
+        detail.respond?.({ status: "accepted" });
         openSidePanelTargetForContext(
-          resolveCurrentSidePanelChatContextKey(),
+          sidePanelContextKey,
           sideChatTargetFromMessage(selectedConversation, sourceMessage, detail.annotation),
         );
         window.getSelection()?.removeAllRanges();
         return;
       }
+      detail.respond?.({ status: "accepted" });
       dispatchResponseAnnotation({ type: "add", annotation: detail.annotation });
       setResponseAnnotationsExpanded(false);
       responseAnnotationEditor.openFromSelection(detail.annotation.id, {
         anchorRect: detail.anchorRect,
         boundaryRect: detail.boundaryRect,
+        getBoundaryRect: detail.getBoundaryRect,
       });
       setResponseAnnotationAnnouncement(t("chat.annotations.added"));
       window.getSelection()?.removeAllRanges();
@@ -2012,6 +2046,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       window.removeEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, handleFileAnnotationRequest);
     };
   }, [
+    conversationId,
     openSidePanelTargetForContext,
     pushToast,
     rawMessages,

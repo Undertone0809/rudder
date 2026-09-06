@@ -1,0 +1,617 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "file-annotation-action-fix-2026-08-13",
+  "status": "in_progress",
+  "owner": {
+    "root_id": "root",
+    "agent_id": "codex"
+  },
+  "intent": {
+    "raw_request": "PLEASE IMPLEMENT THIS PLAN:\n# 修复文件 Annotation 点击无响应\n\n## Summary\n\n点击后浮层会消失，说明按钮事件已触发；当前请求随后可能在 Chat 顶层因会话未就绪或 Side Panel 会话上下文不匹配而被静默丢弃。修复目标是让两个动作可靠完成，并彻底取消无反馈终态。\n\n受影响合同为 `CHAT.RESPONSE.ANNOTATION.001`、`CHAT.SIDE.PANEL.001`、`CHAT.SIDE.CHAT.001`。这是合同内回归修复，不修改受保护的 `doc/product/**`。\n\n## Implementation Changes\n\n- 先新增 `doc/plans/2026-08-13-file-annotation-action-fix.md` 和 delivery packet，记录原始请求、验收状态与候选身份。\n- 将文件 annotation 的全局事件从 fire-and-forget 改为同步确认协议，返回 `accepted`、`rejected` 或 `unhandled`。\n- `Add to chat` 以当前 Chat 路由 ID 为权威目标，不再因 `selectedConversation` 查询快照暂时缺失而静默退出；接受后添加 annotation 并打开 comment 编辑器。\n- `Ask in side chat` 仅在当前 Chat、已完成 assistant anchor 和 Side Chat 条件全部满足后确认成功并切换面板。\n- 会话上下文不匹配、Chat 尚未就绪或没有监听器时显示明确提示并保留选区浮层；不得自动把旧 Chat 的文件选区绑定到新 Chat。\n- `FileAnnotationSelectionToolbar` 只在收到 `accepted` 后关闭。外部点击、Escape、无效/未保存文件仍按现有语义关闭或隐藏。\n- 不改数据库、服务端 API、annotation 数据结构或文件安全边界。\n\n状态约束：\n\n- 选区状态：只显示 `Add to chat` / `Ask in side chat`，后续编辑控件暂不出现。\n- Add 状态：打开单个 annotation 编辑器；Save 写入当前 Chat 草稿，Cancel/Delete 不发送消息。\n- Side Chat 状态：打开临时 Side Chat 草稿；首次 Send 前不持久化新会话。\n- 上下文异常：显示原因并保留当前选区，用户可关闭、重新打开文件或重试。\n\n## Test Plan\n\n- 单元测试覆盖事件的 accepted/rejected/unhandled 回执、浮层关闭规则、键盘激活以及会话不匹配时不写入错误 Chat。\n- Chat 集成测试覆盖 `selectedConversation` 暂时缺失、旧 Side Panel context、两个动作的成功分支和显式失败反馈。\n- 新增 Desktop 本地 `.ts` 文件 E2E，使用真实 CodeMirror 选区和真实鼠标点击：\n  - `Add to chat` 打开编辑器，保存后出现 annotation count。\n  - `Ask in side chat` 打开携带同一文件摘录的 Side Chat。\n  - 切换 Chat 后不得把旧文件选区附加到新 Chat。\n  - 未保存文件仍不提供 annotation 动作。\n- 用 `ego-browser` 检查 Web 可复现路径，并在真实 Desktop 开发壳层验证截图中的本地文件路径；保存最终宽屏和受限宽度截图。\n- 运行 focused UI tests、相关 Chromium E2E、`pnpm product-logic:check`、`pnpm lint`、`pnpm -r typecheck`、`pnpm test:run`、`pnpm build` 和 `pnpm desktop:verify`。\n\n## Delivery\n\n- 在基于最新 `origin/main` 的隔离 worktree 和 `codex/fix-file-annotation-actions` 分支实施，避免触碰当前 checkout 的并行改动。\n- 独立 reviewer 先审查 intent、实现、交互和验收包；修复阻塞项后冻结 SHA、diff、build、runtime、组织及数据身份。\n- 独立 verifier 在该精确候选上黑盒执行 Desktop 主流程及上下文漂移边界，必须返回 `PASS`；随后 reviewer 对同一候选给出最终 `accept`。\n- 只有两份终态凭证仍然有效时，按 Conventional Commit 提交、推送该分支并创建 Review Ready PR；不发布版本。",
+    "corrections": [],
+    "non_goals": [
+      "database or server API changes",
+      "annotation data structure changes",
+      "file safety boundary changes",
+      "semantic edits to doc/product/**",
+      "version release or publication"
+    ],
+    "authorization": "implementation, branch push, and Review Ready pull request; no release"
+  },
+  "candidate": {
+    "branch": "codex/fix-file-annotation-actions",
+    "source_ref": "refs/heads/codex/fix-file-annotation-actions",
+    "source_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "dirty_fingerprint": "4612082d09cb09cb79406c8d631638fd8627e382215af5309c5a3c66936b01e2",
+    "changed_paths": [
+      "desktop/scripts/smoke.mjs",
+      "doc/plans/2026-08-13-file-annotation-action-fix.md",
+      "doc/plans/2026-08-13-file-annotation-action-fix.delivery.json",
+      "tests/e2e/chat-side-panel.spec.ts",
+      "ui/src/components/Layout.test.ts",
+      "ui/src/components/Layout.tsx",
+      "ui/src/components/chat/FileAnnotationSelectionToolbar.test.tsx",
+      "ui/src/components/chat/FileAnnotationSelectionToolbar.tsx",
+      "ui/src/components/chat/ResponseAnnotations.test.tsx",
+      "ui/src/components/chat/ResponseAnnotations.tsx",
+      "ui/src/components/transcript/TranscriptLocalFilePreview.tsx",
+      "ui/src/context/SidePanelContext.test.tsx",
+      "ui/src/context/SidePanelContext.tsx",
+      "ui/src/lib/chat-file-annotation-events.test.ts",
+      "ui/src/lib/chat-file-annotation-events.ts",
+      "ui/src/pages/Chat.attachment-preview.test.tsx",
+      "ui/src/pages/Chat.side-panel.tsx",
+      "ui/src/pages/Chat.tsx"
+    ],
+    "build": {
+      "id": "annotation-v19-desktop-2a8747b07e43-ui-cd474f82b26e",
+      "source_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595"
+    },
+    "runtime": {
+      "id": "annotation-v19-runtime-api-3202-pg-54339",
+      "source_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595"
+    },
+    "organization_data": {
+      "organization_id": "5cfbf968-5da1-436e-8734-2a3abdf2ad70",
+      "data_id": "chat-a-90196147-chat-b-5ce7736f-local-annotation-v17-ts"
+    },
+    "workload_fixture": "saved local annotation-e2e.ts, two Chats, completed assistant anchor, missing-query and stale-context variants, plus unsaved local-file state",
+    "budget_lease": {
+      "id": "not_applicable",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+        "version": "19",
+        "fingerprint": "file-annotation-actions-v19-import-order-refreeze",
+      "contracts": [
+        "CHAT.RESPONSE.ANNOTATION.001",
+        "CHAT.SIDE.PANEL.001",
+        "CHAT.SIDE.CHAT.001"
+      ],
+      "comparative_reference": "the existing response-text annotation toolbar, annotation comment editor, and completed-response Side Chat workflow in the same Chat surface",
+      "criteria": [
+        {
+          "id": "ack_protocol",
+          "observable": "each global file annotation request synchronously returns accepted, rejected, or unhandled; first response wins"
+        },
+        {
+          "id": "toolbar_close_rule",
+          "observable": "the selection toolbar closes only after accepted; rejected and unhandled retain it, while outside click, Escape, invalid geometry, and unsaved files keep existing dismissal or suppression semantics"
+        },
+        {
+          "id": "add_missing_query",
+          "observable": "Add to chat targets the current Chat route and opens one comment editor even while selectedConversation is temporarily absent"
+        },
+        {
+          "id": "add_draft_semantics",
+          "observable": "Save adds the annotation to the current Chat draft and increments its count; Cancel and Delete do not send a Chat message"
+        },
+        {
+          "id": "side_chat_acceptance",
+          "observable": "Ask in side chat opens the same file excerpt only when route, loaded Chat, Side Panel context, and completed non-superseded assistant anchor all match"
+        },
+        {
+          "id": "side_chat_persistence",
+          "observable": "the Side Chat remains a temporary draft and creates no new persisted conversation before first Send"
+        },
+        {
+          "id": "stale_context_public_journey",
+          "observable": "with a Chat A file selection toolbar retained, clicking Chat B through the Messenger list and activating the old action shows mismatch feedback, retains the toolbar, opens no editor, and creates no Chat B annotation"
+        },
+        {
+          "id": "failure_and_retry",
+          "observable": "conversation mismatch, Chat not ready, missing listener, validation failure, or missing Side Chat anchor gives an explicit reason and leaves the selection available for close, file reopen, or retry without cross-Chat rebinding"
+        },
+        {
+          "id": "keyboard",
+          "observable": "keyboard activation follows the same acknowledgement and close rules as mouse activation"
+        },
+        {
+          "id": "rendered_web",
+          "observable": "ego-browser verifies accepted Add and Side Chat on a real saved Library file through real interaction plus DOM, API persistence, and page-error evidence; Web screenshots are supporting evidence when the ego task surface can capture them, not a terminal requirement"
+        },
+        {
+          "id": "rendered_desktop",
+          "observable": "a real Desktop development shell verifies the saved local .ts path and produces final wide and constrained screenshots; the Add editor remains fully visible and usable after resizing to 1080x760"
+        },
+        {
+          "id": "desktop_startup_prerequisite",
+          "observable": "Electron 37 starts without mutating the default read-only Quit menu role; Rudder overrides only the mutable id and click callback needed for resident-shell quit handling"
+        },
+        {
+          "id": "desktop_smoke_contract_migration",
+          "observable": "Desktop App Builder smoke treats the removed Plugins toggle as an always-enabled compatibility field and verifies App shutdown through the current localApps.stop IPC lifecycle"
+        },
+        {
+          "id": "boundaries",
+          "observable": "no database, server API, annotation structure, file safety, or guarded Product Logic Registry change occurs"
+        }
+      ],
+      "state_inventory": [
+        {
+          "state": "selection",
+          "decision": "choose Add to chat or Ask in side chat",
+          "visible": ["two peer actions", "selected local or Library file excerpt"],
+          "deferred": ["comment editor", "Side Chat composer", "message send"],
+          "safety": "the source Chat identity and saved-file status remain authoritative",
+          "back_cancel_close_reopen": "outside click and Escape close; reopening the file requires a new selection; rejected or unhandled requests intentionally keep the current selection"
+        },
+        {
+          "state": "add",
+          "decision": "edit and Save, Cancel, or Delete one annotation draft",
+          "visible": ["one annotation editor", "selected file excerpt"],
+          "deferred": ["message send"],
+          "safety": "the draft belongs to the active Chat route",
+          "back_cancel_close_reopen": "Cancel and Delete dismiss the annotation draft without sending; Save retains it in the current Chat draft; no cross-Chat restoration"
+        },
+        {
+          "state": "side_chat",
+          "decision": "compose or Send the Side Chat draft",
+          "visible": ["same file excerpt", "one Side Chat composer", "completed assistant anchor context"],
+          "deferred": ["new conversation persistence until first Send"],
+          "safety": "route, selected Chat, Side Panel context, and completed assistant anchor must match",
+          "back_cancel_close_reopen": "Close leaves no newly persisted conversation before Send; reopening from the original Chat starts from that Chat context"
+        },
+        {
+          "state": "context_exception",
+          "decision": "retry, close, or reopen the file",
+          "visible": ["specific failure toast", "retained selection toolbar"],
+          "deferred": ["all annotation and Side Chat mutations"],
+          "safety": "an old Chat selection never attaches to the new Chat",
+          "back_cancel_close_reopen": "the user may retry while context becomes ready, explicitly close, or reopen the source file; no automatic rebinding or draft restoration"
+        },
+        {
+          "state": "invalid_or_unsaved",
+          "decision": "save or obtain a valid source selection first",
+          "visible": ["file editor without annotation actions"],
+          "deferred": ["both annotation actions"],
+          "safety": "invalid or unsaved source text cannot produce an annotation",
+          "back_cancel_close_reopen": "existing hidden or close semantics are unchanged"
+        }
+      ],
+      "evidence_matrix": {
+        "content": ["saved local TypeScript excerpt", "unsaved local TypeScript excerpt", "nearest response annotation sibling"],
+        "async": ["selectedConversation temporarily absent", "accepted", "rejected", "unhandled"],
+        "interaction": ["mouse drag and click", "keyboard activation", "outside click", "Escape", "retry"],
+        "continuity": ["public Messenger Chat A to Chat B switch", "reopen original file", "no cross-Chat annotation leakage"],
+        "viewport": ["wide 1440x900", "constrained desktop window"],
+        "theme_locale": ["current default theme", "English UI copy; no locale keys or theme tokens changed"],
+        "surfaces": ["ego-browser Web", "real Desktop development shell", "packaged Desktop smoke after the menu prerequisite fix"]
+      },
+      "known_baseline_checks": [
+        "on origin/main@de0fd432, pnpm lint reports thirteen inherited import-order failures; the only candidate-touched path is the pre-existing desktop/src/main.ts import order and the candidate changes no imports",
+        "on origin/main@de0fd432, serial pnpm desktop:verify passes startup recovery then the App Builder fresh PostgreSQL is externally shut down after server-ready and before source handoff; an isolated App Builder rerun reproduces database system is shutting down and graceful-quit cleanup failures before reaching the candidate's Plugins/explicit-stop tail",
+        "on origin/main@de0fd432, pnpm test:run passes all preceding package and server files before calendar-routes.test.ts has one socket hang up under cumulative load; an immediate correct workspace-local rerun passes 3/3",
+        "a first calendar isolated command used a nonexistent root Vitest project and produced no test evidence; the subsequent server-workspace command is the valid 3/3 rerun",
+        "an earlier parallel pnpm test:run and Desktop smoke attempt is invalid evidence because Vitest cleanup terminated the smoke PostgreSQL process"
+      ],
+      "verification_evidence": {
+        "passed": [
+          "v19: import organization changed only ui/src/components/chat/ResponseAnnotations.test.tsx imports; focused UI regression suite passed 265/265",
+          "v19: UI typecheck passed and pnpm product-logic:check verified 96 contracts",
+          "v19: git diff --check and delivery packet validation passed before refreeze",
+          "v19: pnpm desktop:verify rebuilt the candidate and passed startup recovery before the inherited App Builder create-company failure",
+          "v17: two editor geometry/controller cases plus five Chat annotation integration cases passed 7/7 serially after the release-only rebase",
+          "v17: UI typecheck passed",
+          "v17: git diff --check passed",
+          "v12: annotation-focused UI behavior passed within the 237 passing tests: event receipts, toolbar close/keyboard rules, missing conversation snapshot, stale conversation rejection, and completed-anchor Side Chat",
+          "v12: pnpm product-logic:check verified 96 contracts",
+          "v12: pnpm -r typecheck passed",
+          "v12: git diff --check passed",
+          "v12: node --check desktop/scripts/smoke.mjs passed",
+          "v12: delivery packet validator passed",
+          "v12: the five Chat annotation integration cases passed 5/5 serially with one worker after the stage reviewer requested timing-noise removal",
+          "v12: pnpm build passed, including UI, server, CLI, and Desktop staging",
+          "historical v6 only: focused UI tests 238/238",
+          "historical v6 only: focused Chromium annotation E2E 1 passed",
+          "historical v6 only: pnpm product-logic:check verified 96 contracts",
+          "historical v6 only: pnpm -r typecheck passed",
+          "historical v6 only: pnpm build passed",
+          "historical v6 only: serial Desktop startup recovery smoke passed",
+          "historical v6 only: isolated calendar-routes.test.ts rerun passed 3/3",
+          "historical v6 only: git diff --check passed",
+          "historical v6 only: node --check desktop/scripts/smoke.mjs passed",
+          "v7 delivery packet validator passed before author checks",
+          "historical v7 only: focused UI tests 238/238",
+          "historical v7 only: focused Chromium local TypeScript annotation E2E 1 passed",
+          "historical v7 only: pnpm product-logic:check verified 96 contracts",
+          "historical v7 only: pnpm -r typecheck passed",
+          "historical v7 only: pnpm build passed"
+        ],
+        "baseline_blocked": [
+          "v19 pnpm lint: the task file is clean; thirteen inherited import-order failures remain outside task scope",
+          "v19 pnpm test:run: no assertion failed through the executed package/server suites, but Vitest fail-closed teardown stopped the run after detecting one PostgreSQL process owned by an earlier preserved Desktop smoke root",
+          "v19 pnpm desktop:verify: startup recovery passed, then App Builder create-company returned 500 and graceful quit cleanup timed out; the failure occurred before the candidate Plugins/explicit-stop tail and matches the recorded baseline App Builder instability",
+          "v12 focused UI batch: 237/238 passed; the unrelated pre-existing Chat mention-source test timed out at its 5 second limit both in the batch and isolated while several independent worktrees were compiling; all annotation-specific tests passed",
+          "pnpm lint: thirteen inherited import-order files on de0fd432",
+          "pnpm test:run: cumulative-load socket hang up in calendar-routes.test.ts after preceding suites passed; isolated rerun passes 3/3",
+          "pnpm desktop:verify: startup recovery passes, then App Builder PostgreSQL is shut down after server-ready; isolated App Builder reproduces the external database shutdown before source handoff and before candidate Plugins/stop steps",
+          "v7 pnpm lint: same thirteen inherited import-order files on origin/main@2e28c33d; no candidate path changes import order"
+        ],
+        "desktop_ab": {
+          "baseline_sha": "de0fd4324eb50a5c4e7b786f8adf589023f52afa",
+          "baseline_worktree": "/tmp/rudder-annotation-baseline.JOqsBF/worktree",
+          "baseline_failure_root": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-desktop-smoke-nTHcqo",
+          "candidate_failure_root": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-desktop-smoke-fUp1Ll",
+          "shared_terminal_failure": "page.waitForFunction timeout at desktop/scripts/smoke.mjs:5194 while terminal-panel-view remains on Starting terminal",
+          "latest_serial_observation": "startup recovery PASS; App Builder database externally shut down after server-ready; isolated App Builder reproduces database system is shutting down before source handoff",
+          "latest_failure_roots": [
+            "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-desktop-smoke-ffXofa",
+            "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-desktop-smoke-8g2Y9B"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "path": "/private/tmp/rudder-annotation-verifier-v17.FH5x8l/screenshots/desktop-v17-wide-add-editor.png",
+          "sha256": "321fd12d4e21f5a1f0355544799327357c05055bd0cd37823bb6f806ab36b119",
+          "observed": "current v18 lease; real Desktop saved local TypeScript Add action opened one full-width annotation editor"
+        },
+        {
+          "path": "/private/tmp/rudder-annotation-verifier-v17.FH5x8l/screenshots/desktop-v17-wide-add-saved.png",
+          "sha256": "69b32b1cbdbaa167e4e4674d38c5ef4f448734c84ffa1b43816ca2b59d15380a",
+          "observed": "current v18 lease; Save produced Show 1 annotation without sending a message"
+        },
+        {
+          "path": "/private/tmp/rudder-annotation-verifier-v17.FH5x8l/screenshots/desktop-v17-wide-side-chat.png",
+          "sha256": "639b706845ebb20f42f5bd70ce73632a808cea71796f13f7b713812f2ff0a6ec",
+          "observed": "current v18 lease; Side Chat carried the exact local path and excerpt and remained unpersisted before Send"
+        },
+        {
+          "path": "/private/tmp/rudder-annotation-verifier-v17.FH5x8l/screenshots/desktop-v17-stale-rejection.png",
+          "sha256": "be844dd07cace2155ea274dcf76bfe850ceabc0f9a3f6dfbe1da0ad7a9eea04e",
+          "observed": "current v18 lease; stale Chat A selection rejected in Chat B with explicit feedback and retained toolbar"
+        },
+        {
+          "path": "/private/tmp/rudder-annotation-verifier-v17.FH5x8l/screenshots/desktop-v17-unsaved.png",
+          "sha256": "9a43114f7e4c2a3b804b5dbaae268c626fa2ae5ead096f440a3ad605db7131c7",
+          "observed": "current v18 lease; unsaved local source suppressed annotation actions"
+        },
+        {
+          "path": "/private/tmp/rudder-annotation-verifier-v17.FH5x8l/screenshots/desktop-v17-constrained.png",
+          "sha256": "9bff166c29058d1dc714fffeafe1188a2dbc9504f1b992b32335ad95c62521c2",
+          "observed": "current v18 lease; 1080x760 editor remained 352px wide with Delete, Cancel, and Save fully reachable"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-wide-add-editor.png",
+          "sha256": "ff4999b1e96b826b3ae5a4c9c3f70c5d9a4fbab42d83f3c1bc63771e135347cd",
+          "observed": "historical v6 only; real Electron Add opened exactly one annotation editor; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-wide-add-saved.png",
+          "sha256": "eea96f8b707b655443111f22fe3b0381a446ca1dd0f10106dc0a338fde982232",
+          "observed": "historical v6 only; Save yielded one Chat A annotation; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-wide-side-chat.png",
+          "sha256": "e4007503c5f73274c3d81ef27c68c69f8f8f8e99d0a7eec63dbd44f88d7957df",
+          "observed": "historical v6 only; Side Chat carried the same local file excerpt with zero persistence before Send; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-stale-rejection.png",
+          "sha256": "1de6f2cc2d92809863bfa481f4c69bed3d5253765759c0e9882553c47ab566da",
+          "observed": "historical v6 only; Chat A to Chat B mismatch showed explicit feedback, retained toolbar, and created no Chat B annotation; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-unsaved-conflict.png",
+          "sha256": "be1f1b4a2eeae8e580f6d7d5161ed84d01ee0daf90211d5180f688d23ef64cc4",
+          "observed": "historical v6 only; genuine unsaved conflict suppressed annotation actions; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-constrained-native.png",
+          "sha256": "a4ceef639379e07e351c2b4c2791632f0da7a6a15ad3f0e85d29fed3609e8413",
+          "observed": "historical v6 only; constrained native Desktop layout had no incoherent overlap; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/desktop-wide-final.png",
+          "sha256": "1560e0af5215865423e04a377bc433ee0637ec68df17a83e10d32d04d3ecb403",
+          "observed": "historical v6 only; final wide Desktop state; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/ego-web-add-editor.png",
+          "sha256": "97b18a32b3a917c47456a03a3b0596297a4f6e1e54a0b67fdcea9388fa4338c9",
+          "observed": "historical v6 only; ego-browser Web Add editor; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v6.9EZ7v4/screenshots/ego-web-side-chat.png",
+          "sha256": "20f63b1001721cde18f99461d49bd48972e4c94a46cae548a3edc5db664c9f06",
+          "observed": "historical v6 only; ego-browser Web Side Chat excerpt; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/desktop-wide-add-editor.png",
+          "sha256": "36f4cc2aedc885abfbd70870907216a9f3e4777d002efebfda892e6351f56fd1",
+          "observed": "historical v5 only; real Electron Add opened one editor; invalidated when origin/main advanced during verification"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/desktop-wide-add-saved.png",
+          "sha256": "ec30dcddd4234d2ce44e8688155d1ce8fb891cd0b953b320ac732a7bf27d005f",
+          "observed": "historical v5 only; Save produced one Chat A annotation; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/desktop-wide-side-chat-excerpt.png",
+          "sha256": "b11398fb401b64c103c67a346bc8aa89272369c41a53d9d3927ba0294e810df8",
+          "observed": "historical v5 only; same excerpt opened in temporary Side Chat with zero persistence before Send; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/desktop-stale-rejection-wide.png",
+          "sha256": "4b9c5e7500cd723277025d31d565903672dd3c0287c8721da69004fd67611728",
+          "observed": "historical v5 only; public Chat A to Chat B mismatch retained toolbar and created no Chat B annotation; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/desktop-unsaved-conflict-suppressed.png",
+          "sha256": "49e72c45ed59f463b6e1a05f55c9ce14eddf99be65a794311dc47b842d3bf55d",
+          "observed": "historical v5 only; real unsaved conflict suppressed annotation actions; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/desktop-constrained-native.png",
+          "sha256": "af7734133a72f9921e98e22ce431b2a29647ca17b3ad259db737522aa985692b",
+          "observed": "historical v5 only; constrained Desktop layout showed no overlap; invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/ego-web-add-editor.png",
+          "sha256": "04e6e2e5f86caae3c9375ffcaefe45e216c846918b7076f001bacdaf1d09dc6b",
+          "observed": "historical v5 only; ego-browser Web Add editor evidence invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-verifier-v5.Kmhwxa/screenshots/ego-web-side-chat.png",
+          "sha256": "e57ccf395155101e368e81a7d3c62bc181a4df5e53579cb67e3a7921a0d1c519",
+          "observed": "historical v5 only; ego-browser Web Side Chat evidence invalidated by base drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-visual.3IudeM/wide-add-editor.png",
+          "sha256": "003c7e8bc2e3bd5557a8e8e1a5f42d7d982e021b5bb03f5d76559917945cb5cd",
+          "observed": "historical v4 only; saved file Add to chat opens one annotation editor; invalidated by candidate drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-visual.3IudeM/wide-side-chat.png",
+          "sha256": "8e97f900934a0479df6d19d82e0e501445238a49ba715375e869837524f7be6a",
+          "observed": "historical v4 only; Ask in side chat opens a temporary composer carrying the same file excerpt; invalidated by candidate drift"
+        },
+        {
+          "path": "/tmp/rudder-annotation-visual.3IudeM/constrained-stale-rejection.png",
+          "sha256": "4bba4b6f303a1d373552523ce606d8564c4fe1edceb9e06d281798c34f3eff18",
+          "observed": "historical v4 only; this screenshot did not prove first-responder ordering and is invalidated by the v4 verifier FAIL"
+        },
+        {
+          "path": "/tmp/rudder-annotation-visual.3IudeM/desktop-local-path.png",
+          "sha256": "9e1a08f7470fd893d944c911f7226c766e711f7dc9bf32e59492f08c7f87231c",
+          "observed": "historical v4 only; real Electron development shell path evidence invalidated by candidate drift"
+        }
+      ],
+      "gate_order": [
+        "independent stage reviewer inspects intent, implementation, interaction, and packet",
+        "blocking findings are resolved and the exact candidate, build, runtime, organization, data, and packet identity are frozen",
+        "independent verifier black-boxes Desktop primary and stale-context journeys and returns PASS for that exact identity",
+        "independent final reviewer reads verifier evidence and returns accept for the unchanged candidate",
+        "only then commit, push the branch, and create a Review Ready pull request; do not release"
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "candidate_fingerprint": "4612082d09cb09cb79406c8d631638fd8627e382215af5309c5a3c66936b01e2",
+      "source_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+      "build_id": "annotation-v19-desktop-2a8747b07e43-ui-cd474f82b26e",
+      "runtime_id": "annotation-v19-runtime-api-3202-pg-54339",
+      "data_id": "chat-a-90196147-chat-b-5ce7736f-local-annotation-v17-ts",
+      "packet_version": "19",
+      "level": "stage verdict",
+      "verified_patch_tree": "55db25aeff5a521422cf06921912841143360467",
+      "evidence": "exact-identity v19 stage accept; independently reproduced complete alternate-index fingerprint and patch tree; v18-to-v19 delta is one test import-order move"
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "candidate_fingerprint": "4612082d09cb09cb79406c8d631638fd8627e382215af5309c5a3c66936b01e2",
+      "source_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+      "build_id": "annotation-v19-desktop-2a8747b07e43-ui-cd474f82b26e",
+      "runtime_id": "annotation-v19-runtime-api-3202-pg-54339",
+      "data_id": "chat-a-90196147-chat-b-5ce7736f-local-annotation-v17-ts",
+      "packet_version": "19",
+      "evidence": "exact-v19 PASS after independently rebinding the fresh Web/Desktop black-box matrix; build payload, runtime, organization/data, API state, and six screenshot hashes remained current"
+    },
+    "final_review": {
+      "verdict": "accept",
+      "candidate_fingerprint": "4612082d09cb09cb79406c8d631638fd8627e382215af5309c5a3c66936b01e2",
+      "source_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+      "build_id": "annotation-v19-desktop-2a8747b07e43-ui-cd474f82b26e",
+      "runtime_id": "annotation-v19-runtime-api-3202-pg-54339",
+      "data_id": "chat-a-90196147-chat-b-5ce7736f-local-annotation-v17-ts",
+      "packet_version": "19",
+      "level": "final handoff verdict",
+      "evidence": "exact-v19 final accept after reading the verifier PASS and independently confirming unchanged candidate identity, six screenshot hashes, progressive disclosure, explicit failure feedback, and authoritative Chat boundaries"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      {
+        "reason": "candidate rebased onto latest origin/main after initial stage review",
+        "before": "95054005d4707a922776436d7df189afb58bee7b",
+        "after": "9302a46ccfaebbe6285ba398f496f7852cb7b5a2",
+        "effect": "all pre-rebase test and review evidence invalidated"
+      },
+      {
+        "reason": "origin/main advanced during stale-context E2E implementation",
+        "before": "9302a46ccfaebbe6285ba398f496f7852cb7b5a2",
+        "after": "23cc1896987a850738ec5a74a22cd7ba5ed51d7c",
+        "effect": "all focused and E2E evidence from the previous base invalidated"
+      },
+      {
+        "reason": "origin/main advanced after the second stage review",
+        "before": "23cc1896987a850738ec5a74a22cd7ba5ed51d7c",
+        "after": "10de109a97a33ee269ec8ae003db7d7995dfcd64",
+        "effect": "the second stage-review receipt and all pre-rebase test evidence were invalidated"
+      },
+      {
+        "reason": "latest origin/main Desktop smoke failed before app boot by assigning Electron 37's read-only default Quit menu role",
+        "before": "47e99dc83681cc2770f3bd1feb78075b2538ed7673c0c96f08d76bf94d9e354c",
+        "after": "87da8a332662758685b3da2212740e307f4af122625cdd8546b1f868c9923a1a",
+        "effect": "the stage receipt and all runtime/build evidence were invalidated; candidate v3 includes the existing minimal local fix from 662a3e5d7 so Desktop annotation acceptance can run"
+      },
+      {
+        "reason": "after startup recovery passed, App Builder smoke exercised the removed Plugins-disable contract instead of the current always-enabled compatibility and explicit stop lifecycle",
+        "before": "87da8a332662758685b3da2212740e307f4af122625cdd8546b1f868c9923a1a",
+        "after": "19c8972731a8c5b8b54b3d0418af7249ab9a6c33ba3c74014fd05ef60da4cbb3",
+        "effect": "v3 stage receipt and runtime evidence invalidated; v4 migrates only desktop/scripts/smoke.mjs to the current Plugins V1 contract and explicit Desktop stop IPC"
+      },
+      {
+        "reason": "v4 black-box verifier observed the stale Chat A listener accepting before the new Chat B listener could reject after a public Messenger route switch",
+        "before": "19c8972731a8c5b8b54b3d0418af7249ab9a6c33ba3c74014fd05ef60da4cbb3",
+        "after": "sender-side-route-preflight-fix",
+        "effect": "v4 stage accept, verifier evidence, runtime identity, and screenshots invalidated; sender now rejects a route mismatch before dispatching to any listener"
+      },
+      {
+        "reason": "candidate rebased onto the latest origin/main after the sender-side route preflight fix",
+        "before": "10de109a97a33ee269ec8ae003db7d7995dfcd64",
+        "after": "0906539b5b2bc7bcbb04af74e86a8da104647e87",
+        "effect": "all v4 receipts and runtime evidence remain invalid; v5 requires fresh stage review, Desktop verification, and final review"
+      },
+      {
+        "reason": "origin/main advanced while the v5 verifier was exercising the frozen Desktop candidate",
+        "before": "0906539b5b2bc7bcbb04af74e86a8da104647e87",
+        "after": "de0fd4324eb50a5c4e7b786f8adf589023f52afa",
+        "effect": "v5 stage accept and otherwise successful verifier observations became a terminal QUESTION; candidate was rebased without conflict and v6 requires fresh checks and all receipts"
+      },
+      {
+        "reason": "origin/main advanced after the v6 verifier PASS and before final review completed",
+        "before": "de0fd4324eb50a5c4e7b786f8adf589023f52afa",
+        "after": "2e28c33d7c5112b68658f7b648842e1cc4bdb0f6",
+        "effect": "v6 stage accept, verifier PASS, screenshots, build/runtime lease, and pending final review were invalidated; v7 rebased without conflict and dropped the duplicate desktop/src/main.ts patch already present upstream"
+      },
+      {
+        "reason": "origin/main advanced during v7 author checks before stage review",
+        "before": "2e28c33d7c5112b68658f7b648842e1cc4bdb0f6",
+        "after": "480463b4eeb732d9bf30736a7794f9c1d146c7ba",
+        "effect": "v7 author checks and pending receipts were invalidated; v8 fast-forwarded without task-path overlap and preserved the scoped task fingerprint"
+      },
+      {
+        "reason": "origin/main advanced immediately after the v8 refreeze",
+        "before": "480463b4eeb732d9bf30736a7794f9c1d146c7ba",
+        "after": "478465d978ac88fb1c6cb8b505ce9850e4b23b03",
+        "effect": "v8 identity was invalidated before author checks; v9 fast-forwarded the v0.7.5 package metadata without task-path overlap and preserved the scoped task fingerprint"
+      },
+      {
+        "reason": "origin/main advanced during v9 author checks",
+        "before": "478465d978ac88fb1c6cb8b505ce9850e4b23b03",
+        "after": "00b7545b297836e0db36422c8004b3784b14ccda",
+        "effect": "v9 author checks and pending receipts were invalidated; v10 fast-forwarded the architecture audit baseline without task-path overlap and preserved the scoped task fingerprint"
+      },
+      {
+        "reason": "origin/main advanced after v10 author verification and before stage review",
+        "before": "00b7545b297836e0db36422c8004b3784b14ccda",
+        "after": "2581552cd856bcd5b50daa0f760ed9118179e95a",
+        "effect": "v10 author checks, ego-browser screenshots, and pending receipts were invalidated; v11 fast-forwarded heartbeat recovery and docs-search fixes without task-path overlap and preserved the scoped task fingerprint"
+      },
+      {
+        "reason": "origin/main advanced after v11 focused verification and before stage review",
+        "before": "2581552cd856bcd5b50daa0f760ed9118179e95a",
+        "after": "96cb4fe6a5f09cba266770b854627467bfc854a1",
+        "effect": "v11 author checks and pending receipts were invalidated; v12 fast-forwarded release qualification CI and Desktop tests without task-path overlap"
+      },
+      {
+        "reason": "v12 verifier found the Add editor compressed to 154px at 1080x760 and origin/main advanced during acceptance",
+        "before": "96cb4fe6a5f09cba266770b854627467bfc854a1",
+        "after": "f191b79dabcbe31240b5d92b44488f0e2fa858fd",
+        "effect": "v12 stage accept, verifier QUESTION, runtime, data, and screenshots were invalidated; v13 adds live boundary remeasurement plus viewport fallback and rebases onto the non-overlapping canary cleanup test change"
+      },
+      {
+        "reason": "origin/main advanced during the v13 refreeze with overlapping Chat.tsx and Chat.attachment-preview.test.tsx changes",
+        "before": "f191b79dabcbe31240b5d92b44488f0e2fa858fd",
+        "after": "a0baa24ec82272cf2c38803a37a23dce4db0fdda",
+        "effect": "v13 pending identity was invalidated; v14 replayed without conflict and reran the five Chat annotation cases, focused geometry suite, and UI typecheck"
+      },
+      {
+        "reason": "v14 stage review found maxWidth still used a clipped boundary, null live boundaries stayed stale, and origin/main advanced with overlapping Chat.tsx architecture cleanup",
+        "before": "a0baa24ec82272cf2c38803a37a23dce4db0fdda",
+        "after": "2166f31571695339ac441bcf83502088396b35a6",
+        "effect": "v14 needs-more-evidence review and pending verifier identity were invalidated; v15 disables boundary max dimensions when the boundary cannot contain the editor, clears null live boundaries, adds rendered-width coverage, and replays the architecture ratchet"
+      },
+      {
+        "reason": "v16 Desktop acceptance passed but ego Web evidence remained incomplete and origin/main advanced with release-only npm pack isolation",
+        "before": "2166f31571695339ac441bcf83502088396b35a6",
+        "after": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+        "effect": "v16 stage accept, verifier QUESTION, runtime, data, and screenshots were invalidated; v17 fast-forwarded the non-overlapping release workflow change and preserved the scoped diff fingerprint"
+      },
+      {
+        "reason": "pnpm lint identified import organization in the task-owned ResponseAnnotations regression test after the v18 verifier PASS",
+        "before": "eab92da4029bc4370de74464c5e38fb33a6f14c7138b83eb1f32f11baa3fadbd",
+        "after": "4612082d09cb09cb79406c8d631638fd8627e382215af5309c5a3c66936b01e2",
+        "effect": "v18 reviewer and verifier receipts were invalidated; v19 changes imports only, reruns focused checks, and requires exact-identity receipts"
+      }
+    ],
+    "invalidated_receipts": [
+      "initial stage review needs more evidence",
+      "second stage review accept on 23cc1896987a850738ec5a74a22cd7ba5ed51d7c",
+      "all pre-rebase author and independent test results",
+      "stage accept for candidate fingerprint 47e99dc83681cc2770f3bd1feb78075b2538ed7673c0c96f08d76bf94d9e354c",
+      "stage accept for candidate fingerprint 87da8a332662758685b3da2212740e307f4af122625cdd8546b1f868c9923a1a",
+      "v4 stage accept for candidate fingerprint 19c8972731a8c5b8b54b3d0418af7249ab9a6c33ba3c74014fd05ef60da4cbb3",
+      "v4 verifier FAIL: stale Chat A listener accepted before Chat B rejection",
+      "all v4 screenshots and runtime evidence",
+      "parallel pnpm test:run and Desktop smoke attempt whose Vitest cleanup terminated smoke PostgreSQL",
+      "v5 stage accept on fingerprint 8aa49d1814ca64a3ba6409516abe0cba40c415c3f84740684152c62d9f0f15fc",
+      "v5 verifier QUESTION after all observable workflows passed because origin/main advanced",
+      "all v5 screenshots and runtime evidence",
+      "v6 stage accept and verifier PASS on fingerprint 89acf41c998c720dc9d03bfb0a200c1f6c6235288914c7e5fa0c1fdba4d5b6e2",
+      "all v6 screenshots, build/runtime identity, and final-review work after origin/main advanced",
+      "v7 author checks and stage review needs-more-evidence after origin/main advanced to 480463b4",
+      "v8 candidate identity invalidated before author checks when origin/main advanced to 478465d9",
+      "v9 candidate identity and author checks invalidated when origin/main advanced to 00b7545b",
+      "v10 candidate identity, author checks, and ego-browser screenshots invalidated when origin/main advanced to 2581552c",
+      "v11 candidate identity and author checks invalidated when origin/main advanced to 96cb4fe6",
+      "v12 needs-more-evidence stage verdict on the unreproducible 9be34f fingerprint; identity was corrected to the independently reproduced 1014a85f scoped diff fingerprint without changing the patch tree or implementation",
+      "v12 stage accept and verifier QUESTION on 1014a85f after origin/main drift and constrained Add-editor clipping",
+      "all v12 runtime, organization/data, Desktop observations, and screenshots",
+      "v13 pending identity before the overlapping Chat ask-user timer fix was replayed and retested",
+      "v14 needs-more-evidence stage verdict and pending verifier identity",
+      "v15 needs-more-evidence stage verdict and pending verifier identity after the controller null fallback and existing-annotation branch findings",
+      "v16 stage accept and verifier QUESTION after Web Side Chat/screenshots remained incomplete and origin/main drifted",
+      "v17 stage accept and verifier QUESTION because the packet incorrectly made ego Web screenshots a hard requirement beyond the original user plan; final source lease was later confirmed current"
+      ,
+      "v18 stage accept and verifier PASS invalidated by import-order-only cleanup in ResponseAnnotations.test.tsx"
+    ]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "branch_refs": ["refs/heads/codex/fix-file-annotation-actions"],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/tmp/rudder-annotation-fix.U1knGc/worktree",
+    "patch_tree_sha": "55db25aeff5a521422cf06921912841143360467",
+    "expected_old_sha": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "alternate_index"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": ["the original checkout contains concurrent user changes and remains out of scope"],
+    "index_fingerprint_before": "isolated-clean-index-at-73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "index_fingerprint_after": "isolated-clean-index-at-73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "worktree_fingerprint_before": "73f955fec10b4755dcbc740e8114eca2f0b4b595",
+    "worktree_fingerprint_after": "4612082d09cb09cb79406c8d631638fd8627e382215af5309c5a3c66936b01e2-alternate-index-diff-excluding-only-self-referential-delivery-packet",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "all implementation and verification work is isolated in /tmp/rudder-annotation-fix.U1knGc/worktree",
+      "candidate fingerprint is sha256 of git diff --binary HEAD from an alternate index containing every changed and untracked candidate path except the self-referential delivery packet"
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

@@ -136,7 +136,7 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
       })}>Open routed link</button>
       <button type="button" onClick={() => sidePanel.openTargetForContext("chat:a", issueTarget)}>Open issue for A</button>
       <button type="button" onClick={() => sidePanel.holdDisplayedContext("org-a", "chat:a")}>Hold chat A</button>
-      <button type="button" onClick={sidePanel.clearDisplayedContextHold}>Clear hold</button>
+      <button type="button" onClick={() => sidePanel.clearDisplayedContextHold()}>Clear hold</button>
       <button type="button" onClick={sidePanel.openEmpty}>Open empty</button>
       <button type="button" onClick={sidePanel.hidePanel}>Hide</button>
       <button type="button" onClick={() => sidePanel.activeKey && sidePanel.closeTarget(sidePanel.activeKey)}>Close active</button>

@@ -68,10 +68,12 @@ function DesktopLocalTextFileEditor({
   preview,
   sourceConversationId,
   onPreviewChange,
+  onAnnotationSelectionPendingChange,
 }: {
   preview: DesktopLocalFilePreview;
   sourceConversationId: string | null;
   onPreviewChange: (preview: DesktopLocalFilePreview) => void;
+  onAnnotationSelectionPendingChange?: (pending: boolean) => void;
 }) {
   const desktopShell = readDesktopShell();
   const initialContent = preview.content ?? "";
@@ -316,6 +318,7 @@ function DesktopLocalTextFileEditor({
             ? draftContent.length - markdownParts.body.length
             : 0
         }
+        onPendingChange={onAnnotationSelectionPendingChange}
       />
       <div
         className={`absolute bottom-3 left-3 z-10 flex min-h-8 items-center gap-2 rounded-md border border-border bg-[color:var(--surface-elevated)] px-2.5 text-xs shadow-sm ${saveStatus === "error" ? "text-destructive" : "text-muted-foreground"}`}
@@ -341,10 +344,12 @@ export function TranscriptLocalFilePreview({
   targetPath,
   label,
   sourceConversationId = null,
+  onAnnotationSelectionPendingChange,
 }: {
   targetPath: string;
   label: string;
   sourceConversationId?: string | null;
+  onAnnotationSelectionPendingChange?: (pending: boolean) => void;
 }) {
   const desktopShell = readDesktopShell();
   const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
@@ -526,6 +531,7 @@ export function TranscriptLocalFilePreview({
           preview={preview}
           sourceConversationId={sourceConversationId}
           onPreviewChange={setPreview}
+          onAnnotationSelectionPendingChange={onAnnotationSelectionPendingChange}
         />
       ) : (
         <WorkspaceFilePreview

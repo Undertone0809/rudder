@@ -16,6 +16,12 @@ import {
   resolveRenderedFileSelectionRange,
 } from "./FileAnnotationSelectionToolbar";
 
+const pushToast = vi.hoisted(() => vi.fn());
+
+vi.mock("@/context/ToastContext", () => ({
+  useOptionalToast: () => ({ pushToast }),
+}));
+
 vi.mock("@/lib/chat-response-annotation-selection", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/chat-response-annotation-selection")>(),
   hashChatAnnotationSource: async () => "a".repeat(64),
@@ -29,6 +35,8 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  pushToast.mockReset();
+  window.history.replaceState({}, "", "/messenger/chat/conversation-1");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -305,6 +313,187 @@ describe("FileAnnotationSelectionToolbar", () => {
         end: 10,
       },
     });
+  });
+
+  it("closes only after an accepted action acknowledgement", async () => {
+    const containerRef = createRef<HTMLElement>();
+    Object.defineProperty(containerRef, "current", { value: host });
+    const details: ChatFileAnnotationRequestDetail[] = [];
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent<ChatFileAnnotationRequestDetail>).detail;
+      details.push(detail);
+      detail.respond?.({ status: "accepted" });
+    };
+    window.addEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, listener, { once: true });
+
+    await act(async () => {
+      root.render(
+        <FileAnnotationSelectionToolbar
+          containerRef={containerRef}
+          conversationId="conversation-1"
+          explicitSelection={{
+            start: 0,
+            end: 5,
+            selectedText: "alpha",
+            anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+          }}
+          saved
+          source="alpha beta"
+          sourceIdentity={{ surface: "local_file", sourceFilePath: "/tmp/example.ts" }}
+          sourceRenderMode="text"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const addButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Add to chat")!;
+    act(() => addButton.click());
+
+    expect(document.body.querySelector("[role='toolbar']")).toBeNull();
+    expect(pushToast).not.toHaveBeenCalled();
+
+    const resizedBoundary = {
+      left: 718,
+      right: 1069,
+      top: 100,
+      bottom: 752,
+      width: 351,
+      height: 652,
+      x: 718,
+      y: 100,
+      toJSON: () => ({}),
+    };
+    host.getBoundingClientRect = () => resizedBoundary;
+    expect(details[0]?.getBoundaryRect?.()).toEqual(resizedBoundary);
+  });
+
+  it("keeps a file selection while keyboard navigation occurs outside the file", async () => {
+    const containerRef = createRef<HTMLElement>();
+    Object.defineProperty(containerRef, "current", { value: host });
+    const outsideButton = document.createElement("button");
+    outsideButton.textContent = "Other chat";
+    document.body.appendChild(outsideButton);
+
+    await act(async () => {
+      root.render(
+        <FileAnnotationSelectionToolbar
+          containerRef={containerRef}
+          conversationId="conversation-1"
+          explicitSelection={{
+            start: 0,
+            end: 5,
+            selectedText: "alpha",
+            anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+          }}
+          saved
+          source="alpha beta"
+          sourceIdentity={{ surface: "local_file", sourceFilePath: "/tmp/example.ts" }}
+          sourceRenderMode="text"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    outsideButton.focus();
+    act(() => {
+      outsideButton.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    });
+
+    expect(document.body.querySelector("[role='toolbar']")).not.toBeNull();
+    outsideButton.remove();
+  });
+
+  it.each([
+    ["rejected", true],
+    ["unhandled", false],
+  ] as const)("keeps the toolbar after an %s action", async (_outcome, reject) => {
+    const containerRef = createRef<HTMLElement>();
+    Object.defineProperty(containerRef, "current", { value: host });
+    if (reject) {
+      window.addEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, (event) => {
+        (event as CustomEvent<ChatFileAnnotationRequestDetail>).detail.respond?.({
+          status: "rejected",
+          reason: "conversation_mismatch",
+        });
+      }, { once: true });
+    }
+
+    await act(async () => {
+      root.render(
+        <FileAnnotationSelectionToolbar
+          containerRef={containerRef}
+          conversationId="conversation-1"
+          explicitSelection={{
+            start: 0,
+            end: 5,
+            selectedText: "alpha",
+            anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+          }}
+          saved
+          source="alpha beta"
+          sourceIdentity={{ surface: "local_file", sourceFilePath: "/tmp/example.ts" }}
+          sourceRenderMode="text"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const addButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Add to chat")!;
+    addButton.focus();
+    act(() => {
+      addButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(document.body.contains(addButton)).toBe(true);
+    expect(pushToast).toHaveBeenCalledTimes(reject ? 0 : 1);
+    if (!reject) {
+      expect(pushToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Annotation action is not available",
+      }));
+    }
+  });
+
+  it("rejects a retained selection before stale Chat listeners can accept it", async () => {
+    const containerRef = createRef<HTMLElement>();
+    Object.defineProperty(containerRef, "current", { value: host });
+    const listener = vi.fn((event: Event) => {
+      (event as CustomEvent<ChatFileAnnotationRequestDetail>).detail.respond?.({ status: "accepted" });
+    });
+    window.addEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, listener);
+
+    await act(async () => {
+      root.render(
+        <FileAnnotationSelectionToolbar
+          containerRef={containerRef}
+          conversationId="conversation-1"
+          explicitSelection={{
+            start: 0,
+            end: 5,
+            selectedText: "alpha",
+            anchorRect: { left: 10, right: 60, top: 20, bottom: 40, width: 50, height: 20 },
+          }}
+          saved
+          source="alpha beta"
+          sourceIdentity={{ surface: "local_file", sourceFilePath: "/tmp/example.ts" }}
+          sourceRenderMode="text"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    window.history.pushState({}, "", "/messenger/chat/conversation-2");
+    const addButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Add to chat")!;
+    act(() => addButton.click());
+
+    expect(listener).not.toHaveBeenCalled();
+    expect(document.body.contains(addButton)).toBe(true);
+    expect(pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "File selection belongs to another chat",
+    }));
+    window.removeEventListener(CHAT_FILE_ANNOTATION_REQUEST_EVENT, listener);
   });
 
   it("does not offer annotation actions while the file has unsaved changes", async () => {

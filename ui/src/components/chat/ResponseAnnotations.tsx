@@ -73,6 +73,7 @@ export function useResponseAnnotationEditorController(
   const [initialAnchor, setInitialAnchor] = useState<{
     anchorRect: ResponseAnnotationAnchorRect;
     boundaryRect: ResponseAnnotationAnchorRect | null;
+    getBoundaryRect?: () => ResponseAnnotationAnchorRect | null;
   } | null>(null);
   const anchorRef = useRef<HTMLButtonElement | null>(null);
   const close = useCallback(() => {
@@ -106,7 +107,9 @@ export function useResponseAnnotationEditorController(
         .closest<HTMLElement>('[data-testid="chat-main-workspace-card"]')
         ?.getBoundingClientRect()
       : null)
-      ?? initialAnchor?.boundaryRect
+      ?? (initialAnchor?.getBoundaryRect
+        ? initialAnchor.getBoundaryRect()
+        : initialAnchor?.boundaryRect)
       ?? null
   ), [initialAnchor]);
 
@@ -143,31 +146,43 @@ export function placeResponseAnnotationEditor(
   },
 ): { left: number; top: number; placement: "top" | "bottom" } {
   const boundary = viewport.boundaryRect;
-  const minLeft = Math.max(
-    viewport.padding,
-    boundary ? boundary.left + viewport.padding : viewport.padding,
+  const viewportMinLeft = viewport.padding;
+  const viewportMaxLeft = Math.max(
+    viewportMinLeft,
+    viewport.width - viewport.padding - editorSize.width,
   );
-  const maxRight = Math.min(
-    viewport.width - viewport.padding,
-    boundary ? boundary.right - viewport.padding : viewport.width - viewport.padding,
+  const boundaryMinLeft = boundary
+    ? Math.max(viewportMinLeft, boundary.left + viewport.padding)
+    : viewportMinLeft;
+  const boundaryMaxLeft = boundary
+    ? Math.min(viewportMaxLeft, boundary.right - viewport.padding - editorSize.width)
+    : viewportMaxLeft;
+  const boundaryFitsWidth = boundaryMinLeft <= boundaryMaxLeft;
+  const minLeft = boundaryFitsWidth ? boundaryMinLeft : viewportMinLeft;
+  const maxLeft = boundaryFitsWidth ? boundaryMaxLeft : viewportMaxLeft;
+
+  const viewportMinTop = viewport.padding;
+  const viewportMaxTop = Math.max(
+    viewportMinTop,
+    viewport.height - viewport.padding - editorSize.height,
   );
-  const minTop = Math.max(
-    viewport.padding,
-    boundary ? boundary.top + viewport.padding : viewport.padding,
-  );
-  const maxBottom = Math.min(
-    viewport.height - viewport.padding,
-    boundary ? boundary.bottom - viewport.padding : viewport.height - viewport.padding,
-  );
+  const boundaryMinTop = boundary
+    ? Math.max(viewportMinTop, boundary.top + viewport.padding)
+    : viewportMinTop;
+  const boundaryMaxTop = boundary
+    ? Math.min(viewportMaxTop, boundary.bottom - viewport.padding - editorSize.height)
+    : viewportMaxTop;
+  const boundaryFitsHeight = boundaryMinTop <= boundaryMaxTop;
+  const minTop = boundaryFitsHeight ? boundaryMinTop : viewportMinTop;
+  const maxTop = boundaryFitsHeight ? boundaryMaxTop : viewportMaxTop;
+
   const preferredLeft = anchorRect.left + (anchorRect.width - editorSize.width) / 2;
-  const maxLeft = Math.max(minLeft, maxRight - editorSize.width);
   const left = Math.min(Math.max(preferredLeft, minLeft), maxLeft);
   const topPosition = anchorRect.top - viewport.gap - editorSize.height;
   const placement = topPosition >= minTop ? "top" : "bottom";
   const preferredTop = placement === "top"
     ? topPosition
     : anchorRect.bottom + viewport.gap;
-  const maxTop = Math.max(minTop, maxBottom - editorSize.height);
   return {
     left,
     top: Math.min(Math.max(preferredTop, minTop), maxTop),
@@ -939,19 +954,27 @@ export function ResponseAnnotationEditor({
   const anchored = Boolean(anchorRect);
   const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
   const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
-  const boundaryMaxWidth = liveBoundaryRect
+  const availableBoundaryWidth = liveBoundaryRect
     ? Math.max(
         0,
         Math.min(viewportWidth - 8, liveBoundaryRect.right - 8)
           - Math.max(8, liveBoundaryRect.left + 8),
       )
-    : undefined;
-  const boundaryMaxHeight = liveBoundaryRect
+    : null;
+  const availableBoundaryHeight = liveBoundaryRect
     ? Math.max(
         0,
         Math.min(viewportHeight - 8, liveBoundaryRect.bottom - 8)
           - Math.max(8, liveBoundaryRect.top + 8),
       )
+    : null;
+  const boundaryMaxWidth = availableBoundaryWidth !== null
+    && availableBoundaryWidth >= editorSize.width
+    ? availableBoundaryWidth
+    : undefined;
+  const boundaryMaxHeight = availableBoundaryHeight !== null
+    && availableBoundaryHeight >= editorSize.height
+    ? availableBoundaryHeight
     : undefined;
   const placement = liveAnchorRect
     ? placeResponseAnnotationEditor(
@@ -1078,8 +1101,7 @@ export function ResponseAnnotationEditor({
     const updatePosition = () => {
       const nextAnchorRect = getAnchorRect?.();
       if (nextAnchorRect) setLiveAnchorRect(nextAnchorRect);
-      const nextBoundaryRect = getBoundaryRect?.();
-      if (nextBoundaryRect) setLiveBoundaryRect(nextBoundaryRect);
+      if (getBoundaryRect) setLiveBoundaryRect(getBoundaryRect());
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);

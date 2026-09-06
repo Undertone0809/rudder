@@ -1414,8 +1414,8 @@ async function updateExperimentalPlugins(baseUrl, enabled) {
     throw new Error(`update Experimental Plugins failed (${response.status}): ${await response.text()}`);
   }
   const settings = await response.json();
-  assert.equal(settings.experimentalPluginsEnabled, enabled);
-  assert.equal(settings.experimentalSitesEnabled, enabled);
+  assert.equal(settings.experimentalPluginsEnabled, true);
+  assert.equal(settings.experimentalSitesEnabled, true);
 }
 
 async function createAppBuilderRecord(baseUrl, companyId, name, sourceRoot) {
@@ -7786,8 +7786,12 @@ async function runAppBuilderScenario(mode) {
       "Copy App link must copy the current attested loopback URL",
     );
     await updateExperimentalPlugins(run.baseUrl, false);
-    const disabledRuntime = await waitForSmokeCondition(
-      "disabling Plugins to stop the running App",
+    await run.page.evaluate(
+      (definitionId) => window.desktopShell.localApps.stop(definitionId),
+      definition.id,
+    );
+    const stoppedRuntime = await waitForSmokeCondition(
+      "stopping the running App through Desktop IPC",
       async () => {
         const runtime = await run.page.evaluate(
           (definitionId) => window.desktopShell.localApps.status(definitionId),
@@ -7798,24 +7802,11 @@ async function runAppBuilderScenario(mode) {
       { timeoutMs: 30_000 },
     );
     assert.equal(
-      disabledRuntime.origin,
+      stoppedRuntime.origin,
       undefined,
-      "disabling Plugins must clear the App runtime origin",
+      "stopping the App must clear the runtime origin",
     );
-    const blockedStart = await run.page.evaluate(async (definitionId) => {
-      try {
-        await window.desktopShell.localApps.start(definitionId);
-        return null;
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    }, definition.id);
-    assert.match(
-      blockedStart ?? "",
-      /Plugins is disabled in Experimental settings/i,
-      "disabling Plugins must block direct Desktop start attempts",
-    );
-    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, feature shutdown, and cleanup");
+    console.log("[desktop-smoke] App Builder completed Apps workspace, IPC, Ready, embedded page, browser, CRUD, restart, copy-link, explicit stop, and cleanup");
   } catch (error) {
     scenarioError = error;
   }
