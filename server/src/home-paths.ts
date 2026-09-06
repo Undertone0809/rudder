@@ -184,10 +184,7 @@ export function resolveOrganizationWorkspaceRoot(orgId: string): string {
   const normalizedOrgId = resolveOrganizationStorageKey(orgId);
   if (usesFriendlyOrganizationWorkspaceHome()) {
     const mappedFolderName = readOrganizationWorkspaceFolderName(orgId);
-    const folderName = mappedFolderName ?? normalizedOrgId;
-    if (RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(folderName.toLowerCase())) {
-      throw new Error(`Invalid organization workspace folder mapping for '${orgId}': '${folderName}' is reserved.`);
-    }
+    const folderName = mappedFolderName ?? sanitizeOrganizationWorkspaceFolderName(normalizedOrgId, normalizedOrgId);
     return path.resolve(
       resolveOrganizationWorkspaceHomeDir(),
       folderName,
@@ -1172,23 +1169,34 @@ function findOrganizationWorkspaceMapRecord(
 
 function readOrganizationWorkspaceFolderName(orgId: string): string | null {
   if (!usesFriendlyOrganizationWorkspaceHome()) return null;
+  const mapPath = resolveOrganizationWorkspaceMapPath();
+  let raw: string;
+  try {
+    raw = fsSync.readFileSync(mapPath, "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return null;
+    throw new Error(`Rudder could not read the organization workspace mapping at ${mapPath}.`, { cause: error });
+  }
   let parsed: Partial<OrganizationWorkspaceMapFile>;
   try {
-    const raw = fsSync.readFileSync(resolveOrganizationWorkspaceMapPath(), "utf8");
     parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`Invalid organization workspace mapping file at ${mapPath}.`, { cause: error });
   }
-  if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) return null;
+  if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) {
+    throw new Error(`Invalid organization workspace mapping file at ${mapPath}.`);
+  }
   const record = parsed.organizations.find((entry) =>
       typeof entry === "object"
       && entry !== null
       && entry.instanceId === resolveRudderInstanceId()
-      && entry.orgId === orgId
-      && typeof entry.folderName === "string"
+      && entry.orgId === orgId,
   );
   if (!record) return null;
   try {
+    if (typeof record.folderName !== "string") {
+      throw new Error("Organization workspace folder mapping must contain a folder name.");
+    }
     const folderName = validatePathSegment(record.folderName, "organization workspace folder");
     if (folderName !== record.folderName) {
       throw new Error("Organization workspace folder mapping must not contain leading or trailing whitespace.");
@@ -1271,6 +1279,39 @@ async function workspaceIdentityMatches(root: string, orgId: string): Promise<bo
   }
 }
 
+async function assertFriendlyWorkspaceRemovalOwnership(
+  orgId: string,
+  workspaceRootPath: string,
+  map: OrganizationWorkspaceMapFile,
+): Promise<void> {
+  if (!usesFriendlyOrganizationWorkspaceHome()) return;
+
+  const record = findOrganizationWorkspaceMapRecord(map, orgId);
+  if (record) {
+    const normalizedFolderName = record.folderName.toLowerCase();
+    const duplicate = map.organizations.find((entry) =>
+      entry.instanceId === resolveRudderInstanceId()
+      && entry.orgId !== orgId
+      && entry.folderName.toLowerCase() === normalizedFolderName,
+    );
+    if (duplicate) {
+      throw new Error([
+        `Refusing to remove organization workspace '${workspaceRootPath}'.`,
+        `The folder is also mapped to organization '${duplicate.orgId}'.`,
+      ].join(" "));
+    }
+  }
+
+  const existing = await pathExists(workspaceRootPath);
+  if (!existing) return;
+  if (existing.isSymbolicLink() || !existing.isDirectory()) {
+    throw new Error(`Refusing to remove organization workspace '${workspaceRootPath}' because it is not a regular directory.`);
+  }
+  if (!await workspaceIdentityMatches(workspaceRootPath, orgId)) {
+    throw new Error(`Refusing to remove organization workspace '${workspaceRootPath}' because its identity does not match '${orgId}'.`);
+  }
+}
+
 async function recordWorkspaceCompatibilityAlias(root: string, aliasPath: string): Promise<void> {
   const aliases = await readWorkspaceMigrationAliases(root);
   const normalizedAliasPath = path.resolve(aliasPath);
@@ -1338,11 +1379,11 @@ async function allocateOrganizationWorkspaceFolderName(input: {
   const usedFolders = new Set(
     input.map.organizations
       .filter((entry) => entry.instanceId === resolveRudderInstanceId() && entry.orgId !== input.orgId)
-      .map((entry) => entry.folderName),
+      .map((entry) => entry.folderName.toLowerCase()),
   );
   for (let attempt = 1; attempt < 10000; attempt += 1) {
     const folderName = attempt === 1 ? base : `${base}-${attempt}`;
-    if (usedFolders.has(folderName)) continue;
+    if (usedFolders.has(folderName.toLowerCase())) continue;
     const existing = await pathExists(path.resolve(input.homeDir, folderName));
     if (existing && !existing.isDirectory()) continue;
     if (
@@ -1354,7 +1395,7 @@ async function allocateOrganizationWorkspaceFolderName(input: {
       const owned = input.map.organizations.some((entry) =>
         entry.instanceId === resolveRudderInstanceId()
         && entry.orgId === input.orgId
-        && entry.folderName === folderName
+        && entry.folderName.toLowerCase() === folderName.toLowerCase()
       );
       if (!owned) continue;
     }
@@ -1377,6 +1418,8 @@ export async function removeOrganizationStorage(orgId: string): Promise<{
     const workspaceRootPath = resolveOrganizationWorkspaceRoot(normalizedOrgId);
     const previousDocumentsWorkspaceRootPath = resolvePreviousDocumentsOrganizationWorkspaceRoot(normalizedOrgId);
     const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
+    const mapState = await readOrganizationWorkspaceMapFileState();
+    await assertFriendlyWorkspaceRemovalOwnership(normalizedOrgId, workspaceRootPath, mapState.map);
     const pathsToRemove = new Set([
       organizationRootPath,
       workspaceRootPath,
@@ -1387,7 +1430,6 @@ export async function removeOrganizationStorage(orgId: string): Promise<{
     await Promise.all([...pathsToRemove].map((targetPath) =>
       fs.rm(targetPath, { recursive: true, force: true })));
 
-    const mapState = await readOrganizationWorkspaceMapFileState();
     const nextOrganizations = mapState.map.organizations.filter((entry) =>
       !(entry.instanceId === resolveRudderInstanceId() && entry.orgId === normalizedOrgId)
     );

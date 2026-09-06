@@ -363,6 +363,39 @@ describe("home paths", () => {
     expect(resolveOrganizationWorkspaceRoot("organization-1")).toBe(first.root);
   });
 
+  it("treats friendly workspace mappings as case-insensitive during allocation", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-friendly-case-duplicate-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-case-duplicate-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [{
+          instanceId: "test-instance",
+          orgId: "existing-org",
+          folderName: "Acme",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: "new-org",
+      name: "Acme",
+      urlKey: "acme",
+    });
+
+    expect(layout.root).toBe(path.join(workspaceHome, "acme-2"));
+  });
+
   it("keeps reserved friendly names away from shared workspace directories", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-friendly-reserved-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-reserved-");
@@ -381,6 +414,25 @@ describe("home paths", () => {
     expect(layout.root).toBe(path.join(workspaceHome, "reserved-name-org"));
     expect(layout.root).not.toBe(path.join(workspaceHome, "projects"));
     expect(layout.root).not.toBe(path.join(workspaceHome, "organizations"));
+  });
+
+  it("keeps string organization IDs away from reserved friendly workspace directories", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-string-reserved-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-string-reserved-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const sentinel = path.join(workspaceHome, "projects", "keep.txt");
+    await fs.mkdir(path.dirname(sentinel), { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+
+    const layout = await ensureOrganizationWorkspaceLayout("projects");
+
+    expect(layout.root).toBe(path.join(workspaceHome, "organization-projects"));
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
   });
 
   it("keeps the friendly organization workspace map valid during concurrent layout creation", async () => {
@@ -474,6 +526,103 @@ describe("home paths", () => {
 
     expect(() => resolveOrganizationWorkspaceRoot(orgId)).toThrow(/reserved/);
     await expect(removeOrganizationStorage(orgId)).rejects.toThrow(/reserved/);
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
+  });
+
+  it("fails closed when removing a mapped workspace without a matching identity", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-remove-missing-identity-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-remove-missing-identity-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const workspaceRoot = path.join(workspaceHome, "mapped-org");
+    const sentinel = path.join(workspaceRoot, "keep.txt");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [{
+          instanceId: "test-instance",
+          orgId,
+          folderName: "mapped-org",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(removeOrganizationStorage(orgId)).rejects.toThrow(/identity does not match/);
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
+  });
+
+  it("fails closed when a workspace mapping is shared by another organization", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-remove-duplicate-mapping-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-remove-duplicate-mapping-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const workspaceRoot = path.join(workspaceHome, "shared-org");
+    const sentinel = path.join(workspaceRoot, "keep.txt");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+    await fs.writeFile(
+      path.join(workspaceRoot, ".rudder-workspace.json"),
+      `${JSON.stringify({ version: 1, orgId }, null, 2)}\n`,
+      "utf8",
+    );
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [
+          {
+            instanceId: "test-instance",
+            orgId,
+            folderName: "shared-org",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            instanceId: "test-instance",
+            orgId: "other-org",
+            folderName: "Shared-Org",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(removeOrganizationStorage(orgId)).rejects.toThrow(/also mapped to organization 'other-org'/);
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
+  });
+
+  it("fails closed before cleanup when the workspace mapping is corrupt", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-remove-corrupt-map-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-remove-corrupt-map-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const fallbackRoot = path.join(workspaceHome, orgId);
+    const sentinel = path.join(fallbackRoot, "keep.txt");
+    await fs.mkdir(fallbackRoot, { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+    await fs.writeFile(resolveOrganizationWorkspaceMapPath(), "{\"version\":1,\n", "utf8");
+
+    await expect(removeOrganizationStorage(orgId)).rejects.toThrow(/Invalid organization workspace mapping/);
     await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
   });
 
