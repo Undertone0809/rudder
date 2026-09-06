@@ -147,6 +147,7 @@ export async function resolveIssueReference(
 
 const REFERENCE_FIELDS = [
   { key: "agentId", kind: "agent", label: "Agent ID", table: agents },
+  { key: "participantAgentId", kind: "agent", label: "Participant agent ID", table: agents },
   { key: "assigneeAgentId", kind: "agent", label: "Assignee agent ID", table: agents },
   { key: "reviewerAgentId", kind: "agent", label: "Reviewer agent ID", table: agents },
   { key: "projectId", kind: "project", label: "Project ID", table: projects },
@@ -161,6 +162,10 @@ const REFERENCE_FIELDS = [
 const USER_REFERENCE_FIELDS = [
   { key: "assigneeUserId", label: "Assignee user ID" },
   { key: "reviewerUserId", label: "Reviewer user ID" },
+  { key: "touchedByUserId", label: "Touched-by user ID" },
+  { key: "unreadForUserId", label: "Unread-for user ID" },
+  { key: "followedByUserId", label: "Followed-by user ID" },
+  { key: "involvedUserId", label: "Involved user ID" },
 ] as const;
 
 /** Resolve all organization-scoped references used by Issue-shaped inputs. */

@@ -193,6 +193,7 @@ describe("issueService.list participantAgentId", () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();
     const agentId = randomUUID();
+    const userId = randomUUID();
     const projectId = randomUUID();
     const otherProjectId = randomUUID();
 
@@ -227,6 +228,13 @@ describe("issueService.list participantAgentId", () => {
       { id: projectId, orgId, name: "Local Project", status: "in_progress" },
       { id: otherProjectId, orgId: otherOrgId, name: "Other Project", status: "in_progress" },
     ]);
+    await db.insert(organizationMemberships).values({
+      orgId,
+      principalType: "user",
+      principalId: userId,
+      status: "active",
+      membershipRole: "member",
+    });
 
     const parent = await svc.create(orgId, {
       title: "Short reference parent",
@@ -240,11 +248,27 @@ describe("issueService.list participantAgentId", () => {
       projectId: shortRefFor("project", projectId),
       parentId: shortRefFor("issue", parent.id),
       assigneeAgentId: shortRefFor("agent", agentId),
+      createdByUserId: userId,
     });
 
     expect(child.projectId).toBe(projectId);
     expect(child.parentId).toBe(parent.id);
     expect(child.assigneeAgentId).toBe(agentId);
+
+    const participantMatches = await svc.list(orgId, {
+      participantAgentId: shortRefFor("agent", agentId),
+    });
+    expect(participantMatches.some((issue) => issue.id === child.id)).toBe(true);
+    const userFilterValues = [
+      "touchedByUserId",
+      "unreadForUserId",
+      "followedByUserId",
+      "involvedUserId",
+    ] as const;
+    for (const key of userFilterValues) {
+      await expect(svc.list(orgId, { [key]: shortRefFor("user", userId) })).resolves.toEqual(expect.any(Array));
+    }
+
     await expect(svc.create(orgId, {
       title: "Cross-organization short reference",
       status: "todo",
