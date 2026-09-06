@@ -85,6 +85,10 @@ type WorkspaceRootResolution = {
   repoUrl: null;
 };
 
+export type OrganizationWorkspaceBrowserHooks = {
+  onLibraryEntryDecorationStart?: (entryPath: string) => void | Promise<void>;
+};
+
 function toPortableRelativePath(relativePath: string) {
   return relativePath.split(path.sep).join("/");
 }
@@ -444,7 +448,10 @@ function getWorkspaceFilePreviewKind(contentType: string, buffer?: Buffer): Orga
   return buffer && hasBinaryBytes(buffer) ? "binary" : "text";
 }
 
-export function organizationWorkspaceBrowserService(db: Db) {
+export function organizationWorkspaceBrowserService(
+  db: Db,
+  hooks: OrganizationWorkspaceBrowserHooks = {},
+) {
   const orgs = organizationService(db);
   const libraryEntries = libraryEntryService(db);
   const workspaceFileWriteTails = new Map<string, Promise<void>>();
@@ -566,6 +573,8 @@ export function organizationWorkspaceBrowserService(db: Db) {
           decoratedEntries[index] = entry;
           continue;
         }
+        await hooks.onLibraryEntryDecorationStart?.(entry.path);
+        signal?.throwIfAborted();
         const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, entry.path);
         signal?.throwIfAborted();
         decoratedEntries[index] = {
@@ -642,6 +651,9 @@ export function organizationWorkspaceBrowserService(db: Db) {
         env: process.env,
         legacyToggleEnvs: ["RUDDER_NATIVE_WORKSPACE_FILES"],
       });
+      if (policy.required && targetIsAlias) {
+        throw unprocessable("Requested path cannot alias a directory in required native mode");
+      }
       let unsortedEntries: OrganizationWorkspaceFileEntry[] | null = null;
       if (policy.enabled && !targetIsAlias) {
         try {

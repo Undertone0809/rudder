@@ -275,6 +275,34 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.listFiles(orgId, "projects/protected-link")).rejects.toMatchObject({ status: 422 });
   });
 
+  it.runIf(process.platform !== "win32")("rejects internal directory aliases when native listing is required", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = resolveNativeWorkspaceFilesBinary();
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Required Native Internal Alias Org",
+      urlKey: deriveOrganizationUrlKey("Required Native Internal Alias Org"),
+      issuePrefix: "RNIA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const canonicalDirectory = path.join(workspaceRoot, "projects", "real");
+    await fs.mkdir(canonicalDirectory, { recursive: true });
+    await fs.symlink(canonicalDirectory, path.join(workspaceRoot, "projects", "link"));
+
+    await expect(workspaceBrowser.listFiles(orgId, "projects/link")).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("required native mode"),
+    });
+  });
+
   it.runIf(process.platform !== "win32")("lists internal directory aliases from their canonical target in the Node fallback", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
@@ -795,13 +823,19 @@ describe("organization workspace browser", () => {
     );
 
     const controller = new AbortController();
-    const pending = workspaceBrowser.listMentionableFiles(orgId, {
+    let decorationStarts = 0;
+    const pending = organizationWorkspaceBrowserService(db, {
+      onLibraryEntryDecorationStart: () => {
+        decorationStarts += 1;
+        if (decorationStarts === 1) controller.abort(new Error("client disconnected"));
+      },
+    }).listMentionableFiles(orgId, {
       limit: 500,
       signal: controller.signal,
     });
-    setTimeout(() => controller.abort(new Error("client disconnected")), 0);
 
     await expect(pending).rejects.toMatchObject({ message: "client disconnected" });
+    expect(decorationStarts).toBeLessThanOrEqual(8);
   });
 
   it("keeps workspace file Library entry ids stable across managed file and directory moves", async () => {
