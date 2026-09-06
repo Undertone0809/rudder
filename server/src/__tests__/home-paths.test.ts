@@ -290,6 +290,53 @@ describe("home paths", () => {
     expect((await fs.lstat(legacyRoot)).isSymbolicLink()).toBe(false);
   });
 
+  it("fails closed before moving a nested workspace entry across filesystems", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-nested-cross-device-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-nested-cross-device-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Nested Cross Device Org",
+      urlKey: "nested-cross-device-org",
+    });
+    const legacyRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    const canonicalFile = path.join(layout.root, "projects", "canonical", "README.md");
+    const legacyFile = path.join(legacyRoot, "projects", "legacy", "README.md");
+    await fs.mkdir(path.dirname(canonicalFile), { recursive: true });
+    await fs.mkdir(path.dirname(legacyFile), { recursive: true });
+    await fs.writeFile(canonicalFile, "canonical\n", "utf8");
+    await fs.writeFile(legacyFile, "legacy\n", "utf8");
+
+    const sourceParent = path.join(layout.root, "projects");
+    const targetParent = path.join(legacyRoot, "projects");
+    const originalStat = fs.stat.bind(fs);
+    const statSpy = vi.spyOn(fs, "stat").mockImplementation(async (...args) => {
+      const result = await originalStat(...args);
+      const targetPath = typeof args[0] === "string" ? path.resolve(args[0]) : null;
+      if (targetPath === sourceParent) Object.defineProperty(result, "dev", { value: 101 });
+      if (targetPath === targetParent) Object.defineProperty(result, "dev", { value: 202 });
+      return result;
+    });
+
+    try {
+      await expect(migrateOrganizationWorkspaceRoot(orgId)).rejects.toMatchObject({
+        code: "RUDDER_WORKSPACE_CROSS_DEVICE_MIGRATION",
+      });
+    } finally {
+      statSpy.mockRestore();
+    }
+
+    await expect(fs.readFile(canonicalFile, "utf8")).resolves.toBe("canonical\n");
+    await expect(fs.readFile(legacyFile, "utf8")).resolves.toBe("legacy\n");
+    await expect(fs.stat(path.join(legacyRoot, "projects", "canonical", "README.md")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("allocates friendly organization workspace folders under the configured user workspace home", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-friendly-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-");
@@ -348,6 +395,33 @@ describe("home paths", () => {
     expect(parsed.organizations?.map((entry) => entry.folderName).sort()).toEqual(
       Array.from({ length: 12 }, (_, index) => `concurrent-org-${index + 1}`).sort(),
     );
+  });
+
+  it("rejects a friendly workspace mapping that is not a single safe path segment", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-invalid-folder-map-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-invalid-folder-map-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [{
+          instanceId: "test-instance",
+          orgId,
+          folderName: "../outside",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    expect(() => resolveOrganizationWorkspaceRoot(orgId)).toThrow(/Invalid organization workspace folder mapping/);
   });
 
   it("serializes direct organization storage migrations across processes", async () => {
@@ -1063,6 +1137,45 @@ describe("home paths", () => {
     await expect(fs.stat(path.join(workspaceHome, "corrupt-map-org"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("recovers a torn workspace identity file without publishing partial JSON", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-torn-identity-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-torn-identity-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const root = path.join(workspaceHome, "torn-identity-org");
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, ".rudder-workspace.json"), "{\"version\": 1,", "utf8");
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [{
+          instanceId: "test-instance",
+          orgId,
+          folderName: "torn-identity-org",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Torn Identity Org",
+      urlKey: "torn-identity-org",
+    })).resolves.toMatchObject({ root });
+
+    await expect(fs.readFile(path.join(root, ".rudder-workspace.json"), "utf8"))
+      .resolves.toContain(`"orgId": "${orgId}"`);
+    const recovered = (await fs.readdir(root)).filter((entry) => entry.startsWith(".rudder-workspace.json.corrupt-"));
+    expect(recovered).toHaveLength(1);
+  });
+
   it("can recover a directory created before a mapping write failed", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-map-write-retry-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-map-write-retry-");
@@ -1529,5 +1642,55 @@ describe("home paths", () => {
 
     await expect(fs.stat(canonicalRoot)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("removes friendly workspace aliases, legacy projects, and the mapping record", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-remove-friendly-org-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-remove-friendly-org-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: orgId,
+      name: "Friendly Delete Org",
+      urlKey: "friendly-delete-org",
+    });
+    const previousDocumentsRoot = resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId);
+    const legacyWorkspaceRoot = resolveLegacyOrganizationWorkspaceRoot(orgId);
+    const legacyProjectsRoot = path.join(
+      rudderHome,
+      "instances",
+      "test-instance",
+      "projects",
+      orgId,
+    );
+    await fs.mkdir(path.dirname(previousDocumentsRoot), { recursive: true });
+    await fs.symlink(layout.root, previousDocumentsRoot, "dir");
+    await fs.mkdir(legacyWorkspaceRoot, { recursive: true });
+    await fs.mkdir(legacyProjectsRoot, { recursive: true });
+
+    const mapPath = resolveOrganizationWorkspaceMapPath();
+    const mapBefore = JSON.parse(await fs.readFile(mapPath, "utf8")) as {
+      organizations: Array<{ instanceId: string; orgId: string }>;
+    };
+    expect(mapBefore.organizations).toEqual([
+      expect.objectContaining({ instanceId: "test-instance", orgId }),
+    ]);
+
+    await removeOrganizationStorage(orgId);
+
+    await expect(fs.stat(layout.root)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(previousDocumentsRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(legacyWorkspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(legacyProjectsRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    const mapAfter = JSON.parse(await fs.readFile(mapPath, "utf8")) as {
+      organizations: Array<{ instanceId: string; orgId: string }>;
+    };
+    expect(mapAfter.organizations).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ instanceId: "test-instance", orgId }),
+    ]));
   });
 });

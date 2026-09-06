@@ -1159,20 +1159,30 @@ function findOrganizationWorkspaceMapRecord(
 
 function readOrganizationWorkspaceFolderName(orgId: string): string | null {
   if (!usesFriendlyOrganizationWorkspaceHome()) return null;
+  let parsed: Partial<OrganizationWorkspaceMapFile>;
   try {
     const raw = fsSync.readFileSync(resolveOrganizationWorkspaceMapPath(), "utf8");
-    const parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) return null;
-    const record = parsed.organizations.find((entry) =>
+    parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
+  } catch {
+    return null;
+  }
+  if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) return null;
+  const record = parsed.organizations.find((entry) =>
       typeof entry === "object"
       && entry !== null
       && entry.instanceId === resolveRudderInstanceId()
       && entry.orgId === orgId
       && typeof entry.folderName === "string"
-    );
-    return record?.folderName ?? null;
-  } catch {
-    return null;
+  );
+  if (!record) return null;
+  try {
+    const folderName = validatePathSegment(record.folderName, "organization workspace folder");
+    if (folderName !== record.folderName) {
+      throw new Error("Organization workspace folder mapping must not contain leading or trailing whitespace.");
+    }
+    return folderName;
+  } catch (error) {
+    throw new Error(`Invalid organization workspace folder mapping for '${orgId}'.`, { cause: error });
   }
 }
 
@@ -1203,17 +1213,34 @@ async function ensureOrganizationWorkspaceIdentity(root: string, orgId: string):
     }
     return;
   } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
+    if (errorCode(error) === "ENOENT") {
+      // Continue below and publish a fresh identity atomically.
+    } else if (error instanceof SyntaxError) {
+      const corruptPath = `${identityPath}.corrupt-${randomUUID()}`;
+      await fs.rename(identityPath, corruptPath);
+      await syncDirectory(root);
+    } else {
+      throw error;
+    }
   }
-  await fs.writeFile(
-    identityPath,
-    `${JSON.stringify({ version: 1, orgId: expectedOrgId }, null, 2)}\n`,
-    { encoding: "utf8", mode: 0o600, flag: "wx" },
-  ).catch(async (error) => {
+  const tempPath = `${identityPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    const handle = await fs.open(tempPath, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify({ version: 1, orgId: expectedOrgId }, null, 2)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(tempPath, identityPath);
+    await syncDirectory(root);
+  } catch (error) {
     if (errorCode(error) !== "EEXIST" || !(await workspaceIdentityMatches(root, expectedOrgId))) {
       throw error;
     }
-  });
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function workspaceIdentityMatches(root: string, orgId: string): Promise<boolean> {
@@ -1323,24 +1350,44 @@ export async function removeOrganizationStorage(orgId: string): Promise<{
   organizationRootPath: string;
   legacyOrganizationRootPath: string;
   workspaceRootPath: string;
+  previousDocumentsWorkspaceRootPath: string;
   legacyProjectsRootPath: string;
 }> {
-  const normalizedOrgId = validatePathSegment(orgId, "org id");
-  const organizationRootPath = resolveOrganizationRoot(normalizedOrgId);
-  const legacyOrganizationRootPath = resolveLegacyOrganizationRoot(normalizedOrgId);
-  const workspaceRootPath = resolveOrganizationWorkspaceRoot(normalizedOrgId);
-  const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
-  const removeLegacyOrganizationRoot = legacyOrganizationRootPath === organizationRootPath
-    ? []
-    : [fs.rm(legacyOrganizationRootPath, { recursive: true, force: true })];
-  await Promise.all([
-    fs.rm(organizationRootPath, { recursive: true, force: true }),
-    fs.rm(workspaceRootPath, { recursive: true, force: true }),
-    ...removeLegacyOrganizationRoot,
-    // Best-effort cleanup for legacy pre-org-workspace managed project paths.
-    fs.rm(legacyProjectsRootPath, { recursive: true, force: true }),
-  ]);
-  return { organizationRootPath, legacyOrganizationRootPath, workspaceRootPath, legacyProjectsRootPath };
+  return await updateOrganizationWorkspaceMap(async () => {
+    const normalizedOrgId = validatePathSegment(orgId, "org id");
+    const organizationRootPath = resolveOrganizationRoot(normalizedOrgId);
+    const legacyOrganizationRootPath = resolveLegacyOrganizationRoot(normalizedOrgId);
+    const workspaceRootPath = resolveOrganizationWorkspaceRoot(normalizedOrgId);
+    const previousDocumentsWorkspaceRootPath = resolvePreviousDocumentsOrganizationWorkspaceRoot(normalizedOrgId);
+    const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
+    const pathsToRemove = new Set([
+      organizationRootPath,
+      workspaceRootPath,
+      legacyOrganizationRootPath,
+      previousDocumentsWorkspaceRootPath,
+      legacyProjectsRootPath,
+    ]);
+    await Promise.all([...pathsToRemove].map((targetPath) =>
+      fs.rm(targetPath, { recursive: true, force: true })));
+
+    const mapState = await readOrganizationWorkspaceMapFileState();
+    const nextOrganizations = mapState.map.organizations.filter((entry) =>
+      !(entry.instanceId === resolveRudderInstanceId() && entry.orgId === normalizedOrgId)
+    );
+    if (nextOrganizations.length !== mapState.map.organizations.length) {
+      await writeOrganizationWorkspaceMapFile(resolveOrganizationWorkspaceMapPath(), {
+        ...mapState.map,
+        organizations: nextOrganizations,
+      });
+    }
+    return {
+      organizationRootPath,
+      legacyOrganizationRootPath,
+      workspaceRootPath,
+      previousDocumentsWorkspaceRootPath,
+      legacyProjectsRootPath,
+    };
+  });
 }
 
 async function listDirectoryNames(rootPath: string): Promise<string[]> {
@@ -1433,16 +1480,11 @@ async function movePath(sourcePath: string, targetPath: string): Promise<void> {
     await fs.rename(sourcePath, targetPath);
     return;
   } catch (error) {
-    if (errorCode(error) !== "EXDEV") throw error;
+    if (errorCode(error) === "EXDEV") {
+      throw organizationWorkspaceCrossDeviceMigrationError(sourcePath, targetPath);
+    }
+    throw error;
   }
-
-  await fs.cp(sourcePath, targetPath, {
-    recursive: true,
-    errorOnExist: true,
-    force: false,
-    preserveTimestamps: true,
-  });
-  await fs.rm(sourcePath, { recursive: true, force: false });
 }
 
 async function pathsReferenceSameDirectory(first: string, second: string): Promise<boolean> {
@@ -1466,6 +1508,10 @@ function organizationWorkspaceCrossDeviceMigrationError(sourcePath: string, targ
 }
 
 async function assertWorkspaceRootMoveCanBeAtomic(sourcePath: string, targetPath: string): Promise<void> {
+  await assertPathMoveCanBeAtomic(sourcePath, targetPath);
+}
+
+async function assertPathMoveCanBeAtomic(sourcePath: string, targetPath: string): Promise<void> {
   const sourceParentPath = path.dirname(sourcePath);
   const targetParentPath = path.dirname(targetPath);
   const [sourceParentStat, targetParentStat] = await Promise.all([
@@ -1583,6 +1629,7 @@ async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): P
     const targetPath = path.join(targetRoot, entry.name);
     const targetStat = await lstatIfExists(targetPath);
     if (!targetStat) {
+      await assertPathMoveCanBeAtomic(sourcePath, targetPath);
       await movePath(sourcePath, targetPath);
       continue;
     }
@@ -1614,7 +1661,10 @@ async function assertCanMergeDirectoryContents(sourceRoot: string, targetRoot: s
     const sourcePath = path.join(sourceRoot, entry.name);
     const targetPath = path.join(targetRoot, entry.name);
     const targetStat = await lstatIfExists(targetPath);
-    if (!targetStat) continue;
+    if (!targetStat) {
+      await assertPathMoveCanBeAtomic(sourcePath, targetPath);
+      continue;
+    }
     if (entry.isDirectory() && targetStat.isDirectory()) {
       await assertCanMergeDirectoryContents(sourcePath, targetPath);
       continue;
