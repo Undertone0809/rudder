@@ -474,6 +474,59 @@ describe("issueService.list participantAgentId", () => {
     ]);
   });
 
+  it("matches the UI lexical contract for text and pagination tie-breakers", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Lexically sorted issues",
+      urlKey: deriveOrganizationUrlKey("Lexically sorted issues"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const createdAt = new Date("2026-05-01T00:00:00.000Z");
+    const updatedAt = new Date("2026-05-02T00:00:00.000Z");
+    await db.insert(issues).values([
+      { id: randomUUID(), orgId, identifier: "TEXT-1", title: "alpha", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-2", title: "Alpha", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-3", title: "! punctuation", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-4", title: "éclair", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-5", title: "中 文", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-6", title: "😀 emoji", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "case-a", title: "same title", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "!case-b", title: "same title", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "Case-c", title: "same title", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "中-case-d", title: "same title", createdAt, updatedAt },
+    ]);
+
+    const titleFirstPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3 });
+    const titleSecondPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3, offset: 3 });
+    const titleThirdPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3, offset: 6 });
+    const titleFourthPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3, offset: 9 });
+
+    expect([
+      ...titleFirstPage,
+      ...titleSecondPage,
+      ...titleThirdPage,
+      ...titleFourthPage,
+    ].map((issue) => issue.title)).toEqual([
+      "! punctuation",
+      "Alpha",
+      "alpha",
+      "same title",
+      "same title",
+      "same title",
+      "same title",
+      "éclair",
+      "中 文",
+      "😀 emoji",
+    ]);
+
+    expect(titleSecondPage.map((issue) => issue.identifier)).toEqual(["!case-b", "Case-c", "case-a"]);
+    expect(titleThirdPage.map((issue) => issue.identifier)).toEqual(["中-case-d", "TEXT-4", "TEXT-5"]);
+    expect(titleFourthPage.map((issue) => issue.identifier)).toEqual(["TEXT-6"]);
+  });
+
   it("keeps automation execution issues out of generic lists unless explicitly requested", async () => {
     const orgId = randomUUID();
     const userId = "board-user-automation-notified";

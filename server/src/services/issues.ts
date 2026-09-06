@@ -229,6 +229,10 @@ function issueSortExpression(expression: SortableIssueExpression, direction: Iss
   return direction === "desc" ? desc(expression) : asc(expression);
 }
 
+function issueCTextExpression(expression: SortableIssueExpression) {
+  return sql<string>`${expression} COLLATE "C"`;
+}
+
 function issuePriorityOrderExpression() {
   return sql<number>`CASE ${issues.priority}
     WHEN 'critical' THEN 0
@@ -263,7 +267,7 @@ function issueListOrderBy(
       : sortField === "priority"
         ? issuePriorityOrderExpression()
         : sortField === "title"
-          ? issues.title
+          ? issueCTextExpression(issues.title)
           : sortField === "created"
             ? issues.createdAt
             : issues.updatedAt;
@@ -272,7 +276,7 @@ function issueListOrderBy(
     issueSortExpression(primary, sortDir),
     desc(issues.updatedAt),
     desc(issues.createdAt),
-    asc(sql<string>`COALESCE(${issues.identifier}, ${issues.id}::text)`),
+    asc(sql<string>`COALESCE(${issues.identifier}, ${issues.id}::text) COLLATE "C"`),
   ];
 }
 
@@ -871,7 +875,13 @@ export function issueService(db: Db, storage?: StorageService) {
         .from(issues)
         .where(and(...conditions))
         .orderBy(...(hasSearch
-          ? [asc(searchOrder), asc(priorityOrder), desc(issues.updatedAt)]
+          ? [
+              asc(searchOrder),
+              asc(priorityOrder),
+              desc(issues.updatedAt),
+              desc(issues.createdAt),
+              asc(sql<string>`COALESCE(${issues.identifier}, ${issues.id}::text) COLLATE "C"`),
+            ]
           : issueListOrderBy(filters?.sortField, filters?.sortDir)))
         .$dynamic();
       const limit = normalizeIssueListLimit(filters?.limit);
