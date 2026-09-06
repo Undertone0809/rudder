@@ -668,6 +668,109 @@ describe("chatInlineAnnotationService", () => {
     });
   });
 
+  it("accepts a long mixed-block selection containing several resolved issue links", async () => {
+    const source = await seedSource({ body: "placeholder" });
+    const agentId = randomUUID();
+    const terminalIssueId = randomUUID();
+    const retryIssueId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId,
+      orgId: source.orgId,
+      name: "Annotation agent",
+      role: "engineer",
+    });
+    await db.insert(issues).values([
+      {
+        id: terminalIssueId,
+        orgId: source.orgId,
+        title: "Add Agent Workspace Terminal to Side Panel",
+        identifier: "R6Z-72",
+        createdByAgentId: agentId,
+      },
+      {
+        id: retryIssueId,
+        orgId: source.orgId,
+        title: "Add retry and failure budgets to Assignment Runs",
+        identifier: "R6Z-73",
+        createdByAgentId: agentId,
+      },
+    ]);
+    const terminalLink = `[stale terminal title](${buildIssueMentionHref(terminalIssueId, "R6Z-72")})`;
+    const retryLink = `[stale retry title](${buildIssueMentionHref(retryIssueId, "R6Z-73")})`;
+    const body = [
+      "## Done",
+      "",
+      "- 完成 Chat transcript 中文思考中、密度对齐及 debug/JSON 清理。",
+      "- 完成 Aident 竞品档案、每日信息流和 Agent Run 效率复盘。",
+      "- 复盘识别到单次 Assignment Run 消耗约 1.30 亿 tokens，并创建了改进项。",
+      "",
+      "## In progress",
+      "",
+      `- ${retryLink} 当前唯一 Assignment Run 正在执行。`,
+      "- 正在分析 Terminal 验收 Run 失败后为何没有自动 retry 或 follow-up。",
+      "",
+      "## Unfinished or not started",
+      "",
+      `- ${terminalLink} 需要定位 Desktop 不显示 Terminal 的实际运行环境或发布链路问题。`,
+      "- 创建内容为 `hello` 的文档仍在 backlog，未开始。",
+      "",
+      "## Blockers or risks",
+      "",
+      "- Terminal 的代码级验证通过，但用户可见验收失败。",
+      "- 两个关联 Run 以 `adapter_failed` 结束，系统没有自动续跑。",
+      "",
+      "## Recommended next tasks",
+      "",
+      `- 等 ${retryLink} Run 终态后立即验收 guardrail、retry/checkpoint 和 continuation 行为。`,
+      `- 对 ${terminalLink} 核对当前 Desktop 实际 commit/build/version。`,
+      "- 将失败 Run 的自动 retry/follow-up 缺口纳入现有改进项。",
+    ].join("\n");
+    await db.update(chatMessages)
+      .set({ body })
+      .where(eq(chatMessages.id, source.sourceMessageId));
+
+    const start = body.indexOf("复盘识别到");
+    const end = body.indexOf("纳入现有改进项") + "纳入现有改进项".length;
+    const selectedText = [
+      "复盘识别到单次 Assignment Run 消耗约 1.30 亿 tokens，并创建了改进项。",
+      "In progress",
+      "R6Z-73 Add retry and failure budgets to Assignment Runs 当前唯一 Assignment Run 正在执行。",
+      "正在分析 Terminal 验收 Run 失败后为何没有自动 retry 或 follow-up。",
+      "Unfinished or not started",
+      "R6Z-72 Add Agent Workspace Terminal to Side Panel 需要定位 Desktop 不显示 Terminal 的实际运行环境或发布链路问题。",
+      "创建内容为 hello 的文档仍在 backlog，未开始。",
+      "Blockers or risks",
+      "Terminal 的代码级验证通过，但用户可见验收失败。",
+      "两个关联 Run 以 adapter_failed 结束，系统没有自动续跑。",
+      "Recommended next tasks",
+      "等 R6Z-73 Add retry and failure budgets to Assignment Runs Run 终态后立即验收 guardrail、retry/checkpoint 和 continuation 行为。",
+      "对 R6Z-72 Add Agent Workspace Terminal to Side Panel 核对当前 Desktop 实际 commit/build/version。",
+      "将失败 Run 的自动 retry/follow-up 缺口纳入现有改进项",
+    ].join("\n");
+
+    await expect(service.prepare({
+      orgId: source.orgId,
+      conversationId: source.conversationId,
+      uploadedFileCount: 0,
+      annotations: [{
+        id: randomUUID(),
+        surface: "assistant_body",
+        selectedText,
+        comment: null,
+        sourceConversationId: source.conversationId,
+        sourceMessageId: source.sourceMessageId,
+        sourceHash: sha256(body),
+        start,
+        end,
+        prefix: body.slice(Math.max(0, start - 160), start),
+        suffix: body.slice(end, end + 160),
+        attachmentIds: [],
+      }],
+    })).resolves.toMatchObject({
+      annotations: [expect.objectContaining({ selectedText })],
+    });
+  });
+
   it("accepts only current resolved issue and skill labels for anchored Markdown links", async () => {
     const source = await seedSource({ body: "placeholder" });
     const issueId = randomUUID();
