@@ -189,6 +189,73 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("resolves typed short references within the organization boundary", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const agentId = randomUUID();
+    const projectId = randomUUID();
+    const otherProjectId = randomUUID();
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Short Reference Org",
+        urlKey: deriveOrganizationUrlKey("Short Reference Org"),
+        issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Short Reference Org",
+        urlKey: deriveOrganizationUrlKey("Other Short Reference Org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Short Reference Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(projects).values([
+      { id: projectId, orgId, name: "Local Project", status: "in_progress" },
+      { id: otherProjectId, orgId: otherOrgId, name: "Other Project", status: "in_progress" },
+    ]);
+
+    const parent = await svc.create(orgId, {
+      title: "Short reference parent",
+      status: "todo",
+      priority: "medium",
+    });
+    const child = await svc.create(orgId, {
+      title: "Short reference child",
+      status: "todo",
+      priority: "medium",
+      projectId: shortRefFor("project", projectId),
+      parentId: shortRefFor("issue", parent.id),
+      assigneeAgentId: shortRefFor("agent", agentId),
+    });
+
+    expect(child.projectId).toBe(projectId);
+    expect(child.parentId).toBe(parent.id);
+    expect(child.assigneeAgentId).toBe(agentId);
+    await expect(svc.create(orgId, {
+      title: "Cross-organization short reference",
+      status: "todo",
+      priority: "medium",
+      projectId: shortRefFor("project", otherProjectId),
+    })).rejects.toMatchObject({ status: 404 });
+
+    const listed = await svc.list(orgId, { projectId: shortRefFor("project", projectId) });
+    expect(listed.some((issue) => issue.id === child.id)).toBe(true);
+  });
+
   it("keeps pending terminal runs visible without leaking terminal state from the issue list route", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
