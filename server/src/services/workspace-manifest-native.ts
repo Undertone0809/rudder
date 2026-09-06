@@ -187,19 +187,23 @@ function parseManifest(value: unknown, rootPath: string): NativeWorkspaceManifes
     || path.resolve(String(manifest.rootPath ?? "")) !== path.resolve(rootPath)
     || !Array.isArray(manifest.entries) || manifest.entries.length > MAX_ENTRIES) return null;
   const entries: NativeWorkspaceManifestEntry[] = [];
+  const seenPaths = new Set<string>();
   let pathBytes = 0;
   for (const value of manifest.entries) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const entry = value as Record<string, unknown>;
     const entryPath = typeof entry.path === "string" ? entry.path : "";
     const kind = entry.kind;
-    if (!entryPath || entryPath.includes("\\") || entryPath.startsWith("/")
+    if (!entryPath || entryPath.includes("\\") || entryPath.includes("\0") || entryPath.startsWith("/")
+      || Buffer.from(entryPath, "utf8").toString("utf8") !== entryPath
       || entryPath.split("/").some((part) => !part || part === "." || part === "..")
+      || seenPaths.has(entryPath)
       || !["file", "directory", "symlink"].includes(String(kind))
       || !Number.isSafeInteger(entry.byteSize) || Number(entry.byteSize) < 0
       || !Number.isSafeInteger(entry.modifiedMillis) || Number(entry.modifiedMillis) < 0) return null;
     pathBytes += Buffer.byteLength(entryPath);
     if (pathBytes > MAX_PATH_BYTES) return null;
+    seenPaths.add(entryPath);
     entries.push({
       path: entryPath,
       kind: kind as NativeWorkspaceManifestEntry["kind"],

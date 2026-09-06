@@ -224,6 +224,32 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.listFiles(orgId, "leak")).rejects.toMatchObject({ status: 422 });
   });
 
+  it.runIf(process.platform !== "win32")("rejects a symlinked organization workspace root instead of following it", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Symlinked Workspace Root Org",
+      urlKey: deriveOrganizationUrlKey("Symlinked Workspace Root Org"),
+      issuePrefix: "SWR",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const outsideRoot = path.join(rudderHome, "outside-workspace-root");
+    await fs.mkdir(outsideRoot, { recursive: true });
+    await fs.writeFile(path.join(outsideRoot, "secret.md"), "do not follow\n", "utf8");
+    await fs.mkdir(path.dirname(workspaceRoot), { recursive: true });
+    await fs.symlink(outsideRoot, workspaceRoot, "dir");
+
+    await expect(workspaceBrowser.listFiles(orgId)).rejects.toThrow(/cannot be a symbolic link/);
+    await expect(fs.readFile(path.join(outsideRoot, "secret.md"), "utf8")).resolves.toBe("do not follow\n");
+  });
+
   it.runIf(process.platform !== "win32")("blocks internal symlink aliases into protected agent roots in the Node fallback", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
@@ -741,6 +767,41 @@ describe("organization workspace browser", () => {
       ["projects/product/z-special-product-brief.md", false],
       ["projects/special-product-research", true],
     ]);
+  });
+
+  it("stops mentionable-file decoration when the request is aborted", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Mention Abort Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Mention Abort Org"),
+      issuePrefix: "WMA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    const filesDir = path.join(root, "projects", "abort");
+    await fs.mkdir(filesDir, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 500 }, (_, index) =>
+        fs.writeFile(path.join(filesDir, `file-${String(index).padStart(3, "0")}.md`), "# File\n", "utf8"),
+      ),
+    );
+
+    const controller = new AbortController();
+    const pending = workspaceBrowser.listMentionableFiles(orgId, {
+      limit: 500,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error("client disconnected")), 0);
+
+    await expect(pending).rejects.toMatchObject({ message: "client disconnected" });
   });
 
   it("keeps workspace file Library entry ids stable across managed file and directory moves", async () => {

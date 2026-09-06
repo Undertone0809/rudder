@@ -687,11 +687,21 @@ export function organizationRoutes(
     assertBoard(req);
     const query = typeof req.query.q === "string" ? req.query.q : "";
     const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : null;
-    const entries = await workspaceBrowser.listMentionableFiles(orgId, {
-      query,
-      limit: Number.isFinite(rawLimit) ? rawLimit : null,
-    });
-    res.json({ entries });
+    const controller = new AbortController();
+    const abortOnDisconnect = () => controller.abort();
+    req.once("aborted", abortOnDisconnect);
+    res.once("close", abortOnDisconnect);
+    try {
+      const entries = await workspaceBrowser.listMentionableFiles(orgId, {
+        query,
+        limit: Number.isFinite(rawLimit) ? rawLimit : null,
+        signal: controller.signal,
+      });
+      res.json({ entries });
+    } finally {
+      req.off("aborted", abortOnDisconnect);
+      res.off("close", abortOnDisconnect);
+    }
   });
 
   router.post("/:orgId/workspace/file", validate(createOrganizationWorkspaceFileSchema), async (req, res) => {

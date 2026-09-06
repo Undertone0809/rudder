@@ -287,17 +287,19 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
       mappingState = { record: existing, created: false };
     }
   }
+  const root = resolveOrganizationWorkspaceRoot(orgId);
+  await assertOrganizationWorkspaceRootIsOwned(root);
   await migrateOrganizationWorkspaceRoot(orgId, {
     failIfMappedFolderMissing: Boolean(mappingState && !mappingState.created),
   });
-
-  const root = resolveOrganizationWorkspaceRoot(orgId);
+  await assertOrganizationWorkspaceRootIsOwned(root);
   const agentsDir = resolveOrganizationAgentsDir(orgId);
   const skillsDir = resolveOrganizationSkillsDir(orgId);
   const projectsDir = resolveOrganizationProjectsDir(orgId);
   try {
+    await fs.mkdir(root, { recursive: true });
+    await assertOrganizationWorkspaceRootIsOwned(root);
     await Promise.all([
-      fs.mkdir(root, { recursive: true }),
       fs.mkdir(agentsDir, { recursive: true }),
       fs.mkdir(skillsDir, { recursive: true }),
       fs.mkdir(projectsDir, { recursive: true }),
@@ -897,6 +899,17 @@ function formatOrganizationWorkspacePermissionMessage(input: {
     "This usually means the target folder is not writable or the operating system blocked access.",
     "Grant Rudder permission to access Documents, choose a writable folder with RUDDER_ORGANIZATION_WORKSPACE_HOME, or on Windows try running Rudder as administrator if the folder policy requires it.",
   ].join(" ");
+}
+
+async function assertOrganizationWorkspaceRootIsOwned(rootPath: string): Promise<void> {
+  const stat = await lstatIfExists(rootPath);
+  if (!stat) return;
+  if (stat.isSymbolicLink()) {
+    throw new Error("The organization workspace root cannot be a symbolic link.");
+  }
+  if (!stat.isDirectory()) {
+    throw new Error("The organization workspace root must be a directory.");
+  }
 }
 
 async function lstatIfExists(targetPath: string) {

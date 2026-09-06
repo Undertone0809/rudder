@@ -210,6 +210,10 @@ async function resolveCanonicalPathWithinRoot(
   resolvedTarget: string,
   missingMessage: string,
 ) {
+  const rootStat = await fs.lstat(resolvedRoot);
+  if (rootStat.isSymbolicLink()) {
+    throw unprocessable("The organization Library root cannot be a symbolic link");
+  }
   const canonicalRoot = await fs.realpath(resolvedRoot);
   let canonicalTarget: string;
   try {
@@ -716,8 +720,12 @@ export function organizationWorkspaceBrowserService(db: Db) {
     async listMentionableFiles(orgId: string, options?: {
       query?: string | null;
       limit?: number | null;
+      signal?: AbortSignal;
     }): Promise<OrganizationWorkspaceFileEntry[]> {
+      const signal = options?.signal;
+      signal?.throwIfAborted();
       const root = await resolveWorkspaceRoot(orgId);
+      signal?.throwIfAborted();
       const { resolvedRoot } = resolveWithinRoot(root.rootPath, "");
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) return [];
@@ -727,9 +735,10 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const requestedLimit = options?.limit ?? DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT;
       const limit = Math.max(1, Math.min(MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT, requestedLimit));
 
-      const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
+      const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot, signal);
       if (nativeManifest) {
         for (const entry of nativeManifest.sort((left, right) => left.path.localeCompare(right.path))) {
+          signal?.throwIfAborted();
           if (entries.length >= limit) break;
           if (entry.kind === "symlink") continue;
           const segments = entry.path.split("/");
@@ -739,11 +748,12 @@ export function organizationWorkspaceBrowserService(db: Db) {
           if (normalizedQuery && !`${name} ${entry.path}`.toLowerCase().includes(normalizedQuery)) continue;
           entries.push({ name, path: entry.path, isDirectory: entry.kind === "directory" });
         }
-        const decoratedEntries = await attachLibraryEntryIds(orgId, entries);
+        const decoratedEntries = await attachLibraryEntryIds(orgId, entries, signal);
         return decoratedEntries.sort((left, right) => left.path.localeCompare(right.path));
       }
 
       async function visit(directoryPath: string) {
+        signal?.throwIfAborted();
         if (entries.length >= limit) return;
         if (isProtectedLibraryResourcePath(directoryPath)) return;
 
@@ -754,6 +764,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           .sort((left, right) => left.name.localeCompare(right.name));
 
         for (const entry of rawEntries) {
+          signal?.throwIfAborted();
           if (entries.length >= limit) break;
           if (shouldHideWorkspaceEntry(entry.name)) continue;
           if (entry.isSymbolicLink()) continue;
@@ -785,7 +796,8 @@ export function organizationWorkspaceBrowserService(db: Db) {
       }
 
       await visit("");
-      const decoratedEntries = await attachLibraryEntryIds(orgId, entries);
+      signal?.throwIfAborted();
+      const decoratedEntries = await attachLibraryEntryIds(orgId, entries, signal);
       return decoratedEntries.sort((left, right) => left.path.localeCompare(right.path));
     },
 
