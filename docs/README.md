@@ -79,7 +79,7 @@ favicons, and creates the immutable docs tag.
 
 Preparing or approving docs content does not authorize publishing it. Before a
 production docs release, report the exact source ref and proposed tag, confirm
-`pnpm docs:validate` and staging health, disclose known failing checks, and name
+`pnpm docs:validate` and the production public-path checks, disclose known failing checks, and name
 the rollback ref. Then stop and obtain explicit authorization to deploy
 `docs.rudderhq.dev`.
 

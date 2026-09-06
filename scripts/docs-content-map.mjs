@@ -10,7 +10,6 @@ export const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const MANIFEST_PATH = "scripts/docs-content-map.yml";
 const DOCS_JSON_PATH = "docs/docs.json";
 const LLMS_PATH = "docs/llms.txt";
-const VERCEL_STAGING_REDIRECTS_PATH = "docs/vercel.staging.redirects.json";
 const VERCEL_PRODUCTION_REDIRECTS_PATH = "docs/vercel.production.redirects.json";
 
 const PAGE_KINDS = new Set(["home", "get_started", "concept", "how_to", "reference", "project"]);
@@ -19,7 +18,7 @@ const METADATA_ENFORCEMENT = new Set(["strict", "reserved"]);
 const EXAMPLE_CLASSES = new Set(["real_rudder_case", "anonymized_real_case", "illustrative_case"]);
 const REDIRECT_STATUSES = new Set(["active", "reserved_batch_3"]);
 const REDIRECT_TARGETS = new Set(["mintlify", "vercel"]);
-const DEPLOYMENT_ENVIRONMENTS = new Set(["staging", "production"]);
+const DEPLOYMENT_ENVIRONMENTS = new Set(["production"]);
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -345,7 +344,7 @@ export function expectedRedirects(manifest, target, { environment = "production"
       if (target === "vercel" && has) result.has = has;
       return result;
     }));
-  if (target !== "vercel" || environment === "staging") return aliases;
+  if (target !== "vercel") return aliases;
 
   const legacyRules = manifest.redirect_policy.legacy_host_redirects
     .filter((rule) => rule.environments.includes(environment));
@@ -499,7 +498,6 @@ export function generatedArtifacts(manifest, root = REPO_ROOT) {
   return {
     docsJson: `${JSON.stringify(docsJson, null, 2)}\n`,
     llms: renderLlms(manifest, root),
-    vercelStaging: `${JSON.stringify({ redirects: expectedRedirects(manifest, "vercel", { environment: "staging" }) }, null, 2)}\n`,
     vercelProduction: `${JSON.stringify({ redirects: expectedRedirects(manifest, "vercel", { environment: "production" }) }, null, 2)}\n`,
   };
 }
@@ -613,7 +611,6 @@ export function generateMetadata(root = REPO_ROOT) {
   const writeResult = writeArtifactsAtomically(root, [
     [DOCS_JSON_PATH, output.docsJson],
     [LLMS_PATH, output.llms],
-    [VERCEL_STAGING_REDIRECTS_PATH, output.vercelStaging],
     [VERCEL_PRODUCTION_REDIRECTS_PATH, output.vercelProduction],
   ]);
   for (const warning of writeResult.cleanupWarnings) console.warn(`WARNING: ${warning}`);
@@ -809,9 +806,10 @@ function collectRedirectErrors(manifest, canonicalUrls, declaredUrls = canonical
     const declaredRedirects = active.filter(
       (redirect) => Array.isArray(redirect.targets) && redirect.targets.includes(target),
     );
-    const configurations = target === "vercel"
-      ? [{ environment: "staging", label: "vercel/staging" }, { environment: "production", label: "vercel/production" }]
-      : [{ environment: "production", label: target }];
+    const configurations = [{
+      environment: "production",
+      label: target === "vercel" ? "vercel/production" : target,
+    }];
     for (const configuration of configurations) {
       const generatedRedirects = expectedRedirects(manifest, target, { environment: configuration.environment });
       errors.push(...collectGeneratedRedirectChainErrors(
@@ -1124,7 +1122,6 @@ export function collectIntegrityErrors({ root = REPO_ROOT, manifest = loadManife
   }
   if (generated) {
     if (fs.readFileSync(path.join(root, DOCS_JSON_PATH), "utf8") !== generated.docsJson) errors.push("docs/docs.json redirects are not generated from the manifest");
-    if (!fs.existsSync(path.join(root, VERCEL_STAGING_REDIRECTS_PATH)) || fs.readFileSync(path.join(root, VERCEL_STAGING_REDIRECTS_PATH), "utf8") !== generated.vercelStaging) errors.push("docs/vercel.staging.redirects.json is stale or missing");
     if (!fs.existsSync(path.join(root, VERCEL_PRODUCTION_REDIRECTS_PATH)) || fs.readFileSync(path.join(root, VERCEL_PRODUCTION_REDIRECTS_PATH), "utf8") !== generated.vercelProduction) errors.push("docs/vercel.production.redirects.json is stale or missing");
     if (fs.readFileSync(path.join(root, LLMS_PATH), "utf8") !== generated.llms) errors.push("docs/llms.txt is stale");
   }
