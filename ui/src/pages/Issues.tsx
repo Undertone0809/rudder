@@ -493,10 +493,10 @@ export function Issues() {
   });
   const issues = useMemo(() => {
     const byId = new Map<string, Issue>();
-    for (const issue of issuePages?.pages.flat() ?? []) {
+    for (const issue of boardLaneIssues) {
       byId.set(issue.id, issue);
     }
-    for (const issue of boardLaneIssues) {
+    for (const issue of issuePages?.pages.flat() ?? []) {
       byId.set(issue.id, issue);
     }
     return [...byId.values()];
@@ -661,7 +661,7 @@ export function Issues() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-        <IssuesList
+      <IssuesList
         issues={visibleIssues}
         isLoading={isLoading}
         error={isFetchNextPageError ? null : (error as Error | null)}

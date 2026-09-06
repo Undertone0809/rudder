@@ -30,14 +30,23 @@ function timestamp(value: Date | string | null | undefined): number {
   return new Date(value).getTime();
 }
 
+const utf8Encoder = new TextEncoder();
+
 /**
  * Keep issue text ordering aligned with the server's PostgreSQL C collation.
- * Relational string comparison uses UTF-16 code units, which has the same
- * lexical order as UTF-8 byte comparison for valid database text.
+ * C collation compares the encoded database bytes, so compare UTF-8 bytes
+ * instead of JavaScript's UTF-16 code units.
  */
 export function compareIssueText(a: string, b: string): number {
   if (a === b) return 0;
-  return a < b ? -1 : 1;
+  const aBytes = utf8Encoder.encode(a);
+  const bBytes = utf8Encoder.encode(b);
+  const length = Math.min(aBytes.length, bBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = aBytes[index] - bBytes[index];
+    if (difference !== 0) return difference;
+  }
+  return aBytes.length - bBytes.length;
 }
 
 function compareIssueField(a: Issue, b: Issue, field: IssueSortField): number {

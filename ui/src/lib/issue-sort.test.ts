@@ -16,7 +16,17 @@ function issue(overrides: Partial<Issue>): Issue {
 
 describe("issue sorting", () => {
   it("uses the same raw lexical order for punctuation, case, and Unicode text", () => {
-    const values = ["😀 emoji", "same title", "中 文", "éclair", "alpha", "Alpha", "! punctuation"];
+    const values = [
+      "😀 emoji",
+      "same title",
+      "中 文",
+      "éclair",
+      "alpha",
+      "Alpha",
+      "! punctuation",
+      "\u{10000} astral",
+      "\uE000 BMP",
+    ];
 
     expect([...values].sort(compareIssueText)).toEqual([
       "! punctuation",
@@ -25,6 +35,8 @@ describe("issue sorting", () => {
       "same title",
       "éclair",
       "中 文",
+      "\uE000 BMP",
+      "\u{10000} astral",
       "😀 emoji",
     ]);
   });

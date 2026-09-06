@@ -28,7 +28,7 @@ const mockState = vi.hoisted(() => ({
   setBreadcrumbs: vi.fn(),
   issuesListProps: null as null | Record<string, unknown>,
   infiniteQueryOptions: null as null | Record<string, unknown>,
-  initialIssues: [] as Array<{ id: string; status: string }>,
+  initialIssues: [] as Array<{ id: string; status: string; title?: string; updatedAt?: Date | string }>,
   hasNextPage: false,
   refetchIssues: vi.fn(),
 }));
@@ -317,6 +317,32 @@ describe("Issues board pagination", () => {
 
     const queryKey = mockState.infiniteQueryOptions?.queryKey as unknown[];
     expect(queryKey).toEqual(expect.arrayContaining(["sort-field", "title", "sort-dir", "asc"]));
+  });
+
+  it("keeps refreshed query data ahead of stale board-page data", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{
+      id: "todo-1",
+      status: "todo",
+      title: "Fresh title",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "todo-1",
+      status: "todo",
+      title: "Stale title",
+      updatedAt: "2026-09-06T11:00:00.000Z",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+
+    const renderedIssues = mockState.issuesListProps?.issues as Array<{ id: string; title: string }>;
+    expect(renderedIssues.find((issue) => issue.id === "todo-1")?.title).toBe("Fresh title");
   });
 });
 
