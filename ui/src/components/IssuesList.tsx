@@ -4,10 +4,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCurrentUserAvatar } from "@/hooks/useCurrentUserAvatar";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Loader2, Pin, Plus, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Loader2, Pin, Plus, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
@@ -44,6 +45,10 @@ import { StatusIcon } from "./StatusIcon";
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(typeof value === "string" ? value : "Unknown issue pagination error");
 }
 
 /* ── View state ── */
@@ -289,7 +294,9 @@ interface IssuesListProps {
   onReorderIssue?: (data: ReorderIssue) => void;
   hasMoreIssues?: boolean;
   isLoadingMoreIssues?: boolean;
-  onLoadMoreIssues?: () => void;
+  loadMoreError?: Error | null;
+  onResetIssuePagination?: () => void;
+  onLoadMoreIssues?: () => void | Promise<unknown>;
 }
 
 type GroupedIssueContent = {
@@ -326,6 +333,8 @@ export function IssuesList({
   onReorderIssue,
   hasMoreIssues = false,
   isLoadingMoreIssues = false,
+  loadMoreError: externalLoadMoreError = null,
+  onResetIssuePagination,
   onLoadMoreIssues,
 }: IssuesListProps) {
   const { selectedOrganizationId } = useOrganization();
@@ -422,6 +431,81 @@ export function IssuesList({
   const activeHasData = searchActive ? searchedIssuesData !== undefined : hasData;
   const activeRetrying = searchActive ? isSearchFetching : isFetching;
   const retryActiveQuery = searchActive ? () => void refetchSearch() : onRetry;
+  const [localLoadMoreError, setLocalLoadMoreError] = useState<Error | null>(null);
+  const loadMoreInFlightRef = useRef(false);
+  const loadMoreRequestIdRef = useRef(0);
+
+  const requestLoadMore = useCallback(() => {
+    if (
+      searchActive
+      || !onLoadMoreIssues
+      || !hasMoreIssues
+      || isLoadingMoreIssues
+      || loadMoreInFlightRef.current
+    ) {
+      return;
+    }
+
+    loadMoreInFlightRef.current = true;
+    setLocalLoadMoreError(null);
+    const requestId = ++loadMoreRequestIdRef.current;
+    let result: void | Promise<unknown>;
+    try {
+      result = onLoadMoreIssues();
+    } catch (cause) {
+      if (loadMoreRequestIdRef.current === requestId) {
+        setLocalLoadMoreError(asError(cause));
+        loadMoreInFlightRef.current = false;
+      }
+      return;
+    }
+
+    return Promise.resolve(result)
+      .catch((cause) => {
+        if (loadMoreRequestIdRef.current === requestId) {
+          setLocalLoadMoreError(asError(cause));
+        }
+      })
+      .finally(() => {
+        if (loadMoreRequestIdRef.current === requestId) {
+          loadMoreInFlightRef.current = false;
+        }
+      });
+  }, [hasMoreIssues, isLoadingMoreIssues, onLoadMoreIssues, searchActive]);
+
+  const paginationResetKey = useMemo(() => JSON.stringify({
+    statuses: [...viewState.statuses].sort(),
+    priorities: [...viewState.priorities].sort(),
+    assignees: [...viewState.assignees].sort(),
+    labels: [...viewState.labels].sort(),
+    projects: [...viewState.projects].sort(),
+    sortField: viewState.sortField,
+    sortDir: viewState.sortDir,
+    showWorkingOnly,
+    search: normalizedIssueSearch,
+  }), [
+    normalizedIssueSearch,
+    showWorkingOnly,
+    viewState.assignees,
+    viewState.labels,
+    viewState.priorities,
+    viewState.projects,
+    viewState.sortDir,
+    viewState.sortField,
+    viewState.statuses,
+  ]);
+  const previousPaginationResetKey = useRef(paginationResetKey);
+  useEffect(() => {
+    if (previousPaginationResetKey.current === paginationResetKey) return;
+    previousPaginationResetKey.current = paginationResetKey;
+    loadMoreRequestIdRef.current += 1;
+    loadMoreInFlightRef.current = false;
+    setLocalLoadMoreError(null);
+    onResetIssuePagination?.();
+  }, [onResetIssuePagination, paginationResetKey]);
+
+  const paginationError = localLoadMoreError ?? externalLoadMoreError;
+  const infiniteScrollSupported = typeof IntersectionObserver !== "undefined";
 
   const agentById = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
   const agentLabel = useCallback((id: string | null) => {
@@ -550,6 +634,17 @@ export function IssuesList({
       items: groups[key]!,
     }));
   }, [agentLabel, currentUserId, filtered, isGettingStartedProject, isGettingStartedV2, projects, viewState.groupBy]);
+
+  const listLoadMoreRef = useInfiniteScroll({
+    enabled: !isLoading
+      && !searchActive
+      && viewState.viewMode !== "board"
+      && activeHasData
+      && hasMoreIssues
+      && !paginationError
+      && Boolean(onLoadMoreIssues),
+    onLoadMore: requestLoadMore,
+  });
 
   const contextNewIssueDefaults = useMemo<NewIssueDefaults>(() => {
     const defaults: NewIssueDefaults = {};
@@ -1080,6 +1175,10 @@ export function IssuesList({
             onTogglePinnedIssue={onTogglePinnedIssue}
             onUpdateIssue={onUpdateIssue}
             onReorderIssue={reorderIssue}
+            hasMoreIssues={!searchActive && hasMoreIssues}
+            isLoadingMoreIssues={!searchActive && isLoadingMoreIssues}
+            loadMoreError={searchActive ? null : paginationError}
+            onLoadMoreIssues={requestLoadMore}
           />
         </div>
       )}
@@ -1335,18 +1434,67 @@ export function IssuesList({
         </>
       )}
 
-      {!isLoading && hasMoreIssues && onLoadMoreIssues ? (
+      {!isLoading && !searchActive && viewState.viewMode !== "board" ? (
+        <div
+          ref={listLoadMoreRef}
+          data-testid="issues-list-load-more-sentinel"
+          className="h-px shrink-0"
+          aria-hidden="true"
+        />
+      ) : null}
+
+      {!isLoading && !searchActive && onLoadMoreIssues && (
+        isLoadingMoreIssues
+        || paginationError
+        || (hasMoreIssues && !infiniteScrollSupported)
+        || (!hasMoreIssues && activeHasData)
+      ) ? (
         <div className="flex justify-center border-t border-[color:var(--border-soft)] py-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isLoadingMoreIssues}
-            onClick={onLoadMoreIssues}
-          >
-            {isLoadingMoreIssues ? <Loader2 className="h-4 w-4 animate-spin sm:mr-1" /> : null}
-            <span>{isLoadingMoreIssues ? "Loading..." : "Load more"}</span>
-          </Button>
+          {isLoadingMoreIssues ? (
+            <div
+              data-testid="issues-load-more-loading"
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2 text-sm text-muted-foreground"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              <span>Loading more issues...</span>
+            </div>
+          ) : paginationError ? (
+            <div
+              data-testid="issues-load-more-error"
+              role="alert"
+              className="flex items-center gap-3 text-sm text-destructive"
+            >
+              <span>Could not load more issues.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isLoadingMoreIssues}
+                onClick={() => void requestLoadMore()}
+                className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <RefreshCw className={isLoadingMoreIssues ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} aria-hidden="true" />
+                {isLoadingMoreIssues ? "Retrying..." : "Retry"}
+              </Button>
+            </div>
+          ) : hasMoreIssues && !infiniteScrollSupported ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLoadingMoreIssues}
+              onClick={() => void requestLoadMore()}
+            >
+              {isLoadingMoreIssues ? <Loader2 className="h-4 w-4 animate-spin sm:mr-1" /> : null}
+              <span>{isLoadingMoreIssues ? "Loading..." : "Load more"}</span>
+            </Button>
+          ) : !hasMoreIssues && activeHasData ? (
+            <span data-testid="issues-end-state" className="text-xs text-muted-foreground">
+              All issues loaded
+            </span>
+          ) : null}
         </div>
       ) : null}
     </div>

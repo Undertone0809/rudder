@@ -390,6 +390,10 @@ export function Issues() {
     () => getIssueScopeFilters(effectiveIssueScope, currentUserId),
     [currentUserId, effectiveIssueScope],
   );
+  const [issuePaginationRevision, setIssuePaginationRevision] = useState(0);
+  const resetIssuePagination = useCallback(() => {
+    setIssuePaginationRevision((revision) => revision + 1);
+  }, []);
 
   const {
     data: issuePages,
@@ -400,6 +404,7 @@ export function Issues() {
     hasNextPage: hasMoreIssues,
     fetchNextPage: fetchMoreIssues,
     isFetchingNextPage: isLoadingMoreIssues,
+    isFetchNextPageError,
   } = useInfiniteQuery({
     queryKey: [
       ...queryKeys.issues.list(selectedOrganizationId!),
@@ -413,6 +418,8 @@ export function Issues() {
       projectId ?? "__all__",
       "limit",
       ISSUE_LIST_INITIAL_LIMIT,
+      "pagination-revision",
+      issuePaginationRevision,
     ],
     queryFn: ({ pageParam = 0 }) =>
       issuesApi.list(selectedOrganizationId!, {
@@ -501,10 +508,10 @@ export function Issues() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <IssuesList
+        <IssuesList
         issues={visibleIssues}
         isLoading={isLoading}
-        error={error as Error | null}
+        error={isFetchNextPageError ? null : (error as Error | null)}
         hasData={issuePages !== undefined}
         isFetching={isFetching}
         onRetry={() => void refetchIssues()}
@@ -533,9 +540,9 @@ export function Issues() {
         searchFilters={participantAgentId ? { participantAgentId } : undefined}
         hasMoreIssues={Boolean(hasMoreIssues)}
         isLoadingMoreIssues={isLoadingMoreIssues}
-        onLoadMoreIssues={() => {
-          void fetchMoreIssues();
-        }}
+        loadMoreError={isFetchNextPageError ? (error as Error) : null}
+        onResetIssuePagination={resetIssuePagination}
+        onLoadMoreIssues={() => fetchMoreIssues()}
       />
     </div>
   );

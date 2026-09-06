@@ -1,5 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
@@ -26,7 +27,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { AgentRole, Issue, IssueStatus, ReorderIssue } from "@rudderhq/shared";
-import { CalendarClock, FolderKanban, Pin, Plus, Tags, User, UserCheck } from "lucide-react";
+import { CalendarClock, FolderKanban, Loader2, Pin, Plus, RefreshCw, Tags, User, UserCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AgentIcon } from "./AgentAvatar";
 import { IssueLabelChip } from "./IssueLabelChip";
@@ -177,6 +178,10 @@ interface KanbanBoardProps {
   onOpenIssue?: (issue: Issue) => void;
   pinnedIssueIds?: string[];
   onTogglePinnedIssue?: (issueId: string) => void;
+  hasMoreIssues?: boolean;
+  isLoadingMoreIssues?: boolean;
+  loadMoreError?: Error | null;
+  onLoadMoreIssues?: (status: string) => void | Promise<unknown>;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
   onReorderIssue?: (data: ReorderIssue) => void;
 }
@@ -308,6 +313,10 @@ function KanbanColumn({
   onOpenIssue,
   pinnedIssueIds = [],
   onTogglePinnedIssue,
+  hasMoreIssues = false,
+  isLoadingMoreIssues = false,
+  loadMoreError = null,
+  onLoadMoreIssues,
 }: {
   status: string;
   issues: Issue[];
@@ -323,14 +332,26 @@ function KanbanColumn({
   onOpenIssue?: (issue: Issue) => void;
   pinnedIssueIds?: string[];
   onTogglePinnedIssue?: (issueId: string) => void;
+  hasMoreIssues?: boolean;
+  isLoadingMoreIssues?: boolean;
+  loadMoreError?: Error | null;
+  onLoadMoreIssues?: (status: string) => void | Promise<unknown>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const columnScrollRef = useScrollbarActivityRef();
+  const columnElementRef = useRef<HTMLDivElement | null>(null);
   const laneTone = laneSurfaceClasses[status] ?? laneSurfaceClasses.backlog;
   const setColumnRefs = useCallback((node: HTMLDivElement | null) => {
+    columnElementRef.current = node;
     setNodeRef(node);
     columnScrollRef(node);
   }, [columnScrollRef, setNodeRef]);
+  const loadMoreRef = useInfiniteScroll({
+    enabled: hasMoreIssues && !isLoadingMoreIssues && !loadMoreError && Boolean(onLoadMoreIssues),
+    onLoadMore: () => onLoadMoreIssues?.(status),
+    rootRef: columnElementRef,
+    rootMargin: "240px 0px",
+  });
 
   return (
     <div className="flex h-full min-h-0 w-[260px] min-w-[260px] shrink-0 flex-col">
@@ -377,9 +398,88 @@ function KanbanColumn({
             />
           ))}
         </SortableContext>
+        {hasMoreIssues && onLoadMoreIssues ? (
+          <div
+            ref={loadMoreRef}
+            data-testid={`kanban-load-more-sentinel-${status}`}
+            className="h-px w-full shrink-0"
+            aria-hidden="true"
+          />
+        ) : null}
       </div>
     </div>
   );
+}
+
+function KanbanPaginationFooter({
+  hasMoreIssues,
+  isLoadingMoreIssues,
+  loadMoreError,
+  onLoadMoreIssues,
+}: Pick<KanbanBoardProps, "hasMoreIssues" | "isLoadingMoreIssues" | "loadMoreError" | "onLoadMoreIssues">) {
+  if (!onLoadMoreIssues) return null;
+
+  const infiniteScrollSupported = typeof IntersectionObserver !== "undefined";
+
+  if (isLoadingMoreIssues) {
+    return (
+      <div
+        data-testid="kanban-load-more-loading"
+        role="status"
+        aria-live="polite"
+        className="flex shrink-0 justify-center border-t border-[color:var(--border-soft)] py-3 text-sm text-muted-foreground"
+      >
+        <span className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Loading more issues...
+        </span>
+      </div>
+    );
+  }
+
+  if (loadMoreError) {
+    return (
+      <div
+        data-testid="kanban-load-more-error"
+        role="alert"
+        className="flex shrink-0 items-center justify-center gap-3 border-t border-[color:var(--border-soft)] py-3 text-sm text-destructive"
+      >
+        <span>Could not load more issues.</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void onLoadMoreIssues("board")}
+          className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (hasMoreIssues && !infiniteScrollSupported) {
+    return (
+      <div className="flex shrink-0 justify-center border-t border-[color:var(--border-soft)] py-3">
+        <Button type="button" variant="outline" size="sm" onClick={() => void onLoadMoreIssues("board")}>
+          Load more
+        </Button>
+      </div>
+    );
+  }
+
+  if (!hasMoreIssues) {
+    return (
+      <div className="flex shrink-0 justify-center border-t border-[color:var(--border-soft)] py-3">
+        <span data-testid="kanban-end-state" className="text-xs text-muted-foreground">
+          All issues loaded
+        </span>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function HiddenKanbanStatus({
@@ -657,6 +757,10 @@ export function KanbanBoard({
   onTogglePinnedIssue,
   onUpdateIssue,
   onReorderIssue,
+  hasMoreIssues = false,
+  isLoadingMoreIssues = false,
+  loadMoreError = null,
+  onLoadMoreIssues,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [recentlyDroppedIssueIds, setRecentlyDroppedIssueIds] = useState<Set<string>>(new Set());
@@ -842,6 +946,10 @@ export function KanbanBoard({
                 onOpenIssue={onOpenIssue}
                 pinnedIssueIds={pinnedIssueIds}
                 onTogglePinnedIssue={onTogglePinnedIssue}
+                hasMoreIssues={hasMoreIssues}
+                isLoadingMoreIssues={isLoadingMoreIssues}
+                loadMoreError={loadMoreError}
+                onLoadMoreIssues={onLoadMoreIssues}
               />
             ))}
             {hiddenStatuses.length > 0 ? (
@@ -871,6 +979,12 @@ export function KanbanBoard({
             ) : null}
           </div>
         </div>
+        <KanbanPaginationFooter
+          hasMoreIssues={hasMoreIssues}
+          isLoadingMoreIssues={isLoadingMoreIssues}
+          loadMoreError={loadMoreError}
+          onLoadMoreIssues={onLoadMoreIssues}
+        />
       </div>
       <DragOverlay>
         {activeIssue ? (

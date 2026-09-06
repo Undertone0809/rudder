@@ -185,11 +185,11 @@ test.describe("Issue auto refresh", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`, { waitUntil: "domcontentloaded" });
     await page.getByTitle("List view").click();
 
-    const loadMore = page.getByRole("button", { name: "Load more", exact: true });
-    await expect(loadMore).toBeVisible({ timeout: 30_000 });
-    await loadMore.scrollIntoViewIfNeeded();
-    await loadMore.click();
-    await expect(loadMore).toBeHidden({ timeout: 20_000 });
+    const listSentinel = page.getByTestId("issues-list-load-more-sentinel");
+    await expect(listSentinel).toBeAttached({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
+    await listSentinel.scrollIntoViewIfNeeded();
+    await expect(page.getByTestId("issues-end-state")).toBeVisible({ timeout: 20_000 });
 
     const anchor = page.getByText("Paginated refresh issue 000", { exact: true });
     await anchor.scrollIntoViewIfNeeded();
@@ -207,5 +207,47 @@ test.describe("Issue auto refresh", () => {
     const after = await anchor.boundingBox();
     expect(after).not.toBeNull();
     expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(120);
+  });
+
+  test("loads more completed issues when the done lane reaches its scroll threshold", async ({ page }) => {
+    test.setTimeout(300_000);
+    const organizationResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `Issue-Infinite-Scroll-Done-${Date.now()}` },
+    });
+    expect(organizationResponse.ok(), await organizationResponse.text()).toBe(true);
+    const organization = await organizationResponse.json() as { id: string; issuePrefix: string };
+    const currentUserId = await getCurrentUserId(page);
+    const baseTime = Date.now() - 201_000;
+    const createdIssues = Array.from({ length: 201 }, (_, index) => ({
+      id: randomUUID(),
+      orgId: organization.id,
+      title: `Done infinite scroll issue ${String(index).padStart(3, "0")}`,
+      description: "This completed issue exercises the status-lane infinite scroll boundary.",
+      status: "done" as const,
+      priority: "medium" as const,
+      assigneeUserId: currentUserId,
+      createdAt: new Date(baseTime + index * 1_000),
+      updatedAt: new Date(baseTime + index * 1_000),
+    }));
+    await e2eDb.insert(issues).values(createdIssues);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`, { waitUntil: "domcontentloaded" });
+
+    const doneLane = page.getByTestId("kanban-column-done");
+    await expect(doneLane).toBeVisible({ timeout: 30_000 });
+    await expect(doneLane.locator('[data-testid^="kanban-card-"]')).toHaveCount(200, { timeout: 30_000 });
+
+    await doneLane.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    await expect(doneLane.getByText("Done infinite scroll issue 000", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(doneLane.locator('[data-testid^="kanban-card-"]')).toHaveCount(201, { timeout: 20_000 });
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("issues-end-state")).toBeVisible({ timeout: 20_000 });
   });
 });
