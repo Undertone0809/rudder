@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::fs::File;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::mpsc::Sender;
@@ -87,6 +87,21 @@ pub struct DirectoryListEntry {
 pub struct DirectoryListResult {
     pub directory_path: String,
     pub entries: Vec<DirectoryListEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileReadLimits {
+    pub max_bytes: u64,
+    pub max_path_bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileReadResult {
+    pub file_path: String,
+    pub byte_size: u64,
+    pub modified_millis: u64,
+    pub content: String,
 }
 
 #[derive(Debug)]
@@ -274,6 +289,87 @@ pub fn list_directory(
     Ok(DirectoryListResult {
         directory_path,
         entries,
+    })
+}
+
+pub fn read_file(
+    root: &Path,
+    requested_path: &Path,
+    limits: FileReadLimits,
+) -> Result<FileReadResult, ManifestError> {
+    if limits.max_bytes == 0 || limits.max_path_bytes == 0 {
+        return Err(ManifestError::safe("invalid_limit"));
+    }
+    if requested_path.is_absolute()
+        || requested_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(ManifestError::safe("unsafe_workspace_path"));
+    }
+
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(ManifestError::safe("workspace_not_directory"));
+    }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    let canonical_target = fs::canonicalize(root.join(requested_path)).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            ManifestError::safe_source("workspace_file_not_found", error)
+        } else {
+            ManifestError::safe_source("workspace_file_read_failed", error)
+        }
+    })?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(ManifestError::safe("workspace_path_escape"));
+    }
+    let file_path = portable_path(
+        canonical_target
+            .strip_prefix(&canonical_root)
+            .map_err(|_| ManifestError::safe("workspace_path_escape"))?,
+    )?;
+    if file_path.is_empty() || file_path.len() as u64 > limits.max_path_bytes {
+        return Err(ManifestError::safe("manifest_path_limit"));
+    }
+
+    let metadata = fs::metadata(&canonical_target).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            ManifestError::safe_source("workspace_file_not_found", error)
+        } else {
+            ManifestError::safe_source("workspace_metadata_failed", error)
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(ManifestError::safe("workspace_not_file"));
+    }
+    if metadata.len() > limits.max_bytes {
+        return Err(ManifestError::safe("workspace_file_size_limit"));
+    }
+
+    let file = fs::File::open(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    let mut bytes = Vec::new();
+    file.take(limits.max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    if bytes.len() as u64 > limits.max_bytes {
+        return Err(ManifestError::safe("workspace_file_size_limit"));
+    }
+    let stable_metadata = fs::metadata(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !stable_metadata.is_file() || stable_metadata.len() != metadata.len() {
+        return Err(ManifestError::safe("workspace_file_changed"));
+    }
+    let content =
+        String::from_utf8(bytes).map_err(|_| ManifestError::safe("non_utf8_workspace_file"))?;
+
+    Ok(FileReadResult {
+        file_path,
+        byte_size: metadata.len(),
+        modified_millis: modified_millis(&metadata),
+        content,
     })
 }
 
@@ -839,6 +935,13 @@ mod tests {
         }
     }
 
+    fn file_limits() -> FileReadLimits {
+        FileReadLimits {
+            max_bytes: 1024,
+            max_path_bytes: 1024 * 1024,
+        }
+    }
+
     #[test]
     fn lists_one_directory_with_stable_portable_paths() {
         let root = tempdir().unwrap();
@@ -896,6 +999,66 @@ mod tests {
             .unwrap_err()
             .code(),
             "manifest_entry_limit"
+        );
+    }
+
+    #[test]
+    fn reads_bounded_utf8_files_and_rejects_invalid_requests() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("docs")).unwrap();
+        fs::write(root.path().join("docs/readme.md"), "Aé🙂Z").unwrap();
+        fs::write(root.path().join("docs/é.md"), "accented path").unwrap();
+        fs::write(root.path().join("docs/binary.md"), [0, 159, 146, 150]).unwrap();
+
+        let result = read_file(root.path(), Path::new("docs/readme.md"), file_limits()).unwrap();
+        assert_eq!(result.file_path, "docs/readme.md");
+        assert_eq!(result.byte_size, 8);
+        assert_eq!(result.content, "Aé🙂Z");
+
+        assert_eq!(
+            read_file(
+                root.path(),
+                Path::new("docs/é.md"),
+                FileReadLimits {
+                    max_bytes: 1024,
+                    max_path_bytes: 8,
+                },
+            )
+            .unwrap_err()
+            .code(),
+            "manifest_path_limit"
+        );
+
+        assert_eq!(
+            read_file(
+                root.path(),
+                Path::new("docs/readme.md"),
+                FileReadLimits {
+                    max_bytes: 4,
+                    max_path_bytes: 1024,
+                },
+            )
+            .unwrap_err()
+            .code(),
+            "workspace_file_size_limit"
+        );
+        assert_eq!(
+            read_file(root.path(), Path::new("docs"), file_limits())
+                .unwrap_err()
+                .code(),
+            "workspace_not_file"
+        );
+        assert_eq!(
+            read_file(root.path(), Path::new("../outside"), file_limits())
+                .unwrap_err()
+                .code(),
+            "unsafe_workspace_path"
+        );
+        assert_eq!(
+            read_file(root.path(), Path::new("docs/binary.md"), file_limits())
+                .unwrap_err()
+                .code(),
+            "non_utf8_workspace_file"
         );
     }
 

@@ -138,6 +138,7 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "evidence.read",
             "workspace.watch",
             "workspace.list",
+            "workspace.read",
             "payload.verify",
             "payload.extract",
             "payload.probeVersion",
@@ -190,6 +191,44 @@ fn lists_bounded_workspace_directories_and_rejects_escape() {
     assert_eq!(code, 2);
     assert_eq!(response["capability"], "workspace.list");
     assert_eq!(response["errorCode"], "unsafe_workspace_path");
+    assert_eq!(response["accepted"], false);
+    assert!(!stderr.is_empty());
+}
+
+#[test]
+fn reads_bounded_workspace_files_and_rejects_oversized_content() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("docs")).unwrap();
+    fs::write(root.path().join("docs/readme.md"), "Aé🙂Z").unwrap();
+    let root_value = root.path().to_str().unwrap();
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root_value,
+        "docs/readme.md",
+        "1024",
+        "4096",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.is_empty());
+    assert_eq!(response["capability"], "workspace.read");
+    assert_eq!(response["operation"], "readWorkspaceFile");
+    assert_eq!(response["filePath"], "docs/readme.md");
+    assert_eq!(response["byteSize"], 8);
+    assert_eq!(response["content"], "Aé🙂Z");
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root_value,
+        "docs/readme.md",
+        "4",
+        "4096",
+    ]);
+    assert_eq!(code, 2);
+    assert_eq!(response["capability"], "workspace.read");
+    assert_eq!(response["errorCode"], "workspace_file_size_limit");
     assert_eq!(response["accepted"], false);
     assert!(!stderr.is_empty());
 }

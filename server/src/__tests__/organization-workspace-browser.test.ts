@@ -101,6 +101,7 @@ describe("organization workspace browser", () => {
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
   const originalNativeMode = process.env.RUDDER_NATIVE_MODE;
   const originalNativeWorkspaceFilesPath = process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH;
+  const originalNativeWorkspaceFilePath = process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -126,6 +127,8 @@ describe("organization workspace browser", () => {
     else process.env.RUDDER_NATIVE_MODE = originalNativeMode;
     if (originalNativeWorkspaceFilesPath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH;
     else process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = originalNativeWorkspaceFilesPath;
+    if (originalNativeWorkspaceFilePath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
+    else process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = originalNativeWorkspaceFilePath;
   });
 
   afterAll(async () => {
@@ -196,6 +199,35 @@ describe("organization workspace browser", () => {
       expect.objectContaining({ name: "zeta", path: "projects/zeta", isDirectory: true }),
       expect.objectContaining({ name: "alpha.md", path: "projects/alpha.md", isDirectory: false }),
     ]);
+  });
+
+  it("uses required native reads for bounded text-file projection", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = resolveNativeWorkspaceFilesBinary();
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Native Workspace File Org",
+      urlKey: deriveOrganizationUrlKey("Native Workspace File Org"),
+      issuePrefix: "NWF",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "readme.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "Aé🙂Z", "utf8");
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/readme.md")).resolves.toMatchObject({
+      filePath: "projects/readme.md",
+      content: "Aé🙂Z",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+    });
   });
 
   it.runIf(process.platform !== "win32")("fails closed when a listed directory symlink escapes the Library root", async () => {
