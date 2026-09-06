@@ -5,6 +5,7 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { formatIssueCardDate } from "@/lib/issue-card-date";
+import { ISSUE_BOARD_STATUSES, type IssuePaginationState } from "@/lib/issue-pagination";
 import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
 import { formatPriorityLabel } from "@/lib/priorities";
 import { Link } from "@/lib/router";
@@ -34,15 +35,7 @@ import { IssueLabelChip } from "./IssueLabelChip";
 import { PriorityIcon } from "./PriorityIcon";
 import { StatusIcon } from "./StatusIcon";
 
-const boardStatuses: IssueStatus[] = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "blocked",
-  "done",
-  "cancelled",
-];
+const boardStatuses = ISSUE_BOARD_STATUSES;
 
 type KanbanIssueGroups = Record<IssueStatus, Issue[]>;
 type KanbanDropOrderPreview = {
@@ -181,6 +174,7 @@ interface KanbanBoardProps {
   hasMoreIssues?: boolean;
   isLoadingMoreIssues?: boolean;
   loadMoreError?: Error | null;
+  paginationByStatus?: Partial<Record<IssueStatus, IssuePaginationState>>;
   onLoadMoreIssues?: (status: string) => void | Promise<unknown>;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
   onReorderIssue?: (data: ReorderIssue) => void;
@@ -316,6 +310,13 @@ function KanbanColumn({
   hasMoreIssues = false,
   isLoadingMoreIssues = false,
   loadMoreError = null,
+  pagination = {
+    hasMore: hasMoreIssues,
+    isLoading: isLoadingMoreIssues,
+    error: loadMoreError,
+    hasLoaded: false,
+  },
+  showPaginationState = false,
   onLoadMoreIssues,
 }: {
   status: string;
@@ -335,6 +336,8 @@ function KanbanColumn({
   hasMoreIssues?: boolean;
   isLoadingMoreIssues?: boolean;
   loadMoreError?: Error | null;
+  pagination?: IssuePaginationState;
+  showPaginationState?: boolean;
   onLoadMoreIssues?: (status: string) => void | Promise<unknown>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
@@ -347,7 +350,7 @@ function KanbanColumn({
     columnScrollRef(node);
   }, [columnScrollRef, setNodeRef]);
   const loadMoreRef = useInfiniteScroll({
-    enabled: hasMoreIssues && !isLoadingMoreIssues && !loadMoreError && Boolean(onLoadMoreIssues),
+    enabled: pagination.hasMore && !pagination.isLoading && !pagination.error && Boolean(onLoadMoreIssues),
     onLoadMore: () => onLoadMoreIssues?.(status),
     rootRef: columnElementRef,
     rootMargin: "240px 0px",
@@ -398,13 +401,39 @@ function KanbanColumn({
             />
           ))}
         </SortableContext>
-        {hasMoreIssues && onLoadMoreIssues ? (
+        {pagination.hasMore && onLoadMoreIssues ? (
           <div
             ref={loadMoreRef}
             data-testid={`kanban-load-more-sentinel-${status}`}
             className="h-px w-full shrink-0"
             aria-hidden="true"
           />
+        ) : null}
+        {showPaginationState && pagination.isLoading ? (
+          <div data-testid={`kanban-load-more-loading-${status}`} role="status" aria-live="polite" className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            Loading more issues...
+          </div>
+        ) : null}
+        {showPaginationState && pagination.error ? (
+          <div data-testid={`kanban-load-more-error-${status}`} role="alert" className="flex items-center justify-center gap-2 py-2 text-xs text-destructive">
+            <span>Could not load more issues.</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void onLoadMoreIssues?.(status)}
+              className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              Retry
+            </Button>
+          </div>
+        ) : null}
+        {showPaginationState && pagination.hasLoaded && !pagination.hasMore && !pagination.isLoading && !pagination.error ? (
+          <div data-testid={`kanban-end-state-${status}`} className="py-2 text-center text-[11px] text-muted-foreground">
+            All issues loaded
+          </div>
         ) : null}
       </div>
     </div>
@@ -415,8 +444,11 @@ function KanbanPaginationFooter({
   hasMoreIssues,
   isLoadingMoreIssues,
   loadMoreError,
+  showAggregateEndState = true,
   onLoadMoreIssues,
-}: Pick<KanbanBoardProps, "hasMoreIssues" | "isLoadingMoreIssues" | "loadMoreError" | "onLoadMoreIssues">) {
+}: Pick<KanbanBoardProps, "hasMoreIssues" | "isLoadingMoreIssues" | "loadMoreError" | "onLoadMoreIssues"> & {
+  showAggregateEndState?: boolean;
+}) {
   if (!onLoadMoreIssues) return null;
 
   const infiniteScrollSupported = typeof IntersectionObserver !== "undefined";
@@ -469,7 +501,7 @@ function KanbanPaginationFooter({
     );
   }
 
-  if (!hasMoreIssues) {
+  if (!hasMoreIssues && showAggregateEndState) {
     return (
       <div className="flex shrink-0 justify-center border-t border-[color:var(--border-soft)] py-3">
         <span data-testid="kanban-end-state" className="text-xs text-muted-foreground">
@@ -760,6 +792,7 @@ export function KanbanBoard({
   hasMoreIssues = false,
   isLoadingMoreIssues = false,
   loadMoreError = null,
+  paginationByStatus,
   onLoadMoreIssues,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -800,6 +833,14 @@ export function KanbanBoard({
     () => boardStatuses.filter((status) => (columnIssues[status]?.length ?? 0) === 0),
     [columnIssues],
   );
+  const boardLoadMoreRef = useInfiniteScroll({
+    enabled: hiddenStatuses.length > 0
+      && hasMoreIssues
+      && !isLoadingMoreIssues
+      && !loadMoreError
+      && Boolean(onLoadMoreIssues),
+    onLoadMore: () => onLoadMoreIssues?.("board"),
+  });
 
   const activeIssue = useMemo(
     () => (activeId ? issues.find((i) => i.id === activeId) : null),
@@ -949,6 +990,8 @@ export function KanbanBoard({
                 hasMoreIssues={hasMoreIssues}
                 isLoadingMoreIssues={isLoadingMoreIssues}
                 loadMoreError={loadMoreError}
+                pagination={paginationByStatus?.[status]}
+                showPaginationState={Boolean(paginationByStatus)}
                 onLoadMoreIssues={onLoadMoreIssues}
               />
             ))}
@@ -974,6 +1017,14 @@ export function KanbanBoard({
                       onCreateIssue={onCreateIssue}
                     />
                   ))}
+                  {hasMoreIssues && onLoadMoreIssues ? (
+                    <div
+                      ref={boardLoadMoreRef}
+                      data-testid="kanban-board-load-more-sentinel"
+                      className="h-px w-full"
+                      aria-hidden="true"
+                    />
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -983,6 +1034,7 @@ export function KanbanBoard({
           hasMoreIssues={hasMoreIssues}
           isLoadingMoreIssues={isLoadingMoreIssues}
           loadMoreError={loadMoreError}
+          showAggregateEndState={!paginationByStatus}
           onLoadMoreIssues={onLoadMoreIssues}
         />
       </div>

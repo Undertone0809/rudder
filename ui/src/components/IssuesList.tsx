@@ -6,7 +6,7 @@ import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/compon
 import { useCurrentUserAvatar } from "@/hooks/useCurrentUserAvatar";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
-import type { AgentRole, Issue, IssueSearchField, ReorderIssue } from "@rudderhq/shared";
+import type { AgentRole, Issue, IssueSearchField, IssueStatus, ReorderIssue } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpDown, Check, ChevronRight, CircleDot, Columns3, Filter, Layers, List, Loader2, Pin, Plus, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +17,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { agentTitleBadgeLabel, formatChatAgentLabel } from "../lib/agent-labels";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { groupBy } from "../lib/groupBy";
+import type { IssuePaginationState } from "../lib/issue-pagination";
 import { ISSUE_REFRESH_QUERY_OPTIONS } from "../lib/issue-refresh";
 import {
   issueSortOptions,
@@ -24,6 +25,7 @@ import {
   sortIssues,
   issueStatusOrder as statusOrder,
   type IssueSortField,
+  type IssueSortState,
 } from "../lib/issue-sort";
 import { formatPriorityLabel } from "../lib/priorities";
 import { queryKeys } from "../lib/queryKeys";
@@ -296,7 +298,9 @@ interface IssuesListProps {
   isLoadingMoreIssues?: boolean;
   loadMoreError?: Error | null;
   onResetIssuePagination?: () => void;
-  onLoadMoreIssues?: () => void | Promise<unknown>;
+  paginationByStatus?: Partial<Record<IssueStatus, IssuePaginationState>>;
+  onSortChange?: (sortState: IssueSortState) => void;
+  onLoadMoreIssues?: (target?: string) => void | Promise<unknown>;
 }
 
 type GroupedIssueContent = {
@@ -335,6 +339,8 @@ export function IssuesList({
   isLoadingMoreIssues = false,
   loadMoreError: externalLoadMoreError = null,
   onResetIssuePagination,
+  paginationByStatus,
+  onSortChange,
   onLoadMoreIssues,
 }: IssuesListProps) {
   const { selectedOrganizationId } = useOrganization();
@@ -397,6 +403,10 @@ export function IssuesList({
       setViewState(getInitialViewState());
     }
   }, [getInitialViewState, scopedKey]);
+
+  useEffect(() => {
+    onSortChange?.({ sortField: viewState.sortField, sortDir: viewState.sortDir });
+  }, [onSortChange, viewState.sortDir, viewState.sortField]);
 
   const updateView = useCallback((patch: Partial<IssueViewState>) => {
     setViewState((prev) => {
@@ -1178,7 +1188,8 @@ export function IssuesList({
             hasMoreIssues={!searchActive && hasMoreIssues}
             isLoadingMoreIssues={!searchActive && isLoadingMoreIssues}
             loadMoreError={searchActive ? null : paginationError}
-            onLoadMoreIssues={requestLoadMore}
+            paginationByStatus={paginationByStatus}
+            onLoadMoreIssues={onLoadMoreIssues}
           />
         </div>
       )}

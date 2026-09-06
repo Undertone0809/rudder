@@ -445,6 +445,35 @@ describe("issueService.list participantAgentId", () => {
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
   });
 
+  it("keeps paged results in the requested sort order", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Sorted issues",
+      urlKey: deriveOrganizationUrlKey("Sorted issues"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const createdAt = new Date("2026-05-01T00:00:00.000Z");
+    await db.insert(issues).values([
+      { id: randomUUID(), orgId, identifier: "SORT-4", title: "Delta", createdAt, updatedAt: createdAt },
+      { id: randomUUID(), orgId, identifier: "SORT-2", title: "Bravo", createdAt, updatedAt: createdAt },
+      { id: randomUUID(), orgId, identifier: "SORT-1", title: "Alpha", createdAt, updatedAt: createdAt },
+      { id: randomUUID(), orgId, identifier: "SORT-3", title: "Charlie", createdAt, updatedAt: createdAt },
+    ]);
+
+    const firstPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 2 });
+    const secondPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 2, offset: 2 });
+
+    expect([...firstPage, ...secondPage].map((issue) => issue.title)).toEqual([
+      "Alpha",
+      "Bravo",
+      "Charlie",
+      "Delta",
+    ]);
+  });
+
   it("keeps automation execution issues out of generic lists unless explicitly requested", async () => {
     const orgId = randomUUID();
     const userId = "board-user-automation-notified";

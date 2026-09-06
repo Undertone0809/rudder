@@ -159,6 +159,76 @@ describe("KanbanBoard", () => {
     }
   });
 
+  it("keeps a board discovery sentinel when the current board has no matching lane", () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    const observers: Array<{
+      callback: IntersectionObserverCallback;
+      options?: IntersectionObserverInit;
+    }> = [];
+    class MockIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        observers.push({ callback, options });
+      }
+
+      observe() {}
+
+      disconnect() {}
+    }
+
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    try {
+      const onLoadMoreIssues = vi.fn(() => Promise.resolve());
+      const container = render(
+        <KanbanBoard
+          issues={[]}
+          hasMoreIssues
+          onLoadMoreIssues={onLoadMoreIssues}
+          onUpdateIssue={() => undefined}
+        />,
+      );
+
+      const sentinel = container.querySelector('[data-testid="kanban-board-load-more-sentinel"]');
+      const observer = observers.find((candidate) => candidate.options?.root === null);
+      expect(sentinel).toBeTruthy();
+      expect(observer).toBeTruthy();
+
+      act(() => {
+        observer?.callback(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          observer as unknown as IntersectionObserver,
+        );
+      });
+
+      expect(onLoadMoreIssues).toHaveBeenCalledWith("board");
+    } finally {
+      if (originalIntersectionObserver) {
+        vi.stubGlobal("IntersectionObserver", originalIntersectionObserver);
+      } else {
+        vi.unstubAllGlobals();
+      }
+    }
+  });
+
+  it("renders independent pagination state for each populated lane", () => {
+    const doneIssue = { ...issue, id: "issue-2", identifier: "RUD-2", title: "Completed issue", status: "done" as const };
+    const container = render(
+      <KanbanBoard
+        issues={[issue, doneIssue]}
+        paginationByStatus={{
+          todo: { hasMore: true, isLoading: true, error: null, hasLoaded: false },
+          done: { hasMore: false, isLoading: false, error: null, hasLoaded: true },
+        }}
+        onLoadMoreIssues={() => undefined}
+        onUpdateIssue={() => undefined}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="kanban-load-more-loading-todo"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="kanban-end-state-done"]')?.textContent).toBe("All issues loaded");
+    expect(container.querySelector('[data-testid="kanban-load-more-loading-done"]')).toBeNull();
+  });
+
   it("keeps a retry path visible when loading another page fails", () => {
     const onLoadMoreIssues = vi.fn(() => Promise.resolve());
     const container = render(

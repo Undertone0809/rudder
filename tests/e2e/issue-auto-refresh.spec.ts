@@ -248,6 +248,62 @@ test.describe("Issue auto refresh", () => {
     });
     await expect(doneLane.locator('[data-testid^="kanban-card-"]')).toHaveCount(201, { timeout: 20_000 });
     await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("issues-end-state")).toBeVisible({ timeout: 20_000 });
+    await expect(doneLane.getByTestId("kanban-end-state-done")).toBeVisible({ timeout: 20_000 });
+  });
+
+  test("discovers a filtered lane when the first page has no matching issues", async ({ page }) => {
+    test.setTimeout(300_000);
+    const organizationResponse = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `Issue-Infinite-Scroll-Filtered-Lane-${Date.now()}` },
+    });
+    expect(organizationResponse.ok(), await organizationResponse.text()).toBe(true);
+    const organization = await organizationResponse.json() as { id: string; issuePrefix: string };
+    const baseTime = Date.now() - 201_000;
+    const todoIssues = Array.from({ length: 200 }, (_, index) => ({
+      id: randomUUID(),
+      orgId: organization.id,
+      title: `Todo discovery issue ${String(index).padStart(3, "0")}`,
+      description: "These issues fill the first page without matching the active Done filter.",
+      status: "todo" as const,
+      priority: "medium" as const,
+      createdAt: new Date(baseTime + (index + 1) * 1_000),
+      updatedAt: new Date(baseTime + (index + 1) * 1_000),
+    }));
+    const doneIssue = {
+      id: randomUUID(),
+      orgId: organization.id,
+      title: "Done issue discovered after filtering",
+      description: "This issue is deliberately placed on the second page.",
+      status: "done" as const,
+      priority: "medium" as const,
+      createdAt: new Date(baseTime),
+      updatedAt: new Date(baseTime),
+    };
+    await e2eDb.insert(issues).values([...todoIssues, doneIssue]);
+
+    await selectOrganization(page, organization.id);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem(
+        `rudder:issues-view:${orgId}`,
+        JSON.stringify({ viewMode: "board", statuses: ["done"], sortField: "updated", sortDir: "desc" }),
+      );
+    }, organization.id);
+
+    const secondPageRequest = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET"
+        && url.pathname === `/api/orgs/${organization.id}/issues`
+        && url.searchParams.get("offset") === "200"
+        && !url.searchParams.has("status");
+    });
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`, { waitUntil: "domcontentloaded" });
+
+    const pageResponse = await secondPageRequest;
+    expect(pageResponse.ok(), await pageResponse.text()).toBe(true);
+    const doneLane = page.getByTestId("kanban-column-done");
+    await expect(doneLane).toBeVisible({ timeout: 30_000 });
+    await expect(doneLane.getByText(doneIssue.title, { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(doneLane.locator('[data-testid^="kanban-card-"]')).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
   });
 });

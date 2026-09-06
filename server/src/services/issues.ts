@@ -74,15 +74,19 @@ import {
   withIssueLabels,
   type IssueFilters,
   type IssueRow,
+  type IssueSortDir,
+  type IssueSortField,
   type IssueUserCommentStats,
   type IssueWithLabelsAndRun,
   type IssueWithSearchMatch
 } from "./issues.helpers.js";
 export { deriveIssueUserContext } from "./issues.helpers.js";
-export type { IssueFilters } from "./issues.helpers.js";
+export type { IssueFilters, IssueSortDir, IssueSortField } from "./issues.helpers.js";
 
 const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
 const MAX_ISSUE_LIST_LIMIT = 500;
+const DEFAULT_ISSUE_SORT_FIELD: IssueSortField = "priority";
+const DEFAULT_ISSUE_SORT_DIR: IssueSortDir = "asc";
 const ISSUE_DESCRIPTION_ASSET_PATH_RE = /\/api\/assets\/([^/?#\s)]+)\/content/g;
 
 export function extractIssueDescriptionAssetIds(description: string | null | undefined): string[] {
@@ -217,6 +221,59 @@ function normalizeIssueListOffset(offset: number | undefined): number | undefine
   const normalized = Math.floor(offset);
   if (normalized < 1) return undefined;
   return normalized;
+}
+
+type SortableIssueExpression = Parameters<typeof asc>[0];
+
+function issueSortExpression(expression: SortableIssueExpression, direction: IssueSortDir) {
+  return direction === "desc" ? desc(expression) : asc(expression);
+}
+
+function issuePriorityOrderExpression() {
+  return sql<number>`CASE ${issues.priority}
+    WHEN 'critical' THEN 0
+    WHEN 'high' THEN 1
+    WHEN 'medium' THEN 2
+    WHEN 'low' THEN 3
+    ELSE 4
+  END`;
+}
+
+function issueStatusOrderExpression() {
+  return sql<number>`CASE ${issues.status}
+    WHEN 'in_progress' THEN 0
+    WHEN 'todo' THEN 1
+    WHEN 'backlog' THEN 2
+    WHEN 'in_review' THEN 3
+    WHEN 'blocked' THEN 4
+    WHEN 'done' THEN 5
+    WHEN 'cancelled' THEN 6
+    ELSE 7
+  END`;
+}
+
+function issueListOrderBy(
+  sortField: IssueSortField = DEFAULT_ISSUE_SORT_FIELD,
+  sortDir: IssueSortDir = DEFAULT_ISSUE_SORT_DIR,
+) {
+  const primary = sortField === "manual"
+    ? issues.boardOrder
+    : sortField === "status"
+      ? issueStatusOrderExpression()
+      : sortField === "priority"
+        ? issuePriorityOrderExpression()
+        : sortField === "title"
+          ? issues.title
+          : sortField === "created"
+            ? issues.createdAt
+            : issues.updatedAt;
+
+  return [
+    issueSortExpression(primary, sortDir),
+    desc(issues.updatedAt),
+    desc(issues.createdAt),
+    asc(sql<string>`COALESCE(${issues.identifier}, ${issues.id}::text)`),
+  ];
 }
 
 export function issueService(db: Db, storage?: StorageService) {
@@ -797,7 +854,7 @@ export function issueService(db: Db, storage?: StorageService) {
       }
       conditions.push(isNull(issues.hiddenAt));
 
-      const priorityOrder = sql`CASE ${issues.priority} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
+      const priorityOrder = issuePriorityOrderExpression();
       const searchOrder = sql<number>`
         CASE
           WHEN ${searchFields.has("title")} AND ${titleStartsWithMatch} THEN 0
@@ -813,7 +870,9 @@ export function issueService(db: Db, storage?: StorageService) {
         .select()
         .from(issues)
         .where(and(...conditions))
-        .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt))
+        .orderBy(...(hasSearch
+          ? [asc(searchOrder), asc(priorityOrder), desc(issues.updatedAt)]
+          : issueListOrderBy(filters?.sortField, filters?.sortDir)))
         .$dynamic();
       const limit = normalizeIssueListLimit(filters?.limit);
       if (limit !== undefined) {
