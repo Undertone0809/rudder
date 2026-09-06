@@ -178,8 +178,8 @@ Rudder Desktop uses a transparent, tinted shell by default on Windows to keep
 the same paper-glass workspace character without relying on platform vibrancy.
 Windows uses a transparent frameless application window with Rudder-owned
 caption controls and rounded restored-window clipping. macOS and Linux keep the
-opaque default for compositor stability, but can opt into a transparent mode;
-macOS transparent-vibrant mode additionally uses native vibrancy.
+same paper-glass workspace character with macOS defaulting to native transparent
+vibrancy; Linux keeps its opaque default but can opt into a transparent mode.
 
 Use `RUDDER_DESKTOP_WINDOW_EFFECT_MODE=opaque` as the escape hatch when a
 platform, GPU driver, virtual machine, remote-desktop session, or compositor

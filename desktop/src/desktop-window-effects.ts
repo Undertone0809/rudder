@@ -49,7 +49,7 @@ export function resolveDesktopWindowEffectMode(
     ?? (platform === "darwin" ? env.RUDDER_DESKTOP_MAC_WINDOW_MODE : undefined);
   const override = normalizeDesktopWindowEffectMode(value);
   if (override) return override;
-  return platform === "win32" ? "transparent_vibrant" : "opaque";
+  return platform === "darwin" || platform === "win32" ? "transparent_vibrant" : "opaque";
 }
 
 export function resolveDesktopWindowChromeOptions(platform: NodeJS.Platform): DesktopWindowChromeOptions {
