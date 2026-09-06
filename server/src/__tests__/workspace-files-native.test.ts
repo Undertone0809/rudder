@@ -48,4 +48,27 @@ describe("native workspace directory listing", () => {
       fallbackAllowed: false,
     });
   });
+
+  it.runIf(process.platform !== "win32")("does not trust an invalid native failure envelope", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-list-"));
+    cleanupDirs.add(root);
+    const fakeBinary = path.join(root, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(JSON.stringify({ ok: false, capability: 'wrong.capability', protocolVersion: 1, accepted: false, errorCode: 'workspace_directory_not_found' }) + '\\n');",
+        "process.exitCode = 2;",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = fakeBinary;
+
+    await expect(listWorkspaceDirectoryNative(root, "projects")).rejects.toMatchObject({
+      code: "workspace_list_process_failed",
+      fallbackAllowed: true,
+      pathRejected: false,
+    });
+  });
 });

@@ -87,6 +87,14 @@ function watchState(value: unknown): WatchState | null {
     : null;
 }
 
+function decodeNativeUtf8(value: Buffer): string {
+  const decoded = value.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(value)) {
+    throw new Error("Native workspace manifest is not valid UTF-8");
+  }
+  return decoded;
+}
+
 async function startSession(rootPath: string): Promise<WatchSession> {
   const manifestPath = manifestPathForRoot(rootPath);
   await fs.mkdir(path.dirname(manifestPath), { recursive: true });
@@ -226,9 +234,9 @@ export async function readNativeWorkspaceManifest(
     const stat = await fs.stat(session.manifestPath);
     signal?.throwIfAborted();
     if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) throw new Error("Native workspace manifest exceeds its read boundary");
-    const raw = await fs.readFile(session.manifestPath, { encoding: "utf8", signal });
+    const raw = await fs.readFile(session.manifestPath, { signal });
     signal?.throwIfAborted();
-    const entries = parseManifest(JSON.parse(raw), rootPath);
+    const entries = parseManifest(JSON.parse(decodeNativeUtf8(raw)), rootPath);
     if (!entries) throw new Error("Native workspace manifest is invalid");
     return entries;
   } catch (error) {

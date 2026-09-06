@@ -151,6 +151,21 @@ function parseEntries(response: NativeResponse, expectedDirectoryPath: string): 
   });
 }
 
+function parseFailureCode(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const response = value as NativeResponse;
+  if (response.ok !== false
+    || response.capability !== "workspace.list"
+    || response.protocolVersion !== PROTOCOL_VERSION
+    || response.accepted !== false
+    || (response.operation !== undefined && response.operation !== "listWorkspaceDirectory")
+    || typeof response.errorCode !== "string"
+    || !response.errorCode) {
+    return null;
+  }
+  return response.errorCode;
+}
+
 export async function listWorkspaceDirectoryNative(
   rootPath: string,
   directoryPath: string,
@@ -183,9 +198,10 @@ export async function listWorkspaceDirectoryNative(
     if (lines.length === 1) {
       try {
         const response = JSON.parse(lines[0]!) as NativeResponse;
-        if (typeof response.errorCode === "string") {
-          const pathRejected = REJECTED_PATH_CODES.has(response.errorCode);
-          throw new WorkspaceFilesNativeError(response.errorCode, !pathRejected, pathRejected);
+        const errorCode = parseFailureCode(response);
+        if (errorCode) {
+          const pathRejected = REJECTED_PATH_CODES.has(errorCode);
+          throw new WorkspaceFilesNativeError(errorCode, !pathRejected, pathRejected);
         }
       } catch (parsedError) {
         if (parsedError instanceof WorkspaceFilesNativeError) throw parsedError;
