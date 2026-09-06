@@ -491,6 +491,12 @@ export function Issues() {
     enabled: !!selectedOrganizationId && !isDraftScope,
     ...ISSUE_REFRESH_QUERY_OPTIONS,
   });
+
+  useEffect(() => {
+    if (!isFetching) return;
+    clearBoardPagination();
+  }, [clearBoardPagination, isFetching]);
+
   const issues = useMemo(() => {
     const byId = new Map<string, Issue>();
     for (const issue of boardLaneIssues) {
@@ -603,6 +609,7 @@ export function Issues() {
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
       issuesApi.update(id, data),
     onSuccess: () => {
+      resetIssuePagination();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedOrganizationId!) });
     },
   });
@@ -611,6 +618,7 @@ export function Issues() {
     mutationFn: (data: ReorderIssue) =>
       issuesApi.reorder(selectedOrganizationId!, data),
     onSuccess: () => {
+      resetIssuePagination();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedOrganizationId!) });
     },
   });

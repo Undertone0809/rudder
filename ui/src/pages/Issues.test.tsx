@@ -28,8 +28,10 @@ const mockState = vi.hoisted(() => ({
   setBreadcrumbs: vi.fn(),
   issuesListProps: null as null | Record<string, unknown>,
   infiniteQueryOptions: null as null | Record<string, unknown>,
+  mutationOptions: [] as Array<Record<string, unknown>>,
   initialIssues: [] as Array<{ id: string; status: string; title?: string; updatedAt?: Date | string }>,
   hasNextPage: false,
+  isFetching: false,
   refetchIssues: vi.fn(),
 }));
 
@@ -49,7 +51,7 @@ vi.mock("@tanstack/react-query", () => ({
       error: null,
       fetchNextPage: vi.fn(),
       hasNextPage: mockState.hasNextPage,
-      isFetching: false,
+      isFetching: mockState.isFetching,
       isFetchingNextPage: false,
       isLoading: false,
       refetch: mockState.refetchIssues,
@@ -61,9 +63,12 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "auth") return { data: mockState.session, isLoading: false, error: null };
     return { data: [], isLoading: false, error: null };
   },
-  useMutation: () => ({
-    mutate: vi.fn(),
-  }),
+  useMutation: (options: Record<string, unknown>) => {
+    mockState.mutationOptions.push(options);
+    return {
+      mutate: vi.fn(),
+    };
+  },
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
   }),
@@ -119,6 +124,7 @@ vi.mock("@/components/IssuesList", () => ({
 }));
 
 let cleanupFn: (() => void) | null = null;
+let rerenderIssues: (() => void) | null = null;
 let storageState: Record<string, string> = {};
 
 const savedDraft = {
@@ -162,6 +168,15 @@ function renderIssues() {
   document.body.appendChild(container);
   const root = createRoot(container);
   cleanupFn = () => root.unmount();
+  rerenderIssues = () => {
+    act(() => {
+      root.render(
+        <ThemeProvider>
+          <Issues />
+        </ThemeProvider>,
+      );
+    });
+  };
 
   act(() => {
     root.render(
@@ -181,8 +196,10 @@ beforeEach(() => {
   mockState.pushToast.mockReset();
   mockState.issuesListProps = null;
   mockState.infiniteQueryOptions = null;
+  mockState.mutationOptions = [];
   mockState.initialIssues = [];
   mockState.hasNextPage = false;
+  mockState.isFetching = false;
   vi.mocked(issuesApi.list).mockReset();
   mockState.refetchIssues.mockReset();
   mockState.search = "?scope=drafts";
@@ -206,6 +223,7 @@ afterEach(() => {
     });
   }
   cleanupFn = null;
+  rerenderIssues = null;
   window.localStorage.clear();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
@@ -343,6 +361,59 @@ describe("Issues board pagination", () => {
 
     const renderedIssues = mockState.issuesListProps?.issues as Array<{ id: string; title: string }>;
     expect(renderedIssues.find((issue) => issue.id === "todo-1")?.title).toBe("Fresh title");
+  });
+
+  it("clears lane-only records after a successful issue mutation", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{ id: "global-1", status: "todo" }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "lane-only-1",
+      status: "todo",
+      title: "Lane-only record",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
+
+    const onSuccess = mockState.mutationOptions[0]?.onSuccess as (() => void) | undefined;
+    expect(onSuccess).toBeDefined();
+    act(() => {
+      onSuccess?.();
+    });
+
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .not.toContain("lane-only-1");
+  });
+
+  it("clears lane-only records when the global query starts refreshing", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{ id: "global-1", status: "todo" }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "lane-only-1",
+      status: "todo",
+      title: "Lane-only record",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
+
+    mockState.isFetching = true;
+    rerenderIssues?.();
+
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .not.toContain("lane-only-1");
   });
 });
 
