@@ -1387,6 +1387,8 @@ export function NewIssueDialog() {
   const hasIssueTitle = title.trim().length > 0;
   const hasAgentRequest = Boolean(selectedAssigneeAgentId) && description.trim().length > 0;
   const canSubmit = creationMode === "agent" ? hasAgentRequest : hasIssueTitle;
+  const descriptionScrollRef = useScrollbarActivityRef();
+  const agentDescriptionScrollRef = useScrollbarActivityRef();
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1732,7 +1734,8 @@ export function NewIssueDialog() {
             </div>
             <div
               data-slot="agent-issue-description"
-              className="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pb-2 pt-3"
+              ref={agentDescriptionScrollRef}
+              className="scrollbar-auto-hide min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain border-t border-border/60 px-4 pb-2 pt-3"
             >
               <MarkdownEditor
                 ref={descriptionEditorRef}
@@ -2000,7 +2003,9 @@ export function NewIssueDialog() {
 
         {/* Description */}
         <div
-          className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
+          data-slot="new-issue-description"
+          ref={descriptionScrollRef}
+          className="scrollbar-auto-hide min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain border-t border-border/60 px-4 pb-2 pt-3"
           onDragEnter={handleFileDragEnter}
           onDragOver={handleFileDragOver}
           onDragLeave={handleFileDragLeave}

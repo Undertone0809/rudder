@@ -410,6 +410,15 @@ describe("NewIssueDialog", () => {
     expect(html).not.toContain("min-h-[120px]");
   });
 
+  it("gives the manual description a bounded modal scroll region", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-slot="new-issue-description"');
+    expect(html).toContain(
+      "scrollbar-auto-hide min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain",
+    );
+  });
+
   it("keeps a fixed dialog width and removes the expand action", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
