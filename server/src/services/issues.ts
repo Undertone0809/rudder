@@ -47,6 +47,7 @@ import {
 } from "./execution-workspace-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
+import { resolveIssueReferenceInputs } from "./issue-references.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
 import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
 
@@ -733,6 +734,13 @@ export function issueService(db: Db, storage?: StorageService) {
     },
 
     list: async (orgId: string, filters?: IssueFilters) => {
+      if (filters) {
+        filters = await resolveIssueReferenceInputs(
+          db,
+          orgId,
+          filters as unknown as Record<string, unknown>,
+        ) as IssueFilters;
+      }
       const conditions = [eq(issues.orgId, orgId)];
       const touchedByUserId = filters?.touchedByUserId?.trim() || undefined;
       const unreadForUserId = filters?.unreadForUserId?.trim() || undefined;
@@ -1097,6 +1105,11 @@ export function issueService(db: Db, storage?: StorageService) {
       orgId: string,
       data: IssueCreateInput,
     ) => {
+      data = await resolveIssueReferenceInputs(
+        db,
+        orgId,
+        data as unknown as Record<string, unknown>,
+      ) as IssueCreateInput;
       const { labelIds: inputLabelIds, ...rawIssueData } = data;
       const issueData = { ...rawIssueData };
       const idempotentOrigin = resolveIdempotentIssueOrigin(issueData.originKind, issueData.originId);
@@ -1376,6 +1389,12 @@ export function issueService(db: Db, storage?: StorageService) {
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
+
+      data = await resolveIssueReferenceInputs(
+        db,
+        existing.orgId,
+        data as unknown as Record<string, unknown>,
+      ) as Partial<typeof issues.$inferInsert> & { labelIds?: string[] };
 
       const { labelIds: nextLabelIds, ...issueData } = data;
       const hasIssueFieldChangesFrom = (current: typeof existing) => Object.entries(issueData).some(([key, value]) => {
@@ -1676,8 +1695,13 @@ export function issueService(db: Db, storage?: StorageService) {
       });
     },
 
-    reorder: async (orgId: string, input: ReorderIssue) =>
-      db.transaction(async (tx) => {
+    reorder: async (orgId: string, input: ReorderIssue) => {
+      input = await resolveIssueReferenceInputs(
+        db,
+        orgId,
+        input as unknown as Record<string, unknown>,
+      ) as ReorderIssue;
+      return db.transaction(async (tx) => {
         const existing = await tx
           .select()
           .from(issues)
@@ -1788,7 +1812,8 @@ export function issueService(db: Db, storage?: StorageService) {
           previousStatus: existing.status,
           previousBoardOrder: existing.boardOrder,
         };
-      }),
+      });
+    },
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
@@ -1835,6 +1860,8 @@ export function issueService(db: Db, storage?: StorageService) {
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!issueCompany) throw notFound("Issue not found");
+      const resolvedCheckout = await resolveIssueReferenceInputs(db, issueCompany.orgId, { agentId });
+      agentId = resolvedCheckout.agentId as string;
       await assertAssignableAgent(issueCompany.orgId, agentId);
 
       const now = new Date();

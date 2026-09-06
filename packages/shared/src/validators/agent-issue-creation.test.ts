@@ -43,6 +43,16 @@ describe("Agent Issue Creation validators", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("accepts typed short references for the requesting Agent and related Issue entities", () => {
+    expect(createAgentIssueCreationRequestSchema.safeParse({
+      ...baseRequest,
+      agentId: "agt_11111111",
+      projectId: "prj_22222222",
+      goalId: "gol_33333333",
+      parentId: "iss_44444444",
+    }).success).toBe(true);
+  });
+
   it("rejects blank text, invalid UUIDs, and oversized instructions", () => {
     expect(createAgentIssueCreationRequestSchema.safeParse({
       ...baseRequest,

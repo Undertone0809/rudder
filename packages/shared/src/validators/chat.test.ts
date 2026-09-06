@@ -374,6 +374,20 @@ describe("chat issue proposals", () => {
     });
   });
 
+  it("accepts typed short references in chat issue proposals", () => {
+    expect(convertChatToIssueSchema.safeParse({
+      proposal: {
+        title: "Short reference proposal",
+        description: "Create this issue using typed references.",
+        projectId: "prj_11111111",
+        goalId: "gol_22222222",
+        parentId: "iss_33333333",
+        assigneeAgentId: "agt_44444444",
+        reviewerAgentId: "agt_55555555",
+      },
+    }).success).toBe(true);
+  });
+
   it("requires an explicit owner decision when converting chat proposals into issues", () => {
     expect(convertChatToIssueSchema.safeParse({
       proposal: {
