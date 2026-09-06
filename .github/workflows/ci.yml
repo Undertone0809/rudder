@@ -370,6 +370,7 @@ jobs:
           RUDDER_DESKTOP_TARGET_ARCH: x64
         run: |
           pnpm native:build
+          echo "RUDDER_NATIVE_ARCHIVE_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
           echo "RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
 
       - name: Unit tests

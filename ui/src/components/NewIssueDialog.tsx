@@ -88,6 +88,7 @@ import { AgentMenuLabel, AssigneeLabel } from "./AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import { useNewIssueDescriptionScrollProps } from "./NewIssueDialog.scroll";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
 
@@ -1387,8 +1388,7 @@ export function NewIssueDialog() {
   const hasIssueTitle = title.trim().length > 0;
   const hasAgentRequest = Boolean(selectedAssigneeAgentId) && description.trim().length > 0;
   const canSubmit = creationMode === "agent" ? hasAgentRequest : hasIssueTitle;
-  const descriptionScrollRef = useScrollbarActivityRef();
-  const agentDescriptionScrollRef = useScrollbarActivityRef();
+  const descriptionScrollProps = useNewIssueDescriptionScrollProps();
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1732,11 +1732,7 @@ export function NewIssueDialog() {
                 </div>
               </div>
             </div>
-            <div
-              data-slot="agent-issue-description"
-              ref={agentDescriptionScrollRef}
-              className="scrollbar-auto-hide min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain border-t border-border/60 px-4 pb-2 pt-3"
-            >
+            <div {...descriptionScrollProps.agentDescription}>
               <MarkdownEditor
                 ref={descriptionEditorRef}
                 engine="codemirror"
@@ -2003,9 +1999,7 @@ export function NewIssueDialog() {
 
         {/* Description */}
         <div
-          data-slot="new-issue-description"
-          ref={descriptionScrollRef}
-          className="scrollbar-auto-hide min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain border-t border-border/60 px-4 pb-2 pt-3"
+          {...descriptionScrollProps.description}
           onDragEnter={handleFileDragEnter}
           onDragOver={handleFileDragOver}
           onDragLeave={handleFileDragLeave}
