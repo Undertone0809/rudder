@@ -60,6 +60,8 @@ const SKIPPED_ENTRY_NAMES = new Set([
   ".nvm",
   ".pnpm-store",
   ".rudder",
+  ".rudder-workspace-migrations.json",
+  ".rudder-workspace.json",
   ".tmp",
   ".turbo",
   ".vite",

@@ -19,8 +19,23 @@ const EXECUTABLE_MODE_BITS = 0o111;
 const MIGRATION_BACKUP_DIR_NAME = ".rudder-migration-backups";
 const WORKSPACE_PERMISSION_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 const ORGANIZATION_WORKSPACE_MAP_FILE = ".rudder-organizations.json";
+const ORGANIZATION_WORKSPACE_MAP_LOCK = ".rudder-organizations.lock";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX = ".rudder-lock-owner-";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_ACQUIRE_PREFIX = ".rudder-organizations.lock.acquire-";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_RECOVERY_PREFIX = ".rudder-organizations.lock.recovered-";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_KIND = "rudder-organization-workspace-map-lock";
+const ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX = ".rudder-lock-reclaim-";
+const ORGANIZATION_WORKSPACE_IDENTITY_FILE = ".rudder-workspace.json";
+const ORGANIZATION_WORKSPACE_MIGRATION_FILE = ".rudder-workspace-migrations.json";
+const ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS = 10_000;
+const ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS = 60_000;
+const ORGANIZATION_WORKSPACE_MAP_LOCK_TARGET_EXISTS_CODES = new Set(["EEXIST", "ENOTEMPTY", "EISDIR"]);
 const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
   ORGANIZATION_WORKSPACE_MAP_FILE,
+  ORGANIZATION_WORKSPACE_MAP_LOCK,
+  MIGRATION_BACKUP_DIR_NAME,
+  "organizations",
+  "projects",
   ".rudder",
   "backups",
   "data",
@@ -63,6 +78,29 @@ type OrganizationWorkspacePermissionFailure = {
   orgId: string;
   code: string | null;
   message: string;
+};
+
+type OrganizationWorkspaceMapLockOwner = {
+  kind: typeof ORGANIZATION_WORKSPACE_MAP_LOCK_KIND;
+  version: 1;
+  token: string;
+  pid: number;
+  hostname: string;
+  createdAt: string;
+};
+
+type OrganizationWorkspaceMigrationFile = {
+  version: 1;
+  compatibilityAliases: string[];
+};
+
+type OrganizationWorkspaceMapReclaimClaim = {
+  version: 1;
+  token: string;
+  ownerToken: string;
+  pid: number;
+  hostname: string;
+  createdAt: string;
 };
 
 function expandHomePrefix(value: string): string {
@@ -145,9 +183,11 @@ function resolveAgentWorkspacePathSegment(agent: string | AgentWorkspaceLocator)
 export function resolveOrganizationWorkspaceRoot(orgId: string): string {
   const normalizedOrgId = resolveOrganizationStorageKey(orgId);
   if (usesFriendlyOrganizationWorkspaceHome()) {
+    const mappedFolderName = readOrganizationWorkspaceFolderName(orgId);
+    const folderName = mappedFolderName ?? sanitizeOrganizationWorkspaceFolderName(normalizedOrgId, normalizedOrgId);
     return path.resolve(
       resolveOrganizationWorkspaceHomeDir(),
-      readOrganizationWorkspaceFolderName(orgId) ?? normalizedOrgId,
+      folderName,
     );
   }
   return path.resolve(
@@ -275,11 +315,20 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
   skillsDir: string;
   projectsDir: string;
 }> {
+  return await updateOrganizationWorkspaceMap(() => ensureOrganizationWorkspaceLayoutUnlocked(org));
+}
+
+async function ensureOrganizationWorkspaceLayoutUnlocked(org: string | OrganizationWorkspaceLocator): Promise<{
+  root: string;
+  agentsDir: string;
+  skillsDir: string;
+  projectsDir: string;
+}> {
   const orgId = typeof org === "string" ? org : org.id;
-  await migrateOrganizationStorageRoot(orgId);
+  await migrateOrganizationStorageRootUnlocked(orgId);
   let mappingState: OrganizationWorkspaceMappingState | null = null;
   if (typeof org !== "string") {
-    mappingState = await ensureOrganizationWorkspaceMapping(org);
+    mappingState = await ensureOrganizationWorkspaceMappingUnlocked(org);
   } else if (usesFriendlyOrganizationWorkspaceHome()) {
     const map = await readOrganizationWorkspaceMapFile();
     const existing = findOrganizationWorkspaceMapRecord(map, orgId);
@@ -289,7 +338,7 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
   }
   const root = resolveOrganizationWorkspaceRoot(orgId);
   await assertOrganizationWorkspaceRootIsOwned(root);
-  await migrateOrganizationWorkspaceRoot(orgId, {
+  await migrateOrganizationWorkspaceRootUnlocked(orgId, {
     failIfMappedFolderMissing: Boolean(mappingState && !mappingState.created),
   });
   await assertOrganizationWorkspaceRootIsOwned(root);
@@ -304,6 +353,7 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
       fs.mkdir(skillsDir, { recursive: true }),
       fs.mkdir(projectsDir, { recursive: true }),
     ]);
+    await ensureOrganizationWorkspaceIdentity(root, orgId);
   } catch (error) {
     if (isPermissionError(error)) {
       throw new Error(formatOrganizationWorkspacePermissionMessage({
@@ -318,55 +368,377 @@ export async function ensureOrganizationWorkspaceLayout(org: string | Organizati
   return { root, agentsDir, skillsDir, projectsDir };
 }
 
-async function ensureOrganizationWorkspaceMapping(org: OrganizationWorkspaceLocator): Promise<OrganizationWorkspaceMappingState | null> {
+async function ensureOrganizationWorkspaceMappingUnlocked(
+  org: OrganizationWorkspaceLocator,
+): Promise<OrganizationWorkspaceMappingState | null> {
   if (!usesFriendlyOrganizationWorkspaceHome()) return null;
-  return await updateOrganizationWorkspaceMap(async () => {
-    const orgId = validatePathSegment(org.id, "org id");
-    const homeDir = resolveOrganizationWorkspaceHomeDir();
-    const mapPath = resolveOrganizationWorkspaceMapPath();
-    await fs.mkdir(homeDir, { recursive: true });
+  const orgId = validatePathSegment(org.id, "org id");
+  const homeDir = resolveOrganizationWorkspaceHomeDir();
+  const mapPath = resolveOrganizationWorkspaceMapPath();
+  await fs.mkdir(homeDir, { recursive: true });
 
-    const now = new Date().toISOString();
-    const mapState = await readOrganizationWorkspaceMapFileState();
-    const map = mapState.map;
-    const existing = findOrganizationWorkspaceMapRecord(map, orgId);
-    if (existing) {
-      existing.orgName = org.name ?? existing.orgName ?? null;
-      existing.updatedAt = now;
-      await writeOrganizationWorkspaceMapFile(mapPath, map);
-      return { record: existing, created: false };
-    }
-
-    const folderName = await allocateOrganizationWorkspaceFolderName({
-      homeDir,
-      map,
-      orgId,
-      orgName: org.name,
-      orgUrlKey: org.urlKey,
-      allowExistingBaseDirectory: !mapState.exists,
-    });
-    const record: OrganizationWorkspaceMapRecord = {
-      instanceId: resolveRudderInstanceId(),
-      orgId,
-      folderName,
-      orgName: org.name ?? null,
-      createdAt: now,
-      updatedAt: now,
-    };
-    map.organizations.push(record);
+  const now = new Date().toISOString();
+  const mapState = await readOrganizationWorkspaceMapFileState();
+  const map = mapState.map;
+  const existing = findOrganizationWorkspaceMapRecord(map, orgId);
+  if (existing) {
+    existing.orgName = org.name ?? existing.orgName ?? null;
+    existing.updatedAt = now;
     await writeOrganizationWorkspaceMapFile(mapPath, map);
-    return { record, created: true };
+    return { record: existing, created: false };
+  }
+
+  const folderName = await allocateOrganizationWorkspaceFolderName({
+    homeDir,
+    map,
+    orgId,
+    orgName: org.name,
+    orgUrlKey: org.urlKey,
   });
+  const folderPath = path.resolve(homeDir, folderName);
+  // Materialize the identity before publishing the map record so a crash can
+  // reclaim a directory that was created just before the map write.
+  await fs.mkdir(folderPath, { recursive: true });
+  await ensureOrganizationWorkspaceIdentity(folderPath, orgId);
+  const record: OrganizationWorkspaceMapRecord = {
+    instanceId: resolveRudderInstanceId(),
+    orgId,
+    folderName,
+    orgName: org.name ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  map.organizations.push(record);
+  await writeOrganizationWorkspaceMapFile(mapPath, map);
+  return { record, created: true };
 }
 
 async function updateOrganizationWorkspaceMap<T>(fn: () => Promise<T>): Promise<T> {
   const previous = organizationWorkspaceMapUpdateQueue.catch(() => {});
-  const current = previous.then(fn, fn);
+  const current = previous.then(
+    () => withOrganizationWorkspaceMapLock(fn),
+    () => withOrganizationWorkspaceMapLock(fn),
+  );
   organizationWorkspaceMapUpdateQueue = current.catch(() => {});
   return await current;
 }
 
+async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lockPath = path.resolve(resolveOrganizationWorkspaceHomeDir(), ORGANIZATION_WORKSPACE_MAP_LOCK);
+  const lockParentPath = path.dirname(lockPath);
+  const startedAt = Date.now();
+  const token = randomUUID();
+  const ownerFileName = `${ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX}${token}.json`;
+  const acquisitionPath = path.join(lockParentPath, `${ORGANIZATION_WORKSPACE_MAP_LOCK_ACQUIRE_PREFIX}${token}`);
+  const acquisitionOwnerPath = path.join(acquisitionPath, ownerFileName);
+  let acquisitionCreated = false;
+  let lockAcquired = false;
+  await fs.mkdir(lockParentPath, { recursive: true });
+
+  try {
+    // Build a complete owner directory before the final rename. This keeps an
+    // acquired lock from ever being observable without its owner record.
+    await fs.mkdir(acquisitionPath, { mode: 0o700 });
+    acquisitionCreated = true;
+    const owner: OrganizationWorkspaceMapLockOwner = {
+      kind: ORGANIZATION_WORKSPACE_MAP_LOCK_KIND,
+      version: 1,
+      token,
+      pid: process.pid,
+      hostname: os.hostname(),
+      createdAt: new Date().toISOString(),
+    };
+    const handle = await fs.open(acquisitionOwnerPath, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(owner, null, 2)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncDirectory(acquisitionPath);
+
+    while (true) {
+      if (Date.now() - startedAt >= ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
+        throw Object.assign(new Error(
+          `Timed out waiting for the organization workspace mapping lock at ${lockPath}.`,
+        ), { code: "RUDDER_WORKSPACE_MAP_LOCK_TIMEOUT" });
+      }
+      const existingLock = await lstatIfExists(lockPath);
+      if (existingLock) {
+        const existingOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
+        if (!existingOwner) {
+          const entries = await fs.readdir(lockPath).catch(() => []);
+          if (
+            entries.length === 0
+            && await quarantineStaleEmptyOrganizationWorkspaceMapLock(lockPath)
+          ) {
+            continue;
+          }
+          if (entries.length === 0 && Date.now() - startedAt < ORGANIZATION_WORKSPACE_MAP_LOCK_TIMEOUT_MS) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            continue;
+          }
+          throw organizationWorkspaceMapLockCollision(lockPath);
+        }
+        const ownerAgeMs = Date.now() - Date.parse(existingOwner.createdAt);
+        if (
+          existingOwner.hostname === os.hostname()
+          && ownerAgeMs > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+          && !isProcessAlive(existingOwner.pid)
+        ) {
+          await reclaimStaleOrganizationWorkspaceMapLock(lockPath, existingOwner);
+          continue;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
+      try {
+        await fs.rename(acquisitionPath, lockPath);
+        lockAcquired = true;
+        break;
+      } catch (error) {
+        if (!ORGANIZATION_WORKSPACE_MAP_LOCK_TARGET_EXISTS_CODES.has(errorCode(error) ?? "")) throw error;
+        // Another process appeared between the existence probe and rename;
+        // inspect it through the non-destructive path on the next iteration.
+      }
+    }
+
+    return await fn();
+  } finally {
+    if (lockAcquired) {
+      await releaseOrganizationWorkspaceMapLock(lockPath, token);
+    } else if (acquisitionCreated) {
+      await fs.rm(acquisitionPath, { recursive: true, force: true });
+    }
+  }
+}
+
+function organizationWorkspaceMapLockCollision(lockPath: string): Error {
+  return Object.assign(new Error(
+    `Refusing to replace the unrecognized organization workspace mapping lock path at ${lockPath}. `
+      + "Rename or restore that directory before starting Rudder.",
+  ), { code: "RUDDER_WORKSPACE_MAP_LOCK_COLLISION" });
+}
+
+async function quarantineStaleEmptyOrganizationWorkspaceMapLock(lockPath: string): Promise<boolean> {
+  const lockStat = await lstatIfExists(lockPath);
+  if (
+    !lockStat
+    || !lockStat.isDirectory()
+    || lockStat.isSymbolicLink()
+    || (lockStat.mode & 0o777) !== 0o700
+    || Date.now() - lockStat.mtimeMs <= ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+  ) return false;
+
+  const entries = await fs.readdir(lockPath).catch((error) => {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  });
+  if (entries.length > 0) return false;
+
+  const quarantinePath = path.join(
+    path.dirname(lockPath),
+    `${ORGANIZATION_WORKSPACE_MAP_LOCK_RECOVERY_PREFIX}${randomUUID()}`,
+  );
+  try {
+    await fs.rename(lockPath, quarantinePath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return true;
+    throw error;
+  }
+  await syncDirectory(path.dirname(lockPath));
+  return true;
+}
+
+async function reclaimStaleOrganizationWorkspaceMapLock(
+  lockPath: string,
+  observedOwner: OrganizationWorkspaceMapLockOwner,
+): Promise<void> {
+  const claim: OrganizationWorkspaceMapReclaimClaim = {
+    version: 1,
+    token: randomUUID(),
+    ownerToken: observedOwner.token,
+    pid: process.pid,
+    hostname: os.hostname(),
+    createdAt: new Date().toISOString(),
+  };
+  const reclaimPath = path.join(
+    lockPath,
+    `${ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX}${claim.token}.json`,
+  );
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(reclaimPath, "wx", 0o600);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return;
+    throw error;
+  }
+  try {
+    await handle.writeFile(`${JSON.stringify(claim)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  // Let concurrently-starting reclaimers publish before electing the oldest live claim.
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const claims = await readOrganizationWorkspaceMapReclaimClaims(lockPath);
+  await Promise.all(claims.map(async (candidate) => {
+    if (
+      candidate.hostname === os.hostname()
+      && Date.now() - Date.parse(candidate.createdAt) > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+      && !isProcessAlive(candidate.pid)
+    ) {
+      await fs.rm(candidate.path, { force: true });
+    }
+  }));
+  const liveClaims = (await readOrganizationWorkspaceMapReclaimClaims(lockPath))
+    .filter((candidate) => candidate.ownerToken === observedOwner.token)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.token.localeCompare(right.token));
+  if (liveClaims[0]?.token !== claim.token) {
+    await fs.rm(reclaimPath, { force: true });
+    return;
+  }
+
+  const currentOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
+  const stillStale = currentOwner?.token === observedOwner.token
+    && currentOwner.hostname === os.hostname()
+    && Date.now() - Date.parse(currentOwner.createdAt) > ORGANIZATION_WORKSPACE_MAP_STALE_LOCK_MS
+    && !isProcessAlive(currentOwner.pid);
+  if (!stillStale) {
+    await fs.rm(reclaimPath, { force: true });
+    return;
+  }
+
+  const tombstonePath = `${lockPath}.reclaimed-${observedOwner.token}-${randomUUID()}`;
+  try {
+    await fs.rename(lockPath, tombstonePath);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+    return;
+  }
+  // Only the positively identified directory captured by the atomic rename is removed.
+  await fs.rm(tombstonePath, { recursive: true, force: true });
+}
+
+async function readOrganizationWorkspaceMapReclaimClaims(
+  lockPath: string,
+): Promise<Array<OrganizationWorkspaceMapReclaimClaim & { path: string }>> {
+  try {
+    const entries = await fs.readdir(lockPath, { withFileTypes: true });
+    const claims = await Promise.all(entries.flatMap((entry) =>
+      entry.isFile()
+        && entry.name.startsWith(ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX)
+        && entry.name.endsWith(".json")
+        ? [readOrganizationWorkspaceMapReclaimClaim(path.join(lockPath, entry.name), entry.name)]
+        : []
+    ));
+    return claims.flatMap((claim) => claim ? [claim] : []);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function readOrganizationWorkspaceMapReclaimClaim(
+  claimPath: string,
+  fileName: string,
+): Promise<(OrganizationWorkspaceMapReclaimClaim & { path: string }) | null> {
+  try {
+    const claim = JSON.parse(await fs.readFile(claimPath, "utf8")) as Partial<
+      OrganizationWorkspaceMapReclaimClaim
+    >;
+    if (
+      claim.version !== 1
+      || typeof claim.token !== "string"
+      || fileName !== `${ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX}${claim.token}.json`
+      || typeof claim.ownerToken !== "string"
+      || !Number.isSafeInteger(claim.pid)
+      || (claim.pid ?? 0) <= 0
+      || typeof claim.hostname !== "string"
+      || typeof claim.createdAt !== "string"
+      || !Number.isFinite(Date.parse(claim.createdAt))
+    ) return null;
+    return { ...(claim as OrganizationWorkspaceMapReclaimClaim), path: claimPath };
+  } catch {
+    return null;
+  }
+}
+
+async function releaseOrganizationWorkspaceMapLock(lockPath: string, token: string): Promise<void> {
+  const currentOwner = await readOrganizationWorkspaceMapLockOwner(lockPath);
+  if (currentOwner?.token !== token) return;
+  const tombstonePath = `${lockPath}.released-${token}-${randomUUID()}`;
+  try {
+    await fs.rename(lockPath, tombstonePath);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
+    return;
+  }
+  await fs.rm(tombstonePath, { recursive: true, force: true });
+}
+
+async function readOrganizationWorkspaceMapLockOwner(
+  lockPath: string,
+): Promise<OrganizationWorkspaceMapLockOwner | null> {
+  try {
+    const entries = await fs.readdir(lockPath, { withFileTypes: true });
+    const ownerEntries = entries.filter((entry) =>
+      entry.isFile()
+      && entry.name.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX)
+      && entry.name.endsWith(".json")
+    );
+    if (ownerEntries.length !== 1) return null;
+    if (entries.some((entry) =>
+      entry.name !== ownerEntries[0]!.name
+      && !(entry.isFile()
+        && entry.name.startsWith(ORGANIZATION_WORKSPACE_MAP_RECLAIM_PREFIX)
+        && entry.name.endsWith(".json"))
+    )) return null;
+    const fileName = ownerEntries[0]!.name;
+    if (!fileName.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX) || !fileName.endsWith(".json")) {
+      return null;
+    }
+    const owner = JSON.parse(await fs.readFile(path.join(lockPath, fileName), "utf8")) as Partial<
+      OrganizationWorkspaceMapLockOwner
+    >;
+    if (
+      owner.kind !== ORGANIZATION_WORKSPACE_MAP_LOCK_KIND
+      || owner.version !== 1
+      || typeof owner.token !== "string"
+      || fileName !== `${ORGANIZATION_WORKSPACE_MAP_LOCK_OWNER_PREFIX}${owner.token}.json`
+      || !Number.isSafeInteger(owner.pid)
+      || (owner.pid ?? 0) <= 0
+      || typeof owner.hostname !== "string"
+      || typeof owner.createdAt !== "string"
+      || !Number.isFinite(Date.parse(owner.createdAt))
+    ) return null;
+    return owner as OrganizationWorkspaceMapLockOwner;
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return errorCode(error) !== "ESRCH";
+  }
+}
+
 export async function migrateOrganizationStorageRoot(orgId: string): Promise<{
+  canonicalRootPath: string;
+  legacyRootPath: string;
+  migrated: boolean;
+  mergedIntoExistingTarget: boolean;
+  skippedBecauseTargetExists: boolean;
+}> {
+  return await updateOrganizationWorkspaceMap(() => migrateOrganizationStorageRootUnlocked(orgId));
+}
+
+async function migrateOrganizationStorageRootUnlocked(orgId: string): Promise<{
   canonicalRootPath: string;
   legacyRootPath: string;
   migrated: boolean;
@@ -457,6 +829,18 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
   mergedIntoExistingTarget: boolean;
   skippedBecauseTargetExists: boolean;
 }> {
+  return await updateOrganizationWorkspaceMap(() => migrateOrganizationWorkspaceRootUnlocked(orgId, options));
+}
+
+async function migrateOrganizationWorkspaceRootUnlocked(orgId: string, options?: {
+  failIfMappedFolderMissing?: boolean;
+}): Promise<{
+  canonicalRootPath: string;
+  legacyRootPath: string;
+  migrated: boolean;
+  mergedIntoExistingTarget: boolean;
+  skippedBecauseTargetExists: boolean;
+}> {
   const canonicalRootPath = resolveOrganizationWorkspaceRoot(orgId);
   const legacyRootPath = resolveLegacyOrganizationWorkspaceRoot(orgId);
   const previousDocumentsRootPath = resolvePreviousDocumentsOrganizationWorkspaceRoot(orgId);
@@ -482,15 +866,43 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
   for (const candidateLegacyRootPath of legacyRootPaths) {
     firstLegacyRootPath = firstLegacyRootPath || candidateLegacyRootPath;
     const legacyExists = await directoryExists(candidateLegacyRootPath);
-    if (!legacyExists) continue;
+    if (!legacyExists) {
+      if (
+        await directoryExists(canonicalRootPath)
+        && await workspaceIdentityMatches(canonicalRootPath, orgId)
+        && await workspaceMigrationIncludesAlias(canonicalRootPath, candidateLegacyRootPath)
+      ) {
+        await fs.mkdir(path.dirname(candidateLegacyRootPath), { recursive: true });
+        await createDirectoryCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath);
+        migrated = true;
+        migratedFromRootPath = candidateLegacyRootPath;
+      }
+      continue;
+    }
+    if (await pathsReferenceSameDirectory(candidateLegacyRootPath, canonicalRootPath)) continue;
 
     const canonicalExists = await directoryExists(canonicalRootPath);
     try {
       if (canonicalExists) {
-        await assertCanMergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
-        const retainedDuplicates = await mergeDirectoryContents(candidateLegacyRootPath, canonicalRootPath);
-        if (retainedDuplicates) await archiveRetainedMigrationSource(candidateLegacyRootPath);
-        else await fs.rmdir(candidateLegacyRootPath);
+        await assertWorkspaceRootMoveCanBeAtomic(candidateLegacyRootPath, canonicalRootPath);
+        await ensureOrganizationWorkspaceIdentity(canonicalRootPath, orgId);
+        await ensureOrganizationWorkspaceIdentity(candidateLegacyRootPath, orgId);
+        const compatibilityAliases = new Set([
+          ...(await readWorkspaceMigrationAliases(canonicalRootPath)),
+          ...(await readWorkspaceMigrationAliases(candidateLegacyRootPath)),
+          path.resolve(candidateLegacyRootPath),
+        ]);
+        // Preserve the legacy root inode while merging. A Run may already have
+        // a cwd anywhere below it; renaming this root to the canonical path
+        // keeps that cwd attached to the live workspace after the rekey.
+        await writeWorkspaceMigrationState(candidateLegacyRootPath, [...compatibilityAliases]);
+        await assertCanMergeDirectoryContents(canonicalRootPath, candidateLegacyRootPath);
+        const retainedDuplicates = await mergeDirectoryContents(canonicalRootPath, candidateLegacyRootPath);
+        if (retainedDuplicates) {
+          await archiveRetainedMigrationSource(canonicalRootPath, path.dirname(candidateLegacyRootPath));
+        }
+        else await fs.rmdir(canonicalRootPath);
+        await moveWorkspacePathWithCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath);
         migrated = true;
         migratedFromRootPath = candidateLegacyRootPath;
         mergedIntoExistingTarget = true;
@@ -498,7 +910,11 @@ export async function migrateOrganizationWorkspaceRoot(orgId: string, options?: 
       }
 
       await fs.mkdir(path.dirname(canonicalRootPath), { recursive: true });
-      await movePath(candidateLegacyRootPath, canonicalRootPath);
+      await assertWorkspaceRootMoveCanBeAtomic(candidateLegacyRootPath, canonicalRootPath);
+      // The identity moves with the directory and makes a post-rename crash repairable.
+      await ensureOrganizationWorkspaceIdentity(candidateLegacyRootPath, orgId);
+      await recordWorkspaceCompatibilityAlias(candidateLegacyRootPath, candidateLegacyRootPath);
+      await moveWorkspacePathWithCompatibilityAlias(candidateLegacyRootPath, canonicalRootPath);
       migrated = true;
       migratedFromRootPath = candidateLegacyRootPath;
     } catch (error) {
@@ -678,21 +1094,45 @@ function sanitizeFriendlyPathSegment(value: string | null | undefined, fallback 
 }
 
 function sanitizeOrganizationWorkspaceFolderName(value: string | null | undefined, fallback: string): string {
+  const safeFallback = sanitizeFriendlyPathSegment(fallback, "_default")
+    .replace(/[.]+$/g, "")
+    .toLowerCase();
+  const normalizedFallback = RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(safeFallback)
+    ? `organization-${safeFallback}`
+    : safeFallback;
   const sanitized = sanitizeFriendlyPathSegment(value, fallback)
     .replace(/[.]+$/g, "")
     .toLowerCase();
   const normalized = sanitized && !RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(sanitized)
     ? sanitized
-    : fallback;
-  return normalized || fallback;
+    : normalizedFallback;
+  return normalized || normalizedFallback;
+}
+
+function isOrganizationWorkspaceMapInternalDirectoryName(name: string): boolean {
+  return name === ORGANIZATION_WORKSPACE_MAP_LOCK
+    || name.startsWith(`${ORGANIZATION_WORKSPACE_MAP_LOCK}.`)
+    || name.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_ACQUIRE_PREFIX)
+    || name.startsWith(ORGANIZATION_WORKSPACE_MAP_LOCK_RECOVERY_PREFIX);
+}
+
+function isOrganizationWorkspaceMapRecord(value: unknown): value is OrganizationWorkspaceMapRecord {
+  return typeof value === "object"
+    && value !== null
+    && typeof (value as { instanceId?: unknown }).instanceId === "string"
+    && typeof (value as { orgId?: unknown }).orgId === "string"
+    && typeof (value as { folderName?: unknown }).folderName === "string"
+    && typeof (value as { createdAt?: unknown }).createdAt === "string"
+    && typeof (value as { updatedAt?: unknown }).updatedAt === "string";
 }
 
 async function readOrganizationWorkspaceMapFileState(): Promise<OrganizationWorkspaceMapFileState> {
   const mapPath = resolveOrganizationWorkspaceMapPath();
   try {
     const raw = await fs.readFile(mapPath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) {
+    const parsed = JSON.parse(raw) as { version?: unknown; organizations?: unknown };
+    if (parsed.version !== 1 || !Array.isArray(parsed.organizations)
+      || !parsed.organizations.every(isOrganizationWorkspaceMapRecord)) {
       throw new Error(
         `Invalid organization workspace mapping file at ${mapPath}. Restore the mapping file or restore organizations from workspace backups before starting Rudder.`,
       );
@@ -701,15 +1141,7 @@ async function readOrganizationWorkspaceMapFileState(): Promise<OrganizationWork
       exists: true,
       map: {
         version: 1,
-        organizations: parsed.organizations.filter((entry): entry is OrganizationWorkspaceMapRecord =>
-          typeof entry === "object"
-          && entry !== null
-          && typeof entry.instanceId === "string"
-          && typeof entry.orgId === "string"
-          && typeof entry.folderName === "string"
-          && typeof entry.createdAt === "string"
-          && typeof entry.updatedAt === "string"
-        ),
+        organizations: parsed.organizations,
       },
     };
   } catch (error) {
@@ -742,20 +1174,43 @@ function findOrganizationWorkspaceMapRecord(
 
 function readOrganizationWorkspaceFolderName(orgId: string): string | null {
   if (!usesFriendlyOrganizationWorkspaceHome()) return null;
+  const mapPath = resolveOrganizationWorkspaceMapPath();
+  let raw: string;
   try {
-    const raw = fsSync.readFileSync(resolveOrganizationWorkspaceMapPath(), "utf8");
-    const parsed = JSON.parse(raw) as Partial<OrganizationWorkspaceMapFile>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.organizations)) return null;
-    const record = parsed.organizations.find((entry) =>
-      typeof entry === "object"
-      && entry !== null
-      && entry.instanceId === resolveRudderInstanceId()
-      && entry.orgId === orgId
-      && typeof entry.folderName === "string"
-    );
-    return record?.folderName ?? null;
-  } catch {
-    return null;
+    raw = fsSync.readFileSync(mapPath, "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return null;
+    throw new Error(`Rudder could not read the organization workspace mapping at ${mapPath}.`, { cause: error });
+  }
+  let parsed: { version?: unknown; organizations?: unknown };
+  try {
+    parsed = JSON.parse(raw) as { version?: unknown; organizations?: unknown };
+  } catch (error) {
+    throw new Error(`Invalid organization workspace mapping file at ${mapPath}.`, { cause: error });
+  }
+  if (parsed.version !== 1 || !Array.isArray(parsed.organizations)
+    || !parsed.organizations.every(isOrganizationWorkspaceMapRecord)) {
+    throw new Error(`Invalid organization workspace mapping file at ${mapPath}.`);
+  }
+  const record = parsed.organizations.find((entry) =>
+    entry.instanceId === resolveRudderInstanceId() && entry.orgId === orgId,
+  );
+  if (!record) return null;
+  try {
+    if (typeof record.folderName !== "string") {
+      throw new Error("Organization workspace folder mapping must contain a folder name.");
+    }
+    const folderName = validatePathSegment(record.folderName, "organization workspace folder");
+    if (folderName !== record.folderName) {
+      throw new Error("Organization workspace folder mapping must not contain leading or trailing whitespace.");
+    }
+    if (RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(folderName.toLowerCase())) {
+      throw new Error(`Organization workspace folder mapping uses reserved folder '${folderName}'.`);
+    }
+    return folderName;
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? ` ${error.message}` : "";
+    throw new Error(`Invalid organization workspace folder mapping for '${orgId}'.${detail}`, { cause: error });
   }
 }
 
@@ -765,8 +1220,154 @@ async function writeOrganizationWorkspaceMapFile(
 ): Promise<void> {
   const tempPath = `${mapPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await fs.mkdir(path.dirname(mapPath), { recursive: true });
-  await fs.writeFile(tempPath, `${JSON.stringify(map, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  const handle = await fs.open(tempPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(map, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   await fs.rename(tempPath, mapPath);
+  await syncDirectory(path.dirname(mapPath));
+}
+
+async function ensureOrganizationWorkspaceIdentity(root: string, orgId: string): Promise<void> {
+  const identityPath = path.join(root, ORGANIZATION_WORKSPACE_IDENTITY_FILE);
+  const expectedOrgId = validatePathSegment(orgId, "org id");
+  try {
+    const existing = JSON.parse(await fs.readFile(identityPath, "utf8")) as { orgId?: unknown };
+    if (existing.orgId !== expectedOrgId) {
+      throw new Error(`Organization workspace identity mismatch at ${identityPath}.`);
+    }
+    return;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      // Continue below and publish a fresh identity atomically.
+    } else if (error instanceof SyntaxError) {
+      const corruptPath = `${identityPath}.corrupt-${randomUUID()}`;
+      await fs.rename(identityPath, corruptPath);
+      await syncDirectory(root);
+    } else {
+      throw error;
+    }
+  }
+  const tempPath = `${identityPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    const handle = await fs.open(tempPath, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify({ version: 1, orgId: expectedOrgId }, null, 2)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(tempPath, identityPath);
+    await syncDirectory(root);
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST" || !(await workspaceIdentityMatches(root, expectedOrgId))) {
+      throw error;
+    }
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function workspaceIdentityMatches(root: string, orgId: string): Promise<boolean> {
+  try {
+    const identity = JSON.parse(
+      await fs.readFile(path.join(root, ORGANIZATION_WORKSPACE_IDENTITY_FILE), "utf8"),
+    ) as { orgId?: unknown };
+    return identity.orgId === validatePathSegment(orgId, "org id");
+  } catch {
+    return false;
+  }
+}
+
+async function assertFriendlyWorkspaceRemovalOwnership(
+  orgId: string,
+  workspaceRootPath: string,
+  map: OrganizationWorkspaceMapFile,
+): Promise<void> {
+  if (!usesFriendlyOrganizationWorkspaceHome()) return;
+
+  const record = findOrganizationWorkspaceMapRecord(map, orgId);
+  if (record) {
+    const normalizedFolderName = record.folderName.toLowerCase();
+    const duplicate = map.organizations.find((entry) =>
+      entry.instanceId === resolveRudderInstanceId()
+      && entry.orgId !== orgId
+      && entry.folderName.toLowerCase() === normalizedFolderName,
+    );
+    if (duplicate) {
+      throw new Error([
+        `Refusing to remove organization workspace '${workspaceRootPath}'.`,
+        `The folder is also mapped to organization '${duplicate.orgId}'.`,
+      ].join(" "));
+    }
+  }
+
+  const existing = await pathExists(workspaceRootPath);
+  if (!existing) return;
+  if (existing.isSymbolicLink() || !existing.isDirectory()) {
+    throw new Error(`Refusing to remove organization workspace '${workspaceRootPath}' because it is not a regular directory.`);
+  }
+  if (!await workspaceIdentityMatches(workspaceRootPath, orgId)) {
+    throw new Error(`Refusing to remove organization workspace '${workspaceRootPath}' because its identity does not match '${orgId}'.`);
+  }
+}
+
+async function recordWorkspaceCompatibilityAlias(root: string, aliasPath: string): Promise<void> {
+  const aliases = await readWorkspaceMigrationAliases(root);
+  const normalizedAliasPath = path.resolve(aliasPath);
+  if (aliases.includes(normalizedAliasPath)) return;
+  aliases.push(normalizedAliasPath);
+  await writeWorkspaceMigrationState(root, aliases);
+}
+
+async function readWorkspaceMigrationAliases(root: string): Promise<string[]> {
+  const migrationPath = path.join(root, ORGANIZATION_WORKSPACE_MIGRATION_FILE);
+  try {
+    const parsed = JSON.parse(await fs.readFile(migrationPath, "utf8")) as Partial<
+      OrganizationWorkspaceMigrationFile
+    >;
+    if (parsed.version !== 1 || !Array.isArray(parsed.compatibilityAliases)) {
+      throw new Error(`Invalid organization workspace migration state at ${migrationPath}.`);
+    }
+    return parsed.compatibilityAliases.filter((entry): entry is string => typeof entry === "string");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function writeWorkspaceMigrationState(root: string, aliases: string[]): Promise<void> {
+  const migrationPath = path.join(root, ORGANIZATION_WORKSPACE_MIGRATION_FILE);
+  const state: OrganizationWorkspaceMigrationFile = {
+    version: 1,
+    compatibilityAliases: [...new Set(aliases.map((alias) => path.resolve(alias)))].sort(),
+  };
+  const tempPath = `${migrationPath}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await fs.open(tempPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(tempPath, migrationPath);
+  await syncDirectory(root);
+}
+
+async function workspaceMigrationIncludesAlias(root: string, aliasPath: string): Promise<boolean> {
+  try {
+    const state = JSON.parse(
+      await fs.readFile(path.join(root, ORGANIZATION_WORKSPACE_MIGRATION_FILE), "utf8"),
+    ) as Partial<OrganizationWorkspaceMigrationFile>;
+    return state.version === 1
+      && Array.isArray(state.compatibilityAliases)
+      && state.compatibilityAliases.includes(path.resolve(aliasPath));
+  } catch {
+    return false;
+  }
 }
 
 async function allocateOrganizationWorkspaceFolderName(input: {
@@ -775,26 +1376,29 @@ async function allocateOrganizationWorkspaceFolderName(input: {
   orgId: string;
   orgName?: string | null;
   orgUrlKey?: string | null;
-  allowExistingBaseDirectory?: boolean;
 }): Promise<string> {
   const fallback = resolveOrganizationStorageKey(input.orgId);
   const base = sanitizeOrganizationWorkspaceFolderName(input.orgName ?? input.orgUrlKey, fallback);
   const usedFolders = new Set(
     input.map.organizations
       .filter((entry) => entry.instanceId === resolveRudderInstanceId() && entry.orgId !== input.orgId)
-      .map((entry) => entry.folderName),
+      .map((entry) => entry.folderName.toLowerCase()),
   );
   for (let attempt = 1; attempt < 10000; attempt += 1) {
     const folderName = attempt === 1 ? base : `${base}-${attempt}`;
-    if (usedFolders.has(folderName)) continue;
+    if (usedFolders.has(folderName.toLowerCase())) continue;
     const existing = await pathExists(path.resolve(input.homeDir, folderName));
     if (existing && !existing.isDirectory()) continue;
-    if (existing && input.allowExistingBaseDirectory && folderName === base) return folderName;
+    if (
+      existing
+      && folderName === base
+      && await workspaceIdentityMatches(path.resolve(input.homeDir, folderName), input.orgId)
+    ) return folderName;
     if (existing) {
       const owned = input.map.organizations.some((entry) =>
         entry.instanceId === resolveRudderInstanceId()
         && entry.orgId === input.orgId
-        && entry.folderName === folderName
+        && entry.folderName.toLowerCase() === folderName.toLowerCase()
       );
       if (!owned) continue;
     }
@@ -807,24 +1411,45 @@ export async function removeOrganizationStorage(orgId: string): Promise<{
   organizationRootPath: string;
   legacyOrganizationRootPath: string;
   workspaceRootPath: string;
+  previousDocumentsWorkspaceRootPath: string;
   legacyProjectsRootPath: string;
 }> {
-  const normalizedOrgId = validatePathSegment(orgId, "org id");
-  const organizationRootPath = resolveOrganizationRoot(normalizedOrgId);
-  const legacyOrganizationRootPath = resolveLegacyOrganizationRoot(normalizedOrgId);
-  const workspaceRootPath = resolveOrganizationWorkspaceRoot(normalizedOrgId);
-  const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
-  const removeLegacyOrganizationRoot = legacyOrganizationRootPath === organizationRootPath
-    ? []
-    : [fs.rm(legacyOrganizationRootPath, { recursive: true, force: true })];
-  await Promise.all([
-    fs.rm(organizationRootPath, { recursive: true, force: true }),
-    fs.rm(workspaceRootPath, { recursive: true, force: true }),
-    ...removeLegacyOrganizationRoot,
-    // Best-effort cleanup for legacy pre-org-workspace managed project paths.
-    fs.rm(legacyProjectsRootPath, { recursive: true, force: true }),
-  ]);
-  return { organizationRootPath, legacyOrganizationRootPath, workspaceRootPath, legacyProjectsRootPath };
+  return await updateOrganizationWorkspaceMap(async () => {
+    const normalizedOrgId = validatePathSegment(orgId, "org id");
+    const organizationRootPath = resolveOrganizationRoot(normalizedOrgId);
+    const legacyOrganizationRootPath = resolveLegacyOrganizationRoot(normalizedOrgId);
+    const workspaceRootPath = resolveOrganizationWorkspaceRoot(normalizedOrgId);
+    const previousDocumentsWorkspaceRootPath = resolvePreviousDocumentsOrganizationWorkspaceRoot(normalizedOrgId);
+    const legacyProjectsRootPath = path.resolve(resolveRudderInstanceRoot(), "projects", normalizedOrgId);
+    const mapState = await readOrganizationWorkspaceMapFileState();
+    await assertFriendlyWorkspaceRemovalOwnership(normalizedOrgId, workspaceRootPath, mapState.map);
+    const pathsToRemove = new Set([
+      organizationRootPath,
+      workspaceRootPath,
+      legacyOrganizationRootPath,
+      previousDocumentsWorkspaceRootPath,
+      legacyProjectsRootPath,
+    ]);
+    await Promise.all([...pathsToRemove].map((targetPath) =>
+      fs.rm(targetPath, { recursive: true, force: true })));
+
+    const nextOrganizations = mapState.map.organizations.filter((entry) =>
+      !(entry.instanceId === resolveRudderInstanceId() && entry.orgId === normalizedOrgId)
+    );
+    if (nextOrganizations.length !== mapState.map.organizations.length) {
+      await writeOrganizationWorkspaceMapFile(resolveOrganizationWorkspaceMapPath(), {
+        ...mapState.map,
+        organizations: nextOrganizations,
+      });
+    }
+    return {
+      organizationRootPath,
+      legacyOrganizationRootPath,
+      workspaceRootPath,
+      previousDocumentsWorkspaceRootPath,
+      legacyProjectsRootPath,
+    };
+  });
 }
 
 async function listDirectoryNames(rootPath: string): Promise<string[]> {
@@ -928,16 +1553,86 @@ async function movePath(sourcePath: string, targetPath: string): Promise<void> {
     await fs.rename(sourcePath, targetPath);
     return;
   } catch (error) {
-    if (errorCode(error) !== "EXDEV") throw error;
+    if (errorCode(error) === "EXDEV") {
+      throw organizationWorkspaceCrossDeviceMigrationError(sourcePath, targetPath);
+    }
+    throw error;
   }
+}
 
-  await fs.cp(sourcePath, targetPath, {
-    recursive: true,
-    errorOnExist: true,
-    force: false,
-    preserveTimestamps: true,
-  });
-  await fs.rm(sourcePath, { recursive: true, force: false });
+async function pathsReferenceSameDirectory(first: string, second: string): Promise<boolean> {
+  try {
+    const [firstRealPath, secondRealPath] = await Promise.all([fs.realpath(first), fs.realpath(second)]);
+    return firstRealPath === secondRealPath;
+  } catch {
+    return false;
+  }
+}
+
+async function createDirectoryCompatibilityAlias(aliasPath: string, targetPath: string): Promise<void> {
+  await fs.symlink(targetPath, aliasPath, process.platform === "win32" ? "junction" : "dir");
+  await syncDirectory(path.dirname(aliasPath));
+}
+
+function organizationWorkspaceCrossDeviceMigrationError(sourcePath: string, targetPath: string): Error {
+  return Object.assign(new Error(
+    `Cannot atomically migrate organization workspace across filesystems from ${sourcePath} to ${targetPath}.`,
+  ), { code: "RUDDER_WORKSPACE_CROSS_DEVICE_MIGRATION" });
+}
+
+async function assertWorkspaceRootMoveCanBeAtomic(sourcePath: string, targetPath: string): Promise<void> {
+  await assertPathMoveCanBeAtomic(sourcePath, targetPath);
+}
+
+async function assertPathMoveCanBeAtomic(sourcePath: string, targetPath: string): Promise<void> {
+  const sourceParentPath = path.dirname(sourcePath);
+  const targetParentPath = path.dirname(targetPath);
+  const [sourceParentStat, targetParentStat] = await Promise.all([
+    fs.stat(sourceParentPath),
+    fs.stat(targetParentPath),
+  ]);
+  const sourceVolumeRoot = path.parse(sourceParentPath).root;
+  const targetVolumeRoot = path.parse(targetParentPath).root;
+  const sameVolumeRoot = process.platform === "win32"
+    ? sourceVolumeRoot.toLowerCase() === targetVolumeRoot.toLowerCase()
+    : sourceVolumeRoot === targetVolumeRoot;
+  if (sourceParentStat.dev !== targetParentStat.dev || !sameVolumeRoot) {
+    throw organizationWorkspaceCrossDeviceMigrationError(sourcePath, targetPath);
+  }
+}
+
+async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.rename(sourcePath, targetPath);
+  } catch (error) {
+    if (errorCode(error) === "EXDEV") {
+      throw organizationWorkspaceCrossDeviceMigrationError(sourcePath, targetPath);
+    }
+    throw error;
+  }
+  try {
+    await createDirectoryCompatibilityAlias(sourcePath, targetPath);
+  } catch (error) {
+    await fs.rename(targetPath, sourcePath).catch(() => {});
+    throw error;
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(directory, "r");
+  } catch (error) {
+    if (["EISDIR", "EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) return;
+    throw error;
+  }
+  try {
+    await handle.sync().catch((error) => {
+      if (!["EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) throw error;
+    });
+  } finally {
+    await handle.close();
+  }
 }
 
 async function regularFilesHaveIdenticalContents(sourcePath: string, targetPath: string): Promise<boolean> {
@@ -984,8 +1679,11 @@ async function regularFilesHaveIdenticalContents(sourcePath: string, targetPath:
   }
 }
 
-async function archiveRetainedMigrationSource(sourceRoot: string): Promise<string> {
-  const backupHome = path.join(path.dirname(sourceRoot), MIGRATION_BACKUP_DIR_NAME);
+async function archiveRetainedMigrationSource(
+  sourceRoot: string,
+  backupParentPath = path.dirname(sourceRoot),
+): Promise<string> {
+  const backupHome = path.join(backupParentPath, MIGRATION_BACKUP_DIR_NAME);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(backupHome, `${path.basename(sourceRoot)}-${timestamp}-${randomUUID()}`);
   await fs.mkdir(backupHome, { recursive: true });
@@ -999,10 +1697,12 @@ async function mergeDirectoryContents(sourceRoot: string, targetRoot: string): P
   let retainedDuplicates = false;
 
   for (const entry of entries) {
+    if (entry.name === ORGANIZATION_WORKSPACE_MIGRATION_FILE) continue;
     const sourcePath = path.join(sourceRoot, entry.name);
     const targetPath = path.join(targetRoot, entry.name);
     const targetStat = await lstatIfExists(targetPath);
     if (!targetStat) {
+      await assertPathMoveCanBeAtomic(sourcePath, targetPath);
       await movePath(sourcePath, targetPath);
       continue;
     }
@@ -1030,10 +1730,14 @@ async function assertCanMergeDirectoryContents(sourceRoot: string, targetRoot: s
   const entries = await fs.readdir(sourceRoot, { withFileTypes: true });
 
   for (const entry of entries) {
+    if (entry.name === ORGANIZATION_WORKSPACE_MIGRATION_FILE) continue;
     const sourcePath = path.join(sourceRoot, entry.name);
     const targetPath = path.join(targetRoot, entry.name);
     const targetStat = await lstatIfExists(targetPath);
-    if (!targetStat) continue;
+    if (!targetStat) {
+      await assertPathMoveCanBeAtomic(sourcePath, targetPath);
+      continue;
+    }
     if (entry.isDirectory() && targetStat.isDirectory()) {
       await assertCanMergeDirectoryContents(sourcePath, targetPath);
       continue;
@@ -1069,7 +1773,9 @@ export async function pruneOrphanedOrganizationStorage(
   const legacyProjectsRootExists = await directoryExists(legacyProjectsRoot);
 
   const removedOrganizationDirNames = organizationDirNames.filter((dirName) =>
-    dirName !== MIGRATION_BACKUP_DIR_NAME && !liveOrgIdSet.has(dirName)
+    dirName !== MIGRATION_BACKUP_DIR_NAME
+    && !isOrganizationWorkspaceMapInternalDirectoryName(dirName)
+    && !liveOrgIdSet.has(dirName)
   );
   const removedLegacyProjectDirNames = legacyProjectDirNames;
 
