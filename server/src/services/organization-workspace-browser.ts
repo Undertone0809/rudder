@@ -23,6 +23,8 @@ import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
 import {
   listWorkspaceDirectoryNative,
+  WORKSPACE_LIST_MAX_ENTRIES,
+  WORKSPACE_LIST_MAX_PATH_BYTES,
   WorkspaceFilesNativeError,
 } from "./workspace-files-native.js";
 import { readNativeWorkspaceManifest } from "./workspace-manifest-native.js";
@@ -86,8 +88,86 @@ function toPortableRelativePath(relativePath: string) {
   return relativePath.split(path.sep).join("/");
 }
 
+function assertWorkspaceDirectoryPathBounds(directoryPath: string) {
+  if (Buffer.byteLength(directoryPath, "utf8") > WORKSPACE_LIST_MAX_PATH_BYTES) {
+    throw unprocessable("Requested path exceeds the organization Library path limit");
+  }
+}
+
+function decodeWorkspaceEntryName(value: string | Buffer) {
+  if (typeof value === "string") return value;
+  const decoded = value.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(value)) {
+    throw unprocessable("Workspace entry names must be valid UTF-8");
+  }
+  return decoded;
+}
+
+function validateWorkspaceDirectoryEntries(
+  directoryPath: string,
+  entries: OrganizationWorkspaceFileEntry[],
+) {
+  assertWorkspaceDirectoryPathBounds(directoryPath);
+  if (entries.length > WORKSPACE_LIST_MAX_ENTRIES) {
+    throw unprocessable("The organization Library directory contains too many entries");
+  }
+
+  let pathBytes = Buffer.byteLength(directoryPath, "utf8");
+  return entries.filter((entry) => {
+    const expectedPath = directoryPath ? `${directoryPath}/${entry.name}` : entry.name;
+    if (!entry.name || entry.name === "." || entry.name === ".."
+      || entry.name.includes("/") || entry.name.includes("\\") || entry.name.includes("\0")
+      || entry.path !== expectedPath || entry.path.includes("\\") || entry.path.includes("\0")
+      || entry.path.startsWith("/")
+      || entry.path.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+      throw unprocessable("Native workspace directory response contains an invalid entry");
+    }
+    pathBytes += Buffer.byteLength(entry.path, "utf8");
+    if (pathBytes > WORKSPACE_LIST_MAX_PATH_BYTES) {
+      throw unprocessable("The organization Library directory paths exceed the path limit");
+    }
+    return !shouldHideWorkspaceEntry(entry.name);
+  });
+}
+
+async function listWorkspaceDirectoryNode(
+  canonicalTarget: string,
+  directoryPath: string,
+  signal?: AbortSignal,
+): Promise<OrganizationWorkspaceFileEntry[]> {
+  signal?.throwIfAborted();
+  const rawEntries = await fs.readdir(canonicalTarget, {
+    withFileTypes: true,
+    encoding: "buffer",
+  });
+  signal?.throwIfAborted();
+  if (rawEntries.length > WORKSPACE_LIST_MAX_ENTRIES) {
+    throw unprocessable("The organization Library directory contains too many entries");
+  }
+
+  const entries = rawEntries.map((entry) => {
+    const name = decodeWorkspaceEntryName(entry.name);
+    const entryPath = directoryPath ? `${directoryPath}/${name}` : name;
+    return {
+      name,
+      path: entryPath,
+      isDirectory: entry.isDirectory(),
+    };
+  });
+  signal?.throwIfAborted();
+  return validateWorkspaceDirectoryEntries(directoryPath, entries);
+}
+
 function normalizeRequestedPath(value: string | null | undefined) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function assertPortableWorkspacePath(requestedPath: string) {
+  if (requestedPath.includes("\\")
+    || requestedPath.startsWith("/")
+    || requestedPath.split("/").some((segment) => segment === "." || segment === "..")) {
+    throw unprocessable("Requested path must stay inside the organization Library root");
+  }
 }
 
 function workspaceFileLabel(filePath: string) {
@@ -110,6 +190,7 @@ function workspaceFileReferenceFields(filePath: string, libraryEntryId: string |
 
 function resolveWithinRoot(rootPath: string, requestedPath: string) {
   const normalizedPath = normalizeRequestedPath(requestedPath);
+  assertPortableWorkspacePath(normalizedPath);
   const resolvedRoot = path.resolve(rootPath);
   const resolvedTarget = normalizedPath ? path.resolve(resolvedRoot, normalizedPath) : resolvedRoot;
   const relative = path.relative(resolvedRoot, resolvedTarget);
@@ -123,14 +204,18 @@ function resolveWithinRoot(rootPath: string, requestedPath: string) {
   };
 }
 
-async function resolveCanonicalFileWithinRoot(resolvedRoot: string, resolvedTarget: string) {
+async function resolveCanonicalPathWithinRoot(
+  resolvedRoot: string,
+  resolvedTarget: string,
+  missingMessage: string,
+) {
   const canonicalRoot = await fs.realpath(resolvedRoot);
   let canonicalTarget: string;
   try {
     canonicalTarget = await fs.realpath(resolvedTarget);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw notFound("File not found inside the organization Library");
+      throw notFound(missingMessage);
     }
     throw error;
   }
@@ -138,7 +223,18 @@ async function resolveCanonicalFileWithinRoot(resolvedRoot: string, resolvedTarg
   if (canonicalRelative.startsWith("..") || path.isAbsolute(canonicalRelative)) {
     throw unprocessable("Requested path must stay inside the organization Library root");
   }
-  return canonicalTarget;
+  return { canonicalRoot, canonicalTarget };
+}
+
+function assertNoProtectedPathAlias(
+  requestedPath: string,
+  canonicalRoot: string,
+  canonicalTarget: string,
+) {
+  const canonicalPath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
+  if (isProtectedLibraryResourcePath(canonicalPath) && !isProtectedLibraryResourcePath(requestedPath)) {
+    throw unprocessable("Requested path cannot alias a protected organization Library root");
+  }
 }
 
 function isProtectedAgentWorkspaceContainerPath(normalizedPath: string) {
@@ -406,10 +502,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
     orgId: string,
     directoryPath: string,
     entries: OrganizationWorkspaceFileEntry[],
+    signal?: AbortSignal,
   ): Promise<OrganizationWorkspaceFileEntry[]> {
     if (directoryPath !== "agents") return entries;
 
+    signal?.throwIfAborted();
     const agentDirectoriesByWorkspaceKey = await listAgentWorkspaceDirectoryMap(orgId);
+    signal?.throwIfAborted();
     return entries.map((entry) => {
       if (!entry.isDirectory) return entry;
       const agentDirectory = agentDirectoriesByWorkspaceKey.get(entry.name);
@@ -435,15 +534,25 @@ export function organizationWorkspaceBrowserService(db: Db) {
   async function attachLibraryEntryIds(
     orgId: string,
     entries: OrganizationWorkspaceFileEntry[],
+    signal?: AbortSignal,
   ): Promise<OrganizationWorkspaceFileEntry[]> {
-    return await Promise.all(entries.map(async (entry) => {
-      if (entry.isDirectory) return entry;
-      const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, entry.path);
-      return {
-        ...entry,
-        libraryEntryId: libraryEntry.id,
-      };
-    }));
+    const decoratedEntries: OrganizationWorkspaceFileEntry[] = [];
+    const batchSize = 64;
+    for (let index = 0; index < entries.length; index += batchSize) {
+      signal?.throwIfAborted();
+      const batch = entries.slice(index, index + batchSize);
+      decoratedEntries.push(...await Promise.all(batch.map(async (entry) => {
+        signal?.throwIfAborted();
+        if (entry.isDirectory) return entry;
+        const libraryEntry = await libraryEntries.getOrCreateWorkspaceFileEntry(orgId, entry.path);
+        signal?.throwIfAborted();
+        return {
+          ...entry,
+          libraryEntryId: libraryEntry.id,
+        };
+      })));
+    }
+    return decoratedEntries;
   }
 
   async function resolveWorkspaceRoot(orgId: string): Promise<WorkspaceRootResolution> {
@@ -465,8 +574,10 @@ export function organizationWorkspaceBrowserService(db: Db) {
       directoryPath = "",
       signal?: AbortSignal,
     ): Promise<OrganizationWorkspaceFileList> {
+      signal?.throwIfAborted();
       const root = await resolveWorkspaceRoot(orgId);
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, directoryPath);
+      assertWorkspaceDirectoryPathBounds(normalizedPath);
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
         return {
@@ -483,6 +594,13 @@ export function organizationWorkspaceBrowserService(db: Db) {
       if (!(await pathExistsAsDirectory(resolvedTarget))) {
         throw notFound("Directory not found inside the organization Library");
       }
+      const { canonicalRoot, canonicalTarget } = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        resolvedTarget,
+        "Directory not found inside the organization Library",
+      );
+      assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
+      signal?.throwIfAborted();
 
       const policy = resolveRudderNativeCapability({
         capability: "workspace-files",
@@ -492,8 +610,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       let unsortedEntries: OrganizationWorkspaceFileEntry[] | null = null;
       if (policy.enabled) {
         try {
-          unsortedEntries = (await listWorkspaceDirectoryNative(resolvedRoot, normalizedPath, signal))
-            .filter((entry) => !shouldHideWorkspaceEntry(entry.name));
+          unsortedEntries = await listWorkspaceDirectoryNative(resolvedRoot, normalizedPath, signal);
         } catch (error) {
           if (error instanceof WorkspaceFilesNativeError && error.pathRejected) {
             if (error.code === "workspace_directory_not_found") {
@@ -504,36 +621,43 @@ export function organizationWorkspaceBrowserService(db: Db) {
           if (!policy.fallbackAllowed || signal?.aborted) throw error;
         }
       }
+      signal?.throwIfAborted();
       if (!unsortedEntries) {
-        const nativeManifest = await readNativeWorkspaceManifest(resolvedRoot);
+        const targetIsAlias = path.resolve(canonicalTarget) !== path.resolve(resolvedTarget);
+        const nativeManifest = targetIsAlias
+          ? null
+          : await readNativeWorkspaceManifest(resolvedRoot, signal);
+        signal?.throwIfAborted();
         unsortedEntries = nativeManifest
           ? nativeManifest
             .filter((entry) => {
               const entryName = workspaceFileLabel(entry.path);
               const parentPath = entry.path.slice(0, Math.max(0, entry.path.length - entryName.length)).replace(/\/$/, "");
-              return parentPath === normalizedPath && !shouldHideWorkspaceEntry(entryName);
+              return parentPath === normalizedPath;
             })
             .map((entry) => ({
               name: workspaceFileLabel(entry.path),
               path: entry.path,
               isDirectory: entry.kind === "directory",
             }))
-          : (await fs.readdir(resolvedTarget, { withFileTypes: true }))
-            .filter((entry) => !shouldHideWorkspaceEntry(entry.name))
-            .map((entry) => {
-              const entryPath = toPortableRelativePath(path.relative(resolvedRoot, path.join(resolvedTarget, entry.name)));
-              return {
-                name: entry.name,
-                path: entryPath,
-                isDirectory: entry.isDirectory(),
-              };
-            });
+          : await listWorkspaceDirectoryNode(canonicalTarget, normalizedPath, signal);
       }
+      const stableTarget = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        canonicalTarget,
+        "Directory not found inside the organization Library",
+      );
+      if (path.resolve(stableTarget.canonicalTarget) !== path.resolve(canonicalTarget)) {
+        throw unprocessable("Requested path changed while reading the organization Library");
+      }
+      unsortedEntries = validateWorkspaceDirectoryEntries(normalizedPath, unsortedEntries);
       signal?.throwIfAborted();
       const decoratedEntries = await attachLibraryEntryIds(
         orgId,
-        await decorateWorkspaceEntries(orgId, normalizedPath, unsortedEntries),
+        await decorateWorkspaceEntries(orgId, normalizedPath, unsortedEntries, signal),
+        signal,
       );
+      signal?.throwIfAborted();
       const entries: OrganizationWorkspaceFileEntry[] = decoratedEntries.sort((left, right) => {
         if (left.isDirectory !== right.isDirectory) return left.isDirectory ? -1 : 1;
         return (left.displayLabel ?? left.name).localeCompare(right.displayLabel ?? right.name);
@@ -593,6 +717,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         for (const entry of rawEntries) {
           if (entries.length >= limit) break;
           if (shouldHideWorkspaceEntry(entry.name)) continue;
+          if (entry.isSymbolicLink()) continue;
           const entryPath = directoryPath ? `${directoryPath}/${entry.name}` : entry.name;
           if (isProtectedLibraryResourcePath(entryPath)) continue;
           if (entry.isDirectory()) {
@@ -650,6 +775,12 @@ export function organizationWorkspaceBrowserService(db: Db) {
       if (!(await pathExistsAsFile(resolvedTarget))) {
         throw notFound("File not found inside the organization Library");
       }
+      const { canonicalRoot, canonicalTarget } = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        resolvedTarget,
+        "File not found inside the organization Library",
+      );
+      assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
 
       const mappedContentType = getWorkspaceFileContentType(normalizedPath || resolvedTarget);
       const mappedPreviewKind = mappedContentType
@@ -659,7 +790,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         || mappedPreviewKind === "pdf"
         || mappedPreviewKind === "video"
         || mappedPreviewKind === "audio";
-      const buffer = streamsInline ? null : await fs.readFile(resolvedTarget);
+      const buffer = streamsInline ? null : await fs.readFile(canonicalTarget);
       const contentType = mappedContentType
         ?? getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer ?? undefined)
         ?? "application/octet-stream";
@@ -732,8 +863,14 @@ export function organizationWorkspaceBrowserService(db: Db) {
       if (!(await pathExistsAsFile(resolvedTarget))) {
         throw notFound("File not found inside the organization Library");
       }
+      const { canonicalRoot, canonicalTarget } = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        resolvedTarget,
+        "File not found inside the organization Library",
+      );
+      assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
 
-      const buffer = await fs.readFile(resolvedTarget);
+      const buffer = await fs.readFile(canonicalTarget);
       return {
         normalizedPath,
         originalFilename: path.basename(resolvedTarget),
@@ -754,7 +891,12 @@ export function organizationWorkspaceBrowserService(db: Db) {
       if (!(await pathExistsAsDirectory(resolvedRoot))) {
         throw notFound("The shared Library root is not available on this machine yet.");
       }
-      const canonicalTarget = await resolveCanonicalFileWithinRoot(resolvedRoot, resolvedTarget);
+      const { canonicalRoot, canonicalTarget } = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        resolvedTarget,
+        "File not found inside the organization Library",
+      );
+      assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
       const entry = await statWorkspaceEntry(canonicalTarget);
       if (!entry?.isFile()) {
         throw notFound("File not found inside the organization Library");

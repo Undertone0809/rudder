@@ -137,16 +137,38 @@ async function ensureSession(rootPath: string) {
   return session;
 }
 
-async function waitForRequiredReady(session: WatchSession) {
+async function waitForRequiredReady(session: WatchSession, signal?: AbortSignal) {
   const deadline = Date.now() + REQUIRED_READY_TIMEOUT_MS;
   while (session.state !== "ready") {
+    signal?.throwIfAborted();
     if (session.state === "unavailable" || session.exited) {
       throw new NativeWorkspaceManifestError(session, "watch_unavailable", "Native workspace manifest watcher is unavailable");
     }
     if (Date.now() >= deadline) {
       throw new NativeWorkspaceManifestError(session, "ready_timeout", `Native workspace manifest watcher did not become ready within ${REQUIRED_READY_TIMEOUT_MS}ms`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal?.removeEventListener("abort", onAbort);
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(finish, 10);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        clearTimeout(timer);
+        onAbort();
+      }
+    });
   }
 }
 
@@ -180,27 +202,37 @@ function parseManifest(value: unknown, rootPath: string): NativeWorkspaceManifes
   return entries;
 }
 
-export async function readNativeWorkspaceManifest(rootPath: string): Promise<NativeWorkspaceManifestEntry[] | null> {
+export async function readNativeWorkspaceManifest(
+  rootPath: string,
+  signal?: AbortSignal,
+): Promise<NativeWorkspaceManifestEntry[] | null> {
+  signal?.throwIfAborted();
   const policy = resolveRudderNativeCapability({ capability: "workspace-manifest", env: process.env });
   if (!policy.enabled) return null;
   let session: WatchSession;
   try {
     session = await ensureSession(rootPath);
   } catch (error) {
+    signal?.throwIfAborted();
     if (policy.required) throw error;
     return null;
   }
-  if (policy.required) await waitForRequiredReady(session);
+  if (policy.required) await waitForRequiredReady(session, signal);
+  signal?.throwIfAborted();
   if (session.state !== "ready") {
     return null;
   }
   try {
     const stat = await fs.stat(session.manifestPath);
+    signal?.throwIfAborted();
     if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) throw new Error("Native workspace manifest exceeds its read boundary");
-    const entries = parseManifest(JSON.parse(await fs.readFile(session.manifestPath, "utf8")), rootPath);
+    const raw = await fs.readFile(session.manifestPath, { encoding: "utf8", signal });
+    signal?.throwIfAborted();
+    const entries = parseManifest(JSON.parse(raw), rootPath);
     if (!entries) throw new Error("Native workspace manifest is invalid");
     return entries;
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     await fs.rm(session.manifestPath, { force: true }).catch(() => undefined);
     session.state = "dirty";
     if (policy.required) {

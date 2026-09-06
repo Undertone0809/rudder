@@ -7,8 +7,8 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const PROTOCOL_VERSION = 1;
-const MAX_ENTRIES = 10_000;
-const MAX_PATH_BYTES = 4 * 1024 * 1024;
+export const WORKSPACE_LIST_MAX_ENTRIES = 10_000;
+export const WORKSPACE_LIST_MAX_PATH_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -20,6 +20,8 @@ const REJECTED_PATH_CODES = new Set([
   "non_utf8_workspace_path",
   "manifest_entry_limit",
   "manifest_path_limit",
+  "workspace_list_path_invalid",
+  "workspace_list_path_limit",
 ]);
 
 export type NativeWorkspaceDirectoryEntry = {
@@ -33,6 +35,7 @@ type NativeResponse = {
   capability?: unknown;
   operation?: unknown;
   protocolVersion?: unknown;
+  accepted?: unknown;
   directoryPath?: unknown;
   entries?: unknown;
   errorCode?: unknown;
@@ -80,17 +83,41 @@ function timeoutMs() {
     : DEFAULT_TIMEOUT_MS;
 }
 
+function decodeNativeUtf8(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Buffer.isBuffer(value)) {
+    throw new WorkspaceFilesNativeError("workspace_list_output_invalid", true, false);
+  }
+  const decoded = value.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(value)) {
+    throw new WorkspaceFilesNativeError("workspace_list_invalid_utf8", true, false);
+  }
+  return decoded;
+}
+
 function parseEntries(response: NativeResponse, expectedDirectoryPath: string): NativeWorkspaceDirectoryEntry[] {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new WorkspaceFilesNativeError("workspace_list_envelope_mismatch", true, false);
+  }
+  if (expectedDirectoryPath.includes("\\")
+    || expectedDirectoryPath.startsWith("/")
+    || (expectedDirectoryPath !== ""
+      && expectedDirectoryPath.split("/").some((segment) => !segment || segment === "." || segment === ".."))
+    || Buffer.byteLength(expectedDirectoryPath, "utf8") > WORKSPACE_LIST_MAX_PATH_BYTES) {
+    throw new WorkspaceFilesNativeError("workspace_list_path_invalid", false, false);
+  }
   if (response.ok !== true
     || response.capability !== "workspace.list"
     || response.operation !== "listWorkspaceDirectory"
     || response.protocolVersion !== PROTOCOL_VERSION
+    || response.accepted !== false
     || response.directoryPath !== expectedDirectoryPath
     || !Array.isArray(response.entries)
-    || response.entries.length > MAX_ENTRIES) {
+    || response.entries.length > WORKSPACE_LIST_MAX_ENTRIES) {
     throw new WorkspaceFilesNativeError("workspace_list_envelope_mismatch", true, false);
   }
   const seen = new Set<string>();
+  let pathBytes = Buffer.byteLength(expectedDirectoryPath, "utf8");
   return response.entries.map((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new WorkspaceFilesNativeError("workspace_list_entry_invalid", true, false);
@@ -103,11 +130,17 @@ function parseEntries(response: NativeResponse, expectedDirectoryPath: string): 
       || typeof entry.path !== "string" || !entry.path
       || entry.path !== expectedPath
       || typeof entry.isDirectory !== "boolean"
-      || entry.name.includes("/") || entry.name.includes("\\")
+      || entry.name === "." || entry.name === ".."
+      || entry.name.includes("/") || entry.name.includes("\\") || entry.name.includes("\0")
       || entry.path.includes("\\") || entry.path.startsWith("/")
+      || entry.path.includes("\0")
       || entry.path.split("/").some((segment) => !segment || segment === "." || segment === "..")
       || seen.has(entry.path)) {
       throw new WorkspaceFilesNativeError("workspace_list_entry_invalid", true, false);
+    }
+    pathBytes += Buffer.byteLength(entry.path, "utf8");
+    if (pathBytes > WORKSPACE_LIST_MAX_PATH_BYTES) {
+      throw new WorkspaceFilesNativeError("workspace_list_path_limit", true, false);
     }
     seen.add(entry.path);
     return {
@@ -128,24 +161,24 @@ export async function listWorkspaceDirectoryNative(
     "list",
     path.resolve(rootPath),
     directoryPath,
-    String(MAX_ENTRIES),
-    String(MAX_PATH_BYTES),
+    String(WORKSPACE_LIST_MAX_ENTRIES),
+    String(WORKSPACE_LIST_MAX_PATH_BYTES),
   ]);
   let stdout: string;
   let stderr: string;
   try {
     const result = await execFileAsync(command.command, command.args, {
-      encoding: "utf8",
+      encoding: "buffer",
       timeout: timeoutMs(),
       maxBuffer: MAX_OUTPUT_BYTES,
       windowsHide: true,
       signal,
     });
-    stdout = result.stdout;
-    stderr = result.stderr;
+    stdout = decodeNativeUtf8(result.stdout);
+    stderr = decodeNativeUtf8(result.stderr);
   } catch (error) {
     const details = error as { stdout?: unknown; code?: unknown; killed?: unknown; signal?: unknown; name?: unknown };
-    const output = typeof details.stdout === "string" ? details.stdout : "";
+    const output = details.stdout === undefined ? "" : decodeNativeUtf8(details.stdout);
     const lines = output.trim().split(/\r?\n/).filter(Boolean);
     if (lines.length === 1) {
       try {

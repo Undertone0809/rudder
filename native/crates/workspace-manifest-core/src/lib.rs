@@ -169,7 +169,7 @@ fn portable_path(relative: &Path) -> Result<String, ManifestError> {
                 let value = value
                     .to_str()
                     .ok_or_else(|| ManifestError::safe("non_utf8_workspace_path"))?;
-                if value.contains('\0') {
+                if value.contains('\0') || value.contains('\\') {
                     return Err(ManifestError::safe("unsafe_workspace_path"));
                 }
                 values.push(value);
@@ -226,8 +226,11 @@ pub fn list_directory(
     }
 
     let directory_path = portable_path(requested_path)?;
+    if directory_path.len() as u64 > limits.max_path_bytes {
+        return Err(ManifestError::safe("manifest_path_limit"));
+    }
     let mut entries = Vec::new();
-    let mut path_bytes = 0_u64;
+    let mut path_bytes = directory_path.len() as u64;
     let children = fs::read_dir(&canonical_target)
         .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?;
     for child in children {
@@ -261,6 +264,11 @@ pub fn list_directory(
             path: entry_path,
             is_directory: metadata.is_dir() && !metadata.file_type().is_symlink(),
         });
+    }
+    let stable_target = fs::canonicalize(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_read_failed", error))?;
+    if stable_target != canonical_target || !stable_target.starts_with(&canonical_root) {
+        return Err(ManifestError::safe("workspace_path_escape"));
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(DirectoryListResult {

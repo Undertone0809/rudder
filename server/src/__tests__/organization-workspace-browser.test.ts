@@ -224,6 +224,82 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.listFiles(orgId, "leak")).rejects.toMatchObject({ status: 422 });
   });
 
+  it.runIf(process.platform !== "win32")("blocks internal symlink aliases into protected agent roots in the Node fallback", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Node Workspace Protected Alias Org",
+      urlKey: deriveOrganizationUrlKey("Node Workspace Protected Alias Org"),
+      issuePrefix: "NWPA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const protectedSkills = path.join(workspaceRoot, "agents", "worker--1234", "skills");
+    await fs.mkdir(protectedSkills, { recursive: true });
+    await fs.mkdir(path.join(workspaceRoot, "projects"), { recursive: true });
+    await fs.symlink(protectedSkills, path.join(workspaceRoot, "projects", "protected-link"));
+
+    await expect(workspaceBrowser.listFiles(orgId, "projects/protected-link")).rejects.toMatchObject({ status: 422 });
+  });
+
+  it.runIf(process.platform !== "win32")("lists internal directory aliases from their canonical target in the Node fallback", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Node Workspace Internal Alias Org",
+      urlKey: deriveOrganizationUrlKey("Node Workspace Internal Alias Org"),
+      issuePrefix: "NWIA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const canonicalDirectory = path.join(workspaceRoot, "projects", "real");
+    await fs.mkdir(canonicalDirectory, { recursive: true });
+    await fs.writeFile(path.join(canonicalDirectory, "README.md"), "# Alias\n", "utf8");
+    await fs.symlink(canonicalDirectory, path.join(workspaceRoot, "projects", "link"));
+
+    await expect(workspaceBrowser.listFiles(orgId, "projects/link")).resolves.toMatchObject({
+      directoryPath: "projects/link",
+      entries: [expect.objectContaining({
+        name: "README.md",
+        path: "projects/link/README.md",
+        isDirectory: false,
+      })],
+    });
+  });
+
+  it("rejects non-portable workspace path separators before selecting a listing engine", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Portable Path Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Portable Path Org"),
+      issuePrefix: "WPP",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await expect(workspaceBrowser.listFiles(orgId, "projects\\nested")).rejects.toMatchObject({ status: 422 });
+  });
+
   it("shows the current agent name for agent workspace directories while preserving workspaceKey paths", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
