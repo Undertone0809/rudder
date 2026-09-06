@@ -735,4 +735,74 @@ test.describe("New issue project context", () => {
     await expect(dialog.getByText("Execution workspace", { exact: true })).toHaveCount(0);
     await expect(dialog.getByText("Reuse existing workspace", { exact: true })).toHaveCount(0);
   });
+
+  test("keeps a long Description independently scrollable inside the modal", async ({ page }, testInfo) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-Description-Scroll-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
+    await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    const description = dialog.getByLabel("Issue Description");
+    const descriptionText = Array.from(
+      { length: 80 },
+      (_, index) => `Description line ${index + 1}: ${"Long content keeps the editor usable. ".repeat(3)}`,
+    ).join("\n");
+    const descriptionRegion = dialog.locator('[data-slot="new-issue-description"]');
+
+    await expect(descriptionRegion).toBeVisible();
+    await description.fill(descriptionText);
+
+    const readScrollMetrics = () => descriptionRegion.evaluate((element) => {
+      const region = element as HTMLElement;
+      return {
+        clientHeight: region.clientHeight,
+        scrollHeight: region.scrollHeight,
+        scrollTop: region.scrollTop,
+        overflowY: window.getComputedStyle(region).overflowY,
+      };
+    });
+    await expect.poll(async () => {
+      const metrics = await readScrollMetrics();
+      return metrics.scrollHeight > metrics.clientHeight;
+    }).toBe(true);
+    await expect.poll(async () => (await readScrollMetrics()).overflowY).toBe("auto");
+
+    await descriptionRegion.evaluate((element) => {
+      (element as HTMLElement).scrollTop = 0;
+    });
+    const pageScrollTop = await page.evaluate(() => document.scrollingElement?.scrollTop ?? window.scrollY);
+    await descriptionRegion.hover();
+    await page.mouse.wheel(0, 900);
+    await expect.poll(async () => (await readScrollMetrics()).scrollTop).toBeGreaterThan(0);
+    expect(await page.evaluate(() => document.scrollingElement?.scrollTop ?? window.scrollY)).toBe(pageScrollTop);
+
+    const bottomScrollTop = await readScrollMetrics();
+    await descriptionRegion.evaluate((element) => {
+      const region = element as HTMLElement;
+      region.scrollTop = region.scrollHeight;
+    });
+    await expect.poll(async () => (await readScrollMetrics()).scrollTop).toBeGreaterThan(0);
+    await page.mouse.wheel(0, -900);
+    await expect.poll(async () => (await readScrollMetrics()).scrollTop).toBeLessThan(
+      bottomScrollTop.scrollHeight - bottomScrollTop.clientHeight,
+    );
+
+    await expect(dialog.getByRole("button", { name: "Create Issue" })).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("new-issue-description-scroll.png"),
+      fullPage: false,
+    });
+  });
 });
