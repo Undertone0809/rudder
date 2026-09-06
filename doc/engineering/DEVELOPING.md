@@ -359,12 +359,14 @@ runtime descriptor instead of polling only the requested port.
 Local agent runtimes must not rely on Git's hostname fallback identity. Codex local runs preserve the
 operator `HOME` for normal host CLI auth, but write `user.useConfigOnly=true` into a Rudder-owned
 Git config sidecar under the managed `CODEX_HOME` and point Git at it with `GIT_CONFIG_GLOBAL`.
-The sidecar includes the host global Git identity only when a safe identity can be resolved from
-explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`, the workspace repo-local config, or the host global
-config. Runtime-created git worktrees also get repo-local `user.useConfigOnly=true`.
-Rudder does not store or inject a separate confirmed Git identity. If no safe identity is available,
-`git commit` fails with Git's auto-detection-disabled error instead of creating a `*@*.local`
-fallback commit.
+Identity resolution prefers a valid workspace repo-local `user.name` and `user.email`; when that
+identity exists, inherited `GIT_AUTHOR_*` / `GIT_COMMITTER_*` values are removed so a runtime's
+service identity cannot replace the repository's author. If no repo-local identity exists, a safe
+explicit environment identity is used, followed by the host global config. Runtime-created git
+worktrees and provision commands use the same policy and also get repo-local
+`user.useConfigOnly=true`.
+If no safe identity is available, `git commit` fails with Git's auto-detection-disabled error
+instead of creating a `*@*.local` fallback commit.
 
 Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Codex, Claude, Pi,
 Gemini, Cursor, and OpenCode local runs keep child `HOME` as the operator home and use

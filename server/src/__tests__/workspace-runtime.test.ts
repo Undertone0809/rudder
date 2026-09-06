@@ -235,6 +235,61 @@ describe("realizeExecutionWorkspace", () => {
     }
   });
 
+  it("keeps repo-local identity for provision commands despite inherited runtime identity", async () => {
+    const repoRoot = await createTempRepo();
+    const restoreGitEnv = clearInheritedGitIdentityEnv();
+    const previousHome = process.env.HOME;
+    const previousGitConfigNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
+    process.env.HOME = path.join(repoRoot, "empty-home");
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    process.env.GIT_AUTHOR_NAME = "Rudder";
+    process.env.GIT_AUTHOR_EMAIL = "285064165+Rudderhq@users.noreply.github.com";
+    process.env.GIT_COMMITTER_NAME = "Rudder";
+    process.env.GIT_COMMITTER_EMAIL = "285064165+Rudderhq@users.noreply.github.com";
+
+    try {
+      const workspace = await realizeExecutionWorkspace({
+        base: {
+          baseCwd: repoRoot,
+          source: "project_primary",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          repoUrl: null,
+          repoRef: "HEAD",
+        },
+        config: {
+          workspaceStrategy: {
+            type: "git_worktree",
+            branchTemplate: "{{issue.identifier}}-{{slug}}",
+            provisionCommand:
+              "git commit --allow-empty -m 'Provision commit' && git log -1 --format='%an <%ae> | %cn <%ce>' > .rudder-provision-identity",
+          },
+        },
+        issue: {
+          id: "issue-identity-provision",
+          identifier: "PAP-449",
+          title: "Preserve repository Git identity",
+        },
+        agent: {
+          id: "agent-1",
+          name: "Codex Coder",
+          orgId: "organization-1",
+        },
+      });
+
+      await expect(fs.readFile(path.join(workspace.cwd, ".rudder-provision-identity"), "utf8")).resolves.toBe(
+        "Rudder Test <rudder@example.com> | Rudder Test <rudder@example.com>\n",
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousGitConfigNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = previousGitConfigNoSystem;
+      restoreGitEnv();
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("creates and reuses a git worktree for an issue-scoped branch", async () => {
     const repoRoot = await createTempRepo();
 
