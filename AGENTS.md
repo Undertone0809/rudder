@@ -2,35 +2,12 @@
 
 Guidance for human and AI contributors working in this repository.
 
-## 0. Operating Contract
-
-Use judgment appropriate to GPT-6 Astra. Optimize for a complete, verified
-outcome within the user's authority; process is a means to that outcome.
-
-- An action request authorizes investigation, scoped implementation, repair,
-  verification, and the Git handoff in section 10. Read-only questions and
-  requests for a plan or review alone do not authorize implementation.
-- Carry forward the user's objective and authorization across retries, skill
-  handoffs, status questions, and context compaction. Do not ask again merely
-  because a workflow enters another stage.
-- Resolve ordinary choices from repository context. Clarify only a material
-  ambiguity about behavior, scope, authority, or irreversible consequences.
-  Prepare the reviewable result first where possible, ask once, and continue
-  independent work while waiting. Missing permission blocks its dependent
-  action, not the entire task.
-- Fix recoverable failures within scope. A failing test or reviewer finding is
-  work to resolve, not a reason to hand the task back. Stop with a partial result
-  only when a named external dependency or decision prevents useful progress.
-- These project-wide rules own authorization, review depth, and completion.
-  Maintainer skills supply specialized procedures; their templates and examples
-  do not create additional universal gates. Preserve concrete safety constraints.
-- Read canonical skills only. Historical `*-workspace/skill-snapshot*` copies
-  are evaluation evidence, not competing instructions.
-
 ## 1. Purpose
 
 Rudder is open-source software for assigning, running, reviewing, and improving agent work. It connects goals, tasks, knowledge, runs, reviews, budgets, and workflows so agents can work within clear boundaries, collaborate, and move work forward.
-The current product behavior contract is the guarded Product Logic Registry in `doc/product/`.
+Current behavior is defined by the implementation and tests. Use proposals in
+`doc/plans/` for design decisions that need discussion; no separate product
+contract or registry update is required.
 The product north-star metric is the weekly count of real agent-work loops successfully completed through Rudder end-to-end.
 
 ## 1.1 Repository Identity
@@ -55,7 +32,7 @@ change contributor/product-development guidance, edit `doc/`.
 For product behavior or architecture work, start here:
 
 1. `doc/product/PRODUCT.md`
-2. `doc/product/README.md`
+2. Relevant implementation, tests, and existing proposals
 
 For narrow docs, tooling, or skill edits, read the affected guidance and its
 callers directly. Expand only when product behavior or another boundary is affected.
@@ -73,16 +50,13 @@ Then choose the route that matches the work:
   - `doc/engineering/DEVELOPING.md`
   - `doc/engineering/DATABASE.md`
   - `doc/engineering/DEPLOYMENT-MODES.md`
-  - relevant `doc/product/domains/**` contracts when behavior changes
 - CLI/task-surface work:
   - `doc/README.md`
   - `doc/engineering/CLI.md`
-  - relevant `doc/product/domains/issues/**`, `doc/product/domains/work-routing/**`, and `doc/product/domains/agents/**` contracts
 - Visible UI or interaction design work:
   - `doc/README.md`
   - `doc/product/PRODUCT.md`
   - `doc/engineering/DESIGN.md`
-  - relevant `doc/product/domains/**` contracts for user-visible behavior
 - Release/publishing work:
   - `doc/README.md`
   - `doc/engineering/RELEASING.md`
@@ -92,7 +66,6 @@ Then choose the route that matches the work:
   - `doc/README.md`
   - `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`
   - `doc/engineering/PLUGIN_RUNTIME_CONTRACT.md`
-  - `doc/product/domains/plugins/**`
 
 `doc/archive/` contains historical or superseded docs for archaeology. Do not use archived docs as current behavior contracts.
 `doc/README.md` is the navigation hub for choosing the right doc route.
@@ -176,10 +149,6 @@ If you change schema/API behavior, update all impacted layers:
 - Budget hard-stop auto-pause behavior
 - Activity logging for mutating actions
 
-1. Do not replace current product contracts wholesale unless asked.
-
-Prefer additive updates. Keep `doc/product/**` as the current source of product truth. `doc/archive/**` is historical context only.
-
 1. Keep bundled skill docs synchronized.
 
 If you change a built-in Rudder skill under `server/resources/bundled-skills/<slug>/`, update the sibling `references/` docs and any contributor-facing docs that describe the bundled-skill location or behavior when they are affected. Do not leave `SKILL.md` content on a newer API contract than the docs that point to it.
@@ -196,23 +165,6 @@ durable record. Ordinary implementation does not require a plan document. In
 read-only plan mode, present the plan without writing files; persist it once
 implementation is authorized if it remains useful.
 New plan docs should start with the standard YAML frontmatter described in `doc/engineering/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
-
-1. Treat `doc/product/` as the guarded Product Logic Registry.
-
-`doc/product/` is the current product-behavior contract. Agents may read it at any time, but must not semantically edit `doc/product/**` unless the current user explicitly authorizes that edit or has approved a proposal/plan that includes the product doc delta.
-
-Do not infer `doc/product/**` edit permission from implementation approval. User phrases such as "start", "proceed", "implement it", "fix it", "optimize it", "ship it", "add tests", "sync contracts", or similar task approval do not authorize guarded Product Logic Registry edits by themselves. Approval must explicitly mention updating `doc/product/**`, updating the Product Logic Contract/Registry, or approving a concrete product-doc delta.
-
-When changing product logic, identify the affected contract IDs and run
-`pnpm product-logic:check` before handoff. Distinguish restoring existing behavior
-from changing the contract. A compatible fix needs no routine registry approval.
-
-If a requested behavior needs a registry delta without edit authorization,
-prepare the concrete proposed delta outside `doc/product/**`, complete independent
-authorized implementation and verification, and ask once for that delta. Do not
-edit the registry or claim the overall contract change complete while it remains
-pending. An existing approval for that exact delta remains valid. Do not ask a
-generic registry-sync question after every feature or ask again after approval.
 
 1. Require end-to-end coverage for feature work.
 
@@ -415,8 +367,7 @@ A change is done when all are true:
 
 1. The requested result exists and has been verified at the level claimed.
 2. Applicable checks and section 9.1 review gates pass; material limits are explicit.
-3. Affected code/API contracts and documentation agree. A pending guarded product
-   delta is reported as pending, not as a completed contract change.
+3. Affected code, API types, tests, and user-facing documentation agree.
 4. UI changes include current screenshots; other artifacts include useful evidence.
 5. The authorized Git handoff is complete, or a concrete external blocker is reported.
 

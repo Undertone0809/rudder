@@ -6,8 +6,7 @@ status: active
 # Plugin Import And Activation Contract
 
 Rudder Plugins are distribution and lifecycle records. There is no Plugin
-runtime. Product behavior is owned by
-`doc/product/domains/plugins/lifecycle-capabilities.md`; package authoring is
+runtime. Verify behavior against the plugin implementation and tests; package authoring is
 described in `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`.
 
 ## Import Boundary

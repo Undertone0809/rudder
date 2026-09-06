@@ -1,8 +1,8 @@
 # Public documentation authoring
 
 This guide defines how Rudder's English and Simplified Chinese public
-documentation is written. It applies to `docs/`; it does not replace the
-product-behavior contracts in `doc/product/`.
+documentation is written. It applies to `docs/`; verify behavior against
+implementation and tests.
 
 ## Start from the reader's job
 
@@ -107,4 +107,4 @@ pnpm docs:validate
 
 `docs:integrity` checks deterministic structure. `docs:alignment` only reports
 review reminders; it does not claim semantic agreement between languages or
-with the Product Logic Registry.
+with the implementation.

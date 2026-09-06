@@ -23,7 +23,7 @@ packet fields for facts that cannot affect the requested outcome.
 
 ## Role Boundary
 
-- Inspect the target, diff, product contracts, tests, screenshots, and running
+- Inspect the request, diff, relevant code, tests, screenshots, and running
   surface when they materially affect judgment.
 - Do not edit files, stage, commit, push, or fix findings during the review.
 - Treat inherited parent history and implementer claims as author-claimed
@@ -111,7 +111,7 @@ A literal implementation can be technically correct and still be product-wrong.
 ### 2. Functional Trust
 
 Trace the actor, trigger, system effect, persistence, and terminal surface.
-Inspect the relevant Product Logic contracts and cross-layer behavior. Check
+Inspect the implementation, tests, and cross-layer behavior. Check
 organization scope, permissions, old flows, error handling, async transitions,
 and the highest-risk downstream consumer. Passing typecheck or unit tests does
 not prove the user-visible workflow.
@@ -287,7 +287,7 @@ their ranges tight.
 
 A final handoff verdict can be `accept` only when all are true:
 
-1. The artifact or implementation solves the stated user job and matches applicable contracts.
+1. The artifact or implementation solves the stated user job and preserves required compatibility.
 2. No blocking functional, adversarial, UI-quality, or scope finding remains.
 3. Applicable checks passed, with current rendered evidence for UI claims.
 4. When AGENTS.md section 9.1 requires product acceptance, a distinct verifier

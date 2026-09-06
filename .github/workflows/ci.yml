@@ -372,14 +372,6 @@ jobs:
           pnpm native:build
           echo "RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
 
-      - name: Product logic registry
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm product-logic:check
-
-      - name: Product logic registry tests
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm product-logic:test
-
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=2

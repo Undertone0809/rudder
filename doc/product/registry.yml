@@ -1,3 +1,4 @@
+# Historical registry. Retired on 2026-09-06; see README.md.
 contracts:
   ISSUE.IDENTITY.001:
     owner: product

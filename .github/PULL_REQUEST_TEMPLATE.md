@@ -29,20 +29,6 @@
 
 -
 
-## Product Logic Alignment
-
-<!--
-  Required for product, workflow, runtime, CLI, API, or visible UI behavior
-  changes. Use `product_doc_impact: none` only when the change has no product
-  logic impact and explain why.
--->
-
-- Product docs read:
-- Affected contract IDs:
-- Product doc impact: updated / none / deferred
-- Product doc update authorization or defer link:
-- Tests or E2E proving affected contracts:
-
 ## Risks
 
 <!--
@@ -59,6 +45,5 @@
 - [ ] I have added or updated tests where applicable
 - [ ] If this change affects the UI, I have included before/after screenshots
 - [ ] I have updated relevant documentation to reflect my changes
-- [ ] I have run `pnpm product-logic:check` when this change touches product logic or `doc/product/**`
 - [ ] I have considered and documented any risks above
 - [ ] I will address all Greptile and reviewer comments before requesting merge

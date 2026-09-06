@@ -72,7 +72,6 @@ describe("unified delivery workflows", () => {
 
   it("runs source, docs, platform, and fast packaged Desktop gates in Test", () => {
     expect(testWorkflow).toContain("Architecture ratchet");
-    expect(testWorkflow).toContain("pnpm product-logic:check");
     expect(testWorkflow).toContain("pnpm test:run --maxWorkers=2");
     expect(testWorkflow).toContain("Ensure Electron runtime dependency");
     expect(testWorkflow).toContain("pnpm --filter @rudderhq/desktop rebuild electron");
