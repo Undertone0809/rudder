@@ -602,8 +602,17 @@ export function organizationRoutes(
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     assertAgentLibraryProjectPath(req, filePath, "file");
-    const result = await workspaceBrowser.readFile(orgId, filePath);
-    res.json(result);
+    const controller = new AbortController();
+    const abortOnDisconnect = () => controller.abort();
+    req.once("aborted", abortOnDisconnect);
+    res.once("close", abortOnDisconnect);
+    try {
+      const result = await workspaceBrowser.readFile(orgId, filePath, controller.signal);
+      res.json(result);
+    } finally {
+      req.off("aborted", abortOnDisconnect);
+      res.off("close", abortOnDisconnect);
+    }
   });
 
   const sendWorkspaceFileContent = async (req: Request, res: Response, next: NextFunction) => {

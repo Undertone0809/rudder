@@ -22,6 +22,10 @@ import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } f
 import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
 import {
+  readWorkspaceFileNative,
+  WorkspaceFileNativeError,
+} from "./workspace-file-native.js";
+import {
   listWorkspaceDirectoryNative,
   WORKSPACE_LIST_MAX_ENTRIES,
   WORKSPACE_LIST_MAX_PATH_BYTES,
@@ -813,9 +817,15 @@ export function organizationWorkspaceBrowserService(
       return decoratedEntries.sort((left, right) => left.path.localeCompare(right.path));
     },
 
-    async readFile(orgId: string, filePath: string): Promise<OrganizationWorkspaceFileDetail> {
+    async readFile(
+      orgId: string,
+      filePath: string,
+      signal?: AbortSignal,
+    ): Promise<OrganizationWorkspaceFileDetail> {
+      signal?.throwIfAborted();
       const root = await resolveWorkspaceRoot(orgId);
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
+      signal?.throwIfAborted();
       const rootExists = await pathExistsAsDirectory(resolvedRoot);
       if (!rootExists) {
         return {
@@ -853,7 +863,34 @@ export function organizationWorkspaceBrowserService(
         || mappedPreviewKind === "pdf"
         || mappedPreviewKind === "video"
         || mappedPreviewKind === "audio";
-      const buffer = streamsInline ? null : await fs.readFile(canonicalTarget);
+      let nativeContent: string | null = null;
+      if (!streamsInline && mappedPreviewKind === "text" && mappedContentType) {
+        const policy = resolveRudderNativeCapability({
+          capability: "workspace-files",
+          env: process.env,
+          legacyToggleEnvs: ["RUDDER_NATIVE_WORKSPACE_FILES"],
+        });
+        if (policy.enabled) {
+          const canonicalFilePath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
+          try {
+            const nativeResult = await readWorkspaceFileNative(canonicalRoot, canonicalFilePath, signal);
+            nativeContent = nativeResult.content;
+          } catch (error) {
+            if (error instanceof WorkspaceFileNativeError && error.pathRejected) {
+              if (error.code === "workspace_file_not_found") {
+                throw notFound("File not found inside the organization Library");
+              }
+              throw unprocessable("Requested path must stay inside the organization Library root");
+            }
+            if (!policy.fallbackAllowed || signal?.aborted) throw error;
+          }
+        }
+      }
+      signal?.throwIfAborted();
+      const buffer = streamsInline || nativeContent !== null
+        ? null
+        : await fs.readFile(canonicalTarget);
+      signal?.throwIfAborted();
       const contentType = mappedContentType
         ?? getWorkspaceFileContentType(normalizedPath || resolvedTarget, buffer ?? undefined)
         ?? "application/octet-stream";
@@ -902,7 +939,7 @@ export function organizationWorkspaceBrowserService(
         libraryEntryId: libraryEntry.id,
         ...workspaceFileReferenceFields(normalizedPath, libraryEntry.id),
         rootExists: true,
-        content: buffer?.toString("utf8") ?? "",
+        content: nativeContent ?? buffer?.toString("utf8") ?? "",
         contentType,
         previewKind,
         contentPath: null,
