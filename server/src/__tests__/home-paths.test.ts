@@ -363,6 +363,26 @@ describe("home paths", () => {
     expect(resolveOrganizationWorkspaceRoot("organization-1")).toBe(first.root);
   });
 
+  it("keeps reserved friendly names away from shared workspace directories", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-friendly-reserved-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-reserved-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const layout = await ensureOrganizationWorkspaceLayout({
+      id: "reserved-name-org",
+      name: "Projects",
+      urlKey: "organizations",
+    });
+
+    expect(layout.root).toBe(path.join(workspaceHome, "reserved-name-org"));
+    expect(layout.root).not.toBe(path.join(workspaceHome, "projects"));
+    expect(layout.root).not.toBe(path.join(workspaceHome, "organizations"));
+  });
+
   it("keeps the friendly organization workspace map valid during concurrent layout creation", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-friendly-concurrent-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-friendly-concurrent-");
@@ -422,6 +442,39 @@ describe("home paths", () => {
     );
 
     expect(() => resolveOrganizationWorkspaceRoot(orgId)).toThrow(/Invalid organization workspace folder mapping/);
+  });
+
+  it("rejects reserved mappings before organization cleanup can remove sibling data", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reserved-mapping-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-reserved-mapping-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const sharedProjectsRoot = path.join(workspaceHome, "projects");
+    const sentinel = path.join(sharedProjectsRoot, "keep.txt");
+    await fs.mkdir(sharedProjectsRoot, { recursive: true });
+    await fs.writeFile(sentinel, "preserve me\n", "utf8");
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [{
+          instanceId: "test-instance",
+          orgId,
+          folderName: "projects",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    expect(() => resolveOrganizationWorkspaceRoot(orgId)).toThrow(/reserved/);
+    await expect(removeOrganizationStorage(orgId)).rejects.toThrow(/reserved/);
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("preserve me\n");
   });
 
   it("serializes direct organization storage migrations across processes", async () => {

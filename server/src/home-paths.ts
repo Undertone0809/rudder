@@ -34,6 +34,8 @@ const RESERVED_ORGANIZATION_WORKSPACE_NAMES = new Set([
   ORGANIZATION_WORKSPACE_MAP_FILE,
   ORGANIZATION_WORKSPACE_MAP_LOCK,
   MIGRATION_BACKUP_DIR_NAME,
+  "organizations",
+  "projects",
   ".rudder",
   "backups",
   "data",
@@ -181,9 +183,14 @@ function resolveAgentWorkspacePathSegment(agent: string | AgentWorkspaceLocator)
 export function resolveOrganizationWorkspaceRoot(orgId: string): string {
   const normalizedOrgId = resolveOrganizationStorageKey(orgId);
   if (usesFriendlyOrganizationWorkspaceHome()) {
+    const mappedFolderName = readOrganizationWorkspaceFolderName(orgId);
+    const folderName = mappedFolderName ?? normalizedOrgId;
+    if (RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(folderName.toLowerCase())) {
+      throw new Error(`Invalid organization workspace folder mapping for '${orgId}': '${folderName}' is reserved.`);
+    }
     return path.resolve(
       resolveOrganizationWorkspaceHomeDir(),
-      readOrganizationWorkspaceFolderName(orgId) ?? normalizedOrgId,
+      folderName,
     );
   }
   return path.resolve(
@@ -1088,13 +1095,19 @@ function sanitizeFriendlyPathSegment(value: string | null | undefined, fallback 
 }
 
 function sanitizeOrganizationWorkspaceFolderName(value: string | null | undefined, fallback: string): string {
+  const safeFallback = sanitizeFriendlyPathSegment(fallback, "_default")
+    .replace(/[.]+$/g, "")
+    .toLowerCase();
+  const normalizedFallback = RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(safeFallback)
+    ? `organization-${safeFallback}`
+    : safeFallback;
   const sanitized = sanitizeFriendlyPathSegment(value, fallback)
     .replace(/[.]+$/g, "")
     .toLowerCase();
   const normalized = sanitized && !RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(sanitized)
     ? sanitized
-    : fallback;
-  return normalized || fallback;
+    : normalizedFallback;
+  return normalized || normalizedFallback;
 }
 
 function isOrganizationWorkspaceMapInternalDirectoryName(name: string): boolean {
@@ -1180,9 +1193,13 @@ function readOrganizationWorkspaceFolderName(orgId: string): string | null {
     if (folderName !== record.folderName) {
       throw new Error("Organization workspace folder mapping must not contain leading or trailing whitespace.");
     }
+    if (RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(folderName.toLowerCase())) {
+      throw new Error(`Organization workspace folder mapping uses reserved folder '${folderName}'.`);
+    }
     return folderName;
   } catch (error) {
-    throw new Error(`Invalid organization workspace folder mapping for '${orgId}'.`, { cause: error });
+    const detail = error instanceof Error && error.message ? ` ${error.message}` : "";
+    throw new Error(`Invalid organization workspace folder mapping for '${orgId}'.${detail}`, { cause: error });
   }
 }
 
