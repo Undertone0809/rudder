@@ -493,9 +493,9 @@ export function Issues() {
   });
 
   useEffect(() => {
-    if (!isFetching) return;
+    if (!isFetching || isLoadingMoreIssues) return;
     clearBoardPagination();
-  }, [clearBoardPagination, isFetching]);
+  }, [clearBoardPagination, isFetching, isLoadingMoreIssues]);
 
   const issues = useMemo(() => {
     const byId = new Map<string, Issue>();

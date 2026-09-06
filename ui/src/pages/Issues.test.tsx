@@ -32,6 +32,7 @@ const mockState = vi.hoisted(() => ({
   initialIssues: [] as Array<{ id: string; status: string; title?: string; updatedAt?: Date | string }>,
   hasNextPage: false,
   isFetching: false,
+  isFetchingNextPage: false,
   refetchIssues: vi.fn(),
 }));
 
@@ -52,7 +53,7 @@ vi.mock("@tanstack/react-query", () => ({
       fetchNextPage: vi.fn(),
       hasNextPage: mockState.hasNextPage,
       isFetching: mockState.isFetching,
-      isFetchingNextPage: false,
+      isFetchingNextPage: mockState.isFetchingNextPage,
       isLoading: false,
       refetch: mockState.refetchIssues,
     };
@@ -200,6 +201,7 @@ beforeEach(() => {
   mockState.initialIssues = [];
   mockState.hasNextPage = false;
   mockState.isFetching = false;
+  mockState.isFetchingNextPage = false;
   vi.mocked(issuesApi.list).mockReset();
   mockState.refetchIssues.mockReset();
   mockState.search = "?scope=drafts";
@@ -414,6 +416,32 @@ describe("Issues board pagination", () => {
 
     expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
       .not.toContain("lane-only-1");
+  });
+
+  it("preserves lane-only records while the global query fetches another page", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{ id: "global-1", status: "todo" }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "lane-only-1",
+      status: "todo",
+      title: "Lane-only record",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
+
+    mockState.isFetching = true;
+    mockState.isFetchingNextPage = true;
+    rerenderIssues?.();
+
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
   });
 });
 
