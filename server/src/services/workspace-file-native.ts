@@ -23,6 +23,8 @@ const REJECTED_PATH_CODES = new Set([
   "manifest_path_limit",
 ]);
 
+const REJECTED_CONTENT_CODES = new Set(["non_utf8_workspace_file"]);
+
 export type NativeWorkspaceFileRead = {
   filePath: string;
   byteSize: number;
@@ -49,6 +51,7 @@ export class WorkspaceFileNativeError extends Error {
     readonly fallbackAllowed: boolean,
     readonly pathRejected: boolean,
     readonly limitExceeded = code === "workspace_file_size_limit",
+    readonly contentRejected = code === "non_utf8_workspace_file",
   ) {
     super(`Native workspace file read failed: ${code}`);
   }
@@ -193,11 +196,13 @@ export async function readWorkspaceFileNative(
         if (errorCode) {
           const pathRejected = REJECTED_PATH_CODES.has(errorCode);
           const limitExceeded = errorCode === "workspace_file_size_limit";
+          const contentRejected = REJECTED_CONTENT_CODES.has(errorCode);
           throw new WorkspaceFileNativeError(
             errorCode,
-            !pathRejected && !limitExceeded,
+            !pathRejected && !limitExceeded && !contentRejected,
             pathRejected,
             limitExceeded,
+            contentRejected,
           );
         }
       } catch (parsedError) {
@@ -344,11 +349,16 @@ export async function readWorkspaceFileNode(
       || stableMetadata.size !== openedStat.size) {
       throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
     }
+    const content = bytes.subarray(0, offset);
+    const decoded = content.toString("utf8");
+    if (!Buffer.from(decoded, "utf8").equals(content)) {
+      throw new WorkspaceFileNativeError("non_utf8_workspace_file", false, false, false, true);
+    }
     return {
       filePath,
       byteSize: openedStat.size,
       modifiedMillis: Math.max(0, Math.floor(openedStat.mtimeMs)),
-      content: bytes.subarray(0, offset).toString("utf8"),
+      content: decoded,
     };
   } catch (error) {
     if (signal?.aborted) throw cancelledError();

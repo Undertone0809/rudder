@@ -266,6 +266,35 @@ describe("organization workspace browser", () => {
     });
   });
 
+  it("keeps explicit Node workspace reads bounded", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Node Workspace Bounded Read Org",
+      urlKey: deriveOrganizationUrlKey("Node Workspace Bounded Read Org"),
+      issuePrefix: "NWBR",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "large.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, Buffer.alloc(1_000_001, 97));
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/large.md")).rejects.toMatchObject({
+      status: 422,
+    });
+
+    await fs.writeFile(filePath, Buffer.from([0xc3, 0x28]));
+    await expect(workspaceBrowser.readFile(orgId, "projects/large.md")).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
   it.runIf(process.platform !== "win32")("fails closed when a listed directory symlink escapes the Library root", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);

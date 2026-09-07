@@ -71,6 +71,18 @@ describe("native workspace file reads", () => {
     });
   });
 
+  it("rejects invalid UTF-8 in the Node fallback", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(root);
+    await fs.writeFile(path.join(root, "invalid.md"), Buffer.from([0xc3, 0x28]));
+
+    await expect(readWorkspaceFileNode(root, "invalid.md")).rejects.toMatchObject({
+      code: "non_utf8_workspace_file",
+      fallbackAllowed: false,
+      contentRejected: true,
+    });
+  });
+
   it("closes an in-flight Node fallback read when the request is aborted", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
     cleanupDirs.add(root);
