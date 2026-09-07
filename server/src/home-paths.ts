@@ -1618,10 +1618,7 @@ async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targe
   }
 }
 
-async function syncDirectory(directory: string): Promise<void> {
-  // Windows does not provide a usable directory handle for this metadata-only
-  // durability step. The file itself is synced before publication.
-  if (process.platform === "win32") return;
+async function syncDirectory(directory: string): Promise<void> { if (process.platform === "win32") return;
   let handle: Awaited<ReturnType<typeof fs.open>>;
   try {
     handle = await fs.open(directory, "r");
