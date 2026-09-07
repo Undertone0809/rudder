@@ -26,6 +26,93 @@ test.describe("New issue project context", () => {
 
     const dialog = page.getByRole("dialog", { name: "New issue" });
     await expect(dialog).toBeVisible();
+
+    await expect(dialog.getByText("NEW", { exact: true })).toHaveCount(0);
+    const modalLayout = await dialog.evaluate((dialogElement) => {
+      const closeButton = dialogElement.querySelector<HTMLButtonElement>(
+        'button[aria-label="Close new issue dialog"]',
+      );
+      const dialogRect = dialogElement.getBoundingClientRect();
+      const closeRect = closeButton?.getBoundingClientRect();
+      const hasLegacyHeader = Array.from(dialogElement.children).some((child) => {
+        const className = typeof child.className === "string" ? child.className : "";
+        const classTokens = className.split(/\s+/);
+        return classTokens.includes("justify-between")
+          && classTokens.includes("border-b")
+          && classTokens.includes("border-border");
+      });
+
+      return {
+        closeIsDirectChild: closeButton?.parentElement === dialogElement,
+        closePosition: closeButton ? getComputedStyle(closeButton).position : null,
+        hasLegacyHeader,
+        closeInsideDialog: Boolean(
+          closeRect
+          && closeRect.top >= dialogRect.top
+          && closeRect.left >= dialogRect.left
+          && closeRect.right <= dialogRect.right
+          && closeRect.bottom <= dialogRect.bottom,
+        ),
+      };
+    });
+    expect(modalLayout).toEqual({
+      closeIsDirectChild: true,
+      closePosition: "absolute",
+      hasLegacyHeader: false,
+      closeInsideDialog: true,
+    });
+
+    await dialog.getByRole("button", { name: "Close new issue dialog" }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test("keeps the close control anchored and usable at a narrow mobile width", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-Narrow-Modal-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    const dialog = page.getByRole("dialog", { name: "New issue" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("NEW", { exact: true })).toHaveCount(0);
+
+    const modalLayout = await dialog.evaluate((dialogElement) => {
+      const closeButton = dialogElement.querySelector<HTMLButtonElement>(
+        'button[aria-label="Close new issue dialog"]',
+      );
+      const dialogRect = dialogElement.getBoundingClientRect();
+      const closeRect = closeButton?.getBoundingClientRect();
+      return {
+        viewportWidth: window.innerWidth,
+        closeIsDirectChild: closeButton?.parentElement === dialogElement,
+        closePosition: closeButton ? getComputedStyle(closeButton).position : null,
+        closeInsideDialog: Boolean(
+          closeRect
+          && closeRect.top >= dialogRect.top
+          && closeRect.left >= dialogRect.left
+          && closeRect.right <= dialogRect.right
+          && closeRect.bottom <= dialogRect.bottom,
+        ),
+      };
+    });
+    expect(modalLayout).toEqual({
+      viewportWidth: 390,
+      closeIsDirectChild: true,
+      closePosition: "absolute",
+      closeInsideDialog: true,
+    });
+
     await dialog.getByRole("button", { name: "Close new issue dialog" }).click();
     await expect(dialog).toBeHidden();
   });
