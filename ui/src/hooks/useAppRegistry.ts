@@ -91,6 +91,10 @@ export function useAppRegistry(enabled: boolean) {
       || definitionsQuery.data !== undefined
     ),
   );
+  const registryError = appsQuery.error
+    ?? otherAppsQueries.find((query) => query.error)?.error
+    ?? definitionsQuery.error
+    ?? null;
   const localEntries = useMemo<LocalAppEntry[]>(() => (
     managedCatalogReady
       ? (definitionsQuery.data ?? [])
@@ -111,5 +115,5 @@ export function useAppRegistry(enabled: boolean) {
     [localEntries, managedEntries],
   );
 
-  return { appsQuery, definitionsQuery, entries, localApps, registryReady };
+  return { appsQuery, definitionsQuery, entries, localApps, registryReady, registryError };
 }

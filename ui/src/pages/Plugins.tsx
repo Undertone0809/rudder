@@ -23,7 +23,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useTheme } from "@/context/ThemeContext";
-import { appRoute } from "@/lib/apps-workspace";
+import { useAppRegistry } from "@/hooks/useAppRegistry";
+import {
+  appBuildStatusLabel,
+  appRoute,
+  requestAppDirectOpen,
+  type AppEntry,
+} from "@/lib/apps-workspace";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
@@ -58,14 +64,71 @@ import {
   Plus,
   Search,
   ShieldCheck,
-  Sparkles,
   Unplug,
   Upload,
   Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type HubTab = "plugins" | "skills" | "showcase";
+export type HubTab = "plugins" | "skills" | "apps";
+
+export function resolveHubTab(value: string | null): HubTab | null {
+  if (value === "showcase") return "apps";
+  if (value === "plugins" || value === "skills" || value === "apps") return value;
+  return null;
+}
+
+export function appEntryTitle(entry: AppEntry) {
+  return entry.kind === "managed" ? entry.app.name : entry.definition.title;
+}
+
+export function appEntryStatus(entry: AppEntry) {
+  return entry.kind === "managed" && !entry.definition
+    ? appBuildStatusLabel(entry.app.buildStatus)
+    : "On this device";
+}
+
+export function filterAppEntries(entries: readonly AppEntry[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [...entries];
+  return entries.filter((entry) => {
+    const kind = entry.kind === "managed" ? "organization app app builder" : "local app device";
+    return `${appEntryTitle(entry)} ${appEntryStatus(entry)} ${kind}`
+      .toLowerCase()
+      .includes(normalizedQuery);
+  });
+}
+
+export function openAppEntry(
+  entry: AppEntry,
+  organizationId: string | null,
+  navigate: (path: string) => void,
+) {
+  if (organizationId && entry.definition) requestAppDirectOpen(organizationId, entry.key);
+  navigate(appRoute(entry.key));
+}
+
+function isRudderLocalAppProjection(plugin: RudderInstalledPlugin) {
+  return plugin.components.some((component) => (
+    component.type === "app" && component.metadata.projectionKind === "rudder_local_app"
+  ));
+}
+
+function AppCatalogIcon({ entry }: { entry: AppEntry }) {
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)]">
+      {entry.definition ? (
+        <LocalAppIdentityIcon
+          className="h-full w-full rounded-[inherit]"
+          iconDataUrl={entry.definition.iconDataUrl}
+          testId="app-catalog-icon"
+        />
+      ) : (
+        <AppWindow className="h-4.5 w-4.5 text-[color:var(--accent-base)]" aria-hidden />
+      )}
+    </div>
+  );
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -525,9 +588,10 @@ export function Plugins() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedTab = searchParams.get("tab") as HubTab | null;
+  const requestedTab = searchParams.get("tab");
   const requestedPluginId = searchParams.get("plugin");
-  const explicitTab = requestedTab && ["plugins", "skills", "showcase"].includes(requestedTab) ? requestedTab : null;
+  const explicitTab = resolveHubTab(requestedTab);
+  const tab: HubTab = explicitTab ?? "plugins";
   const [search, setSearch] = useState("");
   const [importReport, setImportReport] = useState<RudderPluginImportReport | null>(null);
   const [detailPlugin, setDetailPlugin] = useState<RudderInstalledPlugin | null>(null);
@@ -550,6 +614,11 @@ export function Plugins() {
   const skillFolderInputRef = useRef<HTMLInputElement | null>(null);
   const [skillUploadOpen, setSkillUploadOpen] = useState(searchParams.get("create") === "upload");
   const [uploadedSkills, setUploadedSkills] = useState<string[]>([]);
+  const {
+    entries: appEntries,
+    registryError: appRegistryError,
+    registryReady: appRegistryReady,
+  } = useAppRegistry(tab === "apps");
 
   const directoryQuery = useQuery({
     queryKey: queryKeys.rudderPlugins.directory(selectedOrganizationId ?? "__none__"),
@@ -744,17 +813,17 @@ export function Plugins() {
   });
 
   const normalizedSearch = search.trim().toLowerCase();
-  const installed = useMemo(() => (directoryQuery.data?.installed ?? []).filter((plugin) =>
-    !normalizedSearch || `${plugin.displayName} ${plugin.description ?? ""} ${plugin.publisher ?? ""}`.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.installed, normalizedSearch]);
-  const localApps = useMemo(() => (directoryQuery.data?.localApps ?? []).filter((app) =>
-    !normalizedSearch || app.name.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.localApps, normalizedSearch]);
+  const installed = useMemo(() => (directoryQuery.data?.installed ?? [])
+    .filter((plugin) => !isRudderLocalAppProjection(plugin))
+    .filter((plugin) =>
+      !normalizedSearch || `${plugin.displayName} ${plugin.description ?? ""} ${plugin.publisher ?? ""}`.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.installed, normalizedSearch]);
   const discover = useMemo(() => (catalogQuery.data?.entries ?? []).filter((plugin) =>
     !normalizedSearch || `${plugin.displayName} ${plugin.shortDescription} ${plugin.developer} ${plugin.category}`.toLowerCase().includes(normalizedSearch)), [catalogQuery.data?.entries, normalizedSearch]);
   const configuredDiscover = useMemo(() => (directoryQuery.data?.discover ?? []).filter((plugin) =>
     !normalizedSearch || `${plugin.displayName} ${plugin.description ?? ""} ${plugin.publisher ?? ""}`.toLowerCase().includes(normalizedSearch)), [directoryQuery.data?.discover, normalizedSearch]);
   const skills = useMemo(() => (skillsQuery.data ?? []).filter((skill) =>
     !normalizedSearch || `${skill.name} ${skill.description ?? ""} ${skill.sourceLabel ?? ""}`.toLowerCase().includes(normalizedSearch)), [skillsQuery.data, normalizedSearch]);
-  const tab: HubTab = explicitTab ?? "plugins";
+  const filteredAppEntries = useMemo(() => filterAppEntries(appEntries, search), [appEntries, search]);
   const installedCatalogIcons = useMemo(() => new Map(
     (directoryQuery.data?.installed ?? []).map((plugin) => {
       const catalogEntry = (catalogQuery.data?.entries ?? []).find((entry) => entry.installedPluginId === plugin.id);
@@ -792,7 +861,7 @@ export function Plugins() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={tab === "plugins" ? "Search plugins" : tab === "skills" ? "Search skills" : "Search showcase"}
+            placeholder={tab === "plugins" ? "Search plugins" : tab === "skills" ? "Search skills" : "Search apps"}
             aria-label="Search Hub"
             data-testid="hub-header-search"
             className="h-8 border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] pl-8 text-sm"
@@ -857,6 +926,18 @@ export function Plugins() {
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
+        {tab === "apps" ? (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => navigate("/apps")}
+            aria-label="Build App"
+            data-testid="hub-build-app"
+          >
+            <Wrench className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Build App</span>
+          </Button>
+        ) : null}
       </>,
     );
   }, [
@@ -864,6 +945,7 @@ export function Plugins() {
     createSkillInChat,
     inspectMutation.isPending,
     marketplaceMutation.isPending,
+    navigate,
     search,
     selectedOrganizationId,
     setHeaderActions,
@@ -882,13 +964,13 @@ export function Plugins() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={tab === "plugins" ? "Search plugins" : tab === "skills" ? "Search skills" : "Search showcase"}
+            placeholder={tab === "plugins" ? "Search plugins" : tab === "skills" ? "Search skills" : "Search apps"}
             aria-label="Search Hub"
             className="h-8 border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] pl-8 text-sm"
           />
         </div>
         <nav className="flex gap-1" aria-label="Hub views">
-          {(["plugins", "skills", "showcase"] as const).map((item) => (
+          {(["plugins", "skills", "apps"] as const).map((item) => (
             <button
               key={item}
               type="button"
@@ -910,26 +992,30 @@ export function Plugins() {
         {tab === "plugins" && directoryQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{directoryQuery.error.message}</div> : null}
         {tab === "plugins" && catalogQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{catalogQuery.error.message}</div> : null}
         {tab === "skills" && skillsQuery.error ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{skillsQuery.error.message}</div> : null}
+        {tab === "apps" && appRegistryError ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{appRegistryError instanceof Error ? appRegistryError.message : "Could not load Apps."}</div> : null}
         {actionError && !detailPlugin && !importReport && !assigningPlugin ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{actionError}</div> : null}
-        {(tab === "plugins" ? directoryQuery.isLoading : tab === "skills" ? skillsQuery.isLoading : false) ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : null}
+        {(tab === "plugins"
+          ? directoryQuery.isLoading
+          : tab === "skills"
+            ? skillsQuery.isLoading
+            : !appRegistryReady && !appRegistryError) ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div> : null}
 
         {tab === "plugins" && !directoryQuery.isLoading ? (
           <div className="mx-auto max-w-5xl">
             <section>
               <div className="mb-3 flex items-end justify-between gap-3">
-                <div><h2 className="text-sm font-semibold">Your plugins</h2><p className="mt-0.5 text-xs text-muted-foreground">Installed packages and private Apps available to this Organization.</p></div>
-                <span className="text-xs text-muted-foreground">{installed.length + localApps.length}</span>
+                <div><h2 className="text-sm font-semibold">Your plugins</h2><p className="mt-0.5 text-xs text-muted-foreground">Installed packages available to this Organization.</p></div>
+                <span className="text-xs text-muted-foreground">{installed.length}</span>
               </div>
-              {installed.length + localApps.length === 0 ? (
+              {installed.length === 0 ? (
                 <div data-testid="hub-empty-installed" className="flex flex-col gap-3 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 py-4 sm:flex-row sm:items-center">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)]"><Blocks className="h-4 w-4 text-muted-foreground" /></div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium">No plugins yet</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Import a Codex-compatible Plugin or build a private App.</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Import a Codex-compatible Plugin.</p>
                   </div>
                   <div className="flex shrink-0 gap-2">
                     <Button size="sm" variant="outline" onClick={() => folderInputRef.current?.click()}><PackageOpen className="h-3.5 w-3.5" />Import Plugin</Button>
-                    <Button size="sm" variant="ghost" onClick={() => navigate("/apps")}><Wrench className="h-3.5 w-3.5" />Build App</Button>
                   </div>
                 </div>
               ) : (
@@ -953,19 +1039,6 @@ export function Plugins() {
                         </div>
                       </div>
                       {plugin.components.length === 1 && plugin.components[0]?.type === "app" && plugin.components[0]?.metadata.appKey ? <ExternalLink className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />}
-                    </button>
-                  ))}
-                  {localApps.map((app) => (
-                    <button key={app.id} type="button" disabled={!app.appKey} onClick={() => app.appKey && navigate(appRoute(app.appKey))} className="group flex min-h-[104px] items-start gap-3 rounded-md border bg-card p-3 text-left transition-colors hover:bg-muted/35 disabled:cursor-not-allowed disabled:opacity-55">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/40">
-                        <AppWindow className="h-4.5 w-4.5" aria-hidden />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{app.name}</span><span className={cn("text-[11px]", app.appKey ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{app.appKey ? "Ready" : app.buildStatus.replaceAll("_", " ")}</span></div>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">Private interactive capability built in Rudder.</p>
-                        <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"><span>Local App</span><span className="ml-auto">Rudder</span></div>
-                      </div>
-                      {app.appKey ? <ExternalLink className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" /> : <Wrench className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />}
                     </button>
                   ))}
                 </div>
@@ -1110,25 +1183,53 @@ export function Plugins() {
           </div>
         ) : null}
 
-        {tab === "showcase" ? (
+        {tab === "apps" && appRegistryReady ? (
           <div className="mx-auto max-w-5xl">
-            <div className="mb-4"><h2 className="text-sm font-semibold">Showcase</h2><p className="mt-0.5 text-xs text-muted-foreground">Starting points from effective multi-Agent workflows.</p></div>
-            <div className="divide-y border-y">
-              {[
-                { icon: Sparkles, title: "Research brief", copy: "Combine a research Plugin with a verification Agent before the result returns to the team.", action: "Explore plugins", run: () => setSearchParams({ tab: "plugins" }) },
-                { icon: BookOpen, title: "Team writing standard", copy: "Turn an existing playbook into a Skill that every writing Agent can share.", action: "Create Skill", run: createSkillInChat },
-                { icon: AppWindow, title: "Internal operations console", copy: "Build a private App when the work needs an interactive surface, records, and repeated actions.", action: "Build App", run: () => navigate("/apps") },
-              ].filter((item) => !normalizedSearch || `${item.title} ${item.copy}`.toLowerCase().includes(normalizedSearch)).map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div key={item.title} className="flex items-center gap-4 py-4">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/40"><Icon className="h-4.5 w-4.5" /></div>
-                    <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">{item.title}</h3><p className="mt-0.5 text-sm text-muted-foreground">{item.copy}</p></div>
-                    <Button variant="outline" size="sm" onClick={item.run}>{item.action}<ChevronRight className="h-3.5 w-3.5" /></Button>
-                  </div>
-                );
-              })}
+            <div className="mb-4 flex items-end justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold">Apps</h2>
+              </div>
+              <span className="text-xs text-muted-foreground">{filteredAppEntries.length}</span>
             </div>
+            {filteredAppEntries.length === 0 ? (
+              <div data-testid="hub-empty-apps" className="flex flex-col gap-3 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] px-4 py-4 sm:flex-row sm:items-center">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)]"><AppWindow className="h-4 w-4 text-muted-foreground" /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{appEntries.length === 0 ? "No Apps registered" : "No Apps match this search"}</p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => navigate("/apps")}><Wrench className="h-3.5 w-3.5" />Build App</Button>
+              </div>
+            ) : (
+              <div data-testid="hub-app-catalog" className="divide-y border-y">
+                {filteredAppEntries.map((entry) => {
+                  const title = appEntryTitle(entry);
+                  const status = appEntryStatus(entry);
+                  const statusReady = status === "Ready" || status === "On this device";
+                  return (
+                    <button
+                      key={entry.key}
+                      type="button"
+                      className="group flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-[color:var(--surface-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      aria-label={`Open ${title}`}
+                      data-app-entry-key={entry.key}
+                      onClick={() => openAppEntry(entry, selectedOrganizationId, navigate)}
+                    >
+                      <AppCatalogIcon entry={entry} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                          <span className="min-w-0 break-words text-sm font-semibold leading-5">{title}</span>
+                          <span className={cn("shrink-0 break-words text-[11px]", statusReady ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{status}</span>
+                        </span>
+                        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                          <span>{entry.kind === "managed" ? "Organization App" : "Local App"}</span>
+                        </span>
+                      </span>
+                      <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ) : null}
       </main>
