@@ -127,22 +127,23 @@ content-equivalent metadata/ref changes, document equivalence and rebind the
 receipt with the issuing agent; do not copy mismatched identities into a packet
 or replay unrelated product journeys. Recheck exact-source CI for releases.
 
-### 5. Integrate main-first, then recheck
+### 5. Integrate through a protected PR, then recheck
 
 For an explicitly authorized local integration:
 
 1. Inspect current target `main`, remote ref/SHA, branch tips, and the dirty
    path/index baseline. Record all six (or however many) candidate branch refs
    rather than collapsing them into “the branches”.
-2. Attempt the smallest direct main-first operation. If it is conflict-free
-   and no concurrent-write/destructive risk exists, keep the named checkout.
+2. Prepare integration on a working branch and open/update its PR targeting
+   `main`. Never push commits directly to `main` or bypass protection, including
+   for release preparation or version handoffs.
 3. On a real conflict or risk trigger, create a detached isolated worktree and
    perform the merge/rebase there. Validate the exact candidate tree, tests,
    and receipts before touching the shared ref.
-4. Use compare-and-swap semantics against the recorded expected-old target
-   SHA. If the target or remote moved, stop, record non-fast-forward/drift,
-   refreeze against the new base, and reverify. Never silently merge onto a
-   newer target.
+4. Merge only with integration authority, current review/verifier evidence,
+   and passing required PR checks. If the target or remote moved, record drift,
+   update the PR against the new base, and reverify affected behavior. Record
+   the actual merged SHA and exact-source CI; do not update the shared ref by hand.
 5. Never run `git read-tree` against the shared checkout's live index. A ref
    update does not require an index update. If a disposable index view is
    needed for comparison, set `GIT_INDEX_FILE` to an explicit temporary path,

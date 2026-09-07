@@ -14,6 +14,29 @@ import {
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const tempRoots = [];
 
+function mockGitHub(repo, { failAfterCreate = false } = {}) {
+  const dir = join(dirname(repo), "bin");
+  mkdirSync(dir);
+  const state = join(dirname(repo), "pr.json");
+  const calls = join(dirname(repo), "gh-calls.jsonl");
+  writeFileSync(join(dir, "gh"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
+if (args[0] !== "pr") process.exit(2);
+if (args[1] === "list") {
+  console.log(fs.existsSync(${JSON.stringify(state)}) ? fs.readFileSync(${JSON.stringify(state)}, "utf8") : "[]");
+} else if (args[1] === "create") {
+  const url = "https://github.com/test/release/pull/1";
+  fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify([{ url }]));
+  if (${failAfterCreate}) process.exit(1);
+  console.log(url);
+} else process.exit(2);
+`);
+  chmodSync(join(dir, "gh"), 0o755);
+  return { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, calls };
+}
+
 function exec(command, args, cwd) {
   return execFileSync(command, args, { cwd, encoding: "utf8" });
 }
@@ -81,7 +104,7 @@ describe("next release version handoff", () => {
     );
   });
 
-  it("plans a direct main handoff without mutating a real temporary repository", () => {
+  it("plans a PR handoff without mutating a real temporary repository", () => {
     const repo = createReleaseRepo();
     const before = exec("git", ["rev-parse", "HEAD"], repo).trim();
     const beforeBranch = exec("git", ["branch", "--show-current"], repo).trim();
@@ -100,7 +123,7 @@ describe("next release version handoff", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("from 0.5.1 -> 0.5.2");
-    expect(result.stdout).toContain("push the release-maintenance commit directly");
+    expect(result.stdout).toContain("open a pull request");
     expect(exec("git", ["rev-parse", "HEAD"], repo).trim()).toBe(before);
     expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe(beforeBranch);
     expect(exec("git", ["status", "--porcelain"], repo)).toBe("");
@@ -155,8 +178,13 @@ describe("next release version handoff", () => {
     );
   }, 15_000);
 
-  it("pushes one idempotent release-maintenance commit directly to main", () => {
+  it("opens one idempotent PR while a protected remote rejects all main pushes", () => {
     const repo = createReleaseRepo();
+    const { env, calls } = mockGitHub(repo);
+    const originalHead = exec("git", ["rev-parse", "HEAD"], repo).trim();
+    const hook = join(dirname(repo), "remote.git", "hooks", "update");
+    writeFileSync(hook, '#!/bin/sh\n[ "$1" != "refs/heads/main" ]\n');
+    chmodSync(hook, 0o755);
     const outputFile = join(repo, "..", "github-output-update.txt");
     writeFileSync(outputFile, "");
 
@@ -166,23 +194,25 @@ describe("next release version handoff", () => {
     ], {
       cwd: repo,
       encoding: "utf8",
-      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+      env: { ...env, GITHUB_OUTPUT: outputFile },
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Advanced origin/main to 0.5.2");
+    expect(result.stdout).toContain("proposed at https://github.com/test/release/pull/1");
     expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe("main");
     exec("git", ["fetch", "origin"], repo);
-    const remoteHead = exec("git", ["rev-parse", "origin/main"], repo).trim();
+    const remoteHead = exec("git", ["rev-parse", "origin/codex/release-v0.5.2"], repo).trim();
+    expect(exec("git", ["rev-parse", "origin/main"], repo).trim()).toBe(originalHead);
+    expect(exec("git", ["rev-parse", "HEAD"], repo).trim()).toBe(originalHead);
     expect(
-      JSON.parse(exec("git", ["show", "origin/main:cli/package.json"], repo))
+      JSON.parse(exec("git", ["show", "origin/codex/release-v0.5.2:cli/package.json"], repo))
         .version,
     ).toBe("0.5.2");
     expect(exec("git", ["show", "-s", "--format=%s", remoteHead], repo).trim()).toBe(
       "chore(release): start v0.5.2 [skip release]",
     );
-    expect(readFileSync(outputFile, "utf8")).toContain("action=updated");
-    expect(readFileSync(outputFile, "utf8")).not.toContain("branch=");
+    expect(readFileSync(outputFile, "utf8")).toContain("action=proposed");
+    expect(readFileSync(outputFile, "utf8")).toContain("branch=codex/release-v0.5.2");
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
 
     writeFileSync(outputFile, "");
@@ -192,59 +222,56 @@ describe("next release version handoff", () => {
     ], {
       cwd: repo,
       encoding: "utf8",
-      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+      env: { ...env, GITHUB_OUTPUT: outputFile },
     });
 
     expect(retry.status, retry.stderr).toBe(0);
-    expect(retry.stdout).toContain("main already advanced to 0.5.2");
-    expect(exec("git", ["rev-parse", "origin/main"], repo).trim()).toBe(remoteHead);
-    expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
+    expect(retry.stdout).toContain("proposed at https://github.com/test/release/pull/1");
+    expect(exec("git", ["rev-parse", "origin/main"], repo).trim()).toBe(originalHead);
+    expect(exec("git", ["rev-parse", "origin/codex/release-v0.5.2"], repo).trim()).toBe(remoteHead);
+    expect(readFileSync(outputFile, "utf8")).toContain("action=proposed");
     expect(readFileSync(outputFile, "utf8")).toContain(`head_sha=${remoteHead}`);
+    expect(readFileSync(calls, "utf8").split("\n").filter((line) => line.includes('"create"'))).toHaveLength(1);
   }, 15_000);
 
-  it("accepts an identical main handoff created by a concurrent run", () => {
+  it("recovers an unknown PR-create outcome without creating a duplicate", () => {
     const repo = createReleaseRepo();
-    const root = dirname(repo);
-    const hook = join(repo, ".git", "hooks", "pre-push");
-    const marker = join(root, "concurrent-push-complete");
-    writeFileSync(hook, [
-      "#!/bin/sh",
-      `if [ ! -f '${marker}' ]; then`,
-      `  touch '${marker}'`,
-      "  tree=\"$(git rev-parse 'HEAD^{tree}')\"",
-      "  parent=\"$(git rev-parse 'HEAD^')\"",
-      `  concurrent_commit="$(printf '%s\\n' 'concurrent release handoff' | `
-        + `GIT_AUTHOR_NAME='Concurrent Release Test' `
-        + `GIT_AUTHOR_EMAIL='concurrent-release@example.com' `
-        + `GIT_COMMITTER_NAME='Concurrent Release Test' `
-        + `GIT_COMMITTER_EMAIL='concurrent-release@example.com' `
-        + `git commit-tree "$tree" -p "$parent")"`,
-      "  git push --no-verify origin "
-        + "\"$concurrent_commit:refs/heads/main\" >/dev/null 2>&1",
-      "fi",
-      "",
-    ].join("\n"));
-    chmodSync(hook, 0o755);
-
-    const outputFile = join(root, "github-output-race.txt");
-    writeFileSync(outputFile, "");
+    const { env, calls } = mockGitHub(repo, { failAfterCreate: true });
     const result = spawnSync("node", [
       "scripts/prepare-next-release.mjs",
       "--stable-version", "0.5.1",
     ], {
       cwd: repo,
       encoding: "utf8",
-      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+      env,
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Concurrent main update detected");
-    expect(result.stdout).toContain("main already advanced to 0.5.2");
-    expect(readFileSync(outputFile, "utf8")).toContain("action=ready");
-    expect(exec("git", ["ls-remote", "--heads", "origin"], repo)).toContain("refs/heads/main");
+    expect(result.stdout).toContain("proposed at https://github.com/test/release/pull/1");
+    expect(readFileSync(calls, "utf8").split("\n").filter((line) => line.includes('"create"'))).toHaveLength(1);
     expect(JSON.parse(
       exec("git", ["show", "origin/main:cli/package.json"], repo),
-    ).version).toBe("0.5.2");
+    ).version).toBe("0.5.1");
+  }, 15_000);
+
+  it("rejects a conflicting existing handoff branch without overwriting it", () => {
+    const repo = createReleaseRepo();
+    const { env } = mockGitHub(repo);
+    exec("git", ["checkout", "-b", "codex/release-v0.5.2"], repo);
+    writeFileSync(join(repo, "unexpected.txt"), "unrelated work\n");
+    exec("git", ["add", "unexpected.txt"], repo);
+    exec("git", ["commit", "-m", "other work"], repo);
+    exec("git", ["push", "origin", "HEAD"], repo);
+    const before = exec("git", ["rev-parse", "HEAD"], repo).trim();
+    exec("git", ["checkout", "main"], repo);
+    const result = spawnSync("node", ["scripts/prepare-next-release.mjs", "--stable-version", "0.5.1"], {
+      cwd: repo, encoding: "utf8", env,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("differs from the expected version-only change");
+    expect(exec("git", ["rev-parse", "origin/codex/release-v0.5.2"], repo).trim()).toBe(before);
+    expect(exec("git", ["branch", "--show-current"], repo).trim()).toBe("main");
+    expect(exec("git", ["status", "--porcelain"], repo)).toBe("");
   }, 15_000);
 
 });

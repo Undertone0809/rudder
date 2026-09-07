@@ -6,7 +6,7 @@ This document covers the GitHub and npm setup required for the current Rudder re
 - manual stable promotion from a full locked commit SHA
 - npm trusted publishing via GitHub OIDC
 - optional Tencent COS Desktop mirroring via GitHub OIDC and Tencent STS
-- direct-main release execution with exact-source Test
+- protected-PR integration and release execution with exact-source Test
 
 Repo-side files that depend on this setup:
 
@@ -17,10 +17,17 @@ Repo-side files that depend on this setup:
 
 The `Release` workflow needs `actions: write` because it inspects exact-source
 Test runs and starts Test for the generated post-stable version commit. It needs
-`contents: write` to push release tags and the direct version handoff commit to
-`main`. A tag or branch push performed with `GITHUB_TOKEN` will not, by itself,
-trigger a second workflow run, so the workflow dispatches handoff Test
-explicitly.
+`contents: write` to push release tags and the version handoff branch, plus
+`pull-requests: write` to open its PR. Enable **Allow GitHub Actions to create
+and approve pull requests** in repository Actions settings. No release job gets
+a bypass for protected `main`. A tag/branch push or PR creation performed with
+`GITHUB_TOKEN` does not trigger the usual follow-up workflow, so Release
+explicitly dispatches Test **on the handoff branch** with its immutable
+`source_sha`, so the required check attaches to the PR head. This controlled
+dispatch requires the branch HEAD, a single parent reachable from `main`, and
+unchanged CI workflow/guard code. It cannot qualify release publication, which
+still requires a successful `main` run. The release operator merges that PR after required checks pass
+and verifies CI on the resulting `main` commit.
 
 Note:
 
@@ -269,15 +276,27 @@ Reasoning:
 - the environment isolates stable credentials and limits use to `main` without
   introducing an account switch or reviewer click
 
-## 7. Direct `main` Release Flow
+## 7. Protected `main` Release Flow
 
-Stable release work does not require a PR, branch-protection approval, repository
-attestation variable, or workflow confirmation phrase. The release agent pushes
-the validated source directly to `main`; the workflow then requires that exact
-SHA to have a successful `main` Test run before it can publish.
+All changes enter `main` through a PR, including release preparation and the
+post-stable version bump. Configure an active branch ruleset targeting
+`refs/heads/main` with no bypass actors (including administrators and apps):
 
-The generated post-stable `[skip release]` version commit is also pushed
-directly to `main`, followed by an explicit CI dispatch for its immutable SHA.
+- require a pull request and resolved review conversations;
+- require the GitHub Actions `Qualification summary` check with an up-to-date base;
+- block branch deletion and non-fast-forward updates.
+
+The single-maintainer repository may require zero approving reviews while still
+requiring a PR and checks. This does not waive independent task review gates.
+Verify live repository rules rather than treating this document as enforcement.
+Never disable protection or add a release bypass to resolve a failing check.
+
+The release agent merges reviewed preparation PRs under the existing release
+authority, then requires exact-source `main` Test before publishing. The
+generated `[skip release]` version commit is proposed on
+`codex/release-vX.Y.Z`; retries reuse its PR without force-pushing. The workflow
+reports the PR as pending integration and dispatches Test for its immutable SHA.
+Complete the handoff by merging the PR normally and verifying merged `main` CI.
 
 ## 7.1. Configure progressive qualification and candidate promotion
 
@@ -335,10 +354,8 @@ These files should always trigger code owner review:
 - `doc/engineering/RELEASING.md`
 - `doc/engineering/PUBLISHING.md`
 
-If you want stronger controls, add a repository ruleset that explicitly blocks direct pushes to:
-
-- `.github/workflows/**`
-- `scripts/release*`
+The protected `main` ruleset applies to these files as well. CODEOWNERS routing
+does not replace the required PR and qualification checks.
 
 ## 10. Do Not Store a Claude Token in GitHub Actions
 
@@ -418,8 +435,9 @@ After at least one good canary exists:
     from the matching `v0.1.0` source and passes public health checks
 16. confirm Windows, macOS, and Linux public install smoke all pass; do not
     remove a slow Windows smoke because it measures real installation behavior
-17. confirm the workflow commits the next patch version directly to `main` and
-    dispatches Test for that exact commit, or reports that `main` already advanced
+17. confirm the workflow opens/reuses the next-patch PR and dispatches Test for
+    that exact commit, or reports that `main` already advanced; merge its PR
+    after required checks pass and verify the resulting `main` CI
 
 Start-path check:
 
