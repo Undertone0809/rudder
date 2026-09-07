@@ -7,6 +7,7 @@ import { useChatGenerationActions } from "@/context/ChatGenerationContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useToast } from "@/context/ToastContext";
 import { useAppRegistry } from "@/hooks/useAppRegistry";
+import { useCloseApp } from "@/hooks/useCloseApp";
 import {
   APP_BUILDER_SCAFFOLD_VERSION,
   appBuilderChatPrefill,
@@ -34,6 +35,7 @@ import {
   resolveLocalAppAttestedWebview,
 } from "@/lib/local-apps";
 import { invalidateMessengerThreadSummaryQueries } from "@/lib/messenger-query-cache";
+import { openApp, useOpenApps } from "@/lib/open-apps";
 import { queryKeys } from "@/lib/queryKeys";
 import { useLocation, useNavigate } from "@/lib/router";
 import type {
@@ -68,11 +70,6 @@ import {
   CHAT_LIST_PREVIEW_LIMIT,
   EMPTY_CHAT_BODY_SHA256,
 } from "./Chat.workspace-helpers";
-
-type WorkspaceTab = {
-  key: string;
-  title: string;
-};
 
 function chooseBuilderAgent(agents: Agent[]) {
   const available = agents.filter((agent) => agent.status !== "terminated");
@@ -551,9 +548,8 @@ export function Apps() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const activeKey = activeKeyFromPath(location.pathname);
-  const [tabs, setTabs] = useState<WorkspaceTab[]>([
-    { key: "home", title: "Home" },
-  ]);
+  const openedApps = useOpenApps(selectedOrganizationId);
+  const closeAppMutation = useCloseApp();
   const [focusedTabKey, setFocusedTabKey] = useState("home");
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousOrganizationId = useRef(selectedOrganizationId);
@@ -572,6 +568,10 @@ export function Apps() {
     [entries],
   );
   const activeEntry = entryByKey.get(activeKey) ?? null;
+  const tabs = useMemo(() => [
+    { key: "home", title: "Home" },
+    ...openedApps.filter((app) => entryByKey.has(app.key)),
+  ], [entryByKey, openedApps]);
   const openIntentVersion = useSyncExternalStore(
     subscribeAppDirectOpen,
     () => readAppDirectOpenIntent(selectedOrganizationId ?? "", activeKey),
@@ -581,7 +581,6 @@ export function Apps() {
   useEffect(() => {
     if (previousOrganizationId.current === selectedOrganizationId) return;
     previousOrganizationId.current = selectedOrganizationId;
-    setTabs([{ key: "home", title: "Home" }]);
     setFocusedTabKey("home");
     if (!shouldPreserveAppDirectOpenDuringOrganizationChange(
       activeKey,
@@ -593,20 +592,6 @@ export function Apps() {
 
   useEffect(() => {
     if (!registryReady) return;
-    setTabs((current) => {
-      const next = current.filter((tab) => tab.key === "home" || entryByKey.has(tab.key));
-      if (next.length === current.length) return current;
-      for (const tab of current) {
-        if (!next.some((candidate) => candidate.key === tab.key)) {
-          tabRefs.current.delete(tab.key);
-        }
-      }
-      return next;
-    });
-  }, [entryByKey, registryReady]);
-
-  useEffect(() => {
-    if (!registryReady) return;
     setFocusedTabKey((current) => {
       if (current === "home" || entryByKey.has(current)) return current;
       return activeKey === "home" || entryByKey.has(activeKey) ? activeKey : "home";
@@ -614,16 +599,29 @@ export function Apps() {
   }, [activeKey, entryByKey, registryReady]);
 
   useEffect(() => {
-    if (activeKey === "home" || !activeEntry) return;
+    if (activeKey === "home" || !activeEntry || !selectedOrganizationId) return;
     const title = activeEntry.kind === "managed"
       ? activeEntry.app.name
       : activeEntry.definition.title;
-    setTabs((current) => (
-      current.some((tab) => tab.key === activeKey)
-        ? current
-        : [...current, { key: activeKey, title }]
-    ));
-  }, [activeEntry, activeKey]);
+    const definition = activeEntry.definition ?? (activeEntry.kind === "managed"
+      && activeEntry.app.desktopInstallationId && activeEntry.app.appPublicId && activeEntry.app.localBindingId
+      ? {
+          desktopInstallationId: activeEntry.app.desktopInstallationId,
+          appPublicId: activeEntry.app.appPublicId,
+          localBindingId: activeEntry.app.localBindingId,
+        }
+      : null);
+    openApp(selectedOrganizationId, {
+      key: activeKey,
+      title,
+      path: appRoute(activeKey),
+      ...(definition ? { identity: {
+        desktopInstallationId: definition.desktopInstallationId,
+        appPublicId: definition.appPublicId,
+        localBindingId: definition.localBindingId,
+      } } : {}),
+    });
+  }, [activeEntry, activeKey, selectedOrganizationId]);
 
   useEffect(() => {
     if (activeKey !== "home" && !activeEntry && registryReady) {
@@ -879,18 +877,19 @@ export function Apps() {
   };
 
   const closeTab = (key: string) => {
+    const app = openedApps.find((entry) => entry.key === key);
+    if (!app || !selectedOrganizationId || closeAppMutation.isPending) return;
     const index = tabs.findIndex((candidate) => candidate.key === key);
     const nextTabs = tabs.filter((candidate) => candidate.key !== key);
     const fallback = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0];
-    setTabs(nextTabs);
-    tabRefs.current.delete(key);
-    if (activeKey === key) {
-      activateTab(fallback?.key ?? "home");
-    } else if (focusedTabKey === key) {
-      const fallbackKey = fallback?.key ?? "home";
-      setFocusedTabKey(fallbackKey);
-      requestAnimationFrame(() => tabRefs.current.get(fallbackKey)?.focus());
-    }
+    closeAppMutation.mutate({ organizationId: selectedOrganizationId, app }, { onSuccess: () => {
+      tabRefs.current.delete(key);
+      if (activeKey !== key && focusedTabKey === key) {
+        const fallbackKey = fallback?.key ?? "home";
+        setFocusedTabKey(fallbackKey);
+        requestAnimationFrame(() => tabRefs.current.get(fallbackKey)?.focus());
+      }
+    } });
   };
 
   const handleTabKeyDown = (

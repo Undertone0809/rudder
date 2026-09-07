@@ -35,9 +35,10 @@ Important constraints:
 - stable source commits must have one committed public package version
 - all public packages must share that same stable semver before release
 - canary publishes derive the next prerelease from the committed stable version
-- after publishing stable `X.Y.Z`, the workflow commits the public package
-  version bump directly to `main`, for example `X.Y.Z -> X.Y.(Z+1)`, marks the
-   maintenance commit `[skip release]`, and explicitly dispatches Test for it
+- after publishing stable `X.Y.Z`, the workflow opens/reuses a PR for the public
+  package version bump, for example `X.Y.Z -> X.Y.(Z+1)`, marks the maintenance
+  commit `[skip release]`, and explicitly dispatches Test for it; the release
+  operator merges through protected `main` after required checks pass
 - `./scripts/release.sh canary --print-version` fails if the committed canary
   base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
@@ -77,8 +78,8 @@ Release preparation and release execution are separate operations:
 1. **Review Ready** — identify the exact source SHA, complete verification, and
    prepare release notes/screenshots.
 2. **Release execution** — an explicit release/publish request authorizes
-   immediately freezing the reviewed source, committing and pushing any
-   release-only narratives directly to `main`, waiting for exact-source Test,
+   immediately freezing the reviewed source, integrating any release-only
+   narratives through a PR and required checks, waiting for exact-source Test,
    running preflight and package validation, and publishing all standard
    surfaces in one production execution.
 3. **Status and verification** — report the exact source ref, version/tag,
@@ -92,8 +93,10 @@ Instructions such as `start`, `continue`, `proceed`, `implement`, or approval of
 a plan do not request publication. Imperatives such as `release`, `publish`,
 `发版`, and `发布` do. Once that request exists, the release agent completes all
 standard release surfaces, including production docs and the deterministic
-post-release version commit on `main`, without returning PR or authorization
-tasks to the operator.
+post-release version PR, without requesting routine second authorization. All
+source changes and version bumps enter `main` through protected PRs. The release
+agent merges authorized release PRs after checks pass and verifies merged CI;
+an open handoff PR remains pending integration, not a completed version advance.
 
 The workflow still fails closed on machine evidence: the release source must be
 reachable from `main`, have successful exact-source Test, pass stable preflight,
@@ -288,8 +291,8 @@ Before running stable:
 8. continue without another confirmation unless the user excluded
    `docs.rudderhq.dev` or a genuinely ambiguous/nonstandard decision appears
 9. after stable and the docs deployment are both published, confirm the
-   workflow committed the next-patch base directly to `main` and its explicitly
-   dispatched CI succeeded
+   workflow opened/reused the next-patch PR and its explicitly dispatched CI
+   succeeded; merge the protected PR and verify merged `main` CI
 
 Example:
 
@@ -318,9 +321,10 @@ The workflow:
   the released stable version or older, while preserving the current npm
   `@rudderhq/cli@canary` target if the next-base canary has not been published
   yet
-- commits the next canary/stable base directly to `main` with `[skip release]`
-  and dispatches the trusted Test workflow with the immutable bump SHA, unless
-  `main` already advanced
+- proposes the next canary/stable base through a `[skip release]` PR and
+  dispatches Test on that maintenance branch with the immutable bump SHA, unless
+  `main` already advanced; the release operator completes protected PR merge
+  and verifies merged `main` CI
 - makes the website changelog deployment a required stable-release surface;
   canary releases never deploy it
 

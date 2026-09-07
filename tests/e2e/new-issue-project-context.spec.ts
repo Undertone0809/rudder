@@ -73,14 +73,15 @@ test.describe("New issue project context", () => {
       },
     });
     expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
+    const organizationRouteKey = organization.urlKey || organization.issuePrefix;
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(E2E_BASE_URL);
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
+    await page.goto(`${E2E_BASE_URL}/${organizationRouteKey}/issues`);
     await page.getByRole("button", { name: "Create", exact: true }).click();
 
     const dialog = page.getByRole("dialog", { name: "New issue" });

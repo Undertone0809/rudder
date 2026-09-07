@@ -41,6 +41,11 @@ PRs that follow this path are **much** more likely to be accepted, even when the
 
 ## General Rules (both paths)
 
+- Every change enters protected `main` through a pull request, including release
+  preparation and version bumps. Push a working branch, open a PR, and wait for
+  the required `Qualification summary` check before merging. Direct pushes,
+  force pushes, and protection bypasses are prohibited for contributors,
+  administrators, and automation alike.
 - Write clear commit messages
 - Keep PR title + description meaningful
 - One PR = one logical change (unless it's a small related group)
