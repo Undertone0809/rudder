@@ -54,6 +54,40 @@ test.describe("Chat project empty heading", () => {
     expect(await listAfter.json()).toHaveLength(conversationsBefore.length);
   });
 
+  test("opens the create project dialog from the no-project context menu", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Chat-Create-Project-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+    const agent = await createE2EChatAgent(page.request, organization.id, { name: "Project Creator" });
+
+    await page.addInitScript(({ orgId, agentId }) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder.chatLastAgentByOrg", JSON.stringify({ [orgId]: agentId }));
+    }, { orgId: organization.id, agentId: agent.id });
+    await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${agent.id}`);
+
+    const projectSelector = page.getByTestId("chat-project-selector");
+    await expect(projectSelector).toContainText("No project", { timeout: 15_000 });
+    await projectSelector.click();
+
+    const projectMenu = page.getByTestId("chat-project-menu");
+    await expect(projectMenu).toContainText("Create project");
+    await page.screenshot({
+      path: "/tmp/rudder-chat-project-menu-create-project.png",
+      fullPage: true,
+    });
+    await projectMenu.getByRole("menuitem", { name: "Create project", exact: true }).click();
+
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByPlaceholder("Project name")).toBeVisible();
+    await page.screenshot({
+      path: "/tmp/rudder-chat-create-project-dialog.png",
+      fullPage: true,
+    });
+  });
+
   test("keeps project Chats visible when newer unrelated chats exceed the global preview limit", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Chat-Project-Filter-${Date.now()}` },

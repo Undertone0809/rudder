@@ -238,7 +238,7 @@ export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
-function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm } = useDialog();
+function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm, openNewProject } = useDialog();
   const localizeChatProcessText = useCallback((text: string) => {
     // "Thinking" is a live Chat state here; keep it distinct from the model's reasoning setting.
     if (text === "Thinking" && locale === "zh-CN") return "思考中";
@@ -3050,6 +3050,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             projects={visibleProjects}
             activeProjectId={activeProjectId === NO_PROJECT_ID ? null : activeProjectId}
             onSelect={(projectId) => applyProjectContext(projectId ?? NO_PROJECT_ID)}
+            onCreateProject={() => {
+              closeComposerContextMenus();
+              openNewProject();
+            }}
           />
         ) : null}
         {agentMenuOpen ? (
