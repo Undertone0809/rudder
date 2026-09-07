@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::mpsc::Sender;
@@ -204,6 +206,17 @@ fn modified_millis(metadata: &fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        left.len() == right.len() && modified_millis(left) == modified_millis(right)
+    }
+}
+
 pub fn list_directory(
     root: &Path,
     requested_path: &Path,
@@ -350,16 +363,42 @@ pub fn read_file(
 
     let file = fs::File::open(&canonical_target)
         .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !opened_metadata.is_file() || !same_file_identity(&metadata, &opened_metadata) {
+        return Err(ManifestError::safe("workspace_file_changed"));
+    }
+
+    let stable_target = fs::canonicalize(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    if !stable_target.starts_with(&canonical_root) {
+        return Err(ManifestError::safe("workspace_path_escape"));
+    }
+    let stable_path_metadata = fs::metadata(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !same_file_identity(&stable_path_metadata, &opened_metadata) {
+        return Err(ManifestError::safe("workspace_file_changed"));
+    }
+    if opened_metadata.len() > limits.max_bytes {
+        return Err(ManifestError::safe("workspace_file_size_limit"));
+    }
+
     let mut bytes = Vec::new();
-    file.take(limits.max_bytes.saturating_add(1))
+    (&file)
+        .take(limits.max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
     if bytes.len() as u64 > limits.max_bytes {
         return Err(ManifestError::safe("workspace_file_size_limit"));
     }
-    let stable_metadata = fs::metadata(&canonical_target)
+    let stable_metadata = file
+        .metadata()
         .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
-    if !stable_metadata.is_file() || stable_metadata.len() != metadata.len() {
+    if !stable_metadata.is_file()
+        || !same_file_identity(&stable_metadata, &opened_metadata)
+        || stable_metadata.len() != opened_metadata.len()
+    {
         return Err(ManifestError::safe("workspace_file_changed"));
     }
     let content =
@@ -367,8 +406,8 @@ pub fn read_file(
 
     Ok(FileReadResult {
         file_path,
-        byte_size: metadata.len(),
-        modified_millis: modified_millis(&metadata),
+        byte_size: opened_metadata.len(),
+        modified_millis: modified_millis(&opened_metadata),
         content,
     })
 }
