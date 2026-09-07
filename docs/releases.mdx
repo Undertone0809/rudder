@@ -18,6 +18,39 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="September 7, 2026" description="v0.7.19" tags={["New","Improved","Fixed"]}>
+
+## v0.7.19
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.19)
+
+Rudder 0.7.19 makes large Issue queues easier to work through, helps assigned work advance without extra wakeups, and improves recovery across Chat, workspaces, backups, and Desktop.
+
+### New
+
+- Issue list and Kanban views now load more issues as you scroll, with loading, retry, and completion states.
+- Heartbeat runs now advance the first runnable assigned or review Issue from the Inbox, so assigned work can proceed without waiting for a new wake.
+- Chat users can now create a Project directly from the no-project context menu.
+
+### Improved
+
+- Issue and Agent workflows now accept typed short references alongside UUIDs, making CLI, MCP, and API operations easier to address.
+- Workspace backup browsing and downloads now keep file ordering and metadata consistent across platforms, provide bounded text previews, and identify binary files clearly.
+- Issue recovery after a transport outage now avoids repeated collection probes and clears the backoff after the alternate CLI or MCP surface succeeds.
+- Chat response annotation markers and count chips now show hover details, with long details remaining scrollable.
+- Desktop updates now apply automatically when ready when no active-run blockers remain, while forced updates continue to respect safeguards.
+- Restored the macOS Desktop glass shell and removed the unwanted rail tint.
+
+### Fixed
+
+- Codex provider authentication failures now terminate promptly, appear as non-retryable errors, and stop repeated attempts until provider readiness changes.
+- Fixed organization workspace relocation and browsing edge cases so canonical paths are preserved and malformed or escaping mappings are rejected.
+- Agent-created workspace commits now preserve the repository's configured author identity instead of inheriting a runtime identity.
+- New Issue descriptions now scroll within the dialog instead of being clipped.
+- Fixed workspace backup creation and file inspection on Windows when filesystem durability calls return a permission error.
+
+</Update>
+
 <Update label="September 2, 2026" description="v0.7.18" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.18

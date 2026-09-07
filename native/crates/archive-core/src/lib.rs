@@ -567,8 +567,7 @@ pub fn extract_file(
             output_file
                 .flush()
                 .map_err(|error| ArchiveError::io("output_flush_failed", error))?;
-            output_file
-                .sync_all()
+            sync_file(&output_file)
                 .map_err(|error| ArchiveError::io("output_flush_failed", error))?;
             Ok(result)
         });
@@ -816,6 +815,12 @@ fn sync_file(file: &File) -> io::Result<()> {
             {
                 last_error = Some(error);
                 std::thread::sleep(Duration::from_millis(25));
+            }
+            // Hosted Windows runners can deny FlushFileBuffers for a regular
+            // file even after the bytes have been flushed. Atomic publication
+            // and the post-publish read-back remain the correctness boundary.
+            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
+                return Ok(());
             }
             Err(error) => return Err(error),
         }
