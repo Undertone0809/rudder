@@ -1618,7 +1618,7 @@ async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targe
   }
 }
 
-async function syncDirectory(directory: string): Promise<void> {
+async function syncDirectory(directory: string): Promise<void> { if (process.platform === "win32") return;
   let handle: Awaited<ReturnType<typeof fs.open>>;
   try {
     handle = await fs.open(directory, "r");

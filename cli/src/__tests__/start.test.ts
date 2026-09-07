@@ -2440,6 +2440,8 @@ describe("runtime install helpers", () => {
 
   it("does not delay Desktop full fallback while incomplete cache cleanup is stalled", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-cleanup-deadline-test."));
+    const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+    const cleanupLockPath = `${cacheDir}.install.lock`;
     let releaseCleanup!: () => void;
     let markCleanupStarted!: () => void;
     const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
@@ -2470,9 +2472,14 @@ describe("runtime install helpers", () => {
 
       expect(Date.now() - startedAt).toBeLessThan(250);
       await cleanupStarted;
-      expect(stalledCleanup).toHaveBeenCalledWith(resolveRuntimeCacheDir("1.2.3", root));
+      expect(stalledCleanup).toHaveBeenCalledWith(cacheDir);
     } finally {
-      releaseCleanup?.();
+      if (releaseCleanup) {
+        releaseCleanup();
+        await vi.waitFor(async () => {
+          await expect(access(cleanupLockPath)).rejects.toThrow();
+        });
+      }
       await rm(root, { recursive: true, force: true });
     }
   });
