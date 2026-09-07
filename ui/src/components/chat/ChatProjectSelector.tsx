@@ -1,7 +1,7 @@
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import { cn } from "@/lib/utils";
 import type { Project } from "@rudderhq/shared";
-import { X } from "lucide-react";
+import { FolderPlus, X } from "lucide-react";
 import type { Ref } from "react";
 
 export function ChatProjectSelectorButton({
@@ -81,10 +81,12 @@ export function ChatProjectMenuContent({
   projects,
   activeProjectId,
   onSelect,
+  onCreateProject,
 }: {
   projects: readonly Project[];
   activeProjectId: string | null;
   onSelect: (projectId: string | null) => void;
+  onCreateProject?: () => void;
 }) {
   return (
     <>
@@ -116,6 +118,21 @@ export function ChatProjectMenuContent({
               <span className="min-w-0 flex-1 truncate font-medium">{project.name?.trim() || "Unknown project"}</span>
             </button>
           ))}
+        </div>
+      ) : null}
+      {onCreateProject && activeProjectId === null ? (
+        <div className="mt-1 border-t border-[color:var(--border-soft)] pt-1">
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="chat-project-create"
+            data-chat-composer-menu-item
+            className="chat-composer-menu-row project-context-menu-item"
+            onClick={onCreateProject}
+          >
+            <FolderPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">Create project</span>
+          </button>
         </div>
       ) : null}
     </>

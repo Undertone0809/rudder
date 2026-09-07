@@ -139,6 +139,7 @@ const zhExactPhrases: Record<string, string> = {
   "Create new issue": "创建新任务",
   "Create new organization": "创建新组织",
   "Create new project": "创建新项目",
+  "Create project": "创建项目",
   "credits": "入账",
   "Urgent": "紧急",
   "Critical": "紧急",
