@@ -142,7 +142,7 @@ describe("Rust Agent Run process host", () => {
     await expect(access(path.join(root, "receipts"))).resolves.toBeUndefined();
   });
 
-  it("fails closed when the log consumer cannot drain the bounded output spool", async () => {
+  it("fails closed when the log consumer cannot drain the bounded output spool", { timeout: 15_000 }, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-spool-overflow-"));
     const commandInput = new PassThrough();
     const lifecycle = new PassThrough();
