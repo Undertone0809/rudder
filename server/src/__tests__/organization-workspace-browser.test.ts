@@ -230,6 +230,42 @@ describe("organization workspace browser", () => {
     });
   });
 
+  it("does not fall back after native workspace reads report a size limit", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "auto";
+    const fakeBinary = path.join(rudderHome, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(JSON.stringify({ ok: false, capability: 'workspace.read', operation: 'readWorkspaceFile', protocolVersion: 1, accepted: false, errorCode: 'workspace_file_size_limit' }) + '\\n');",
+        "process.exitCode = 2;",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Native Workspace Size Limit Org",
+      urlKey: deriveOrganizationUrlKey("Native Workspace Size Limit Org"),
+      issuePrefix: "NWS",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "small.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "small", "utf8");
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/small.md")).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
   it.runIf(process.platform !== "win32")("fails closed when a listed directory symlink escapes the Library root", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);

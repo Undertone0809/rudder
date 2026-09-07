@@ -1,5 +1,7 @@
 import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import { execFile } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { resolveNativeWorkspaceFilesBinary } from "./workspace-files-native.js";
@@ -46,6 +48,7 @@ export class WorkspaceFileNativeError extends Error {
     readonly code: string,
     readonly fallbackAllowed: boolean,
     readonly pathRejected: boolean,
+    readonly limitExceeded = code === "workspace_file_size_limit",
   ) {
     super(`Native workspace file read failed: ${code}`);
   }
@@ -76,6 +79,30 @@ function validPortablePath(value: string) {
     && !value.startsWith("/")
     && !value.includes("\0")
     && !value.split("/").some((segment) => !segment || segment === "." || segment === "..");
+}
+
+type WorkspaceFileStat = Awaited<ReturnType<typeof fs.stat>>;
+
+function sameFileIdentity(left: WorkspaceFileStat, right: WorkspaceFileStat) {
+  if (left.dev !== 0 || left.ino !== 0 || right.dev !== 0 || right.ino !== 0) {
+    return left.dev === right.dev && left.ino === right.ino;
+  }
+  return left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+function isWithinRoot(rootPath: string, targetPath: string) {
+  const relative = path.relative(rootPath, targetPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function cancelledError() {
+  return new WorkspaceFileNativeError("workspace_file_cancelled", false, false);
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) throw cancelledError();
 }
 
 function parseResponse(response: NativeResponse, expectedFilePath: string): NativeWorkspaceFileRead {
@@ -165,7 +192,13 @@ export async function readWorkspaceFileNative(
         const errorCode = parseFailureCode(response);
         if (errorCode) {
           const pathRejected = REJECTED_PATH_CODES.has(errorCode);
-          throw new WorkspaceFileNativeError(errorCode, !pathRejected, pathRejected);
+          const limitExceeded = errorCode === "workspace_file_size_limit";
+          throw new WorkspaceFileNativeError(
+            errorCode,
+            !pathRejected && !limitExceeded,
+            pathRejected,
+            limitExceeded,
+          );
         }
       } catch (parsedError) {
         if (parsedError instanceof WorkspaceFileNativeError) throw parsedError;
@@ -193,4 +226,135 @@ export async function readWorkspaceFileNative(
     throw new WorkspaceFileNativeError("workspace_file_malformed_json", true, false);
   }
   return parseResponse(response, filePath);
+}
+
+export async function readWorkspaceFileNode(
+  rootPath: string,
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<NativeWorkspaceFileRead> {
+  if (!validPortablePath(filePath) || Buffer.byteLength(filePath, "utf8") > WORKSPACE_FILE_PATH_MAX_BYTES) {
+    throw new WorkspaceFileNativeError("workspace_file_path_invalid", false, false);
+  }
+  throwIfCancelled(signal);
+
+  const resolvedRoot = path.resolve(rootPath);
+  let rootStat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    rootStat = await fs.lstat(resolvedRoot);
+  } catch {
+    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, true);
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new WorkspaceFileNativeError("workspace_not_directory", false, true);
+  }
+
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = await fs.realpath(resolvedRoot);
+  } catch {
+    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, true);
+  }
+  const canonicalTarget = path.resolve(canonicalRoot, filePath);
+  if (!isWithinRoot(canonicalRoot, canonicalTarget) || canonicalTarget === canonicalRoot) {
+    throw new WorkspaceFileNativeError("workspace_path_escape", false, true);
+  }
+
+  let expectedStat: WorkspaceFileStat;
+  try {
+    expectedStat = await fs.stat(canonicalTarget);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new WorkspaceFileNativeError("workspace_file_not_found", false, true);
+    }
+    throw new WorkspaceFileNativeError("workspace_file_read_failed", false, false);
+  }
+  throwIfCancelled(signal);
+  if (!expectedStat.isFile()) {
+    throw new WorkspaceFileNativeError("workspace_not_file", false, true);
+  }
+  if (expectedStat.size > WORKSPACE_FILE_READ_MAX_BYTES) {
+    throw new WorkspaceFileNativeError("workspace_file_size_limit", false, false, true);
+  }
+
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(
+      canonicalTarget,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (signal?.aborted) throw cancelledError();
+    throw new WorkspaceFileNativeError("workspace_file_read_failed", false, false);
+  }
+
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await handle.close().catch(() => undefined);
+  };
+  const abort = () => {
+    void close();
+  };
+
+  try {
+    const openedStat = await handle.stat();
+    if (!openedStat.isFile() || !sameFileIdentity(expectedStat, openedStat)) {
+      throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+    }
+    if (openedStat.size > WORKSPACE_FILE_READ_MAX_BYTES) {
+      throw new WorkspaceFileNativeError("workspace_file_size_limit", false, false, true);
+    }
+
+    const stableTarget = await fs.realpath(canonicalTarget);
+    if (!isWithinRoot(canonicalRoot, stableTarget)) {
+      throw new WorkspaceFileNativeError("workspace_path_escape", false, true);
+    }
+    const stablePathStat = await fs.stat(canonicalTarget);
+    if (!sameFileIdentity(stablePathStat, openedStat)) {
+      throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+    }
+
+    const bytes = Buffer.alloc(WORKSPACE_FILE_READ_MAX_BYTES + 1);
+    let offset = 0;
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      while (offset < bytes.length) {
+        throwIfCancelled(signal);
+        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, null);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      throwIfCancelled(signal);
+    } catch (error) {
+      if (signal?.aborted) throw cancelledError();
+      if (error instanceof WorkspaceFileNativeError) throw error;
+      throw new WorkspaceFileNativeError("workspace_file_read_failed", false, false);
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+
+    if (offset > WORKSPACE_FILE_READ_MAX_BYTES) {
+      throw new WorkspaceFileNativeError("workspace_file_size_limit", false, false, true);
+    }
+    const stableMetadata = await handle.stat();
+    if (!stableMetadata.isFile()
+      || !sameFileIdentity(stableMetadata, openedStat)
+      || stableMetadata.size !== openedStat.size) {
+      throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+    }
+    return {
+      filePath,
+      byteSize: openedStat.size,
+      modifiedMillis: Math.max(0, Math.floor(openedStat.mtimeMs)),
+      content: bytes.subarray(0, offset).toString("utf8"),
+    };
+  } catch (error) {
+    if (signal?.aborted) throw cancelledError();
+    if (error instanceof WorkspaceFileNativeError) throw error;
+    throw new WorkspaceFileNativeError("workspace_file_read_failed", false, false);
+  } finally {
+    await close();
+  }
 }

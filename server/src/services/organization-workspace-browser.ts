@@ -23,6 +23,7 @@ import { libraryEntryService } from "./library-entries.js";
 import { organizationService } from "./orgs.js";
 import {
   readWorkspaceFileNative,
+  readWorkspaceFileNode,
   WorkspaceFileNativeError,
 } from "./workspace-file-native.js";
 import {
@@ -876,6 +877,9 @@ export function organizationWorkspaceBrowserService(
             const nativeResult = await readWorkspaceFileNative(canonicalRoot, canonicalFilePath, signal);
             nativeContent = nativeResult.content;
           } catch (error) {
+            if (error instanceof WorkspaceFileNativeError && error.limitExceeded) {
+              throw unprocessable("The organization Library file exceeds the 1 MB read limit");
+            }
             if (error instanceof WorkspaceFileNativeError && error.pathRejected) {
               if (error.code === "workspace_file_not_found") {
                 throw notFound("File not found inside the organization Library");
@@ -883,6 +887,21 @@ export function organizationWorkspaceBrowserService(
               throw unprocessable("Requested path must stay inside the organization Library root");
             }
             if (!policy.fallbackAllowed || signal?.aborted) throw error;
+            try {
+              const fallbackResult = await readWorkspaceFileNode(canonicalRoot, canonicalFilePath, signal);
+              nativeContent = fallbackResult.content;
+            } catch (fallbackError) {
+              if (fallbackError instanceof WorkspaceFileNativeError && fallbackError.limitExceeded) {
+                throw unprocessable("The organization Library file exceeds the 1 MB read limit");
+              }
+              if (fallbackError instanceof WorkspaceFileNativeError && fallbackError.pathRejected) {
+                if (fallbackError.code === "workspace_file_not_found") {
+                  throw notFound("File not found inside the organization Library");
+                }
+                throw unprocessable("Requested path must stay inside the organization Library root");
+              }
+              throw fallbackError;
+            }
           }
         }
       }
