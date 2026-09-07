@@ -1420,6 +1420,13 @@
     backdrop-filter: blur(20px) saturate(118%);
   }
 
+  html.desktop-shell-macos.desktop-shell-glass .primary-rail-shell {
+    background: transparent;
+    border-right: 0;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
   html.desktop-shell-windows.desktop-shell-glass .primary-rail-shell {
     background:
       linear-gradient(
