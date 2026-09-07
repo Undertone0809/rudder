@@ -47,14 +47,15 @@ a package, or another surface authorizes that surface and its prerequisites.
 Resolve a bare `publish` from context; do not expand it into a full version release.
 
 1. resolve and lock the single consistent version and source SHA;
-2. land reviewed release source on `main` when needed;
+2. land reviewed release source on `main` through a PR and required checks when needed;
 3. run required exact-source CI, preflight, and package validation once;
 4. publish npm, tag, GitHub Release, Desktop, and production-docs surfaces;
 5. verify public installation, clean obsolete canary Releases/tags, and advance
-   the next-version base;
+   the next-version base through its protected-branch PR;
 6. when explicitly authorized, publish and read back the stable Discord announcement.
 
-Do not create a release PR or ask for routine second approval after validation.
+Release and next-version PRs are part of this authorization. Never push directly
+to `main` or bypass its protection. Do not ask for routine second approval after validation.
 Ask only when channel, version, source, or destination is materially ambiguous.
 
 Questions such as “how does release work?” or “is this ready?” are read-only.

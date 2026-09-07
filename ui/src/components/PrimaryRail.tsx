@@ -13,6 +13,7 @@ import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
+import { useCloseApp } from "@/hooks/useCloseApp";
 import { useInboxBadge } from "@/hooks/useInboxBadge";
 import {
   readDesktopNotificationPermission,
@@ -20,17 +21,19 @@ import {
 } from "@/lib/desktop-notification-permission";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import { readRememberedIssueNavigationPath } from "@/lib/issue-navigation";
+import { localAppIdentityMatches, type LocalAppOpaqueIdentity } from "@/lib/local-apps";
 import { localAppSavedViewRoute } from "@/lib/messenger-saved-views";
 import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
+import { openApp, useOpenApps } from "@/lib/open-apps";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";
 import { queryKeys } from "@/lib/queryKeys";
 import { NavLink, useLocation, useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { cn } from "@/lib/utils";
-import type { MessengerSavedViewTarget } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AppWindow,
   Blocks,
   Bot,
   CircleCheckBig,
@@ -47,6 +50,7 @@ import {
   Settings,
   Target,
   UsersRound,
+  X,
 } from "lucide-react";
 import {
   type CSSProperties,
@@ -74,7 +78,7 @@ type RailItem = {
   badgeTone?: "default" | "danger";
   badgeTestId?: string;
   active: boolean;
-  localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
+  localAppIdentity?: LocalAppOpaqueIdentity;
 };
 
 function isMessengerAttentionRoute(relativePath: string): boolean {
@@ -106,6 +110,8 @@ function RailNavItem({
   onContextMenu,
   localAppIdentity,
   end,
+  onClose,
+  closePending,
 }: {
   to: string;
   label: string;
@@ -117,10 +123,12 @@ function RailNavItem({
   active?: boolean;
   onDoubleClick?: () => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
-  localAppIdentity?: Extract<MessengerSavedViewTarget, { kind: "local_app" }>;
+  localAppIdentity?: LocalAppOpaqueIdentity;
   end?: boolean;
+  onClose?: () => void;
+  closePending?: boolean;
 }) {
-  return (
+  const link = (
     <NavLink
       to={to}
       end={end}
@@ -170,6 +178,22 @@ function RailNavItem({
       <span className="block w-full min-w-0 truncate text-center" title={label}>{label}</span>
     </NavLink>
   );
+  if (!onClose) return link;
+  return (
+    <div className="group/rail-app relative shrink-0" data-testid="primary-rail-app">
+      {link}
+      <button
+        type="button"
+        aria-label={`Close ${label}`}
+        title={`Close ${label}`}
+        disabled={closePending}
+        onClick={onClose}
+        className="absolute right-0 top-0.5 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-sidebar text-sidebar-foreground opacity-0 pointer-events-none transition-opacity group-hover/rail-app:opacity-100 group-hover/rail-app:pointer-events-auto group-focus-within/rail-app:opacity-100 group-focus-within/rail-app:pointer-events-auto hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait"
+      >
+        <X className="h-3 w-3" aria-hidden />
+      </button>
+    </div>
+  );
 }
 
 export function PrimaryRail({
@@ -183,6 +207,8 @@ export function PrimaryRail({
   const { openNewIssue, openNewAgent, openNewGoal, openNewProject } = useDialog();
   const { setSidebarOpen } = useSidebar();
   const { selectedOrganizationId } = useOrganization();
+  const openedApps = useOpenApps(selectedOrganizationId);
+  const closeRailAppMutation = useCloseApp();
   const queryClient = useQueryClient();
   const inboxBadge = useInboxBadge(selectedOrganizationId);
   const [messengerContextMenu, setMessengerContextMenu] = useState<{
@@ -215,6 +241,22 @@ export function PrimaryRail({
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
+  const savedViewId = relativePath.match(/^\/apps\/saved\/([^/]+)$/)?.[1];
+  const activeSavedViewQuery = useQuery({
+    queryKey: queryKeys.messenger.savedView(selectedOrganizationId ?? "__none__", savedViewId ?? "__none__"),
+    queryFn: () => messengerApi.getSavedView(selectedOrganizationId!, savedViewId!),
+    enabled: Boolean(selectedOrganizationId && savedViewId),
+  });
+  useEffect(() => {
+    const saved = activeSavedViewQuery.data;
+    if (!selectedOrganizationId || !savedViewId || !saved || saved.id !== savedViewId || saved.targetPayload.kind !== "local_app") return;
+    openApp(selectedOrganizationId, {
+      key: `saved-view:${saved.id}`,
+      title: saved.title,
+      path: localAppSavedViewRoute(saved.id),
+      identity: saved.targetPayload,
+    });
+  }, [activeSavedViewQuery.data, savedViewId, selectedOrganizationId]);
   const suppressInboxPopups = isMessengerAttentionRoute(relativePath);
   const isDesktopShell = readDesktopShell() !== null;
   const desktopRailPlatform = resolveDesktopRailPlatform(isDesktopShell);
@@ -279,7 +321,7 @@ export function PrimaryRail({
           label: "Hub",
           icon: Blocks,
           active: /^\/(?:hub|plugins|apps)(?:\/|$)/.test(relativePath)
-            && !/^\/apps\/saved\/[^/]+(?:\/|$)/.test(relativePath),
+            && !/^\/apps\/(?:saved|view)\/[^/]+(?:\/|$)/.test(relativePath),
         }]
       : []),
     {
@@ -297,16 +339,33 @@ export function PrimaryRail({
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },
   ];
-  const pinnedLocalAppItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
+  const openedAppItems: RailItem[] = openedApps.map((app) => ({
+    key: app.key,
+    to: app.path,
+    label: app.title,
+    icon: AppWindow,
+    localAppIdentity: app.identity,
+    active: relativePath === app.path,
+  }));
+  const sameApp = (a: RailItem, b: RailItem) => a.to === b.to || Boolean(
+    a.localAppIdentity && b.localAppIdentity && localAppIdentityMatches(a.localAppIdentity, b.localAppIdentity),
+  );
+  const legacyPinnedItems: RailItem[] = (pinnedLocalAppsQuery.data?.items ?? [])
     .filter((savedView) => savedView.targetPayload.kind === "local_app")
     .map((savedView) => ({
       key: `saved-view:${savedView.id}`,
       to: localAppSavedViewRoute(savedView.id),
       label: savedView.title,
       icon: MessageSquare,
-      localAppIdentity: savedView.targetPayload as Extract<MessengerSavedViewTarget, { kind: "local_app" }>,
+      localAppIdentity: savedView.targetPayload as LocalAppOpaqueIdentity,
       active: relativePath === localAppSavedViewRoute(savedView.id),
     }));
+  const pinnedLocalAppItems = [...openedAppItems, ...legacyPinnedItems].reduce<RailItem[]>((items, item) => {
+    const index = items.findIndex((candidate) => sameApp(candidate, item));
+    if (index < 0) items.push(item);
+    else if (item.active) items[index] = item;
+    return items;
+  }, []);
   const activeFixedRailIndex = railItems.findIndex((item) => item.active);
   const activePinnedRailIndex = pinnedLocalAppItems.findIndex((item) => item.active);
   const activeRailIndex = activeFixedRailIndex >= 0
@@ -565,6 +624,8 @@ export function PrimaryRail({
             icon={item.icon}
             active={item.active}
             localAppIdentity={item.localAppIdentity}
+            onClose={() => selectedOrganizationId && closeRailAppMutation.mutate({ organizationId: selectedOrganizationId, app: { key: item.key, path: item.to, title: item.label, identity: item.localAppIdentity } })}
+            closePending={closeRailAppMutation.isPending}
           />
         ))}
       </nav>

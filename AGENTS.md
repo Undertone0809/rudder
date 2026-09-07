@@ -188,19 +188,23 @@ separate transitions.
 
 - `start`, `continue`, `proceed`, `implement`, `finish`, or approval of a plan
   authorizes implementation, verification, and the section 10 Git handoff. The default stopping point
-  is Review Ready: validated changes committed and pushed on the current branch,
-  a PR when appropriate, review evidence, and a release-risk summary.
+  is Review Ready: validated changes committed and pushed on a working branch,
+  a PR targeting `main`, review evidence, and a release-risk summary.
 - An explicit imperative to release a Rudder version, such as `release vX.Y.Z`,
   `ship this version`, or `发版`, authorizes the complete standard release
   lifecycle when the conversation identifies that version release as the target.
   Publishing only named docs, a package, or another surface stays limited to
   that surface. A bare `publish` is interpreted from context, not as automatic
   authority for every release target. The version lifecycle includes committing
-  and pushing the reviewed source directly
-  to `main`, running CI and the release dry-run, publishing npm/GitHub/Desktop/
+  reviewed source on a working branch and merging its PR after protected-branch
+  checks pass, running exact-source CI and release validation, publishing npm/GitHub/Desktop/
   production-docs surfaces, verifying them, cleaning obsolete canary
-  Releases/tags, and completing the direct next-version handoff. Do not create a
-  release PR or ask for another authorization during this lifecycle.
+  Releases/tags, and completing the next-version handoff through a PR. These PRs
+  are part of the authorized lifecycle; do not ask for routine second approval.
+- `main` is protected for everyone, including administrators and automation.
+  All changes, including features, fixes, docs, release preparation, and version
+  bumps, enter through a PR with required checks. Never push commits directly to
+  `main`, bypass its rules, or disable protection to finish a task or release.
 - If the release request omits a version, infer the single consistent target
   from the current release context and repository release scripts, lock its
   source SHA, and state both in a progress update. Ask only when the channel,
@@ -372,7 +376,8 @@ A change is done when all are true:
 5. The authorized Git handoff is complete, or a concrete external blocker is reported.
 
 - After scoped edits and applicable validation, commit and push the task's changes
-  to the current remote branch, including instruction/doc fixes. This standing
+  to a working branch and open/update its PR, including instruction/doc fixes.
+  If the checkout is on `main`, create a `codex/` branch before committing. This standing
   authority does not authorize merging another branch, release, or deployment.
   Honor a user request for local-only work or no commit/push.
 - Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).

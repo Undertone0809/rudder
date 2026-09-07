@@ -10,6 +10,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } from "./agent-workspace-key.js";
+import { syncDirectory, syncFileHandle } from "./file-system-durability.js";
 
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -451,7 +452,7 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
     const handle = await fs.open(acquisitionOwnerPath, "wx", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify(owner, null, 2)}\n`, "utf8");
-      await handle.sync();
+      await syncFileHandle(handle);
     } finally {
       await handle.close();
     }
@@ -575,7 +576,7 @@ async function reclaimStaleOrganizationWorkspaceMapLock(
   }
   try {
     await handle.writeFile(`${JSON.stringify(claim)}\n`, "utf8");
-    await handle.sync();
+    await syncFileHandle(handle);
   } finally {
     await handle.close();
   }
@@ -1223,7 +1224,7 @@ async function writeOrganizationWorkspaceMapFile(
   const handle = await fs.open(tempPath, "wx", 0o600);
   try {
     await handle.writeFile(`${JSON.stringify(map, null, 2)}\n`, "utf8");
-    await handle.sync();
+    await syncFileHandle(handle);
   } finally {
     await handle.close();
   }
@@ -1256,7 +1257,7 @@ async function ensureOrganizationWorkspaceIdentity(root: string, orgId: string):
     const handle = await fs.open(tempPath, "wx", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify({ version: 1, orgId: expectedOrgId }, null, 2)}\n`, "utf8");
-      await handle.sync();
+      await syncFileHandle(handle);
     } finally {
       await handle.close();
     }
@@ -1349,7 +1350,7 @@ async function writeWorkspaceMigrationState(root: string, aliases: string[]): Pr
   const handle = await fs.open(tempPath, "wx", 0o600);
   try {
     await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
-    await handle.sync();
+    await syncFileHandle(handle);
   } finally {
     await handle.close();
   }
@@ -1615,23 +1616,6 @@ async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targe
   } catch (error) {
     await fs.rename(targetPath, sourcePath).catch(() => {});
     throw error;
-  }
-}
-
-async function syncDirectory(directory: string): Promise<void> { if (process.platform === "win32") return;
-  let handle: Awaited<ReturnType<typeof fs.open>>;
-  try {
-    handle = await fs.open(directory, "r");
-  } catch (error) {
-    if (["EISDIR", "EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) return;
-    throw error;
-  }
-  try {
-    await handle.sync().catch((error) => {
-      if (!["EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) throw error;
-    });
-  } finally {
-    await handle.close();
   }
 }
 

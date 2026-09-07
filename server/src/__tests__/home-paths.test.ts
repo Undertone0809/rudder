@@ -33,6 +33,7 @@ import {
   resolveProjectLibraryDir,
   resolveProjectLibraryRelativePath,
 } from "../home-paths.js";
+import { syncFileHandle } from "../file-system-durability.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -46,6 +47,22 @@ const agentName = "Agent One";
 const workspaceKey = buildAgentWorkspaceKey(agentName, agentId);
 const agent = { id: agentId, orgId, name: agentName, workspaceKey };
 const serverPackageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+describe("home path durability helpers", () => {
+  it.each(["EPERM", "EINVAL", "ENOTSUP"])("ignores unsupported Windows file sync error %s", async (code) => {
+    const sync = vi.fn().mockRejectedValue(Object.assign(new Error(code), { code }));
+
+    await expect(syncFileHandle({ sync }, "win32")).resolves.toBeUndefined();
+    expect(sync).toHaveBeenCalledOnce();
+  });
+
+  it("preserves non-unsupported Windows file sync errors", async () => {
+    const error = Object.assign(new Error("access denied"), { code: "EACCES" });
+    const sync = vi.fn().mockRejectedValue(error);
+
+    await expect(syncFileHandle({ sync }, "win32")).rejects.toBe(error);
+  });
+});
 
 describe("home paths", () => {
   const originalRudderHome = process.env.RUDDER_HOME;

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { openApp, readOpenApps } from "@/lib/open-apps";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -46,16 +47,26 @@ const mockState = vi.hoisted(() => ({
   pathname: "/dashboard",
   primaryRailPaths: {} as Record<string, string>,
   pinnedLocalApps: [] as Array<Record<string, unknown>>,
+  updateSavedView: vi.fn(),
+  listSavedViews: vi.fn(),
+  pushToast: vi.fn(),
+  organizationId: "org-1",
 }));
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: (options: {
-    mutationFn: () => Promise<unknown>;
-    onSuccess?: () => Promise<void> | void;
+    mutationFn: (input: unknown) => Promise<unknown>;
+    onSuccess?: (result: unknown, input: unknown) => Promise<void> | void;
+    onError?: (error: unknown) => void;
   }) => ({
-    mutate: vi.fn(async () => {
-      await options.mutationFn();
-      await options.onSuccess?.();
+    mutate: vi.fn(async (input: unknown) => {
+      try {
+        const result = await options.mutationFn(input);
+        await options.onSuccess?.(result, input);
+      } catch (error) {
+        if (options.onError) options.onError(error);
+        else throw error;
+      }
     }),
     isPending: false,
   }),
@@ -97,7 +108,8 @@ vi.mock("@/api/instanceSettings", () => ({
 vi.mock("@/api/messenger", () => ({
   messengerApi: {
     dismissUnreads: mockState.dismissUnreads,
-    listSavedViews: vi.fn(),
+    listSavedViews: mockState.listSavedViews,
+    updateSavedView: mockState.updateSavedView,
   },
 }));
 
@@ -112,8 +124,12 @@ vi.mock("@/context/DialogContext", () => ({
 
 vi.mock("@/context/OrganizationContext", () => ({
   useOrganization: () => ({
-    selectedOrganizationId: "org-1",
+    selectedOrganizationId: mockState.organizationId,
   }),
+}));
+
+vi.mock("@/context/ToastContext", () => ({
+  useOptionalToast: () => ({ pushToast: mockState.pushToast }),
 }));
 
 vi.mock("@/context/SidebarContext", () => ({
@@ -197,6 +213,10 @@ function setUserAgent(userAgent: string) {
 }
 
 beforeEach(() => {
+  window.sessionStorage.clear();
+  mockState.organizationId = "org-1";
+  mockState.updateSavedView.mockReset().mockResolvedValue({});
+  mockState.listSavedViews.mockReset().mockImplementation(async () => ({ items: mockState.pinnedLocalApps, pageInfo: { hasMore: false, nextOffset: null } }));
   setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
   mockState.desktopShell.setBadgeCount.mockResolvedValue(undefined);
   mockState.desktopShell.showNotification.mockResolvedValue(undefined);
@@ -667,6 +687,62 @@ describe("PrimaryRail active motion indicator", () => {
     expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
     expect(linkHref("Organization")).toBe("/dashboard/calendar");
     expect(linkHref("Automations")).toBe("/automations/weekly-ci");
+  });
+});
+
+describe("PrimaryRail opened Apps", () => {
+  const identity = { desktopInstallationId: "installation-a", appPublicId: "public-a", localBindingId: "binding-a" };
+
+  it("closes an inactive App without navigating, unpinning only its matching saved view", async () => {
+    openApp("org-1", { key: "local:a", title: "Operations", path: "/apps/view/local%3Aa", identity });
+    openApp("org-1", { key: "saved-view:saved-a", title: "Operations", path: "/apps/saved/saved-a", identity });
+    mockState.pinnedLocalApps = [{ id: "saved-a", title: "Operations", targetPayload: { kind: "local_app", ...identity } }];
+    await renderPrimaryRail();
+    expect(document.querySelectorAll('[data-testid="primary-rail-app"]')).toHaveLength(1);
+    const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close Operations"]')!;
+    expect(close.closest("a")).toBeNull();
+    expect(close.className).toContain("opacity-0");
+    expect(close.className).toContain("group-hover/rail-app:opacity-100");
+    await act(async () => close.click());
+    expect(mockState.updateSavedView).toHaveBeenCalledWith("org-1", "saved-a", { primaryRailPinned: false });
+    expect(readOpenApps("org-1")).toHaveLength(0);
+    expect(mockState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("closes the active App back to the catalog and leaves another App open", async () => {
+    openApp("org-1", { key: "managed:a", title: "Operations", path: "/apps/view/managed%3Aa" });
+    openApp("org-1", { key: "managed:b", title: "Research", path: "/apps/view/managed%3Ab" });
+    mockState.pathname = "/apps/view/managed%3Aa";
+    await renderPrimaryRail();
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Close Operations"]')!.click());
+    expect(mockState.navigate).toHaveBeenCalledWith("/hub?tab=apps", { replace: true });
+    expect(readOpenApps("org-1").map((app) => app.key)).toEqual(["managed:b"]);
+    expect(mockState.updateSavedView).not.toHaveBeenCalled();
+  });
+
+  it("keeps the entry and reports a failed close", async () => {
+    openApp("org-1", { key: "local:a", title: "Operations", path: "/apps/view/local%3Aa", identity });
+    mockState.pinnedLocalApps = [{ id: "saved-a", title: "Operations", targetPayload: { kind: "local_app", ...identity } }];
+    mockState.updateSavedView.mockRejectedValue(new Error("Connection lost"));
+    await renderPrimaryRail();
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Close Operations"]')!.click());
+    expect(readOpenApps("org-1")).toHaveLength(1);
+    expect(mockState.navigate).not.toHaveBeenCalled();
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({ title: "Could not close App", body: "Connection lost" }));
+  });
+
+  it("does not navigate the new organization when a previous close finishes", async () => {
+    openApp("org-1", { key: "managed:a", title: "Operations", path: "/apps/view/managed%3Aa" });
+    mockState.pathname = "/apps/view/managed%3Aa";
+    let resolveList!: (page: unknown) => void;
+    mockState.listSavedViews.mockImplementation(() => new Promise((resolve) => { resolveList = resolve; }));
+    const view = await renderPrimaryRail();
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Close Operations"]')!.click());
+    mockState.organizationId = "org-2";
+    await view.rerender();
+    await act(async () => resolveList({ items: [], pageInfo: { hasMore: false, nextOffset: null } }));
+    expect(readOpenApps("org-1")).toHaveLength(0);
+    expect(mockState.navigate).not.toHaveBeenCalled();
   });
 });
 

@@ -3,6 +3,15 @@
 This guide is the entrypoint for local development.
 It keeps the shortest path here and routes deep operational details to focused docs.
 
+## Protected Main Workflow
+
+Create a working branch before making commits (`codex/` for agent work), push
+that branch, and open a PR targeting `main`. All changes use this path, including
+docs, release preparation, and version bumps. Required qualification checks must
+pass before PR merge. Administrators and automation have no direct-push bypass.
+See [release automation setup](RELEASE-AUTOMATION-SETUP.md#7-protected-main-release-flow)
+for the enforced branch rules and automatic version-handoff PRs.
+
 ## Deployment Modes
 
 For mode definitions and intended CLI behavior, see `doc/engineering/DEPLOYMENT-MODES.md`.

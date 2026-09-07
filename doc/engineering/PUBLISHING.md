@@ -93,9 +93,11 @@ summary, locale-appropriate headings, and only non-empty categories. CI,
 workflow, branch, source-locking, approval, and deployment mechanics belong in
 maintainer records rather than the public changelog.
 After both the stable and public changelog deploy succeed,
-`scripts/prepare-next-release.mjs` idempotently updates current `main` to the
-next patch base with one `[skip release]` maintenance commit pushed directly to
-`main`, then explicitly dispatches Test for that exact SHA.
+`scripts/prepare-next-release.mjs` idempotently proposes the next patch base on
+`codex/release-vX.Y.Z` with one `[skip release]` maintenance commit and a PR.
+Release explicitly dispatches Test for that exact SHA because `GITHUB_TOKEN`
+PR creation does not trigger normal PR checks. Merge through protected `main`
+after required checks pass, then verify the merged commit's CI.
 
 ## Version formats
 
