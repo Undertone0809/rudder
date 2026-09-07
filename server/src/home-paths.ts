@@ -451,7 +451,7 @@ async function withOrganizationWorkspaceMapLock<T>(fn: () => Promise<T>): Promis
     const handle = await fs.open(acquisitionOwnerPath, "wx", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify(owner, null, 2)}\n`, "utf8");
-      await handle.sync();
+      await syncFileHandle(handle);
     } finally {
       await handle.close();
     }
@@ -575,7 +575,7 @@ async function reclaimStaleOrganizationWorkspaceMapLock(
   }
   try {
     await handle.writeFile(`${JSON.stringify(claim)}\n`, "utf8");
-    await handle.sync();
+    await syncFileHandle(handle);
   } finally {
     await handle.close();
   }
@@ -1223,7 +1223,7 @@ async function writeOrganizationWorkspaceMapFile(
   const handle = await fs.open(tempPath, "wx", 0o600);
   try {
     await handle.writeFile(`${JSON.stringify(map, null, 2)}\n`, "utf8");
-    await handle.sync();
+    await syncFileHandle(handle);
   } finally {
     await handle.close();
   }
@@ -1256,7 +1256,7 @@ async function ensureOrganizationWorkspaceIdentity(root: string, orgId: string):
     const handle = await fs.open(tempPath, "wx", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify({ version: 1, orgId: expectedOrgId }, null, 2)}\n`, "utf8");
-      await handle.sync();
+      await syncFileHandle(handle);
     } finally {
       await handle.close();
     }
@@ -1349,7 +1349,7 @@ async function writeWorkspaceMigrationState(root: string, aliases: string[]): Pr
   const handle = await fs.open(tempPath, "wx", 0o600);
   try {
     await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
-    await handle.sync();
+    await syncFileHandle(handle);
   } finally {
     await handle.close();
   }
@@ -1618,7 +1618,22 @@ async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targe
   }
 }
 
-async function syncDirectory(directory: string): Promise<void> { if (process.platform === "win32") return;
+const UNSUPPORTED_FILE_SYNC_ERROR_CODES = new Set(["EINVAL", "ENOTSUP", "EPERM"]);
+
+export async function syncFileHandle(
+  handle: { sync(): Promise<void> },
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  try {
+    await handle.sync();
+  } catch (error) {
+    if (platform === "win32" && UNSUPPORTED_FILE_SYNC_ERROR_CODES.has(errorCode(error) ?? "")) return;
+    throw error;
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  if (process.platform === "win32") return;
   let handle: Awaited<ReturnType<typeof fs.open>>;
   try {
     handle = await fs.open(directory, "r");
