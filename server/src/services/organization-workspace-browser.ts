@@ -871,14 +871,17 @@ export function organizationWorkspaceBrowserService(
           env: process.env,
           legacyToggleEnvs: ["RUDDER_NATIVE_WORKSPACE_FILES"],
         });
+        const canonicalFilePath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
         if (policy.enabled) {
-          const canonicalFilePath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
           try {
             const nativeResult = await readWorkspaceFileNative(canonicalRoot, canonicalFilePath, signal);
             nativeContent = nativeResult.content;
           } catch (error) {
             if (error instanceof WorkspaceFileNativeError && error.limitExceeded) {
               throw unprocessable("The organization Library file exceeds the 1 MB read limit");
+            }
+            if (error instanceof WorkspaceFileNativeError && error.contentRejected) {
+              throw unprocessable("The organization Library text file must be valid UTF-8");
             }
             if (error instanceof WorkspaceFileNativeError && error.pathRejected) {
               if (error.code === "workspace_file_not_found") {
@@ -894,6 +897,9 @@ export function organizationWorkspaceBrowserService(
               if (fallbackError instanceof WorkspaceFileNativeError && fallbackError.limitExceeded) {
                 throw unprocessable("The organization Library file exceeds the 1 MB read limit");
               }
+              if (fallbackError instanceof WorkspaceFileNativeError && fallbackError.contentRejected) {
+                throw unprocessable("The organization Library text file must be valid UTF-8");
+              }
               if (fallbackError instanceof WorkspaceFileNativeError && fallbackError.pathRejected) {
                 if (fallbackError.code === "workspace_file_not_found") {
                   throw notFound("File not found inside the organization Library");
@@ -902,6 +908,25 @@ export function organizationWorkspaceBrowserService(
               }
               throw fallbackError;
             }
+          }
+        } else {
+          try {
+            const nodeResult = await readWorkspaceFileNode(canonicalRoot, canonicalFilePath, signal);
+            nativeContent = nodeResult.content;
+          } catch (error) {
+            if (error instanceof WorkspaceFileNativeError && error.limitExceeded) {
+              throw unprocessable("The organization Library file exceeds the 1 MB read limit");
+            }
+            if (error instanceof WorkspaceFileNativeError && error.contentRejected) {
+              throw unprocessable("The organization Library text file must be valid UTF-8");
+            }
+            if (error instanceof WorkspaceFileNativeError && error.pathRejected) {
+              if (error.code === "workspace_file_not_found") {
+                throw notFound("File not found inside the organization Library");
+              }
+              throw unprocessable("Requested path must stay inside the organization Library root");
+            }
+            throw error;
           }
         }
       }
