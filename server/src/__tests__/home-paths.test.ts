@@ -32,8 +32,8 @@ import {
   resolvePreviousDocumentsOrganizationWorkspaceRoot,
   resolveProjectLibraryDir,
   resolveProjectLibraryRelativePath,
-  syncFileHandle,
 } from "../home-paths.js";
+import { syncFileHandle } from "../file-system-durability.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));

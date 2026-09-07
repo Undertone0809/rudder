@@ -10,6 +10,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } from "./agent-workspace-key.js";
+import { syncDirectory, syncFileHandle } from "./file-system-durability.js";
 
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -1615,38 +1616,6 @@ async function moveWorkspacePathWithCompatibilityAlias(sourcePath: string, targe
   } catch (error) {
     await fs.rename(targetPath, sourcePath).catch(() => {});
     throw error;
-  }
-}
-
-const UNSUPPORTED_FILE_SYNC_ERROR_CODES = new Set(["EINVAL", "ENOTSUP", "EPERM"]);
-
-export async function syncFileHandle(
-  handle: { sync(): Promise<void> },
-  platform: NodeJS.Platform = process.platform,
-): Promise<void> {
-  try {
-    await handle.sync();
-  } catch (error) {
-    if (platform === "win32" && UNSUPPORTED_FILE_SYNC_ERROR_CODES.has(errorCode(error) ?? "")) return;
-    throw error;
-  }
-}
-
-async function syncDirectory(directory: string): Promise<void> {
-  if (process.platform === "win32") return;
-  let handle: Awaited<ReturnType<typeof fs.open>>;
-  try {
-    handle = await fs.open(directory, "r");
-  } catch (error) {
-    if (["EISDIR", "EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) return;
-    throw error;
-  }
-  try {
-    await handle.sync().catch((error) => {
-      if (!["EINVAL", "ENOTSUP"].includes(errorCode(error) ?? "")) throw error;
-    });
-  } finally {
-    await handle.close();
   }
 }
 
