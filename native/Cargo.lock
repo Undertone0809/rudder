@@ -1403,6 +1403,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-read-surfaces-core"
+version = "0.7.20"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-run-evidence-core"
 version = "0.7.20"
 dependencies = [
