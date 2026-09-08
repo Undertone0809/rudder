@@ -6795,7 +6795,8 @@ async function cleanupLocalAppScenario(input) {
 
 async function waitForLocalAppWebview(page, definition, expectedAttestation, expectedBodyText) {
   const { expectedPartition, expectedUrl } = expectedAttestation;
-  const evidenceHandle = await page.waitForFunction(async ({ bindingId, expectedBodyText: bodyText, expectedPartition, expectedUrl: url }) => {
+  // Await each async probe before testing truthiness; waitForFunction sees a truthy Promise.
+  const check = () => page.evaluate(async ({ bindingId, expectedBodyText: bodyText, expectedPartition, expectedUrl: url }) => {
     const webview = Array.from(document.querySelectorAll("[data-testid='local-app-webview']"))
       .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
         && candidate.getAttribute("data-active") === "true");
@@ -6840,11 +6841,37 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
     expectedBodyText,
     expectedPartition,
     expectedUrl,
-  }, { timeout: 45_000 });
+  });
+  const deadline = Date.now() + 45_000;
+  let lastError = null;
+  const timeoutError = () => new Error(`Timed out waiting for the active Local App webview to produce attested evidence.${lastError instanceof Error ? ` Last error: ${lastError.message}` : ""}`);
+  let deadlineTimer;
+  let pollTimer;
+  const deadlinePromise = new Promise((_, reject) => {
+    deadlineTimer = setTimeout(() => reject(timeoutError()), 45_000);
+  });
   try {
-    return await evidenceHandle.jsonValue();
+    // Race each await, not a background poller: expiry exits the loop even while
+    // evaluate is pending. Browser work cannot be cancelled, but cannot start another poll.
+    while (Date.now() < deadline) {
+      let evidence;
+      try {
+        evidence = await Promise.race([check(), deadlinePromise]);
+      } catch (error) {
+        if (Date.now() >= deadline) throw timeoutError();
+        lastError = error;
+      }
+      if (Date.now() >= deadline) throw timeoutError();
+      if (evidence) return evidence;
+      await Promise.race([
+        new Promise((resolve) => { pollTimer = setTimeout(resolve, 100); }),
+        deadlinePromise,
+      ]);
+    }
+    throw timeoutError();
   } finally {
-    await evidenceHandle.dispose();
+    clearTimeout(deadlineTimer);
+    clearTimeout(pollTimer);
   }
 }
 
