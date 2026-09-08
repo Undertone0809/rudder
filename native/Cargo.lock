@@ -1413,6 +1413,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-runtime-core"
+version = "0.7.20"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rudder-runtime-payload-core"
 version = "0.7.20"
 dependencies = [
