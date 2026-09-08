@@ -1377,6 +1377,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-auth-core"
+version = "0.7.20"
+dependencies = [
+ "hex",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.20",
+ "zeroize",
+]
+
+[[package]]
 name = "rudder-authority-core"
 version = "0.7.20"
 dependencies = [
