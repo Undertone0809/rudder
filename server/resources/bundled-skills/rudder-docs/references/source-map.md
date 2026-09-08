@@ -7,7 +7,7 @@ directories rather than an exhaustive page list. Follow the current checkout's
 ## Section Map
 
 - [Official public documentation](#official-public-documentation)
-- [Product Logic Registry](#product-logic-registry)
+- [Design proposals](#design-proposals)
 - [Contributor and engineering documentation](#contributor-and-engineering-documentation)
 - [Implementation and tests](#implementation-and-tests)
 - [Official remote source and version history](#official-remote-source-and-version-history)
@@ -51,36 +51,12 @@ Other lookup pages are similarly narrow:
 | Windows Desktop release signing policy | `https://docs.rudderhq.dev/reference/code-signing-policy` | `https://docs.rudderhq.dev/zh/reference/code-signing-policy` |
 | Local data and optional service privacy | `https://docs.rudderhq.dev/reference/privacy` | `https://docs.rudderhq.dev/zh/reference/privacy` |
 
-## Product Logic Registry
+## Design Proposals
 
-- Entry point: `doc/product/README.md`
-- Registry map: `doc/product/registry.yml`
-- Domain contracts: `doc/product/domains/`
-- Composed workflows: `doc/product/workflows/`
-- Surface-to-contract maps: `doc/product/surfaces/`
-
-Use Product Logic for intended product semantics and invariants. Start at the
-registry entry point and select the owning domain rather than scanning all
-contracts. Reading these guarded files does not authorize editing them.
-
-Common domain routes include:
-
-- agents, skills, and inbox: `doc/product/domains/agents/`
-- issues and issue-visible state: `doc/product/domains/issues/`
-- assignment, checkout, review routing: `doc/product/domains/work-routing/`
-- runs, execution, transcripts, workspaces: `doc/product/domains/execution/`
-- organizations, goals, and projects:
-  `doc/product/domains/organizations-and-goals/`
-- Library, resources, and runtime context:
-  `doc/product/domains/library-and-context/`
-- Chat, Messenger, comments, and integrations:
-  `doc/product/domains/collaboration/`
-- approvals, budgets, costs, and activity:
-  `doc/product/domains/governance-and-visibility/`
-- reviews, feedback, and learning:
-  `doc/product/domains/review-feedback-learning/`
-- automations: `doc/product/domains/automations/`
-- plugins: `doc/product/domains/plugins/`
+Use `doc/plans/` for proposed designs and decision history. Verify current
+behavior against implementation and tests; a proposal is not evidence that a
+feature shipped. The old `doc/product/` registry, domains, workflows, and surface
+maps are historical reference only. They require no synchronization or approval.
 
 ## Contributor And Engineering Documentation
 

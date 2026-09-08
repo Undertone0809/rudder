@@ -2,7 +2,15 @@
 
 Use concise Chinese by default when the user asked in Chinese.
 
-## Verdict Vocabulary
+## Overall Verdict
+
+Return `PASS`, `FAIL`, or `QUESTION` for the requested scope. If required behavior
+was observed to fail, return `FAIL`. Otherwise, a required runtime with
+`BLOCKED_PROVIDER`, `PARTIAL`, or `NOT_RUN` yields `QUESTION`. Return `PASS` only
+when all required criteria have terminal proof. Unrequested runtimes are not
+part of this gate. Keep diagnostic status details in the per-runtime matrix.
+
+## Per-Runtime Vocabulary
 
 - `PASS`: real local runtime executed the requested tool/workflow with
   transcript evidence and terminal readback.
@@ -19,7 +27,7 @@ not run.
 ## Matrix Format
 
 ```markdown
-Verdict: PARTIAL
+Verdict: FAIL
 
 Runtime matrix:
 | Runtime | Model | Verdict | Run | Evidence | Fallback |
@@ -73,4 +81,3 @@ Avoid:
 - "MCP auth fixed" when the run failed before a tool call
 - "no CLI involved" unless you mean model-visible fallback and have transcript
   evidence
-

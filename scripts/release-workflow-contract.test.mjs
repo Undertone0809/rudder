@@ -59,7 +59,7 @@ describe("unified delivery workflows", () => {
     expect(testWorkflow).toContain("Require exact trusted dispatch source");
     expect(testWorkflow).toContain("source_sha:");
     expect(testWorkflow).toContain("merge_group:");
-    expect(testWorkflow).toContain('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"');
+    expect(testWorkflow.match(/node scripts\/ci-dispatch-source\.mjs/g)).toHaveLength(3);
     expect(testWorkflow).not.toContain('test "$DISPATCH_REF_SHA" = "$SOURCE_SHA"');
     const architecture = workflowJob(testWorkflow, "architecture");
     expect(architecture).toContain('needs.plan.outputs.comparison_sha');
@@ -72,7 +72,6 @@ describe("unified delivery workflows", () => {
 
   it("runs source, docs, platform, and fast packaged Desktop gates in Test", () => {
     expect(testWorkflow).toContain("Architecture ratchet");
-    expect(testWorkflow).toContain("pnpm product-logic:check");
     expect(testWorkflow).toContain("pnpm test:run --maxWorkers=2");
     expect(testWorkflow).toContain("Ensure Electron runtime dependency");
     expect(testWorkflow).toContain("pnpm --filter @rudderhq/desktop rebuild electron");
@@ -580,6 +579,7 @@ describe("unified delivery workflows", () => {
   });
 
   it("keeps automatic canary and deterministic stable handoff behavior", () => {
+    const handoff = workflowJob(releaseWorkflow, "next-release-base");
     expect(releaseWorkflow).toContain('EVENT_NAME: ${{ github.event_name }}');
     expect(releaseWorkflow).toContain('if [ "$EVENT_NAME" = "workflow_run" ]; then');
     expect(releaseWorkflow).toContain("environment: npm-canary");
@@ -589,5 +589,14 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain("node scripts/prepare-next-release.mjs");
     expect(releaseWorkflow).toContain("gh workflow run ci.yml");
     expect(nextReleaseScript).toContain("[skip release]");
+    expect(handoff).toContain("pull-requests: write");
+    expect(handoff).toContain("GH_TOKEN: ${{ github.token }}");
+    expect(handoff).toContain("steps.next-release.outputs.action == 'proposed'");
+    expect(handoff).toContain('HANDOFF_BRANCH: ${{ steps.next-release.outputs.branch }}');
+    expect(handoff).toContain('HANDOFF_SHA: ${{ steps.next-release.outputs.head_sha }}');
+    expect(handoff).toContain('gh workflow run ci.yml --ref "$HANDOFF_BRANCH" -f source_sha="$HANDOFF_SHA"');
+    expect(handoff).toContain("merge pending required checks");
+    expect(nextReleaseScript).not.toContain('HEAD:refs/heads/${options.base}');
+    expect(nextReleaseScript).toContain('HEAD:refs/heads/${branch}');
   });
 });

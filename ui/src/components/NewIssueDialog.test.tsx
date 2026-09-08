@@ -410,12 +410,30 @@ describe("NewIssueDialog", () => {
     expect(html).not.toContain("min-h-[120px]");
   });
 
+  it("gives the manual description a bounded modal scroll region", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-slot="new-issue-description"');
+    expect(html).toContain(
+      "scrollbar-auto-hide min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain",
+    );
+  });
+
   it("keeps a fixed dialog width and removes the expand action", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
     expect(html).toContain("sm:max-w-[920px]");
     expect(html).not.toContain("sm:max-w-[1040px]");
     expect(html).toContain('aria-label="Close new issue dialog"');
+  });
+
+  it("removes the organization and title header row while keeping close anchored to the dialog", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).not.toContain("&rsaquo;");
+    expect(html).not.toContain("border-b border-border shrink-0");
+    expect(html).toContain("!absolute right-3 top-3 z-10");
+    expect(html).toContain("<svg");
   });
 
   it("clips the creation mode selection inside one rounded segmented control", () => {

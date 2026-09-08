@@ -151,10 +151,12 @@ Never reset or delete `~/.rudder` as a diagnostic shortcut.
 1. Capture exact command, checkout, target mode, logs, and current processes.
 2. Resolve the correct descriptor and health payload.
 3. If the symptom is identity-related, record each continuity transition and
-   stop at the first missing applicable transition.
+   diagnose the first missing applicable transition.
 4. Find the first failing layer.
-5. Apply only a safe, reversible runtime recovery within the user's requested
-   scope. Do not edit product source unless the user separately asked for a fix.
+5. Apply a scoped recovery. A request to fix or restore Desktop authorizes
+   necessary source repairs and verification; no second "fix" instruction is
+   needed. A diagnosis-only request remains read-only. Preserve user data and
+   use the packaged verification path when the repair affects installed behavior.
 6. Restart the same target path.
 7. Observe the Electron window or installed application.
 8. Verify runtime identity, the original symptom, and the first usable

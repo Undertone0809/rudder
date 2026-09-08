@@ -112,6 +112,7 @@ const mockState = vi.hoisted(() => ({
   markRead: vi.fn(),
   mutations: [] as unknown[],
   navigate: vi.fn(),
+  openNewProject: vi.fn(),
   pushToast: vi.fn(),
   allQueryKeys: [] as unknown[][],
   queryKeys: [] as unknown[][],
@@ -557,7 +558,7 @@ vi.mock("@/context/SavedViewPromotionContext", () => ({
 }));
 
 vi.mock("@/context/DialogContext", () => ({
-  useDialog: () => ({ confirm: vi.fn(async () => true), openNewIssue: vi.fn() }),
+  useDialog: () => ({ confirm: vi.fn(async () => true), openNewIssue: vi.fn(), openNewProject: mockState.openNewProject }),
 }));
 
 vi.mock("@/context/SidebarContext", () => ({
@@ -8891,6 +8892,32 @@ describe("Chat project context selector", () => {
     expect(projectMenu).not.toBeNull();
     expect(projectMenu?.textContent).toContain("Rudder mkt");
     expect(projectMenu?.textContent).not.toMatch(/\b\d+\s+resources\b/u);
+  });
+
+  it("offers to create a project from the no-project context menu", () => {
+    mockState.conversationId = null;
+    mockState.conversations = [];
+    mockState.messagesByChatId = {};
+    mockState.projects = [];
+    mockState.openNewProject.mockClear();
+
+    const { container } = renderChat();
+    const projectSelector = container.querySelector<HTMLButtonElement>("[data-testid='chat-project-selector']");
+
+    act(() => {
+      projectSelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const createProject = document.body.querySelector<HTMLButtonElement>("[data-testid='chat-project-create']");
+    expect(createProject).not.toBeNull();
+    expect(createProject?.getAttribute("role")).toBe("menuitem");
+
+    act(() => {
+      createProject?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockState.openNewProject).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector("[data-testid='chat-project-menu']")).toBeNull();
   });
 
   it("hides the no-project selector after a conversation starts without project context", () => {

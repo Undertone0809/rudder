@@ -422,6 +422,23 @@ describe("server-utils prompt contracts", () => {
     })).toBe(DEFAULT_AGENT_PROMPT_TEMPLATE);
   });
 
+  it("defines heartbeat as bounded Inbox work instead of a self-check", () => {
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("The Inbox—not Today's Plan or local memory—is the authoritative heartbeat work queue.");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("select the first runnable item");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("assignee `todo` or `in_progress` Issue remains actionable");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("Reviewer `in_review` or `blocked` rows remain review work");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("attempt to advance at most one");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("Stop rather than retry an ownership conflict");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("Reading state, restating a plan, rewriting memory, or reporting “still unchanged” is orientation, not progress.");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("Idle is valid only after the current Inbox shows no runnable owned or reviewer item.");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("heartbeat/self-check pipeline");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("RUDDER_TASK_ID");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("RUDDER_WAKE_COMMENT_ID");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("RUDDER_APPROVAL_ID");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("HEARTBEAT_OK");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("NO_REPLY");
+  });
+
   it("uses managed Goal context for missing wake facts without inventing a blocked conclusion", () => {
     const rendered = renderTemplate(selectPromptTemplate(undefined, {
       wakeReason: "goal_feedback",
@@ -684,9 +701,8 @@ describe("server-utils prompt contracts", () => {
     expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("including user-owned or unassigned issues");
     expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("strictly respond to the comment's content");
     expect(RUDDER_AGENT_OPERATING_CONTRACT).toContain("handle only the narrow action the comment explicitly requests");
-    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("If the issue is not assigned to you");
-    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("including user-owned or unassigned issues");
-    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("respond to the comment itself instead of executing the whole issue");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("RUDDER_WAKE_COMMENT_ID");
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("respond to the comment itself");
   });
 
   it("uses the assignee comment prompt for issue reopen comment wakes", () => {
@@ -755,10 +771,10 @@ describe("server-utils prompt contracts", () => {
   it("keeps Rudder Docs usage conditional and out of the global operating contract", () => {
     expect(RUDDER_AGENT_OPERATING_CONTRACT).not.toContain("You can use `rudder` skill");
     expect(RUDDER_AGENT_OPERATING_CONTRACT).not.toContain("`rudder-docs`");
-    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain("may consult the bundled `rudder-docs` skill");
     expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).toContain(
-      "Do not load it merely because this is a heartbeat",
+      "Consult `rudder-docs` only for exact commands or operating details",
     );
+    expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("Do not load it merely because this is a heartbeat");
     expect(RUDDER_AGENT_HEARTBEAT_INSTRUCTION).not.toContain("bundled `rudder` skill");
   });
 

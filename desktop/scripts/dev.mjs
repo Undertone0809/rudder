@@ -1,3 +1,4 @@
+import { build } from "esbuild";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -8,6 +9,15 @@ const electronCli = require.resolve("electron/cli.js");
 const tsxLoader = require.resolve("tsx");
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mainEntry = path.join(desktopDir, "dist", "main.js");
+// Electron preload cannot rely on the main process's tsx loader for workspace imports.
+await build({
+  entryPoints: [path.join(desktopDir, "src", "preload.ts")],
+  outfile: path.join(desktopDir, "dist", "preload.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  external: ["electron"],
+});
 const nodeOptions = [process.env.NODE_OPTIONS, `--import=${tsxLoader}`].filter(Boolean).join(" ");
 const child = spawn(process.execPath, [electronCli, mainEntry], {
   cwd: desktopDir,

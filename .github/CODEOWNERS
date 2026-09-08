@@ -1,7 +1,6 @@
-# Release and product contracts require review from the independent maintainer account.
+# Release infrastructure requires review from the independent maintainer account.
 
 .github/** @Rudderhq
-doc/product/** @Rudderhq
 scripts/release*.sh @Rudderhq
 scripts/release-*.mjs @Rudderhq
 scripts/create-github-release.sh @Rudderhq

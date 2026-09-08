@@ -27,7 +27,7 @@ describe("desktop window effect mode", () => {
   });
 
   it("prefers the cross-platform env var while preserving the legacy macOS env fallback", () => {
-    expect(resolveDesktopWindowEffectMode({}, "darwin")).toBe("opaque");
+    expect(resolveDesktopWindowEffectMode({}, "darwin")).toBe("transparent_vibrant");
     expect(resolveDesktopWindowEffectMode({}, "win32")).toBe("transparent_vibrant");
     expect(resolveDesktopWindowEffectMode({}, "linux")).toBe("opaque");
     expect(resolveDesktopWindowEffectMode({ RUDDER_DESKTOP_MAC_WINDOW_MODE: "transparent" }, "darwin"))

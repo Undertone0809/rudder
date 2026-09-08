@@ -12,7 +12,7 @@ use rudder_runtime_payload_core::{
     publish_payload, verify_payload,
 };
 use rudder_workspace_manifest_core::{
-    MANIFEST_PROTOCOL_VERSION, ManifestLimits, ManifestState, watch_workspace,
+    MANIFEST_PROTOCOL_VERSION, ManifestLimits, ManifestState, list_directory, watch_workspace,
 };
 use serde_json::json;
 use std::io::{self, Read, Write};
@@ -27,6 +27,7 @@ const CAPABILITIES: &[&str] = &[
     "evidence.index",
     "evidence.read",
     "workspace.watch",
+    "workspace.list",
     "payload.verify",
     "payload.extract",
     "payload.probeVersion",
@@ -84,6 +85,7 @@ fn capability_for_args(namespace: Option<&str>, operation: Option<&str>) -> Opti
         (Some("evidence"), Some("index")) => Some("evidence.index"),
         (Some("evidence"), Some("read")) => Some("evidence.read"),
         (Some("workspace"), Some("watch")) => Some("workspace.watch"),
+        (Some("workspace"), Some("list")) => Some("workspace.list"),
         (Some("payload"), Some("verify")) => Some("payload.verify"),
         (Some("payload"), Some("extract")) => Some("payload.extract"),
         (Some("payload"), Some("probe-version")) => Some("payload.probeVersion"),
@@ -273,6 +275,34 @@ fn run() -> Result<serde_json::Value, NativeFailure> {
             }))
         }
         (Some("workspace"), Some("watch")) => run_workspace_watch(args).map_err(Into::into),
+        (Some("workspace"), Some("list")) => {
+            let root = absolute(required(&mut args, "root_required")?)?;
+            let directory = PathBuf::from(required(&mut args, "directory_required")?);
+            let max_entries = number(required(&mut args, "max_entries_required")?)?;
+            let max_path_bytes = number(required(&mut args, "max_path_bytes_required")?)?;
+            if args.next().is_some() {
+                return Err("usage".into());
+            }
+            let result = list_directory(
+                &root,
+                &directory,
+                ManifestLimits {
+                    max_entries,
+                    max_path_bytes,
+                },
+            )
+            .map_err(|error| NativeFailure {
+                code: error.code(),
+                accepted: false,
+            })?;
+            let mut response = response_metadata(MANIFEST_PROTOCOL_VERSION, "workspace.list");
+            response["ok"] = json!(true);
+            response["operation"] = json!("listWorkspaceDirectory");
+            response["accepted"] = json!(false);
+            response["directoryPath"] = json!(result.directory_path);
+            response["entries"] = json!(result.entries);
+            Ok(response)
+        }
         (Some("archive"), Some("create")) => {
             let plan = absolute(required(&mut args, "plan_required")?)?;
             let output = absolute(required(&mut args, "output_required")?)?;

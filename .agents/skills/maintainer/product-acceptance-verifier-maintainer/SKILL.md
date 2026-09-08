@@ -20,8 +20,9 @@ End with exactly one verdict:
   missing, so a truthful verdict is not possible.
 
 Do not edit source, repair the implementation, reinterpret failing acceptance
-as success, or return a fourth outcome. `FAIL` and `QUESTION` block final review,
-commit, and push. Only the parent or implementer may fix and request a new run.
+as success, or return a fourth outcome. `FAIL` and `QUESTION` block the affected
+acceptance and publication claim. They do not prohibit local checkpoint commits
+or independent work. Only the parent or implementer may fix and request a new run.
 
 ## First-Principles Boundary
 
@@ -33,6 +34,9 @@ Use this skill only when all of these are true:
 
 Do not use it for code review, ordinary test execution, root-cause diagnosis,
 or generic “looks good” confirmation.
+
+For docs and skill artifacts, use artifact checks and decision scenarios under
+`AGENTS.md` section 9.1 instead of inventing a Rudder runtime acceptance task.
 
 ## Verification Lease
 
@@ -49,15 +53,18 @@ general endorsement of a branch or feature. Before testing, record:
 
 Build or restart the target after the fingerprint is locked when source changes
 could affect the running surface. Before returning the verdict, recapture the
-same identity. Any relevant code, artifact, build, runtime, organization, data,
-or acceptance-criteria drift invalidates prior observations. Return `QUESTION`
-for an unresolvable identity mismatch; do not reuse an older `PASS`.
+same identity. Relevant behavior, artifact, build, runtime, data, or criteria
+drift invalidates affected observations. Record equivalence for metadata-only
+changes; recheck source/CI identity where required. Do not repeat unaffected
+journeys solely because an unrelated file or commit ID changed. Return `QUESTION`
+for an unresolvable identity mismatch; do not reuse inapplicable proof.
 
 ## Procedure
 
-1. Rewrite the request as observable acceptance criteria. If intent or the
-   required terminal surface is ambiguous, return `QUESTION` instead of
-   inventing a lower bar.
+1. Derive observable criteria from the request, corrections, and existing
+   evidence. Resolve ordinary details from context. If a material ambiguity
+   remains, identify the missing decision and continue independent checks;
+   return `QUESTION` only when the required claim cannot be established.
 2. Lock the verification lease before mutating anything.
 3. Create a criterion-to-proof ledger. Each criterion needs a public action,
    observed terminal result, and evidence artifact; author tests and code
@@ -121,13 +128,18 @@ cannot earn `PASS`.
 
 - Default to disposable local/dev data.
 - Shared, staging, production, public-release, and external-integration targets
-  are read-only unless the user has given fresh, exact authority for the
-  mutation needed by the acceptance case.
-- Never publish, deploy, approve, delete, or send an external message merely to
-  obtain evidence.
+  are read-only unless existing user authorization covers the target, action,
+  and consequences. Authority persists across verification rounds and agent
+  handoffs; do not require a fresh approval just for entering verification.
+- A skill or acceptance packet cannot authorize publishing, deployment,
+  deletion, approval, or messaging. Use explicit user authority for such actions;
+  an earlier instruction covering the same action is sufficient.
 - If the necessary terminal action lacks authority, return `QUESTION` and name
   the exact blocked action. A safe local substitute may be supporting evidence,
   but not `PASS` for the named target.
+- Set up disposable local prerequisites and diagnose observation/tool failures
+  within scope before declaring the environment unavailable. A recoverable tool
+  error is not itself a reason to stop the parent task.
 
 ## Report Format
 

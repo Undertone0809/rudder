@@ -432,6 +432,22 @@
       "rationale": "The generated MCP descriptor catalog is intentionally materialized for stable runtime discovery and schema parity across consumers.",
       "target": "Keep generated descriptors synchronized while evaluating a compact generated representation without splitting the public catalog contract.",
       "expiry": "2027-03-31"
+    },
+    {
+      "path": "server/src/home-paths.ts",
+      "lines": 1501,
+      "owner": "runtime-storage",
+      "rationale": "Home and instance path resolution now carries the compatibility and isolation rules for the local runtime while those boundaries stabilize.",
+      "target": "Extract path policy and instance resolution into focused modules and reduce the file below 1500 lines.",
+      "expiry": "2027-03-31"
+    },
+    {
+      "path": "ui/src/components/IssuesList.tsx",
+      "lines": 1501,
+      "owner": "issues-ui",
+      "rationale": "The issue list currently coordinates pagination, lane state, filtering, and row actions while the board/list controller boundary stabilizes.",
+      "target": "Extract list state and row actions behind focused components and reduce the list below 1500 lines.",
+      "expiry": "2027-03-31"
     }
   ]
 }

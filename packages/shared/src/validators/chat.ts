@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { organizationEntityReferenceSchema } from "./reference.js";
 import {
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
@@ -810,13 +811,13 @@ export const chatIssueProposalSchema = z.object({
   description: z.string().trim().min(1).max(20000),
   status: z.enum(ISSUE_STATUSES).optional().default("todo"),
   priority: z.enum(["critical", "high", "medium", "low"]).optional().default("medium"),
-  projectId: z.string().uuid().optional().nullable(),
-  goalId: z.string().uuid().optional().nullable(),
-  parentId: z.string().uuid().optional().nullable(),
-  assigneeAgentId: z.string().uuid().optional().nullable(),
+  projectId: organizationEntityReferenceSchema("project", "Project ID").optional().nullable(),
+  goalId: organizationEntityReferenceSchema("goal", "Goal ID").optional().nullable(),
+  parentId: organizationEntityReferenceSchema("issue", "Parent issue ID").optional().nullable(),
+  assigneeAgentId: organizationEntityReferenceSchema("agent", "Assignee agent ID").optional().nullable(),
   assigneeUserId: z.string().trim().optional().nullable(),
   assigneeUnassignedReason: z.string().trim().min(1).max(500).optional().nullable(),
-  reviewerAgentId: z.string().uuid().optional().nullable(),
+  reviewerAgentId: organizationEntityReferenceSchema("agent", "Reviewer agent ID").optional().nullable(),
   reviewerUserId: z.string().trim().optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
 }).superRefine((proposal, ctx) => {

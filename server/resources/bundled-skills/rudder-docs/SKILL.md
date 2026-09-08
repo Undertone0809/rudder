@@ -14,7 +14,7 @@ If this body is already present in the prompt but the current request does not n
 
 Classify the Rudder question, consult the smallest authoritative source set,
 and answer with clear provenance. Use current evidence instead of memory for
-commands, interfaces, versioned behavior, and product contracts.
+commands, interfaces, versioned behavior, and design proposals.
 
 This router does not make an ordinary hosted task into a Rudder workflow. It
 does not provide a command catalog, replace runtime-owned execution rails, or
@@ -71,8 +71,8 @@ exact page. Do not crawl or load the whole site for a narrow question.
 ### Local Rudder Checkout
 
 Follow the checkout's `AGENTS.md`, then use `doc/README.md` to choose the
-documentation layer: `docs/` for public user guidance, `doc/product/` for the
-intended product contract, `doc/engineering/` for contributor detail, and
+documentation layer: `docs/` for public user guidance, `doc/plans/` for design
+proposals, `doc/engineering/` for contributor detail, and
 source and tests for exact implementation. Search the owning area narrowly and
 cite local paths and line numbers when supported.
 
@@ -92,7 +92,7 @@ limits. Missing evidence narrows the answer; it does not justify invention.
 ## Resolve Versions And Conflicts
 
 Current callable or installed behavior wins for this environment.
-`doc/product/` owns intended product semantics. Source and tests own exact implementation evidence. Public docs own published user guidance. An official
+Proposals record intended changes and rationale. Source and tests own exact implementation evidence. Public docs own published user guidance. An official
 release or tag owns version-specific history.
 
 Do not flatten disagreement:
@@ -101,10 +101,10 @@ Do not flatten disagreement:
   documentation drift;
 - installed help versus a bundled reference: use installed help here and label
   the reference version-adjacent or stale;
-- public docs versus product contract: distinguish published guidance from
-  intended semantics;
-- product contract versus source or tests: report apparent implementation
-  drift and identify both;
+- public docs versus source or tests: report documentation drift and identify
+  both;
+- proposal versus implementation: distinguish intended changes from shipped
+  behavior;
 - default branch versus installed release: use the matching release tag for
   installed behavior;
 - verified evidence versus model memory: discard unsupported memory.
@@ -115,7 +115,7 @@ together or imply certainty that the evidence does not support.
 ## Evidence And Citations
 
 - Attribute each material claim as current-environment behavior, public
-  guidance, intended contract, implementation evidence, version history, or
+  guidance, proposed design, implementation evidence, version history, or
   inference.
 - Cite or link the exact source near the claim when the host supports links.
   For local files, include the path and a tight line reference when possible.
@@ -142,7 +142,7 @@ Read only the reference needed for the request:
 6. [Organization skills](references/organization-skills.md) — discover,
    import, inspect, enable, and synchronize organization or agent skills.
 7. [Source map](references/source-map.md) — stable official documentation,
-   Product Logic, engineering, implementation, test, release, and search
+   proposal, engineering, implementation, test, release, and search
    routes.
 
 ## Security And Bounded Use
@@ -157,8 +157,8 @@ Read only the reference needed for the request:
   releases and tags. Follow stricter host policy when it applies.
 - Preserve organization and workspace boundaries. Do not use documentation
   lookup to expose private resources or cross organization scope.
-- Reading `doc/product/` is allowed for evidence; it does not authorize edits.
-  Product Logic changes require the repository's separate explicit approval.
+- Code and tests establish current behavior. Proposals record design decisions;
+  the retired `doc/product/` registry is historical reference, not an approval gate.
 - A docs-only question does not authorize mutations. If the user also asks for
   an action, apply the normal authorization and safety rules to that action.
 

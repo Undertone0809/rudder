@@ -23,8 +23,6 @@
     "architecture:audit:test": "node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs",
     "architecture:audit:check": "node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref origin/main --fail-on-regression",
     "architecture:boundaries": "node scripts/architecture-boundaries.mjs",
-    "product-logic:check": "node scripts/product-logic-check.mjs",
-    "product-logic:test": "node --test scripts/product-logic-check.test.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest",

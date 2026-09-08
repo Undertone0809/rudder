@@ -189,6 +189,97 @@ describe("issueService.list participantAgentId", () => {
     });
   });
 
+  it("resolves typed short references within the organization boundary", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const agentId = randomUUID();
+    const userId = randomUUID();
+    const projectId = randomUUID();
+    const otherProjectId = randomUUID();
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Short Reference Org",
+        urlKey: deriveOrganizationUrlKey("Short Reference Org"),
+        issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Short Reference Org",
+        urlKey: deriveOrganizationUrlKey("Other Short Reference Org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Short Reference Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(projects).values([
+      { id: projectId, orgId, name: "Local Project", status: "in_progress" },
+      { id: otherProjectId, orgId: otherOrgId, name: "Other Project", status: "in_progress" },
+    ]);
+    await db.insert(organizationMemberships).values({
+      orgId,
+      principalType: "user",
+      principalId: userId,
+      status: "active",
+      membershipRole: "member",
+    });
+
+    const parent = await svc.create(orgId, {
+      title: "Short reference parent",
+      status: "todo",
+      priority: "medium",
+    });
+    const child = await svc.create(orgId, {
+      title: "Short reference child",
+      status: "todo",
+      priority: "medium",
+      projectId: shortRefFor("project", projectId),
+      parentId: shortRefFor("issue", parent.id),
+      assigneeAgentId: shortRefFor("agent", agentId),
+      createdByUserId: userId,
+    });
+
+    expect(child.projectId).toBe(projectId);
+    expect(child.parentId).toBe(parent.id);
+    expect(child.assigneeAgentId).toBe(agentId);
+
+    const participantMatches = await svc.list(orgId, {
+      participantAgentId: shortRefFor("agent", agentId),
+    });
+    expect(participantMatches.some((issue) => issue.id === child.id)).toBe(true);
+    const userFilterValues = [
+      "touchedByUserId",
+      "unreadForUserId",
+      "followedByUserId",
+      "involvedUserId",
+    ] as const;
+    for (const key of userFilterValues) {
+      await expect(svc.list(orgId, { [key]: shortRefFor("user", userId) })).resolves.toEqual(expect.any(Array));
+    }
+
+    await expect(svc.create(orgId, {
+      title: "Cross-organization short reference",
+      status: "todo",
+      priority: "medium",
+      projectId: shortRefFor("project", otherProjectId),
+    })).rejects.toMatchObject({ status: 404 });
+
+    const listed = await svc.list(orgId, { projectId: shortRefFor("project", projectId) });
+    expect(listed.some((issue) => issue.id === child.id)).toBe(true);
+  });
+
   it("keeps pending terminal runs visible without leaking terminal state from the issue list route", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -443,6 +534,88 @@ describe("issueService.list participantAgentId", () => {
     });
 
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
+  });
+
+  it("keeps paged results in the requested sort order", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Sorted issues",
+      urlKey: deriveOrganizationUrlKey("Sorted issues"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const createdAt = new Date("2026-05-01T00:00:00.000Z");
+    await db.insert(issues).values([
+      { id: randomUUID(), orgId, identifier: "SORT-4", title: "Delta", createdAt, updatedAt: createdAt },
+      { id: randomUUID(), orgId, identifier: "SORT-2", title: "Bravo", createdAt, updatedAt: createdAt },
+      { id: randomUUID(), orgId, identifier: "SORT-1", title: "Alpha", createdAt, updatedAt: createdAt },
+      { id: randomUUID(), orgId, identifier: "SORT-3", title: "Charlie", createdAt, updatedAt: createdAt },
+    ]);
+
+    const firstPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 2 });
+    const secondPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 2, offset: 2 });
+
+    expect([...firstPage, ...secondPage].map((issue) => issue.title)).toEqual([
+      "Alpha",
+      "Bravo",
+      "Charlie",
+      "Delta",
+    ]);
+  });
+
+  it("matches the UI lexical contract for text and pagination tie-breakers", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Lexically sorted issues",
+      urlKey: deriveOrganizationUrlKey("Lexically sorted issues"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const createdAt = new Date("2026-05-01T00:00:00.000Z");
+    const updatedAt = new Date("2026-05-02T00:00:00.000Z");
+    await db.insert(issues).values([
+      { id: randomUUID(), orgId, identifier: "TEXT-1", title: "alpha", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-2", title: "Alpha", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-3", title: "! punctuation", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-4", title: "éclair", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-5", title: "中 文", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "TEXT-6", title: "😀 emoji", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "case-a", title: "same title", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "!case-b", title: "same title", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "Case-c", title: "same title", createdAt, updatedAt },
+      { id: randomUUID(), orgId, identifier: "中-case-d", title: "same title", createdAt, updatedAt },
+    ]);
+
+    const titleFirstPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3 });
+    const titleSecondPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3, offset: 3 });
+    const titleThirdPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3, offset: 6 });
+    const titleFourthPage = await svc.list(orgId, { sortField: "title", sortDir: "asc", limit: 3, offset: 9 });
+
+    expect([
+      ...titleFirstPage,
+      ...titleSecondPage,
+      ...titleThirdPage,
+      ...titleFourthPage,
+    ].map((issue) => issue.title)).toEqual([
+      "! punctuation",
+      "Alpha",
+      "alpha",
+      "same title",
+      "same title",
+      "same title",
+      "same title",
+      "éclair",
+      "中 文",
+      "😀 emoji",
+    ]);
+
+    expect(titleSecondPage.map((issue) => issue.identifier)).toEqual(["!case-b", "Case-c", "case-a"]);
+    expect(titleThirdPage.map((issue) => issue.identifier)).toEqual(["中-case-d", "TEXT-4", "TEXT-5"]);
+    expect(titleFourthPage.map((issue) => issue.identifier)).toEqual(["TEXT-6"]);
   });
 
   it("keeps automation execution issues out of generic lists unless explicitly requested", async () => {

@@ -128,17 +128,14 @@ test("redirect generation includes the activated Batch 3 aliases", () => {
   assert.ok(vercel.some((redirect) => redirect.source === "/concepts/chat"));
 });
 
-test("deployment redirect artifacts keep legacy hosts out of staging and resolve production aliases in one hop", () => {
+test("deployment redirect artifacts resolve production aliases in one hop", () => {
   const manifest = loadManifest();
   const mintlify = expectedRedirects(manifest, "mintlify");
-  const staging = expectedRedirects(manifest, "vercel", { environment: "staging" });
   const production = expectedRedirects(manifest, "vercel", { environment: "production" });
   const legacyHost = "doc.rudder.zeeland.studio";
   const canonicalHost = "docs.rudderhq.dev";
   const prefixedAlias = "/en/concepts/messenger-approvals";
-  assert.ok(!staging.some((redirect) => redirect.has?.some((condition) => condition.value === legacyHost)));
   assert.equal(resolveRedirect(mintlify, { host: canonicalHost, path: prefixedAlias }), "/concepts/chat-messenger");
-  assert.equal(resolveRedirect(staging, { host: canonicalHost, path: prefixedAlias }), "/concepts/chat-messenger");
   assert.equal(
     resolveRedirect(production, { host: legacyHost, path: prefixedAlias }),
     "https://docs.rudderhq.dev/concepts/chat-messenger",
@@ -155,7 +152,6 @@ test("deployment redirect artifacts keep legacy hosts out of staging and resolve
     assert.equal(resolveRedirect(production, { host: legacyHost, path: requestPath }), destination);
   }
   assert.equal(resolveRedirect(production, { host: canonicalHost, path: "/concepts/issues" }), null);
-  assert.equal(resolveRedirect(staging, { host: legacyHost, path: "/concepts/issues" }), null);
 });
 
 test("manifest schema failures are path-qualified and integrity never dereferences malformed input", () => {
@@ -500,7 +496,7 @@ test("Batch 3 legacy aliases are permanent, locale-safe, and resolve in one hop"
   ];
 
   for (const target of ["mintlify", "vercel"]) {
-    const generated = expectedRedirects(manifest, target, { environment: "staging" });
+    const generated = expectedRedirects(manifest, target);
     for (const [source, destination] of redirectCases) {
       assert.equal(resolveRedirect(generated, { host: "docs.rudderhq.dev", path: source }), destination);
       assert.equal(resolveRedirect(generated, { host: "docs.rudderhq.dev", path: destination }), null);

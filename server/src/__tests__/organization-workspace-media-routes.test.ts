@@ -1,5 +1,6 @@
 import express from "express";
 import { once } from "node:events";
+import { request as httpRequest } from "node:http";
 import fs from "node:fs/promises";
 import type { Server } from "node:http";
 import os from "node:os";
@@ -11,6 +12,7 @@ import { organizationRoutes } from "../routes/orgs.js";
 
 const mockWorkspaceBrowser = vi.hoisted(() => ({
   resolveContentFile: vi.fn(),
+  listMentionableFiles: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -109,6 +111,7 @@ describe("organization workspace media content route", () => {
 
   beforeEach(async () => {
     mockWorkspaceBrowser.resolveContentFile.mockReset();
+    mockWorkspaceBrowser.listMentionableFiles.mockReset();
     const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-media-route-"));
     temporaryDirectories.add(temporaryDirectory);
     mediaPath = path.join(temporaryDirectory, "sample.mp4");
@@ -159,6 +162,40 @@ describe("organization workspace media content route", () => {
     expect(response.headers["content-length"]).toBe(String(mediaBytes.byteLength));
     expect(response.headers["accept-ranges"]).toBe("bytes");
     expect(response.body).toEqual({});
+  });
+
+  it("propagates an HTTP disconnect to mention-file listing", async () => {
+    let resolveAbort!: () => void;
+    const abortObserved = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    mockWorkspaceBrowser.listMentionableFiles.mockImplementation((_orgId, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        resolveAbort();
+        reject(new Error("client disconnected"));
+      }, { once: true });
+    }));
+
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+    const address = app.address();
+    expect(address && typeof address !== "string").toBe(true);
+    if (!address || typeof address === "string") return;
+
+    const client = httpRequest({
+      hostname: "127.0.0.1",
+      port: address.port,
+      path: "/api/orgs/organization-1/workspace/mention-files",
+      method: "GET",
+    }, (response) => response.resume());
+    client.on("error", () => undefined);
+    client.end();
+    setTimeout(() => client.destroy(), 25);
+
+    await abortObserved;
+    expect(mockWorkspaceBrowser.listMentionableFiles).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it.each([

@@ -35,6 +35,7 @@ const NATIVE_DIAGNOSTIC_DETAIL_BYTES = 180;
 const SKIPPED_ENTRY_NAMES = new Set([
   ".DS_Store", ".cache", ".codex", ".config", ".git", ".gstack", ".local",
   ".mintlify", ".npm", ".nvm", ".pnpm-store", ".rudder", ".tmp", ".turbo",
+  ".rudder-workspace-migrations.json", ".rudder-workspace.json",
   ".vite", "Library", "node_modules",
 ]);
 

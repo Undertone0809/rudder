@@ -46,8 +46,9 @@ The standard sequence is:
    `npx @rudderhq/cli@latest start --no-open` path and the resulting persistent
    `rudder start --no-open` command;
 7. remove obsolete canary GitHub Releases/tags at or below the stable base;
-8. advance the next patch base directly on `main` with `[skip release]` and
-   dispatch CI for that immutable handoff SHA.
+8. open or reuse the next-patch `[skip release]` PR and dispatch CI for its
+   immutable handoff SHA; merge through the protected PR flow after checks pass,
+   then verify the merged `main` CI. A proposed PR is pending integration.
 
 If npm succeeds and a downstream step fails, stop the normal stable path and
 use `partial-recovery.md`; do not republish.
@@ -107,9 +108,9 @@ Stable is complete only when:
 
 - npm `latest`, tag, Release, Desktop assets/checksum, docs, and public install
   resolve to the locked version;
-- the GitHub Release plus localized public changelogs are live, and the manual
-  Rudder Discord announcement has been posted and read back according to
-  `announcement.md`;
+- the GitHub Release plus localized public changelogs are live;
+- if the user requested a Discord announcement, it has been posted and read
+  back according to `announcement.md`; otherwise it is `not requested`;
 - post-stable cleanup is verified;
 - next-version `main` handoff and CI are verified;
 - unrelated later canaries are reported as separate overwrite risk rather than

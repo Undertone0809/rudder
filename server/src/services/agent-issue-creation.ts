@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
+import { resolveIssueReferenceInputs } from "./issue-references.js";
 
 type AgentIssueCreationRequestRow = typeof agentIssueCreationRequests.$inferSelect;
 
@@ -540,6 +541,11 @@ export function agentIssueCreationService(db: Db) {
   }
 
   async function create(input: CreateRequestInput) {
+    input = await resolveIssueReferenceInputs(
+      db,
+      input.orgId,
+      input as unknown as Record<string, unknown>,
+    ) as CreateRequestInput;
     const existing = await getByIdempotencyKey(input.orgId, input.requestedByUserId, input.idempotencyKey);
     if (existing) {
       if (!sameRequest(existing, input)) {

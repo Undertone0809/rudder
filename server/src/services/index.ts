@@ -28,7 +28,7 @@ export { agentIntegrationService } from "./integrations/agent-integrations.js";
 export { customIntegrationService } from "./integrations/custom-integrations.js";
 export { createFeishuInboundDispatcherDbDeps } from "./integrations/feishu/inbound-dispatcher-db.js";
 export { issueApprovalService } from "./issue-approvals.js";
-export { issueService, type IssueFilters } from "./issues.js";
+export { issueService, type IssueFilters, type IssueSortDir, type IssueSortField } from "./issues.js";
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";
 export {
   RequiredManagedMcpConnectionUnavailableError,

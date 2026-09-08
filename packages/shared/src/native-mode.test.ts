@@ -38,6 +38,8 @@ describe("native mode policy", () => {
       env: { RUDDER_NATIVE_RUN_EVIDENCE_INDEX: "false" },
       legacyToggleEnvs: ["RUDDER_NATIVE_RUN_EVIDENCE_INDEX"],
     })).toMatchObject({ enabled: false, disabledBy: "RUDDER_NATIVE_RUN_EVIDENCE_INDEX" });
+    expect(rudderNativeCapabilityDisableEnv("workspace-files"))
+      .toBe("RUDDER_NATIVE_WORKSPACE_FILES_DISABLED");
   });
 
   it("rejects invalid global modes instead of silently changing engines", () => {

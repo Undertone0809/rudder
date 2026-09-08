@@ -31,6 +31,7 @@ export {
   createAgentIssueCreationRequestSchema,
   type CreateAgentIssueCreationRequest
 } from "./agent-issue-creation.js";
+export { organizationEntityReferenceSchema } from "./reference.js";
 export {
   aiSearchRequestSchema,
   aiSearchScopeSchema,

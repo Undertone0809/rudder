@@ -110,15 +110,18 @@ describe("chatInlineAnnotationService", () => {
   let service!: ReturnType<typeof chatInlineAnnotationService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let workspaceHome = "";
   let originalWorkspaceHome: string | undefined;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
     originalWorkspaceHome = process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME;
-    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = path.join(
+    workspaceHome = path.join(
       started.dataDir || os.tmpdir(),
       `rudder-annotation-workspaces-${randomUUID()}`,
     );
+    fs.mkdirSync(workspaceHome, { recursive: true });
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
     db = createDb(started.connectionString);
     service = chatInlineAnnotationService(db);
     instance = started.instance;
@@ -142,8 +145,8 @@ describe("chatInlineAnnotationService", () => {
 
   afterAll(async () => {
     await instance?.stop();
-    if (process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME) {
-      fs.rmSync(process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME, {
+    if (workspaceHome) {
+      fs.rmSync(workspaceHome, {
         recursive: true,
         force: true,
       });

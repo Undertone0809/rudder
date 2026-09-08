@@ -49,13 +49,24 @@ export function isUnsafeGitIdentityEmail(email: string | null | undefined): bool
   return LOCAL_EMAIL_RE.test(normalized);
 }
 
+export function applyGitIdentityEnvironmentPolicy(
+  env: NodeJS.ProcessEnv,
+  preparation: GitIdentityPreparationResult,
+): void {
+  if (preparation.identity?.source === "repository") {
+    clearGitIdentityEnvOverrides(env);
+    return;
+  }
+  clearUnsafeIdentityEnvPair(env, "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL");
+  clearUnsafeIdentityEnvPair(env, "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL");
+}
+
 export function applyGitIdentityPreparationEnv(
-  env: Record<string, string>,
+  env: NodeJS.ProcessEnv,
   preparation: GitIdentityPreparationResult,
 ): void {
   env.GIT_CONFIG_GLOBAL = preparation.configTarget;
-  clearUnsafeIdentityEnvPair(env, "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL");
-  clearUnsafeIdentityEnvPair(env, "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL");
+  applyGitIdentityEnvironmentPolicy(env, preparation);
 }
 
 function buildIdentity(
@@ -81,8 +92,15 @@ function identityFromEnv(env: NodeJS.ProcessEnv): GitIdentity | null {
   );
 }
 
+export function clearGitIdentityEnvOverrides(env: NodeJS.ProcessEnv): void {
+  delete env.GIT_AUTHOR_NAME;
+  delete env.GIT_AUTHOR_EMAIL;
+  delete env.GIT_COMMITTER_NAME;
+  delete env.GIT_COMMITTER_EMAIL;
+}
+
 function clearUnsafeIdentityEnvPair(
-  env: Record<string, string>,
+  env: NodeJS.ProcessEnv,
   nameKey: "GIT_AUTHOR_NAME" | "GIT_COMMITTER_NAME",
   emailKey: "GIT_AUTHOR_EMAIL" | "GIT_COMMITTER_EMAIL",
 ): void {
@@ -179,11 +197,11 @@ async function resolveBestGitIdentity(input: {
   sourceEnv: NodeJS.ProcessEnv;
 }): Promise<GitIdentity | null> {
   return (
-    identityFromEnv(input.sourceEnv) ??
     (await readIdentityFromGitConfig(["config", "--local"], "repository", {
       cwd: input.cwd,
       env: input.sourceEnv,
     })) ??
+    identityFromEnv(input.sourceEnv) ??
     (await readIdentityFromGitConfig(["config", "--global"], "global", {
       cwd: input.cwd,
       env: input.sourceEnv,

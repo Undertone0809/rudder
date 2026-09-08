@@ -2785,6 +2785,10 @@ describe("codex execute", { timeout: 20_000 }, () => {
       expect(capture.prompt).toContain("<current_automations>");
       expect(capture.prompt.match(/<current_automations>/g)).toHaveLength(1);
       expect(capture.prompt).toContain("<rudder_heartbeat_instruction>");
+      expect(capture.prompt).toContain(
+        "task-dispatch heartbeat: attempt to advance at most one assignee or reviewer Issue",
+      );
+      expect(capture.prompt).not.toContain("platform-owned heartbeat/self-check pipeline");
       expect(capture.prompt).not.toContain("# Heartbeat\n\n- Check assigned issues.");
       expect(capture.prompt.indexOf("# Agent Instructions")).toBeLessThan(capture.prompt.indexOf("# Agent Soul"));
       expect(capture.prompt.indexOf("# Agent Soul")).toBeLessThan(capture.prompt.indexOf("# Agent Tools"));

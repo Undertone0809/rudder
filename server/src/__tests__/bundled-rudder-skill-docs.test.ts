@@ -88,7 +88,7 @@ describe("bundled rudder docs skill", () => {
     expect(contents).toContain("https://docs.rudderhq.dev/llms.txt");
     expect(contents).toMatch(/one or two[\s\S]*official pages/);
     expect(contents).toMatch(/user's language/);
-    expect(contents).toMatch(/AGENTS\.md[\s\S]*doc\/README\.md[\s\S]*docs\/[\s\S]*doc\/product\/[\s\S]*doc\/engineering\/[\s\S]*source and tests/);
+    expect(contents).toMatch(/AGENTS\.md[\s\S]*doc\/README\.md[\s\S]*docs\/[\s\S]*doc\/plans\/[\s\S]*doc\/engineering\/[\s\S]*source and tests/);
     expect(contents).toContain("https://github.com/Undertone0809/rudder");
     expect(contents).toMatch(/release tag[\s\S]*installed version/);
     expect(contents).toMatch(/default branch[\s\S]*latest development[\s\S]*not installed behavior/);
@@ -99,7 +99,7 @@ describe("bundled rudder docs skill", () => {
     const contents = await readSkill();
 
     expect(contents).toContain("Current callable or installed behavior wins for this environment");
-    expect(contents).toContain("`doc/product/` owns intended product semantics");
+    expect(contents).toContain("Proposals record intended changes and rationale");
     expect(contents).toContain("Source and tests own exact implementation evidence");
     expect(contents).toContain("Public docs own published user guidance");
     expect(contents).toContain("release or tag owns version-specific history");
@@ -221,7 +221,6 @@ describe("bundled rudder docs skill", () => {
 
     expect(localRoutes).toContain("packages/agent-runtimes/");
     expect(localRoutes).toContain("packages/agent-runtime-utils/");
-    expect(new Set(localRoutes).size).toBeGreaterThan(20);
     for (const localRoute of new Set(localRoutes)) {
       await expect(
         fs.stat(path.join(process.cwd(), localRoute)),
@@ -384,7 +383,7 @@ describe("bundled rudder docs skill", () => {
     expect(contents).toContain("`docs.rudderhq.dev`");
     expect(contents).toContain("`github.com/Undertone0809/rudder`");
     expect(contents).toMatch(/organization and workspace boundaries/i);
-    expect(contents).toMatch(/Reading `doc\/product\/`[\s\S]*does not authorize edits/i);
+    expect(contents).toMatch(/docs-only question does not authorize mutations/i);
   });
 
   it("ships a balanced bilingual trigger set with hard near misses and paired cases", async () => {

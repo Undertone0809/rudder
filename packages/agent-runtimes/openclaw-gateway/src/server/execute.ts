@@ -394,6 +394,7 @@ export function buildWakeText(payload: WakePayload, rudderEnv: Record<string, st
   const issueIdHint = payload.taskId ?? payload.issueId ?? "";
   const apiBaseHint = rudderEnv.RUDDER_API_URL ?? "<set RUDDER_API_URL>";
   const isDelegation = payload.scene === "delegation";
+  const isHeartbeat = payload.scene === "heartbeat";
 
   const lines = [
     isDelegation ? "Rudder Delegation Run event for a cloud adapter." : "Rudder wake event for a cloud adapter.",
@@ -411,14 +412,16 @@ export function buildWakeText(payload: WakePayload, rudderEnv: Record<string, st
         "",
         `Source Run ${payload.sourceRunId ?? "unknown"} is provenance only; use the target Agent's own context.`,
       ]
-      : [
+      : isHeartbeat
+      ? [
         "Translate the heartbeat instruction into the explicit HTTP workflow below. The listed HTTP endpoints override any CLI command guidance.",
         "",
         wrapPromptSection(
           RUDDER_PROMPT_SECTION_TAGS.heartbeatInstruction,
           RUDDER_AGENT_HEARTBEAT_INSTRUCTION,
         ),
-      ]),
+      ]
+      : []),
     "",
     "Set these values in your run context:",
     ...envLines,
@@ -444,7 +447,9 @@ export function buildWakeText(payload: WakePayload, rudderEnv: Record<string, st
     "- Do NOT call guessed endpoints like /api/cloud-adapter/*, /api/cloud-adapters/*, /api/adapters/cloud/*, or /api/heartbeat.",
     isDelegation
       ? "- Treat HTTP compatibility as a narrow fallback. Preserve Delegation isolation and provenance-only source semantics even when the transport is HTTP."
-      : "- Treat HTTP compatibility as a narrow fallback. Preserve the Rudder heartbeat semantics even when the transport is HTTP.",
+      : isHeartbeat
+      ? "- Treat HTTP compatibility as a narrow fallback. Preserve the Rudder heartbeat semantics even when the transport is HTTP."
+      : "- Treat HTTP compatibility as a narrow fallback. Preserve the Rudder wake semantics even when the transport is HTTP.",
     "",
     ...(isDelegation
       ? [

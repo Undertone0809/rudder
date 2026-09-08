@@ -6,6 +6,7 @@ import { ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { issuesApi } from "../api/issues";
 import { Issues } from "./Issues";
 
 (
@@ -27,19 +28,32 @@ const mockState = vi.hoisted(() => ({
   setBreadcrumbs: vi.fn(),
   issuesListProps: null as null | Record<string, unknown>,
   infiniteQueryOptions: null as null | Record<string, unknown>,
+  mutationOptions: [] as Array<Record<string, unknown>>,
+  initialIssues: [] as Array<{ id: string; status: string; title?: string; updatedAt?: Date | string }>,
+  hasNextPage: false,
+  isFetching: false,
+  isFetchingNextPage: false,
   refetchIssues: vi.fn(),
+}));
+
+vi.mock("../api/issues", () => ({
+  issuesApi: {
+    list: vi.fn(),
+    update: vi.fn(),
+    reorder: vi.fn(),
+  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
   useInfiniteQuery: (options: Record<string, unknown>) => {
     mockState.infiniteQueryOptions = options;
     return {
-      data: { pages: [[]] },
+      data: { pages: [mockState.initialIssues] },
       error: null,
       fetchNextPage: vi.fn(),
-      hasNextPage: false,
-      isFetching: false,
-      isFetchingNextPage: false,
+      hasNextPage: mockState.hasNextPage,
+      isFetching: mockState.isFetching,
+      isFetchingNextPage: mockState.isFetchingNextPage,
       isLoading: false,
       refetch: mockState.refetchIssues,
     };
@@ -50,9 +64,12 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "auth") return { data: mockState.session, isLoading: false, error: null };
     return { data: [], isLoading: false, error: null };
   },
-  useMutation: () => ({
-    mutate: vi.fn(),
-  }),
+  useMutation: (options: Record<string, unknown>) => {
+    mockState.mutationOptions.push(options);
+    return {
+      mutate: vi.fn(),
+    };
+  },
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
   }),
@@ -108,6 +125,7 @@ vi.mock("@/components/IssuesList", () => ({
 }));
 
 let cleanupFn: (() => void) | null = null;
+let rerenderIssues: (() => void) | null = null;
 let storageState: Record<string, string> = {};
 
 const savedDraft = {
@@ -151,6 +169,15 @@ function renderIssues() {
   document.body.appendChild(container);
   const root = createRoot(container);
   cleanupFn = () => root.unmount();
+  rerenderIssues = () => {
+    act(() => {
+      root.render(
+        <ThemeProvider>
+          <Issues />
+        </ThemeProvider>,
+      );
+    });
+  };
 
   act(() => {
     root.render(
@@ -170,6 +197,12 @@ beforeEach(() => {
   mockState.pushToast.mockReset();
   mockState.issuesListProps = null;
   mockState.infiniteQueryOptions = null;
+  mockState.mutationOptions = [];
+  mockState.initialIssues = [];
+  mockState.hasNextPage = false;
+  mockState.isFetching = false;
+  mockState.isFetchingNextPage = false;
+  vi.mocked(issuesApi.list).mockReset();
   mockState.refetchIssues.mockReset();
   mockState.search = "?scope=drafts";
   vi.stubGlobal("confirm", mockState.confirm);
@@ -192,6 +225,7 @@ afterEach(() => {
     });
   }
   cleanupFn = null;
+  rerenderIssues = null;
   window.localStorage.clear();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
@@ -241,6 +275,173 @@ describe("Issues refresh recovery", () => {
 
     (mockState.issuesListProps?.onRetry as (() => void) | undefined)?.();
     expect(mockState.refetchIssues).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Issues board pagination", () => {
+  it("keeps status lane offsets independent while preserving the active sort", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [
+      { id: "todo-1", status: "todo" },
+      { id: "done-1", status: "done" },
+    ];
+    vi.mocked(issuesApi.list).mockImplementation((_orgId, filters) =>
+      Promise.resolve(filters?.status === "todo" ? [] : []),
+    );
+
+    renderIssues();
+
+    const loadMoreIssues = mockState.issuesListProps?.onLoadMoreIssues as
+      ((target?: string) => void | Promise<unknown>) | undefined;
+    expect(loadMoreIssues).toBeDefined();
+
+    await act(async () => {
+      await Promise.all([
+        loadMoreIssues?.("todo"),
+        loadMoreIssues?.("done"),
+      ]);
+    });
+
+    const laneRequests = vi.mocked(issuesApi.list).mock.calls
+      .map(([, filters]) => filters)
+      .filter((filters) => filters?.status === "todo" || filters?.status === "done");
+    expect(laneRequests).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: "todo",
+        offset: 1,
+        limit: 200,
+        sortField: "updated",
+        sortDir: "desc",
+      }),
+      expect.objectContaining({
+        status: "done",
+        offset: 1,
+        limit: 200,
+        sortField: "updated",
+        sortDir: "desc",
+      }),
+    ]));
+  });
+
+  it("updates the server pagination sort when the board sort changes", () => {
+    mockState.search = "";
+
+    renderIssues();
+
+    const onSortChange = mockState.issuesListProps?.onSortChange as
+      ((sortState: { sortField: string; sortDir: string }) => void) | undefined;
+    act(() => {
+      onSortChange?.({ sortField: "title", sortDir: "asc" });
+    });
+
+    const queryKey = mockState.infiniteQueryOptions?.queryKey as unknown[];
+    expect(queryKey).toEqual(expect.arrayContaining(["sort-field", "title", "sort-dir", "asc"]));
+  });
+
+  it("keeps refreshed query data ahead of stale board-page data", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{
+      id: "todo-1",
+      status: "todo",
+      title: "Fresh title",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "todo-1",
+      status: "todo",
+      title: "Stale title",
+      updatedAt: "2026-09-06T11:00:00.000Z",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+
+    const renderedIssues = mockState.issuesListProps?.issues as Array<{ id: string; title: string }>;
+    expect(renderedIssues.find((issue) => issue.id === "todo-1")?.title).toBe("Fresh title");
+  });
+
+  it("clears lane-only records after a successful issue mutation", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{ id: "global-1", status: "todo" }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "lane-only-1",
+      status: "todo",
+      title: "Lane-only record",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
+
+    const onSuccess = mockState.mutationOptions[0]?.onSuccess as (() => void) | undefined;
+    expect(onSuccess).toBeDefined();
+    act(() => {
+      onSuccess?.();
+    });
+
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .not.toContain("lane-only-1");
+  });
+
+  it("clears lane-only records when the global query starts refreshing", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{ id: "global-1", status: "todo" }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "lane-only-1",
+      status: "todo",
+      title: "Lane-only record",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
+
+    mockState.isFetching = true;
+    rerenderIssues?.();
+
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .not.toContain("lane-only-1");
+  });
+
+  it("preserves lane-only records while the global query fetches another page", async () => {
+    mockState.search = "";
+    mockState.hasNextPage = true;
+    mockState.initialIssues = [{ id: "global-1", status: "todo" }];
+    vi.mocked(issuesApi.list).mockResolvedValue([{
+      id: "lane-only-1",
+      status: "todo",
+      title: "Lane-only record",
+    }] as never);
+
+    renderIssues();
+
+    await act(async () => {
+      await (mockState.issuesListProps?.onLoadMoreIssues as ((target?: string) => Promise<unknown>))("todo");
+    });
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
+
+    mockState.isFetching = true;
+    mockState.isFetchingNextPage = true;
+    rerenderIssues?.();
+
+    expect((mockState.issuesListProps?.issues as Array<{ id: string }>).map((issue) => issue.id))
+      .toContain("lane-only-1");
   });
 });
 

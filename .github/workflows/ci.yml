@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Optional immutable source SHA to verify with the trusted main-branch Test workflow"
+        description: "Optional immutable source SHA; dispatch on main or a controlled release-maintenance branch"
         required: false
         type: string
 
@@ -60,8 +60,13 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then exit 0; fi
+          [[ "$GITHUB_REF" =~ ^refs/heads/codex/release-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          git diff --exit-code refs/remotes/origin/main HEAD -- .github/workflows/ci.yml scripts/ci-dispatch-source.mjs
+          node scripts/ci-dispatch-source.mjs
 
       - name: Resolve comparison source
         id: comparison
@@ -188,8 +193,13 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then exit 0; fi
+          [[ "$GITHUB_REF" =~ ^refs/heads/codex/release-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          git diff --exit-code refs/remotes/origin/main HEAD -- .github/workflows/ci.yml scripts/ci-dispatch-source.mjs
+          node scripts/ci-dispatch-source.mjs
 
       - name: Architecture audit tests
         run: node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs
@@ -373,14 +383,6 @@ jobs:
           echo "RUDDER_NATIVE_ARCHIVE_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
           echo "RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH=${{ github.workspace }}/desktop/.packaged/native/x86_64-unknown-linux-gnu/rudder-native" >> "$GITHUB_ENV"
 
-      - name: Product logic registry
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm product-logic:check
-
-      - name: Product logic registry tests
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm product-logic:test
-
       - name: Unit tests
         if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=2
@@ -538,8 +540,13 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then exit 0; fi
+          [[ "$GITHUB_REF" =~ ^refs/heads/codex/release-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          git diff --exit-code refs/remotes/origin/main HEAD -- .github/workflows/ci.yml scripts/ci-dispatch-source.mjs
+          node scripts/ci-dispatch-source.mjs
 
       - uses: actions/setup-node@v6
         with:

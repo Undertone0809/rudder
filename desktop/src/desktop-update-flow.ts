@@ -163,6 +163,7 @@ export function createDesktopUpdateFlow(context: {
     version: string;
     stdin: NodeJS.WritableStream | null;
     blockers: DesktopUpdateBlocker[];
+    automaticApply: boolean;
     applyStarted: boolean;
     finalGuardWaiting: boolean;
     forceEscalated: boolean;
@@ -1462,6 +1463,7 @@ export function createDesktopUpdateFlow(context: {
         version: normalizedVersion,
         stdin: child.stdin,
         blockers: activeRuns.blockers,
+        automaticApply: !forceWhenApplying,
         applyStarted: false,
         finalGuardWaiting: false,
         forceEscalated: false,
@@ -1487,9 +1489,9 @@ export function createDesktopUpdateFlow(context: {
             if (event.phase === "ready_to_install" && session && !session.applyStarted) {
               publishDesktopUpdateProgress({
                 ...event,
-                automaticApply: true,
+                automaticApply: session.automaticApply,
               });
-              void refreshRunningBlockersAndApply(updateId);
+              if (session.automaticApply) void refreshRunningBlockersAndApply(updateId);
             } else if (event.phase === "waiting_for_active_runs" && session) {
               session.finalGuardWaiting = true;
               session.blockers = [];

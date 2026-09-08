@@ -8,6 +8,7 @@
  */
 import { z } from "zod";
 import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
+import { organizationEntityReferenceSchema } from "./reference.js";
 
 const runWorkspaceStrategySchema = z
   .object({
@@ -39,17 +40,17 @@ export const issueAssigneeAdapterOverridesSchema = z
   .strict();
 
 export const createIssueSchema = z.object({
-  projectId: z.string().uuid().optional().nullable(),
+  projectId: organizationEntityReferenceSchema("project", "Project ID").optional().nullable(),
   projectWorkspaceId: z.string().uuid().optional().nullable(),
-  goalId: z.string().uuid().optional().nullable(),
-  parentId: z.string().uuid().optional().nullable(),
+  goalId: organizationEntityReferenceSchema("goal", "Goal ID").optional().nullable(),
+  parentId: organizationEntityReferenceSchema("issue", "Parent issue ID").optional().nullable(),
   title: z.string().min(1),
   description: z.string().optional().nullable(),
   status: z.enum(ISSUE_STATUSES).optional().default("backlog"),
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
-  assigneeAgentId: z.string().uuid().optional().nullable(),
+  assigneeAgentId: organizationEntityReferenceSchema("agent", "Assignee agent ID").optional().nullable(),
   assigneeUserId: z.string().optional().nullable(),
-  reviewerAgentId: z.string().uuid().optional().nullable(),
+  reviewerAgentId: organizationEntityReferenceSchema("agent", "Reviewer agent ID").optional().nullable(),
   reviewerUserId: z.string().optional().nullable(),
   requestDepth: z.number().int().nonnegative().optional().default(0),
   billingCode: z.string().optional().nullable(),
@@ -118,10 +119,10 @@ export type IssueExecutionWorkspaceSettings = IssueRunWorkspaceSettings;
 
 export const reorderIssueSchema = z
   .object({
-    issueId: z.string().uuid(),
+    issueId: organizationEntityReferenceSchema("issue", "Issue ID"),
     targetStatus: z.enum(ISSUE_STATUSES),
-    previousIssueId: z.string().uuid().optional().nullable(),
-    nextIssueId: z.string().uuid().optional().nullable(),
+    previousIssueId: organizationEntityReferenceSchema("issue", "Previous issue ID").optional().nullable(),
+    nextIssueId: organizationEntityReferenceSchema("issue", "Next issue ID").optional().nullable(),
     position: z.enum(["start", "end"]).optional(),
   })
   .refine(
@@ -134,7 +135,7 @@ export const reorderIssueSchema = z
 export type ReorderIssue = z.infer<typeof reorderIssueSchema>;
 
 export const checkoutIssueSchema = z.object({
-  agentId: z.string().uuid(),
+  agentId: organizationEntityReferenceSchema("agent", "Agent ID"),
   expectedStatuses: z.array(z.enum(ISSUE_STATUSES)).nonempty(),
 });
 

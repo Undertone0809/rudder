@@ -1,4 +1,4 @@
-import { ensureGitRepositoryIdentityConfig } from "@rudderhq/agent-runtime-utils/git-identity";
+import { applyGitIdentityEnvironmentPolicy, ensureGitRepositoryIdentityConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import type { Db } from "@rudderhq/db";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -460,24 +460,27 @@ export async function provisionExecutionWorktree(input: {
   created: boolean;
   recorder?: WorkspaceOperationRecorder | null;
 }) {
-  await ensureGitRepositoryIdentityConfig({ cwd: input.worktreePath });
+  const preparedGitIdentity = await ensureGitRepositoryIdentityConfig({ cwd: input.worktreePath });
 
   const provisionCommand = asString(input.strategy.provisionCommand, "").trim();
   if (!provisionCommand) return;
+
+  const provisionEnv = buildWorkspaceCommandEnv({
+    base: input.base,
+    repoRoot: input.repoRoot,
+    worktreePath: input.worktreePath,
+    branchName: input.branchName,
+    issue: input.issue,
+    agent: input.agent,
+    created: input.created,
+  });
+  applyGitIdentityEnvironmentPolicy(provisionEnv, preparedGitIdentity);
 
   await recordWorkspaceCommandOperation(input.recorder, {
     phase: "workspace_provision",
     command: provisionCommand,
     cwd: input.worktreePath,
-    env: buildWorkspaceCommandEnv({
-      base: input.base,
-      repoRoot: input.repoRoot,
-      worktreePath: input.worktreePath,
-      branchName: input.branchName,
-      issue: input.issue,
-      agent: input.agent,
-      created: input.created,
-    }),
+    env: provisionEnv,
     label: `Run workspace provision command "${provisionCommand}"`,
     metadata: {
       repoRoot: input.repoRoot,
@@ -537,4 +540,3 @@ export async function resolveGitRepoRootForWorkspaceCleanup(
   const resolvedGitDir = path.resolve(worktreePath, gitDir);
   return path.dirname(resolvedGitDir);
 }
-

@@ -15,6 +15,7 @@ import {
   buildMcpServerEnv,
   parseMcpStdioMessages,
   resolveRudderCliInvocation,
+  resolveRudderMcpCliCwd,
   runAgentV1McpJsonRpcMessage,
   runMcpStdioServer,
   startBrowserMcpLivenessMonitor,
@@ -2201,5 +2202,27 @@ describe("agent-v1 MCP server", () => {
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("chooses a stable existing cwd for CLI-backed MCP tools", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-mcp-cwd-"));
+    try {
+      expect(resolveRudderMcpCliCwd({
+        RUDDER_PROJECT_LIBRARY_ROOT: path.join(tempDir, "missing-project"),
+        AGENT_HOME: tempDir,
+        RUDDER_ORG_WORKSPACE_ROOT: path.dirname(tempDir),
+      })).toBe(tempDir);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the runtime temp directory when injected workspace paths disappeared", () => {
+    expect(resolveRudderMcpCliCwd({
+      RUDDER_PROJECT_LIBRARY_ROOT: "/definitely/missing/project-library",
+      AGENT_HOME: "/definitely/missing/agent-home",
+      RUDDER_ORG_WORKSPACE_ROOT: "/definitely/missing/org-root",
+      RUDDER_RUNTIME_TMPDIR: os.tmpdir(),
+    })).toBe(path.resolve(os.tmpdir()));
   });
 });

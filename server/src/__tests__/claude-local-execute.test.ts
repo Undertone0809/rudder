@@ -341,6 +341,10 @@ describe("claude execute", { timeout: 20_000 }, () => {
       expect(systemPrompt).toContain("# Tacit Memory");
       expect(systemPrompt).toContain("<current_automations>");
       expect(systemPrompt).toContain("<rudder_heartbeat_instruction>");
+      expect(systemPrompt).toContain(
+        "task-dispatch heartbeat: attempt to advance at most one assignee or reviewer Issue",
+      );
+      expect(systemPrompt).not.toContain("platform-owned heartbeat/self-check pipeline");
       expect(systemPrompt).toContain("<enabled_rudder_skills>");
       expect(systemPrompt).toContain("No optional Rudder skills are enabled for this run.");
       expect(systemPrompt).toContain("Claude Code built-in/provider-native skills");

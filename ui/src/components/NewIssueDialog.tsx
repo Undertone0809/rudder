@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/popover";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useI18n } from "@/context/I18nContext";
-import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
 import { useLocation, useNavigate } from "@/lib/router";
@@ -88,6 +87,7 @@ import { AgentMenuLabel, AssigneeLabel } from "./AssigneeLabel";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import { useNewIssueDescriptionScrollProps } from "./NewIssueDialog.scroll";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
 import { ProjectIcon } from "./ProjectIdentity";
 
@@ -285,7 +285,6 @@ export function NewIssueDialog() {
   const [priorityOpen, setPriorityOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -891,7 +890,6 @@ export function NewIssueDialog() {
     setAssigneeChrome(draft.assigneeChrome);
     setStagedFiles(draft.stagedFiles);
     setIsFileDragOver(false);
-    setCompanyOpen(false);
     // Submission deletes the source saved draft. Undo restores its content as
     // a fresh editable draft so subsequent Manual autosave cannot target a
     // stale saved-draft id.
@@ -1051,7 +1049,6 @@ export function NewIssueDialog() {
     setDialogCompanyId(null);
     setStagedFiles([]);
     setIsFileDragOver(false);
-    setCompanyOpen(false);
     setActiveSavedIssueDraftId(null);
     setRedirectingIssueRef(null);
     agentIssueIdempotencyKeyRef.current = null;
@@ -1072,22 +1069,6 @@ export function NewIssueDialog() {
     agentIssueIdempotencyKeyRef.current = null;
     agentIssueSubmissionInFlightRef.current = false;
     closeNewIssue();
-  }
-
-  function handleCompanyChange(orgId: string) {
-    if (isCreatingOrRedirecting) return;
-    if (orgId === effectiveCompanyId) return;
-    setDialogCompanyId(orgId);
-    setAssigneeValue("");
-    setReviewerValue("");
-    setProjectId("");
-    setGoalId("");
-    setProjectWorkspaceId("");
-    setSelectedLabelIds([]);
-    setLabelSearch("");
-    setAssigneeModelOverride("");
-    setAssigneeThinkingEffort("");
-    setAssigneeChrome(false);
   }
 
   function saveDraftIssue() {
@@ -1387,6 +1368,7 @@ export function NewIssueDialog() {
   const hasIssueTitle = title.trim().length > 0;
   const hasAgentRequest = Boolean(selectedAssigneeAgentId) && description.trim().length > 0;
   const canSubmit = creationMode === "agent" ? hasAgentRequest : hasIssueTitle;
+  const descriptionScrollProps = useNewIssueDescriptionScrollProps();
   const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
@@ -1528,6 +1510,16 @@ export function NewIssueDialog() {
         }}
         >
         <DialogTitle className="sr-only">{isSubIssueDraft ? "New sub-issue" : "New issue"}</DialogTitle>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="!absolute right-3 top-3 z-10 text-muted-foreground"
+          aria-label="Close new issue dialog"
+          onClick={handleCloseNewIssue}
+          disabled={isCreatingOrRedirecting}
+        >
+          <X className="size-4" />
+        </Button>
         <div className="flex items-center justify-center border-b border-border/60 px-4 py-2 shrink-0">
           <div
             className="grid h-8 w-40 grid-cols-2 overflow-hidden rounded-lg border border-border bg-muted/30 p-0.5"
@@ -1564,80 +1556,6 @@ export function NewIssueDialog() {
             <span>Created {redirectingIssueRef}. Opening issue...</span>
           </div>
         ) : null}
-
-        {/* Header bar */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Popover open={companyOpen} onOpenChange={setCompanyOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  disabled={isCreatingOrRedirecting}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity disabled:cursor-wait disabled:opacity-60",
-                    !dialogCompany?.brandColor && "bg-muted",
-                  )}
-                  style={
-                    dialogCompany?.brandColor
-                      ? {
-                          backgroundColor: dialogCompany.brandColor,
-                          color: pickTextColorForSolidBg(dialogCompany.brandColor),
-                        }
-                      : undefined
-                  }
-                >
-                  {(dialogCompany?.name ?? "").slice(0, 3).toUpperCase()}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-48 p-1" align="start">
-                {organizations.filter((c) => c.status !== "archived").map((c) => (
-                  <button
-                    key={c.id}
-                    className={cn(
-                      "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
-                      c.id === effectiveCompanyId && "bg-accent",
-                    )}
-                    onClick={() => {
-                      handleCompanyChange(c.id);
-                      setCompanyOpen(false);
-                    }}
-                  >
-                    <span
-                      className={cn(
-                        "px-1 py-0.5 rounded text-[10px] font-semibold leading-none",
-                        !c.brandColor && "bg-muted",
-                      )}
-                      style={
-                        c.brandColor
-                          ? {
-                              backgroundColor: c.brandColor,
-                              color: pickTextColorForSolidBg(c.brandColor),
-                            }
-                          : undefined
-                      }
-                    >
-                      {c.name.slice(0, 3).toUpperCase()}
-                    </span>
-                    <span className="truncate">{c.name}</span>
-                  </button>
-                ))}
-              </PopoverContent>
-            </Popover>
-            <span className="text-muted-foreground/60">&rsaquo;</span>
-            <span>{isSubIssueDraft ? "New sub-issue" : "New issue"}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              aria-label="Close new issue dialog"
-              onClick={handleCloseNewIssue}
-              disabled={isCreatingOrRedirecting}
-            >
-              <span className="text-lg leading-none">&times;</span>
-            </Button>
-          </div>
-        </div>
 
         {isSubIssueDraft ? (
           <div data-slot="new-issue-parent-context" className="border-b border-border/60 px-4 py-2.5 shrink-0">
@@ -1730,10 +1648,7 @@ export function NewIssueDialog() {
                 </div>
               </div>
             </div>
-            <div
-              data-slot="agent-issue-description"
-              className="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 pb-2 pt-3"
-            >
+            <div {...descriptionScrollProps.agentDescription}>
               <MarkdownEditor
                 ref={descriptionEditorRef}
                 engine="codemirror"
@@ -2000,7 +1915,7 @@ export function NewIssueDialog() {
 
         {/* Description */}
         <div
-          className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
+          {...descriptionScrollProps.description}
           onDragEnter={handleFileDragEnter}
           onDragOver={handleFileDragOver}
           onDragLeave={handleFileDragLeave}

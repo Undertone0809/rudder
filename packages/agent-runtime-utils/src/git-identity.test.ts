@@ -107,6 +107,54 @@ describe("git identity guard", () => {
     }
   });
 
+  it("prefers repository identity over an inherited runtime identity", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-git-identity-repository-precedence-"));
+    try {
+      const repo = await createRepoWithoutStoredIdentity(root);
+      const isolatedHome = path.join(root, "agent-home");
+      await runGit(repo, ["config", "user.name", "Repository Owner"]);
+      await runGit(repo, ["config", "user.email", "owner@example.com"]);
+
+      const result = await ensureGitIdentityFileConfig({
+        cwd: repo,
+        home: isolatedHome,
+        sourceEnv: baseGitTestEnv({
+          HOME: path.join(root, "empty-home"),
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_AUTHOR_NAME: "Rudder",
+          GIT_AUTHOR_EMAIL: "285064165+Rudderhq@users.noreply.github.com",
+          GIT_COMMITTER_NAME: "Rudder",
+          GIT_COMMITTER_EMAIL: "285064165+Rudderhq@users.noreply.github.com",
+        }),
+      });
+
+      expect(result.identity).toMatchObject({
+        name: "Repository Owner",
+        email: "owner@example.com",
+        source: "repository",
+      });
+
+      const childEnv = baseGitTestEnv({
+        HOME: path.join(root, "empty-home"),
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Rudder",
+        GIT_AUTHOR_EMAIL: "285064165+Rudderhq@users.noreply.github.com",
+        GIT_COMMITTER_NAME: "Rudder",
+        GIT_COMMITTER_EMAIL: "285064165+Rudderhq@users.noreply.github.com",
+      });
+      applyGitIdentityPreparationEnv(childEnv, result);
+
+      expect(childEnv.GIT_AUTHOR_NAME).toBeUndefined();
+      expect(childEnv.GIT_AUTHOR_EMAIL).toBeUndefined();
+      expect(childEnv.GIT_COMMITTER_NAME).toBeUndefined();
+      expect(childEnv.GIT_COMMITTER_EMAIL).toBeUndefined();
+      const ident = await gitAuthorIdent(repo, childEnv);
+      expect(ident.stdout).toContain("Repository Owner <owner@example.com>");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("copies only safe host global Git identity into the isolated config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-git-identity-include-"));
     try {

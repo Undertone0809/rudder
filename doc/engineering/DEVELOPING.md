@@ -3,6 +3,15 @@
 This guide is the entrypoint for local development.
 It keeps the shortest path here and routes deep operational details to focused docs.
 
+## Protected Main Workflow
+
+Create a working branch before making commits (`codex/` for agent work), push
+that branch, and open a PR targeting `main`. All changes use this path, including
+docs, release preparation, and version bumps. Required qualification checks must
+pass before PR merge. Administrators and automation have no direct-push bypass.
+See [release automation setup](RELEASE-AUTOMATION-SETUP.md#7-protected-main-release-flow)
+for the enforced branch rules and automatic version-handoff PRs.
+
 ## Deployment Modes
 
 For mode definitions and intended CLI behavior, see `doc/engineering/DEPLOYMENT-MODES.md`.
@@ -278,67 +287,15 @@ When revisiting an existing feature area, inspect plan history in this order:
 6. inspect linked `issue`, `related_code`, and `commit_refs`
 7. fall back to slug/title keyword search for older unstructured plans
 
-## Product Logic Registry
+## Behavior And Proposals
 
-`doc/product/` is the guarded source for current product behavior contracts.
-It is more specific than `doc/product/PRODUCT.md` and more current than historical
-plans, but it does not replace implementation code or tests.
+Implementation and tests define current behavior. For a change, read the relevant
+code, make the change, and verify its workflow and regression risks.
 
-Use it when a change touches:
-
-- user-visible workflows or UI interaction behavior
-- agent-visible runtime behavior
-- issue status, assignment, checkout, reviewer, wakeup, or close-out logic
-- permissions, organization boundaries, budgets, approvals, or activity logging
-- CLI/API behavior that operators or agents rely on
-
-Agent editing rule:
-
-- Agents may always read `doc/product/**`.
-- Agents may semantically edit `doc/product/**` only when the current user
-  explicitly authorizes it or when an approved proposal/plan contains the
-  product doc delta.
-- An agent-written handoff, draft plan, or PR body is not authorization by
-  itself.
-
-Development flow:
-
-1. Before implementation, identify whether the task restores an existing
-   contract, intentionally changes product behavior, is implementation-only, or
-   is unknown.
-2. Read the owning domain docs and list affected contract IDs. For contracts
-   marked `spec_depth: logic_contract`, align with the documented intent,
-   reasoning, flow, decision table, actor-visible output, persisted evidence,
-   and canonical scenarios before changing code.
-3. During implementation, keep schema/API/server/UI/tests aligned with the
-   contract IDs.
-4. If code and registry disagree, classify the conflict as code regression,
-   stale doc, or product decision. Do not silently rewrite `doc/product/**`
-   without authorization.
-5. Before hand-off, run:
-
-```sh
-pnpm product-logic:check
-```
-
-6. Include Product Logic Alignment in hand-off: docs read, affected contract
-   IDs, docs updated/no impact/deferred, tests or E2E proving the contract, and
-   remaining gaps.
-
-Contract depth:
-
-- `spec_depth: compact` is for simple current-behavior contracts.
-- `spec_depth: logic_contract` is for high-risk product logic where the doc must
-  also explain why the design exists, the executable flow, decision cases,
-  agent/operator-visible output, persisted evidence, and canonical scenarios.
-
-`pnpm product-logic:check` validates registry/doc consistency and required
-headings for active `logic_contract` entries. It does not prove that the prose
-matches runtime behavior; code anchors, tests, E2E, logs, and reviewer evidence
-remain required for product proof.
-
-Deferred registry updates require explicit human approval plus an owner, linked
-issue or plan, affected contract IDs, due date, and reason.
+Use a dated proposal in `doc/plans/` only when a design decision needs discussion
+or durable rationale. Ordinary fixes need no proposal. There is no contract-ID,
+registry-sync, product-doc approval, or alignment-packet requirement.
+Existing `doc/product/` contract material is historical reference, not a gate.
 
 ## Dependency Lockfile Policy
 
@@ -411,12 +368,14 @@ runtime descriptor instead of polling only the requested port.
 Local agent runtimes must not rely on Git's hostname fallback identity. Codex local runs preserve the
 operator `HOME` for normal host CLI auth, but write `user.useConfigOnly=true` into a Rudder-owned
 Git config sidecar under the managed `CODEX_HOME` and point Git at it with `GIT_CONFIG_GLOBAL`.
-The sidecar includes the host global Git identity only when a safe identity can be resolved from
-explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`, the workspace repo-local config, or the host global
-config. Runtime-created git worktrees also get repo-local `user.useConfigOnly=true`.
-Rudder does not store or inject a separate confirmed Git identity. If no safe identity is available,
-`git commit` fails with Git's auto-detection-disabled error instead of creating a `*@*.local`
-fallback commit.
+Identity resolution prefers a valid workspace repo-local `user.name` and `user.email`; when that
+identity exists, inherited `GIT_AUTHOR_*` / `GIT_COMMITTER_*` values are removed so a runtime's
+service identity cannot replace the repository's author. If no repo-local identity exists, a safe
+explicit environment identity is used, followed by the host global config. Runtime-created git
+worktrees and provision commands use the same policy and also get repo-local
+`user.useConfigOnly=true`.
+If no safe identity is available, `git commit` fails with Git's auto-detection-disabled error
+instead of creating a `*@*.local` fallback commit.
 
 Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Codex, Claude, Pi,
 Gemini, Cursor, and OpenCode local runs keep child `HOME` as the operator home and use

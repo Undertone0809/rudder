@@ -12,6 +12,7 @@ import {
   createIssueWorkProductSchema,
   isUuidLike,
   linkIssueApprovalSchema,
+  parseShortRef,
   reorderIssueSchema,
   updateIssueLabelSchema,
   updateIssueWorkProductSchema,
@@ -37,17 +38,21 @@ import {
   projectService,
   runWorkspaceService,
   workProductService,
+  type IssueSortDir,
+  type IssueSortField,
 } from "../services/index.js";
+import { resolveIssueReference } from "../services/issue-references.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { StorageService } from "../storage/types.js";
 import { registerAgentIssueCreationRoutes } from "./agent-issue-creation.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
 import { registerIssueCommentAttachmentRoutes } from "./issues.comments-attachments.js";
 import { registerIssueMutationRoutes } from "./issues.mutations.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const MAX_ISSUE_LIST_LIMIT = 500;
 const ISSUE_SEARCH_FIELDS = new Set<IssueSearchField>(["title", "description", "comment"]);
+const ISSUE_SORT_FIELDS = new Set<IssueSortField>(["manual", "status", "priority", "title", "created", "updated"]);
 
 function positiveIntegerQuery(value: unknown, max: number): number | undefined {
   if (typeof value !== "string" || value.trim().length === 0) return undefined;
@@ -61,6 +66,16 @@ function nonNegativeIntegerQuery(value: unknown): number | undefined {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return undefined;
   return parsed;
+}
+
+function issueSortFieldQuery(value: unknown): IssueSortField | undefined {
+  return typeof value === "string" && ISSUE_SORT_FIELDS.has(value as IssueSortField)
+    ? value as IssueSortField
+    : undefined;
+}
+
+function issueSortDirQuery(value: unknown): IssueSortDir | undefined {
+  return value === "asc" || value === "desc" ? value : undefined;
 }
 
 export function issueRoutes(db: Db, storage: StorageService) {
@@ -319,12 +334,22 @@ export function issueRoutes(db: Db, storage: StorageService) {
     return { ok: true, runId };
   }
 
-  async function normalizeIssueIdentifier(rawId: string): Promise<string> {
+  async function normalizeIssueIdentifier(req: Request, rawId: string): Promise<string> {
     if (/^[A-Z][A-Z0-9]*-\d+$/i.test(rawId)) {
       const issue = await svc.getByIdentifier(rawId);
       if (issue) {
         return issue.id;
       }
+    }
+    const parsed = parseShortRef(rawId);
+    if (parsed) {
+      if (parsed.kind !== "issue") {
+        throw unprocessable("Issue ID must be a UUID, issue identifier, or typed iss_<prefix> reference");
+      }
+      return resolveIssueReference(db, rawId, { orgIds: getAuthorizedOrgScope(req) });
+    }
+    if (/^[a-z]{3}_/i.test(rawId)) {
+      throw unprocessable("Issue ID must be a UUID, issue identifier, or typed iss_<prefix> reference");
     }
     return rawId;
   }
@@ -388,7 +413,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for all /issues/:id routes
   router.param("id", async (req, res, next, rawId) => {
     try {
-      req.params.id = await normalizeIssueIdentifier(rawId);
+      req.params.id = await normalizeIssueIdentifier(req, rawId);
       next();
     } catch (err) {
       next(err);
@@ -398,7 +423,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for organization-scoped attachment routes.
   router.param("issueId", async (req, res, next, rawId) => {
     try {
-      req.params.issueId = await normalizeIssueIdentifier(rawId);
+      req.params.issueId = await normalizeIssueIdentifier(req, rawId);
       next();
     } catch (err) {
       next(err);
@@ -493,6 +518,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       searchFields: parseIssueSearchFields(req.query.searchFields),
       limit: positiveIntegerQuery(req.query.limit, MAX_ISSUE_LIST_LIMIT),
       offset: nonNegativeIntegerQuery(req.query.offset),
+      sortField: issueSortFieldQuery(req.query.sortField),
+      sortDir: issueSortDirQuery(req.query.sortDir),
     });
     res.json(result);
   });

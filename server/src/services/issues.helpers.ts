@@ -122,7 +122,12 @@ export interface IssueFilters {
   searchFields?: IssueSearchField[];
   limit?: number;
   offset?: number;
+  sortField?: IssueSortField;
+  sortDir?: IssueSortDir;
 }
+
+export type IssueSortField = "manual" | "status" | "priority" | "title" | "created" | "updated";
+export type IssueSortDir = "asc" | "desc";
 
 export type IssueRow = typeof issues.$inferSelect;
 export type IssueLabelRow = typeof labels.$inferSelect;

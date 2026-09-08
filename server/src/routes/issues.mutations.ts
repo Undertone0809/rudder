@@ -29,6 +29,7 @@ import {
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
+import { resolveIssueReferenceInputs } from "../services/issue-references.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -446,13 +447,18 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
 
   router.patch("/issues/:id", validate(updateIssueSchema), async (req, res) => {
     const id = req.params.id as string;
-    const body = normalizeIssueRunWorkspaceFields(req.body);
+    const normalizedBody = normalizeIssueRunWorkspaceFields(req.body);
     const existing = await svc.getById(id);
     if (!existing) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
     assertCompanyAccess(req, existing.orgId);
+    const body = await resolveIssueReferenceInputs(
+      db,
+      existing.orgId,
+      normalizedBody,
+    );
     const assigneeWillChange =
       (body.assigneeAgentId !== undefined && body.assigneeAgentId !== existing.assigneeAgentId) ||
       (body.assigneeUserId !== undefined && body.assigneeUserId !== existing.assigneeUserId);
@@ -1087,6 +1093,12 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
+    const checkoutInput = await resolveIssueReferenceInputs(
+      db,
+      issue.orgId,
+      req.body,
+    );
+    const agentId = checkoutInput.agentId;
 
     if (issue.projectId) {
       const project = await projectsSvc.getById(issue.projectId);
@@ -1096,14 +1108,14 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       }
     }
 
-    if (req.actor.type === "agent" && req.actor.agentId !== req.body.agentId) {
+    if (req.actor.type === "agent" && req.actor.agentId !== agentId) {
       res.status(403).json({ error: "Agent can only checkout as itself" });
       return;
     }
 
     const checkoutRunId = requireAgentRunId(req, res);
     if (req.actor.type === "agent" && !checkoutRunId) return;
-    const updated = await svc.checkout(id, req.body.agentId, req.body.expectedStatuses, checkoutRunId);
+    const updated = await svc.checkout(id, agentId, checkoutInput.expectedStatuses as string[], checkoutRunId);
     const actor = getActorInfo(req);
 
     await logActivity(db, {
@@ -1115,19 +1127,19 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       action: "issue.checked_out",
       entityType: "issue",
       entityId: issue.id,
-      details: { agentId: req.body.agentId },
+      details: { agentId },
     });
 
     if (
       shouldWakeAssigneeOnCheckout({
         actorType: req.actor.type,
         actorAgentId: req.actor.type === "agent" ? req.actor.agentId ?? null : null,
-        checkoutAgentId: req.body.agentId,
+        checkoutAgentId: agentId,
         checkoutRunId,
       })
     ) {
       void heartbeat
-        .wakeup(req.body.agentId, {
+        .wakeup(agentId, {
           source: "assignment",
           triggerDetail: "system",
           reason: "issue_checked_out",
