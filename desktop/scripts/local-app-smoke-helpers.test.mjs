@@ -77,6 +77,10 @@ describe("Local App smoke helpers", () => {
     expect(functionStart).toBeGreaterThanOrEqual(0);
     expect(functionEnd).toBeGreaterThan(functionStart);
     const probeSource = smokeSource.slice(functionStart, functionEnd);
+    expect(probeSource).toContain('const partition = webview.getAttribute("partition");');
+    expect(probeSource).toContain("const currentUrl = webview.getURL();");
+    expect(probeSource).toContain("partition !== expectedPartition");
+    expect(probeSource).toContain("url: currentUrl");
     expect(probeSource).toContain("expectedPartition,\n    expectedUrl,");
     expect(probeSource).not.toContain("attested.partition");
   });
