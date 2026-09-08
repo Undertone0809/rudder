@@ -176,7 +176,10 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
   if (/^\/calendar(?:\/|$)/.test(relativePath)) {
     return { title: "Calendar", description: "Sources and filters" };
   }
-  if (/^\/(?:dashboard|org|projects|library|resources|workspaces|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
+  if (/^\/projects(?:\/|$)/.test(relativePath)) {
+    return { title: "Projects", description: "Project surfaces" };
+  }
+  if (/^\/(?:dashboard|org|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };
@@ -716,9 +719,10 @@ export function ThreeColumnContextSidebar() {
   const isAppsRoute = /^\/apps(?:\/|$)/.test(relativePath);
   const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
-  const isOrgWorkspaceRoute = /^\/(?:dashboard|org|projects|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const isProjectWorkspaceRoute = /^\/projects(?:\/|$)/.test(relativePath);
+  const isOrgWorkspaceRoute = /^\/(?:dashboard|org|library|resources|heartbeats|workspaces|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
-  const isAgentRoute = !isAppsRoute && !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
+  const isAgentRoute = !isAppsRoute && !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isProjectWorkspaceRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
@@ -1374,6 +1378,26 @@ export function ThreeColumnContextSidebar() {
               })}
             </SlidingContextNav>
           )}
+        </div>
+      </aside>
+    );
+  }
+
+  if (isProjectWorkspaceRoute) {
+    return (
+      <aside
+        data-testid="workspace-sidebar"
+        className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
+      >
+        <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ProjectListSection
+            visibleProjects={visibleProjects}
+            activeProjectRef={activeProjectRef}
+            closeMobileSidebar={closeMobileSidebar}
+            onNewProject={openNewProject}
+            scrollRef={workspaceProjectsScrollRef}
+          />
         </div>
       </aside>
     );

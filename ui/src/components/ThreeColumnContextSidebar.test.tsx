@@ -346,6 +346,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='workspace-projects-scroll']")?.classList.contains("scrollbar-auto-hide")).toBe(true);
     expect(document.body.textContent).toContain("Project");
     expect(document.body.textContent).not.toContain("Project workspace");
+    expect(document.querySelector("[data-testid='workspace-context-header'] h2")?.textContent).toBe("Projects");
+    expect(document.querySelector("[aria-label='Organization surfaces']")).toBeNull();
     expect(document.querySelector("[aria-label='Projects']")).not.toBeNull();
   });
 

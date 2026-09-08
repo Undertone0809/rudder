@@ -41,7 +41,7 @@ describe("primary rail memory", () => {
     expect(resolvePrimaryRailSection("/goals/goal-1")).toBe("goals");
     expect(resolvePrimaryRailSection("/agents/wesley/runs/run-1")).toBe("agents");
     expect(resolvePrimaryRailSection("/dashboard/calendar")).toBe("organization");
-    expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("organization");
+    expect(resolvePrimaryRailSection("/projects/rudder/issues")).toBe("projects");
     expect(resolvePrimaryRailSection("/skills/skill-123/files/SKILL.md")).toBeNull();
     expect(resolvePrimaryRailSection("/automations/weekly-ci")).toBe("automations");
     expect(resolvePrimaryRailSection("/plugins")).toBe("plugins");
@@ -64,10 +64,12 @@ describe("primary rail memory", () => {
   it("stores remembered paths per organization and section", () => {
     rememberPrimaryRailPath("org-1", "/issues/ZST-586");
     rememberPrimaryRailPath("org-1", "/agents/wesley/runs/run-1");
+    rememberPrimaryRailPath("org-1", "/projects/rudder/configuration");
     rememberPrimaryRailPath("org-2", "/issues/ZST-100");
 
     expect(readRememberedPrimaryRailPath("org-1", "issues", "/issues")).toBe("/issues/ZST-586");
     expect(readRememberedPrimaryRailPath("org-1", "agents", "/agents")).toBe("/agents/wesley/runs/run-1");
+    expect(readRememberedPrimaryRailPath("org-1", "projects", "/projects")).toBe("/projects/rudder/configuration");
     expect(readRememberedPrimaryRailPath("org-2", "issues", "/issues")).toBe("/issues/ZST-100");
   });
 

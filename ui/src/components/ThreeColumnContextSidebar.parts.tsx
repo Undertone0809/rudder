@@ -116,7 +116,10 @@ export function resolveContextColumnHeader(relativePath: string): { title: strin
   if (/^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath)) {
     return { title: "Calendar", description: "Sources and filters" };
   }
-  if (/^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
+  if (/^\/projects(?:\/|$)/.test(relativePath)) {
+    return { title: "Projects", description: "Project surfaces" };
+  }
+  if (/^\/(?:org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };

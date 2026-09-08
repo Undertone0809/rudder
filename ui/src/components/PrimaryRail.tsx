@@ -263,13 +263,14 @@ export function PrimaryRail({
   const previousInboxCountRef = useRef<number | null>(null);
   const previousInboxOrgRef = useRef<string | null | undefined>(selectedOrganizationId);
   const requestedNotificationPermissionRef = useRef(false);
-  const orgGroupActive = /^\/(?:dashboard|calendar|org|projects|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const orgGroupActive = /^\/(?:dashboard|calendar|org|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
   const issuesEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "issues", issueEntryPath);
   const goalsEntryPath = "/goals";
   const agentsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "agents", "/agents");
   const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
+  const projectsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "projects", "/projects");
   const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
   const pluginsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "plugins", "/hub");
@@ -324,6 +325,13 @@ export function PrimaryRail({
             && !/^\/apps\/(?:saved|view)\/[^/]+(?:\/|$)/.test(relativePath),
         }]
       : []),
+    {
+      key: "projects",
+      to: projectsEntryPath,
+      label: "Projects",
+      icon: FolderKanban,
+      active: /^\/projects(?:\/|$)/.test(relativePath),
+    },
     {
       key: "organization",
       to: organizationEntryPath,

@@ -501,7 +501,7 @@ describe("PrimaryRail active motion indicator", () => {
     const nav = document.querySelector(".motion-rail-nav");
     const indicator = document.querySelector('[data-testid="primary-rail-active-indicator"]');
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("5");
     expect(indicator).not.toBeNull();
   });
 
@@ -514,8 +514,25 @@ describe("PrimaryRail active motion indicator", () => {
     const dashboardLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Dashboard"));
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("5");
     expect(dashboardLink).toBeUndefined();
+  });
+
+  it("uses a dedicated Projects rail item for project routes", async () => {
+    mockState.pathname = "/projects/rudder/configuration";
+
+    await renderPrimaryRail();
+
+    const nav = document.querySelector(".motion-rail-nav");
+    const projectsLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent === "Projects");
+    const organizationLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent === "Organization");
+
+    expect(projectsLink?.getAttribute("href")).toBe("/projects");
+    expect(projectsLink?.getAttribute("aria-current")).toBe("page");
+    expect(organizationLink?.getAttribute("aria-current")).toBeNull();
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
   });
 
   it("moves the rail indicator to issue routes", async () => {
@@ -648,7 +665,7 @@ describe("PrimaryRail active motion indicator", () => {
     expect(pinned?.className).toContain("text-white");
     expect(pinned?.querySelector('[data-testid="primary-rail-pinned-active-indicator"]')).toBeNull();
     expect(document.querySelector('[data-testid="primary-rail-active-indicator"]')).not.toBeNull();
-    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("7");
+    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("8");
     expect(document.querySelector<HTMLElement>(".motion-rail-nav")?.style
       .getPropertyValue("--motion-rail-active-offset")).toContain("0.6875rem");
   });
@@ -671,6 +688,7 @@ describe("PrimaryRail active motion indicator", () => {
       goals: "/goals/goal-1",
       agents: "/agents/wesley/runs/run-1",
       library: "/library?path=projects%2Frudder",
+      projects: "/projects/rudder/configuration",
       organization: "/dashboard/calendar",
       automations: "/automations/weekly-ci",
     };
@@ -685,6 +703,7 @@ describe("PrimaryRail active motion indicator", () => {
     expect(linkHref("Goals")).toBe("/goals");
     expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
     expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
+    expect(linkHref("Projects")).toBe("/projects/rudder/configuration");
     expect(linkHref("Organization")).toBe("/dashboard/calendar");
     expect(linkHref("Automations")).toBe("/automations/weekly-ci");
   });

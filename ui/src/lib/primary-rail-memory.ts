@@ -9,6 +9,7 @@ export type PrimaryRailSection =
   | "agents"
   | "library"
   | "plugins"
+  | "projects"
   | "organization"
   | "automations";
 
@@ -58,7 +59,8 @@ export function resolvePrimaryRailSection(path: string): PrimaryRailSection | nu
   if (/^\/apps\/(?:saved|view)\/[^/]+(?:\/|$)/.test(pathname)) return null;
   if (/^\/(?:hub|plugins)(?:\/|$)/.test(pathname)) return "plugins";
   if (/^\/apps(?:\/|$)/.test(pathname)) return "plugins";
-  if (/^\/(?:dashboard|calendar|org|projects|heartbeats|costs|activity)(?:\/|$)/.test(pathname)) return "organization";
+  if (/^\/projects(?:\/|$)/.test(pathname)) return "projects";
+  if (/^\/(?:dashboard|calendar|org|heartbeats|costs|activity)(?:\/|$)/.test(pathname)) return "organization";
   if (/^\/automations(?:\/|$)/.test(pathname)) return "automations";
 
   return null;

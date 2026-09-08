@@ -527,7 +527,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByRole("button", { name: "Collapse workspace sidebar" })).toBeVisible();
   });
 
-  test("renders projects inside the org workspace shell", async ({ page }, testInfo) => {
+  test("renders projects in their dedicated primary-rail workspace", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Projects-${Date.now()}`,
@@ -549,8 +549,9 @@ test.describe("Workspace shell", () => {
     const primaryRail = page.getByTestId("primary-rail");
     const sidebar = page.getByTestId("workspace-sidebar");
 
-    await expect(primaryRail.getByRole("link", { name: "Projects" })).toHaveCount(0);
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Org", exact: true })).toBeVisible();
+    await expect(primaryRail.getByRole("link", { name: "Projects", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(primaryRail.getByRole("link", { name: "Organization", exact: true })).not.toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await expect(page.getByTestId("workspace-main-header").getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Add Project" })).toBeVisible();
     await expect(sidebar.getByText("Projects", { exact: true })).toBeVisible();

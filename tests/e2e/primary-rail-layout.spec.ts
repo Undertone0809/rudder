@@ -66,7 +66,7 @@ test.describe("Primary rail layout", () => {
         expect(navBox).not.toBeNull();
         expect(navBox!.width).toBeGreaterThanOrEqual(61);
 
-        for (const label of ["Messenger", "Organization", "Automations"]) {
+        for (const label of ["Messenger", "Projects", "Organization", "Automations"]) {
           const item = nav.getByRole("link", { name: label, exact: true });
           await expect(item).toBeVisible();
           const textBox = await item.evaluate((element) => {
