@@ -1603,6 +1603,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-legacy-bridge"
+version = "0.7.20"
+dependencies = [
+ "libc",
+ "rudder-authority-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-mcp"
 version = "0.7.20"
 dependencies = [
