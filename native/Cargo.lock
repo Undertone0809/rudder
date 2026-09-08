@@ -1711,6 +1711,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-runtime-adapter-core"
+version = "0.7.20"
+dependencies = [
+ "rudder-native-protocol",
+ "rudder-runtime-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rudder-runtime-core"
 version = "0.7.20"
 dependencies = [

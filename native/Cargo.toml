@@ -15,6 +15,7 @@ members = [
   "crates/run-evidence-core",
   "crates/runtime-payload-core",
   "crates/runtime-core",
+  "crates/runtime-adapter-core",
   "crates/read-surfaces-core",
   "crates/db-core",
   "crates/server-foundation",
