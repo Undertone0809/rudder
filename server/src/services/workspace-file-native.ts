@@ -32,6 +32,10 @@ export type NativeWorkspaceFileRead = {
   content: string;
 };
 
+export type NativeWorkspaceFileReadBytes = Omit<NativeWorkspaceFileRead, "content"> & {
+  bytes: Buffer;
+};
+
 type NativeResponse = {
   ok?: unknown;
   capability?: unknown;
@@ -233,11 +237,11 @@ export async function readWorkspaceFileNative(
   return parseResponse(response, filePath);
 }
 
-export async function readWorkspaceFileNode(
+export async function readWorkspaceFileNodeBytes(
   rootPath: string,
   filePath: string,
   signal?: AbortSignal,
-): Promise<NativeWorkspaceFileRead> {
+): Promise<NativeWorkspaceFileReadBytes> {
   if (!validPortablePath(filePath) || Buffer.byteLength(filePath, "utf8") > WORKSPACE_FILE_PATH_MAX_BYTES) {
     throw new WorkspaceFileNativeError("workspace_file_path_invalid", false, false);
   }
@@ -350,15 +354,11 @@ export async function readWorkspaceFileNode(
       throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
     }
     const content = bytes.subarray(0, offset);
-    const decoded = content.toString("utf8");
-    if (!Buffer.from(decoded, "utf8").equals(content)) {
-      throw new WorkspaceFileNativeError("non_utf8_workspace_file", false, false, false, true);
-    }
     return {
       filePath,
       byteSize: openedStat.size,
       modifiedMillis: Math.max(0, Math.floor(openedStat.mtimeMs)),
-      content: decoded,
+      bytes: content,
     };
   } catch (error) {
     if (signal?.aborted) throw cancelledError();
@@ -367,4 +367,22 @@ export async function readWorkspaceFileNode(
   } finally {
     await close();
   }
+}
+
+export async function readWorkspaceFileNode(
+  rootPath: string,
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<NativeWorkspaceFileRead> {
+  const result = await readWorkspaceFileNodeBytes(rootPath, filePath, signal);
+  const decoded = result.bytes.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(result.bytes)) {
+    throw new WorkspaceFileNativeError("non_utf8_workspace_file", false, false, false, true);
+  }
+  return {
+    filePath: result.filePath,
+    byteSize: result.byteSize,
+    modifiedMillis: result.modifiedMillis,
+    content: decoded,
+  };
 }
