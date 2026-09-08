@@ -16,6 +16,7 @@ const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const cliEntry = path.join(cliRoot, "dist", "index.js");
 const { version } = JSON.parse(await readFile(path.join(cliRoot, "package.json"), "utf8"));
 const testHome = await mkdtemp(path.join(tmpdir(), "rudder-browser-app-smoke."));
+const READY_TIMEOUT_MS = 300_000;
 const postgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim()
   || path.join(process.env.USERPROFILE ?? "", ".rudder", "runtime-payloads", "postgres-18.4", "win32-x64", "bin");
 
@@ -27,16 +28,21 @@ assert.ok(
 
 const children = new Set();
 
-async function waitForReady(readyFile, timeoutMs = 120_000) {
+async function waitForReady({ child, output, readyFile }, timeoutMs = READY_TIMEOUT_MS) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
       return JSON.parse(await readFile(readyFile, "utf8"));
     } catch {
+      if (child.exitCode !== null) {
+        throw new Error(
+          `browser-app child exited before ready (exit code ${child.exitCode ?? "unknown"}).\n${output()}`,
+        );
+      }
       await delay(200);
     }
   }
-  throw new Error(`browser-app ready handoff timed out: ${readyFile}`);
+  throw new Error(`browser-app ready handoff timed out after ${timeoutMs}ms: ${readyFile}\n${output()}`);
 }
 
 function startBrowserApp(label) {
@@ -167,7 +173,7 @@ async function fetchJson(url, init) {
 try {
   console.log("[browser-app-smoke] starting isolated browser-app runtime");
   const first = startBrowserApp("first");
-  const firstReady = await waitForReady(first.readyFile);
+  const firstReady = await waitForReady(first);
   assert.equal(firstReady.ok, true, firstReady.error ?? first.output());
   assert.equal(firstReady.runtimeMode, "owned");
 
@@ -221,7 +227,7 @@ try {
   await waitForExit(first.child);
   stopEmbeddedPostgres();
   const third = startBrowserApp("third");
-  const thirdReady = await waitForReady(third.readyFile);
+  const thirdReady = await waitForReady(third);
   assert.equal(thirdReady.ok, true, thirdReady.error ?? third.output());
   assert.equal(thirdReady.runtimeMode, "owned");
   const organizations = await fetchJson(`${thirdReady.boardUrl}/api/orgs`);
