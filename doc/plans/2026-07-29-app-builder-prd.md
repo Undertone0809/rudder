@@ -81,7 +81,7 @@ V1 delivers:
 - a Desktop-owned fixed runner that installs dependencies, runs typecheck,
   unit tests, production build, and a real loopback readiness check;
 - a reviewed, opaque installation-local App binding;
-- Start, Stop, Open, Copy App link, Continue in Chat, and Open source;
+- Start, Stop, Open, Copy App link, Continue in Chat, and Open in Finder;
 - development-data Backup, Export, Import, and Restore;
 - clear unavailable and failure states;
 - macOS, Linux, and Windows process-ownership adapters.
@@ -156,7 +156,7 @@ The Apps workspace shows durable build and binding state:
 
 - source work pending: `Continue in Chat`;
 - source exists: `Register & preview`;
-- running: `Open`, `Copy App link`, `Stop`, `Continue in Chat`, `Open source`;
+- running: `Open`, `Copy App link`, `Stop`, `Continue in Chat`, `Open in Finder`;
 - bound App: development-data Backup, Import, and Restore;
 - failed or unavailable: causal error and recovery direction.
 
