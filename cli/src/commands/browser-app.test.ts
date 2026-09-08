@@ -32,6 +32,7 @@ describe("Windows browser-app compatibility", () => {
     const previousInstanceId = process.env.RUDDER_INSTANCE_ID;
     const previousPort = process.env.PORT;
     const previousPostgresPort = process.env.RUDDER_EMBEDDED_POSTGRES_PORT;
+    const previousRuntimePackageDir = process.env.RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR;
     const home = await mkdtemp(path.join(tmpdir(), "rudder-browser-app-runtime-guard."));
     const readyFile = path.join(home, "ready.json");
     const activeRunPid = 42_424;
@@ -40,6 +41,7 @@ describe("Windows browser-app compatibility", () => {
 
     process.env.RUDDER_HOME = home;
     process.env.RUDDER_LOCAL_ENV = "prod_local";
+    process.env.RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR = path.join(home, "candidate-server-package");
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     startRuntimeMock.mockImplementation(async (options) => {
       if (options.takeoverOnVersionMismatch) process.kill(activeRunPid, "SIGTERM");
@@ -59,6 +61,7 @@ describe("Windows browser-app compatibility", () => {
 
       expect(startRuntimeMock).toHaveBeenCalledWith({
         version: "0.7.19",
+        runtimePackageDir: path.join(home, "candidate-server-package"),
         takeoverOnVersionMismatch: false,
       });
       expect(killSpy).not.toHaveBeenCalled();
@@ -80,6 +83,8 @@ describe("Windows browser-app compatibility", () => {
       else process.env.PORT = previousPort;
       if (previousPostgresPort === undefined) delete process.env.RUDDER_EMBEDDED_POSTGRES_PORT;
       else process.env.RUDDER_EMBEDDED_POSTGRES_PORT = previousPostgresPort;
+      if (previousRuntimePackageDir === undefined) delete process.env.RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR;
+      else process.env.RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR = previousRuntimePackageDir;
       await rm(home, { recursive: true, force: true });
     }
   });

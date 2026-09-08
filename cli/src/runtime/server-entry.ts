@@ -26,6 +26,7 @@ export interface StartedServer {
 export interface LoadServerRuntimeOptions {
   version: string;
   homeDir?: string;
+  runtimePackageDir?: string;
   onRuntimeInstalled?: (result: Awaited<ReturnType<typeof ensureRuntimeInstalled>>) => void;
   takeoverOnVersionMismatch?: boolean;
 }
@@ -59,6 +60,11 @@ function resolveDevServerEntry(): string {
 }
 
 export async function loadServerRuntimeModule(options: LoadServerRuntimeOptions): Promise<unknown> {
+  const runtimePackageDir = options.runtimePackageDir?.trim();
+  if (runtimePackageDir) {
+    return await importRuntimeServerModule(path.resolve(runtimePackageDir));
+  }
+
   const devEntry = resolveDevServerEntry();
   if (fs.existsSync(devEntry)) {
     maybeEnableUiDevMiddleware(devEntry);

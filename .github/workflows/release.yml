@@ -578,6 +578,8 @@ jobs:
 
       - name: Smoke Windows Smart App Control browser fallback
         if: matrix.platform == 'windows'
+        env:
+          RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR: ${{ github.workspace }}/desktop/.packaged/server-package
         run: pnpm --filter @rudderhq/cli smoke:browser-app
 
       - name: Smoke packaged App Builder
