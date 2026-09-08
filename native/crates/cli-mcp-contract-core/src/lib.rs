@@ -85,6 +85,10 @@ impl McpError {
         self.code
     }
 
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub fn missing_keys(&self) -> &[&'static str] {
         &self.missing_keys
     }
@@ -640,6 +644,10 @@ impl InputParser {
         } else {
             Err(McpError::invalid("MCP input ended with a partial frame"))
         }
+    }
+
+    pub fn mode(&self) -> Option<FrameMode> {
+        self.mode
     }
 
     fn parse_newline(&mut self) -> Result<Vec<Value>, McpError> {

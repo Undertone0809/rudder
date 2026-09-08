@@ -1561,6 +1561,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-cli"
+version = "0.7.20"
+dependencies = [
+ "rudder-cli-mcp-contract-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "rudder-cli-mcp-contract-core"
 version = "0.7.20"
 dependencies = [
@@ -1591,6 +1600,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "rudder-mcp"
+version = "0.7.20"
+dependencies = [
+ "libc",
+ "rudder-cli-mcp-contract-core",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
