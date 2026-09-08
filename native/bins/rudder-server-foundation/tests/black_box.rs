@@ -53,6 +53,19 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         .read_line(&mut startup_line)
         .expect("startup receipt");
     let startup: Value = serde_json::from_str(&startup_line).expect("startup JSON");
+    assert_eq!(
+        startup["routeAuthority"]["schema"],
+        "rudder.native.server.route-authority.v1"
+    );
+    assert_eq!(
+        startup["routeAuthority"]["authoritySchema"],
+        "rudder.migration.authority.v1"
+    );
+    assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
+    assert_eq!(
+        startup["routeAuthority"]["routes"].as_array().map(Vec::len),
+        Some(10)
+    );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
         .expect("bound address")
@@ -155,6 +168,82 @@ fn health_and_readiness_expose_non_authoritative_identity() {
         assert_eq!(receipt["identity"]["ownershipEpoch"], 0);
         assert_eq!(receipt["identity"]["migrationState"], "node-authoritative");
     }
+
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[test]
+fn authority_introspection_is_versioned_bounded_and_fail_closed() {
+    let (child, stdout, bound_addr) = spawn_server(&[]);
+
+    let startup = response_json(&get_with_retry(bound_addr, "/v1/authority"));
+    assert_eq!(startup["schema"], "rudder.native.server.route-authority.v1");
+    assert_eq!(startup["authoritySchema"], "rudder.migration.authority.v1");
+    assert_eq!(startup["protocolVersion"], 1);
+    assert_eq!(startup["status"], "ready");
+    assert_eq!(startup["publicListener"], false);
+    assert_eq!(startup["productWriteAuthority"], false);
+    assert_eq!(startup["nodeAuthorityUnchanged"], true);
+
+    let routes = startup["routes"].as_array().expect("authority routes");
+    assert_eq!(routes.len(), 10);
+    assert!(routes.iter().any(|route| {
+        route["routeId"] == "foundation.authority"
+            && route["decision"] == "rust"
+            && route["owner"] == "rust"
+    }));
+    assert!(routes.iter().any(|route| {
+        route["routeId"] == "node.product_http"
+            && route["decision"] == "legacy"
+            && route["owner"] == "legacy"
+    }));
+
+    let selected = response_json(&get_with_retry(
+        bound_addr,
+        "/v1/authority?route=%2Fhealthz",
+    ));
+    assert_eq!(selected["selectedRoute"]["routeId"], "foundation.health");
+    assert_eq!(selected["selectedRoute"]["decision"], "rust");
+    assert!(selected.get("fencingToken").is_none());
+    let selected_text = get_with_retry(bound_addr, "/v1/authority?route=%2Fhealthz");
+    assert!(!selected_text.contains("fencingToken"));
+    assert!(!selected_text.contains("secret"));
+
+    let unknown = get_with_retry(bound_addr, "/v1/authority?route=%2Fnot-registered");
+    assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
+    assert!(unknown.contains("unknown_route"), "{unknown}");
+
+    let malformed = get_with_retry(bound_addr, "/v1/authority?route=");
+    assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    assert!(
+        malformed.contains("malformed_authority_query"),
+        "{malformed}"
+    );
+
+    let duplicate = get_with_retry(bound_addr, "/v1/authority?route=%2Fhealthz&route=%2Freadyz");
+    assert!(duplicate.starts_with("HTTP/1.1 400"), "{duplicate}");
+    assert!(
+        duplicate.contains("malformed_authority_query"),
+        "{duplicate}"
+    );
+
+    let extra_parameter = get_with_retry(bound_addr, "/v1/authority?owner=legacy");
+    assert!(
+        extra_parameter.starts_with("HTTP/1.1 400"),
+        "{extra_parameter}"
+    );
+    assert!(
+        extra_parameter.contains("malformed_authority_query"),
+        "{extra_parameter}"
+    );
+
+    let method_not_allowed =
+        http_request(bound_addr, "POST", "/v1/authority").expect("POST authority endpoint");
+    assert!(
+        method_not_allowed.starts_with("HTTP/1.1 404"),
+        "{method_not_allowed}"
+    );
 
     stop_server(child, stdout);
 }
@@ -831,6 +920,19 @@ fn spawn_server(overrides: &[(&str, &str)]) -> (Child, BufReader<ChildStdout>, S
         .read_line(&mut startup_line)
         .expect("startup receipt");
     let startup: Value = serde_json::from_str(&startup_line).expect("startup JSON");
+    assert_eq!(
+        startup["routeAuthority"]["schema"],
+        "rudder.native.server.route-authority.v1"
+    );
+    assert_eq!(
+        startup["routeAuthority"]["authoritySchema"],
+        "rudder.migration.authority.v1"
+    );
+    assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
+    assert_eq!(
+        startup["routeAuthority"]["routes"].as_array().map(Vec::len),
+        Some(10)
+    );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
         .expect("bound address")

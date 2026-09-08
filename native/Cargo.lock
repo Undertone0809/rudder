@@ -1752,6 +1752,7 @@ dependencies = [
  "actix-web",
  "base64",
  "rudder-archive-core",
+ "rudder-authority-core",
  "serde",
  "serde_json",
  "sha2",

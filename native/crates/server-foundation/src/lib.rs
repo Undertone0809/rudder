@@ -1,5 +1,5 @@
 use actix_web::{
-    App, Error, HttpResponse, HttpServer,
+    App, Error, HttpRequest, HttpResponse, HttpServer,
     body::MessageBody,
     dev::ServiceRequest,
     http::{StatusCode, header},
@@ -25,10 +25,16 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod authority;
 mod identity;
 mod workspace_backup_files;
 
+pub use authority::{
+    AUTHORITY_ENDPOINT, AUTHORITY_RECEIPT_SCHEMA, AuthorityReceipt, AuthorityRouteReceipt,
+};
 pub use identity::{BuildIdentity, ServerIdentity};
+
+use authority::{AuthorityAdapterError, AuthorityRegistry, parse_route_selector};
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -270,6 +276,8 @@ pub enum ConfigError {
     Invalid { field: String, reason: String },
     #[error("database URL could not be parsed")]
     DatabaseUrl,
+    #[error("authority inventory is invalid")]
+    Authority,
 }
 
 impl ConfigError {
@@ -390,6 +398,7 @@ pub struct StartupReceipt {
     pub product_write_authority: bool,
     pub database_authority: &'static str,
     pub read_only_authorities: &'static [&'static str],
+    pub route_authority: AuthorityReceipt,
     pub limits: LimitsReceipt,
 }
 
@@ -477,6 +486,8 @@ struct AppState {
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     started_at: Instant,
+    authority: Arc<AuthorityRegistry>,
+    authority_receipt: AuthorityReceipt,
 }
 
 struct DownloadCancellation(Arc<AtomicBool>);
@@ -613,6 +624,10 @@ impl Drop for RequestPermit {
 impl AppState {
     fn new(config: ServerConfig) -> Result<Self, ConfigError> {
         config.validate()?;
+        let authority = AuthorityRegistry::fixed().map_err(|_| ConfigError::Authority)?;
+        let authority_receipt = authority
+            .receipt(None)
+            .map_err(|_| ConfigError::Authority)?;
         let database = match config.database_url.as_deref() {
             Some(url) => {
                 let pool = PgPoolOptions::new()
@@ -634,6 +649,8 @@ impl AppState {
             config: Arc::new(config),
             database,
             started_at: Instant::now(),
+            authority: Arc::new(authority),
+            authority_receipt,
         })
     }
 
@@ -726,6 +743,22 @@ impl AppState {
             limits: self.config.limits(),
         };
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
+    }
+
+    fn authority(&self, query: &str) -> HttpResponse {
+        let selector = match parse_route_selector(query) {
+            Ok(selector) => selector,
+            Err(_) => {
+                return self.json_error(StatusCode::BAD_REQUEST, "malformed_authority_query");
+            }
+        };
+        match self.authority.receipt(selector.as_deref()) {
+            Ok(receipt) => bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes),
+            Err(AuthorityAdapterError::UnknownRoute) => {
+                self.json_error(StatusCode::NOT_FOUND, "unknown_route")
+            }
+            Err(_) => self.json_error(StatusCode::SERVICE_UNAVAILABLE, "authority_unavailable"),
+        }
     }
 
     async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
@@ -1124,6 +1157,10 @@ async fn capabilities(state: web::Data<AppState>) -> HttpResponse {
     state.capabilities()
 }
 
+async fn authority(request: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    state.authority(request.query_string())
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -1184,6 +1221,7 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(AUTHORITY_ENDPOINT, web::get().to(authority))
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),
@@ -1243,6 +1281,7 @@ impl ServerRuntime {
             product_write_authority: false,
             database_authority: "read-only-product-data",
             read_only_authorities: READ_ONLY_AUTHORITIES,
+            route_authority: self.control.state.authority_receipt.clone(),
             limits: self.control.state.config.limits(),
         }
     }

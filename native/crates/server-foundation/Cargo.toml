@@ -8,6 +8,7 @@ publish.workspace = true
 actix-web = { version = "4.11", default-features = false, features = ["macros"] }
 base64 = "0.22"
 rudder-archive-core = { path = "../archive-core" }
+rudder-authority-core = { path = "../authority-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
