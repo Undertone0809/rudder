@@ -1338,6 +1338,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-authority-core"
+version = "0.7.20"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-native"
 version = "0.7.20"
 dependencies = [
