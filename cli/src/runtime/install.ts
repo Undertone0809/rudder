@@ -10,6 +10,17 @@ import { pathToFileURL } from "node:url";
 import { resolveRudderHomeDir } from "../config/home.js";
 import { resolveNpmCommandInvocation } from "../npm-command.js";
 import { tryInstallNativePayload } from "./native-payload.js";
+import {
+  canResolveRuntimePackage,
+  ensureRuntimeNativeDependencies,
+  hasRequiredRuntimeNativeDependencies,
+  installRuntimePackageInStaging,
+  normalizeOptionalDependencyVersion,
+  packageNameFromSpec,
+  readRuntimePackageJson,
+  removeRuntimeInstallLocks,
+  type SpawnSyncResultLike,
+} from "./platform-dependencies.js";
 import { downloadRuntimePostgresArchive } from "./postgres-runtime-download.js";
 import { resolvePostgresRuntimeArchiveSource } from "./postgres-runtime-source.js";
 export const RUNTIME_NPM_PACKAGE_NAME = "@rudderhq/server";
@@ -20,8 +31,9 @@ export const DEFAULT_RUNTIME_CACHE_MAX_ENTRIES = 2;
 export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RUNTIME_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 0;
-const RUNTIME_NPM_INSTALL_FLAGS = ["--omit=dev", "--include=optional", "--no-audit", "--no-fund"];
-const RUNTIME_NPM_PACK_FLAGS = ["--registry", NPM_PUBLIC_REGISTRY_URL, "--silent"];
+const RUNTIME_NPM_INSTALL_BASE_FLAGS = ["--omit=dev"];
+const RUNTIME_NPM_INSTALL_OPTIONAL_FLAGS = ["--include=optional"];
+const RUNTIME_NPM_INSTALL_SUFFIX_FLAGS = ["--no-audit", "--no-fund"];
 const EMBEDDED_POSTGRES_PACKAGE_NAME = "embedded-postgres";
 const RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV = "RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR";
 const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
@@ -33,18 +45,17 @@ const RUNTIME_CACHE_PACKAGE_JSON = {
   private: true,
   type: "module",
 };
-const NPM_PLATFORM_REPAIR_ENV = {
-  npm_config_registry: NPM_PUBLIC_REGISTRY_URL,
-  npm_config_update_notifier: "false",
-  NO_UPDATE_NOTIFIER: "1",
-};
+function omitOptionalRuntimeDependencies(): boolean {
+  return process.env.RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL === "true";
+}
 
-type PackageJsonLike = {
-  name?: string;
-  version?: string;
-  dependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-};
+function runtimeNpmInstallFlags(): string[] {
+  return [
+    ...RUNTIME_NPM_INSTALL_BASE_FLAGS,
+    ...(omitOptionalRuntimeDependencies() ? ["--omit=optional"] : RUNTIME_NPM_INSTALL_OPTIONAL_FLAGS),
+    ...RUNTIME_NPM_INSTALL_SUFFIX_FLAGS,
+  ];
+}
 
 export interface RuntimeInstallMetadata {
   version: 1;
@@ -133,7 +144,6 @@ export class RuntimeInstallError extends Error {
   }
 }
 
-type SpawnSyncResultLike = ReturnType<typeof spawnSync>;
 export type RuntimePostgresVersionProbe = (postgresBinary: string) => string;
 
 type RuntimeInstallDeadline = {
@@ -276,21 +286,13 @@ function resolveEmbeddedPostgresPlatformPackage(
   return null;
 }
 
-async function canResolveRuntimePackage(cacheDir: string, packageName: string): Promise<boolean> {
-  try {
-    await readFile(path.join(cacheDir, "node_modules", ...packageName.split("/"), "package.json"), "utf8");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function hasRequiredRuntimePlatformDependencies(
   cacheDir: string,
   metadata: RuntimeInstallMetadata,
   postgresVersionProbe: RuntimePostgresVersionProbe,
   deadline?: RuntimeInstallDeadline,
 ): Promise<boolean> {
+  if (omitOptionalRuntimeDependencies()) return hasRequiredRuntimeNativeDependencies(cacheDir);
   if (!await canResolveRuntimePackage(cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return true;
   const platformPackage = resolveEmbeddedPostgresPlatformPackage();
   if (!platformPackage) return true;
@@ -312,6 +314,7 @@ async function hasRequiredRuntimePlatformDependencies(
 
 async function assertRequiredRuntimePlatformDependencies(cacheDir: string, command: string, output: string): Promise<void> {
   if (!await canResolveRuntimePackage(cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return;
+  if (omitOptionalRuntimeDependencies()) return;
   const platformPackage = resolveEmbeddedPostgresPlatformPackage();
   if (!platformPackage || await canResolveRuntimePackage(cacheDir, platformPackage)) return;
 
@@ -572,6 +575,7 @@ async function ensureRuntimeInstalledUnlocked(
         fallbackOutput = collectOutputParts(
           fallbackOutput,
           await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, fallbackCacheDir, deadline),
+          await ensureRuntimeNativeDependenciesForCache(spawnSyncImpl, fallbackCacheDir, deadline),
         );
         const postgresPayload = await stageRuntimePostgresPayload(
           fallbackCacheDir,
@@ -617,6 +621,7 @@ async function ensureRuntimeInstalledUnlocked(
   output = collectOutputParts(
     output,
     await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, cacheDir, deadline),
+    await ensureRuntimeNativeDependenciesForCache(spawnSyncImpl, cacheDir, deadline),
   );
   const postgresPayload = await stageRuntimePostgresPayload(
     cacheDir,
@@ -691,7 +696,7 @@ function runNpmRuntimeInstall(
   const npm = resolveNpmCommandInvocation();
   return spawnSyncImpl(
     npm.command,
-    [...npm.args, "install", "--prefix", cacheDir, ...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
+    [...npm.args, "install", "--prefix", cacheDir, ...runtimeNpmInstallFlags(), packageSpec],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -702,7 +707,7 @@ function runNpmRuntimeInstall(
 }
 
 function formatRuntimeInstallCommand(cacheDir: string, packageSpec: string): string {
-  return `npm install --prefix ${cacheDir} ${RUNTIME_NPM_INSTALL_FLAGS.join(" ")} ${packageSpec}`;
+  return `npm install --prefix ${cacheDir} ${runtimeNpmInstallFlags().join(" ")} ${packageSpec}`;
 }
 
 function formatRuntimePlatformRepairCommand(cacheDir: string, packageSpec: string): string {
@@ -738,18 +743,6 @@ function withPostgresPayload<T extends Omit<RuntimeInstallResult, "postgresPaylo
   };
 }
 
-function runtimePackageJsonPath(cacheDir: string, packageName: string): string {
-  return path.join(cacheDir, "node_modules", ...packageName.split("/"), "package.json");
-}
-
-async function readRuntimePackageJson(cacheDir: string, packageName: string): Promise<PackageJsonLike | null> {
-  try {
-    return JSON.parse(await readFile(runtimePackageJsonPath(cacheDir, packageName), "utf8")) as PackageJsonLike;
-  } catch {
-    return null;
-  }
-}
-
 async function tryRepairExistingRuntimePackage(options: {
   spawnSyncImpl: typeof spawnSync;
   cacheDir: string;
@@ -766,11 +759,31 @@ async function tryRepairExistingRuntimePackage(options: {
     options.cacheDir,
     options.deadline,
   );
-  if (!await canResolveRuntimePackage(options.cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return output;
+  const nativeOutput = await ensureRuntimeNativeDependenciesForCache(
+    options.spawnSyncImpl,
+    options.cacheDir,
+    options.deadline,
+  );
+  const combinedOutput = collectOutputParts(output, nativeOutput);
+  if (!await canResolveRuntimePackage(options.cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return combinedOutput;
   const platformPackage = resolveEmbeddedPostgresPlatformPackage();
   return !platformPackage || await canResolveRuntimePackage(options.cacheDir, platformPackage)
-    ? output
+    ? combinedOutput
     : null;
+}
+
+async function ensureRuntimeNativeDependenciesForCache(
+  spawnSyncImpl: typeof spawnSync,
+  cacheDir: string,
+  deadline?: RuntimeInstallDeadline,
+): Promise<string> {
+  return ensureRuntimeNativeDependencies({
+    spawnSyncImpl,
+    cacheDir,
+    deadline,
+    remainingMs: remainingRuntimeInstallMs,
+    createError: (message, command, output) => new RuntimeInstallError(message, { cacheDir, command, output }),
+  });
 }
 
 export function embeddedPostgresPlatformPackageName(
@@ -797,6 +810,7 @@ async function ensureRequiredEmbeddedPostgresPlatformPackage(
   cacheDir: string,
   deadline?: RuntimeInstallDeadline,
 ): Promise<string> {
+  if (omitOptionalRuntimeDependencies()) return "";
   const packageSpec = await resolveEmbeddedPostgresPlatformPackageSpec(cacheDir);
   if (!packageSpec) return "";
 
@@ -809,7 +823,7 @@ async function ensureRequiredEmbeddedPostgresPlatformPackage(
     cacheDir,
     packageSpec,
     packageName,
-    deadline,
+    { cacheDir, deadline, remainingMs: remainingRuntimeInstallMs },
   );
   const output = collectSpawnOutput(result);
   if (result.status === 0 && packageName && await canResolveRuntimePackage(cacheDir, packageName)) {
@@ -821,124 +835,6 @@ async function ensureRequiredEmbeddedPostgresPlatformPackage(
     `Rudder runtime installation is missing required platform package ${packageName || packageSpec}. Re-run manually: ${command}`,
     { cacheDir, command, output },
   );
-}
-
-async function installRuntimePackageInStaging(
-  spawnSyncImpl: typeof spawnSync,
-  cacheDir: string,
-  packageSpec: string,
-  packageName: string,
-  deadline?: RuntimeInstallDeadline,
-): Promise<SpawnSyncResultLike> {
-  const stagingDir = path.join(cacheDir, `.platform-repair-${process.pid}-${Date.now()}`);
-  await mkdir(stagingDir, { recursive: true });
-
-  try {
-    const packResult = runNpmPack(spawnSyncImpl, packageSpec, stagingDir, cacheDir, deadline);
-    if (packResult.status !== 0) return packResult;
-
-    const packFilename = parseNpmPackFilename(packResult.stdout);
-    if (!packFilename) {
-      return createSyntheticSpawnResult(1, "", `Unable to parse npm pack output for ${packageSpec}.`);
-    }
-
-    const archivePath = path.join(stagingDir, packFilename);
-    const targetDir = path.dirname(runtimePackageJsonPath(cacheDir, packageName));
-    await mkdir(path.dirname(targetDir), { recursive: true });
-    await rm(targetDir, { recursive: true, force: true });
-    await mkdir(targetDir, { recursive: true });
-
-    const extractResult = runTarExtract(spawnSyncImpl, archivePath, targetDir, cacheDir, deadline);
-    return combineSpawnResults(packResult, extractResult);
-  } finally {
-    await rm(stagingDir, { recursive: true, force: true });
-  }
-}
-
-function runNpmPack(
-  spawnSyncImpl: typeof spawnSync,
-  packageSpec: string,
-  destinationDir: string,
-  cacheDir: string,
-  deadline?: RuntimeInstallDeadline,
-): SpawnSyncResultLike {
-  const timeout = remainingRuntimeInstallMs(deadline, cacheDir, `npm pack ${packageSpec}`);
-  const npm = resolveNpmCommandInvocation();
-  return spawnSyncImpl(
-    npm.command,
-    [...npm.args, "pack", packageSpec, "--pack-destination", destinationDir, ...RUNTIME_NPM_PACK_FLAGS],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...NPM_PLATFORM_REPAIR_ENV },
-      ...(timeout === undefined ? {} : { timeout }),
-      ...(process.platform === "win32" ? { windowsHide: true } : {}),
-    },
-  );
-}
-
-function runTarExtract(
-  spawnSyncImpl: typeof spawnSync,
-  archivePath: string,
-  targetDir: string,
-  cacheDir: string,
-  deadline?: RuntimeInstallDeadline,
-): SpawnSyncResultLike {
-  const timeout = remainingRuntimeInstallMs(deadline, cacheDir, "extract runtime platform package");
-  return spawnSyncImpl(
-    "tar",
-    ["-xzf", archivePath, "-C", targetDir, "--strip-components", "1"],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(timeout === undefined ? {} : { timeout }),
-      ...(process.platform === "win32" ? { windowsHide: true } : {}),
-    },
-  );
-}
-
-function parseNpmPackFilename(stdout: unknown): string | null {
-  if (typeof stdout !== "string") return null;
-  const filename = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
-  return filename?.endsWith(".tgz") ? filename : null;
-}
-
-function createSyntheticSpawnResult(status: number, stdout: string, stderr: string): SpawnSyncResultLike {
-  return { status, stdout, stderr } as SpawnSyncResultLike;
-}
-
-function combineSpawnResults(...results: SpawnSyncResultLike[]): SpawnSyncResultLike {
-  const last = results.at(-1);
-  return {
-    status: last?.status ?? 0,
-    stdout: results.map((result) => result.stdout).filter(Boolean).join("\n"),
-    stderr: results.map((result) => result.stderr).filter(Boolean).join("\n"),
-    error: results.find((result) => result.error)?.error,
-  } as SpawnSyncResultLike;
-}
-
-async function removeRuntimeInstallLocks(cacheDir: string): Promise<void> {
-  await Promise.all([
-    rm(path.join(cacheDir, "package-lock.json"), { force: true }),
-    rm(path.join(cacheDir, "node_modules", ".package-lock.json"), { force: true }),
-  ]);
-}
-
-function packageNameFromSpec(packageSpec: string): string {
-  if (!packageSpec.startsWith("@")) {
-    const versionSeparator = packageSpec.indexOf("@");
-    return versionSeparator === -1 ? packageSpec : packageSpec.slice(0, versionSeparator);
-  }
-
-  const versionSeparator = packageSpec.indexOf("@", 1);
-  return versionSeparator === -1 ? packageSpec : packageSpec.slice(0, versionSeparator);
-}
-
-function normalizeOptionalDependencyVersion(versionRange: string | undefined): string | null {
-  const trimmed = versionRange?.trim();
-  if (!trimmed) return null;
-  const exactVersion = /^[~^]\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$/.exec(trimmed);
-  return exactVersion?.[1] ?? trimmed;
 }
 
 function runtimePostgresPlatformSegment(
