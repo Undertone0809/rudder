@@ -11,6 +11,7 @@ members = [
   "crates/runtime-payload-core",
   "crates/runtime-core",
   "crates/read-surfaces-core",
+  "crates/migration-core",
   "crates/server-foundation",
   "crates/workspace-manifest-core",
   "bins/rudder-native",
