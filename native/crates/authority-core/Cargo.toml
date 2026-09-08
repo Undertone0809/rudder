@@ -1,0 +1,13 @@
+[package]
+name = "rudder-authority-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2.0"
+
+[dev-dependencies]
+serde_json = "1.0"
