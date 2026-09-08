@@ -70,6 +70,9 @@ describe("translateMessage", () => {
       "These preferences apply across the 控制台界面.",
     );
     expect(translateLegacyString("zh-CN", "All Agents")).toBe("全部智能体");
+    expect(translateLegacyString("zh-CN", "Backlog")).toBe("积压");
+    expect(translateLegacyString("zh-CN", "Issue status: backlog")).toBe("任务状态：积压");
+    expect(translateLegacyString("zh-CN", "backlog · medium · created by me")).toBe("积压 · 中 · 我创建的");
     expect(translateLegacyString("zh-CN", "Finished 2d ago")).toBe("2 天前完成");
     expect(translateLegacyString("zh-CN", "1 live")).toBe("1 个运行中");
     expect(translateLegacyString("zh-CN", "Messenger")).toBe("消息");
