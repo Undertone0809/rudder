@@ -18,6 +18,33 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="September 9, 2026" description="v0.7.20" tags={["New","Improved","Fixed"]}>
+
+## v0.7.20
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.20)
+
+Rudder 0.7.20 makes local agent work easier to start and recover, keeps Chat activity in sync with live runs, and strengthens workspace and Desktop reliability across platforms.
+
+### New
+
+- Windows installations now have a browser-app compatibility path. When Smart App Control would block the unsigned Desktop executable, `rudder start` can open the same local workspace in Microsoft Edge app mode and create a Start Menu shortcut.
+- Added a dedicated `rudder browser-app` command for opening and managing the loopback-only browser workspace.
+
+### Improved
+
+- Chat now refreshes queued work after live activity and reconnects, while avoiding repeated polling for hidden terminal states and keeping failure previews bounded and useful.
+- Desktop and CLI update flows now report progress more consistently, recover terminal and local-app handoffs more reliably, and preserve runtime ownership across retries.
+- Embedded PostgreSQL recovery now verifies process ownership and reuses a live runtime port when appropriate, improving relaunch and recovery behavior.
+
+### Fixed
+
+- Workspace folder mappings now accept valid dotted names while continuing to reject malformed and escaping paths.
+- Fixed Chat website icons being clipped in transcript content.
+- Improved cross-platform local-app readiness and cleanup behavior, including Windows browser-app startup and packaged Desktop restart coverage.
+
+</Update>
+
 <Update label="September 7, 2026" description="v0.7.19" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.19
