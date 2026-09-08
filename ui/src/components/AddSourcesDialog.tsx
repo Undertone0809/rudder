@@ -38,6 +38,7 @@ type Props = {
   open: boolean;
   orgId: string;
   resources: OrganizationResource[];
+  allowLibrary?: boolean;
   excludedResourceIds?: Iterable<string>;
   excludedLibraryLocators?: Iterable<string>;
   testId?: string;
@@ -53,6 +54,7 @@ export function AddSourcesDialog({
   open,
   orgId,
   resources,
+  allowLibrary = true,
   excludedResourceIds = [],
   excludedLibraryLocators = [],
   testId = "add-sources-dialog",
@@ -78,7 +80,7 @@ export function AddSourcesDialog({
   const { data: libraryFiles } = useQuery({
     queryKey: queryKeys.organizations.workspaceMentionFiles(orgId, librarySearch),
     queryFn: () => organizationsApi.listWorkspaceMentionFiles(orgId, { query: librarySearch, limit: 24 }),
-    enabled: open && view === "library",
+    enabled: open && allowLibrary && view === "library",
   });
   const recentLocal = resources
     .filter((resource) => !excludedIds.has(resource.id) && resource.sourceType === "external" && ["file", "directory"].includes(resource.kind))
@@ -128,6 +130,11 @@ export function AddSourcesDialog({
   }
 
   const title = view === "library" ? "Add from library" : view === "local" ? "Select from local" : view === "url" ? "Add from URL" : "Add sources";
+  const sourceTypeOptions = [
+    ...(allowLibrary ? [{ view: "library" as const, label: "Add from library", detail: "Reuse files already in this organization", icon: LibraryBig }] : []),
+    { view: "local" as const, label: "Select from local", detail: "Reuse recent sources or choose a file", icon: FolderOpen },
+    { view: "url" as const, label: "Add from URL", detail: "Link a webpage or remote reference", icon: Globe2 },
+  ];
 
   return (
     <Dialog open={open} onOpenChange={reset}>
@@ -141,11 +148,7 @@ export function AddSourcesDialog({
           <Button type="button" variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label="Close add sources" onClick={() => reset(false)}><X className="h-3.5 w-3.5" /></Button>
         </div>
 
-        {view === "choose" ? <div className="grid gap-2 p-4">{[
-          { view: "library" as const, label: "Add from library", detail: "Reuse files already in this organization", icon: LibraryBig },
-          { view: "local" as const, label: "Select from local", detail: "Reuse recent sources or choose a file", icon: FolderOpen },
-          { view: "url" as const, label: "Add from URL", detail: "Link a webpage or remote reference", icon: Globe2 },
-        ].map((option) => <button key={option.view} type="button" className="group flex w-full items-center gap-3 rounded-[var(--radius-sm)] border border-border/80 px-3 py-3 text-left transition-colors hover:border-border-strong hover:bg-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setView(option.view)}>
+        {view === "choose" ? <div className="grid gap-2 p-4">{sourceTypeOptions.map((option) => <button key={option.view} type="button" className="group flex w-full items-center gap-3 rounded-[var(--radius-sm)] border border-border/80 px-3 py-3 text-left transition-colors hover:border-border-strong hover:bg-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setView(option.view)}>
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] border border-border/70 bg-muted/40 text-muted-foreground group-hover:text-foreground"><option.icon className="h-4 w-4" /></span>
           <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{option.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{option.detail}</span></span><span className="text-muted-foreground">&rsaquo;</span>
         </button>)}</div> : null}

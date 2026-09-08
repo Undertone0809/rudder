@@ -342,7 +342,7 @@ test.describe("Primary rail create menu", () => {
     ]);
   });
 
-  test("creates a project with a Library file attached as a path-based library resource", async ({ page }) => {
+  test("does not expose Library sources in the new project dialog", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `PrimaryRail-Project-Library-${Date.now()}`,
@@ -350,14 +350,6 @@ test.describe("Primary rail create menu", () => {
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
-
-    const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
-      data: {
-        filePath: "projects/create-menu/project-brief.md",
-        content: "# Project brief\n\nUse this as project context.",
-      },
-    });
-    expect(fileRes.ok()).toBe(true);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -374,33 +366,9 @@ test.describe("Primary rail create menu", () => {
 
     await dialog.getByRole("button", { name: "Add sources", exact: true }).click();
     const sourcesDialog = page.getByTestId("new-project-add-sources-dialog");
-    await sourcesDialog.getByRole("button", { name: /Add from library/ }).click();
-    await sourcesDialog.getByRole("button", { name: /project-brief\.md/ }).click();
-    await expect(dialog.getByText("Library · File · projects/create-menu/project-brief.md")).toBeVisible();
-
-    const createResponse = page.waitForResponse((response) =>
-      response.request().method() === "POST"
-      && response.url().includes(`/api/orgs/${organization.id}/projects`)
-      && response.ok(),
-    );
-    await dialog.getByRole("button", { name: "Create project" }).click();
-    const created = await (await createResponse).json() as {
-      resources: Array<{
-        role: string;
-        resource: { name: string; kind: string; sourceType: string; locator: string };
-      }>;
-    };
-
-    expect(created.resources).toHaveLength(1);
-    expect(created.resources[0]).toEqual(expect.objectContaining({
-      role: "reference",
-      resource: expect.objectContaining({
-        name: "project-brief.md",
-        kind: "file",
-        sourceType: "library",
-        locator: "projects/create-menu/project-brief.md",
-      }),
-    }));
+    await expect(sourcesDialog.getByRole("button", { name: /Add from library/ })).toHaveCount(0);
+    await expect(sourcesDialog.getByRole("button", { name: /Select from local/ })).toBeVisible();
+    await expect(sourcesDialog.getByRole("button", { name: /Add from URL/ })).toBeVisible();
   });
 
   test("uses the local file picker from the new project Sources dialog", async ({ page }) => {
