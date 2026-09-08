@@ -842,6 +842,12 @@ async function main() {
             error: status === "failed" || status === "timed_out" ? `Pressure failure ${index + 1}` : null,
             stdoutExcerpt: `Pressure run ${index + 1} output. ${"evidence ".repeat(index % 20)}`,
             usageJson: { inputTokens: 1_000 + index, outputTokens: 100 + (index % 50) },
+            resultJson: status === "failed" || status === "timed_out"
+              ? {
+                userMessage: `Pressure failure ${index + 1} requires operator review.`,
+                diagnosticTranscript: "diagnostic ".repeat(THREAD_PRESSURE_RECIPE.failedRunDiagnosticRepeatCount),
+              }
+              : null,
             resultSummaryJson: terminal ? { summary: `Pressure result ${index + 1}` } : null,
             contextSnapshot: {
               ...(activityOnly ? {} : { issueId: hotIssueId, taskId: hotIssueId }),

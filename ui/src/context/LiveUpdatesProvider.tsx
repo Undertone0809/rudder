@@ -713,6 +713,14 @@ function invalidateActivityQueries(
         { queryKey: queryKeys.chats.messages(orgId, entityId) },
         { cancelRefetch: false },
       );
+      // Idle queues do not poll. Activity from another client must wake them,
+      // including acknowledgements from another tab signed in as this user.
+      if (!isStreamingMessageUpdate) {
+        void queryClient.invalidateQueries(
+          { queryKey: queryKeys.chats.queue(orgId, entityId) },
+          { cancelRefetch: false },
+        );
+      }
     }
     if (!isStreamingMessageUpdate && !isLocalUserMessageAck) {
       void queryClient.invalidateQueries(
@@ -987,6 +995,12 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       socket.onopen = () => {
         if (reconnectAttempt > 0) {
           gateRef.current.suppressUntil = Date.now() + RECONNECT_SUPPRESS_MS;
+          // Events missed while disconnected cannot wake an idle queue. Refetch
+          // mounted queues and mark other cached chats stale within this org.
+          void queryClient.invalidateQueries(
+            { queryKey: ["chats", selectedOrganizationId, "queue"] },
+            { cancelRefetch: false },
+          );
         }
         reconnectAttempt = 0;
       };
