@@ -45,6 +45,14 @@ test("keeps the full graph behind planner outputs and affected checks separate",
   }
 });
 
+test("caches native PostgreSQL runtime payloads by runner and architecture", () => {
+  const native = workflowJob("native-foundations");
+  assert.match(native, /name: Cache PostgreSQL runtime payload/);
+  assert.match(native, /path: \~\/\.rudder\/runtime-payloads\/postgres-18\.4/);
+  assert.match(native, /key: postgres-runtime-18\.4-\$\{\{ runner\.os \}\}-\$\{\{ matrix\.arch \}\}-/);
+  assert.match(native, /restore-keys: postgres-runtime-18\.4-\$\{\{ runner\.os \}\}-\$\{\{ matrix\.arch \}\}-/);
+});
+
 test("prints the profile and identity tuple in the aggregate check", () => {
   const summary = workflowJob("qualification-summary");
   for (const field of ["PROFILE", "QUALIFICATION", "SOURCE_SHA", "COMPARISON_SHA", "PLAN_DIGEST"]) {
