@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   readWorkspaceFileNative,
   readWorkspaceFileNode,
+  readWorkspaceFileNodeBytes,
   WorkspaceFileNativeError,
 } from "../services/workspace-file-native.js";
 import { resolveNativeWorkspaceFilesBinary } from "../services/workspace-files-native.js";
@@ -80,6 +81,19 @@ describe("native workspace file reads", () => {
       code: "non_utf8_workspace_file",
       fallbackAllowed: false,
       contentRejected: true,
+    });
+  });
+
+  it("returns bounded raw bytes without decoding binary content", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(root);
+    const bytes = Buffer.from([0, 0xc3, 0x28]);
+    await fs.writeFile(path.join(root, "binary"), bytes);
+
+    await expect(readWorkspaceFileNodeBytes(root, "binary")).resolves.toMatchObject({
+      filePath: "binary",
+      byteSize: bytes.length,
+      bytes,
     });
   });
 
