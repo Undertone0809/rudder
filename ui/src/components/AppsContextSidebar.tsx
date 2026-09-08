@@ -314,7 +314,7 @@ function AppRowActions({
               if (definition) {
                 void desktopShell?.openPath(definition.cwd).catch((error) => {
                   pushToast({
-                    title: "Could not open App source",
+                    title: "Could not open App in Finder",
                     body: error instanceof Error ? error.message : undefined,
                     tone: "error",
                   });
@@ -327,7 +327,7 @@ function AppRowActions({
             }}
           >
             <FolderSearch aria-hidden />
-            Open source
+            Open in Finder
           </DropdownMenuItem>
         ) : null}
         {entry.kind === "managed" && entry.app.conversationId ? (
