@@ -6800,10 +6800,11 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
       .find((candidate) => candidate.getAttribute("data-local-binding-id") === bindingId
         && candidate.getAttribute("data-active") === "true");
     if (!webview
-      || webview.getAttribute("partition") !== expectedPartition
       || typeof webview.getURL !== "function"
-      || typeof webview.executeJavaScript !== "function"
-      || webview.getURL() !== url) return false;
+      || typeof webview.executeJavaScript !== "function") return false;
+    const partition = webview.getAttribute("partition");
+    const currentUrl = webview.getURL();
+    if (partition !== expectedPartition || currentUrl !== url) return false;
     try {
       const evidence = await webview.executeJavaScript(`(async () => {
         const response = await fetch(window.location.href, { cache: "no-store", credentials: "same-origin" });
@@ -6824,8 +6825,8 @@ async function waitForLocalAppWebview(page, definition, expectedAttestation, exp
         && evidence.bodyText.length > 0
         && (!bodyText || evidence.bodyText.includes(bodyText))) {
         return {
-          partition: webview.getAttribute("partition"),
-          url: webview.getURL(),
+          partition,
+          url: currentUrl,
           ...evidence,
           expectedUrl: url,
         };
