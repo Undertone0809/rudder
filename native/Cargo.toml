@@ -4,6 +4,7 @@ members = [
   "crates/agent-contract-core",
   "crates/archive-core",
   "crates/authority-core",
+  "crates/auth-core",
   "crates/native-protocol",
   "crates/plugin-archive-core",
   "crates/update-helper-core",
