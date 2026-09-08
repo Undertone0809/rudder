@@ -128,6 +128,38 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
 }
 
 #[cfg(unix)]
+#[test]
+fn health_and_readiness_expose_non_authoritative_identity() {
+    let (child, stdout, bound_addr) = spawn_server(&[]);
+
+    let health = response_json(&get_with_retry(bound_addr, "/healthz"));
+    let readiness = response_json(&get_with_retry(bound_addr, "/readyz"));
+    for receipt in [&health, &readiness] {
+        assert_eq!(
+            receipt["identity"]["buildIdentity"]["package"],
+            "rudder-server-foundation-core"
+        );
+        assert_eq!(
+            receipt["identity"]["buildIdentity"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            receipt["identity"]["buildIdentity"]["target"]
+                .as_str()
+                .is_some_and(|target| !target.is_empty())
+        );
+        assert!(receipt["identity"]["schemaFingerprint"].is_null());
+        assert_eq!(receipt["identity"]["routeAuthority"], "node");
+        assert_eq!(receipt["identity"]["commandAuthority"], "node");
+        assert_eq!(receipt["identity"]["toolAuthority"], "node");
+        assert_eq!(receipt["identity"]["ownershipEpoch"], 0);
+        assert_eq!(receipt["identity"]["migrationState"], "node-authoritative");
+    }
+
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn workspace_backup_list_uses_postgres_and_preserves_the_read_only_contract() {
     let postgres = PostgresHarness::start();

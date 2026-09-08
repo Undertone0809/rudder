@@ -25,7 +25,10 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod identity;
 mod workspace_backup_files;
+
+pub use identity::{BuildIdentity, ServerIdentity};
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -381,6 +384,7 @@ pub struct StartupReceipt {
     pub schema: &'static str,
     pub component: &'static str,
     pub protocol_version: u32,
+    pub identity: ServerIdentity,
     pub bound_addr: SocketAddr,
     pub public_listener: bool,
     pub product_write_authority: bool,
@@ -405,6 +409,7 @@ struct HealthReceipt {
     schema: &'static str,
     component: &'static str,
     protocol_version: u32,
+    identity: ServerIdentity,
     status: &'static str,
     authority: &'static str,
     uptime_ms: u128,
@@ -424,6 +429,7 @@ struct ReadinessReceipt {
     schema: &'static str,
     component: &'static str,
     protocol_version: u32,
+    identity: ServerIdentity,
     status: &'static str,
     ready: bool,
     dependencies: ReadinessDependencies,
@@ -443,6 +449,7 @@ struct CapabilitiesReceipt {
     schema: &'static str,
     component: &'static str,
     protocol_version: u32,
+    identity: ServerIdentity,
     effective_engine: &'static str,
     public_listener: bool,
     product_write_authority: bool,
@@ -644,6 +651,7 @@ impl AppState {
             schema: HEALTH_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             status: "ok",
             authority: "foundation-only",
             uptime_ms: self.started_at.elapsed().as_millis(),
@@ -687,6 +695,7 @@ impl AppState {
             schema: READINESS_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             status: if ready { "ready" } else { "notReady" },
             ready,
             dependencies: ReadinessDependencies { runtime, database },
@@ -708,6 +717,7 @@ impl AppState {
             schema: CAPABILITIES_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             effective_engine: "rust",
             public_listener: false,
             product_write_authority: false,
@@ -1227,6 +1237,7 @@ impl ServerRuntime {
             schema: STARTUP_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             bound_addr: self.bound_addr,
             public_listener: false,
             product_write_authority: false,
