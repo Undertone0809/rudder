@@ -18,6 +18,33 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年9月9日" description="v0.7.20" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.20
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.20)
+
+Rudder 0.7.20 让本地 Agent 工作更容易启动和恢复，让 Chat 活动与实时运行保持同步，并提升跨平台工作区和 Desktop 的可靠性。
+
+### 新功能
+
+- Windows 安装现在提供浏览器应用兼容模式。当 Smart App Control 可能阻止未签名的 Desktop 可执行文件时，`rudder start` 可以在 Microsoft Edge 应用模式中打开同一个本地工作区，并创建开始菜单快捷方式。
+- 增加专用的 `rudder browser-app` 命令，用于打开和管理仅限本机回环访问的浏览器工作区。
+
+### 改进
+
+- Chat 现在会在实时活动和重新连接后刷新排队工作，同时避免反复轮询已隐藏的终止状态，并保留有界且有用的失败预览。
+- Desktop 和 CLI 更新流程现在会更一致地报告进度，更可靠地恢复 Terminal 和本地应用交接，并在重试时保留运行时所有权。
+- 内置 PostgreSQL 恢复现在会校验进程所有权，并在适当时复用仍在运行的运行时端口，改善重启和恢复行为。
+
+### 问题修复
+
+- 工作区文件夹映射现在接受有效的点号名称，同时继续拒绝格式错误和越界路径。
+- 修复 Chat Transcript 内容中的网站图标被裁切的问题。
+- 改进跨平台本地应用的就绪和清理行为，包括 Windows 浏览器应用启动和打包 Desktop 重启覆盖。
+
+</Update>
+
 <Update label="2026年9月7日" description="v0.7.19" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.19
