@@ -10951,6 +10951,56 @@ describe("messengerService and issue follows", () => {
     );
   });
 
+  it("keeps failed-run summaries usable when the persisted diagnostic result is large", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-large-failed-run-summary";
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const activityAt = new Date("2026-04-13T12:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Large Failed Run Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Large Failed Run Org"),
+      issuePrefix: `LF${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Large result bot",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      resultJson: {
+        userMessage: "The run failed after saving its diagnostic transcript.",
+        diagnosticTranscript: "diagnostic ".repeat(200_000),
+      },
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+
+    const page = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 40 });
+    const failedRunsSummary = page.items.find((item) => item.threadKey === "failed-runs");
+
+    expect(failedRunsSummary).toMatchObject({
+      subtitle: "1 item",
+      preview: "The run failed after saving its diagnostic transcript.",
+      unreadCount: 1,
+      needsAttention: true,
+    });
+  });
+
   it("shows Agent Issue failure context and only gives the requester the Agent Issue retry action", async () => {
     const orgId = randomUUID();
     const userId = "agent-issue-requester";

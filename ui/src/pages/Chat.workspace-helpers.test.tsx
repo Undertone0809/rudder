@@ -16,6 +16,7 @@ import {
   projectChatQueueDelivery,
   queuedMessagePayloadForBodyEdit,
   revealChatAnnotationSourceElement,
+  shouldPollChatQueue,
   sideChatTargetFromMessage,
   useChatDraftQueries,
 } from "./Chat.workspace-helpers";
@@ -218,6 +219,36 @@ describe("projectChatQueueDelivery", () => {
     expect(projectChatQueueDelivery({ ...queued, deliveredMessageId: "message-1" })).toEqual({ state: "hidden" });
     expect(projectChatQueueDelivery({ ...queued, status: "failed_actionable", sourceMessageId: "message-1" })).toEqual({ state: "hidden" });
     expect(projectChatQueueDelivery({ ...queued, status: "failed_actionable", deliveryDisposition: "reconciled_current" })).toEqual({ state: "hidden" });
+  });
+});
+
+describe("shouldPollChatQueue", () => {
+  it("polls while a generation or queue item still needs reconciliation", () => {
+    expect(shouldPollChatQueue({
+      activeGenerationId: "generation-1",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 1,
+      activeGenerationStatus: "running",
+      items: [],
+    })).toBe(true);
+    expect(shouldPollChatQueue({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
+      items: [{ status: "acceptance_unknown" } as ChatQueuedMessage],
+    })).toBe(true);
+  });
+
+  it("stops polling after the queue reaches a terminal state", () => {
+    expect(shouldPollChatQueue({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: "completed",
+      items: [{ status: "delivered" } as ChatQueuedMessage],
+    })).toBe(false);
+    expect(shouldPollChatQueue(null)).toBe(false);
   });
 });
 

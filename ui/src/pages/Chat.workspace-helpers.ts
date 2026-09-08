@@ -3,7 +3,7 @@ import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
-import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatStreamEvent } from "@rudderhq/shared";
+import { buildChatMentionHref, type ChatConversation, type ChatGenerationStatus, type ChatInlineAnnotationInput, type ChatMessage, type ChatQueueSnapshot, type ChatQueuedMessage, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatStreamEvent } from "@rudderhq/shared";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 export type SendButtonMode = "send" | "continue" | "stop" | "sending" | "stopping" | "queue";
@@ -91,6 +91,19 @@ const ACTIVE_CHAT_GENERATION_STATUSES = new Set<ChatGenerationStatus>([
   "stopping",
 ]);
 
+const ACTIVE_CHAT_QUEUE_ITEM_STATUSES = new Set<ChatQueuedMessageStatus>([
+  "queued",
+  "steer_pending",
+  "accepted_current",
+  "acceptance_unknown",
+  "reconciled_current",
+  "continuation_pending",
+  "running_next",
+  "dequeue_claimed",
+  "running",
+  "steered",
+]);
+
 export function activeGenerationIdFromSnapshot(snapshot: {
   activeGenerationId: string | null;
   activeGenerationStatus: ChatGenerationStatus | null;
@@ -98,6 +111,12 @@ export function activeGenerationIdFromSnapshot(snapshot: {
   if (!snapshot?.activeGenerationId) return null;
   if (snapshot.activeGenerationStatus === null) return snapshot.activeGenerationId;
   return ACTIVE_CHAT_GENERATION_STATUSES.has(snapshot.activeGenerationStatus) ? snapshot.activeGenerationId : null;
+}
+
+export function shouldPollChatQueue(snapshot: ChatQueueSnapshot | null | undefined) {
+  if (!snapshot) return false;
+  return activeGenerationIdFromSnapshot(snapshot) !== null
+    || snapshot.items.some((item) => ACTIVE_CHAT_QUEUE_ITEM_STATUSES.has(item.status));
 }
 
 export function clipboardAttachmentPayloadKey(file: File) {

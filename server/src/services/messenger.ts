@@ -317,10 +317,13 @@ type FailedRunRow = MessengerFailedRunOriginRow & {
   updatedAt: Date;
 };
 
-type FailedRunAgentIssueContext = Pick<
-  FailedRunRow,
-  "agentIssueCreationRequestId" | "agentIssueCreationRequestedByUserId" | "agentIssueCreationError"
->;
+type FailedRunSummaryRow = {
+  id: string;
+  agentIssueCreationRequestId: string | null;
+  userMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 type FailedAgentIssueRequestRow = {
   id: string;
@@ -350,7 +353,9 @@ function maxDate(...values: Array<Date | string | null | undefined>) {
   return dates.sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
 }
 
-function failedRunSummary(run: FailedRunAgentIssueContext & { resultJson?: Record<string, unknown> | null }) {
+function failedRunSummary(
+  run: Pick<FailedRunRow, "agentIssueCreationRequestId"> & { resultJson?: Record<string, unknown> | null },
+) {
   const summary = failedRunUserSummary(run);
   return run.agentIssueCreationRequestId
     ? `Agent Issue creation failed. ${summary}`
@@ -2733,9 +2738,57 @@ export function messengerService(db: Db) {
     };
   }
 
+  async function loadFailedRunSummaryRows(orgId: string, userId: string) {
+    const [runRows, requestRows] = await Promise.all([
+      db
+        .select({
+          id: heartbeatRuns.id,
+          agentIssueCreationRequestId: agentIssueCreationRequests.id,
+          userMessage: sql<string | null>`${heartbeatRuns.resultJson}->>'userMessage'`,
+          createdAt: heartbeatRuns.createdAt,
+          updatedAt: heartbeatRuns.updatedAt,
+        })
+        .from(heartbeatRuns)
+        .leftJoin(agentIssueCreationRequests, and(
+          eq(agentIssueCreationRequests.orgId, heartbeatRuns.orgId),
+          eq(agentIssueCreationRequests.runId, heartbeatRuns.id),
+        ))
+        .where(and(eq(heartbeatRuns.orgId, orgId), eq(heartbeatRuns.status, "failed")))
+        .orderBy(desc(heartbeatRuns.updatedAt), desc(heartbeatRuns.createdAt)),
+      db
+        .select({
+          id: agentIssueCreationRequests.id,
+          orgId: agentIssueCreationRequests.orgId,
+          agentId: agentIssueCreationRequests.agentId,
+          runId: agentIssueCreationRequests.runId,
+          status: agentIssueCreationRequests.status,
+          error: agentIssueCreationRequests.error,
+          createdAt: agentIssueCreationRequests.createdAt,
+          updatedAt: agentIssueCreationRequests.updatedAt,
+        })
+        .from(agentIssueCreationRequests)
+        .where(and(
+          eq(agentIssueCreationRequests.orgId, orgId),
+          eq(agentIssueCreationRequests.requestedByUserId, userId),
+          inArray(agentIssueCreationRequests.status, ["failed", "cancelled"]),
+          isNull(agentIssueCreationRequests.createdIssueId),
+        ))
+        .orderBy(desc(agentIssueCreationRequests.updatedAt), desc(agentIssueCreationRequests.createdAt)),
+    ]);
+    const linkedRequestIds = new Set(
+      runRows
+        .map((run) => run.agentIssueCreationRequestId)
+        .filter((requestId): requestId is string => Boolean(requestId)),
+    );
+    return {
+      runRows: runRows as FailedRunSummaryRow[],
+      requestRows: requestRows.filter((request) => !linkedRequestIds.has(request.id)),
+    };
+  }
+
   async function loadFailedRunSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
     const lastReadAt = await lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
-    const { runRows, requestRows } = await loadFailedRunRows(orgId, userId);
+    const { runRows, requestRows } = await loadFailedRunSummaryRows(orgId, userId);
     const failureRows = [...runRows, ...requestRows];
     const itemCount = failureRows.length;
     const latestRow = [...failureRows].sort((a, b) => {
@@ -2746,7 +2799,10 @@ export function messengerService(db: Db) {
     const unreadCount = systemUnreadCountSince(failureRows, lastReadAt);
     const latestPreview = latestRow
       ? "agentIssueCreationRequestId" in latestRow
-        ? failedRunSummary(latestRow)
+        ? failedRunSummary({
+          agentIssueCreationRequestId: latestRow.agentIssueCreationRequestId,
+          resultJson: latestRow.userMessage ? { userMessage: latestRow.userMessage } : null,
+        })
         : failedAgentIssueRequestSummary(latestRow)
       : null;
     return {
