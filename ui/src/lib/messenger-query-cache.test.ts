@@ -2,11 +2,12 @@
 
 import { queryKeys } from "@/lib/queryKeys";
 import type { ChatConversation, MessengerCustomGroupsResponse, MessengerThreadSummary, SidebarBadges } from "@rudderhq/shared";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import {
   archiveMessengerChatInCache,
   cancelMessengerChatRenameQueries,
+  invalidateMessengerThreadSummaryQueries,
   markMessengerChatPinnedInCache,
   markMessengerChatReadInCache,
   markMessengerThreadPinnedInCache,
@@ -70,6 +71,50 @@ function conversation(overrides: Partial<ChatConversation> & Pick<ChatConversati
     ...overrides,
   };
 }
+
+describe("invalidateMessengerThreadSummaryQueries", () => {
+  it("refreshes each descendant and custom groups once without touching another organization", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    const keys = (orgId: string) => [
+      queryKeys.messenger.threads(orgId),
+      queryKeys.messenger.threadPages(orgId, false),
+      queryKeys.messenger.threadPages(orgId, true),
+      queryKeys.messenger.threadPreview(orgId),
+      queryKeys.messenger.customGroups(orgId),
+    ];
+    const ownKeys = keys("org-1");
+    const otherKeys = keys("org-2");
+    const queries = [...ownKeys, ...otherKeys].map((queryKey) => {
+      const requests: ReturnType<typeof deferred<string[]>>[] = [];
+      client.setQueryData(queryKey, []);
+      const observer = new QueryObserver(client, {
+        queryKey,
+        queryFn: () => {
+          const request = deferred<string[]>();
+          requests.push(request);
+          return request.promise;
+        },
+      });
+      return { requests, unsubscribe: observer.subscribe(() => {}) };
+    });
+    try {
+      const refresh = invalidateMessengerThreadSummaryQueries(client, "org-1");
+      expect(queries.map(({ requests }) => requests.length)).toEqual([
+        ...ownKeys.map(() => 1), ...otherKeys.map(() => 0),
+      ]);
+      queries.forEach(({ requests }) => requests.forEach((request) => request.resolve(["fresh"])));
+      await refresh;
+      ownKeys.forEach((key) => expect(client.getQueryData(key)).toEqual(["fresh"]));
+      otherKeys.forEach((key) => expect(client.getQueryData(key)).toEqual([]));
+    } finally {
+      queries.forEach(({ requests, unsubscribe }) => {
+        requests.forEach((request) => request.resolve([]));
+        unsubscribe();
+      });
+      client.clear();
+    }
+  });
+});
 
 describe("upsertMessengerThreadSummaryQueries", () => {
   it("updates every paged Messenger thread cache variant used by the sidebar", () => {

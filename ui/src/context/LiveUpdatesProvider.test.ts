@@ -39,11 +39,10 @@ describe("LiveUpdatesProvider issue invalidation", () => {
       },
     );
 
+    // This prefix covers touched and unread lists (real observer coverage lives
+    // in LiveUpdatesProvider.invalidation.test.ts).
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listTouchedByMe("organization-1"),
-    });
-    expect(invalidations).toContainEqual({
-      queryKey: queryKeys.issues.listUnreadTouchedByMe("organization-1"),
+      queryKey: queryKeys.issues.list("organization-1"),
     });
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.chats.workManifests("organization-1"),
@@ -316,7 +315,7 @@ describe("LiveUpdatesProvider notification preferences", () => {
       queryKey: queryKeys.activityRoot("organization-1"),
     });
     expect(invalidations).toContainEqual({
-      queryKey: queryKeys.messenger.threadPreview("organization-1"),
+      queryKey: queryKeys.messenger.threads("organization-1"),
     });
   });
 
@@ -366,12 +365,6 @@ describe("LiveUpdatesProvider notification preferences", () => {
     });
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.messenger.threads("organization-1"),
-    });
-    expect(invalidations).toContainEqual({
-      queryKey: queryKeys.messenger.threadPages("organization-1"),
-    });
-    expect(invalidations).toContainEqual({
-      queryKey: queryKeys.messenger.threadPreview("organization-1"),
     });
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.messenger.issues("organization-1"),
@@ -424,12 +417,6 @@ describe("LiveUpdatesProvider notification preferences", () => {
     });
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.messenger.threads("organization-1"),
-    });
-    expect(invalidations).toContainEqual({
-      queryKey: queryKeys.messenger.threadPages("organization-1"),
-    });
-    expect(invalidations).toContainEqual({
-      queryKey: queryKeys.messenger.threadPreview("organization-1"),
     });
     expect(invalidations).toContainEqual({
       queryKey: queryKeys.messenger.issues("organization-1"),
