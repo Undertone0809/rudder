@@ -406,10 +406,12 @@ async function runBrowserAppChild(options: BrowserAppCommandOptions): Promise<vo
   let startedServer: StartedServer | null = null;
   let readyWritten = false;
   let releaseDesktopTakeoverLease: (() => void) | null = null;
+  const runtimePackageDir = process.env.RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR?.trim();
   try {
     while (true) {
       startedServer = await startManagedServerFromRuntime({
         version: runtimeVersion,
+        ...(runtimePackageDir ? { runtimePackageDir } : {}),
         // A native Desktop runtime owns the process while it is alive. Never
         // terminate it just to replace a mismatched browser-app version.
         takeoverOnVersionMismatch: false,

@@ -109,6 +109,8 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain("Smoke packaged account gate");
     expect(preflight).toContain("Verify migration compatibility manifest");
     expect(preflight).toContain("scripts/release-compatibility-matrix.mjs");
+    expect(desktop).toContain("RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR");
+    expect(desktop).toContain("desktop/.packaged/server-package");
     expect(desktop).toContain("timeout-minutes: 25");
     expect(desktop).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
     expect(desktop.indexOf("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts"))
