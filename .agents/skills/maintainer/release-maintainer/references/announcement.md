@@ -1,10 +1,12 @@
 # Stable Discord Announcement
 
-Use this reference when the user has explicitly authorized the stable Discord
-announcement, including earlier in the same conversation. Do not seek renewed
-approval for the same message scope. A release imperative alone does not grant
-messaging authority. Without an announcement request, complete the release and
-record `Announcement: not requested`; do not block it or ask a routine question.
+Zeeland explicitly requested on 2026-09-08 that Rudder stable releases include
+Discord announcements by default. This is standing user authorization for one
+English release post in the destination below after each requested stable release
+is verified. Do not ask again. An explicit opt-out overrides this default.
+Read-only checks, canaries, and publishing only named non-release surfaces do
+not trigger a post. Other destinations, pings, and follower cross-posts remain
+outside this standing authorization.
 
 An authorized announcement is a manual closeout surface, outside Release CI.
 Canary releases do not get a Discord announcement.
