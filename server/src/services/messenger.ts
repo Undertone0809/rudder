@@ -63,6 +63,7 @@ import { budgetService } from "./budgets.js";
 import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 import { listMessengerCustomGroups } from "./messenger-custom-groups.js";
+import { loadFailedRunSummaryData } from "./messenger-failed-run-summary.js";
 import {
   hydrateMessengerFailedRunOrigins,
   messengerFailedRunSourceAction,
@@ -313,14 +314,6 @@ type FailedRunRow = MessengerFailedRunOriginRow & {
   agentIssueCreationRequestId: string | null;
   agentIssueCreationRequestedByUserId: string | null;
   agentIssueCreationError: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-type FailedRunSummaryRow = {
-  id: string;
-  agentIssueCreationRequestId: string | null;
-  userMessage: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -1238,7 +1231,7 @@ export function messengerService(db: Db) {
         return data.itemCount > 0 ? data.summary : null;
       }
       case "failed-runs": {
-        const data = await loadFailedRunSummaryData(orgId, userId, syntheticThreadStates);
+        const data = await loadFailedRunSummaryData(db, orgId, userId, syntheticThreadStates);
         return data.itemCount > 0 ? data.summary : null;
       }
       case "budget-alerts": {
@@ -2738,88 +2731,6 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadFailedRunSummaryRows(orgId: string, userId: string) {
-    const [runRows, requestRows] = await Promise.all([
-      db
-        .select({
-          id: heartbeatRuns.id,
-          agentIssueCreationRequestId: agentIssueCreationRequests.id,
-          userMessage: sql<string | null>`${heartbeatRuns.resultJson}->>'userMessage'`,
-          createdAt: heartbeatRuns.createdAt,
-          updatedAt: heartbeatRuns.updatedAt,
-        })
-        .from(heartbeatRuns)
-        .leftJoin(agentIssueCreationRequests, and(
-          eq(agentIssueCreationRequests.orgId, heartbeatRuns.orgId),
-          eq(agentIssueCreationRequests.runId, heartbeatRuns.id),
-        ))
-        .where(and(eq(heartbeatRuns.orgId, orgId), eq(heartbeatRuns.status, "failed")))
-        .orderBy(desc(heartbeatRuns.updatedAt), desc(heartbeatRuns.createdAt)),
-      db
-        .select({
-          id: agentIssueCreationRequests.id,
-          orgId: agentIssueCreationRequests.orgId,
-          agentId: agentIssueCreationRequests.agentId,
-          runId: agentIssueCreationRequests.runId,
-          status: agentIssueCreationRequests.status,
-          error: agentIssueCreationRequests.error,
-          createdAt: agentIssueCreationRequests.createdAt,
-          updatedAt: agentIssueCreationRequests.updatedAt,
-        })
-        .from(agentIssueCreationRequests)
-        .where(and(
-          eq(agentIssueCreationRequests.orgId, orgId),
-          eq(agentIssueCreationRequests.requestedByUserId, userId),
-          inArray(agentIssueCreationRequests.status, ["failed", "cancelled"]),
-          isNull(agentIssueCreationRequests.createdIssueId),
-        ))
-        .orderBy(desc(agentIssueCreationRequests.updatedAt), desc(agentIssueCreationRequests.createdAt)),
-    ]);
-    const linkedRequestIds = new Set(
-      runRows
-        .map((run) => run.agentIssueCreationRequestId)
-        .filter((requestId): requestId is string => Boolean(requestId)),
-    );
-    return {
-      runRows: runRows as FailedRunSummaryRow[],
-      requestRows: requestRows.filter((request) => !linkedRequestIds.has(request.id)),
-    };
-  }
-
-  async function loadFailedRunSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
-    const lastReadAt = await lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
-    const { runRows, requestRows } = await loadFailedRunSummaryRows(orgId, userId);
-    const failureRows = [...runRows, ...requestRows];
-    const itemCount = failureRows.length;
-    const latestRow = [...failureRows].sort((a, b) => {
-      const aTime = normalizeDate(a.updatedAt ?? a.createdAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
-      const bTime = normalizeDate(b.updatedAt ?? b.createdAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
-      return bTime - aTime;
-    })[0] ?? null;
-    const unreadCount = systemUnreadCountSince(failureRows, lastReadAt);
-    const latestPreview = latestRow
-      ? "agentIssueCreationRequestId" in latestRow
-        ? failedRunSummary({
-          agentIssueCreationRequestId: latestRow.agentIssueCreationRequestId,
-          resultJson: latestRow.userMessage ? { userMessage: latestRow.userMessage } : null,
-        })
-        : failedAgentIssueRequestSummary(latestRow)
-      : null;
-    return {
-      itemCount,
-      summary: systemSummary(
-        "failed-runs",
-        "Failed runs",
-        itemCount,
-        normalizeDate(latestRow?.updatedAt ?? latestRow?.createdAt ?? null),
-        unreadCount,
-        lastReadAt,
-        "No failed runs yet",
-        latestPreview,
-      ),
-    };
-  }
-
   async function loadBudgetAlertData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
     const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "budget-alerts", threadStates);
     const incidents = ((await budgetsSvc.overview(orgId)).activeIncidents ?? []) as BudgetIncidentRow[];
@@ -2967,7 +2878,7 @@ export function messengerService(db: Db) {
         ? loadSplitIssueSummaries(orgId, userId, syntheticThreadStates, MAX_THREAD_SUMMARY_LIMIT)
         : Promise.resolve([] as MessengerThreadSummary[]),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
-      loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
+      loadFailedRunSummaryData(db, orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
       loadJoinRequestSummaryData(orgId, userId, syntheticThreadStates),
     ]);
@@ -3015,7 +2926,7 @@ export function messengerService(db: Db) {
         ? loadSplitIssueSummaries(orgId, userId, syntheticThreadStates, MAX_THREAD_SUMMARY_LIMIT)
         : Promise.resolve([] as MessengerThreadSummary[]),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
-      loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
+      loadFailedRunSummaryData(db, orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
       loadJoinRequestSummaryData(orgId, userId, syntheticThreadStates),
     ]);
