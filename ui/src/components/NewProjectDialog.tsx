@@ -714,6 +714,7 @@ export function NewProjectDialog() {
         open={addSourcesOpen}
         orgId={selectedOrganizationId}
         resources={organizationResources ?? []}
+        allowLibrary={false}
         excludedResourceIds={selectedExistingResourceIds}
         excludedLibraryLocators={selectedLibraryLocators}
         testId="new-project-add-sources-dialog"

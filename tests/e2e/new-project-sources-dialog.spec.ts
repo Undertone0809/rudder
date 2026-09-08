@@ -61,7 +61,7 @@ test("adds recent local sources through the progressive Sources dialog", async (
 
   const sourcesDialog = page.getByTestId("new-project-add-sources-dialog");
   await expect(sourcesDialog).toBeVisible();
-  await expect(sourcesDialog.getByRole("button", { name: /Add from library/ })).toBeVisible();
+  await expect(sourcesDialog.getByRole("button", { name: /Add from library/ })).toHaveCount(0);
   await expect(sourcesDialog.getByRole("button", { name: /Select from local/ })).toBeVisible();
   await expect(sourcesDialog.getByRole("button", { name: /Add from URL/ })).toBeVisible();
   await expect(sourcesDialog.getByPlaceholder("Search Library or paste relative path")).toHaveCount(0);
