@@ -64,6 +64,7 @@ function startBrowserApp(label) {
     env: {
       ...process.env,
       RUDDER_POSTGRES_BIN_DIR: postgresBinDir,
+      RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -93,6 +94,7 @@ function startBrowserAppParent() {
     env: {
       ...process.env,
       RUDDER_POSTGRES_BIN_DIR: postgresBinDir,
+      RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,

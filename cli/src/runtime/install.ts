@@ -20,9 +20,12 @@ export const DEFAULT_RUNTIME_CACHE_MAX_ENTRIES = 2;
 export const DEFAULT_RUNTIME_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 export const DEFAULT_RUNTIME_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const DEFAULT_RUNTIME_CACHE_KEEP_PREVIOUS = 0;
-const RUNTIME_NPM_INSTALL_FLAGS = ["--omit=dev", "--include=optional", "--no-audit", "--no-fund"];
+const RUNTIME_NPM_INSTALL_BASE_FLAGS = ["--omit=dev"];
+const RUNTIME_NPM_INSTALL_OPTIONAL_FLAGS = ["--include=optional"];
+const RUNTIME_NPM_INSTALL_SUFFIX_FLAGS = ["--no-audit", "--no-fund"];
 const RUNTIME_NPM_PACK_FLAGS = ["--registry", NPM_PUBLIC_REGISTRY_URL, "--silent"];
 const EMBEDDED_POSTGRES_PACKAGE_NAME = "embedded-postgres";
+const SHARP_PACKAGE_NAME = "sharp";
 const RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR_ENV = "RUDDER_DESKTOP_MANAGED_POSTGRES_BIN_DIR";
 const RUDDER_POSTGRES_BIN_DIR_ENV = "RUDDER_POSTGRES_BIN_DIR";
 const RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES";
@@ -38,6 +41,18 @@ const NPM_PLATFORM_REPAIR_ENV = {
   npm_config_update_notifier: "false",
   NO_UPDATE_NOTIFIER: "1",
 };
+
+function omitOptionalRuntimeDependencies(): boolean {
+  return process.env.RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL === "true";
+}
+
+function runtimeNpmInstallFlags(): string[] {
+  return [
+    ...RUNTIME_NPM_INSTALL_BASE_FLAGS,
+    ...(omitOptionalRuntimeDependencies() ? ["--omit=optional"] : RUNTIME_NPM_INSTALL_OPTIONAL_FLAGS),
+    ...RUNTIME_NPM_INSTALL_SUFFIX_FLAGS,
+  ];
+}
 
 type PackageJsonLike = {
   name?: string;
@@ -291,6 +306,7 @@ async function hasRequiredRuntimePlatformDependencies(
   postgresVersionProbe: RuntimePostgresVersionProbe,
   deadline?: RuntimeInstallDeadline,
 ): Promise<boolean> {
+  if (omitOptionalRuntimeDependencies()) return hasRequiredRuntimeNativeDependencies(cacheDir);
   if (!await canResolveRuntimePackage(cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return true;
   const platformPackage = resolveEmbeddedPostgresPlatformPackage();
   if (!platformPackage) return true;
@@ -312,6 +328,7 @@ async function hasRequiredRuntimePlatformDependencies(
 
 async function assertRequiredRuntimePlatformDependencies(cacheDir: string, command: string, output: string): Promise<void> {
   if (!await canResolveRuntimePackage(cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return;
+  if (omitOptionalRuntimeDependencies()) return;
   const platformPackage = resolveEmbeddedPostgresPlatformPackage();
   if (!platformPackage || await canResolveRuntimePackage(cacheDir, platformPackage)) return;
 
@@ -572,6 +589,7 @@ async function ensureRuntimeInstalledUnlocked(
         fallbackOutput = collectOutputParts(
           fallbackOutput,
           await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, fallbackCacheDir, deadline),
+          await ensureRequiredRuntimeNativeDependencies(spawnSyncImpl, fallbackCacheDir, deadline),
         );
         const postgresPayload = await stageRuntimePostgresPayload(
           fallbackCacheDir,
@@ -617,6 +635,7 @@ async function ensureRuntimeInstalledUnlocked(
   output = collectOutputParts(
     output,
     await ensureRequiredEmbeddedPostgresPlatformPackage(spawnSyncImpl, cacheDir, deadline),
+    await ensureRequiredRuntimeNativeDependencies(spawnSyncImpl, cacheDir, deadline),
   );
   const postgresPayload = await stageRuntimePostgresPayload(
     cacheDir,
@@ -691,7 +710,7 @@ function runNpmRuntimeInstall(
   const npm = resolveNpmCommandInvocation();
   return spawnSyncImpl(
     npm.command,
-    [...npm.args, "install", "--prefix", cacheDir, ...RUNTIME_NPM_INSTALL_FLAGS, packageSpec],
+    [...npm.args, "install", "--prefix", cacheDir, ...runtimeNpmInstallFlags(), packageSpec],
     {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -702,7 +721,7 @@ function runNpmRuntimeInstall(
 }
 
 function formatRuntimeInstallCommand(cacheDir: string, packageSpec: string): string {
-  return `npm install --prefix ${cacheDir} ${RUNTIME_NPM_INSTALL_FLAGS.join(" ")} ${packageSpec}`;
+  return `npm install --prefix ${cacheDir} ${runtimeNpmInstallFlags().join(" ")} ${packageSpec}`;
 }
 
 function formatRuntimePlatformRepairCommand(cacheDir: string, packageSpec: string): string {
@@ -766,10 +785,16 @@ async function tryRepairExistingRuntimePackage(options: {
     options.cacheDir,
     options.deadline,
   );
-  if (!await canResolveRuntimePackage(options.cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return output;
+  const nativeOutput = await ensureRequiredRuntimeNativeDependencies(
+    options.spawnSyncImpl,
+    options.cacheDir,
+    options.deadline,
+  );
+  const combinedOutput = collectOutputParts(output, nativeOutput);
+  if (!await canResolveRuntimePackage(options.cacheDir, EMBEDDED_POSTGRES_PACKAGE_NAME)) return combinedOutput;
   const platformPackage = resolveEmbeddedPostgresPlatformPackage();
   return !platformPackage || await canResolveRuntimePackage(options.cacheDir, platformPackage)
-    ? output
+    ? combinedOutput
     : null;
 }
 
@@ -797,6 +822,7 @@ async function ensureRequiredEmbeddedPostgresPlatformPackage(
   cacheDir: string,
   deadline?: RuntimeInstallDeadline,
 ): Promise<string> {
+  if (omitOptionalRuntimeDependencies()) return "";
   const packageSpec = await resolveEmbeddedPostgresPlatformPackageSpec(cacheDir);
   if (!packageSpec) return "";
 
@@ -819,6 +845,132 @@ async function ensureRequiredEmbeddedPostgresPlatformPackage(
   const command = formatRuntimePlatformRepairCommand(cacheDir, packageSpec);
   throw new RuntimeInstallError(
     `Rudder runtime installation is missing required platform package ${packageName || packageSpec}. Re-run manually: ${command}`,
+    { cacheDir, command, output },
+  );
+}
+
+function resolveSharpPlatformPackageName(sharpPackage: PackageJsonLike): string | null {
+  const platformPrefixes = process.platform === "linux"
+    ? [
+        isLinuxGlibcRuntime() ? "linux" : "linuxmusl",
+        "linux",
+        "linuxmusl",
+      ]
+    : [process.platform];
+  for (const platformPrefix of platformPrefixes) {
+    const packageName = `@img/sharp-${platformPrefix}-${process.arch}`;
+    if (sharpPackage.optionalDependencies?.[packageName]) return packageName;
+  }
+  return null;
+}
+
+function isLinuxGlibcRuntime(): boolean {
+  try {
+    const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } };
+    return typeof report.header?.glibcVersionRuntime === "string";
+  } catch {
+    return true;
+  }
+}
+
+async function hasRequiredRuntimeNativeDependencies(cacheDir: string): Promise<boolean> {
+  const sharpPackage = await readRuntimePackageJson(cacheDir, SHARP_PACKAGE_NAME);
+  if (!sharpPackage) return true;
+  const platformPackageName = resolveSharpPlatformPackageName(sharpPackage);
+  if (!platformPackageName) return true;
+
+  const requiredPackages = [{
+    name: platformPackageName,
+    version: normalizeOptionalDependencyVersion(sharpPackage.optionalDependencies?.[platformPackageName]),
+  }];
+  for (let index = 0; index < requiredPackages.length; index += 1) {
+    const requiredPackage = requiredPackages[index];
+    const packageJson = await readRuntimePackageJson(cacheDir, requiredPackage.name);
+    if (!packageJson || (
+      requiredPackage.version !== null
+      && packageJson.version !== requiredPackage.version
+    )) return false;
+    for (const [dependencyName, versionRange] of Object.entries(packageJson.optionalDependencies ?? {})) {
+      if (!requiredPackages.some(({ name }) => name === dependencyName)) {
+        requiredPackages.push({
+          name: dependencyName,
+          version: normalizeOptionalDependencyVersion(versionRange),
+        });
+      }
+    }
+  }
+  return true;
+}
+
+async function ensureRequiredRuntimeNativeDependencies(
+  spawnSyncImpl: typeof spawnSync,
+  cacheDir: string,
+  deadline?: RuntimeInstallDeadline,
+): Promise<string> {
+  if (!omitOptionalRuntimeDependencies()) return "";
+  const sharpPackage = await readRuntimePackageJson(cacheDir, SHARP_PACKAGE_NAME);
+  if (!sharpPackage) return "";
+  const platformPackageName = resolveSharpPlatformPackageName(sharpPackage);
+  if (!platformPackageName) return "";
+
+  const requiredPackageVersions = new Map<string, string | null>([
+    [platformPackageName, normalizeOptionalDependencyVersion(sharpPackage.optionalDependencies?.[platformPackageName])],
+  ]);
+  const requiredPackages = new Set([platformPackageName]);
+  let output = "";
+  for (let pass = 0; pass < 8; pass += 1) {
+    const missingSpecs: string[] = [];
+    for (const packageName of requiredPackages) {
+      const version = requiredPackageVersions.get(packageName) ?? null;
+      const packageJson = await readRuntimePackageJson(cacheDir, packageName);
+      if (packageJson && (version === null || packageJson.version === version)) continue;
+      missingSpecs.push(version ? `${packageName}@${version}` : packageName);
+    }
+
+    if (missingSpecs.length > 0) {
+      await removeRuntimeInstallLocks(cacheDir);
+      for (const packageSpec of missingSpecs) {
+        const packageName = packageNameFromSpec(packageSpec);
+        const result = await installRuntimePackageInStaging(
+          spawnSyncImpl,
+          cacheDir,
+          packageSpec,
+          packageName,
+          deadline,
+        );
+        output = collectOutputParts(output, collectSpawnOutput(result));
+        if (result.status === 0 && await canResolveRuntimePackage(cacheDir, packageName)) continue;
+        const command = formatRuntimePlatformRepairCommand(cacheDir, packageSpec);
+        throw new RuntimeInstallError(
+          `Rudder runtime installation is missing required native package ${packageName}. Re-run manually: ${command}`,
+          { cacheDir, command, output },
+        );
+      }
+    }
+
+    let discoveredNewPackage = false;
+    for (const packageName of [...requiredPackages]) {
+      const packageJson = await readRuntimePackageJson(cacheDir, packageName);
+      for (const [dependencyName, versionRange] of Object.entries(packageJson?.optionalDependencies ?? {})) {
+        if (requiredPackages.has(dependencyName)) continue;
+        requiredPackages.add(dependencyName);
+        requiredPackageVersions.set(dependencyName, normalizeOptionalDependencyVersion(versionRange));
+        discoveredNewPackage = true;
+      }
+    }
+    if (!discoveredNewPackage && await hasRequiredRuntimeNativeDependencies(cacheDir)) return output;
+  }
+
+  const command = [...requiredPackages]
+    .map((packageName) => formatRuntimePlatformRepairCommand(
+      cacheDir,
+      requiredPackageVersions.get(packageName)
+        ? `${packageName}@${requiredPackageVersions.get(packageName)}`
+        : packageName,
+    ))
+    .join("; ");
+  throw new RuntimeInstallError(
+    `Rudder runtime native dependency preparation did not converge. Re-run manually: ${command}`,
     { cacheDir, command, output },
   );
 }
