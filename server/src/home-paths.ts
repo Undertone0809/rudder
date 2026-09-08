@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { type AgentWorkspaceLocator, resolveStoredOrDerivedAgentWorkspaceKey } from "./agent-workspace-key.js";
 import { syncDirectory, syncFileHandle } from "./file-system-durability.js";
+import { validateOrganizationWorkspaceFolderName } from "./organization-workspace-folder-name.js";
 
 const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -1201,10 +1202,7 @@ function readOrganizationWorkspaceFolderName(orgId: string): string | null {
     if (typeof record.folderName !== "string") {
       throw new Error("Organization workspace folder mapping must contain a folder name.");
     }
-    const folderName = validatePathSegment(record.folderName, "organization workspace folder");
-    if (folderName !== record.folderName) {
-      throw new Error("Organization workspace folder mapping must not contain leading or trailing whitespace.");
-    }
+    const folderName = validateOrganizationWorkspaceFolderName(record.folderName);
     if (RESERVED_ORGANIZATION_WORKSPACE_NAMES.has(folderName.toLowerCase())) {
       throw new Error(`Organization workspace folder mapping uses reserved folder '${folderName}'.`);
     }

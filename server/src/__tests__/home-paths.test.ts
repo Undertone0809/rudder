@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
+import { syncFileHandle } from "../file-system-durability.js";
 import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
@@ -33,7 +34,6 @@ import {
   resolveProjectLibraryDir,
   resolveProjectLibraryRelativePath,
 } from "../home-paths.js";
-import { syncFileHandle } from "../file-system-durability.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -486,7 +486,7 @@ describe("home paths", () => {
     );
   });
 
-  it("rejects a friendly workspace mapping that is not a single safe path segment", async () => {
+  it("rejects unsafe friendly workspace folder mappings", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-invalid-folder-map-");
     const workspaceHome = await makeTempDir("rudder-user-workspaces-invalid-folder-map-");
     cleanupDirs.add(rudderHome);
@@ -495,22 +495,36 @@ describe("home paths", () => {
     process.env.RUDDER_INSTANCE_ID = "test-instance";
     process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
 
-    await fs.writeFile(
-      resolveOrganizationWorkspaceMapPath(),
-      `${JSON.stringify({
-        version: 1,
-        organizations: [{
-          instanceId: "test-instance",
-          orgId,
-          folderName: "../outside",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        }],
-      }, null, 2)}\n`,
-      "utf8",
-    );
+    for (const folderName of [
+      "",
+      ".",
+      "..",
+      "../outside",
+      "nested/folder",
+      "nested\\folder",
+      " leading-space",
+      "trailing-space ",
+      "trailing-dot.",
+    ]) {
+      await fs.writeFile(
+        resolveOrganizationWorkspaceMapPath(),
+        `${JSON.stringify({
+          version: 1,
+          organizations: [{
+            instanceId: "test-instance",
+            orgId,
+            folderName,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }],
+        }, null, 2)}\n`,
+        "utf8",
+      );
 
-    expect(() => resolveOrganizationWorkspaceRoot(orgId)).toThrow(/Invalid organization workspace folder mapping/);
+      expect(() => resolveOrganizationWorkspaceRoot(orgId), folderName).toThrow(
+        /Invalid organization workspace folder mapping/,
+      );
+    }
   });
 
   it("rejects reserved mappings before organization cleanup can remove sibling data", async () => {
@@ -1246,6 +1260,49 @@ describe("home paths", () => {
       /could not find the mapped organization Library folder/i,
     );
     await expect(fs.stat(layout.root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reconciles legacy mapped folders containing safe dots", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-reconcile-dotted-");
+    const workspaceHome = await makeTempDir("rudder-user-workspaces-reconcile-dotted-");
+    cleanupDirs.add(rudderHome);
+    cleanupDirs.add(workspaceHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_ORGANIZATION_WORKSPACE_HOME = workspaceHome;
+
+    const folderName = "rudder-eval-2026-08-11t20-15-09.137z";
+    const workspaceRoot = path.join(workspaceHome, folderName);
+    const sentinel = path.join(workspaceRoot, "projects", "demo", "README.md");
+    await fs.mkdir(path.dirname(sentinel), { recursive: true });
+    await fs.writeFile(sentinel, "# Preserve legacy mapping\n", "utf8");
+    await fs.writeFile(
+      resolveOrganizationWorkspaceMapPath(),
+      `${JSON.stringify({
+        version: 1,
+        organizations: [{
+          instanceId: "test-instance",
+          orgId,
+          folderName,
+          orgName: "Dotted Legacy Mapping",
+          createdAt: "2026-08-11T20:15:09.137Z",
+          updatedAt: "2026-08-11T20:15:09.137Z",
+        }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const result = await reconcileOrganizationStorageRoots([{
+      id: orgId,
+      name: "Dotted Legacy Mapping",
+      urlKey: "dotted-legacy-mapping",
+    }]);
+
+    expect(result.workspaceAvailableOrganizationIds).toEqual([orgId]);
+    expect(resolveOrganizationWorkspaceRoot(orgId)).toBe(workspaceRoot);
+    await expect(fs.readFile(sentinel, "utf8")).resolves.toBe("# Preserve legacy mapping\n");
+    await expect(fs.readFile(path.join(workspaceRoot, ".rudder-workspace.json"), "utf8"))
+      .resolves.toContain(`"orgId": "${orgId}"`);
   });
 
   it("keeps startup reconciliation available when macOS blocks the organization workspace map", async () => {
