@@ -116,7 +116,10 @@ export function activeGenerationIdFromSnapshot(snapshot: {
 export function shouldPollChatQueue(snapshot: ChatQueueSnapshot | null | undefined) {
   if (!snapshot) return false;
   return activeGenerationIdFromSnapshot(snapshot) !== null
-    || snapshot.items.some((item) => ACTIVE_CHAT_QUEUE_ITEM_STATUSES.has(item.status));
+    || snapshot.items.some((item) => (
+      ACTIVE_CHAT_QUEUE_ITEM_STATUSES.has(item.status)
+      && projectChatQueueDelivery(item).state !== "hidden"
+    ));
 }
 
 export function clipboardAttachmentPayloadKey(file: File) {

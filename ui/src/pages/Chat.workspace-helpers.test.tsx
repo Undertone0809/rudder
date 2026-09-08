@@ -248,6 +248,16 @@ describe("shouldPollChatQueue", () => {
       activeGenerationStatus: "completed",
       items: [{ status: "delivered" } as ChatQueuedMessage],
     })).toBe(false);
+    expect(shouldPollChatQueue({
+      activeGenerationId: null,
+      activeAttemptEpoch: null,
+      activeControlVersion: null,
+      activeGenerationStatus: null,
+      items: [{
+        status: "continuation_pending",
+        deliveryDisposition: "continuation_pending",
+      } as ChatQueuedMessage],
+    })).toBe(false);
     expect(shouldPollChatQueue(null)).toBe(false);
   });
 });
