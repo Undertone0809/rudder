@@ -217,6 +217,7 @@ import {
   useChatComposerFileDrop,
   useChatComposerPasteAttachments,
 } from "./Chat.file-drop";
+import { ChatPendingFirstTurn, firstChatTurnRecoveryToast } from "./Chat.first-turn";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -1798,17 +1799,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       }
       pushToast({
         ...chatErrorToast(error, "send"), tone: "error",
-        ...(firstTurnRecovery ? {
-          persistent: true,
-          action: {
-            label: "Open recovered draft",
-            href: firstTurnRecovery.conversationId?.startsWith("first-turn-recovery:")
-              ? `${location.pathname}?firstTurnRecovery=${encodeURIComponent(firstTurnRecovery.conversationId.slice("first-turn-recovery:".length))}`
-              : firstTurnRecovery.conversationId?.startsWith("local-app-recovery:")
-                ? `${location.pathname}?localAppRecoveryDraft=${encodeURIComponent(firstTurnRecovery.conversationId.slice("local-app-recovery:".length))}`
-                : location.pathname,
-          },
-        } : {}),
+        ...firstChatTurnRecoveryToast(location.pathname, firstTurnRecovery),
       });
       if (conversation) {
         void refreshChat(conversation.id).catch(() => null);
@@ -3663,35 +3654,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       </div>
     );
   };
-  const renderPendingFirstTurn = () => {
-    if (!pendingFirstTurn) return null;
-    return (
-      <div
-        data-testid="chat-pending-first-turn"
-        className="flex w-full max-w-3xl flex-col items-end gap-1 px-1"
-      >
-        <OptimisticUserDraftItem
-          body={pendingFirstTurn.body}
-          files={pendingFirstTurn.files}
-          createdAt={pendingFirstTurn.createdAt}
-          onCopyMessageText={copyChatMessageText}
-          onEditDraftOnly={editDraftOnly}
-          skillReferences={chatSkillReferences}
-          onMarkdownLinkClick={handleChatMarkdownLinkClick}
-        />
-        <div
-          data-testid="chat-pending-first-turn-status"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground"
-        >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          <span>Sending message...</span>
-        </div>
-      </div>
-    );
-  };
   return (
     <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:h-full md:min-h-0">
       <input ref={fileInputRef} type="file" className="hidden"
@@ -4251,7 +4213,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 )} </div> </> ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-8">
               <div className="mx-auto flex w-full max-w-4xl flex-col items-center justify-center">
-                {pendingFirstTurn ? renderPendingFirstTurn() : (
+                {pendingFirstTurn ? <ChatPendingFirstTurn
+                  {...pendingFirstTurn}
+                  onCopyMessageText={copyChatMessageText}
+                  onEditDraftOnly={editDraftOnly}
+                  skillReferences={chatSkillReferences}
+                  onMarkdownLinkClick={handleChatMarkdownLinkClick}
+                /> : (
                   <>
                     <div className="mb-5 w-full max-w-3xl px-1 text-center">
                       <h1 key={emptyStateHeadingKey} className="motion-chat-empty-heading max-w-full text-[2rem] leading-[1.1] tracking-normal text-foreground [overflow-wrap:anywhere] md:text-[2.3rem]" >
