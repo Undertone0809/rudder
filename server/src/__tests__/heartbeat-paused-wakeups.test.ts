@@ -149,6 +149,7 @@ describe("heartbeat paused wakeups", () => {
   });
 
   afterAll(async () => {
+    await db?.$client.end({ timeout: 5 });
     await instance?.stop();
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
