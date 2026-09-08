@@ -78,7 +78,7 @@ const zhExactPhrases: Record<string, string> = {
   "Add instructions e.g. look for crashes in Sentry": "添加说明，例如检查 Sentry 里的崩溃问题",
   "Available Plugins": "可用插件",
   "Back": "返回",
-  "Backlog": "待办",
+  "Backlog": "积压",
   "Back to runs": "返回运行列表",
   "Base ref": "基准引用",
   "Beta": "测试版",
@@ -1055,7 +1055,7 @@ function translateIssueStatus(status: string) {
   if (normalized === "done") return "已完成";
   if (normalized === "blocked") return "阻塞";
   if (normalized === "cancelled") return "已取消";
-  if (normalized === "backlog") return "待整理";
+  if (normalized === "backlog") return "积压";
   return status;
 }
 
