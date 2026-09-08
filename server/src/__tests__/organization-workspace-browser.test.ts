@@ -9,11 +9,11 @@ import {
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
@@ -293,6 +293,94 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.readFile(orgId, "projects/large.md")).rejects.toMatchObject({
       status: 422,
     });
+  });
+
+  it("keeps unmapped workspace reads bounded and validates text encoding", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Unmapped Workspace Bounded Read Org",
+      urlKey: deriveOrganizationUrlKey("Unmapped Workspace Bounded Read Org"),
+      issuePrefix: "UWBR",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const projectsDirectory = path.join(workspaceRoot, "projects");
+    await fs.mkdir(projectsDirectory, { recursive: true });
+    await fs.writeFile(path.join(projectsDirectory, "README"), Buffer.alloc(1_000_001, 97));
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/README")).rejects.toMatchObject({
+      status: 422,
+      message: "The organization Library file exceeds the 1 MB read limit",
+    });
+
+    await fs.writeFile(path.join(projectsDirectory, "source.ts"), Buffer.from([0xc3, 0x28]));
+    await expect(workspaceBrowser.readFile(orgId, "projects/source.ts")).rejects.toMatchObject({
+      status: 422,
+      message: "The organization Library text file must be valid UTF-8",
+    });
+  });
+
+  it("cancels an in-flight unmapped workspace read through the public service", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Unmapped Workspace Cancellation Org",
+      urlKey: deriveOrganizationUrlKey("Unmapped Workspace Cancellation Org"),
+      issuePrefix: "UWCA",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await workspaceBrowser.listFiles(orgId);
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "pending");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "pending", "utf8");
+    const stat = await fs.stat(filePath);
+    let resolveReadStarted!: () => void;
+    let resolveRead!: (result: { bytesRead: number }) => void;
+    const readStarted = new Promise<void>((resolve) => {
+      resolveReadStarted = resolve;
+    });
+    const readResult = new Promise<{ bytesRead: number }>((resolve) => {
+      resolveRead = resolve;
+    });
+    const handle = {
+      stat: vi.fn(async () => stat),
+      read: vi.fn(async () => {
+        resolveReadStarted();
+        return readResult;
+      }),
+      close: vi.fn(async () => {
+        resolveRead({ bytesRead: 0 });
+      }),
+    } as unknown as FileHandle;
+    const originalOpen = fs.open.bind(fs);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (target, flags, mode) => {
+      if (target === filePath) return handle;
+      return await originalOpen(target, flags, mode);
+    });
+    const controller = new AbortController();
+    try {
+      const pending = workspaceBrowser.readFile(orgId, "projects/pending", controller.signal);
+      await readStarted;
+      controller.abort(new Error("client disconnected"));
+
+      await expect(pending).rejects.toMatchObject({ code: "workspace_file_cancelled" });
+      expect(handle.close).toHaveBeenCalledTimes(1);
+    } finally {
+      openSpy.mockRestore();
+    }
   });
 
   it.runIf(process.platform !== "win32")("fails closed when a listed directory symlink escapes the Library root", async () => {
