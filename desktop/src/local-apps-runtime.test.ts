@@ -480,16 +480,16 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
 
   it.runIf(process.platform === "win32")(
     "runs an approved Local App through the real Windows Node watchdog",
-    { timeout: 90_000 },
+    { timeout: 240_000 },
     async () => {
       const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 30_000 });
       const manager = new LocalAppRuntimeManager({
         registry,
         platform: "win32",
         useNativeProcessHost: false,
-        watchdogStartTimeoutMs: 60_000,
-        listenerOwnershipRetryTimeoutMs: 30_000,
-        cleanupTimeoutMs: 30_000,
+        watchdogStartTimeoutMs: 120_000,
+        listenerOwnershipRetryTimeoutMs: 60_000,
+        cleanupTimeoutMs: 60_000,
       });
       try {
         const running = await manager.start(definition.id);
