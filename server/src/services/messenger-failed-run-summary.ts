@@ -115,7 +115,11 @@ async function loadFailedRunSummaryRows(db: Db, orgId: string, userId: string) {
       .select({
         id: heartbeatRuns.id,
         agentIssueCreationRequestId: agentIssueCreationRequests.id,
-        userMessage: sql<string | null>`${heartbeatRuns.resultJson}->>'userMessage'`,
+        userMessage: sql<string | null>`case
+          when jsonb_typeof(${heartbeatRuns.resultJson}->'userMessage') = 'string'
+          then ${heartbeatRuns.resultJson}->>'userMessage'
+          else null
+        end`,
         createdAt: heartbeatRuns.createdAt,
         updatedAt: heartbeatRuns.updatedAt,
       })

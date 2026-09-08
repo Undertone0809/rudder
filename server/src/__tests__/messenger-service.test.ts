@@ -10999,6 +10999,23 @@ describe("messengerService and issue follows", () => {
       unreadCount: 1,
       needsAttention: true,
     });
+
+    await db.insert(heartbeatRuns).values({
+      id: randomUUID(),
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "failed",
+      resultJson: { userMessage: false },
+      createdAt: new Date(activityAt.getTime() + 60_000),
+      updatedAt: new Date(activityAt.getTime() + 60_000),
+    });
+
+    const nonStringPage = await messengerSvc.listThreadSummaryPage(orgId, userId, { limit: 40 });
+    expect(nonStringPage.items.find((item) => item.threadKey === "failed-runs")).toMatchObject({
+      subtitle: "2 items",
+      preview: "The run hit a system-level execution problem. Rudder saved the technical details for diagnostics.",
+    });
   });
 
   it("shows Agent Issue failure context and only gives the requester the Agent Issue retry action", async () => {
