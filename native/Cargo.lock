@@ -1359,6 +1359,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-issue-core"
+version = "0.7.20"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-migration-core"
 version = "0.7.20"
 dependencies = [

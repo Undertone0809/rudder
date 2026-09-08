@@ -5,6 +5,7 @@ members = [
   "crates/archive-core",
   "crates/authority-core",
   "crates/cli-mcp-contract-core",
+  "crates/issue-core",
   "crates/native-protocol",
   "crates/plugin-archive-core",
   "crates/update-helper-core",
