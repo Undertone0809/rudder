@@ -13,6 +13,7 @@ import { SidePanelProvider, useSidePanel } from "@/context/SidePanelContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { readChatAskUserDraft } from "@/lib/chat-draft-storage";
 import { requestChatFileAnnotation } from "@/lib/chat-file-annotation-events";
+import { FirstChatTurnStore } from "@/lib/chat-first-turn-store";
 import {
   resetChatPendingAttachmentsForTests,
   resolveChatPendingAttachmentScopeKey,
@@ -37,6 +38,13 @@ import { ChatSidePanel } from "./Chat.side-panel";
 
 const nativeGetBoundingClientRect =
   HTMLElement.prototype.getBoundingClientRect;
+let firstTurnStore: FirstChatTurnStore;
+
+vi.mock("@/context/FirstChatTurnContext", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/context/FirstChatTurnContext")>(),
+  // Keep the real subscription/operation seam while this fixture mocks its router.
+  useFirstChatTurnStore: () => firstTurnStore,
+}));
 
 function makeLiveSurfaceAnchorsVisible() {
   HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
@@ -1579,6 +1587,8 @@ async function renderPersistedSideChatPanel(conversationId: string) {
 }
 
 beforeEach(() => {
+  firstTurnStore = new FirstChatTurnStore();
+  firstTurnStore.setOwner("org-1:chat");
   mockState.chatGenerationScopes.clear();
   mockState.sitesEnabled = false;
   installLocalStorageMock();
@@ -8591,7 +8601,7 @@ describe("Atomic new-chat drafts", () => {
     });
   });
 
-  it("shows the first-turn draft immediately and commits the accepted chat after acknowledgement", async () => {
+  it.each(["stalled", "rejected"])("opens the accepted first chat without waiting for %s sidebar refreshes", async (refreshOutcome) => {
     mockState.conversationId = null;
     mockState.conversations = [];
     mockState.messagesByChatId = {};
@@ -8628,6 +8638,12 @@ describe("Atomic new-chat drafts", () => {
     expect(container.querySelector("[data-testid='chat-pending-first-turn-status']")?.textContent)
       .toContain("Sending message...");
 
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    mockState.invalidateQueries.mockImplementation(() => refreshOutcome === "stalled"
+      ? refreshGate
+      : Promise.reject(new Error("Sidebar refresh failed")));
+
     const acceptedConversation = chat({
       id: "atomic-chat-1",
       title: "Create exactly one accepted chat",
@@ -8654,6 +8670,9 @@ describe("Atomic new-chat drafts", () => {
 
     expect(editor?.value).toBe("");
     expect(mockState.navigate).toHaveBeenCalledWith("/chat/atomic-chat-1");
+    expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Could not send message" }));
+    releaseRefresh();
+    mockState.invalidateQueries.mockResolvedValue(undefined);
     expect(mockState.setQueryData).toHaveBeenCalledWith(
       expect.arrayContaining(["chats", "org-1", "detail", "atomic-chat-1"]),
       expect.objectContaining({ id: "atomic-chat-1" }),

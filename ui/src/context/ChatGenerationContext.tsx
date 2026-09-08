@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { useActivityCoordinator } from "@/context/ActivityCoordinatorContext";
+import { FirstChatTurnProvider } from "@/context/FirstChatTurnContext";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
 import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
@@ -516,7 +517,7 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   return (
     <ChatGenerationStatusStoreContext.Provider value={statusStore}>
       <ChatGenerationActionsContext.Provider value={actions}>
-        <ChatGenerationContext.Provider value={value}>{children}</ChatGenerationContext.Provider>
+        <ChatGenerationContext.Provider value={value}><FirstChatTurnProvider>{children}</FirstChatTurnProvider></ChatGenerationContext.Provider>
       </ChatGenerationActionsContext.Provider>
     </ChatGenerationStatusStoreContext.Provider>
   );

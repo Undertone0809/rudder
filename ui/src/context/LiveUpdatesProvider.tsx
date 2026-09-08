@@ -638,7 +638,6 @@ function invalidateHeartbeatQueries(
   const agentId = readString(payload.agentId);
   if (agentId) {
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agentRuns(orgId, agentId) });
   }
 }
 
@@ -664,12 +663,10 @@ function invalidateActivityQueries(
   }
 
   if (entityType === "issue") {
+    // Prefixes include touched/unread lists and thread pages/previews.
+    // Re-invalidating their children would restart the just-started requests.
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(orgId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPreview(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.issues(orgId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.chats.workManifests(orgId) });
     if (entityId) {
