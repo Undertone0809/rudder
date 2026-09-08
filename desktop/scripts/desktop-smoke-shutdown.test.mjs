@@ -66,6 +66,26 @@ describe("Desktop smoke shutdown", () => {
     })).rejects.toThrow(`PostgreSQL listener 127.0.0.1:${shutdownInput.dbPort}`);
   });
 
+  it("allows an inherited database to outlive a Desktop process that does not own it", async () => {
+    const isPortReachable = vi.fn(async (port) => port === shutdownInput.dbPort);
+    const isProcessAlive = vi.fn(() => true);
+
+    await expect(closeDesktopAndAssertReleased({
+      ...shutdownInput,
+      electronApp: { close: vi.fn(async () => undefined) },
+      expectDatabaseRelease: false,
+    }, {
+      isPortReachable,
+      isProcessAlive,
+      pathExists: vi.fn(async () => false),
+      readPositivePidFile: vi.fn(async () => 42),
+    })).resolves.toEqual({ databasePid: 42 });
+
+    expect(isPortReachable).toHaveBeenCalledWith(shutdownInput.appPort);
+    expect(isPortReachable).not.toHaveBeenCalledWith(shutdownInput.dbPort);
+    expect(isProcessAlive).not.toHaveBeenCalled();
+  });
+
   it("force-closes the Playwright-owned process tree on timeout and still inspects residue", async () => {
     const child = { pid: 42, exitCode: null, signalCode: null };
     const terminateProcessTree = vi.fn(async () => {
@@ -137,6 +157,37 @@ describe("Desktop smoke shutdown", () => {
     await expect(registry.drain()).resolves.toEqual([]);
     expect(registry.size).toBe(0);
     expect(closeTarget).toHaveBeenCalledWith({ electronApp: earlyFailureApp, appPort: 41_002 });
+  });
+
+  it("releases only an already-exited launch for crash-recovery scenarios", () => {
+    const registry = createDesktopSmokeShutdownRegistry();
+    const runningApp = {
+      process: () => ({ exitCode: null, signalCode: null }),
+    };
+    const exitedApp = {
+      process: () => ({ exitCode: null, signalCode: "SIGKILL" }),
+    };
+    registry.register(runningApp, { appPort: 41_001 });
+    registry.register(exitedApp, { appPort: 41_002 });
+
+    expect(() => registry.releaseExited(runningApp)).toThrow("still running");
+    expect(registry.size).toBe(2);
+    expect(() => registry.releaseExited(exitedApp)).not.toThrow();
+    expect(registry.size).toBe(1);
+  });
+
+  it("accepts a frozen exited child after Playwright disposes the application handle", () => {
+    const registry = createDesktopSmokeShutdownRegistry();
+    const disposedApp = {
+      process: () => {
+        throw new Error("Playwright application already disposed");
+      },
+    };
+    const exitedChild = { exitCode: null, signalCode: "SIGKILL" };
+    registry.register(disposedApp, { appPort: 41_001 });
+
+    expect(() => registry.releaseExited(disposedApp, exitedChild)).not.toThrow();
+    expect(registry.size).toBe(0);
   });
 
   it("detects a real exact-loopback TCP listener and observes its release", async () => {

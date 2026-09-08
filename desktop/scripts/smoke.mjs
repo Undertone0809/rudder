@@ -190,6 +190,25 @@ async function waitForSmokeCondition(label, check, options = {}) {
   throw new Error(`Timed out waiting for ${label}.${detail}`);
 }
 
+function isSmokeProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function stopSmokeProcess(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 2 || !isSmokeProcessAlive(pid)) return;
+  process.kill(pid, "SIGTERM");
+  await waitForSmokeCondition(
+    `smoke-owned process ${pid} to exit`,
+    () => !isSmokeProcessAlive(pid),
+    { timeoutMs: 10_000 },
+  );
+}
+
 async function runCapturedProcess(executable, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -3457,7 +3476,10 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -3496,6 +3518,11 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const shellAssetName = `Rudder-${candidateVersion}-macos-arm64-shell.zip`;
   const fullAssetPath = path.join(scenarioRoot, "release", fullAssetName);
   const shellAssetPath = path.join(scenarioRoot, "release", shellAssetName);
+  await preparePackagedExternalRuntimeFixture(scenarioRoot, {
+    authBypass: true,
+    runtimeVersion: candidateVersion,
+    verifyProcessHost: false,
+  });
   await clonePackagedAppForUpdateSmoke(sourceAppPath, installPath);
   const installedBaseline = JSON.parse(await readFile(path.join(installPath, "Contents", "Resources", "app", "package.json"), "utf8"));
   assert.equal(installedBaseline.version, expectedReleaseVersion, "public update must replace the current installed bundle");
@@ -3529,11 +3556,6 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   await rm(path.join(candidateAppPath, "Contents", "Resources", "postgres-18.4"), { recursive: true, force: true });
   const shellArchiveResult = await runCapturedProcess("ditto", macPortableZipArgs(candidateAppPath, shellAssetPath, { compressionLevel: 1 }), { timeoutMs: 120_000 });
   assert.equal(shellArchiveResult.code, 0, `public shell update candidate archive failed: ${shellArchiveResult.stderr}`);
-  await preparePackagedExternalRuntimeFixture(scenarioRoot, {
-    authBypass: true,
-    runtimeVersion: candidateVersion,
-    verifyProcessHost: false,
-  });
   const helperDigest = createHash("sha256").update(await readFile(helperPath)).digest("hex");
   const fullAssetChecksum = createHash("sha256").update(await readFile(fullAssetPath)).digest("hex");
   const shellAssetChecksum = createHash("sha256").update(await readFile(shellAssetPath)).digest("hex");
@@ -3712,7 +3734,10 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -3747,7 +3772,10 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       scenarioRoot,
       mode,
       await allocateSmokePorts(),
-      resolveMacPackagedSmokeHomeEnv(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
       installedExecutable,
     );
     try {
@@ -4039,6 +4067,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   let page = initialPage;
   let boardReady = false;
   let lastBridgeError = null;
+  let lastBootState = null;
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const openWindows = electronApp.windows().filter((candidate) => !candidate.isClosed());
@@ -4101,6 +4130,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
         }
         return null;
       });
+      lastBootState = bootState;
       if (!bootState) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;
@@ -4126,7 +4156,7 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   assert.equal(
     boardReady,
     true,
-    `expected exactly one ready Desktop board window with an active IPC bridge, got ${page?.url() ?? "no window"}${lastBridgeError ? `; last IPC error: ${lastBridgeError}` : ""}`,
+    `expected exactly one ready Desktop board window with an active IPC bridge, got ${page?.url().slice(0, 240) ?? "no window"}${page?.url().length > 240 ? "..." : ""}${lastBridgeError ? `; last IPC error: ${lastBridgeError}` : ""}${lastBootState ? `; last boot state: ${JSON.stringify(lastBootState)}` : ""}`,
   );
   assert.ok(page.url().startsWith("http"), `expected desktop window to reach board UI, got ${page.url()}`);
   if (expectedUrlPattern) {
@@ -4135,8 +4165,8 @@ async function waitForBoardWindow(electronApp, initialPage, options = {}) {
   return page;
 }
 
-async function closeDesktop(electronApp) {
-  await desktopShutdownRegistry.close(electronApp);
+async function closeDesktop(electronApp, options) {
+  await desktopShutdownRegistry.close(electronApp, options);
 }
 
 async function dismissReleaseNotesDialogIfVisible(page) {
@@ -6268,6 +6298,8 @@ async function runTerminalScenario(mode) {
   const run = await launchDesktop(scenarioRoot, mode, ports);
   try {
     const company = await createCompany(run.baseUrl);
+    const primedAgentListing = await fetch(`${run.baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
+    assert.equal(primedAgentListing.ok, true, "Agent workspace listing should be readable before Agent creation");
     const agent = await createCeo(run.baseUrl, company.id);
     await verifyAgentWorkspaceTerminal(run.electronApp, run.page, run.baseUrl, company, agent);
     await closeDesktop(run.electronApp);
@@ -6316,10 +6348,47 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   await target.click();
   const terminal = sidePanel.getByTestId("terminal-panel-view");
   await terminal.waitFor({ state: "visible", timeout: 15_000 });
-  await page.waitForFunction(() => {
-    const panel = document.querySelector("[data-testid='terminal-panel-view']");
-    return Boolean(panel && !panel.textContent?.includes("Starting terminal") && !panel.textContent?.includes("Terminal unavailable"));
-  }, null, { timeout: 15_000 });
+  try {
+    await page.waitForFunction(() => {
+      const panel = document.querySelector("[data-testid='terminal-panel-view']");
+      return Boolean(panel && !panel.textContent?.includes("Starting terminal") && !panel.textContent?.includes("Terminal unavailable"));
+    }, null, { timeout: 15_000 });
+  } catch (cause) {
+    const renderer = await terminal.evaluate((panel) => {
+      const host = panel.querySelector("[data-testid='terminal-xterm-host']");
+      const xterm = panel.querySelector(".xterm");
+      const screen = panel.querySelector(".xterm-screen");
+      const rect = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height, display: getComputedStyle(element).display };
+      };
+      return {
+        status: panel.querySelector("h3")?.textContent ?? null,
+        message: panel.querySelector("h3 + p")?.textContent ?? null,
+        panel: rect(panel),
+        host: rect(host),
+        xterm: rect(xterm),
+        screen: rect(screen),
+        supported: window.desktopShell?.terminal?.supported ?? null,
+      };
+    });
+    const directCreate = await page.evaluate(async ({ orgId, agentId }) => {
+      const sessionId = `terminal-smoke-probe-${Date.now()}`;
+      try {
+        const result = await Promise.race([
+          window.desktopShell.terminal.create({ orgId, agentId, sessionId, cols: 80, rows: 24 })
+            .then((value) => ({ status: "resolved", value })),
+          new Promise((resolve) => setTimeout(() => resolve({ status: "timeout" }), 5_000)),
+        ]);
+        if (result.status === "resolved") await window.desktopShell.terminal.close(sessionId);
+        return result;
+      } catch (error) {
+        return { status: "rejected", error: error instanceof Error ? error.message : String(error) };
+      }
+    }, { orgId: company.id, agentId: agent.id });
+    throw new Error(`Agent Terminal did not become ready: ${JSON.stringify({ renderer, directCreate })}`, { cause });
+  }
 
   const xtermInput = terminal.locator(".xterm-helper-textarea");
   await xtermInput.waitFor({ state: "attached", timeout: 10_000 });
@@ -6336,16 +6405,18 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     initialLayout.screenWidth >= initialLayout.hostWidth - 32,
     `Agent Terminal screen should fit its host (${JSON.stringify(initialLayout)})`,
   );
-  await xtermInput.pressSequentially("printf 'RUDDER_AGENT_HOME=%s\\n' \"$AGENT_HOME\"; pwd", { delay: 2 });
+  await xtermInput.pressSequentially(
+    "printf 'RUDDER_AGENT_%s=%s\\n' HOME \"$AGENT_HOME\"; if [ \"$PWD\" = \"$AGENT_HOME\" ]; then printf 'RUDDER_AGENT_HOME_%s=yes\\n' MATCH; else printf 'RUDDER_AGENT_HOME_%s=no\\n' MATCH; fi",
+    { delay: 2 },
+  );
   await xtermInput.press("Enter");
-  await waitForSmokeCondition("Agent Terminal command output", async () => {
+  const output = await waitForSmokeCondition("Agent Terminal command output", async () => {
     const text = await terminal.locator(".xterm-rows").innerText();
-    return text.includes("RUDDER_AGENT_HOME=") ? text : null;
+    return text.includes("RUDDER_AGENT_HOME_MATCH=") ? text : null;
   });
-  const output = await terminal.locator(".xterm-rows").innerText();
   const agentHome = output.match(/RUDDER_AGENT_HOME=([^\r\n]+)/u)?.[1]?.trim();
   assert.ok(agentHome, "Terminal should print its trusted AGENT_HOME");
-  assert.ok(output.includes(agentHome), "pwd should resolve to the same Agent workspace root");
+  assert.ok(output.includes("RUDDER_AGENT_HOME_MATCH=yes"), "pwd should resolve to the same Agent workspace root");
 
   await sidePanel.getByTestId("chat-side-panel-collapse").click();
   await sidePanel.waitFor({ state: "hidden", timeout: 5_000 });
@@ -6405,12 +6476,13 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     await rename(unavailablePath, workspacePath);
   };
   await rename(workspacePath, unavailablePath);
+  await writeFile(workspacePath, "terminal smoke obstruction\n", "utf8");
   try {
     const recoveredSidePanel = await openSmokeSidePanel(page);
     await recoveredSidePanel.getByTestId("chat-side-panel-empty-terminal-target").click();
     const failedTerminal = recoveredSidePanel.getByTestId("terminal-panel-view");
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "visible", timeout: 15_000 });
-    await failedTerminal.getByText(/Agent workspace is unavailable/u).waitFor({ state: "visible", timeout: 15_000 });
+    await failedTerminal.getByText("Could not validate the selected Agent.", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
     await page.screenshot({ path: terminalFailureSmokeScreenshotPath, fullPage: true });
     console.log(`[desktop-smoke] Agent Terminal failure screenshot: ${terminalFailureSmokeScreenshotPath}`);
     await restoreWorkspace();
@@ -7440,9 +7512,24 @@ async function runAgentBrowserScenario(mode) {
 async function runPostgresRuntimeHandoffScenario(mode) {
   assert.equal(mode, "packaged", "PostgreSQL runtime handoff requires a packaged Desktop app");
   const scenarioRoot = path.join(tmpRoot, "postgres-runtime-handoff");
-  const ports = await allocateSmokePorts();
-  const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot);
-  const run = await launchDesktop(scenarioRoot, mode, ports, packagedRuntime.env);
+  const firstPorts = await allocateSmokePorts();
+  let secondPorts = await allocateSmokePorts();
+  while (
+    secondPorts.appPort === firstPorts.appPort
+    || secondPorts.appPort === firstPorts.dbPort
+    || secondPorts.dbPort === firstPorts.appPort
+    || secondPorts.dbPort === firstPorts.dbPort
+  ) {
+    secondPorts = await allocateSmokePorts();
+  }
+  const packagedRuntime = await preparePackagedExternalRuntimeFixture(scenarioRoot, { authBypass: true });
+  const launchEnv = {
+    ...packagedRuntime.env,
+    RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+  };
+  const firstRun = await launchDesktop(scenarioRoot, mode, firstPorts, launchEnv);
+  let secondRun = null;
+  let postmasterPid = null;
   try {
     const packagedShareDir = path.join(packagedRuntime.postgresBinDir, "..", "share");
     assert.equal(
@@ -7468,6 +7555,14 @@ async function runPostgresRuntimeHandoffScenario(mode) {
       descriptor.postgresRuntimeKey,
       `postgres-18.4/${process.platform}-${process.arch}`,
     );
+    const postmasterPidLines = (await readFile(
+      resolveInstancePaths(scenarioRoot).postmasterPidPath,
+      "utf8",
+    )).split(/\r?\n/u);
+    postmasterPid = Number(postmasterPidLines[0]?.trim());
+    const actualPostgresPort = Number(postmasterPidLines[3]?.trim());
+    assert.equal(Number.isSafeInteger(postmasterPid) && postmasterPid >= 2, true);
+    assert.equal(actualPostgresPort, firstPorts.dbPort);
     if (process.platform === "win32") {
       assert.equal(
         await realpath(packagedRuntime.runtimePostgresRoot),
@@ -7485,9 +7580,49 @@ async function runPostgresRuntimeHandoffScenario(mode) {
         path.join("..", "..", "runtime-payloads", "postgres-18.4"),
       );
     }
-    await closeDesktop(run.electronApp);
+    const firstDesktopProcess = firstRun.electronApp.process();
+    assert.ok(firstDesktopProcess, "packaged Desktop should expose its owned process");
+    const firstDesktopExit = new Promise((resolve) => firstDesktopProcess.once("exit", resolve));
+    assert.equal(firstDesktopProcess.kill("SIGKILL"), true, "crash fixture should terminate only Desktop");
+    await firstDesktopExit;
+    desktopShutdownRegistry.releaseExited(firstRun.electronApp, firstDesktopProcess);
+
+    secondRun = await launchDesktop(scenarioRoot, mode, secondPorts, launchEnv);
+    const relaunchedPidLines = (await readFile(
+      resolveInstancePaths(scenarioRoot).postmasterPidPath,
+      "utf8",
+    )).split(/\r?\n/u);
+    assert.equal(
+      Number(relaunchedPidLines[0]?.trim()),
+      postmasterPid,
+      "rapid relaunch should reuse the live embedded PostgreSQL process",
+    );
+    assert.equal(
+      Number(relaunchedPidLines[3]?.trim()),
+      firstPorts.dbPort,
+      "rapid relaunch should keep the live postmaster's actual port",
+    );
+    assert.notEqual(
+      secondPorts.dbPort,
+      firstPorts.dbPort,
+      "rapid relaunch fixture should supply a different configured database port",
+    );
+    assert.equal(
+      new URL(secondRun.baseUrl).port,
+      String(secondPorts.appPort),
+      "rapid relaunch should start the new Desktop API on its newly configured app port",
+    );
+    await closeDesktop(secondRun.electronApp, { expectDatabaseRelease: false });
+    secondRun = null;
+    await stopSmokeProcess(postmasterPid);
+    console.log(
+      `[desktop-smoke] rapid relaunch reused PostgreSQL pid=${postmasterPid} port=${firstPorts.dbPort} while ignoring configured port=${secondPorts.dbPort}`,
+    );
   } catch (error) {
-    await closeDesktop(run.electronApp).catch(() => {});
+    if (secondRun) {
+      await closeDesktop(secondRun.electronApp, { expectDatabaseRelease: false }).catch(() => {});
+    }
+    if (postmasterPid) await stopSmokeProcess(postmasterPid).catch(() => {});
     throw error;
   }
 }

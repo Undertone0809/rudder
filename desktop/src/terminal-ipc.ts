@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
+import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { resolveNativeProcessHostPath, spawnNativeProcessHost, type NativeProcessHost } from "./local-app-native-host.js";
 import { terminateOwnedProcessGroup } from "./local-apps-runtime.js";
 
@@ -40,6 +41,11 @@ export type TerminalWorkspaceResolver = (orgId: string, agentId: string) => Prom
 
 type AgentWorkspaceApiRecord = { id?: unknown; orgId?: unknown; name?: unknown };
 type AgentWorkspaceListing = { rootPath?: unknown; directoryPath?: unknown; rootExists?: unknown; entries?: unknown };
+type TerminalWorkspaceApiResponse = { ok: boolean; status: number; json(): Promise<unknown> };
+type TerminalWorkspaceApiFetch = (
+  url: string,
+  init: { credentials: "include"; cache: "no-store" },
+) => Promise<TerminalWorkspaceApiResponse>;
 
 export function resolveTerminalWorkspaceFromApi(
   orgId: string,
@@ -75,6 +81,37 @@ export function resolveTerminalWorkspaceFromApi(
     throw new Error("The Agent workspace could not be validated.");
   }
   return { cwd, agentName: typeof agent.name === "string" ? agent.name : "Agent" };
+}
+
+export async function resolveTerminalWorkspaceFromDesktopApi(input: {
+  apiUrl: string;
+  orgId: string;
+  agentId: string;
+  fetch: TerminalWorkspaceApiFetch;
+  workspaceExists: (cwd: string) => boolean;
+}): Promise<TerminalWorkspace> {
+  const { apiUrl, orgId, agentId } = input;
+  const agentResponse = await input.fetch(
+    buildDesktopApiRequestUrl(apiUrl, `/agents/${encodeURIComponent(agentId)}`),
+    { credentials: "include", cache: "no-store" },
+  );
+  if (!agentResponse.ok) throw new Error(agentResponse.status === 404 ? "The selected Agent no longer exists." : "Could not validate the selected Agent.");
+  const agent = await agentResponse.json() as AgentWorkspaceApiRecord;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const filesResponse = await input.fetch(
+      buildDesktopApiRequestUrl(apiUrl, `/orgs/${encodeURIComponent(orgId)}/workspace/files?path=agents`),
+      { credentials: "include", cache: "no-store" },
+    );
+    if (!filesResponse.ok) throw new Error("The Agent workspace is unavailable on this machine.");
+    try {
+      const workspace = resolveTerminalWorkspaceFromApi(orgId, agentId, agent, await filesResponse.json() as AgentWorkspaceListing);
+      if (input.workspaceExists(workspace.cwd)) return workspace;
+    } catch (cause) {
+      if (!(cause instanceof Error) || cause.message !== "The Agent workspace is unavailable on this machine.") throw cause;
+    }
+    if (attempt < 39) await new Promise((resolve) => setTimeout(resolve, 125));
+  }
+  throw new Error("The Agent workspace is unavailable on this machine.");
 }
 
 type Session = {
