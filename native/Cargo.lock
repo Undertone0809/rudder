@@ -1387,11 +1387,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-cli-mcp-contract-core"
+version = "0.7.20"
+dependencies = [
+ "rudder-workspace-manifest-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-issue-core"
 version = "0.7.20"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "rudder-migration-core"
+version = "0.7.20"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 
@@ -1448,6 +1470,16 @@ version = "0.7.20"
 dependencies = [
  "libc",
  "serde_json",
+]
+
+[[package]]
+name = "rudder-read-surfaces-core"
+version = "0.7.20"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
