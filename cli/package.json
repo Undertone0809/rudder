@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/cli",
-  "version": "0.7.19",
+  "version": "0.7.20",
   "description": "Rudder CLI — orchestrate AI agent teams to run a business",
   "type": "module",
   "bin": {
@@ -32,6 +32,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "node --input-type=module -e \"import { chmod } from 'node:fs/promises'; import esbuild from 'esbuild'; import config from './esbuild.config.mjs'; await esbuild.build(config); if (process.platform !== 'win32') await chmod('dist/index.js', 0o755);\"",
+    "smoke:browser-app": "pnpm build && node scripts/browser-app-smoke.mjs",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },

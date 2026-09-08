@@ -50,4 +50,35 @@ describe("Desktop Identity safe storage policy", () => {
       ...input,
     })).toBe(nativeStorage);
   });
+
+  it("keeps a marker-gated packaged macOS smoke memory-only", () => {
+    const nativeStorage = poisonSafeStorage();
+    const selectedStorage = resolveDesktopIdentitySafeStorage({
+      safeStorage: nativeStorage,
+      isPackaged: true,
+      platform: "darwin",
+      packagedSmokeBypassRequested: true,
+    });
+
+    expect(identityCredentialVaultStatus(selectedStorage, "darwin")).toEqual({
+      available: false,
+      backend: "mac_memory_only",
+      reason: "encryption_unavailable",
+    });
+    expect(nativeStorage.isEncryptionAvailable).not.toHaveBeenCalled();
+    expect(nativeStorage.getSelectedStorageBackend).not.toHaveBeenCalled();
+  });
+
+  it.each(["linux", "win32"] as const)(
+    "does not weaken packaged smoke storage on %s",
+    (platform) => {
+      const nativeStorage = poisonSafeStorage();
+      expect(resolveDesktopIdentitySafeStorage({
+        safeStorage: nativeStorage,
+        isPackaged: true,
+        platform,
+        packagedSmokeBypassRequested: true,
+      })).toBe(nativeStorage);
+    },
+  );
 });

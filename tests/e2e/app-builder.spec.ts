@@ -456,6 +456,8 @@ test.describe("Apps workspace", () => {
     });
     await page.getByRole("link", { name: "Organization" }).click();
     await page.getByRole("link", { name: "Hub" }).click();
+    await expect(page).toHaveURL(/\/apps$/);
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Alpha CRM", exact: true }).click();
     await expect(page.getByTestId("apps-local-webview")).toBeAttached();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __startedApps?: string[] }).__startedApps

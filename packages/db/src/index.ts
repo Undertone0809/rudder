@@ -21,6 +21,7 @@ export {
   createEmbeddedPostgresStartupError,
   isEmbeddedPostgresSharedMemoryError,
   parseSysvSharedMemorySegments,
+  readLivePostmasterPidFile,
   readPostmasterPidFile,
   removeStalePostmasterPidFile,
   type CleanupStaleSysvSharedMemoryResult,

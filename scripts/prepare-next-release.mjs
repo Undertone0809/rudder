@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -126,17 +127,51 @@ function fetchBase(options) {
   ]);
 }
 
-function pushBase(options) {
-  return spawnSync(
-    "git",
-    ["push", "--porcelain", options.remote, `HEAD:refs/heads/${options.base}`],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+function findPullRequest(options, branch) {
+  const prs = JSON.parse(run("gh", [
+    "pr", "list", "--state", "open", "--base", options.base,
+    "--head", branch, "--json", "url",
+  ], { capture: true }));
+  if (prs.length > 1) throw new Error(`multiple open handoff pull requests for ${branch}`);
+  return prs[0]?.url;
+}
+
+function ensurePullRequest(options, branch, version) {
+  const existing = findPullRequest(options, branch);
+  if (existing) return existing;
+  const temp = mkdtempSync(join(tmpdir(), "rudder-release-pr-"));
+  try {
+    const bodyFile = join(temp, "body.md");
+    writeFileSync(bodyFile,
+      `Stable v${options.stableVersion} is published. Advance the workspace to v${version} for subsequent releases.\n\n`
+      + "Validation: Release explicitly dispatches Test for this commit. Merge through the protected PR workflow after required checks pass; do not push to main.\n");
+    try {
+      return run("gh", [
+        "pr", "create", "--base", options.base, "--head", branch,
+        "--title", `chore(release): start v${version} [skip release]`,
+        "--body-file", bodyFile,
+      ], { capture: true });
+    } catch (error) {
+      // A timeout or competing run may have created the PR already.
+      const recovered = findPullRequest(options, branch);
+      if (recovered) return recovered;
+      throw error;
+    }
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function readHandoffBranch(options, branch, expectedPatch) {
+  const remoteRef = `refs/remotes/${options.remote}/${branch}`;
+  const exists = run("git", ["ls-remote", "--heads", options.remote, `refs/heads/${branch}`], { capture: true });
+  if (!exists) return null;
+  run("git", ["fetch", options.remote, `refs/heads/${branch}:${remoteRef}`]);
+  const actualPatch = run("git", ["diff", "--binary", `${options.remote}/${options.base}...${remoteRef}`], { capture: true });
+  if (actualPatch !== expectedPatch) {
+    throw new Error(`existing handoff branch ${branch} differs from the expected version-only change; reconcile its PR`);
+  }
+  return run("git", ["rev-parse", remoteRef], { capture: true });
 }
 
 function main() {
@@ -146,7 +181,6 @@ function main() {
   const originalBranch = run("git", ["branch", "--show-current"], { capture: true });
   const originalCheckout = originalBranch || run("git", ["rev-parse", "HEAD"], { capture: true });
   const restoreOriginalCheckout = () => run("git", ["checkout", originalCheckout]);
-  let shouldRestoreCheckout = true;
 
   try {
     if (options.dryRun) {
@@ -164,52 +198,49 @@ function main() {
       writeActionOutput("version", decision.nextVersion);
       console.log(
         `Would bump ${options.remote}/${options.base} from `
-        + `${currentVersion} -> ${decision.nextVersion} and push the release-maintenance commit directly.`,
+        + `${currentVersion} -> ${decision.nextVersion} on a release-maintenance branch and open a pull request.`,
       );
       return;
     }
 
-    const maxPushAttempts = 3;
-    for (let attempt = 1; attempt <= maxPushAttempts; attempt += 1) {
-      fetchBase(options);
-      run("git", ["checkout", "-B", options.base, `${options.remote}/${options.base}`]);
-      shouldRestoreCheckout = false;
+    fetchBase(options);
+    run("git", ["checkout", "--detach", `${options.remote}/${options.base}`]);
 
-      const currentVersion = readWorkspaceVersion();
-      const decision = decideVersionHandoff(currentVersion, options.stableVersion);
-      writeActionOutput("version", decision.nextVersion);
-      if (decision.action !== "update") {
-        writeActionOutput("action", decision.action);
-        const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
-        writeActionOutput("head_sha", headSha);
-        console.log(`Next release base not needed: ${decision.reason}.`);
-        return;
-      }
-
-      run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
-      run("git", ["add", "-u"]);
-      run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
-
+    const currentVersion = readWorkspaceVersion();
+    const decision = decideVersionHandoff(currentVersion, options.stableVersion);
+    writeActionOutput("version", decision.nextVersion);
+    if (decision.action !== "update") {
+      writeActionOutput("action", decision.action);
       const headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
-      const push = pushBase(options);
-      if (push.status === 0) {
-        writeActionOutput("action", "updated");
-        writeActionOutput("head_sha", headSha);
-        console.log(
-          `Advanced ${options.remote}/${options.base} to ${decision.nextVersion} at ${headSha}.`,
-        );
-        return;
-      }
-      if (attempt === maxPushAttempts) {
-        const pushError = `${push.stderr || ""}\n${push.stdout || ""}`.trim();
-        throw new Error(
-          `could not advance ${options.remote}/${options.base} after ${maxPushAttempts} attempts: ${pushError}`,
-        );
-      }
-      console.log(`Concurrent main update detected; retrying (${attempt}/${maxPushAttempts}).`);
+      writeActionOutput("head_sha", headSha);
+      console.log(`Next release base not needed: ${decision.reason}.`);
+      return;
     }
+
+    run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
+    run("git", ["add", "-u"]);
+    run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
+
+    const branch = `codex/release-v${decision.nextVersion}`;
+    const expectedPatch = run("git", ["diff", "--binary", `${options.remote}/${options.base}`, "HEAD"], { capture: true });
+    let headSha = readHandoffBranch(options, branch, expectedPatch);
+    if (!headSha) {
+      try {
+        run("git", ["push", options.remote, `HEAD:refs/heads/${branch}`]);
+        headSha = run("git", ["rev-parse", "HEAD"], { capture: true });
+      } catch (error) {
+        headSha = readHandoffBranch(options, branch, expectedPatch);
+        if (!headSha) throw error;
+      }
+    }
+    const prUrl = ensurePullRequest(options, branch, decision.nextVersion);
+    writeActionOutput("action", "proposed");
+    writeActionOutput("branch", branch);
+    writeActionOutput("head_sha", headSha);
+    writeActionOutput("pr_url", prUrl);
+    console.log(`Next release v${decision.nextVersion} is proposed at ${prUrl}; merge after required checks pass.`);
   } finally {
-    if (shouldRestoreCheckout) restoreOriginalCheckout();
+    restoreOriginalCheckout();
   }
 }
 

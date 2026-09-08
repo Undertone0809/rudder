@@ -45,6 +45,8 @@ describe("primary rail memory", () => {
     expect(resolvePrimaryRailSection("/skills/skill-123/files/SKILL.md")).toBeNull();
     expect(resolvePrimaryRailSection("/automations/weekly-ci")).toBe("automations");
     expect(resolvePrimaryRailSection("/plugins")).toBe("plugins");
+    expect(resolvePrimaryRailSection("/hub?tab=apps")).toBe("plugins");
+    expect(resolvePrimaryRailSection("/apps/view/managed%3Aapp-a")).toBeNull();
     expect(resolvePrimaryRailSection("/apps/local/binding-a")).toBe("plugins");
     expect(resolvePrimaryRailSection("/apps/saved/saved-local-a")).toBeNull();
     expect(resolvePrimaryRailSection("/organization/settings")).toBeNull();

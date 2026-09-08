@@ -32,11 +32,12 @@ Use a second branch only when the observed state genuinely crosses branches,
 such as a stable publish that needs partial recovery. Do not preload every
 reference for a readiness question.
 
-When the user explicitly requests a Discord announcement, or has already
-authorized that exact announcement in the conversation, read
-`references/announcement.md` after the release surfaces are verified. A release
-request alone does not authorize sending messages. Do not add announcements to
-Release CI or create a webhook unless explicitly requested.
+For a requested Rudder stable release, read `references/announcement.md` after
+the release surfaces are verified. Zeeland explicitly authorized this default
+on 2026-09-08: send one release announcement to Rudder / #announcements unless
+the user opts out. Reuse that standing authority without a second confirmation.
+Read-only checks, canaries, and publishing only a named non-release surface do
+not trigger it. Do not add announcements to Release CI or create a webhook.
 
 ## Authorization Boundary
 
@@ -47,14 +48,16 @@ a package, or another surface authorizes that surface and its prerequisites.
 Resolve a bare `publish` from context; do not expand it into a full version release.
 
 1. resolve and lock the single consistent version and source SHA;
-2. land reviewed release source on `main` when needed;
+2. land reviewed release source on `main` through a PR and required checks when needed;
 3. run required exact-source CI, preflight, and package validation once;
 4. publish npm, tag, GitHub Release, Desktop, and production-docs surfaces;
 5. verify public installation, clean obsolete canary Releases/tags, and advance
-   the next-version base;
-6. when explicitly authorized, publish and read back the stable Discord announcement.
+   the next-version base through its protected-branch PR;
+6. publish and read back the stable Discord announcement under Zeeland's standing
+   authorization, unless the user explicitly opts out.
 
-Do not create a release PR or ask for routine second approval after validation.
+Release and next-version PRs are part of this authorization. Never push directly
+to `main` or bypass its protection. Do not ask for routine second approval after validation.
 Ask only when channel, version, source, or destination is materially ambiguous.
 
 Questions such as “how does release work?” or “is this ready?” are read-only.
@@ -123,8 +126,9 @@ exposing secrets, or expanding to another product/environment.
 8. For an authorized stable announcement, follow `references/announcement.md`: check for an existing
    version post, publish the bounded announcement with no default ping, read it
    back, and record its direct message URL.
-   Otherwise report the announcement as not requested; do not make it a new
-   permission question or a blocker for a release-only task.
+   Stable releases include this step by default. Record an explicit opt-out as
+   skipped by user; missing or unknown delivery means partial closeout. Do not
+   ask for routine second authorization.
 9. Report version/ref, workflow runs, npm tags, Release assets, install proof,
    changelog/docs state, announcement URL, cleanup, and remaining manual work.
 

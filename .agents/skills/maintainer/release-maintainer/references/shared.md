@@ -168,8 +168,9 @@ Before completion, record:
 - GitHub Release name, prerelease/draft flags, and assets;
 - install/update proof appropriate to the changed area;
 - obsolete canary cleanup and retained active line;
-- next-version main handoff and its CI;
-- when announcement delivery is requested, its server, channel, direct message
+- next-version PR URL, required checks, merged `main` SHA and its CI; report an
+  unmerged PR as pending integration even when the Release workflow succeeded;
+- for the default stable announcement, its server, channel, direct message
   URL, ping state, follower cross-post state, and rendered readback; otherwise
-  `Announcement: not requested`;
+  record an explicit user opt-out (read-only and canary runs do not announce);
 - preserved unrelated work or remaining blockers.

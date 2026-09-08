@@ -131,6 +131,7 @@ export function createDesktopIdentityRuntime(options: {
     safeStorage: options.safeStorage,
     isPackaged: app.isPackaged,
     platform: process.platform,
+    packagedSmokeBypassRequested,
   });
   const credentialVault = createIdentityCredentialVault({
     safeStorage,

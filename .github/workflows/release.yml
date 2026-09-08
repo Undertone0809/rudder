@@ -576,6 +576,10 @@ jobs:
             pnpm desktop:dist
           fi
 
+      - name: Smoke Windows Smart App Control browser fallback
+        if: matrix.platform == 'windows'
+        run: pnpm --filter @rudderhq/cli smoke:browser-app
+
       - name: Smoke packaged App Builder
         if: matrix.platform != 'windows'
         run: |
@@ -1784,7 +1788,7 @@ jobs:
         run: node scripts/cleanup-obsolete-canaries.mjs --repo "$GITHUB_REPOSITORY" --remote origin --stable-version "${{ needs.preflight.outputs.version }}"
 
   next-release-base:
-    name: Advance next release base
+    name: Propose next release base
     needs:
       - preflight
       - publish-stable
@@ -1794,6 +1798,7 @@ jobs:
     permissions:
       actions: write
       contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -1804,17 +1809,27 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Advance main to the next patch version
+      - name: Open the next patch version pull request
         id: next-release
-        run: node scripts/prepare-next-release.mjs --stable-version "${{ needs.preflight.outputs.version }}"
-      - name: Start Test for the advanced release base
-        if: steps.next-release.outputs.action == 'updated'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref main -f source_sha="${{ steps.next-release.outputs.head_sha }}"
+        run: node scripts/prepare-next-release.mjs --stable-version "${{ needs.preflight.outputs.version }}"
+      - name: Start Test for the proposed release base
+        if: steps.next-release.outputs.action == 'proposed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HANDOFF_BRANCH: ${{ steps.next-release.outputs.branch }}
+          HANDOFF_SHA: ${{ steps.next-release.outputs.head_sha }}
+        run: gh workflow run ci.yml --ref "$HANDOFF_BRANCH" -f source_sha="$HANDOFF_SHA"
+      - name: Record the protected-branch handoff
+        if: steps.next-release.outputs.action == 'proposed'
+        env:
+          HANDOFF_PR: ${{ steps.next-release.outputs.pr_url }}
+        run: |
+          echo "Next release base PR (merge pending required checks): $HANDOFF_PR" >> "$GITHUB_STEP_SUMMARY"
 
   stable-release-result:
-    name: Require complete stable release
+    name: Require published stable surfaces and handoff PR
     needs:
       - preflight
       - publish-stable

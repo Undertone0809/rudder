@@ -56,15 +56,18 @@ export async function isLoopbackTcpListenerReachable(port, timeoutMs = 250) {
 }
 
 async function inspectShutdownResidue(input, probes) {
+  const expectDatabaseRelease = input.expectDatabaseRelease !== false;
   const [appPortReachable, dbPortReachable, runtimeDescriptorExists] = await Promise.all([
     probes.isPortReachable(input.appPort),
-    probes.isPortReachable(input.dbPort),
+    expectDatabaseRelease ? probes.isPortReachable(input.dbPort) : false,
     probes.pathExists(input.runtimeDescriptorPath),
   ]);
   return {
     appPortReachable,
     dbPortReachable,
-    databasePidAlive: input.databasePid === null ? false : probes.isProcessAlive(input.databasePid),
+    databasePidAlive: !expectDatabaseRelease || input.databasePid === null
+      ? false
+      : probes.isProcessAlive(input.databasePid),
     runtimeDescriptorExists,
   };
 }
@@ -211,17 +214,28 @@ export function createDesktopSmokeShutdownRegistry(options = {}) {
       if (targets.has(electronApp)) throw new Error("Desktop smoke launch was registered twice");
       targets.set(electronApp, target);
     },
-    async close(electronApp) {
+    async close(electronApp, closeOptions = {}) {
       const target = targets.get(electronApp);
       if (!target) throw new Error("Desktop smoke must retain the launched instance shutdown target");
       try {
-        await closeTarget({ electronApp, ...target });
+        await closeTarget({ electronApp, ...target, ...closeOptions });
       } finally {
         // closeTarget performs the force-close and residue probes itself. Do
         // not retain an already-attempted target for drain after Playwright
         // has disposed its Electron connection.
         targets.delete(electronApp);
       }
+    },
+    releaseExited(electronApp, exitedChild = null) {
+      if (!targets.has(electronApp)) {
+        throw new Error("Desktop smoke must retain the launched instance shutdown target");
+      }
+      const child = exitedChild
+        ?? (typeof electronApp.process === "function" ? electronApp.process() : null);
+      if (child && child.exitCode === null && child.signalCode === null) {
+        throw new Error("Desktop smoke cannot release a process that is still running");
+      }
+      targets.delete(electronApp);
     },
     get size() {
       return targets.size;

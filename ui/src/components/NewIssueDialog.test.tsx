@@ -427,6 +427,15 @@ describe("NewIssueDialog", () => {
     expect(html).toContain('aria-label="Close new issue dialog"');
   });
 
+  it("removes the organization and title header row while keeping close anchored to the dialog", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).not.toContain("&rsaquo;");
+    expect(html).not.toContain("border-b border-border shrink-0");
+    expect(html).toContain("!absolute right-3 top-3 z-10");
+    expect(html).toContain("<svg");
+  });
+
   it("clips the creation mode selection inside one rounded segmented control", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 

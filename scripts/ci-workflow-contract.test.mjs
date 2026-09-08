@@ -31,11 +31,13 @@ test("plans affected and merge-boundary qualification from one Test workflow", (
 test("keeps the full graph behind planner outputs and affected checks separate", () => {
   const affected = workflowJob("affected");
   const architecture = workflowJob("architecture");
+  const verify = workflowJob("verify");
   assert.match(affected, /@rudderhq\/ui typecheck/);
   assert.match(affected, /@rudderhq\/ui build/);
   assert.match(affected, /test:e2e --grep @smoke/);
   assert.match(architecture, /needs\.plan\.outputs\.comparison_sha/);
   assert.doesNotMatch(architecture, /HEAD\^2/);
+  assert.match(verify, /RUDDER_NATIVE_ARCHIVE_PATH=.*desktop\/\.packaged\/native\/x86_64-unknown-linux-gnu\/rudder-native/);
   for (const jobName of ["architecture", "docs", "verify", "native-foundations", "desktop-packaged-smoke"]) {
     const job = workflowJob(jobName);
     assert.match(job, /needs: plan/);
