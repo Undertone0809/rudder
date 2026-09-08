@@ -78,7 +78,16 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await page.getByRole("button", { name: "Restore" }).click();
   const restoreDialog = page.getByRole("dialog", { name: "Restore workspace backup" });
   await expect(restoreDialog).toBeVisible();
-  await restoreDialog.getByRole("button", { name: "Restore" }).click();
+  const restoreResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+      && response.url().includes("/workspace/backups/")
+      && response.url().endsWith("/restore")
+      && response.ok(),
+  );
+  await Promise.all([
+    restoreResponse,
+    restoreDialog.getByRole("button", { name: "Restore" }).click(),
+  ]);
   await expect.poll(async () => fs.readFile(path.join(workspaceRoot, "plans", "roadmap.md"), "utf8"))
     .toBe("# Roadmap\n");
   await expect(page.getByText("2 backups")).toBeVisible();
