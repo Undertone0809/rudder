@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertExactLocalAppSavedViewTarget,
@@ -30,7 +31,102 @@ const expectedTarget = {
   viewInstanceId: "view-a",
 };
 
+// Extract only the helpers: importing smoke.mjs would launch the Desktop scenarios.
+function loadWebviewWaiter() {
+  const source = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
+  const extract = (startMarker, endMarker) => {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  };
+  return runInNewContext(`${extract("async function waitForSmokeCondition", "\nfunction isSmokeProcessAlive")}
+    ${extract("async function waitForLocalAppWebview", "\nasync function readActiveLocalAppGuestIdentity")}
+    waitForLocalAppWebview`, { Date, setTimeout, clearTimeout });
+}
+
+function asyncProbePage(check) {
+  return {
+    evaluate: vi.fn(check),
+    // Playwright 1.58.2 tests the Promise's truthiness before it resolves.
+    // Model that first-poll false result; the real Chromium probe verifies it separately.
+    waitForFunction: async () => ({ jsonValue: check, dispose: async () => undefined }),
+  };
+}
+
 describe("Local App smoke helpers", () => {
+  it("retries asynchronously false webview evidence until ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const waitForWebview = loadWebviewWaiter();
+      const evidence = { partition: "persist:probe", url: "http://127.0.0.1:43123/outreach" };
+      const check = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(evidence);
+      const page = asyncProbePage(check);
+      const result = waitForWebview(page, definition, {
+        expectedPartition: evidence.partition,
+        expectedUrl: evidence.url,
+      }, "ready");
+      await vi.advanceTimersByTimeAsync(200);
+      expect(await result).toEqual(evidence);
+      expect(check).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(page.evaluate.mock.calls[0][1]).toEqual({
+        bindingId: definition.localBindingId,
+        expectedBodyText: "ready",
+        expectedPartition: evidence.partition,
+        expectedUrl: evidence.url,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out rather than returning asynchronously false webview evidence", async () => {
+    vi.useFakeTimers();
+    try {
+      const waitForWebview = loadWebviewWaiter();
+      const check = vi.fn().mockResolvedValue(false);
+      const result = waitForWebview(asyncProbePage(check), definition, {}, "ready");
+      await Promise.all([
+        expect(result).rejects.toThrow("Timed out waiting for the active Local App webview"),
+        vi.advanceTimersByTimeAsync(45_000),
+      ]);
+      expect(check).toHaveBeenCalledTimes(450);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["never resolves", "resolves late"])("bounds an in-flight webview probe that %s", async (scenario) => {
+    vi.useFakeTimers();
+    try {
+      let release;
+      const check = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+      let outcome = "pending";
+      const result = loadWebviewWaiter()(asyncProbePage(check), definition, {}, "ready").then(
+        () => { outcome = "resolved"; },
+        (error) => { outcome = error.message; },
+      );
+      await vi.advanceTimersByTimeAsync(44_999);
+      expect(outcome).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(outcome).toContain("Timed out waiting for the active Local App webview");
+      await result;
+      expect(vi.getTimerCount()).toBe(0);
+      if (scenario === "resolves late") {
+        release({ partition: "late-evidence" });
+      }
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(outcome).toContain("Timed out waiting for the active Local App webview");
+      expect(check).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("requires the smoke lsof proof to inspect every structured listener address", () => {
     const smokeSource = readFileSync(new URL("./smoke.mjs", import.meta.url), "utf8");
     const readerStart = smokeSource.indexOf("async function readLocalAppListeners");

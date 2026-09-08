@@ -604,6 +604,38 @@ describe("LiveUpdatesProvider notification preferences", () => {
 });
 
 describe("LiveUpdatesProvider chat invalidation", () => {
+  it.each([
+    ["chat.queue.created", {}],
+    ["chat.queue.claimed", {}],
+    ["chat.message_added", { role: "user" }],
+    ["chat.message_added", { role: "assistant", status: "streaming" }],
+    ["chat.message_updated", { status: "completed" }],
+    ["chat.message_updated", { status: "failed" }],
+  ])("wakes only the affected chat queue for %s (%j)", (action, details) => {
+    const invalidateQueries = vi.fn<(filters: { queryKey: readonly unknown[] }, options?: unknown) => Promise<void>>(() => Promise.resolve());
+    __liveUpdatesTestUtils.handleLiveEvent(
+      { invalidateQueries } as never,
+      "organization-1",
+      "/ORG/chat/chat-1",
+      {
+        type: "activity.logged",
+        orgId: "organization-1",
+        payload: { entityType: "chat", entityId: "chat-1", action, details, actorId: "user-1" },
+      } as never,
+      () => null,
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: false, chatNotifications: false },
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith(
+      { queryKey: queryKeys.chats.queue("organization-1", "chat-1") },
+      { cancelRefetch: false },
+    );
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters.queryKey).filter((key) => key[0] === "chats" && key[2] === "queue")).toEqual([
+      queryKeys.chats.queue("organization-1", "chat-1"),
+    ]);
+  });
+
   it("does not restart chat-list requests for streaming progress updates", () => {
     const invalidateQueries = vi.fn<(filters: unknown, options?: unknown) => Promise<void>>(() => Promise.resolve());
     const queryClient = {
@@ -635,6 +667,9 @@ describe("LiveUpdatesProvider chat invalidation", () => {
     });
     expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
       queryKey: queryKeys.sidebarBadges("organization-1"),
+    });
+    expect(invalidateQueries.mock.calls.map(([filters]) => filters)).not.toContainEqual({
+      queryKey: queryKeys.chats.queue("organization-1", "chat-1"),
     });
   });
 

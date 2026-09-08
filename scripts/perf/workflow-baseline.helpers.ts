@@ -11,6 +11,7 @@ export const THREAD_PRESSURE_RECIPE = {
   transcriptEntries: 24,
   alternateVariantRows: 2,
   activityOnlyRunEvery: 4,
+  failedRunDiagnosticRepeatCount: 20_000,
   activeRunStatuses: ["queued", "running"] as const,
   terminalRunStatuses: ["succeeded", "failed", "cancelled", "timed_out"] as const,
 };

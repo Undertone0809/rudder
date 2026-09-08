@@ -63,6 +63,7 @@ import { budgetService } from "./budgets.js";
 import { chatService } from "./chats.js";
 import { issueLowSignalContentOnlyActivitySql } from "./issue-activity-filters.js";
 import { listMessengerCustomGroups } from "./messenger-custom-groups.js";
+import { loadFailedRunSummaryData } from "./messenger-failed-run-summary.js";
 import {
   hydrateMessengerFailedRunOrigins,
   messengerFailedRunSourceAction,
@@ -317,11 +318,6 @@ type FailedRunRow = MessengerFailedRunOriginRow & {
   updatedAt: Date;
 };
 
-type FailedRunAgentIssueContext = Pick<
-  FailedRunRow,
-  "agentIssueCreationRequestId" | "agentIssueCreationRequestedByUserId" | "agentIssueCreationError"
->;
-
 type FailedAgentIssueRequestRow = {
   id: string;
   orgId: string;
@@ -350,7 +346,9 @@ function maxDate(...values: Array<Date | string | null | undefined>) {
   return dates.sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
 }
 
-function failedRunSummary(run: FailedRunAgentIssueContext & { resultJson?: Record<string, unknown> | null }) {
+function failedRunSummary(
+  run: Pick<FailedRunRow, "agentIssueCreationRequestId"> & { resultJson?: Record<string, unknown> | null },
+) {
   const summary = failedRunUserSummary(run);
   return run.agentIssueCreationRequestId
     ? `Agent Issue creation failed. ${summary}`
@@ -1233,7 +1231,7 @@ export function messengerService(db: Db) {
         return data.itemCount > 0 ? data.summary : null;
       }
       case "failed-runs": {
-        const data = await loadFailedRunSummaryData(orgId, userId, syntheticThreadStates);
+        const data = await loadFailedRunSummaryData(db, orgId, userId, syntheticThreadStates);
         return data.itemCount > 0 ? data.summary : null;
       }
       case "budget-alerts": {
@@ -2733,37 +2731,6 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadFailedRunSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
-    const lastReadAt = await lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
-    const { runRows, requestRows } = await loadFailedRunRows(orgId, userId);
-    const failureRows = [...runRows, ...requestRows];
-    const itemCount = failureRows.length;
-    const latestRow = [...failureRows].sort((a, b) => {
-      const aTime = normalizeDate(a.updatedAt ?? a.createdAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
-      const bTime = normalizeDate(b.updatedAt ?? b.createdAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
-      return bTime - aTime;
-    })[0] ?? null;
-    const unreadCount = systemUnreadCountSince(failureRows, lastReadAt);
-    const latestPreview = latestRow
-      ? "agentIssueCreationRequestId" in latestRow
-        ? failedRunSummary(latestRow)
-        : failedAgentIssueRequestSummary(latestRow)
-      : null;
-    return {
-      itemCount,
-      summary: systemSummary(
-        "failed-runs",
-        "Failed runs",
-        itemCount,
-        normalizeDate(latestRow?.updatedAt ?? latestRow?.createdAt ?? null),
-        unreadCount,
-        lastReadAt,
-        "No failed runs yet",
-        latestPreview,
-      ),
-    };
-  }
-
   async function loadBudgetAlertData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
     const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "budget-alerts", threadStates);
     const incidents = ((await budgetsSvc.overview(orgId)).activeIncidents ?? []) as BudgetIncidentRow[];
@@ -2911,7 +2878,7 @@ export function messengerService(db: Db) {
         ? loadSplitIssueSummaries(orgId, userId, syntheticThreadStates, MAX_THREAD_SUMMARY_LIMIT)
         : Promise.resolve([] as MessengerThreadSummary[]),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
-      loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
+      loadFailedRunSummaryData(db, orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
       loadJoinRequestSummaryData(orgId, userId, syntheticThreadStates),
     ]);
@@ -2959,7 +2926,7 @@ export function messengerService(db: Db) {
         ? loadSplitIssueSummaries(orgId, userId, syntheticThreadStates, MAX_THREAD_SUMMARY_LIMIT)
         : Promise.resolve([] as MessengerThreadSummary[]),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
-      loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
+      loadFailedRunSummaryData(db, orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
       loadJoinRequestSummaryData(orgId, userId, syntheticThreadStates),
     ]);

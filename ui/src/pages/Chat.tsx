@@ -231,7 +231,7 @@ import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annot
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import { ChatWorkManifest, ChatWorkManifestToggle, chatWorkManifestCount, hasChatWorkManifestContent } from "./Chat.work-manifest";
-import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatComposerSendButtonMode, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, localAppRecoveryDraftStorageScope, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry } from "./Chat.workspace-helpers";
+import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatComposerSendButtonMode, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, localAppRecoveryDraftStorageScope, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, shouldPollChatQueue, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
@@ -479,7 +479,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.chats.queue(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.listQueue(conversationId!),
     enabled: !!conversationId && activeConversationBelongsToSelectedOrganization,
-    refetchInterval: conversationId ? 2_000 : false,
+    refetchInterval: (query) => conversationId && shouldPollChatQueue(query.state.data) ? 2_000 : false,
   });
   const serverActiveGenerationId = activeGenerationIdFromSnapshot(queueQuery.data);
   const { data: agents, error: agentsError } = useQuery({
