@@ -46,7 +46,10 @@ describe("log store offsets", () => {
 import fs from "node:fs";
 import crypto from "node:crypto";
 const args = process.argv.slice(2);
-if (${JSON.stringify(mode)} === "hang" && args[1] === "read") { setInterval(() => {}, 1000); }
+if (${JSON.stringify(mode)} === "hang" && args[1] === "read") {
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
 if (["not-found", "invalid-utf8"].includes(${JSON.stringify(mode)}) && args[1] === "read") {
   const errorCode = ${JSON.stringify(mode)} === "not-found" ? "evidence_read_not_found" : "evidence_read_invalid_utf8";
   console.log(JSON.stringify({ ok: false, capability: "evidence.read", protocolVersion: 1, errorCode, accepted: false }));

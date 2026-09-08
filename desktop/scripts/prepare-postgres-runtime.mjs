@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { copyFile, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { downloadPostgresRuntimeArchive } from "./postgres-runtime-download.mjs";
 
 const POSTGRES_VERSION = "18.4";
 const runtimeDirName = `postgres-${POSTGRES_VERSION}`;
@@ -14,7 +14,6 @@ const cacheRoot = process.env.RUDDER_POSTGRES_RUNTIME_CACHE_DIR
   : path.join(os.homedir(), ".rudder", "runtime-payloads");
 const runtimeRoot = path.join(cacheRoot, runtimeDirName, `${platform}-${arch}`);
 const binDir = path.join(runtimeRoot, "bin");
-const downloadTimeoutMs = Number.parseInt(process.env.RUDDER_POSTGRES_RUNTIME_DOWNLOAD_TIMEOUT_MS ?? "600000", 10);
 const installLockPath = `${runtimeRoot}.install.lock`;
 const lifecycleLockPath = path.join(cacheRoot, ".postgres-runtime.lifecycle.lock");
 
@@ -210,33 +209,6 @@ async function materializeSymlinks(currentDir) {
   }
 }
 
-async function downloadArchive(url, targetPath) {
-  if (url.startsWith("file://")) {
-    await copyFile(fileURLToPath(url), targetPath);
-    return;
-  }
-
-  const abortController = new AbortController();
-  const timeout = Number.isFinite(downloadTimeoutMs) && downloadTimeoutMs > 0
-    ? setTimeout(() => abortController.abort(), downloadTimeoutMs)
-    : null;
-  let response;
-  try {
-    response = await fetch(url, { signal: abortController.signal });
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error(`timed out downloading ${url} after ${downloadTimeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-  if (!response.ok) {
-    throw new Error(`failed to download ${url}: ${response.status} ${response.statusText}`);
-  }
-  await writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
-}
-
 function extractArchive(archivePath, extractDir) {
   const result = platform === "win32"
     ? spawnSync("powershell.exe", [
@@ -281,7 +253,7 @@ async function main() {
       try {
         console.error(`[postgres-runtime] downloading PostgreSQL ${POSTGRES_VERSION} runtime for ${platform}-${arch} from ${url}`);
         console.error(`[postgres-runtime] first download can be several hundred MB; cache target: ${binDir}`);
-        await downloadArchive(url, archivePath);
+        await downloadPostgresRuntimeArchive(url, archivePath);
         extractArchive(archivePath, extractDir);
 
         const extractedBinDir = await findBinDir(extractDir);
