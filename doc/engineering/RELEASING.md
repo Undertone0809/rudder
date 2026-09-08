@@ -60,11 +60,17 @@ Every stable release has six separate surfaces:
 A stable release is done when all required surfaces are handled. The China
 mirror is required only for a release that explicitly enables `mirror_cos`.
 
-For the announcement surface, the public GitHub Release notes may be the
-announcement channel when there is no separate website post or social/customer
-announcement in scope. If a separate announcement or docs-site publish is
-expected, record the channel and owner in the release issue before closeout. If
-that surface is intentionally skipped, record who made that decision and why.
+Zeeland's explicit standing instruction (2026-09-08) includes a Discord
+announcement in every requested Rudder stable release unless the user opts out.
+After release verification and next-version handoff, send one English announcement
+to Rudder / #announcements at
+`https://discord.com/channels/1529148109748306051/1529151730200350953`.
+Check for an existing version post first and record its direct message URL after
+rendered readback. This standing authorization needs no second confirmation.
+It excludes canary releases, read-only readiness checks, other destinations,
+pings, and follower-server cross-posts. Keep delivery outside Release CI;
+follow the release skill's `references/announcement.md`. An explicit opt-out
+overrides the default; a missing or unknown delivery remains a partial closeout.
 
 Docs Release deploy failures caused by Vercel account or token access are an
 external release blocker for docs-site publishing. Do not silently count a

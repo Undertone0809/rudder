@@ -109,8 +109,8 @@ Stable is complete only when:
 - npm `latest`, tag, Release, Desktop assets/checksum, docs, and public install
   resolve to the locked version;
 - the GitHub Release plus localized public changelogs are live;
-- if the user requested a Discord announcement, it has been posted and read
-  back according to `announcement.md`; otherwise it is `not requested`;
+- the default Discord announcement has been posted and read back according to
+  `announcement.md`, or the user's explicit opt-out is recorded;
 - post-stable cleanup is verified;
 - next-version `main` handoff and CI are verified;
 - unrelated later canaries are reported as separate overwrite risk rather than
