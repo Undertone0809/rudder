@@ -11,6 +11,8 @@ fn context<'a>(actor: &'a ActorIdentity) -> RequestContext<'a> {
     RequestContext::new(
         actor,
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -26,6 +28,8 @@ fn signed_envelope_round_trips_and_verifies() {
     let unsigned = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -50,7 +54,7 @@ fn signed_envelope_round_trips_and_verifies() {
     assert_eq!(decoded.protocol_version, rudder_auth_core::PROTOCOL_VERSION);
     assert_eq!(
         decoded.signature,
-        "b9159201fa99b11f11b28c7da91b7f44abbdd08ce8a6af0b9f2d7fae168906a6"
+        "5714667f8666a5a88711c93bdc096c93eedc3b449c01aec04e5f954704e80135"
     );
     assert!(!encoded.contains("deterministic-test-secret"));
 }
@@ -60,6 +64,8 @@ fn signature_tampering_is_rejected_without_consuming_nonce() {
     let unsigned = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -94,6 +100,8 @@ fn a_valid_envelope_nonce_is_single_use() {
     let envelope = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -126,6 +134,8 @@ fn expiry_and_not_yet_valid_envelopes_do_not_consume_nonce() {
     let envelope = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -145,6 +155,8 @@ fn expiry_and_not_yet_valid_envelopes_do_not_consume_nonce() {
     let expired = RequestContext::new(
         &request_actor,
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -161,6 +173,8 @@ fn expiry_and_not_yet_valid_envelopes_do_not_consume_nonce() {
     let early = RequestContext::new(
         &request_actor,
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -181,6 +195,8 @@ fn body_binding_rejects_substitution_without_consuming_nonce() {
     let envelope = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -198,6 +214,8 @@ fn body_binding_rejects_substitution_without_consuming_nonce() {
     let changed_body = RequestContext::new(
         &request_actor,
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -224,6 +242,8 @@ fn cross_organization_actor_and_audience_bindings_are_rejected() {
     let envelope = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -243,6 +263,8 @@ fn cross_organization_actor_and_audience_bindings_are_rejected() {
     let cross_org = RequestContext::new(
         &request_actor,
         "org-2",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -260,6 +282,8 @@ fn cross_organization_actor_and_audience_bindings_are_rejected() {
     let actor_mismatch = RequestContext::new(
         &other_actor,
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -276,6 +300,8 @@ fn cross_organization_actor_and_audience_bindings_are_rejected() {
     let audience_mismatch = RequestContext::new(
         &request_actor,
         "org-1",
+        "session-1",
+        7,
         "other-node",
         "POST",
         "/api/agent-actions",
@@ -296,6 +322,8 @@ fn path_mismatch_and_wrong_secret_are_rejected() {
     let envelope = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -313,6 +341,8 @@ fn path_mismatch_and_wrong_secret_are_rejected() {
     let wrong_path = RequestContext::new(
         &request_actor,
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/other-action",
@@ -339,6 +369,8 @@ fn malformed_and_unknown_versions_are_rejected() {
     let mut envelope = ActorEnvelope::new(
         actor(),
         "org-1",
+        "session-1",
+        7,
         "rudder-node",
         "POST",
         "/api/agent-actions",
@@ -361,15 +393,23 @@ fn malformed_and_unknown_versions_are_rejected() {
             expected: rudder_auth_core::PROTOCOL_VERSION,
         })
     );
+    envelope.protocol_version = 1;
+    assert_eq!(
+        envelope.verify(SECRET, &context(&actor()), &mut replay),
+        Err(rudder_auth_core::AuthError::UnsupportedProtocolVersion {
+            actual: 1,
+            expected: rudder_auth_core::PROTOCOL_VERSION,
+        })
+    );
 
     assert!(serde_json::from_str::<ActorEnvelope>(
-        r#"{"protocolVersion":1,"actor":{"kind":"agent","id":"agent-1"},"organizationId":"org-1","audience":"rudder-node","method":"POST","path":"/api/agent-actions","action":"agent.execute","bodySha256":"not-a-hash","requestId":"request-1","nonce":"nonce-9","issuedAt":1000,"expiresAt":1010,"signature":"00"}"#
+        r#"{"protocolVersion":2,"actor":{"kind":"agent","id":"agent-1"},"organizationId":"org-1","sessionId":"session-1","authEpoch":7,"audience":"rudder-node","method":"POST","path":"/api/agent-actions","action":"agent.execute","bodySha256":"not-a-hash","requestId":"request-1","nonce":"nonce-9","issuedAt":1000,"expiresAt":1010,"signature":"00"}"#
     )
     .expect("well-typed but malformed claims")
     .verify(SECRET, &context(&actor()), &mut replay)
     .is_err());
     assert!(serde_json::from_str::<ActorEnvelope>(
-        r#"{"protocolVersion":1,"actor":{"kind":"agent","id":"agent-1"},"organizationId":"org-1","audience":"rudder-node","method":"POST","path":"/api/agent-actions","action":"agent.execute","bodySha256":"0000000000000000000000000000000000000000000000000000000000000000","requestId":"request-1","nonce":"nonce-9","issuedAt":1000,"expiresAt":1010,"signature":"00","secret":"must-not-be-accepted"}"#
+        r#"{"protocolVersion":2,"actor":{"kind":"agent","id":"agent-1"},"organizationId":"org-1","sessionId":"session-1","authEpoch":7,"audience":"rudder-node","method":"POST","path":"/api/agent-actions","action":"agent.execute","bodySha256":"0000000000000000000000000000000000000000000000000000000000000000","requestId":"request-1","nonce":"nonce-9","issuedAt":1000,"expiresAt":1010,"signature":"00","secret":"must-not-be-accepted"}"#
     )
     .is_err());
 }
@@ -380,6 +420,8 @@ fn constructor_rejects_long_lifetime_and_invalid_path() {
         ActorEnvelope::new(
             actor(),
             "org-1",
+            "session-1",
+            7,
             "rudder-node",
             "POST",
             "not-an-http-path",
@@ -397,6 +439,8 @@ fn constructor_rejects_long_lifetime_and_invalid_path() {
         ActorEnvelope::new(
             actor(),
             "org-1",
+            "session-1",
+            7,
             "rudder-node",
             "POST",
             "/api/agent-actions",
@@ -410,4 +454,134 @@ fn constructor_rejects_long_lifetime_and_invalid_path() {
         .expect_err("envelopes are short-lived"),
         rudder_auth_core::AuthError::InvalidTimestamp
     );
+}
+
+#[test]
+fn authentication_session_and_epoch_are_bound_to_the_envelope() {
+    let envelope = ActorEnvelope::new(
+        actor(),
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-session-binding",
+        "nonce-session-binding",
+        1_000,
+        1_010,
+    )
+    .expect("unsigned envelope")
+    .sign(SECRET)
+    .expect("signed envelope");
+    let request_actor = actor();
+    let mut replay = NonceReplayGuard::new();
+
+    let revoked_session = RequestContext::new(
+        &request_actor,
+        "org-1",
+        "session-2",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-session-binding",
+        1_005,
+    );
+    assert_eq!(
+        envelope.verify(SECRET, &revoked_session, &mut replay),
+        Err(rudder_auth_core::AuthError::SessionMismatch)
+    );
+
+    let advanced_epoch = RequestContext::new(
+        &request_actor,
+        "org-1",
+        "session-1",
+        8,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-session-binding",
+        1_005,
+    );
+    assert_eq!(
+        envelope.verify(SECRET, &advanced_epoch, &mut replay),
+        Err(rudder_auth_core::AuthError::AuthEpochMismatch)
+    );
+    assert!(replay.is_empty());
+}
+
+#[test]
+fn replay_guard_evicts_expired_entries_and_rejects_active_overflow() {
+    let first = ActorEnvelope::new(
+        actor(),
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-1",
+        "nonce-replay-1",
+        1_000,
+        1_010,
+    )
+    .expect("unsigned envelope")
+    .sign(SECRET)
+    .expect("signed envelope");
+    let second = ActorEnvelope::new(
+        actor(),
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-1",
+        "nonce-replay-2",
+        1_000,
+        1_020,
+    )
+    .expect("unsigned envelope")
+    .sign(SECRET)
+    .expect("signed envelope");
+    let request_actor = actor();
+    let mut replay = NonceReplayGuard::with_capacity(1).expect("capacity");
+
+    first
+        .verify(SECRET, &context(&request_actor), &mut replay)
+        .expect("first request");
+    let error = second
+        .verify(SECRET, &context(&request_actor), &mut replay)
+        .expect_err("active replay entries must remain bounded");
+    assert_eq!(error, rudder_auth_core::AuthError::ReplayCapacityExceeded);
+    assert_eq!(replay.len(), 1);
+
+    let after_expiry = RequestContext::new(
+        &request_actor,
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-1",
+        1_010,
+    );
+    second
+        .verify(SECRET, &after_expiry, &mut replay)
+        .expect("expired entries are evicted before a new claim");
+    assert_eq!(replay.len(), 1);
 }

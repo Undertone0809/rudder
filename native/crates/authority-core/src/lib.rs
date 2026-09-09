@@ -19,6 +19,8 @@ pub const LEGACY_OWNER: &str = "legacy";
 
 const MAX_IDENTIFIER_BYTES: usize = 256;
 const FENCING_TOKEN_BYTES: usize = 64;
+pub const DEFAULT_REPLAY_CAPACITY: usize = 16 * 1024;
+pub const MAX_REPLAY_CAPACITY: usize = 64 * 1024;
 
 /// Errors returned by authority construction, handoff, and bridge validation.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -69,6 +71,10 @@ pub enum AuthorityError {
     Expired,
     #[error("bridge nonce has already been used")]
     Replay,
+    #[error("bridge replay guard capacity is exhausted")]
+    ReplayCapacityExceeded,
+    #[error("replay guard capacity must be between one and {max} entries")]
+    InvalidReplayCapacity { max: usize },
 }
 
 /// An owner identity is deliberately opaque; only the two migration owners
@@ -635,21 +641,38 @@ impl LegacyBridgeRequestEnvelope {
         if self.nonce.is_empty() {
             return Err(AuthorityError::InvalidField { field: "nonce" });
         }
-        replay.claim(&self.nonce)
+        replay.claim(&self.nonce, self.expires_at, now)
     }
 }
 
 /// Process-local single-use nonce storage for bridge envelopes. A production
 /// bridge must provide an equivalent atomic durable/peer-local store; this
 /// crate intentionally does not open that private transport.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct NonceReplayGuard {
-    used: BTreeSet<String>,
+    used: BTreeMap<String, u64>,
+    capacity: usize,
 }
 
 impl NonceReplayGuard {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> Result<Self, AuthorityError> {
+        if capacity == 0 || capacity > MAX_REPLAY_CAPACITY {
+            return Err(AuthorityError::InvalidReplayCapacity {
+                max: MAX_REPLAY_CAPACITY,
+            });
+        }
+        Ok(Self {
+            used: BTreeMap::new(),
+            capacity,
+        })
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     pub fn len(&self) -> usize {
@@ -660,11 +683,28 @@ impl NonceReplayGuard {
         self.used.is_empty()
     }
 
-    fn claim(&mut self, nonce: &str) -> Result<(), AuthorityError> {
-        if !self.used.insert(nonce.to_owned()) {
+    fn claim(&mut self, nonce: &str, expires_at: u64, now: u64) -> Result<(), AuthorityError> {
+        self.used.retain(|_, expiry| *expiry > now);
+        if expires_at <= now {
+            return Err(AuthorityError::Expired);
+        }
+        if self.used.contains_key(nonce) {
             return Err(AuthorityError::Replay);
         }
+        if self.used.len() >= self.capacity {
+            return Err(AuthorityError::ReplayCapacityExceeded);
+        }
+        self.used.insert(nonce.to_owned(), expires_at);
         Ok(())
+    }
+}
+
+impl Default for NonceReplayGuard {
+    fn default() -> Self {
+        Self {
+            used: BTreeMap::new(),
+            capacity: DEFAULT_REPLAY_CAPACITY,
+        }
     }
 }
 
