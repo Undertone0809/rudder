@@ -20,6 +20,7 @@ import {
 } from "./server-utils.process.js";
 
 const PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
+const V2_PROTOCOL_VERSION = { major: 2, minor: 0 } as const;
 const MAX_LIFECYCLE_FRAME_BYTES = 64 * 1024;
 const MAX_OUTPUT_QUEUE_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
@@ -46,6 +47,37 @@ export interface NativeProcessRunOptions {
   spawnHost?: NativeHostSpawn;
 }
 
+/** Server/runtime-issued authority; legacy callers cannot construct this implicitly. */
+export interface NativeProcessAuthority {
+  authorityVersion: number;
+  runtimeIdentity: {
+    organizationId: string;
+    agentId: string;
+    runId: string;
+  };
+  ownership: {
+    epoch: number;
+    fence: string;
+  };
+  lease: {
+    owner: string;
+    issuedAtMillis: number;
+    expiresAtMillis: number;
+  };
+  attempt: number;
+  requestId: string;
+  bindingDigest: string;
+  receiptContext: {
+    runtimeRoot: string;
+    ownerToken: string;
+  };
+}
+
+type NativeProcessWireOptions = {
+  protocolVersion: typeof PROTOCOL_VERSION | typeof V2_PROTOCOL_VERSION;
+  authority?: NativeProcessAuthority;
+};
+
 export class NativeProcessUnavailableError extends Error {
   readonly fallbackCode: string;
   readonly accepted: boolean;
@@ -63,6 +95,108 @@ export class NativeProcessUnavailableError extends Error {
       protocolVersion: `${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`,
     });
   }
+}
+
+function authorityBindingDigest(authority: NativeProcessAuthority): string {
+  const values = [
+    "rudder.native.process-authority.v2",
+    authority.authorityVersion,
+    authority.runtimeIdentity.organizationId,
+    authority.runtimeIdentity.agentId,
+    authority.runtimeIdentity.runId,
+    authority.ownership.epoch,
+    authority.ownership.fence,
+    authority.lease.owner,
+    authority.lease.issuedAtMillis,
+    authority.lease.expiresAtMillis,
+    authority.attempt,
+    authority.requestId,
+    authority.receiptContext.runtimeRoot,
+    authority.receiptContext.ownerToken,
+  ].map(String);
+  const material = values
+    .map((value) => `${Buffer.byteLength(value, "utf8")}:${value}|`)
+    .join("");
+  return createHash("sha256").update(material).digest("hex");
+}
+
+function invalidV2Authority(message: string): NativeProcessUnavailableError {
+  return new NativeProcessUnavailableError(message, "authority_invalid");
+}
+
+function validateV2Authority(
+  runId: string,
+  authority: NativeProcessAuthority,
+  runtimeRoot?: string,
+): void {
+  const identity = authority?.runtimeIdentity;
+  const ownership = authority?.ownership;
+  const lease = authority?.lease;
+  const receipt = authority?.receiptContext;
+  const textValues = [
+    identity?.organizationId,
+    identity?.agentId,
+    identity?.runId,
+    ownership?.fence,
+    lease?.owner,
+    authority?.requestId,
+  ];
+  if (authority?.authorityVersion !== 1
+    || !identity || !ownership || !lease || !receipt
+    || textValues.some((value) => typeof value !== "string"
+      || value.trim().length === 0
+      || Buffer.byteLength(value, "utf8") > 256)
+    || identity.runId !== runId
+    || !Number.isSafeInteger(ownership.epoch) || ownership.epoch < 1
+    || !Number.isSafeInteger(authority.attempt) || authority.attempt < 1 || authority.attempt > 1_000_000
+    || !Number.isSafeInteger(lease.issuedAtMillis)
+    || !Number.isSafeInteger(lease.expiresAtMillis)
+    || lease.expiresAtMillis <= lease.issuedAtMillis
+    || lease.expiresAtMillis - lease.issuedAtMillis > 86_400_000
+    || Date.now() < lease.issuedAtMillis
+    || Date.now() >= lease.expiresAtMillis
+    || !/^[0-9a-f]{64}$/u.test(authority.bindingDigest)
+    || authority.bindingDigest !== authorityBindingDigest(authority)
+    || !path.isAbsolute(receipt.runtimeRoot)
+    || Buffer.byteLength(receipt.runtimeRoot, "utf8") > 4_096
+    || typeof receipt.ownerToken !== "string"
+    || receipt.ownerToken.trim().length === 0
+    || receipt.ownerToken.length > 256
+    || receipt.ownerToken === "."
+    || receipt.ownerToken === ".."
+    || receipt.ownerToken.includes("/")
+    || receipt.ownerToken.includes("\\")
+    || receipt.ownerToken.includes("\0")
+    || (runtimeRoot !== undefined && path.resolve(runtimeRoot) !== path.resolve(receipt.runtimeRoot))) {
+    throw invalidV2Authority("Rust process host v2 authority is invalid");
+  }
+}
+
+function sameAuthority(left: unknown, right: NativeProcessAuthority): boolean {
+  const candidate = asFrame(left);
+  const identity = candidate && asFrame(candidate.runtimeIdentity);
+  const ownership = candidate && asFrame(candidate.ownership);
+  const lease = candidate && asFrame(candidate.lease);
+  const receipt = candidate && asFrame(candidate.receiptContext);
+  return candidate !== null
+    && identity !== null
+    && ownership !== null
+    && lease !== null
+    && receipt !== null
+    && candidate.authorityVersion === right.authorityVersion
+    && identity.organizationId === right.runtimeIdentity.organizationId
+    && identity.agentId === right.runtimeIdentity.agentId
+    && identity.runId === right.runtimeIdentity.runId
+    && ownership.epoch === right.ownership.epoch
+    && ownership.fence === right.ownership.fence
+    && lease.owner === right.lease.owner
+    && lease.issuedAtMillis === right.lease.issuedAtMillis
+    && lease.expiresAtMillis === right.lease.expiresAtMillis
+    && candidate.attempt === right.attempt
+    && candidate.requestId === right.requestId
+    && candidate.bindingDigest === right.bindingDigest
+    && receipt.runtimeRoot === right.receiptContext.runtimeRoot
+    && receipt.ownerToken === right.receiptContext.ownerToken;
 }
 
 export function nativeAgentRunPolicy(env: NodeJS.ProcessEnv = process.env) {
@@ -191,11 +325,20 @@ function asFrame(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function compatibleProtocol(value: unknown): boolean {
+function compatibleProtocol(
+  value: unknown,
+  expected: { major: number; minor: number } = PROTOCOL_VERSION,
+): boolean {
   const version = asFrame(value);
-  return version?.major === PROTOCOL_VERSION.major
+  return version?.major === expected.major
     && typeof version.minor === "number"
-    && version.minor <= PROTOCOL_VERSION.minor;
+    && version.minor <= expected.minor;
+}
+
+function supportsProtocol(frame: Record<string, unknown>, expected: { major: number; minor: number }): boolean {
+  if (compatibleProtocol(frame.protocolVersion, expected)) return true;
+  return Array.isArray(frame.supportedProtocolVersions)
+    && frame.supportedProtocolVersions.some((version) => compatibleProtocol(version, expected));
 }
 
 function protocolVersion(value: unknown): { major: number; minor: number } | null {
@@ -232,6 +375,35 @@ export async function runNativeChildProcess(
   args: string[],
   opts: NativeProcessRunOptions,
 ): Promise<RunProcessResult> {
+  return runNativeChildProcessInternal(runId, executable, args, opts, {
+    protocolVersion: PROTOCOL_VERSION,
+  });
+}
+
+/**
+ * Explicit authority-bearing process-host entrypoint. Legacy callers remain on
+ * v1; v2 callers must pass the server/runtime-issued envelope unchanged.
+ */
+export async function runNativeChildProcessV2(
+  runId: string,
+  executable: string,
+  args: string[],
+  opts: NativeProcessRunOptions & { authority: NativeProcessAuthority },
+): Promise<RunProcessResult> {
+  validateV2Authority(runId, opts.authority, opts.runtimeRoot);
+  return runNativeChildProcessInternal(runId, executable, args, opts, {
+    protocolVersion: V2_PROTOCOL_VERSION,
+    authority: opts.authority,
+  });
+}
+
+async function runNativeChildProcessInternal(
+  runId: string,
+  executable: string,
+  args: string[],
+  opts: NativeProcessRunOptions,
+  wire: NativeProcessWireOptions,
+): Promise<RunProcessResult> {
   const configuredBinaryPath = opts.binaryPath === undefined
     ? resolveNativeProcessHostPath()
     : opts.binaryPath;
@@ -242,7 +414,9 @@ export async function runNativeChildProcess(
       nativeTarget() ? "binary_unavailable" : "target_unsupported",
     );
   }
-  const runtimeRoot = path.resolve(opts.runtimeRoot ?? defaultRuntimeRoot(process.env));
+  const runtimeRoot = path.resolve(wire.authority?.receiptContext.runtimeRoot ?? opts.runtimeRoot ?? defaultRuntimeRoot(process.env));
+  const requestId = wire.authority?.requestId ?? ownerToken(runId);
+  const lifecycleOwnerToken = wire.authority?.receiptContext.ownerToken ?? requestId;
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 }).catch((error) => {
     throw new NativeProcessUnavailableError(
       "Rust process host receipt root is unavailable",
@@ -289,13 +463,12 @@ export async function runNativeChildProcess(
     rawStdout.resume();
     rawStderr.resume();
 
-    const requestId = ownerToken(runId);
     const startedAt = new Date().toISOString();
     let accepted = false;
     let nativeIdentity: Pick<RudderNativeDiagnostic, "target" | "binaryVersion" | "protocolVersion"> = {
       target: resolveRudderNativeTarget() ?? "unsupported",
       binaryVersion: "unavailable",
-      protocolVersion: `${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`,
+      protocolVersion: `${wire.protocolVersion.major}.${wire.protocolVersion.minor}`,
     };
     let spawnedPid: number | null = null;
     let appExitCode: number | null = null;
@@ -465,8 +638,9 @@ export async function runNativeChildProcess(
       stopSent = true;
       send({
         type: "stop",
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: wire.protocolVersion,
         requestId,
+        ...(wire.authority ? { authority: wire.authority } : {}),
         ...(graceMs === undefined ? {} : { graceMs: Math.max(1, Math.min(60_000, Math.floor(graceMs))) }),
       });
     };
@@ -486,7 +660,10 @@ export async function runNativeChildProcess(
       const type = frame.type;
       if (type === "handshake") {
         const version = protocolVersion(frame.protocolVersion);
-        if (accepted || !version || !compatibleProtocol(version)) {
+        const handshakeCompatible = wire.authority
+          ? supportsProtocol(frame, wire.protocolVersion)
+          : compatibleProtocol(version);
+        if (accepted || !version || !handshakeCompatible) {
           settleReject(new NativeProcessUnavailableError(
             "Rust process host handshake is incompatible",
             "protocol_mismatch",
@@ -495,14 +672,22 @@ export async function runNativeChildProcess(
           return;
         }
         const capabilities = frame.capabilities;
+        const requiredCapabilities = [
+          "process_spawn",
+          "process_group_cleanup",
+          "parent_eof_cleanup",
+          "owner_receipt",
+          "stdout_relay",
+          "stderr_relay",
+          ...(wire.authority ? ["authority_v2"] : []),
+        ];
         nativeIdentity = {
           target: typeof frame.target === "string" ? frame.target : nativeIdentity.target,
           binaryVersion: typeof frame.binaryVersion === "string" ? frame.binaryVersion : nativeIdentity.binaryVersion,
-          protocolVersion: `${version.major}.${version.minor}`,
+          protocolVersion: `${wire.protocolVersion.major}.${wire.protocolVersion.minor}`,
         };
         if (!Array.isArray(capabilities)
-          || !["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "owner_receipt", "stdout_relay", "stderr_relay"]
-            .every((capability) => capabilities.includes(capability))) {
+          || !requiredCapabilities.every((capability) => capabilities.includes(capability))) {
           settleReject(new NativeProcessUnavailableError(
             "Rust process host capabilities are incomplete",
             "capability_mismatch",
@@ -512,23 +697,26 @@ export async function runNativeChildProcess(
         clearTimeout(handshakeTimeout);
         send({
           type: "startProcess",
-          protocolVersion: PROTOCOL_VERSION,
+          protocolVersion: wire.protocolVersion,
           requestId,
+          ...(wire.authority ? { authority: wire.authority } : {}),
           executable,
           argv: args,
           cwd: opts.cwd,
           env: opts.env,
-          ownerToken: requestId,
+          ownerToken: lifecycleOwnerToken,
           runtimeRoot,
           ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
           graceMs: Math.max(1, Math.min(60_000, Math.floor(opts.graceSec * 1_000))),
         });
         return;
       }
+      const authorityValid = !wire.authority || sameAuthority(frame.authority, wire.authority);
       if (type !== "handshake"
-        && (!compatibleProtocol(frame.protocolVersion)
+        && (!compatibleProtocol(frame.protocolVersion, wire.protocolVersion)
           || frame.requestId !== requestId
-          || (accepted ? frame.ownerToken !== requestId : frame.ownerToken !== undefined && frame.ownerToken !== requestId))) {
+          || (accepted ? frame.ownerToken !== lifecycleOwnerToken : frame.ownerToken !== undefined && frame.ownerToken !== lifecycleOwnerToken)
+          || !authorityValid)) {
         settleReject(new NativeProcessUnavailableError(
           "Rust process host lifecycle identity is invalid",
           "lifecycle_identity_invalid",

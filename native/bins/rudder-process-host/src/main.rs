@@ -1,6 +1,7 @@
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use rudder_native_protocol::{
-    CAPABILITIES, Command, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_VERSION,
+    AuthorityEnvelope, CAPABILITIES, Command, PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_VERSION,
+    ProtocolVersion, V2_PROTOCOL_MAJOR, V2_PROTOCOL_MINOR,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -53,11 +54,14 @@ struct LifecycleWriter {
     writer: Mutex<BufWriter<Box<dyn Write + Send>>>,
     request_id: Mutex<String>,
     owner_token: Mutex<Option<String>>,
+    protocol_version: Mutex<ProtocolVersion>,
+    authority: Mutex<Option<AuthorityEnvelope>>,
 }
 
 type Lifecycle = Arc<LifecycleWriter>;
 type RawOutput = Arc<Mutex<BufWriter<Box<dyn Write + Send>>>>;
 
+#[allow(clippy::large_enum_variant)]
 enum Input {
     Command(Command),
     Invalid(&'static str),
@@ -162,6 +166,8 @@ struct OperationEvidence {
     process_group: u32,
     port: Option<u16>,
     owner_kind: &'static str,
+    protocol_version: ProtocolVersion,
+    authority: Option<AuthorityEnvelope>,
 }
 
 #[derive(Debug)]
@@ -206,6 +212,7 @@ fn listener_owned_by_process_group(port: u16, expected_pgid: u32) -> io::Result<
 }
 
 impl OperationEvidence {
+    #[allow(clippy::too_many_arguments)]
     fn create(
         runtime_root: &Path,
         owner_token: String,
@@ -213,6 +220,8 @@ impl OperationEvidence {
         process_group: u32,
         port: Option<u16>,
         owner_kind: &'static str,
+        protocol_version: ProtocolVersion,
+        authority: Option<AuthorityEnvelope>,
     ) -> Result<Arc<Self>, &'static str> {
         let root = fs::canonicalize(runtime_root).map_err(|_| "runtime_root_unavailable")?;
         if !root.is_dir() {
@@ -238,6 +247,8 @@ impl OperationEvidence {
             process_group,
             port,
             owner_kind,
+            protocol_version,
+            authority,
         });
         evidence.write_owner_descriptor()?;
         Ok(evidence)
@@ -245,7 +256,7 @@ impl OperationEvidence {
     fn write_owner_descriptor(&self) -> Result<(), &'static str> {
         atomic_json(
             &self.operation_root.join("owner-descriptor.json"),
-            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"ownerKind":self.owner_kind,"opaqueOwnerToken":self.owner_token,"hostPid":std::process::id(),"childPid":self.child_pid,"platformOwnerIdentity":format!("process-group:{}",self.process_group),"port":self.port,"outputIndexPath":"output-index.jsonl","terminalReceiptPath":"terminal-receipt.json"}),
+            &json!({"protocolVersion":self.protocol_version,"authority":self.authority,"ownerKind":self.owner_kind,"opaqueOwnerToken":self.owner_token,"hostPid":std::process::id(),"childPid":self.child_pid,"platformOwnerIdentity":format!("process-group:{}",self.process_group),"port":self.port,"outputIndexPath":"output-index.jsonl","terminalReceiptPath":"terminal-receipt.json"}),
         )
     }
     fn record_output(&self, stream: &str, bytes: &[u8]) -> Result<(), &'static str> {
@@ -273,7 +284,7 @@ impl OperationEvidence {
             .map_err(|_| "output_index_unavailable")?;
         atomic_json(
             &self.terminal_path,
-            &json!({"protocolVersion":{"major":PROTOCOL_MAJOR,"minor":PROTOCOL_MINOR},"opaqueOwnerToken":self.owner_token,"childPid":self.child_pid,"processGroup":self.process_group,"port":self.port,"terminal":terminal}),
+            &json!({"protocolVersion":self.protocol_version,"authority":self.authority,"opaqueOwnerToken":self.owner_token,"childPid":self.child_pid,"processGroup":self.process_group,"port":self.port,"terminal":terminal}),
         )
     }
 }
@@ -381,6 +392,10 @@ fn main() {
         json!({
             "type": "handshake",
             "protocolVersion": { "major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR },
+            "supportedProtocolVersions": [
+                { "major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR },
+                { "major": V2_PROTOCOL_MAJOR, "minor": V2_PROTOCOL_MINOR }
+            ],
             "capabilities": CAPABILITIES,
             "binary": "rudder-process-host",
             "target": native_target(),
@@ -398,6 +413,7 @@ fn main() {
         bytes_written: AtomicU64::new(0),
     });
     let mut active: Option<ActiveChild> = None;
+    let mut active_authority: Option<AuthorityEnvelope> = None;
     let mut stop_admitted = false;
     let mut listener_mismatch = false;
     let mut terminal_sent = false;
@@ -517,6 +533,7 @@ fn main() {
             Ok(Input::Command(Command::Start {
                 protocol_version,
                 request_id,
+                authority,
                 executable,
                 argv,
                 cwd,
@@ -532,6 +549,7 @@ fn main() {
                 let command = Command::Start {
                     protocol_version,
                     request_id,
+                    authority,
                     executable,
                     argv,
                     cwd,
@@ -544,7 +562,8 @@ fn main() {
                     &lifecycle,
                     command_request_id(&command).unwrap_or_else(|| "local-app".to_string()),
                 );
-                if let Err(code) = command.validate() {
+                set_protocol_version(&lifecycle, command_protocol_version(&command));
+                if let Err(code) = command.validate_at(now_millis()) {
                     send_error(&lifecycle, code);
                     send(
                         &lifecycle,
@@ -554,9 +573,18 @@ fn main() {
                     terminal_sent = true;
                     continue;
                 }
+                if let Err(code) = validate_active_authority(&command, active_authority.as_ref()) {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if active.is_some() {
+                    send_error(&lifecycle, "already_started");
+                    continue;
+                }
                 let Command::Start {
                     protocol_version: _,
                     request_id: _,
+                    authority,
                     executable,
                     argv,
                     cwd,
@@ -571,6 +599,8 @@ fn main() {
                 let owner_token = owner_token.expect("validated owner token");
                 let port = port.expect("validated port");
                 let runtime_root = runtime_root.expect("validated runtime root");
+                active_authority = authority.clone();
+                set_authority(&lifecycle, authority.clone());
                 set_owner_token(&lifecycle, owner_token.clone());
                 if let Err(code) = spawn_path_preflight(&executable, &cwd) {
                     send_error(&lifecycle, code);
@@ -602,6 +632,8 @@ fn main() {
                     "local_app_generation",
                     TERM_TIMEOUT,
                     false,
+                    protocol_version_for_authority(&authority),
+                    authority,
                 ) {
                     Ok((active_child, pid, pgid)) => {
                         active = Some(active_child);
@@ -629,6 +661,7 @@ fn main() {
             Ok(Input::Command(Command::StartProcess {
                 protocol_version,
                 request_id,
+                authority,
                 executable,
                 argv,
                 cwd,
@@ -645,6 +678,7 @@ fn main() {
                 let command = Command::StartProcess {
                     protocol_version,
                     request_id,
+                    authority,
                     executable,
                     argv,
                     cwd,
@@ -658,7 +692,8 @@ fn main() {
                     &lifecycle,
                     command_request_id(&command).unwrap_or_else(|| "agent-run".to_string()),
                 );
-                if let Err(code) = command.validate() {
+                set_protocol_version(&lifecycle, command_protocol_version(&command));
+                if let Err(code) = command.validate_at(now_millis()) {
                     send_error(&lifecycle, code);
                     send(
                         &lifecycle,
@@ -668,7 +703,18 @@ fn main() {
                     terminal_sent = true;
                     continue;
                 }
+                if let Err(code) = validate_active_authority(&command, active_authority.as_ref()) {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if active.is_some() {
+                    send_error(&lifecycle, "already_started");
+                    continue;
+                }
                 let Command::StartProcess {
+                    protocol_version: _,
+                    request_id: _,
+                    authority,
                     executable,
                     argv,
                     cwd,
@@ -684,6 +730,8 @@ fn main() {
                 };
                 let owner_token = owner_token.expect("validated owner token");
                 let runtime_root = runtime_root.expect("validated runtime root");
+                active_authority = authority.clone();
+                set_authority(&lifecycle, authority.clone());
                 set_owner_token(&lifecycle, owner_token.clone());
                 let grace = Duration::from_millis(grace_ms.unwrap_or(2_000).clamp(1, 60_000));
                 if let Err(code) = spawn_path_preflight(&executable, &cwd) {
@@ -716,6 +764,8 @@ fn main() {
                     "agent_run_attempt",
                     grace,
                     false,
+                    protocol_version_for_authority(&authority),
+                    authority,
                 ) {
                     Ok((active_child, pid, pgid)) => {
                         active = Some(active_child);
@@ -755,6 +805,7 @@ fn main() {
             Ok(Input::Command(Command::StartTerminal {
                 protocol_version,
                 request_id,
+                authority,
                 executable,
                 argv,
                 cwd,
@@ -770,6 +821,7 @@ fn main() {
                 let command = Command::StartTerminal {
                     protocol_version,
                     request_id,
+                    authority,
                     executable,
                     argv,
                     cwd,
@@ -782,7 +834,8 @@ fn main() {
                     &lifecycle,
                     command_request_id(&command).unwrap_or_else(|| "terminal".to_string()),
                 );
-                if let Err(code) = command.validate() {
+                set_protocol_version(&lifecycle, command_protocol_version(&command));
+                if let Err(code) = command.validate_at(now_millis()) {
                     send_error(&lifecycle, code);
                     send(
                         &lifecycle,
@@ -792,7 +845,18 @@ fn main() {
                     terminal_sent = true;
                     continue;
                 }
+                if let Err(code) = validate_active_authority(&command, active_authority.as_ref()) {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if active.is_some() {
+                    send_error(&lifecycle, "already_started");
+                    continue;
+                }
                 let Command::StartTerminal {
+                    protocol_version: _,
+                    request_id: _,
+                    authority,
                     executable,
                     argv,
                     cwd,
@@ -806,6 +870,8 @@ fn main() {
                     unreachable!()
                 };
                 let owner_token = owner_token.expect("validated owner token");
+                active_authority = authority.clone();
+                set_authority(&lifecycle, authority.clone());
                 set_owner_token(&lifecycle, owner_token.clone());
                 send(
                     &lifecycle,
@@ -820,6 +886,8 @@ fn main() {
                     rows,
                     stdout.clone(),
                     counters.clone(),
+                    protocol_version_for_authority(&authority),
+                    authority,
                 ) {
                     Ok((active_child, pid)) => {
                         send(
@@ -846,11 +914,18 @@ fn main() {
                 }
             }
             Ok(Input::Command(ref command @ Command::Input { ref data, .. })) => {
-                set_request_id(
-                    &lifecycle,
-                    command_request_id(command).unwrap_or_else(|| "terminal".to_string()),
-                );
-                if let Err(code) = command.validate() {
+                if active_authority.is_none() {
+                    set_request_id(
+                        &lifecycle,
+                        command_request_id(command).unwrap_or_else(|| "terminal".to_string()),
+                    );
+                    set_protocol_version(&lifecycle, command_protocol_version(command));
+                }
+                if let Err(code) = command.validate_at(now_millis()) {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if let Err(code) = validate_active_authority(command, active_authority.as_ref()) {
                     send_error(&lifecycle, code);
                     continue;
                 }
@@ -863,11 +938,18 @@ fn main() {
                 }
             }
             Ok(Input::Command(ref command @ Command::Resize { cols, rows, .. })) => {
-                set_request_id(
-                    &lifecycle,
-                    command_request_id(command).unwrap_or_else(|| "terminal".to_string()),
-                );
-                if let Err(code) = command.validate() {
+                if active_authority.is_none() {
+                    set_request_id(
+                        &lifecycle,
+                        command_request_id(command).unwrap_or_else(|| "terminal".to_string()),
+                    );
+                    set_protocol_version(&lifecycle, command_protocol_version(command));
+                }
+                if let Err(code) = command.validate_at(now_millis()) {
+                    send_error(&lifecycle, code);
+                    continue;
+                }
+                if let Err(code) = validate_active_authority(command, active_authority.as_ref()) {
                     send_error(&lifecycle, code);
                     continue;
                 }
@@ -878,11 +960,14 @@ fn main() {
                 }
             }
             Ok(Input::Command(ref command @ Command::Stop { grace_ms, .. })) => {
-                set_request_id(
-                    &lifecycle,
-                    command_request_id(command).unwrap_or_else(|| "local-app".to_string()),
-                );
-                if let Err(code) = command.validate() {
+                if active_authority.is_none() {
+                    set_request_id(
+                        &lifecycle,
+                        command_request_id(command).unwrap_or_else(|| "local-app".to_string()),
+                    );
+                    set_protocol_version(&lifecycle, command_protocol_version(command));
+                }
+                if let Err(code) = command.validate_at(now_millis()) {
                     send_error(&lifecycle, code);
                     send(
                         &lifecycle,
@@ -890,6 +975,10 @@ fn main() {
                     );
                     process_exit_code = 2;
                     terminal_sent = true;
+                    continue;
+                }
+                if let Err(code) = validate_active_authority(command, active_authority.as_ref()) {
+                    send_error(&lifecycle, code);
                     continue;
                 }
                 if let Some(child) = active.as_ref() {
@@ -1053,6 +1142,8 @@ fn spawn_child(
     owner_kind: &'static str,
     grace: Duration,
     relay_lifecycle: bool,
+    protocol_version: ProtocolVersion,
+    authority: Option<AuthorityEnvelope>,
 ) -> Result<(ActiveChild, u32, u32), SpawnChildError> {
     spawn_path_preflight(&executable, &cwd).map_err(SpawnChildError::before_spawn)?;
     let mut command = ProcessCommand::new(executable);
@@ -1101,6 +1192,8 @@ fn spawn_child(
         pgid,
         port,
         owner_kind,
+        protocol_version,
+        authority,
     ) {
         Ok(evidence) => evidence,
         Err(error) => {
@@ -1197,6 +1290,8 @@ fn spawn_terminal(
     rows: u16,
     stdout: RawOutput,
     counters: Arc<Counters>,
+    protocol_version: ProtocolVersion,
+    authority: Option<AuthorityEnvelope>,
 ) -> Result<(ActiveChild, u32), TerminalStartError> {
     if !Path::new(&executable).exists() || !Path::new(&cwd).is_dir() {
         return Err(TerminalStartError::before_spawn("launch_path_unavailable"));
@@ -1232,6 +1327,25 @@ fn spawn_terminal(
             cleanup,
         ));
     };
+    let evidence = match authority.as_ref() {
+        Some(authority) => match OperationEvidence::create(
+            Path::new(&authority.receipt_context.runtime_root),
+            authority.receipt_context.owner_token.clone(),
+            pid,
+            pid,
+            None,
+            "terminal_attempt",
+            protocol_version.clone(),
+            Some(authority.clone()),
+        ) {
+            Ok(evidence) => Some(evidence),
+            Err(error) => {
+                let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
+                return Err(TerminalStartError::after_spawn(error, cleanup));
+            }
+        },
+        None => None,
+    };
     #[cfg(debug_assertions)]
     if injected_pty_setup_failure("reader") {
         let cleanup = cleanup_spawned_pty_child(&mut child, Some(pid));
@@ -1260,7 +1374,15 @@ fn spawn_terminal(
             ));
         }
     };
-    let output_done = relay(reader, stdout, None, counters, None, None, "stdout");
+    let output_done = relay(
+        reader,
+        stdout,
+        None,
+        counters,
+        evidence.clone(),
+        None,
+        "stdout",
+    );
     let (control_tx, control_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -1330,7 +1452,7 @@ fn spawn_terminal(
             control: control_tx,
             events: event_rx,
             output_done: vec![output_done],
-            evidence: None,
+            evidence,
             output_gate: None,
         },
         pid,
@@ -1759,6 +1881,8 @@ fn lifecycle_writer() -> io::Result<Lifecycle> {
         )),
         request_id: Mutex::new("bootstrap".to_string()),
         owner_token: Mutex::new(None),
+        protocol_version: Mutex::new(ProtocolVersion::default()),
+        authority: Mutex::new(None),
     }))
 }
 
@@ -1811,9 +1935,14 @@ fn unsafe_fd(fd: i32) -> io::Result<std::fs::File> {
 fn send(writer: &Lifecycle, value: Value) {
     let mut value = value;
     if let Some(object) = value.as_object_mut() {
+        let protocol_version = writer
+            .protocol_version
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default();
         object
             .entry("protocolVersion")
-            .or_insert_with(|| json!({ "major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR }));
+            .or_insert_with(|| json!(protocol_version));
         let request_id = writer
             .request_id
             .lock()
@@ -1832,6 +1961,11 @@ fn send(writer: &Lifecycle, value: Value) {
                 .entry("ownerToken")
                 .or_insert_with(|| json!(owner_token));
         }
+        if let Some(authority) = writer.authority.lock().ok().and_then(|value| value.clone()) {
+            object
+                .entry("authority")
+                .or_insert_with(|| json!(authority));
+        }
     }
     if let Ok(mut output) = writer.writer.lock() {
         let _ = serde_json::to_writer(&mut *output, &value);
@@ -1843,6 +1977,29 @@ fn send(writer: &Lifecycle, value: Value) {
 fn set_request_id(writer: &Lifecycle, request_id: String) {
     if let Ok(mut current) = writer.request_id.lock() {
         *current = request_id;
+    }
+}
+
+fn set_protocol_version(writer: &Lifecycle, protocol_version: ProtocolVersion) {
+    if let Ok(mut current) = writer.protocol_version.lock() {
+        *current = protocol_version;
+    }
+}
+
+fn set_authority(writer: &Lifecycle, authority: Option<AuthorityEnvelope>) {
+    if let Ok(mut current) = writer.authority.lock() {
+        *current = authority.clone();
+    }
+    if let Some(authority) = authority {
+        set_protocol_version(
+            writer,
+            ProtocolVersion {
+                major: V2_PROTOCOL_MAJOR,
+                minor: V2_PROTOCOL_MINOR,
+            },
+        );
+        set_request_id(writer, authority.request_id.clone());
+        set_owner_token(writer, authority.receipt_context.owner_token);
     }
 }
 
@@ -1861,6 +2018,64 @@ fn command_request_id(command: &Command) -> Option<String> {
         | Command::Resize { request_id, .. }
         | Command::Stop { request_id, .. } => request_id.clone(),
     }
+}
+
+fn command_protocol_version(command: &Command) -> ProtocolVersion {
+    match command {
+        Command::Start {
+            protocol_version, ..
+        }
+        | Command::StartProcess {
+            protocol_version, ..
+        }
+        | Command::StartTerminal {
+            protocol_version, ..
+        }
+        | Command::Input {
+            protocol_version, ..
+        }
+        | Command::Resize {
+            protocol_version, ..
+        }
+        | Command::Stop {
+            protocol_version, ..
+        } => protocol_version.clone().unwrap_or_default(),
+    }
+}
+
+fn protocol_version_for_authority(authority: &Option<AuthorityEnvelope>) -> ProtocolVersion {
+    if authority.is_some() {
+        ProtocolVersion {
+            major: V2_PROTOCOL_MAJOR,
+            minor: V2_PROTOCOL_MINOR,
+        }
+    } else {
+        ProtocolVersion::default()
+    }
+}
+
+fn validate_active_authority(
+    command: &Command,
+    active_authority: Option<&AuthorityEnvelope>,
+) -> Result<(), &'static str> {
+    let Some(expected) = active_authority else {
+        return Ok(());
+    };
+    if !command.is_v2() {
+        return Err("protocol_version_mismatch");
+    }
+    match command.authority() {
+        Some(actual) if actual == expected => Ok(()),
+        Some(_) => Err("authority_mismatch"),
+        None => Err("authority_required"),
+    }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 fn send_error(writer: &Lifecycle, code: &'static str) {

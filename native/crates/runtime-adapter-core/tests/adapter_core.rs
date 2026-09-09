@@ -67,13 +67,22 @@ fn start_message_preserves_identity_fence_and_run_binding() {
     assert_eq!(start.attempt(), 1);
 
     let wire = start.to_wire_value().unwrap();
+    assert_eq!(wire["protocolVersion"]["major"], 2);
     assert_eq!(wire["requestId"], "run-1");
     assert_eq!(wire["ownerToken"], "host-owner-1");
-    assert_eq!(wire["runtimeIdentity"]["orgId"], "org-1");
-    assert_eq!(wire["runtimeIdentity"]["runId"], "run-1");
-    assert_eq!(wire["runtimeIdentity"]["actor"]["actorId"], "agent-1");
-    assert_eq!(wire["fence"]["epoch"], 1);
-    assert_eq!(wire["lease"]["owner"], "worker-1");
+    assert_eq!(
+        wire["authority"]["runtimeIdentity"]["organizationId"],
+        "org-1"
+    );
+    assert_eq!(wire["authority"]["runtimeIdentity"]["runId"], "run-1");
+    assert_eq!(wire["authority"]["runtimeIdentity"]["agentId"], "agent-1");
+    assert_eq!(wire["authority"]["ownership"]["epoch"], 1);
+    assert_eq!(wire["authority"]["lease"]["owner"], "worker-1");
+    assert_eq!(wire["authority"]["attempt"], 1);
+    assert_eq!(
+        wire["authority"]["receiptContext"]["ownerToken"],
+        "host-owner-1"
+    );
 }
 
 #[test]
@@ -181,11 +190,8 @@ fn stale_fences_and_cancelled_runs_cannot_send_process_controls() {
             CancellationReason::OperatorStop,
             None,
         )
-        .unwrap();
-    assert_eq!(
-        stop_after_lease_expiry.cancellation_reason(),
-        Some(CancellationReason::OperatorStop)
-    );
+        .unwrap_err();
+    assert_eq!(stop_after_lease_expiry.code(), "lease_expired");
 }
 
 #[test]
@@ -197,7 +203,8 @@ fn terminal_mapping_bounds_output_and_preserves_runtime_identity() {
         .map_terminal(
             &machine,
             10,
-            ProcessHostTerminal::succeeded(Some(0), None),
+            ProcessHostTerminal::succeeded(Some(0), None)
+                .with_authority(adapter.authority().clone()),
             ProcessHostOutput::new("héllo", "error-output", Some(json!({"ok": true}))),
         )
         .unwrap();
@@ -218,7 +225,8 @@ fn terminal_events_map_to_stable_failure_and_timeout_outcomes() {
         .map_terminal(
             &machine,
             10,
-            ProcessHostTerminal::failed(Some("child_exit"), Some(7), None),
+            ProcessHostTerminal::failed(Some("child_exit"), Some(7), None)
+                .with_authority(adapter.authority().clone()),
             ProcessHostOutput::default(),
         )
         .unwrap();
@@ -233,7 +241,8 @@ fn terminal_events_map_to_stable_failure_and_timeout_outcomes() {
         .map_terminal(
             &timed_out_machine,
             10,
-            ProcessHostTerminal::failed(Some("child_exit"), None, None),
+            ProcessHostTerminal::failed(Some("child_exit"), None, None)
+                .with_authority(adapter.authority().clone()),
             ProcessHostOutput::default(),
         )
         .unwrap();
@@ -248,7 +257,8 @@ fn terminal_events_map_to_stable_failure_and_timeout_outcomes() {
         .map_terminal(
             &cancelled_machine,
             10,
-            ProcessHostTerminal::failed(Some("child_exit"), None, None),
+            ProcessHostTerminal::failed(Some("child_exit"), None, None)
+                .with_authority(adapter.authority().clone()),
             ProcessHostOutput::default(),
         )
         .unwrap();
@@ -267,7 +277,8 @@ fn terminal_cleanup_and_receipt_failures_never_map_to_success() {
         .map_terminal(
             &machine,
             10,
-            ProcessHostTerminal::succeeded_without_cleanup(),
+            ProcessHostTerminal::succeeded_without_cleanup()
+                .with_authority(adapter.authority().clone()),
             ProcessHostOutput::default(),
         )
         .unwrap();

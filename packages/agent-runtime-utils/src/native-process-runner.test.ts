@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile } from "node:fs/promises";
@@ -5,7 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { runNativeChildProcess, runNativeChildProcessOrFallback } from "./native-process-runner.js";
+import {
+  runNativeChildProcess,
+  runNativeChildProcessOrFallback,
+  runNativeChildProcessV2,
+  type NativeProcessAuthority,
+} from "./native-process-runner.js";
 
 const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
 const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].includes(process.arch))
@@ -13,7 +19,94 @@ const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].inclu
   || (process.platform === "linux" && process.arch === "x64");
 const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
 
+function validAuthority(runId: string, runtimeRoot: string): NativeProcessAuthority {
+  const now = Date.now();
+  const authority: NativeProcessAuthority = {
+    authorityVersion: 1,
+    runtimeIdentity: { organizationId: "org-1", agentId: "agent-1", runId },
+    ownership: { epoch: 1, fence: "fence-1" },
+    lease: { owner: "worker-1", issuedAtMillis: now - 1_000, expiresAtMillis: now + 60_000 },
+    attempt: 1,
+    requestId: `request-${runId}`,
+    bindingDigest: "0".repeat(64),
+    receiptContext: { runtimeRoot, ownerToken: `owner-${runId}` },
+  };
+  const values = [
+    "rudder.native.process-authority.v2",
+    authority.authorityVersion,
+    authority.runtimeIdentity.organizationId,
+    authority.runtimeIdentity.agentId,
+    authority.runtimeIdentity.runId,
+    authority.ownership.epoch,
+    authority.ownership.fence,
+    authority.lease.owner,
+    authority.lease.issuedAtMillis,
+    authority.lease.expiresAtMillis,
+    authority.attempt,
+    authority.requestId,
+    authority.receiptContext.runtimeRoot,
+    authority.receiptContext.ownerToken,
+  ];
+  const material = values.map((value) => `${Buffer.byteLength(String(value), "utf8")}:${value}|`).join("");
+  authority.bindingDigest = createHash("sha256").update(material).digest("hex");
+  return authority;
+}
+
 describe("Rust Agent Run process host", () => {
+  it("fails closed before spawning when v2 authority is not a valid server receipt", async () => {
+    let spawned = false;
+    await expect(runNativeChildProcessV2("v2-run", process.execPath, ["-e", ""], {
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 1,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: path.join(os.tmpdir(), "unused-rudder-process-host"),
+      spawnHost: () => {
+        spawned = true;
+        throw new Error("must not spawn without a valid authority");
+      },
+      authority: {
+        authorityVersion: 1,
+        runtimeIdentity: { organizationId: "org-1", agentId: "agent-1", runId: "v2-run" },
+        ownership: { epoch: 1, fence: "fence-1" },
+        lease: {
+          owner: "worker-1",
+          issuedAtMillis: Date.now() - 1_000,
+          expiresAtMillis: Date.now() + 60_000,
+        },
+        attempt: 1,
+        requestId: "request-1",
+        bindingDigest: "0".repeat(64),
+        receiptContext: { runtimeRoot: path.join(os.tmpdir(), "rudder-v2"), ownerToken: "owner-1" },
+      },
+    })).rejects.toMatchObject({ fallbackCode: "authority_invalid", accepted: false });
+    expect(spawned).toBe(false);
+  });
+
+  nativeOnly("runs a valid authority-bound v2 lifecycle", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-v2-"));
+    const runtimeRoot = path.join(root, "receipts");
+    const result = await runNativeChildProcessV2("v2-lifecycle", process.execPath, [
+      "-e",
+      "process.stdout.write('v2-ok')",
+    ], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 10,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: nativeHostPath!,
+      runtimeRoot,
+      authority: validAuthority("v2-lifecycle", runtimeRoot),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("v2-ok");
+    expect(result.stderr).toBe("");
+  });
+
   it("honors a per-run Node rollback mode before attempting the native host", async () => {
     const result = await runNativeChildProcessOrFallback("node-mode", process.execPath, ["-e", ""], {
       RUDDER_NATIVE_MODE: "node",

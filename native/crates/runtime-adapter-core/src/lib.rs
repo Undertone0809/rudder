@@ -6,10 +6,13 @@
 //! the identity and lease boundary across the native helper boundary and maps
 //! the helper's terminal receipt back to a bounded runtime outcome.
 
-use rudder_native_protocol::{Command, ProtocolVersion};
+use rudder_native_protocol::{
+    AuthorityEnvelope, Command, ProcessLease, ProcessOwnership, ProcessRuntimeIdentity,
+    ProtocolVersion, ReceiptContext, V2_PROTOCOL_MAJOR, V2_PROTOCOL_MINOR,
+};
 use rudder_runtime_core::{
-    AdmissionState, CancellationReason, CancellationState, Failure, FailureCategory, FenceToken,
-    Lease, OutputLimits, ResultEnvelope, RunMachine, RunStatus, RuntimeIdentity,
+    ActorType, AdmissionState, CancellationReason, CancellationState, Failure, FailureCategory,
+    FenceToken, Lease, OutputLimits, ResultEnvelope, RunMachine, RunStatus, RuntimeIdentity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -188,6 +191,7 @@ pub enum ProcessHostMessage {
         protocol_version: ProtocolVersion,
         #[serde(rename = "requestId")]
         request_id: String,
+        authority: AuthorityEnvelope,
         executable: String,
         #[serde(default)]
         argv: Vec<String>,
@@ -208,6 +212,7 @@ pub enum ProcessHostMessage {
         protocol_version: ProtocolVersion,
         #[serde(rename = "requestId")]
         request_id: String,
+        authority: AuthorityEnvelope,
         #[serde(rename = "graceMs", default, skip_serializing_if = "Option::is_none")]
         grace_ms: Option<u64>,
     },
@@ -216,6 +221,7 @@ pub enum ProcessHostMessage {
         protocol_version: ProtocolVersion,
         #[serde(rename = "requestId")]
         request_id: String,
+        authority: AuthorityEnvelope,
         data: String,
     },
     Resize {
@@ -223,16 +229,31 @@ pub enum ProcessHostMessage {
         protocol_version: ProtocolVersion,
         #[serde(rename = "requestId")]
         request_id: String,
+        authority: AuthorityEnvelope,
         cols: u16,
         rows: u16,
     },
 }
 
 impl ProcessHostMessage {
-    fn start_process(request_id: String, launch: &ProcessLaunch) -> Self {
+    pub fn authority(&self) -> Option<&AuthorityEnvelope> {
+        match self {
+            Self::StartProcess { authority, .. }
+            | Self::Stop { authority, .. }
+            | Self::Input { authority, .. }
+            | Self::Resize { authority, .. } => Some(authority),
+        }
+    }
+
+    fn start_process(authority: AuthorityEnvelope, launch: &ProcessLaunch) -> Self {
+        let request_id = authority.request_id.clone();
         Self::StartProcess {
-            protocol_version: ProtocolVersion::default(),
+            protocol_version: ProtocolVersion {
+                major: V2_PROTOCOL_MAJOR,
+                minor: V2_PROTOCOL_MINOR,
+            },
             request_id,
+            authority,
             executable: launch.executable.clone(),
             argv: launch.argv.clone(),
             cwd: launch.cwd.clone(),
@@ -244,26 +265,41 @@ impl ProcessHostMessage {
         }
     }
 
-    fn stop(request_id: String, grace_ms: Option<u64>) -> Self {
+    fn stop(authority: AuthorityEnvelope, grace_ms: Option<u64>) -> Self {
+        let request_id = authority.request_id.clone();
         Self::Stop {
-            protocol_version: ProtocolVersion::default(),
+            protocol_version: ProtocolVersion {
+                major: V2_PROTOCOL_MAJOR,
+                minor: V2_PROTOCOL_MINOR,
+            },
             request_id,
+            authority,
             grace_ms,
         }
     }
 
-    fn input(request_id: String, data: String) -> Self {
+    fn input(authority: AuthorityEnvelope, data: String) -> Self {
+        let request_id = authority.request_id.clone();
         Self::Input {
-            protocol_version: ProtocolVersion::default(),
+            protocol_version: ProtocolVersion {
+                major: V2_PROTOCOL_MAJOR,
+                minor: V2_PROTOCOL_MINOR,
+            },
             request_id,
+            authority,
             data,
         }
     }
 
-    fn resize(request_id: String, cols: u16, rows: u16) -> Self {
+    fn resize(authority: AuthorityEnvelope, cols: u16, rows: u16) -> Self {
+        let request_id = authority.request_id.clone();
         Self::Resize {
-            protocol_version: ProtocolVersion::default(),
+            protocol_version: ProtocolVersion {
+                major: V2_PROTOCOL_MAJOR,
+                minor: V2_PROTOCOL_MINOR,
+            },
             request_id,
+            authority,
             cols,
             rows,
         }
@@ -312,7 +348,21 @@ impl AdapterError {
             | "stdin_too_large"
             | "invalid_grace_ms"
             | "invalid_terminal_input"
-            | "invalid_terminal_size" => AdapterErrorCategory::InvalidInput,
+            | "invalid_terminal_size"
+            | "authority_required"
+            | "invalid_authority_version"
+            | "authority_version_mismatch"
+            | "invalid_authority_identity"
+            | "invalid_authority_ownership"
+            | "invalid_authority_lease"
+            | "invalid_authority_attempt"
+            | "invalid_authority_request"
+            | "invalid_authority_digest"
+            | "invalid_authority_receipt_context"
+            | "receipt_context_mismatch"
+            | "request_id_mismatch"
+            | "binding_digest_mismatch"
+            | "lease_expired" => AdapterErrorCategory::InvalidInput,
             _ => AdapterErrorCategory::Protocol,
         };
         Self::new(
@@ -323,10 +373,7 @@ impl AdapterError {
     }
 }
 
-/// A host command with the runtime identity and fence that authorized it.
-/// `to_wire_value` keeps the host command at the top level and attaches the
-/// binding as ignored metadata, so an older host can consume the same command
-/// without losing the authority context held by the adapter.
+/// A v2 host command with the runtime authority embedded in the wire message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundProcessHostMessage {
     identity: RuntimeIdentity,
@@ -381,39 +428,14 @@ impl BoundProcessHostMessage {
         &self.message
     }
 
+    pub fn authority(&self) -> &AuthorityEnvelope {
+        self.message
+            .authority()
+            .expect("validated v2 message has authority")
+    }
+
     pub fn to_wire_value(&self) -> Result<Value, AdapterError> {
-        let mut value = self.message.to_wire_value()?;
-        let object = value.as_object_mut().ok_or_else(|| {
-            AdapterError::protocol("native host message did not serialize to an object")
-        })?;
-        object.insert(
-            "runtimeIdentity".to_owned(),
-            serde_json::to_value(&self.identity).map_err(|error| {
-                AdapterError::protocol(format!("identity serialization failed: {error}"))
-            })?,
-        );
-        object.insert(
-            "fence".to_owned(),
-            serde_json::to_value(&self.fence).map_err(|error| {
-                AdapterError::protocol(format!("fence serialization failed: {error}"))
-            })?,
-        );
-        object.insert(
-            "lease".to_owned(),
-            serde_json::to_value(&self.lease).map_err(|error| {
-                AdapterError::protocol(format!("lease serialization failed: {error}"))
-            })?,
-        );
-        object.insert("attempt".to_owned(), Value::from(self.attempt));
-        if let Some(reason) = self.cancellation_reason {
-            object.insert(
-                "cancellationReason".to_owned(),
-                serde_json::to_value(reason).map_err(|error| {
-                    AdapterError::protocol(format!("cancellation serialization failed: {error}"))
-                })?,
-            );
-        }
-        Ok(value)
+        self.message.to_wire_value()
     }
 }
 
@@ -448,6 +470,12 @@ pub enum ProcessHostTerminalStatus {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessHostTerminal {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<ProtocolVersion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<AuthorityEnvelope>,
     pub status: ProcessHostTerminalStatus,
     #[serde(default)]
     pub error_code: Option<String>,
@@ -466,6 +494,9 @@ pub struct ProcessHostTerminal {
 impl ProcessHostTerminal {
     pub fn succeeded(exit_code: Option<i32>, signal: Option<&str>) -> Self {
         Self {
+            protocol_version: None,
+            request_id: None,
+            authority: None,
             status: ProcessHostTerminalStatus::Succeeded,
             error_code: None,
             message: None,
@@ -486,6 +517,9 @@ impl ProcessHostTerminal {
 
     pub fn failed(error_code: Option<&str>, exit_code: Option<i32>, signal: Option<&str>) -> Self {
         Self {
+            protocol_version: None,
+            request_id: None,
+            authority: None,
             status: ProcessHostTerminalStatus::Failed,
             error_code: error_code.map(str::to_owned),
             message: None,
@@ -498,6 +532,16 @@ impl ProcessHostTerminal {
 
     pub fn is_durable(&self) -> bool {
         self.cleanup_proven && self.receipt_written
+    }
+
+    pub fn with_authority(mut self, authority: AuthorityEnvelope) -> Self {
+        self.protocol_version = Some(ProtocolVersion {
+            major: V2_PROTOCOL_MAJOR,
+            minor: V2_PROTOCOL_MINOR,
+        });
+        self.request_id = Some(authority.request_id.clone());
+        self.authority = Some(authority);
+        self
     }
 }
 
@@ -567,6 +611,7 @@ pub struct RuntimeProcessAdapter {
     deadline_at_millis: Option<u64>,
     request_id: String,
     launch: ProcessLaunch,
+    authority: AuthorityEnvelope,
 }
 
 impl RuntimeProcessAdapter {
@@ -601,9 +646,47 @@ impl RuntimeProcessAdapter {
         }
 
         let identity = machine.request.identity.clone();
+        if identity.actor.actor_type != ActorType::Agent {
+            return Err(AdapterError::invalid(
+                "agent_identity_required",
+                "v2 process-host authority requires an agent runtime identity",
+            ));
+        }
         let request_id = identity.run_id.clone();
-        let message = ProcessHostMessage::start_process(request_id.clone(), &launch);
         launch.validate_owner_token()?;
+        if launch.runtime_root.is_empty()
+            || launch.runtime_root.len() > 4_096
+            || !std::path::Path::new(&launch.runtime_root).is_absolute()
+        {
+            return Err(AdapterError::invalid(
+                "invalid_runtime_root",
+                "runtime receipt root must be an absolute bounded path",
+            ));
+        }
+        let authority = AuthorityEnvelope::new(
+            ProcessRuntimeIdentity {
+                organization_id: identity.org_id.clone(),
+                agent_id: identity.actor.actor_id.clone(),
+                run_id: identity.run_id.clone(),
+            },
+            ProcessOwnership {
+                epoch: lease.fence.epoch,
+                fence: lease.fence.owner_token.clone(),
+            },
+            ProcessLease {
+                owner: lease.owner.clone(),
+                issued_at_millis: lease.issued_at_millis,
+                expires_at_millis: lease.expires_at_millis,
+            },
+            machine.attempt(),
+            request_id.clone(),
+            ReceiptContext {
+                runtime_root: launch.runtime_root.clone(),
+                owner_token: launch.owner_token.clone(),
+            },
+        )
+        .map_err(|code| AdapterError::invalid(code, "runtime authority is not valid"))?;
+        let message = ProcessHostMessage::start_process(authority.clone(), &launch);
         message.validate()?;
 
         Ok(Self {
@@ -615,6 +698,7 @@ impl RuntimeProcessAdapter {
             deadline_at_millis: machine.deadline_at_millis(),
             request_id,
             launch,
+            authority,
         })
     }
 
@@ -636,6 +720,10 @@ impl RuntimeProcessAdapter {
 
     pub fn launch(&self) -> &ProcessLaunch {
         &self.launch
+    }
+
+    pub fn authority(&self) -> &AuthorityEnvelope {
+        &self.authority
     }
 
     pub fn start(
@@ -662,7 +750,7 @@ impl RuntimeProcessAdapter {
             self.fence.clone(),
             self.attempt,
             None,
-            ProcessHostMessage::start_process(self.request_id.clone(), &self.launch),
+            ProcessHostMessage::start_process(self.authority.clone(), &self.launch),
         )
     }
 
@@ -674,7 +762,7 @@ impl RuntimeProcessAdapter {
         reason: CancellationReason,
         grace_ms: Option<u64>,
     ) -> Result<BoundProcessHostMessage, AdapterError> {
-        self.assert_current(machine, fence, now_millis, false)?;
+        self.assert_current(machine, fence, now_millis, true)?;
         if !matches!(machine.status(), RunStatus::Queued | RunStatus::Running) {
             return Err(AdapterError::conflict(
                 "run_not_active",
@@ -710,7 +798,7 @@ impl RuntimeProcessAdapter {
             self.fence.clone(),
             self.attempt,
             Some(reason),
-            ProcessHostMessage::stop(self.request_id.clone(), grace_ms),
+            ProcessHostMessage::stop(self.authority.clone(), grace_ms),
         )
     }
 
@@ -728,7 +816,7 @@ impl RuntimeProcessAdapter {
             self.fence.clone(),
             self.attempt,
             None,
-            ProcessHostMessage::input(self.request_id.clone(), data.into()),
+            ProcessHostMessage::input(self.authority.clone(), data.into()),
         )
     }
 
@@ -747,7 +835,7 @@ impl RuntimeProcessAdapter {
             self.fence.clone(),
             self.attempt,
             None,
-            ProcessHostMessage::resize(self.request_id.clone(), cols, rows),
+            ProcessHostMessage::resize(self.authority.clone(), cols, rows),
         )
     }
 
@@ -765,6 +853,7 @@ impl RuntimeProcessAdapter {
                 "a process-host terminal event requires a running run",
             ));
         }
+        self.validate_terminal_receipt(&terminal, now_millis)?;
 
         let (status, failure) = self.terminal_status(machine, now_millis, &terminal);
         let result = match failure {
@@ -793,6 +882,36 @@ impl RuntimeProcessAdapter {
             exit_code: terminal.exit_code,
             signal: terminal.signal,
         })
+    }
+
+    fn validate_terminal_receipt(
+        &self,
+        terminal: &ProcessHostTerminal,
+        now_millis: u64,
+    ) -> Result<(), AdapterError> {
+        let Some(version) = terminal.protocol_version.as_ref() else {
+            return Err(AdapterError::from_native_code("protocol_version_required"));
+        };
+        if version.major != V2_PROTOCOL_MAJOR || version.minor > V2_PROTOCOL_MINOR {
+            return Err(AdapterError::from_native_code("protocol_version_mismatch"));
+        }
+        if terminal.request_id.as_deref() != Some(self.request_id.as_str()) {
+            return Err(AdapterError::from_native_code("request_id_mismatch"));
+        }
+        let Some(authority) = terminal.authority.as_ref() else {
+            return Err(AdapterError::from_native_code("authority_required"));
+        };
+        authority
+            .validate_at(now_millis)
+            .map_err(AdapterError::from_native_code)?;
+        if authority != &self.authority {
+            return Err(AdapterError::new(
+                "terminal_authority_mismatch",
+                AdapterErrorCategory::StaleFence,
+                "terminal receipt authority does not match the admitted process attempt",
+            ));
+        }
+        Ok(())
     }
 
     fn terminal_status(
