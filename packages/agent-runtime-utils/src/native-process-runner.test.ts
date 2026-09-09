@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
@@ -19,13 +19,17 @@ const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].inclu
   || (process.platform === "linux" && process.arch === "x64");
 const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
 
-function validAuthority(runId: string, runtimeRoot: string): NativeProcessAuthority {
+function validAuthority(
+  runId: string,
+  runtimeRoot: string,
+  leaseTtlMs = 60_000,
+): NativeProcessAuthority {
   const now = Date.now();
   const authority: NativeProcessAuthority = {
     authorityVersion: 1,
     runtimeIdentity: { organizationId: "org-1", agentId: "agent-1", runId },
     ownership: { epoch: 1, fence: "fence-1" },
-    lease: { owner: "worker-1", issuedAtMillis: now - 1_000, expiresAtMillis: now + 60_000 },
+    lease: { owner: "worker-1", issuedAtMillis: now - 1_000, expiresAtMillis: now + leaseTtlMs },
     attempt: 1,
     requestId: `request-${runId}`,
     bindingDigest: "0".repeat(64),
@@ -105,6 +109,98 @@ describe("Rust Agent Run process host", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("v2-ok");
     expect(result.stderr).toBe("");
+  });
+
+  nativeOnly("recovers a child when the host dies after spawn but before spawned", { timeout: 10_000 }, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-host-loss-"));
+    const runtimeRoot = path.join(root, "receipts");
+    const authority = validAuthority("host-loss-before-spawned", runtimeRoot);
+    const previousInjection = process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED;
+    process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED = "1";
+    try {
+      await expect(runNativeChildProcessV2("host-loss-before-spawned", process.execPath, [
+        "-e",
+        "setInterval(()=>{},1000)",
+      ], {
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutSec: 0,
+        graceSec: 1,
+        onLog: async () => {},
+        onLogError: () => {},
+        binaryPath: nativeHostPath!,
+        runtimeRoot,
+        authority,
+      })).rejects.toMatchObject({
+        fallbackCode: "control_lost",
+        accepted: true,
+      });
+    } finally {
+      if (previousInjection === undefined) delete process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED;
+      else process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED = previousInjection;
+    }
+
+    const descriptorPath = path.join(
+      runtimeRoot,
+      authority.receiptContext.ownerToken,
+      "owner-descriptor.json",
+    );
+    const descriptor = JSON.parse(await readFile(descriptorPath, "utf8")) as {
+      childPid?: unknown;
+      opaqueOwnerToken?: unknown;
+      authority?: unknown;
+    };
+    expect(descriptor.opaqueOwnerToken).toBe(authority.receiptContext.ownerToken);
+    expect(descriptor.authority).toEqual(authority);
+    expect(typeof descriptor.childPid).toBe("number");
+    expect(() => process.kill(descriptor.childPid as number, 0)).toThrow();
+  });
+
+  nativeOnly("expires an active v2 child without waiting for a stop command", { timeout: 10_000 }, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-lease-expiry-"));
+    const runtimeRoot = path.join(root, "receipts");
+    const authority = validAuthority("lease-expiry", runtimeRoot, 300);
+    const result = await runNativeChildProcessV2("lease-expiry", process.execPath, [
+      "-e",
+      "setInterval(()=>{},1000)",
+    ], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 0,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: nativeHostPath!,
+      runtimeRoot,
+      authority,
+    });
+
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.timedOut).toBe(false);
+    const descriptorPath = path.join(
+      runtimeRoot,
+      authority.receiptContext.ownerToken,
+      "owner-descriptor.json",
+    );
+    const descriptor = JSON.parse(await readFile(descriptorPath, "utf8")) as { childPid?: unknown };
+    expect(typeof descriptor.childPid).toBe("number");
+    expect(() => process.kill(descriptor.childPid as number, 0)).toThrow();
+
+    const receipt = JSON.parse(
+      await readFile(path.join(runtimeRoot, authority.receiptContext.ownerToken, "terminal-receipt.json"), "utf8"),
+    ) as {
+      authority?: unknown;
+      opaqueOwnerToken?: unknown;
+      terminal?: { status?: string; errorCode?: string; cleanupProven?: boolean; receiptWritten?: boolean };
+    };
+    expect(receipt.authority).toEqual(authority);
+    expect(receipt.opaqueOwnerToken).toBe(authority.receiptContext.ownerToken);
+    expect(receipt.terminal).toMatchObject({
+      status: "failed",
+      errorCode: "lease_expired",
+      cleanupProven: true,
+      receiptWritten: true,
+    });
   });
 
   it("honors a per-run Node rollback mode before attempting the native host", async () => {

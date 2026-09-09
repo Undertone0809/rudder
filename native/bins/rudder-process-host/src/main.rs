@@ -70,6 +70,7 @@ enum Input {
 
 enum MonitorCommand {
     Stop { grace: Option<Duration> },
+    LeaseExpired,
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
 }
@@ -83,6 +84,7 @@ enum MonitorEvent {
         code: Option<i32>,
         signal: Option<&'static str>,
         was_stopped: bool,
+        failure_code: Option<&'static str>,
         cleanup_proven: bool,
         had_surviving_group: bool,
     },
@@ -415,11 +417,25 @@ fn main() {
     let mut active: Option<ActiveChild> = None;
     let mut active_authority: Option<AuthorityEnvelope> = None;
     let mut stop_admitted = false;
+    let mut lease_expiry_sent = false;
+    let mut lease_expired = false;
     let mut listener_mismatch = false;
     let mut terminal_sent = false;
     let mut process_exit_code = 0;
 
     while !terminal_sent {
+        if !lease_expiry_sent
+            && active.is_some()
+            && active_authority
+                .as_ref()
+                .is_some_and(|authority| now_millis() >= authority.lease.expires_at_millis)
+        {
+            lease_expiry_sent = true;
+            lease_expired = true;
+            if let Some(child) = active.as_ref() {
+                let _ = child.control.send(MonitorCommand::LeaseExpired);
+            }
+        }
         if let Some(child) = active.as_ref() {
             match child.events.try_recv() {
                 Ok(MonitorEvent::ListenerVerified { port }) => {
@@ -435,9 +451,12 @@ fn main() {
                     code,
                     signal,
                     was_stopped,
+                    failure_code: child_failure_code,
                     cleanup_proven,
                     had_surviving_group,
                 }) => {
+                    let failure_code =
+                        child_failure_code.or(lease_expired.then_some("lease_expired"));
                     let mut output_relay_proven = true;
                     if let Some(child) = active.as_ref() {
                         for output_done in &child.output_done {
@@ -457,11 +476,14 @@ fn main() {
                         send(&lifecycle, json!({"type":"stopped"}));
                     }
                     let terminal_succeeded = !listener_mismatch
+                        && failure_code.is_none()
                         && cleanup_proven
                         && output_relay_proven
                         && (was_stopped || (code == Some(0) && !had_surviving_group));
                     let error_code = if listener_mismatch {
                         Some("listener_owner_mismatch")
+                    } else if let Some(code) = failure_code {
+                        Some(code)
                     } else if !cleanup_proven {
                         Some("process_group_cleanup_unproven")
                     } else if !output_relay_proven {
@@ -773,6 +795,13 @@ fn main() {
                             active.as_ref().and_then(|child| child.output_gate.as_ref())
                         {
                             gate.store(true, Ordering::Release);
+                        }
+                        if std::env::var("RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED")
+                            .ok()
+                            .as_deref()
+                            == Some("1")
+                        {
+                            std::process::exit(97);
                         }
                         if std::env::var("RUDDER_PROCESS_HOST_TEST_AFTER_ACCEPT_FRAME")
                             .ok()
@@ -1388,6 +1417,7 @@ fn spawn_terminal(
     thread::spawn(move || {
         let mut writer = writer;
         let mut stopping = false;
+        let mut lease_expired = false;
         let mut requested_cleanup = None;
         loop {
             while let Ok(control) = control_rx.try_recv() {
@@ -1396,6 +1426,13 @@ fn spawn_terminal(
                         stopping = true;
                         requested_cleanup = Some(request_pty_tree_termination(pid));
                         let _ = child.kill();
+                    }
+                    MonitorCommand::LeaseExpired => {
+                        if !stopping && !lease_expired {
+                            lease_expired = true;
+                            requested_cleanup = Some(request_pty_tree_termination(pid));
+                            let _ = child.kill();
+                        }
                     }
                     MonitorCommand::Input(data) => {
                         let _ = writer.write_all(&data);
@@ -1413,7 +1450,7 @@ fn spawn_terminal(
             }
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    let cleanup = if stopping {
+                    let cleanup = if stopping || lease_expired {
                         finish_pty_tree_cleanup(
                             pid,
                             requested_cleanup.unwrap_or(CleanupResult {
@@ -1428,6 +1465,7 @@ fn spawn_terminal(
                         code: status.exit_code().try_into().ok(),
                         signal: None,
                         was_stopped: stopping,
+                        failure_code: lease_expired.then_some("lease_expired"),
                         cleanup_proven: cleanup.proven,
                         had_surviving_group: cleanup.had_surviving_group,
                     });
@@ -1439,6 +1477,7 @@ fn spawn_terminal(
                         code: Some(1),
                         signal: None,
                         was_stopped: stopping,
+                        failure_code: lease_expired.then_some("lease_expired"),
                         cleanup_proven: false,
                         had_surviving_group: false,
                     });
@@ -1679,6 +1718,7 @@ fn monitor_child(
     boundary: OwnedProcessBoundary,
 ) {
     let mut stopping = false;
+    let mut lease_expired = false;
     let mut cleanup = None;
     let mut listener_verified = false;
     let mut listener_owner_mismatch = false;
@@ -1695,10 +1735,18 @@ fn monitor_child(
                     &boundary,
                 ));
             }
+            Ok(MonitorCommand::LeaseExpired) => {
+                if !stopping && !lease_expired {
+                    lease_expired = true;
+                    cleanup = Some(terminate_owned_process(child, pgid, grace, &boundary));
+                }
+            }
             Ok(MonitorCommand::Input(_)) | Ok(MonitorCommand::Resize { .. }) => {}
             Err(_) => {}
         }
-        if let Some(expected_port) = port.filter(|_| !stopping && !listener_verified) {
+        if let Some(expected_port) =
+            port.filter(|_| !stopping && !lease_expired && !listener_verified)
+        {
             match listener_owned_by_process_group(expected_port, pgid) {
                 Ok(ListenerOwnership::Owned) => {
                     listener_verified = true;
@@ -1722,6 +1770,7 @@ fn monitor_child(
                     code: status.code(),
                     signal: signal_name(&status),
                     was_stopped: stopping,
+                    failure_code: lease_expired.then_some("lease_expired"),
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group || listener_owner_mismatch,
                 });
@@ -1734,6 +1783,7 @@ fn monitor_child(
                     code: Some(1),
                     signal: None,
                     was_stopped: stopping,
+                    failure_code: lease_expired.then_some("lease_expired"),
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
                 });

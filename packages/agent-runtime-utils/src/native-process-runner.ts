@@ -838,7 +838,7 @@ async function runNativeChildProcessInternal(
     host.stderr?.on("data", (chunk) => {
       stderr = appendWithCap(stderr, String(chunk));
     });
-    host.once("error", (error) => {
+    host.once("error", (error: Error) => {
       settleReject(new NativeProcessUnavailableError(
         "Rust process host failed",
         "host_error",
@@ -846,7 +846,10 @@ async function runNativeChildProcessInternal(
         { cause: error },
       ));
     });
-    host.once("close", (code, signal) => {
+    let hostTerminationHandled = false;
+    const handleHostTermination = (code: number | null, signal: string | null) => {
+      if (hostTerminationHandled) return;
+      hostTerminationHandled = true;
       runningProcesses.delete(runId);
       if (terminalSeen && cleanupReceiptTrusted) {
         finish();
@@ -866,7 +869,7 @@ async function runNativeChildProcessInternal(
         if (ownedPid === null) {
           try {
             const descriptor = JSON.parse(
-              await readFile(path.join(runtimeRoot, requestId, "owner-descriptor.json"), "utf8"),
+              await readFile(path.join(runtimeRoot, lifecycleOwnerToken, "owner-descriptor.json"), "utf8"),
             ) as { childPid?: unknown };
             if (typeof descriptor.childPid === "number") ownedPid = descriptor.childPid;
           } catch {
@@ -883,7 +886,9 @@ async function runNativeChildProcessInternal(
           { cause: cleanupError },
         )),
       );
-    });
+    };
+    host.once("exit", handleHostTermination);
+    host.once("close", handleHostTermination);
 
     if (opts.timeoutSec > 0) {
       timeout = setTimeout(() => {
