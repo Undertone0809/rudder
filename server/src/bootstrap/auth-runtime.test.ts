@@ -37,6 +37,12 @@ describe("createAuthRuntime", () => {
     expect(runtime.resolveSessionFromHeaders).toBeTypeOf("function");
     expect(await runtime.resolveSessionFromHeaders?.(new Headers())).toBeNull();
     expect(runtime.localAccountSessionRevocation).toBeDefined();
+    expect(runtime.privateActorEnvelopeBridge).toMatchObject({
+      authority: "private_non_authoritative",
+    });
+    expect(JSON.stringify(runtime.privateActorEnvelopeBridge)).not.toContain(
+      "local-session-secret",
+    );
   });
 
   it("rejects local account auth on a non-loopback runtime", async () => {

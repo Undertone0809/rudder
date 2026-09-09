@@ -585,3 +585,37 @@ fn replay_guard_evicts_expired_entries_and_rejects_active_overflow() {
         .expect("expired entries are evicted before a new claim");
     assert_eq!(replay.len(), 1);
 }
+
+#[test]
+fn canonical_signing_bytes_match_machine_readable_cross_language_vector() {
+    let vector: serde_json::Value =
+        serde_json::from_str(include_str!("../test-vectors/actor-envelope-v2.json"))
+            .expect("canonicalization vector");
+    assert_eq!(vector["protocolSchema"], "rudder.actor-envelope.v2");
+    let claims = &vector["claims"];
+    let actor = ActorIdentity::new(
+        claims["actor"]["kind"].as_str().expect("actor kind"),
+        claims["actor"]["id"].as_str().expect("actor id"),
+    )
+    .expect("actor");
+    let envelope = ActorEnvelope::new(
+        actor,
+        claims["organizationId"].as_str().expect("organization id"),
+        claims["sessionId"].as_str().expect("session id"),
+        claims["authEpoch"].as_u64().expect("auth epoch"),
+        claims["audience"].as_str().expect("audience"),
+        claims["method"].as_str().expect("method"),
+        claims["path"].as_str().expect("path"),
+        claims["action"].as_str().expect("action"),
+        claims["body"].as_str().expect("body").as_bytes(),
+        claims["requestId"].as_str().expect("request id"),
+        claims["nonce"].as_str().expect("nonce"),
+        claims["issuedAt"].as_u64().expect("issued at"),
+        claims["expiresAt"].as_u64().expect("expires at"),
+    )
+    .expect("envelope");
+    assert_eq!(
+        hex::encode(envelope.signing_bytes()),
+        vector["signingBytesHex"].as_str().expect("signing bytes")
+    );
+}
