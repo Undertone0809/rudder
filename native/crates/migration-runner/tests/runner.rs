@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use rudder_migration_core::{JournalEntry, MigrationLimits, MigrationManifestOptions};
 use rudder_migration_runner::{
     AppliedMigration, HistorySnapshot, LockAcquisition, MigrationExecutor, MigrationRunRequest,
-    MigrationRunner, MigrationRunnerConfig, MigrationSource, RecoveryPoint,
+    MigrationRunStatus, MigrationRunner, MigrationRunnerConfig, MigrationSource, RecoveryPoint,
 };
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -29,7 +29,11 @@ struct FakeExecutor {
     history_before_transaction: Option<HistorySnapshot>,
     lock_acquired: bool,
     fail_statement: bool,
+    fail_statement_on_call: Option<usize>,
+    statement_calls: usize,
     fail_postcondition: bool,
+    fail_commit: bool,
+    fail_rollback: bool,
 }
 
 impl FakeExecutor {
@@ -41,7 +45,11 @@ impl FakeExecutor {
             history_before_transaction: None,
             lock_acquired: true,
             fail_statement: false,
+            fail_statement_on_call: None,
+            statement_calls: 0,
             fail_postcondition: false,
+            fail_commit: false,
+            fail_rollback: false,
         }
     }
 }
@@ -85,7 +93,8 @@ impl MigrationExecutor for FakeExecutor {
 
     async fn execute_statement(&mut self, statement: &str) -> Result<(), Self::Error> {
         self.events.push(format!("execute:{statement}"));
-        if self.fail_statement {
+        self.statement_calls += 1;
+        if self.fail_statement || self.fail_statement_on_call == Some(self.statement_calls) {
             return Err(FakeError("statement failed"));
         }
         Ok(())
@@ -108,12 +117,18 @@ impl MigrationExecutor for FakeExecutor {
 
     async fn commit(&mut self) -> Result<(), Self::Error> {
         self.events.push("commit".into());
+        if self.fail_commit {
+            return Err(FakeError("commit failed"));
+        }
         self.history_before_transaction = None;
         Ok(())
     }
 
     async fn rollback(&mut self) -> Result<(), Self::Error> {
         self.events.push("rollback".into());
+        if self.fail_rollback {
+            return Err(FakeError("rollback failed"));
+        }
         if let Some(history) = self.history_before_transaction.take() {
             self.history = history;
         }
@@ -230,6 +245,8 @@ async fn applies_only_ordered_pending_files_and_returns_durable_receipt() {
 
     assert_eq!(receipt.applied_entries.len(), 1);
     assert_eq!(receipt.applied_entries[0].file_name, "0001_second.sql");
+    assert_eq!(receipt.attempted_entries, receipt.applied_entries);
+    assert_eq!(receipt.status, MigrationRunStatus::Applied);
     assert!(receipt.lock.acquired);
     assert!(receipt.lock.released);
     assert!(receipt.recovery.required);
@@ -350,11 +367,78 @@ async fn statement_failure_rolls_back_the_whole_transaction_and_never_commits() 
     let receipt = error.receipt().unwrap();
     assert!(receipt.transaction.rolled_back);
     assert!(!receipt.transaction.committed);
+    assert_eq!(receipt.attempted_entries.len(), 1);
     assert!(receipt.applied_entries.is_empty());
     let executor = runner.executor();
     assert!(executor.events.iter().any(|event| event == "rollback"));
     assert!(!executor.events.iter().any(|event| event == "commit"));
     assert!(executor.history.entries.is_empty());
+}
+
+#[tokio::test]
+async fn execution_and_rollback_failure_preserve_applied_entries_and_hold_the_lock() {
+    let (_root, source) = fixture(&[
+        ("0000_first", "CREATE TABLE first_table (id integer);"),
+        ("0001_second", "CREATE TABLE second_table (id integer);"),
+    ]);
+    let mut executor = FakeExecutor::new(false, HistorySnapshot::empty());
+    executor.fail_statement_on_call = Some(2);
+    executor.fail_rollback = true;
+    let mut runner = MigrationRunner::new(executor, MigrationRunnerConfig::default());
+
+    let error = runner.run(request(source, None)).await.unwrap_err();
+
+    assert_eq!(error.code(), "transaction_rollback_failed");
+    let receipt = error.receipt().unwrap();
+    assert_eq!(receipt.attempted_entries.len(), 2);
+    assert_eq!(receipt.applied_entries.len(), 1);
+    assert_eq!(receipt.applied_entries[0].file_name, "0000_first.sql");
+    assert!(!receipt.transaction.committed);
+    assert!(!receipt.transaction.rolled_back);
+    assert!(receipt.transaction.unresolved);
+    assert!(!receipt.lock.released);
+    assert!(
+        runner
+            .executor()
+            .events
+            .iter()
+            .any(|event| event == "rollback")
+    );
+    assert!(
+        !runner
+            .executor()
+            .events
+            .iter()
+            .any(|event| event == "release")
+    );
+}
+
+#[tokio::test]
+async fn commit_and_rollback_failure_preserve_applied_entries_and_hold_the_lock() {
+    let (_root, source) = fixture(&[("0000_first", "CREATE TABLE first_table (id integer);")]);
+    let mut executor = FakeExecutor::new(false, HistorySnapshot::empty());
+    executor.fail_commit = true;
+    executor.fail_rollback = true;
+    let mut runner = MigrationRunner::new(executor, MigrationRunnerConfig::default());
+
+    let error = runner.run(request(source, None)).await.unwrap_err();
+
+    assert_eq!(error.code(), "transaction_rollback_failed");
+    let receipt = error.receipt().unwrap();
+    assert_eq!(receipt.attempted_entries.len(), 1);
+    assert_eq!(receipt.applied_entries.len(), 1);
+    assert!(!receipt.transaction.committed);
+    assert!(!receipt.transaction.rolled_back);
+    assert!(receipt.transaction.rollback_failed);
+    assert!(receipt.transaction.unresolved);
+    assert!(!receipt.lock.released);
+    assert!(
+        !runner
+            .executor()
+            .events
+            .iter()
+            .any(|event| event == "release")
+    );
 }
 
 #[tokio::test]

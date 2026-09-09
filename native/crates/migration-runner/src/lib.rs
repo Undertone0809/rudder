@@ -285,6 +285,8 @@ pub struct TransactionReceipt {
     pub begun: bool,
     pub committed: bool,
     pub rolled_back: bool,
+    pub rollback_failed: bool,
+    pub unresolved: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -300,6 +302,7 @@ pub struct AppliedEntryReceipt {
 pub enum MigrationRunStatus {
     AlreadyCurrent,
     Applied,
+    Failed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -308,6 +311,7 @@ pub struct MigrationReceipt {
     pub candidate_fingerprint: String,
     pub baseline_fingerprint: Option<String>,
     pub pending_entries: Vec<String>,
+    pub attempted_entries: Vec<AppliedEntryReceipt>,
     pub applied_entries: Vec<AppliedEntryReceipt>,
     pub lock: LockReceipt,
     pub recovery: RecoveryReceipt,
@@ -450,6 +454,7 @@ where
                 .as_ref()
                 .map(|source| source.manifest.fingerprint.clone()),
             pending_entries: Vec::new(),
+            attempted_entries: Vec::new(),
             applied_entries: Vec::new(),
             lock: LockReceipt {
                 name: self.config.lock_name.clone(),
@@ -467,6 +472,8 @@ where
                 begun: false,
                 committed: false,
                 rolled_back: false,
+                rollback_failed: false,
+                unresolved: false,
             },
             status: MigrationRunStatus::AlreadyCurrent,
         };
@@ -478,10 +485,12 @@ where
             .map_err(|error| {
                 let mut failure = RunFailure::executor(error);
                 failure.message = format!("failed to acquire advisory lock: {}", failure.message);
+                receipt.status = MigrationRunStatus::Failed;
                 failure.into_error(receipt.clone())
             })?;
         if !lock.acquired {
             receipt.lock.timed_out = true;
+            receipt.status = MigrationRunStatus::Failed;
             return Err(RunFailure::<E::Error>::new(
                 "lock_timeout",
                 format!(
@@ -510,9 +519,14 @@ where
             && !receipt.transaction.rolled_back
         {
             if let Err(error) = self.executor.rollback().await {
+                let original = failure
+                    .take()
+                    .expect("rollback is only attempted after a run failure");
+                receipt.transaction.rollback_failed = true;
+                receipt.transaction.unresolved = true;
                 failure = Some(RunFailure {
                     code: "transaction_rollback_failed",
-                    message: format!("migration failed and rollback failed: {}", error),
+                    message: format!("{}; migration rollback failed: {}", original.message, error),
                     executor_error: Some(error),
                 });
             } else {
@@ -521,22 +535,45 @@ where
             }
         }
 
-        if let Err(error) = self.executor.release_advisory_lock().await {
-            if let Some(existing) = &mut failure {
-                existing.message = format!(
-                    "{}; advisory lock release failed: {}",
-                    existing.message, error
-                );
+        if failure.is_none() && (!receipt.transaction.committed || receipt.transaction.unresolved) {
+            receipt.status = MigrationRunStatus::Failed;
+            receipt.transaction.unresolved = true;
+            failure = Some(RunFailure::new(
+                "transaction_unresolved",
+                "migration transaction did not reach a committed state",
+            ));
+        }
+
+        if !receipt.transaction.unresolved {
+            if let Err(error) = self.executor.release_advisory_lock().await {
+                if let Some(existing) = &mut failure {
+                    existing.message = format!(
+                        "{}; advisory lock release failed: {}",
+                        existing.message, error
+                    );
+                } else {
+                    failure = Some(RunFailure::executor(error));
+                }
             } else {
-                failure = Some(RunFailure::executor(error));
+                receipt.lock.released = true;
             }
-        } else {
-            receipt.lock.released = true;
         }
 
         match failure {
-            Some(failure) => Err(failure.into_error(receipt)),
-            None => Ok(receipt),
+            Some(failure) => {
+                receipt.status = MigrationRunStatus::Failed;
+                Err(failure.into_error(receipt))
+            }
+            None if receipt.transaction.committed && !receipt.transaction.unresolved => Ok(receipt),
+            None => {
+                receipt.status = MigrationRunStatus::Failed;
+                receipt.transaction.unresolved = true;
+                Err(RunFailure::new(
+                    "transaction_unresolved",
+                    "migration transaction did not reach a committed or rolled-back state",
+                )
+                .into_error(receipt))
+            }
         }
     }
 
@@ -547,8 +584,12 @@ where
         recovery: Option<&RecoveryPoint>,
         receipt: &mut MigrationReceipt,
     ) -> Result<(), RunFailure<E::Error>> {
-        self.executor.begin().await.map_err(RunFailure::executor)?;
+        // Mark the transaction as begun before calling the executor. An
+        // executor may fail after issuing BEGIN (for example while setting
+        // transaction-local search_path); the outer error path must still
+        // attempt rollback and keep the lock if rollback is unresolved.
         receipt.transaction.begun = true;
+        self.executor.begin().await.map_err(RunFailure::executor)?;
 
         validate_loaded_manifest(&candidate.manifest)?;
         if let Some(baseline) = baseline {
@@ -625,13 +666,18 @@ where
                 pre_mutation.errors.join("; "),
             ));
         }
+        if !history.table_exists && database_non_empty {
+            return Err(RunFailure::new(
+                "migration_history_missing",
+                "configured migration history table is absent from a non-empty database",
+            ));
+        }
 
         self.executor
             .ensure_history_table()
             .await
             .map_err(RunFailure::executor)?;
 
-        let mut applied_receipts = Vec::with_capacity(plan.pending.len());
         for entry in &plan.pending {
             let statements = candidate.statements(&entry.file_name).ok_or_else(|| {
                 RunFailure::new(
@@ -644,21 +690,6 @@ where
                     "migration_statement_count_limit",
                     format!("{} has too many statements", entry.file_name),
                 ));
-            }
-            for statement in statements {
-                if statement.len() as u64 > self.config.max_statement_bytes {
-                    return Err(RunFailure::new(
-                        "migration_statement_size_limit",
-                        format!(
-                            "statement in {} exceeds the configured bound",
-                            entry.file_name
-                        ),
-                    ));
-                }
-                self.executor
-                    .execute_statement(statement)
-                    .await
-                    .map_err(RunFailure::executor)?;
             }
             let journal_entry = entry.journal_entry.as_ref().ok_or_else(|| {
                 RunFailure::new(
@@ -678,6 +709,28 @@ where
                     ),
                 )
             })?;
+            let applied_entry = AppliedEntryReceipt {
+                order: entry.order,
+                file_name: entry.file_name.clone(),
+                sha256: entry.sha256.clone(),
+                byte_size: entry.byte_size,
+            };
+            receipt.attempted_entries.push(applied_entry.clone());
+            for statement in statements {
+                if statement.len() as u64 > self.config.max_statement_bytes {
+                    return Err(RunFailure::new(
+                        "migration_statement_size_limit",
+                        format!(
+                            "statement in {} exceeds the configured bound",
+                            entry.file_name
+                        ),
+                    ));
+                }
+                self.executor
+                    .execute_statement(statement)
+                    .await
+                    .map_err(RunFailure::executor)?;
+            }
             self.executor
                 .record_history(&AppliedMigration {
                     hash: Some(entry.sha256.clone()),
@@ -686,12 +739,7 @@ where
                 })
                 .await
                 .map_err(RunFailure::executor)?;
-            applied_receipts.push(AppliedEntryReceipt {
-                order: entry.order,
-                file_name: entry.file_name.clone(),
-                sha256: entry.sha256.clone(),
-                byte_size: entry.byte_size,
-            });
+            receipt.applied_entries.push(applied_entry);
         }
 
         let postcondition_history = self
@@ -706,7 +754,6 @@ where
 
         self.executor.commit().await.map_err(RunFailure::executor)?;
         receipt.transaction.committed = true;
-        receipt.applied_entries = applied_receipts;
         receipt.status = MigrationRunStatus::Applied;
         Ok(())
     }
@@ -929,6 +976,9 @@ pub enum SqlxMigrationExecutorError {
 pub struct SqlxMigrationExecutorConfig {
     pub history_schema: String,
     pub history_table: String,
+    /// Schemas for unqualified migration SQL. An empty path uses
+    /// `history_schema`; the ambient `$user`/`public` path is never used and
+    /// `pg_catalog` is appended explicitly.
     pub search_path: Vec<String>,
     pub lock_poll_interval: Duration,
 }
@@ -951,7 +1001,6 @@ pub struct SqlxMigrationExecutor {
     lock_held: bool,
     held_lock_name: Option<String>,
     transaction_open: bool,
-    resolved_history_schema: Option<String>,
 }
 
 impl SqlxMigrationExecutor {
@@ -975,7 +1024,6 @@ impl SqlxMigrationExecutor {
             lock_held: false,
             held_lock_name: None,
             transaction_open: false,
-            resolved_history_schema: None,
         })
     }
 
@@ -996,9 +1044,7 @@ impl SqlxMigrationExecutor {
     }
 
     fn history_schema(&self) -> &str {
-        self.resolved_history_schema
-            .as_deref()
-            .unwrap_or(&self.config.history_schema)
+        &self.config.history_schema
     }
 
     fn qualified_history_table(&self) -> String {
@@ -1007,31 +1053,6 @@ impl SqlxMigrationExecutor {
             quote_identifier(self.history_schema()),
             quote_identifier(&self.config.history_table)
         )
-    }
-
-    async fn discover_history_schema(
-        &mut self,
-    ) -> Result<Option<String>, SqlxMigrationExecutorError> {
-        let table = self.config.history_table.clone();
-        let preferred = self.config.history_schema.clone();
-        let row = sqlx::query(
-            "SELECT n.nspname AS schema_name\
-             FROM pg_class c\
-             JOIN pg_namespace n ON n.oid = c.relnamespace\
-             WHERE c.relname = $1 AND c.relkind IN ('r', 'p')\
-               AND n.nspname NOT IN ('pg_catalog', 'information_schema')\
-             ORDER BY CASE WHEN n.nspname = $2 THEN 0 WHEN n.nspname = 'public' THEN 1 ELSE 2 END, n.nspname\
-             LIMIT 1",
-        )
-        .bind(table)
-        .bind(preferred)
-        .fetch_optional(&mut **self.connection_mut()?)
-        .await?;
-        let schema = row
-            .map(|row| row.try_get::<String, _>("schema_name"))
-            .transpose()?;
-        self.resolved_history_schema = schema.clone();
-        Ok(schema)
     }
 
     async fn history_columns(&mut self) -> Result<BTreeSet<String>, SqlxMigrationExecutorError> {
@@ -1054,7 +1075,37 @@ impl SqlxMigrationExecutor {
     }
 
     async fn history_exists(&mut self) -> Result<bool, SqlxMigrationExecutorError> {
-        Ok(self.discover_history_schema().await?.is_some())
+        let schema = self.config.history_schema.clone();
+        let table = self.config.history_table.clone();
+        sqlx::query_scalar(
+            "SELECT EXISTS (\
+               SELECT 1\
+               FROM pg_class c\
+               JOIN pg_namespace n ON n.oid = c.relnamespace\
+               WHERE n.nspname = $1\
+                 AND c.relname = $2\
+                 AND c.relkind IN ('r', 'p')\
+             )",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_one(&mut **self.connection_mut()?)
+        .await
+        .map_err(Into::into)
+    }
+
+    fn effective_search_path(&self) -> Vec<String> {
+        let configured = if self.config.search_path.is_empty() {
+            vec![self.config.history_schema.clone()]
+        } else {
+            self.config.search_path.clone()
+        };
+        let mut schemas = configured
+            .into_iter()
+            .filter(|schema| schema != "pg_catalog")
+            .collect::<Vec<_>>();
+        schemas.push("pg_catalog".to_owned());
+        schemas
     }
 }
 
@@ -1068,18 +1119,6 @@ impl MigrationExecutor for SqlxMigrationExecutor {
         timeout: Duration,
     ) -> Result<LockAcquisition, Self::Error> {
         let mut connection = self.pool.acquire().await?;
-        if !self.config.search_path.is_empty() {
-            let search_path = self
-                .config
-                .search_path
-                .iter()
-                .map(|schema| quote_identifier(schema))
-                .collect::<Vec<_>>()
-                .join(", ");
-            sqlx::query(&format!("SET search_path TO {search_path}"))
-                .execute(&mut *connection)
-                .await?;
-        }
         let deadline = Instant::now() + timeout;
         loop {
             let acquired = sqlx::query_scalar::<_, bool>(
@@ -1110,6 +1149,15 @@ impl MigrationExecutor for SqlxMigrationExecutor {
             .execute(&mut **self.connection_mut()?)
             .await?;
         self.transaction_open = true;
+        let search_path = self
+            .effective_search_path()
+            .iter()
+            .map(|schema| quote_identifier(schema))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sqlx::query(&format!("SET LOCAL search_path TO {search_path}"))
+            .execute(&mut **self.connection_mut()?)
+            .await?;
         Ok(())
     }
 
@@ -1197,7 +1245,6 @@ impl MigrationExecutor for SqlxMigrationExecutor {
         ))
         .execute(&mut **self.connection_mut()?)
         .await?;
-        self.resolved_history_schema = Some(self.config.history_schema.clone());
         Ok(())
     }
 
