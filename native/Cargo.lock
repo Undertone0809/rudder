@@ -1596,9 +1596,11 @@ name = "rudder-db-core"
 version = "0.7.20"
 dependencies = [
  "base64",
+ "rudder-issue-core",
  "rudder-read-surfaces-core",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 2.0.20",
  "time",
@@ -2163,6 +2165,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -2246,6 +2249,7 @@ dependencies = [
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.20",
+ "time",
  "tracing",
  "whoami",
 ]
@@ -2283,6 +2287,7 @@ dependencies = [
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.20",
+ "time",
  "tracing",
  "whoami",
 ]
@@ -2307,6 +2312,7 @@ dependencies = [
  "serde_urlencoded",
  "sqlx-core",
  "thiserror 2.0.20",
+ "time",
  "tracing",
  "url",
 ]

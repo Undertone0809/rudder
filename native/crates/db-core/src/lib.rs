@@ -1,4 +1,4 @@
-//! Read-only PostgreSQL adapter for organization-scoped Rudder read surfaces.
+//! PostgreSQL adapters for organization-scoped Rudder data surfaces.
 //!
 //! The repository owns SQL construction and database-to-projection mapping so
 //! Actix handlers do not have to duplicate organization fencing, pagination, or
@@ -21,6 +21,8 @@ use sqlx::{
 };
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+pub mod issue_mutation;
 
 const PAGE_LOOKAHEAD: usize = 1;
 

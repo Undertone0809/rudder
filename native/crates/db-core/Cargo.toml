@@ -6,10 +6,12 @@ publish.workspace = true
 
 [dependencies]
 base64 = "0.22"
+rudder-issue-core = { path = "../issue-core" }
 rudder-read-surfaces-core = { path = "../read-surfaces-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls", "json", "macros"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls", "json", "macros", "time"] }
 thiserror = "2.0"
 time = { version = "0.3", features = ["parsing"] }
 
