@@ -42,12 +42,15 @@ fn machine(limits: OutputLimits) -> RunMachine {
 }
 
 fn launch() -> ProcessLaunch {
+    let runtime_root = std::env::temp_dir().join("rudder-runtime");
+    let cwd = std::env::temp_dir();
+    let executable = std::env::current_exe().expect("test executable path");
     ProcessLaunch::new(
-        "/bin/sh",
+        executable.to_string_lossy(),
         vec!["-c".to_owned(), "printf ok".to_owned()],
-        "/tmp",
+        cwd.to_string_lossy(),
         BTreeMap::new(),
-        "/tmp/rudder-runtime",
+        runtime_root.to_string_lossy(),
         "host-owner-1",
     )
 }
