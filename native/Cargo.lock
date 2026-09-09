@@ -1320,14 +1320,14 @@ dependencies = [
 
 [[package]]
 name = "rudder-agent-contract-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "rudder-archive-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "base64",
  "crc32fast",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "crc32fast",
  "rudder-archive-core",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-native-protocol"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-plugin-archive-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "base64",
  "serde",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-host"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "portable-pty",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-process-tree-sampler"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "serde_json",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-run-evidence-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -1404,7 +1404,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-payload-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "flate2",
  "sha2",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-server-foundation"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "rudder-archive-core",
@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-server-foundation-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "actix-web",
  "base64",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "rudder-update-helper-core",
@@ -1461,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-update-helper-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "serde",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-workspace-manifest-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "notify",
  "serde",
