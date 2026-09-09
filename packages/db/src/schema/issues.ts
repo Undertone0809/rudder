@@ -9,6 +9,7 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  bigint,
   index,
   integer,
   jsonb,
@@ -65,6 +66,13 @@ export const issues = pgTable(
       .references((): AnyPgColumn => executionWorkspaces.id, { onDelete: "set null" }),
     executionWorkspacePreference: text("execution_workspace_preference"),
     executionWorkspaceSettings: jsonb("execution_workspace_settings").$type<Record<string, unknown>>(),
+    /** Monotonic issue-core revision used by mutation preconditions. */
+    revision: bigint("revision", { mode: "number" }).notNull().default(0),
+    /** Monotonic fencing token for checkout ownership. */
+    fencingToken: bigint("fencing_token", { mode: "number" }).notNull().default(0),
+    /** Legacy checkoutRunId remains the durable lease run identity. */
+    checkoutLeaseOwner: text("checkout_lease_owner"),
+    checkoutLeaseExpiresAt: timestamp("checkout_lease_expires_at", { withTimezone: true }),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
@@ -73,6 +81,12 @@ export const issues = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgIdUq: uniqueIndex("issues_org_id_id_uq").on(table.orgId, table.id),
+    checkoutLeaseIdx: index("issues_org_checkout_lease_idx").on(
+      table.orgId,
+      table.checkoutLeaseExpiresAt,
+      table.checkoutRunId,
+    ),
     companyStatusIdx: index("issues_company_status_idx").on(table.orgId, table.status),
     companyStatusBoardOrderIdx: index("issues_company_status_board_order_idx").on(
       table.orgId,

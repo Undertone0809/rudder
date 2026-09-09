@@ -21,6 +21,7 @@ export const activityLog = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgIdUq: uniqueIndex("activity_log_org_id_id_uq").on(table.orgId, table.id),
     companyCreatedIdx: index("activity_log_company_created_idx").on(table.orgId, table.createdAt),
     runIdIdx: index("activity_log_run_id_idx").on(table.runId),
     entityIdx: index("activity_log_entity_type_id_idx").on(table.entityType, table.entityId),
