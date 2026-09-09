@@ -5,6 +5,8 @@
 //! validates the authority-core envelope before invoking a caller-owned
 //! dispatcher. It does not own credentials, database writes, or cutover.
 
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
 use rudder_authority_core::{
     AUTHORITY_PROTOCOL_VERSION, ActorIdentity, AuthorityError, ComponentAuthority,
     LegacyBridgeRequestEnvelope, NonceReplayGuard, body_sha256,
