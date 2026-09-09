@@ -1,7 +1,8 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rudder_db_core::{
     AgentDbRow, AgentListOptions, EntityKind, GoalDbRow, OrganizationDbRow, OrganizationScope,
-    PageRequest, ProjectDbRow, ProjectionError, QueryBind, get_query_plan, list_query_plan,
+    PageRequest, ProjectDbRow, ProjectionError, QueryBind, ReadAdapterError, ReadError,
+    get_query_plan, list_query_plan,
 };
 use rudder_read_surfaces_core::{OrganizationWorkspaceProjection, QueryPlan};
 use serde_json::json;
@@ -85,6 +86,36 @@ fn cursor_queries_bind_cursor_values_in_stable_key_order() {
         ]
     );
     assert!(plan.sql.contains("LIMIT $4::int4"));
+}
+
+#[test]
+fn cursor_queries_reject_invalid_timestamp_or_uuid_before_sql_execution() {
+    let scope = OrganizationScope::single("org-a").unwrap();
+    let invalid_timestamp = URL_SAFE_NO_PAD
+        .encode(br#"{"createdAt":"not-a-timestamp","id":"00000000-0000-0000-0000-000000000001"}"#);
+    let timestamp_page = PageRequest::with_cursor(10, invalid_timestamp).unwrap();
+    assert!(matches!(
+        list_query_plan(
+            EntityKind::Goal,
+            &scope,
+            &timestamp_page,
+            AgentListOptions::default()
+        ),
+        Err(ReadAdapterError::Contract(ReadError::InvalidCursor))
+    ));
+
+    let invalid_uuid =
+        URL_SAFE_NO_PAD.encode(br#"{"createdAt":"2026-01-02T03:04:05.000000Z","id":"not-a-uuid"}"#);
+    let uuid_page = PageRequest::with_cursor(10, invalid_uuid).unwrap();
+    assert!(matches!(
+        list_query_plan(
+            EntityKind::Goal,
+            &scope,
+            &uuid_page,
+            AgentListOptions::default()
+        ),
+        Err(ReadAdapterError::Contract(ReadError::InvalidCursor))
+    ));
 }
 
 #[test]
@@ -251,6 +282,23 @@ fn default_agent_list_fences_terminated_and_hidden_rows_but_get_does_not() {
         list.sql
             .contains("COALESCE(a.metadata->>'hidden', 'false') <> 'true'")
     );
+    assert!(
+        list.sql
+            .contains("COALESCE(a.metadata->>'systemManaged', '') <> 'rudder_copilot'")
+    );
+
+    let include_hidden = list_query_plan(
+        EntityKind::Agent,
+        &scope,
+        &PageRequest::new(10).unwrap(),
+        AgentListOptions {
+            include_hidden: true,
+            ..AgentListOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(!include_hidden.sql.contains("metadata->>'hidden'"));
+    assert!(!include_hidden.sql.contains("metadata->>'systemManaged'"));
 
     let get = get_query_plan(EntityKind::Agent, &scope, "agent-id").unwrap();
     assert!(!get.sql.contains("terminated"));

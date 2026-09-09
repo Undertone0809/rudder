@@ -20,6 +20,7 @@ use sqlx::{
     query::QueryAs,
 };
 use thiserror::Error;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const PAGE_LOOKAHEAD: usize = 1;
 
@@ -382,10 +383,26 @@ fn decode_cursor(page: &PageRequest) -> Result<Option<CursorWire>, ReadAdapterEr
         .decode(encoded.as_bytes())
         .map_err(|_| invalid_cursor())?;
     let cursor: CursorWire = serde_json::from_slice(&bytes).map_err(|_| invalid_cursor())?;
-    if cursor.created_at.is_empty() || cursor.id.is_empty() {
+    if cursor.created_at.is_empty()
+        || cursor.id.is_empty()
+        || OffsetDateTime::parse(&cursor.created_at, &Rfc3339).is_err()
+        || !is_canonical_uuid(&cursor.id)
+    {
         return Err(invalid_cursor());
     }
     Ok(Some(cursor))
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 
 fn encode_cursor(created_at: &str, id: &str) -> String {
@@ -581,6 +598,8 @@ pub fn list_query_plan(
         }
         if !agent_options.include_hidden {
             predicates.push("COALESCE(a.metadata->>'hidden', 'false') <> 'true'".into());
+            predicates
+                .push("COALESCE(a.metadata->>'systemManaged', '') <> 'rudder_copilot'".into());
         }
     }
     let limit_bind = binds.len() + 1;

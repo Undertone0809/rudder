@@ -711,11 +711,17 @@ fn project_agent(row: &AgentRow) -> AgentProjection {
 }
 
 fn is_hidden(metadata: Option<&Value>) -> bool {
-    metadata
-        .and_then(Value::as_object)
-        .and_then(|object| object.get("hidden"))
+    let Some(object) = metadata.and_then(Value::as_object) else {
+        return false;
+    };
+    object
+        .get("hidden")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+        || object
+            .get("systemManaged")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "rudder_copilot")
 }
 
 fn slug(value: &str) -> String {
@@ -841,6 +847,15 @@ mod tests {
                 AgentRow {
                     metadata: Some(json!({"hidden": true})),
                     ..agent("agent-hidden", "org-a", "2026-01-04T00:00:00Z", "Hidden")
+                },
+                AgentRow {
+                    metadata: Some(json!({"systemManaged": "rudder_copilot"})),
+                    ..agent(
+                        "agent-copilot",
+                        "org-a",
+                        "2026-01-05T00:00:00Z",
+                        "Rudder Copilot",
+                    )
                 },
                 agent(
                     "agent-foreign",
