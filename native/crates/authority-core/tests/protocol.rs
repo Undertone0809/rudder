@@ -316,3 +316,72 @@ fn stale_handoff_cannot_replace_current_authority() {
     assert!(matches!(error, AuthorityError::StaleEpoch { .. }));
     assert_eq!(registry.current_authority("issues"), Some(&first));
 }
+
+#[test]
+fn bridge_replay_guard_evicts_expired_entries_and_rejects_active_overflow() {
+    let (_, authority) = legacy_registry();
+    let first = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-replay-1",
+        "nonce-replay-1",
+        1_010,
+    )
+    .expect("first bridge envelope");
+    let second = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-replay-2",
+        "nonce-replay-2",
+        1_020,
+    )
+    .expect("second bridge envelope");
+    let mut replay = NonceReplayGuard::with_capacity(1).expect("capacity");
+
+    first
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-replay-1",
+            1_000,
+            &mut replay,
+        )
+        .expect("first request");
+    let error = second
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-replay-2",
+            1_000,
+            &mut replay,
+        )
+        .expect_err("active replay entries must remain bounded");
+    assert!(matches!(error, AuthorityError::ReplayCapacityExceeded));
+    assert_eq!(replay.len(), 1);
+
+    second
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-replay-2",
+            1_010,
+            &mut replay,
+        )
+        .expect("expired entries are evicted before a new claim");
+    assert_eq!(replay.len(), 1);
+}
