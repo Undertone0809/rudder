@@ -1445,7 +1445,7 @@ export function IssuesList({
         </>
       )}
 
-      {!isLoading && !searchActive && viewState.viewMode !== "board" ? (
+      {!isLoading && !searchActive && viewState.viewMode !== "board" && hasMoreIssues && onLoadMoreIssues ? (
         <div
           ref={listLoadMoreRef}
           data-testid="issues-list-load-more-sentinel"
@@ -1458,7 +1458,6 @@ export function IssuesList({
         isLoadingMoreIssues
         || paginationError
         || (hasMoreIssues && !infiniteScrollSupported)
-        || (!hasMoreIssues && activeHasData)
       ) ? (
         <div className="flex justify-center border-t border-[color:var(--border-soft)] py-3">
           {isLoadingMoreIssues ? (
@@ -1501,10 +1500,6 @@ export function IssuesList({
               {isLoadingMoreIssues ? <Loader2 className="h-4 w-4 animate-spin sm:mr-1" /> : null}
               <span>{isLoadingMoreIssues ? "Loading..." : "Load more"}</span>
             </Button>
-          ) : !hasMoreIssues && activeHasData ? (
-            <span data-testid="issues-end-state" className="text-xs text-muted-foreground">
-              All issues loaded
-            </span>
           ) : null}
         </div>
       ) : null}
