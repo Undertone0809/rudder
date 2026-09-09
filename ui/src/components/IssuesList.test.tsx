@@ -383,7 +383,7 @@ describe("IssuesList", () => {
     }
   });
 
-  it("shows a terminal state after the final page", () => {
+  it("removes the terminal state and pagination footer after the final page", () => {
     window.localStorage.setItem("test:issues:org-1", JSON.stringify({ viewMode: "list" }));
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -406,7 +406,9 @@ describe("IssuesList", () => {
       );
     });
 
-    expect(container.querySelector('[data-testid="issues-end-state"]')?.textContent).toBe("All issues loaded");
+    expect(container.querySelector('[data-testid="issues-end-state"]')).toBeNull();
+    expect(container.querySelector('[data-testid="issues-list-load-more-sentinel"]')).toBeNull();
+    expect(container.querySelector(".flex.justify-center.border-t")).toBeNull();
   });
 
   it("keeps a button fallback when IntersectionObserver is unavailable", () => {

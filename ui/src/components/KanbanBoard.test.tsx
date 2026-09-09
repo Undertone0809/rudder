@@ -225,7 +225,7 @@ describe("KanbanBoard", () => {
     );
 
     expect(container.querySelector('[data-testid="kanban-load-more-loading-todo"]')).toBeTruthy();
-    expect(container.querySelector('[data-testid="kanban-end-state-done"]')?.textContent).toBe("All issues loaded");
+    expect(container.querySelector('[data-testid="kanban-end-state-done"]')).toBeNull();
     expect(container.querySelector('[data-testid="kanban-load-more-loading-done"]')).toBeNull();
   });
 
@@ -250,7 +250,7 @@ describe("KanbanBoard", () => {
     expect(onLoadMoreIssues).toHaveBeenCalledWith("board");
   });
 
-  it("shows a terminal state after the final board page", () => {
+  it("removes the terminal state and footer after the final board page", () => {
     const container = render(
       <KanbanBoard
         issues={[issue]}
@@ -259,7 +259,8 @@ describe("KanbanBoard", () => {
       />,
     );
 
-    expect(container.querySelector('[data-testid="kanban-end-state"]')?.textContent).toBe("All issues loaded");
+    expect(container.querySelector('[data-testid="kanban-end-state"]')).toBeNull();
+    expect(container.querySelector(".flex.justify-center.border-t")).toBeNull();
   });
 
   it("projects the dropped card order before the server refetch settles", () => {

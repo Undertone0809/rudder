@@ -185,11 +185,10 @@ test.describe("Issue auto refresh", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`, { waitUntil: "domcontentloaded" });
     await page.getByTitle("List view").click();
 
-    const listSentinel = page.getByTestId("issues-list-load-more-sentinel");
-    await expect(listSentinel).toBeAttached({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
-    await listSentinel.scrollIntoViewIfNeeded();
-    await expect(page.getByTestId("issues-end-state")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Paginated refresh issue 200", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("issues-list-load-more-sentinel")).toHaveCount(0);
+    await expect(page.getByTestId("issues-end-state")).toHaveCount(0);
 
     const anchor = page.getByText("Paginated refresh issue 000", { exact: true });
     await anchor.scrollIntoViewIfNeeded();
@@ -248,7 +247,7 @@ test.describe("Issue auto refresh", () => {
     });
     await expect(doneLane.locator('[data-testid^="kanban-card-"]')).toHaveCount(201, { timeout: 20_000 });
     await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
-    await expect(doneLane.getByTestId("kanban-end-state-done")).toBeVisible({ timeout: 20_000 });
+    await expect(doneLane.getByTestId("kanban-end-state-done")).toHaveCount(0);
   });
 
   test("discovers a filtered lane when the first page has no matching issues", async ({ page }) => {
