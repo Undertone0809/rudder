@@ -95,6 +95,8 @@ maintainer records rather than the public changelog.
 After both the stable and public changelog deploy succeed,
 `scripts/prepare-next-release.mjs` idempotently proposes the next patch base on
 `codex/release-vX.Y.Z` with one `[skip release]` maintenance commit and a PR.
+That handoff also records the next version's migration compatibility declaration
+from the published stable tag, so the next automatic Canary is release-ready.
 Release explicitly dispatches Test for that exact SHA because `GITHUB_TOKEN`
 PR creation does not trigger normal PR checks. Merge through protected `main`
 after required checks pass, then verify the merged commit's CI.

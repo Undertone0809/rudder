@@ -72,6 +72,12 @@ describe("unified delivery workflows", () => {
   });
 
   it("runs source, docs, platform, and fast packaged Desktop gates in Test", () => {
+    const plan = workflowJob(testWorkflow, "plan");
+    expect(plan).toContain("Verify canary migration compatibility declaration");
+    expect(plan).toContain("scripts/release-compatibility-matrix.mjs");
+    expect(plan).toContain("--channel canary");
+    expect(plan.indexOf("Verify canary migration compatibility declaration"))
+      .toBeLessThan(plan.indexOf("Upload impact plan evidence"));
     expect(testWorkflow).toContain("Architecture ratchet");
     expect(testWorkflow).toContain("pnpm test:run --maxWorkers=2");
     expect(testWorkflow).toContain("Ensure Electron runtime dependency");
@@ -140,6 +146,8 @@ describe("unified delivery workflows", () => {
       expect(publish).toContain("--source-tree-sha");
       expect(publish).toContain("--workflow-source-sha");
       expect(publish).toContain("--phase binaries");
+      expect(publish).toContain("timeout-minutes: 45");
+      expect(publish).toContain('wait_for_npm_package_versions "$(cat "$package_map")" 180 5');
       expect(publish).not.toContain("--phase checksum");
       expect(publish).not.toContain("gh release upload");
     }

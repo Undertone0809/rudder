@@ -10,6 +10,7 @@ import {
   decideVersionHandoff,
   nextPatchVersion,
 } from "./prepare-next-release.mjs";
+import { buildMigrationManifest } from "./release-compatibility-matrix.mjs";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const tempRoots = [];
@@ -41,6 +42,69 @@ function exec(command, args, cwd) {
   return execFileSync(command, args, { cwd, encoding: "utf8" });
 }
 
+function compatibilityFingerprint() {
+  return buildMigrationManifest({
+    label: "test fixture",
+    journalRaw: JSON.stringify({
+      version: "7",
+      dialect: "postgresql",
+      entries: [{
+        idx: 0,
+        version: "7",
+        when: 1_700_000_000_000,
+        tag: "0000_base",
+        breakpoints: true,
+      }],
+    }),
+    listSqlFiles: () => ["0000_base.sql"],
+    readSqlFile: () => "SELECT 1;\n",
+  }).fingerprint;
+}
+
+function writeCompatibilityFixture(repo) {
+  const migrations = join(repo, "packages", "db", "src", "migrations");
+  mkdirSync(join(migrations, "meta"), { recursive: true });
+  const journalRaw = JSON.stringify({
+    version: "7",
+    dialect: "postgresql",
+    entries: [{
+      idx: 0,
+      version: "7",
+      when: 1_700_000_000_000,
+      tag: "0000_base",
+      breakpoints: true,
+    }],
+  });
+  const sql = "SELECT 1;\n";
+  const fingerprint = compatibilityFingerprint();
+
+  writeFileSync(join(migrations, "meta", "_journal.json"), `${journalRaw}\n`);
+  writeFileSync(join(migrations, "0000_base.sql"), sql);
+
+  const matrixPath = join(repo, "scripts", "release-compatibility-matrix.mjs");
+  const source = readFileSync(matrixPath, "utf8");
+  const declaration = [
+    '  "0.5.1": {',
+    `    candidateFingerprint: "${fingerprint}",`,
+    "    fixtures: [",
+    "      {",
+    '        version: "0.5.0",',
+    '        ref: "v0.5.0",',
+    `        fingerprint: "${fingerprint}",`,
+    "      },",
+    "    ],",
+    "  },",
+    "",
+  ].join("\n");
+  writeFileSync(
+    matrixPath,
+    source.replace(
+      "export const migrationCompatibilityMatrix = {\n",
+      `export const migrationCompatibilityMatrix = {\n${declaration}`,
+    ),
+  );
+}
+
 function createReleaseRepo() {
   const root = mkdtempSync(join(tmpdir(), "rudder-next-release-test-"));
   tempRoots.push(root);
@@ -50,6 +114,15 @@ function createReleaseRepo() {
   mkdirSync(join(repo, "cli"), { recursive: true });
   cpSync(join(scriptsDir, "prepare-next-release.mjs"), join(repo, "scripts", "prepare-next-release.mjs"));
   cpSync(join(scriptsDir, "release-package-map.mjs"), join(repo, "scripts", "release-package-map.mjs"));
+  cpSync(
+    join(scriptsDir, "release-compatibility-matrix.mjs"),
+    join(repo, "scripts", "release-compatibility-matrix.mjs"),
+  );
+  cpSync(
+    join(scriptsDir, "update-release-compatibility-matrix.mjs"),
+    join(repo, "scripts", "update-release-compatibility-matrix.mjs"),
+  );
+  writeCompatibilityFixture(repo);
   writeFileSync(join(repo, "cli", "package.json"), `${JSON.stringify({
     name: "@rudderhq/cli",
     version: "0.5.1",
@@ -62,6 +135,8 @@ function createReleaseRepo() {
   exec("git", ["config", "user.email", "release-test@example.com"], repo);
   exec("git", ["add", "."], repo);
   exec("git", ["commit", "-m", "fixture"], repo);
+  exec("git", ["tag", "v0.5.0"], repo);
+  exec("git", ["tag", "v0.5.1"], repo);
   exec("git", ["remote", "add", "origin", remote], repo);
   exec("git", ["push", "-u", "origin", "main"], repo);
   return repo;
@@ -208,6 +283,15 @@ describe("next release version handoff", () => {
       JSON.parse(exec("git", ["show", "origin/codex/release-v0.5.2:cli/package.json"], repo))
         .version,
     ).toBe("0.5.2");
+    const handoffMatrix = exec(
+      "git",
+      ["show", "origin/codex/release-v0.5.2:scripts/release-compatibility-matrix.mjs"],
+      repo,
+    );
+    expect(handoffMatrix).toContain('"0.5.2"');
+    expect(handoffMatrix).toContain('version: "0.5.1"');
+    expect(handoffMatrix).toContain(`candidateFingerprint: "${compatibilityFingerprint()}"`);
+    expect(handoffMatrix).toContain(`fingerprint: "${compatibilityFingerprint()}"`);
     expect(exec("git", ["show", "-s", "--format=%s", remoteHead], repo).trim()).toBe(
       "chore(release): start v0.5.2 [skip release]",
     );

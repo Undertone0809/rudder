@@ -295,7 +295,8 @@ The release agent merges reviewed preparation PRs under the existing release
 authority, then requires exact-source `main` Test before publishing. The
 generated `[skip release]` version commit is proposed on
 `codex/release-vX.Y.Z`; retries reuse its PR without force-pushing. The workflow
-reports the PR as pending integration and dispatches Test for its immutable SHA.
+reports the PR as pending integration, includes the next version's generated
+migration compatibility declaration, and dispatches Test for its immutable SHA.
 Complete the handoff by merging the PR normally and verifying merged `main` CI.
 
 ## 7.1. Configure progressive qualification and candidate promotion
@@ -345,6 +346,7 @@ These files should always trigger code owner review:
 - `scripts/release.sh`
 - `scripts/release-lib.sh`
 - `scripts/release-package-map.mjs`
+- `scripts/update-release-compatibility-matrix.mjs`
 - `scripts/create-github-release.sh`
 - `scripts/cleanup-obsolete-canaries.mjs`
 - `scripts/collect-desktop-release-assets.mjs`
