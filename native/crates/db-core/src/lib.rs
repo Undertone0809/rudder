@@ -24,6 +24,14 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 pub mod issue_mutation;
 
+#[cfg(test)]
+#[path = "issue_mutation_contract_tests.rs"]
+mod issue_mutation_contract_tests;
+
+#[cfg(test)]
+#[path = "issue_mutation_postgres_tests.rs"]
+mod issue_mutation_postgres_tests;
+
 const PAGE_LOOKAHEAD: usize = 1;
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]

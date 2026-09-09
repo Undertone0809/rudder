@@ -1,5 +1,3 @@
-#![cfg(feature = "test-support")]
-
 //! Explicitly opt-in disposable PostgreSQL coverage for the mutation executor.
 //!
 //! This test never reads the repository's default database setting. It requires a
@@ -11,7 +9,7 @@
 //! foreign keys; only the durable mutation ledger uses the composite organization
 //! fences added by migration 0163.
 
-use rudder_db_core::issue_mutation::{
+use crate::issue_mutation::{
     ApprovalResubmissionOptions, CHECKOUT_COMMAND_TYPE, CheckoutOptions, HostApprovalCapability,
     IssueMutationError, IssueMutationRepository, TrustedApprovalAuthorization,
     TrustedOrganizationId, command_fingerprint,

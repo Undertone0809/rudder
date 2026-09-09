@@ -1,6 +1,4 @@
-#![cfg(feature = "test-support")]
-
-use rudder_db_core::issue_mutation::{
+use crate::issue_mutation::{
     ApprovalQueryPlans, ApprovalResubmissionOptions, CheckoutOptions, HostApprovalCapability,
     IssueMutationError, MutationBind, MutationQueryPlan, ReviewQueryPlans,
     TrustedApprovalAuthorization, TrustedOrganizationId, approval_decision_query_plans,
@@ -110,6 +108,12 @@ fn checkout_query_plans_use_the_trusted_host_scope_and_fence_every_write() {
     assert!(plans.validate_run.sql.contains("r.agent_id = $3::uuid"));
     assert!(plans.validate_run.sql.contains("JOIN agents AS a"));
     assert!(plans.validate_run.sql.contains("a.org_id = r.org_id"));
+    assert!(
+        plans
+            .validate_run
+            .sql
+            .contains("r.status IN ('queued', 'running')")
+    );
     assert!(plans.validate_run.sql.contains("FOR SHARE"));
     assert!(plans.load_issue.sql.contains("FOR UPDATE"));
     assert!(plans.update_issue.sql.contains("i.revision = $3::int8"));
@@ -138,6 +142,8 @@ fn checkout_query_plans_use_the_trusted_host_scope_and_fence_every_write() {
             .sql
             .contains("i.checkout_lease_expires_at IS NULL")
     );
+    assert!(plans.update_issue.sql.contains("completed_at = NULL"));
+    assert!(plans.update_issue.sql.contains("cancelled_at = NULL"));
     assert!(plans.update_issue.sql.contains("fencing_token = $5::int8"));
     assert!(matches!(
         plans.update_issue.binds.get(5),
@@ -324,6 +330,19 @@ fn approval_query_plans_fence_revision_and_persist_decision_idempotency() {
     assert!(plans.load_approval.sql.contains("a.org_id = $1::uuid"));
     assert!(plans.load_approval.sql.contains("a.id = $2::uuid"));
     assert!(plans.load_approval.sql.contains("FOR UPDATE"));
+    assert!(
+        plans
+            .target_associations
+            .sql
+            .contains("LEFT JOIN issues AS i")
+    );
+    assert!(
+        plans
+            .target_associations
+            .sql
+            .contains("i.id = ia.issue_id AND i.org_id = ia.org_id")
+    );
+    assert!(plans.target_associations.sql.contains("FOR UPDATE OF ia"));
     assert!(plans.update_approval.sql.contains("a.revision = $3::int8"));
     assert!(plans.update_approval.sql.contains("a.status = 'pending'"));
     assert!(plans.update_approval.sql.contains("status = $4::text"));
@@ -480,7 +499,7 @@ fn approval_authorization_requires_an_opaque_host_capability_and_user_actor() {
 
 #[test]
 fn receipts_carry_both_audit_and_ledger_evidence() {
-    let receipt = rudder_db_core::issue_mutation::MutationReceipt {
+    let receipt = crate::issue_mutation::MutationReceipt {
         command_type: "issue.checkout".into(),
         idempotency_key: IdempotencyKey::new("key"),
         ledger_id: "ledger".into(),
