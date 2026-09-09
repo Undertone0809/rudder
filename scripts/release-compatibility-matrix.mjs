@@ -13,7 +13,7 @@ const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
   "0.7.20": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.19",
@@ -38,7 +38,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.19": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.18",
@@ -58,7 +58,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.18": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.16",
@@ -78,7 +78,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.16": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.15",
@@ -133,7 +133,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.15": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.14",
@@ -183,7 +183,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.14": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.13",
@@ -228,7 +228,7 @@ export const migrationCompatibilityMatrix = {
     ],
   },
   "0.7.13": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
       {
         version: "0.7.12",

@@ -42,10 +42,10 @@ describe("release migration compatibility matrix", () => {
     });
 
     expect(result.candidateFingerprint).toBe(
-      "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     );
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.19",
       "0.7.18",
@@ -61,10 +61,10 @@ describe("release migration compatibility matrix", () => {
     });
 
     expect(result.candidateFingerprint).toBe(
-      "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     );
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.18",
       "0.7.16",
@@ -79,10 +79,10 @@ describe("release migration compatibility matrix", () => {
     });
 
     expect(result.candidateFingerprint).toBe(
-      "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     );
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.16",
       "0.7.15",
@@ -97,10 +97,10 @@ describe("release migration compatibility matrix", () => {
     });
 
     expect(result.candidateFingerprint).toBe(
-      "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     );
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.15",
       "0.7.14",
@@ -121,8 +121,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.14",
       "0.7.13",
@@ -142,8 +142,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.13",
       "0.7.12",
@@ -162,8 +162,8 @@ describe("release migration compatibility matrix", () => {
       channel: "stable",
     });
 
-    expect(result.candidateMigrations).toBe(163);
-    expect(result.candidateSqlFiles).toBe(165);
+    expect(result.candidateMigrations).toBe(165);
+    expect(result.candidateSqlFiles).toBe(167);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.12",
       "0.7.11",
