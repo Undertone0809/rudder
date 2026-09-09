@@ -6,6 +6,8 @@ use actix_web::{
     middleware::{self, Next},
     web,
 };
+pub use rudder_db_core::OrganizationScope;
+use rudder_db_core::{PageRequest, ReadAdapterError, ReadRepository};
 use serde::Serialize;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
@@ -27,6 +29,7 @@ use tracing::{info, warn};
 
 mod authority;
 mod identity;
+mod read_surfaces;
 mod workspace_backup_files;
 
 pub use authority::{
@@ -35,6 +38,12 @@ pub use authority::{
 pub use identity::{BuildIdentity, ServerIdentity};
 
 use authority::{AuthorityAdapterError, AuthorityRegistry, parse_route_selector};
+
+use read_surfaces::{
+    AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, GOAL_GET_ROUTE, GOALS_LIST_ROUTE, ORGANIZATIONS_GET_ROUTE,
+    ORGANIZATIONS_LIST_ROUTE, PROJECT_GET_ROUTE, PROJECTS_LIST_ROUTE, ReadSurfaceAdapter,
+    ReadSurfaceQuery, ReadSurfaceQueryError,
+};
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -73,6 +82,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_files_list",
     "workspace_backup_file_read",
     "workspace_backup_download",
+    "organization_read_surfaces",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -126,6 +136,9 @@ pub struct ServerConfig {
     pub shutdown_grace: Duration,
     pub database_url: Option<String>,
     pub database_required: bool,
+    /// Organization scope injected by a trusted host/runtime adapter. It is
+    /// never read from request headers or query parameters.
+    pub trusted_organization_scope: Option<OrganizationScope>,
     pub workers: usize,
 }
 
@@ -143,6 +156,7 @@ impl Default for ServerConfig {
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             database_url: None,
             database_required: false,
+            trusted_organization_scope: None,
             workers: DEFAULT_WORKERS,
         }
     }
@@ -267,6 +281,13 @@ impl ServerConfig {
             max_concurrent_requests: self.workers,
             max_database_connections: self.max_database_connections,
         }
+    }
+
+    /// Attach organization scope supplied by the authenticated host/runtime.
+    /// The scope is intentionally not configurable through request data.
+    pub fn with_trusted_organization_scope(mut self, scope: OrganizationScope) -> Self {
+        self.trusted_organization_scope = Some(scope);
+        self
     }
 }
 
@@ -483,6 +504,7 @@ enum DatabaseState {
 struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
+    read_surfaces: Option<ReadSurfaceAdapter>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     started_at: Instant,
@@ -640,6 +662,13 @@ impl AppState {
             }
             None => DatabaseState::Disabled,
         };
+        let read_surfaces = match (&database, config.trusted_organization_scope.clone()) {
+            (DatabaseState::Configured(pool), Some(scope)) => Some(ReadSurfaceAdapter::new(
+                ReadRepository::new(pool.clone()),
+                scope,
+            )),
+            _ => None,
+        };
         Ok(Self {
             admission: Arc::new(RequestAdmission::new(
                 config.workers,
@@ -648,6 +677,7 @@ impl AppState {
             download_admission: Arc::new(Semaphore::new(config.workers)),
             config: Arc::new(config),
             database,
+            read_surfaces,
             started_at: Instant::now(),
             authority: Arc::new(authority),
             authority_receipt,
@@ -758,6 +788,156 @@ impl AppState {
                 self.json_error(StatusCode::NOT_FOUND, "unknown_route")
             }
             Err(_) => self.json_error(StatusCode::SERVICE_UNAVAILABLE, "authority_unavailable"),
+        }
+    }
+
+    fn read_surface_adapter(&self) -> Option<&ReadSurfaceAdapter> {
+        self.read_surfaces.as_ref()
+    }
+
+    fn read_surface_page(
+        &self,
+        query: &ReadSurfaceQuery,
+    ) -> Result<PageRequest, ReadSurfaceQueryError> {
+        query.page()
+    }
+
+    fn read_surface_query_error(&self, _: ReadSurfaceQueryError) -> HttpResponse {
+        self.json_error(StatusCode::BAD_REQUEST, "read_surface_query_invalid")
+    }
+
+    fn read_surface_error(&self, error: ReadAdapterError) -> HttpResponse {
+        match error {
+            ReadAdapterError::NotFound { .. } => {
+                self.json_error(StatusCode::NOT_FOUND, "read_surface_not_found")
+            }
+            ReadAdapterError::Contract(_) => {
+                self.json_error(StatusCode::BAD_REQUEST, "read_surface_query_invalid")
+            }
+            ReadAdapterError::Database(_) => self.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "read_surface_database_error",
+            ),
+            ReadAdapterError::Projection(_) => self.json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "read_surface_projection_error",
+            ),
+        }
+    }
+
+    async fn read_organizations(&self, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_organizations(page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_organization(&self, organization_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_organization(organization_id).await {
+            Ok(organization) => bounded_json(
+                StatusCode::OK,
+                &organization,
+                self.config.max_response_bytes,
+            ),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_goals(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_goals(&scope, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_goal(&self, goal_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_goal(goal_id).await {
+            Ok(goal) => bounded_json(StatusCode::OK, &goal, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_projects(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_projects(&scope, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_project(&self, project_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_project(project_id).await {
+            Ok(project) => bounded_json(StatusCode::OK, &project, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_agents(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let options = match query.agent_options() {
+            Ok(options) => options,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_agents(&scope, options, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_agent(&self, agent_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_agent(agent_id).await {
+            Ok(agent) => bounded_json(StatusCode::OK, &agent, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
         }
     }
 
@@ -1161,6 +1341,56 @@ async fn authority(request: HttpRequest, state: web::Data<AppState>) -> HttpResp
     state.authority(request.query_string())
 }
 
+async fn read_organizations(
+    state: web::Data<AppState>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_organizations(&query).await
+}
+
+async fn read_organization(
+    state: web::Data<AppState>,
+    organization_id: web::Path<String>,
+) -> HttpResponse {
+    state.read_organization(organization_id.as_str()).await
+}
+
+async fn read_goals(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_goals(route.as_str(), &query).await
+}
+
+async fn read_goal(state: web::Data<AppState>, goal_id: web::Path<String>) -> HttpResponse {
+    state.read_goal(goal_id.as_str()).await
+}
+
+async fn read_projects(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_projects(route.as_str(), &query).await
+}
+
+async fn read_project(state: web::Data<AppState>, project_id: web::Path<String>) -> HttpResponse {
+    state.read_project(project_id.as_str()).await
+}
+
+async fn read_agents(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_agents(route.as_str(), &query).await
+}
+
+async fn read_agent(state: web::Data<AppState>, agent_id: web::Path<String>) -> HttpResponse {
+    state.read_agent(agent_id.as_str()).await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -1222,6 +1452,14 @@ impl ServerRuntime {
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
                 .route(AUTHORITY_ENDPOINT, web::get().to(authority))
+                .route(ORGANIZATIONS_LIST_ROUTE, web::get().to(read_organizations))
+                .route(ORGANIZATIONS_GET_ROUTE, web::get().to(read_organization))
+                .route(GOALS_LIST_ROUTE, web::get().to(read_goals))
+                .route(GOAL_GET_ROUTE, web::get().to(read_goal))
+                .route(PROJECTS_LIST_ROUTE, web::get().to(read_projects))
+                .route(PROJECT_GET_ROUTE, web::get().to(read_project))
+                .route(AGENTS_LIST_ROUTE, web::get().to(read_agents))
+                .route(AGENT_GET_ROUTE, web::get().to(read_agent))
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),

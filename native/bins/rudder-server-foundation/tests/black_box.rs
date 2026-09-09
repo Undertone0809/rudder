@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use rudder_archive_core::create_archive;
+use rudder_server_foundation_core::{OrganizationScope, ServerConfig, ServerRuntime};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
@@ -64,7 +65,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
     assert_eq!(
         startup["routeAuthority"]["routes"].as_array().map(Vec::len),
-        Some(10)
+        Some(18)
     );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
@@ -80,7 +81,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "workspace_backup_list",
             "workspace_backup_files_list",
             "workspace_backup_file_read",
-            "workspace_backup_download"
+            "workspace_backup_download",
+            "organization_read_surfaces"
         ])
     );
 
@@ -101,6 +103,14 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("workspace_backup_files_list"));
     assert!(capabilities.contains("workspace_backup_file_read"));
     assert!(capabilities.contains("workspace_backup_download"));
+    assert!(capabilities.contains("organization_read_surfaces"));
+
+    let read_without_scope = get_with_retry(bound_addr, "/internal/read-surfaces/v1/organizations");
+    assert!(
+        read_without_scope.starts_with("HTTP/1.1 503"),
+        "{read_without_scope}"
+    );
+    assert!(read_without_scope.contains("read_surface_unavailable"));
 
     let parity = parity_fixture();
 
@@ -173,6 +183,66 @@ fn health_and_readiness_expose_non_authoritative_identity() {
 }
 
 #[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "set RUDDER_READ_SURFACES_DATABASE_URL and RUDDER_READ_SURFACES_ORG_ID for PostgreSQL integration"]
+async fn trusted_read_surfaces_use_sqlx_and_fence_organizations() {
+    let database_url = std::env::var("RUDDER_READ_SURFACES_DATABASE_URL")
+        .expect("RUDDER_READ_SURFACES_DATABASE_URL");
+    let organization_id =
+        std::env::var("RUDDER_READ_SURFACES_ORG_ID").expect("RUDDER_READ_SURFACES_ORG_ID");
+    let scope = OrganizationScope::single(organization_id.clone()).expect("organization scope");
+    let config = ServerConfig {
+        listen_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        database_url: Some(database_url),
+        database_required: true,
+        trusted_organization_scope: Some(scope),
+        ..Default::default()
+    };
+    let runtime = ServerRuntime::bind(config).expect("bind read-surface server");
+    let bound_addr = runtime.bound_addr();
+    let control = runtime.control();
+    let server = tokio::spawn(runtime.run());
+
+    let organizations = tokio::task::spawn_blocking(move || {
+        get_with_retry(
+            bound_addr,
+            "/internal/read-surfaces/v1/organizations?limit=1",
+        )
+    })
+    .await
+    .expect("organization request task");
+    assert!(organizations.starts_with("HTTP/1.1 200"), "{organizations}");
+    let organization_page = response_json(&organizations);
+    assert_eq!(organization_page["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(organization_page["items"][0]["id"], organization_id);
+
+    let foreign = tokio::task::spawn_blocking(move || {
+        get_with_retry(
+            bound_addr,
+            "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/goals",
+        )
+    })
+    .await
+    .expect("foreign organization request task");
+    assert!(foreign.starts_with("HTTP/1.1 404"), "{foreign}");
+    assert!(foreign.contains("read_surface_not_found"), "{foreign}");
+
+    let invalid_limit = tokio::task::spawn_blocking(move || {
+        get_with_retry(
+            bound_addr,
+            "/internal/read-surfaces/v1/organizations?limit=1001",
+        )
+    })
+    .await
+    .expect("invalid limit request task");
+    assert!(invalid_limit.starts_with("HTTP/1.1 400"), "{invalid_limit}");
+    assert!(invalid_limit.contains("read_surface_query_invalid"));
+
+    control.shutdown().await;
+    server.await.expect("server task").expect("server shutdown");
+}
+
+#[cfg(unix)]
 #[test]
 fn authority_introspection_is_versioned_bounded_and_fail_closed() {
     let (child, stdout, bound_addr) = spawn_server(&[]);
@@ -187,7 +257,7 @@ fn authority_introspection_is_versioned_bounded_and_fail_closed() {
     assert_eq!(startup["nodeAuthorityUnchanged"], true);
 
     let routes = startup["routes"].as_array().expect("authority routes");
-    assert_eq!(routes.len(), 10);
+    assert_eq!(routes.len(), 18);
     assert!(routes.iter().any(|route| {
         route["routeId"] == "foundation.authority"
             && route["decision"] == "rust"
@@ -931,7 +1001,7 @@ fn spawn_server(overrides: &[(&str, &str)]) -> (Child, BufReader<ChildStdout>, S
     assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
     assert_eq!(
         startup["routeAuthority"]["routes"].as_array().map(Vec::len),
-        Some(10)
+        Some(18)
     );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()

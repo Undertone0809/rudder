@@ -86,6 +86,62 @@ const ROUTE_SPECS: &[RouteSpec] = &[
         owner: "rust",
     },
     RouteSpec {
+        route_id: "foundation.organizations_read_list",
+        path: "/internal/read-surfaces/v1/organizations",
+        claim: "/internal/read-surfaces/v1/organizations",
+        scope: "loopback read-only organization list",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.organization_read_get",
+        path: "/internal/read-surfaces/v1/organizations/{organization_id}",
+        claim: "/internal/read-surfaces/v1/organizations/{organization_id}",
+        scope: "loopback read-only organization get",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.goals_read_list",
+        path: "/internal/read-surfaces/v1/orgs/{org_id}/goals",
+        claim: "/internal/read-surfaces/v1/orgs/{org_id}/goals",
+        scope: "loopback read-only goal list",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.goal_read_get",
+        path: "/internal/read-surfaces/v1/goals/{goal_id}",
+        claim: "/internal/read-surfaces/v1/goals/{goal_id}",
+        scope: "loopback read-only goal get",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.projects_read_list",
+        path: "/internal/read-surfaces/v1/orgs/{org_id}/projects",
+        claim: "/internal/read-surfaces/v1/orgs/{org_id}/projects",
+        scope: "loopback read-only project list",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.project_read_get",
+        path: "/internal/read-surfaces/v1/projects/{project_id}",
+        claim: "/internal/read-surfaces/v1/projects/{project_id}",
+        scope: "loopback read-only project get",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.agents_read_list",
+        path: "/internal/read-surfaces/v1/orgs/{org_id}/agents",
+        claim: "/internal/read-surfaces/v1/orgs/{org_id}/agents",
+        scope: "loopback read-only agent list",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.agent_read_get",
+        path: "/internal/read-surfaces/v1/agents/{agent_id}",
+        claim: "/internal/read-surfaces/v1/agents/{agent_id}",
+        scope: "loopback read-only agent get",
+        owner: "rust",
+    },
+    RouteSpec {
         route_id: "node.product_http",
         path: "node-public-product-http",
         claim: "node.product_http",
@@ -338,7 +394,7 @@ mod tests {
     fn fixed_inventory_has_both_rust_and_legacy_decisions_without_fences() {
         let registry = AuthorityRegistry::fixed().expect("fixed authority inventory");
         let receipt = registry.receipt(None).expect("authority receipt");
-        assert_eq!(receipt.routes.len(), 10);
+        assert_eq!(receipt.routes.len(), 18);
         assert!(receipt.routes.iter().any(|route| route.decision == "rust"));
         assert!(
             receipt

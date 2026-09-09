@@ -1763,6 +1763,8 @@ dependencies = [
  "base64",
  "rudder-archive-core",
  "rudder-authority-core",
+ "rudder-db-core",
+ "rudder-read-surfaces-core",
  "serde",
  "serde_json",
  "sha2",
