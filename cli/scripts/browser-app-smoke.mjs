@@ -203,17 +203,8 @@ try {
   assert.equal(health.localEnv, "e2e");
   assert.equal(health.runtimeOwnerKind, "cli");
   assert.equal(health.deploymentMode, "local_trusted");
-  const runtimeCacheKey = health.version === version ? version : "latest";
-  const installedRuntimePackage = JSON.parse(await readFile(path.join(
-    testHome,
-    "runtimes",
-    runtimeCacheKey,
-    "node_modules",
-    "@rudderhq",
-    "server",
-    "package.json",
-  ), "utf8"));
-  assert.equal(health.version, installedRuntimePackage.version);
+  const activeRuntimePackage = JSON.parse(await readFile(packagedRuntimePackageJsonPath, "utf8"));
+  assert.equal(health.version, activeRuntimePackage.version);
   if (health.version !== version) {
     console.log(
       `[browser-app-smoke] requested prepublish runtime ${version}; observed intentional latest fallback ${health.version}`,
