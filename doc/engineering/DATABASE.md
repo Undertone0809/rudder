@@ -324,3 +324,20 @@ Inline secret migration command:
 ```sh
 pnpm secrets:migrate-inline-env --apply
 ```
+
+## Explicit Rust migration runner boundary
+
+`native/crates/migration-runner` provides an explicit Rust API for a future
+SQLx/PostgreSQL migration cutover. It loads and fingerprint-verifies a Drizzle
+journal and SQL directory, acquires a PostgreSQL advisory lock, rechecks
+history and an optional immutable baseline in one transaction, and applies
+bounded `statement-breakpoint` chunks with rollback and a serializable receipt.
+Callers must explicitly invoke `MigrationRunner::run`, supply a published
+baseline when one is required, and provide recovery evidence before changing a
+non-empty database. The runner does not run from server startup, create a
+backup, or perform a public cutover.
+
+Node/Drizzle remains the current migration authority. The existing Node startup
+path in `server/src/index.ts` and `packages/db` is unchanged; do not invoke the
+Rust runner concurrently with it unless the deployment has explicitly
+coordinated ownership and recovery.

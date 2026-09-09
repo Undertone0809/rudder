@@ -8,6 +8,7 @@ members = [
   "crates/cli-mcp-contract-core",
   "crates/issue-core",
   "crates/migration-core",
+  "crates/migration-runner",
   "crates/legacy-bridge",
   "crates/native-protocol",
   "crates/plugin-archive-core",
