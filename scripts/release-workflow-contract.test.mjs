@@ -11,6 +11,7 @@ const releaseWorkflow = readFileSync(join(workflowDir, "release.yml"), "utf8");
 const docsWorkflow = readFileSync(join(workflowDir, "docs-production.yml"), "utf8");
 const releaseSetup = readFileSync(join(repoRoot, "doc/engineering/RELEASE-AUTOMATION-SETUP.md"), "utf8");
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
+const browserAppSmoke = readFileSync(join(repoRoot, "cli/scripts/browser-app-smoke.mjs"), "utf8");
 const releaseMirrorPolicy = join(repoRoot, "scripts/release-mirror-policy.mjs");
 
 function workflowJob(source, jobName) {
@@ -111,6 +112,7 @@ describe("unified delivery workflows", () => {
     expect(preflight).toContain("scripts/release-compatibility-matrix.mjs");
     expect(desktop).toContain("RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR");
     expect(desktop).toContain("desktop/.packaged/server-package");
+    expect(browserAppSmoke).toContain("readFile(packagedRuntimePackageJsonPath");
     expect(desktop).toContain("timeout-minutes: 25");
     expect(desktop).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
     expect(desktop.indexOf("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts"))
