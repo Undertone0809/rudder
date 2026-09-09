@@ -10,15 +10,15 @@
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fmt};
+use std::{collections::BTreeMap, fmt};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
 /// The only protocol version accepted by this crate.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 /// Stable protocol name used as domain separation in the signing bytes.
-pub const PROTOCOL_SCHEMA: &str = "rudder.actor-envelope.v1";
+pub const PROTOCOL_SCHEMA: &str = "rudder.actor-envelope.v2";
 /// Maximum size of a textual protocol field in bytes.
 pub const MAX_FIELD_BYTES: usize = 256;
 /// Maximum lifetime of an envelope, in Unix seconds.
@@ -27,6 +27,10 @@ pub const MAX_ENVELOPE_LIFETIME_SECONDS: u64 = 300;
 pub const SHA256_BYTES: usize = 32;
 /// Number of hexadecimal characters in a SHA-256 digest or signature.
 pub const SHA256_HEX_LENGTH: usize = SHA256_BYTES * 2;
+/// Default number of live nonces retained by the process-local replay guard.
+pub const DEFAULT_REPLAY_CAPACITY: usize = 16 * 1024;
+/// Maximum replay-guard capacity accepted by this crate.
+pub const MAX_REPLAY_CAPACITY: usize = 64 * 1024;
 
 /// Errors returned while constructing or verifying an actor envelope.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -43,6 +47,10 @@ pub enum AuthError {
     ActorMismatch,
     #[error("organization does not match the request")]
     OrganizationMismatch,
+    #[error("authentication session does not match the request")]
+    SessionMismatch,
+    #[error("authentication epoch does not match the request")]
+    AuthEpochMismatch,
     #[error("audience does not match the request")]
     AudienceMismatch,
     #[error("HTTP method does not match the request")]
@@ -63,6 +71,10 @@ pub enum AuthError {
     NotYetValid,
     #[error("actor envelope nonce has already been used")]
     Replay,
+    #[error("actor envelope replay guard capacity is exhausted")]
+    ReplayCapacityExceeded,
+    #[error("replay guard capacity must be between one and {max} entries")]
+    InvalidReplayCapacity { max: usize },
 }
 
 /// Compatibility alias with a more descriptive name for downstream adapters.
@@ -102,6 +114,8 @@ pub struct UnsignedActorEnvelope {
     pub protocol_version: u16,
     pub actor: ActorIdentity,
     pub organization_id: String,
+    pub session_id: String,
+    pub auth_epoch: u64,
     pub audience: String,
     pub method: String,
     pub path: String,
@@ -123,6 +137,8 @@ impl UnsignedActorEnvelope {
             protocol_version: self.protocol_version,
             actor: self.actor,
             organization_id: self.organization_id,
+            session_id: self.session_id,
+            auth_epoch: self.auth_epoch,
             audience: self.audience,
             method: self.method,
             path: self.path,
@@ -152,6 +168,8 @@ impl UnsignedActorEnvelope {
             self.protocol_version,
             &self.actor,
             &self.organization_id,
+            &self.session_id,
+            self.auth_epoch,
             &self.audience,
             &self.method,
             &self.path,
@@ -169,6 +187,8 @@ impl UnsignedActorEnvelope {
         validate_claims(
             &self.actor,
             &self.organization_id,
+            &self.session_id,
+            self.auth_epoch,
             &self.audience,
             &self.method,
             &self.path,
@@ -190,6 +210,8 @@ pub struct ActorEnvelope {
     pub protocol_version: u16,
     pub actor: ActorIdentity,
     pub organization_id: String,
+    pub session_id: String,
+    pub auth_epoch: u64,
     pub audience: String,
     pub method: String,
     pub path: String,
@@ -208,6 +230,8 @@ impl ActorEnvelope {
     pub fn new(
         actor: ActorIdentity,
         organization_id: impl Into<String>,
+        session_id: impl Into<String>,
+        auth_epoch: u64,
         audience: impl Into<String>,
         method: impl Into<String>,
         path: impl Into<String>,
@@ -222,6 +246,8 @@ impl ActorEnvelope {
             protocol_version: PROTOCOL_VERSION,
             actor,
             organization_id: organization_id.into(),
+            session_id: session_id.into(),
+            auth_epoch,
             audience: audience.into(),
             method: method.into(),
             path: path.into(),
@@ -261,7 +287,7 @@ impl ActorEnvelope {
         }
         self.verify_signature(secret)?;
         self.verify_request_bindings(request)?;
-        replay.claim(&self.nonce)
+        replay.claim(&self.nonce, self.expires_at, request.now)
     }
 
     /// Verify using a non-serializable, zeroizing key wrapper.
@@ -280,6 +306,8 @@ impl ActorEnvelope {
             self.protocol_version,
             &self.actor,
             &self.organization_id,
+            &self.session_id,
+            self.auth_epoch,
             &self.audience,
             &self.method,
             &self.path,
@@ -297,6 +325,8 @@ impl ActorEnvelope {
         validate_claims(
             &self.actor,
             &self.organization_id,
+            &self.session_id,
+            self.auth_epoch,
             &self.audience,
             &self.method,
             &self.path,
@@ -328,6 +358,8 @@ impl ActorEnvelope {
     fn verify_request_bindings(&self, request: &RequestContext<'_>) -> Result<(), AuthError> {
         request.actor.validate()?;
         validate_text(request.organization_id, "organizationId")?;
+        validate_text(request.session_id, "sessionId")?;
+        validate_auth_epoch(request.auth_epoch)?;
         validate_text(request.audience, "audience")?;
         validate_text(request.method, "method")?;
         validate_path(request.path)?;
@@ -339,6 +371,12 @@ impl ActorEnvelope {
         }
         if self.organization_id != request.organization_id {
             return Err(AuthError::OrganizationMismatch);
+        }
+        if self.session_id != request.session_id {
+            return Err(AuthError::SessionMismatch);
+        }
+        if self.auth_epoch != request.auth_epoch {
+            return Err(AuthError::AuthEpochMismatch);
         }
         if self.audience != request.audience {
             return Err(AuthError::AudienceMismatch);
@@ -366,10 +404,14 @@ impl ActorEnvelope {
 ///
 /// The caller owns these values and supplies the current clock. Keeping the
 /// context separate prevents verification from trusting claims copied out of
-/// the untrusted envelope.
+/// the untrusted envelope. `session_id` and `auth_epoch` must be read from the
+/// currently active authentication state, so logout or credential revocation
+/// invalidates envelopes issued under the previous state.
 pub struct RequestContext<'a> {
     pub actor: &'a ActorIdentity,
     pub organization_id: &'a str,
+    pub session_id: &'a str,
+    pub auth_epoch: u64,
     pub audience: &'a str,
     pub method: &'a str,
     pub path: &'a str,
@@ -384,6 +426,8 @@ impl<'a> RequestContext<'a> {
     pub fn new(
         actor: &'a ActorIdentity,
         organization_id: &'a str,
+        session_id: &'a str,
+        auth_epoch: u64,
         audience: &'a str,
         method: &'a str,
         path: &'a str,
@@ -395,6 +439,8 @@ impl<'a> RequestContext<'a> {
         Self {
             actor,
             organization_id,
+            session_id,
+            auth_epoch,
             audience,
             method,
             path,
@@ -411,14 +457,31 @@ impl<'a> RequestContext<'a> {
 /// This is deliberately an in-memory primitive. A caller that spans processes
 /// must provide an equivalent atomic store at its boundary; this crate does not
 /// create a database or credential store.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct NonceReplayGuard {
-    used: BTreeSet<String>,
+    used: BTreeMap<String, u64>,
+    capacity: usize,
 }
 
 impl NonceReplayGuard {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> Result<Self, AuthError> {
+        if capacity == 0 || capacity > MAX_REPLAY_CAPACITY {
+            return Err(AuthError::InvalidReplayCapacity {
+                max: MAX_REPLAY_CAPACITY,
+            });
+        }
+        Ok(Self {
+            used: BTreeMap::new(),
+            capacity,
+        })
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     pub fn len(&self) -> usize {
@@ -430,15 +493,32 @@ impl NonceReplayGuard {
     }
 
     pub fn contains(&self, nonce: &str) -> bool {
-        self.used.contains(nonce)
+        self.used.contains_key(nonce)
     }
 
-    pub fn claim(&mut self, nonce: &str) -> Result<(), AuthError> {
+    pub fn claim(&mut self, nonce: &str, expires_at: u64, now: u64) -> Result<(), AuthError> {
         validate_text(nonce, "nonce")?;
-        if !self.used.insert(nonce.to_owned()) {
+        self.used.retain(|_, expiry| *expiry > now);
+        if expires_at <= now {
+            return Err(AuthError::Expired);
+        }
+        if self.used.contains_key(nonce) {
             return Err(AuthError::Replay);
         }
+        if self.used.len() >= self.capacity {
+            return Err(AuthError::ReplayCapacityExceeded);
+        }
+        self.used.insert(nonce.to_owned(), expires_at);
         Ok(())
+    }
+}
+
+impl Default for NonceReplayGuard {
+    fn default() -> Self {
+        Self {
+            used: BTreeMap::new(),
+            capacity: DEFAULT_REPLAY_CAPACITY,
+        }
     }
 }
 
@@ -527,6 +607,8 @@ fn validate_version(version: u16) -> Result<(), AuthError> {
 fn validate_claims(
     actor: &ActorIdentity,
     organization_id: &str,
+    session_id: &str,
+    auth_epoch: u64,
     audience: &str,
     method: &str,
     path: &str,
@@ -539,6 +621,8 @@ fn validate_claims(
 ) -> Result<(), AuthError> {
     actor.validate()?;
     validate_text(organization_id, "organizationId")?;
+    validate_text(session_id, "sessionId")?;
+    validate_auth_epoch(auth_epoch)?;
     validate_text(audience, "audience")?;
     validate_text(method, "method")?;
     validate_path(path)?;
@@ -551,6 +635,13 @@ fn validate_claims(
     }
     if expires_at - issued_at > MAX_ENVELOPE_LIFETIME_SECONDS {
         return Err(AuthError::InvalidTimestamp);
+    }
+    Ok(())
+}
+
+fn validate_auth_epoch(auth_epoch: u64) -> Result<(), AuthError> {
+    if auth_epoch == 0 {
+        return Err(AuthError::InvalidField { field: "authEpoch" });
     }
     Ok(())
 }
@@ -593,6 +684,8 @@ fn canonical_signing_bytes(
     protocol_version: u16,
     actor: &ActorIdentity,
     organization_id: &str,
+    session_id: &str,
+    auth_epoch: u64,
     audience: &str,
     method: &str,
     path: &str,
@@ -607,6 +700,7 @@ fn canonical_signing_bytes(
         actor.kind.as_bytes(),
         actor.id.as_bytes(),
         organization_id.as_bytes(),
+        session_id.as_bytes(),
         audience.as_bytes(),
         method.as_bytes(),
         path.as_bytes(),
@@ -624,6 +718,7 @@ fn canonical_signing_bytes(
         output.extend_from_slice(&(field.len() as u64).to_be_bytes());
         output.extend_from_slice(field);
     }
+    output.extend_from_slice(&auth_epoch.to_be_bytes());
     output.extend_from_slice(&issued_at.to_be_bytes());
     output.extend_from_slice(&expires_at.to_be_bytes());
     output
