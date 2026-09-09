@@ -404,7 +404,8 @@ export class LocalAppRuntimeManager {
     this.watchdogStartTimeoutMs = Math.max(1, options.watchdogStartTimeoutMs ?? 10_000);
     this.listenerOwnershipRetryTimeoutMs = Math.max(
       1,
-      options.listenerOwnershipRetryTimeoutMs ?? LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS,
+      options.listenerOwnershipRetryTimeoutMs
+        ?? (platform === "win32" ? WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS : LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS),
     );
     this.cleanupTimeoutMs = Math.max(
       1,
@@ -1062,12 +1063,7 @@ export class LocalAppRuntimeManager {
   }
 
   private async waitForListenerOwnership(record: RuntimeRecord): Promise<void> {
-    const deadline = Date.now() + Math.min(
-      record.definition.readiness.timeoutMs,
-      this.processPlatform.platform === "win32"
-        ? WINDOWS_LISTENER_OWNERSHIP_RETRY_TIMEOUT_MS
-        : this.listenerOwnershipRetryTimeoutMs,
-    );
+    const deadline = Date.now() + this.listenerOwnershipRetryTimeoutMs;
     while (Date.now() < deadline) {
       if (
         !record.helper

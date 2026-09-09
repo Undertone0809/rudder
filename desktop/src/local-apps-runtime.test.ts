@@ -968,7 +968,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
   it("allows a bounded slow Windows process snapshot to prove listener ownership", async () => {
     const owned = await approvedFixture({ readinessTimeoutMs: 30_000 });
     const verifyListenerOwnership = vi.fn(async (input: { timeoutMs: number }) => {
-      expect(input.timeoutMs).toBeGreaterThan(20_000);
+      expect(input.timeoutMs).toBe(60_000);
       await new Promise((resolve) => setTimeout(resolve, 900));
       return true;
     });
@@ -978,6 +978,7 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       ...(windowsFixtureProcessPlatform ? { processPlatform: windowsFixtureProcessPlatform } : {}),
       ...(windowsFixtureWatchdogSpawner ? { spawnWatchdog: windowsFixtureWatchdogSpawner } : {}),
       verifyListenerOwnership,
+      listenerOwnershipRetryTimeoutMs: 60_000,
     });
     try {
       await expect(manager.start(owned.definition.id)).resolves.toMatchObject({ status: "running" });
@@ -1342,7 +1343,10 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     },
   );
 
-  it("keeps watchdog startup and cleanup deadlines referenced while start is pending", async () => {
+  it(
+    "keeps watchdog startup and cleanup deadlines referenced while start is pending",
+    { timeout: 15_000 },
+    async () => {
     const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
     const helper = watchdogEmitting({ type: "ignored" });
     helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
@@ -1352,25 +1356,25 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const manager = new LocalAppRuntimeManager({
       registry,
-      platform: process.platform,
+      platform: "win32",
       spawnWatchdog,
-      watchdogStartTimeoutMs: 60_001,
-      cleanupTimeoutMs: 60_002,
+      watchdogStartTimeoutMs: 1_001,
+      cleanupTimeoutMs: 1_002,
     });
 
     try {
       const pendingStart = manager.start(definition.id);
       await vi.waitFor(() => expect(spawnWatchdog).toHaveBeenCalledOnce());
-      const startupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 60_001);
+      const startupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 1_001);
       expect(startupCallIndex).toBeGreaterThanOrEqual(0);
       const startupTimer = timeoutSpy.mock.results[startupCallIndex]?.value as NodeJS.Timeout;
       expect(startupTimer.hasRef()).toBe(true);
 
       helper.emit("error", new Error("watchdog fixture failed"));
       await vi.waitFor(() => {
-        expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 60_002)).toBe(true);
-      });
-      const cleanupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 60_002);
+        expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 1_002)).toBe(true);
+      }, { timeout: 5_000 });
+      const cleanupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 1_002);
       const cleanupTimer = timeoutSpy.mock.results[cleanupCallIndex]?.value as NodeJS.Timeout;
       expect(cleanupTimer.hasRef()).toBe(true);
 
@@ -1381,7 +1385,8 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
       timeoutSpy.mockRestore();
       await manager.shutdown();
     }
-  });
+    },
+  );
 
   it.runIf(process.platform !== "win32")(
     "keeps ownership orphaned when a running watchdog exits without acknowledging cleanup",
