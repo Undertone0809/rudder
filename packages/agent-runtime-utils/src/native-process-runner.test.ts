@@ -175,7 +175,11 @@ describe("Rust Agent Run process host", () => {
       authority,
     });
 
-    expect(result.signal).toBe("SIGTERM");
+    if (process.platform === "win32") {
+      expect(result.signal).toBeNull();
+    } else {
+      expect(result.signal).toBe("SIGTERM");
+    }
     expect(result.timedOut).toBe(false);
     const descriptorPath = path.join(
       runtimeRoot,
