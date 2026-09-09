@@ -5,6 +5,8 @@ import {
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
 import { COMPUTER_USE_MCP_TOOLS } from "@rudderhq/shared";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +20,7 @@ import {
   resolveRudderMcpCliCwd,
   runAgentV1McpJsonRpcMessage,
   runMcpStdioServer,
+  runRudderCli,
   startBrowserMcpLivenessMonitor,
 } from "../agent-v1-mcp-server.js";
 import { buildAgentV1McpToolsManifest } from "../agent-v1-registry.js";
@@ -876,6 +879,117 @@ describe("agent-v1 MCP server", () => {
     ]);
     expect(() => buildAgentV1ToolCallPlan("rudder_runs_list", { includeOutput: false }, env))
       .toThrow(/unsupported argument/i);
+  });
+
+  it("bounds chat transcript pages before the MCP CLI fallback", () => {
+    const env = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+    };
+
+    expect(buildAgentV1ToolCallPlan("rudder_chat_messages", {
+      chat: "chat-1",
+      limit: 100,
+      includeTranscript: true,
+      maxOutputChars: 12_000,
+    }, env).args).toEqual([
+      "chat",
+      "messages",
+      "chat-1",
+      "--limit",
+      "20",
+      "--max-output-chars",
+      "1200",
+      "--include-transcript",
+      "--json",
+    ]);
+    expect(buildAgentV1ToolCallPlan("rudder_chat_read", {
+      chat: "chat-1",
+      turnLimit: 100,
+      includeOutput: true,
+      maxOutputChars: 12_000,
+    }, env).args).toEqual([
+      "chat",
+      "read",
+      "chat-1",
+      "--turn-limit",
+      "20",
+      "--max-output-chars",
+      "1200",
+      "--include-transcript",
+      "--json",
+    ]);
+  });
+
+  it("terminates a fallback CLI when aggregate output exceeds its bounded budget", async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const child = new EventEmitter() as ChildProcess & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stdout = stdout;
+    child.stderr = stderr;
+    child.kill = vi.fn(() => {
+      stdout.end();
+      stderr.end();
+      setImmediate(() => child.emit("close", null, "SIGTERM"));
+      return true;
+    });
+    const spawnImpl = vi.fn(() => child) as unknown as typeof import("node:child_process").spawn;
+    const resultPromise = runRudderCli(
+      ["chat", "read", "chat-1"],
+      buildMcpServerEnv({
+        RUDDER_MCP_RUDDER_BIN: "fake-rudder",
+        RUDDER_RUNTIME_TMPDIR: os.tmpdir(),
+      }),
+      1024,
+      spawnImpl,
+    );
+    setImmediate(() => {
+      stdout.write("X".repeat(700));
+      stderr.write("Y".repeat(325));
+    });
+
+    const result = await resultPromise;
+    expect(result.outputLimitExceeded).toBe(true);
+    expect(result.outputBytes).toBeGreaterThan(1024);
+    expect(result.stdout).toHaveLength(700);
+    expect(result.stderr).toBe("");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("accepts fallback CLI output exactly at the aggregate budget", async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const child = new EventEmitter() as ChildProcess & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stdout = stdout;
+    child.stderr = stderr;
+    child.kill = vi.fn(() => true);
+    const spawnImpl = vi.fn(() => child) as unknown as typeof import("node:child_process").spawn;
+    const resultPromise = runRudderCli(
+      ["chat", "read", "chat-1"],
+      buildMcpServerEnv({ RUDDER_MCP_RUDDER_BIN: "fake-rudder", RUDDER_RUNTIME_TMPDIR: os.tmpdir() }),
+      1024,
+      spawnImpl,
+    );
+    setImmediate(() => {
+      stdout.end("X".repeat(700));
+      stderr.end("Y".repeat(324));
+      child.emit("close", 0);
+    });
+
+    const result = await resultPromise;
+    expect(result.outputLimitExceeded).toBe(false);
+    expect(result.outputBytes).toBe(1024);
+    expect(result.stdout).toHaveLength(700);
+    expect(result.stderr).toHaveLength(324);
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("publishes exact schemas for the production contract-error hotspots", () => {

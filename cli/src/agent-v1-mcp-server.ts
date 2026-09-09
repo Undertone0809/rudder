@@ -29,7 +29,7 @@ import {
   createGoalResultProposalSchema,
   createIssueSchema,
 } from "@rudderhq/shared";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -50,6 +50,8 @@ const RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES = 16_000_000;
 const RUDDER_MCP_MAX_INLINE_TEXT_BYTES = 32_000;
 const RUDDER_BROWSER_LIVENESS_INTERVAL_MS = 5_000;
 const RUDDER_MCP_TOOL_PAGE_SIZE = 50;
+const RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES = 20;
+const RUDDER_MCP_CHAT_MAX_OUTPUT_CHARS = 1_200;
 
 type JsonRpcId = string | number | null;
 
@@ -209,7 +211,8 @@ export function buildAgentV1ToolCallPlan(
   assertRuntimeMcpContext(capability, env);
 
   const tempFiles: TempFilePlan[] = [];
-  const args = cliArgsForCapability(capabilityId, input, tempFiles, env);
+  const boundedInput = boundMcpChatReadInput(capabilityId, input);
+  const args = cliArgsForCapability(capabilityId, boundedInput, tempFiles, env);
   args.push("--json");
 
   return {
@@ -591,12 +594,18 @@ async function callTool(
       }
     }
 
-    const result = await runRudderCli(materializedArgs, plan.env);
+    const maxOutputBytes = surface === "browser"
+      ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
+      : RUDDER_MCP_MAX_TOOL_RESULT_BYTES;
+    const result = await runRudderCli(materializedArgs, plan.env, maxOutputBytes);
+    if (result.outputLimitExceeded) {
+      return mcpResponseTooLarge(result.outputBytes, maxOutputBytes);
+    }
     if (result.exitCode === 0) {
       const text = result.stdout.trim() || "{}";
       return mcpSuccessFromJsonText(
         text,
-        surface === "browser" ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+        maxOutputBytes,
       );
     }
     const payload = {
@@ -969,6 +978,36 @@ function parseNonNegativeInteger(value: unknown, fallback: number): number {
   return Math.floor(parsed);
 }
 
+function boundMcpChatReadInput(capabilityId: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (!capabilityId.startsWith("chat.")) return input;
+  if (!["chat.messages", "chat.read", "chat.transcript"].includes(capabilityId)) return input;
+
+  const bounded = { ...input };
+  if (capabilityId === "chat.messages" || capabilityId === "chat.transcript") {
+    bounded.limit = Math.min(
+      parsePositiveInteger(input.limit, RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES),
+      RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES,
+    );
+  } else if (input.turnLimit !== undefined) {
+    bounded.turnLimit = Math.min(
+      parsePositiveInteger(input.turnLimit, RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES),
+      RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES,
+    );
+  } else if (input.limit !== undefined) {
+    bounded.limit = Math.min(
+      parsePositiveInteger(input.limit, RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES),
+      RUDDER_MCP_CHAT_MAX_PAGE_MESSAGES,
+    );
+  }
+  if (input.maxOutputChars !== undefined) {
+    bounded.maxOutputChars = Math.min(
+      parsePositiveInteger(input.maxOutputChars, RUDDER_MCP_CHAT_MAX_OUTPUT_CHARS),
+      RUDDER_MCP_CHAT_MAX_OUTPUT_CHARS,
+    );
+  }
+  return bounded;
+}
+
 function requiredRuntimeString(env: McpServerEnv, key: keyof McpServerEnv): string {
   const value = optionalString(env[key]);
   if (value) return value;
@@ -1100,6 +1139,7 @@ function mcpResponseTooLarge(responseBytes: number, maxBytes = RUDDER_MCP_MAX_TO
     details: {
       maxBytes,
       responseBytes,
+      hint: "Use a smaller page, continue with the returned cursor, or use an errors-only/around-error or ranged log read.",
     },
   };
   return {
@@ -2131,21 +2171,88 @@ function renderCsv(value: unknown): unknown {
   return value.map((entry) => optionalString(entry)).filter(Boolean).join(",");
 }
 
-function runRudderCli(args: string[], env: McpServerEnv): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+export interface RudderCliResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  outputBytes: number;
+  outputLimitExceeded: boolean;
+}
+
+export async function runRudderCli(
+  args: string[],
+  env: McpServerEnv,
+  maxOutputBytes = RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
+  spawnImpl: typeof spawn = spawn,
+): Promise<RudderCliResult> {
   const invocation = resolveRudderCliInvocation(args, env);
   const cwd = resolveRudderMcpCliCwd(env);
+  const boundedOutputBytes = Math.max(1, Math.floor(maxOutputBytes));
   return new Promise((resolve) => {
-    const child = spawn(invocation.command, invocation.args, {
+    const child: ChildProcess = spawnImpl(invocation.command, invocation.args, {
       cwd,
       env: env as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
-    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
-    child.on("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
-    child.on("error", (err) => resolve({ exitCode: 1, stdout, stderr: err.message }));
+    let outputBytes = 0;
+    let outputLimitExceeded = false;
+    let settled = false;
+    let forceKillTimer: NodeJS.Timeout | null = null;
+
+    const finish = (result: RudderCliResult) => {
+      if (settled) return;
+      settled = true;
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      forceKillTimer = null;
+      resolve(result);
+    };
+    const stopForOutputOverflow = () => {
+      outputLimitExceeded = true;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // The child may have exited between the bounded read and termination.
+      }
+      forceKillTimer = setTimeout(() => {
+        if (settled) return;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // The child may have exited between the two termination attempts.
+        }
+      }, 250);
+      forceKillTimer.unref?.();
+    };
+    const append = (stream: "stdout" | "stderr", chunk: unknown) => {
+      if (outputLimitExceeded) return;
+      const text = String(chunk);
+      outputBytes += Buffer.byteLength(text, "utf8");
+      if (outputBytes > boundedOutputBytes) {
+        stopForOutputOverflow();
+        return;
+      }
+      if (stream === "stdout") stdout += text;
+      else stderr += text;
+    };
+
+    child.stdout?.on("data", (chunk) => append("stdout", chunk));
+    child.stderr?.on("data", (chunk) => append("stderr", chunk));
+    child.on("close", (exitCode) => finish({
+      exitCode,
+      stdout,
+      stderr,
+      outputBytes,
+      outputLimitExceeded,
+    }));
+    child.on("error", (err) => finish({
+      exitCode: 1,
+      stdout,
+      stderr: outputLimitExceeded ? stderr : err.message,
+      outputBytes,
+      outputLimitExceeded,
+    }));
   });
 }
 

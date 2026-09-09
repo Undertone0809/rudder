@@ -558,6 +558,71 @@ describe("CLI automation/chat/runs parity", () => {
     });
   });
 
+  it("keeps MCP chat JSON bounded even when the API transcript is oversized", async () => {
+    const marker = "oversized-transcript-marker";
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const requestedUrl = new URL(String(url));
+      expect(requestedUrl.searchParams.get("limit")).toBe("20");
+      return new Response(JSON.stringify({
+        messages: [{
+          id: "message-oversized",
+          role: "assistant",
+          kind: "message",
+          status: "completed",
+          createdAt: "2026-06-11T00:00:00.000Z",
+          body: "done",
+          transcript: Array.from({ length: 16 }, (_, index) => ({
+            kind: "tool_result" as const,
+            ts: "2026-06-11T00:00:00.000Z",
+            toolUseId: `tool-oversized-${index + 1}`,
+            content: index === 15 ? marker : "X".repeat(100_000),
+            isError: false,
+          })),
+        }],
+        page: {
+          cursor: null,
+          nextCursor: "next-message",
+          hasMore: true,
+          limit: 20,
+          order: "newest",
+          returnedMessages: 1,
+          totalMessages: 100,
+        },
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.RUDDER_TOOL_TRANSPORT_SURFACE = "mcp";
+    const output = captureOutput();
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "chat",
+      "messages",
+      "chat-1",
+      "--limit",
+      "100",
+      "--include-output",
+      "--max-output-chars",
+      "12000",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    const payload = JSON.parse(output.stdoutText()) as {
+      messages: Array<{ transcript?: unknown; transcriptEntries?: number; transcriptPreview?: string }>;
+      page: { nextCursor: string | null };
+    };
+    expect(payload.page.nextCursor).toBe("next-message");
+    expect(payload.messages[0]).not.toHaveProperty("transcript");
+    expect(payload.messages[0]?.transcriptEntries).toBe(16);
+    expect(payload.messages[0]?.transcriptPreview?.length).toBeLessThanOrEqual(1_200);
+    expect(output.stdoutText()).not.toContain(marker);
+  });
+
   it("prints chat message run linkage and follow-up run commands in human output", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       messages: [

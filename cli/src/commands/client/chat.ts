@@ -85,6 +85,10 @@ interface ChatMessagesPage {
   };
 }
 
+const MCP_CHAT_MAX_PAGE_MESSAGES = 20;
+const MCP_CHAT_MAX_OUTPUT_CHARS = 1_200;
+const MCP_CHAT_MAX_TRANSCRIPT_ENTRIES = 8;
+
 export function registerChatCommands(program: Command): void {
   const chat = program.command("chat").description("Chat operations");
 
@@ -171,8 +175,11 @@ export function registerChatCommands(program: Command): void {
             limit: opts.limit,
             cursor: opts.cursor,
           });
+          const maxOutputChars = parseMcpOutputLimit(opts.maxOutputChars, 1200);
           printOutput(
-            ctx.json ? page : page.messages.map((message) => formatChatMessage(message, parseLimit(opts.maxOutputChars, 1200))),
+            ctx.json && isMcpToolOutput()
+              ? formatMcpChatMessagesPage(page, maxOutputChars)
+              : ctx.json ? page : page.messages.map((message) => formatChatMessage(message, parseLimit(opts.maxOutputChars, 1200))),
             { json: ctx.json },
           );
         } catch (err) {
@@ -200,7 +207,9 @@ export function registerChatCommands(program: Command): void {
           });
           const maxChars = parseLimit(opts.maxOutputChars ?? opts.maxChars, 1200);
           printOutput(
-            ctx.json ? page : page.messages.flatMap((message) => formatChatTranscriptMessage(message, maxChars)),
+            ctx.json && isMcpToolOutput()
+              ? formatMcpChatTranscriptPage(page, maxChars)
+              : ctx.json ? page : page.messages.flatMap((message) => formatChatTranscriptMessage(message, maxChars)),
             { json: ctx.json },
           );
         } catch (err) {
@@ -253,8 +262,11 @@ export function registerChatCommands(program: Command): void {
             messages: page.messages,
             page: page.page,
           };
+          const maxOutputChars = parseMcpOutputLimit(opts.maxOutputChars, 1200);
           printOutput(
-            ctx.json ? payload : page.messages.map((message) => formatChatMessage(message, parseLimit(opts.maxOutputChars, 1200))),
+            ctx.json && isMcpToolOutput()
+              ? { ...payload, ...formatMcpChatMessagesPage(page, maxOutputChars) }
+              : ctx.json ? payload : page.messages.map((message) => formatChatMessage(message, parseLimit(opts.maxOutputChars, 1200))),
             { json: ctx.json },
           );
         } catch (err) {
@@ -372,7 +384,8 @@ async function getChatMessagesPage(
   const params = new URLSearchParams();
   params.set("envelope", "true");
   params.set("order", "newest");
-  params.set("limit", String(parseLimit(opts.limit, 50)));
+  const requestedLimit = parseLimit(opts.limit, 50);
+  params.set("limit", String(isMcpToolOutput() ? Math.min(requestedLimit, MCP_CHAT_MAX_PAGE_MESSAGES) : requestedLimit));
   if (opts.cursor) params.set("cursor", opts.cursor);
   if (opts.includeTranscript) params.set("includeTranscript", "true");
   const page = await ctx.api.get<ChatMessagesPage>(`/api/chats/${encodeURIComponent(chatId)}/messages?${params.toString()}`);
@@ -415,8 +428,14 @@ function formatChatSearchResult(row: ChatConversation, maxChars: number) {
   };
 }
 
-function formatChatMessage(row: ChatMessage, maxOutputChars = 1200) {
+function formatChatMessage(
+  row: ChatMessage,
+  maxOutputChars = 1200,
+  maxTranscriptEntries = Number.POSITIVE_INFINITY,
+) {
   const runId = row.runId ? formatCliRunId(row.runId) : null;
+  const transcriptEntries = row.transcriptSummary?.entryCount ?? row.transcript?.length ?? 0;
+  const transcriptPreviewEntries = row.transcript?.slice(0, maxTranscriptEntries);
   return {
     id: row.id,
     role: row.role,
@@ -429,14 +448,49 @@ function formatChatMessage(row: ChatMessage, maxOutputChars = 1200) {
     } : {}),
     createdAt: row.createdAt,
     body: clip(row.body, 220),
-    transcriptEntries: row.transcriptSummary?.entryCount ?? row.transcript?.length ?? 0,
-    ...(row.transcript?.length
-      ? { transcriptPreview: clip(row.transcript.map((entry) => formatTranscriptEntry(entry, maxOutputChars)).join(" "), maxOutputChars) }
+    transcriptEntries,
+    ...(transcriptPreviewEntries?.length
+      ? { transcriptPreview: clip(transcriptPreviewEntries.map((entry) => formatTranscriptEntry(entry, maxOutputChars)).join(" "), maxOutputChars) }
       : {}),
   };
 }
 
-function formatChatTranscriptMessage(row: ChatMessage, maxChars: number) {
+function formatMcpChatMessagesPage(page: ChatMessagesPage, maxOutputChars: number) {
+  return {
+    ...page,
+    messages: page.messages.map((message) => formatChatMessage(
+      message,
+      maxOutputChars,
+      MCP_CHAT_MAX_TRANSCRIPT_ENTRIES,
+    )),
+  };
+}
+
+function formatMcpChatTranscriptPage(page: ChatMessagesPage, maxChars: number) {
+  return {
+    ...page,
+    messages: page.messages.flatMap((message) => {
+      const rows = formatChatTranscriptMessage(message, maxChars, MCP_CHAT_MAX_TRANSCRIPT_ENTRIES);
+      const header = rows[0];
+      if (!header || typeof header !== "object") return rows;
+      const transcriptEntries = message.transcript?.length ?? message.transcriptSummary?.entryCount ?? 0;
+      return [
+        {
+          ...header,
+          transcriptEntries,
+          transcriptTruncated: transcriptEntries > MCP_CHAT_MAX_TRANSCRIPT_ENTRIES,
+        },
+        ...rows.slice(1, MCP_CHAT_MAX_TRANSCRIPT_ENTRIES + 1),
+      ];
+    }),
+  };
+}
+
+function formatChatTranscriptMessage(
+  row: ChatMessage,
+  maxChars: number,
+  maxTranscriptEntries = Number.POSITIVE_INFINITY,
+) {
   const runId = row.runId ? formatCliRunId(row.runId) : null;
   const header = {
     id: row.id,
@@ -451,7 +505,7 @@ function formatChatTranscriptMessage(row: ChatMessage, maxChars: number) {
     createdAt: row.createdAt,
     body: clip(row.body, 220),
   };
-  const transcriptRows = (row.transcript ?? []).map((entry, index) => ({
+  const transcriptRows = (row.transcript ?? []).slice(0, maxTranscriptEntries).map((entry, index) => ({
     id: `${row.id}:entry-${index + 1}`,
     messageId: row.id,
     role: row.role,
@@ -472,6 +526,15 @@ function parseLimit(value: string | undefined, fallback: number) {
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.floor(parsed);
+}
+
+function parseMcpOutputLimit(value: string | undefined, fallback: number) {
+  const parsed = parseLimit(value, fallback);
+  return isMcpToolOutput() ? Math.min(parsed, MCP_CHAT_MAX_OUTPUT_CHARS) : parsed;
+}
+
+function isMcpToolOutput() {
+  return process.env.RUDDER_TOOL_TRANSPORT_SURFACE === "mcp";
 }
 
 function includesChatTranscript(opts: { includeTranscript?: boolean; includeOutput?: boolean; includeOutputs?: boolean }) {
