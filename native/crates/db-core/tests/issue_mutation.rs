@@ -1,7 +1,8 @@
 use rudder_db_core::issue_mutation::{
-    ApprovalQueryPlans, CheckoutOptions, IssueMutationError, MutationBind, MutationQueryPlan,
-    ReviewQueryPlans, TrustedOrganizationId, approval_decision_query_plans, checkout_query_plans,
-    command_fingerprint, review_decision_query_plans,
+    ApprovalQueryPlans, ApprovalResubmissionOptions, CheckoutOptions, IssueMutationError,
+    MutationBind, MutationQueryPlan, ReviewQueryPlans, TrustedApprovalAuthorization,
+    TrustedOrganizationId, approval_decision_query_plans, approval_resubmission_query_plans,
+    checkout_query_plans, command_fingerprint, review_decision_query_plans,
 };
 use rudder_issue_core::{
     ActorRef, AgentId, ApprovalDecision, ApprovalDecisionCommand, ApprovalId, ApprovalRef,
@@ -94,6 +95,17 @@ fn checkout_query_plans_use_the_trusted_host_scope_and_fence_every_write() {
     ));
     assert!(plans.load_issue.sql.contains("i.org_id = $1::uuid"));
     assert!(plans.load_issue.sql.contains("i.id = $2::uuid"));
+    assert_parameterized(
+        &plans.validate_run,
+        &[
+            "org-client",
+            "00000000-0000-0000-0000-000000000002",
+            "00000000-0000-0000-0000-000000000003",
+        ],
+    );
+    assert!(plans.validate_run.sql.contains("FROM heartbeat_runs"));
+    assert!(plans.validate_run.sql.contains("r.agent_id = $3::uuid"));
+    assert!(plans.validate_run.sql.contains("FOR SHARE"));
     assert!(plans.load_issue.sql.contains("FOR UPDATE"));
     assert!(plans.update_issue.sql.contains("i.revision = $3::int8"));
     assert!(
@@ -216,8 +228,24 @@ fn review_query_plans_bind_revision_and_fencing_preconditions() {
             .sql
             .contains("i.fencing_token = $4::int8")
     );
-    assert!(plans.update_issue.sql.contains("i.status = 'in_review'"));
-    assert!(plans.update_issue.sql.contains("checkout_run_id = NULL"));
+    assert!(plans.update_issue.sql.contains("status = $5::text"));
+    assert!(
+        plans
+            .update_issue
+            .sql
+            .contains("i.status IN ('in_review', 'blocked')")
+    );
+    assert!(plans.update_issue.sql.contains("started_at = CASE"));
+    assert!(plans.update_issue.sql.contains("completed_at = CASE"));
+    assert!(
+        plans
+            .update_issue
+            .sql
+            .contains("COALESCE(i.started_at, now())")
+    );
+    assert!(plans.update_issue.sql.contains("completed_at = CASE"));
+    assert!(plans.update_issue.sql.contains("cancelled_at = CASE"));
+    assert!(plans.update_issue.sql.contains("ELSE NULL END"));
     assert!(plans.update_issue.sql.contains("execution_run_id = NULL"));
     assert!(
         plans
@@ -236,6 +264,15 @@ fn review_query_plans_bind_revision_and_fencing_preconditions() {
         plans.load_issue.binds.first(),
         Some(MutationBind::Uuid(value)) if value == "org-client"
     ));
+    assert!(
+        plans
+            .insert_comment
+            .sql
+            .contains("INSERT INTO issue_comments")
+    );
+    assert!(plans.insert_comment.sql.contains("author_agent_id"));
+    assert!(plans.insert_comment.sql.contains("author_user_id"));
+    assert!(plans.insert_comment.sql.contains("$5::text"));
 }
 
 fn approval_command() -> ApprovalDecisionCommand {
@@ -257,13 +294,20 @@ fn approval_command() -> ApprovalDecisionCommand {
 
 #[test]
 fn approval_query_plans_fence_revision_and_persist_decision_idempotency() {
+    let command = approval_command();
+    let authorization = TrustedApprovalAuthorization::from_host(
+        scope("org-client"),
+        command.approval.approval_id.clone(),
+        command.actor.clone(),
+    );
     let plans: ApprovalQueryPlans =
-        approval_decision_query_plans(&scope("org-client"), &approval_command()).unwrap();
+        approval_decision_query_plans(&authorization, &command).unwrap();
     assert!(plans.load_approval.sql.contains("a.org_id = $1::uuid"));
     assert!(plans.load_approval.sql.contains("a.id = $2::uuid"));
     assert!(plans.load_approval.sql.contains("FOR UPDATE"));
     assert!(plans.update_approval.sql.contains("a.revision = $3::int8"));
     assert!(plans.update_approval.sql.contains("a.status = 'pending'"));
+    assert!(plans.update_approval.sql.contains("status = $4::text"));
     assert!(
         plans
             .update_approval
@@ -297,11 +341,77 @@ fn approval_query_plans_fence_revision_and_persist_decision_idempotency() {
 
 #[test]
 fn approval_command_cannot_cross_the_trusted_organization_fence() {
-    let error = approval_decision_query_plans(&scope("org-host"), &approval_command()).unwrap_err();
+    let command = approval_command();
+    let authorization = TrustedApprovalAuthorization::from_host(
+        scope("org-host"),
+        command.approval.approval_id.clone(),
+        command.actor.clone(),
+    );
+    let error = approval_decision_query_plans(&authorization, &command).unwrap_err();
     assert!(matches!(
         error,
         IssueMutationError::Domain(rudder_issue_core::DomainError::CrossOrganization { .. })
     ));
+}
+
+#[test]
+fn approval_decisions_require_host_trusted_approval_authorization() {
+    let command = approval_command();
+    let authorization = TrustedApprovalAuthorization::from_host(
+        scope("org-client"),
+        ApprovalId::new("different-approval"),
+        command.actor.clone(),
+    );
+
+    let error = approval_decision_query_plans(&authorization, &command).unwrap_err();
+
+    assert!(matches!(
+        error,
+        IssueMutationError::ApprovalAuthorizationMismatch
+    ));
+}
+
+#[test]
+fn approval_resubmission_plans_return_revision_requested_approvals_to_pending() {
+    let command = rudder_issue_core::ApprovalResubmissionCommand::new(
+        ApprovalRef::new(
+            OrganizationId::new("org-client"),
+            ApprovalId::new("00000000-0000-0000-0000-000000000004"),
+        ),
+        ActorRef::user(
+            OrganizationId::new("org-client"),
+            rudder_issue_core::UserId::new("user-1"),
+        ),
+        4,
+        IdempotencyKey::new("approval-resubmit-key"),
+    );
+    let authorization = TrustedApprovalAuthorization::from_host(
+        scope("org-client"),
+        command.approval.approval_id.clone(),
+        command.actor.clone(),
+    );
+    let plans = approval_resubmission_query_plans(
+        &authorization,
+        &command,
+        &ApprovalResubmissionOptions::new(None),
+    )
+    .unwrap();
+
+    assert!(
+        plans
+            .update_approval
+            .sql
+            .contains("a.status = 'revision_requested'")
+    );
+    assert!(plans.update_approval.sql.contains("status = 'pending'"));
+    assert!(
+        plans
+            .update_approval
+            .sql
+            .contains("decision_idempotency_key = NULL")
+    );
+    assert!(plans.update_approval.sql.contains("decision = NULL"));
+    assert!(plans.update_approval.sql.contains("payload"));
 }
 
 #[test]

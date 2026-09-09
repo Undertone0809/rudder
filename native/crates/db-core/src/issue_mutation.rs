@@ -3,15 +3,19 @@
 //! This module is deliberately not wired to an HTTP route or a public writer. The
 //! caller must provide [`TrustedOrganizationId`] from authenticated host state;
 //! command payloads are checked against that scope but never choose the SQL
-//! organization predicate. Every mutation reserves a durable command-ledger
-//! row, applies the issue-core state machine under row locks and optimistic
-//! preconditions, and commits its activity evidence and final ledger receipt in
-//! one PostgreSQL transaction.
+//! organization predicate. Approval operations additionally require a
+//! [`TrustedApprovalAuthorization`] produced by the host after its board/approval
+//! authorization check. The adapter records approval status/decision state only;
+//! type-specific side effects for non-issue approvals remain owned by the host.
+//! Every mutation reserves a durable command-ledger row, applies the issue-core
+//! state machine under row locks and optimistic preconditions, and commits its
+//! activity evidence and final ledger receipt in one PostgreSQL transaction.
 
 use rudder_issue_core::{
-    ActorRef, AgentId, Approval, ApprovalDecision, ApprovalDecisionCommand, ApprovalRef,
-    ApprovalStatus, ApprovalType, CheckoutCommand, DomainError, IdempotencyKey, Issue, IssueId,
-    IssueRef, IssueStatus, OrganizationId, PrincipalRef, ReviewDecisionCommand, RunId,
+    ActorRef, AgentId, Approval, ApprovalDecision, ApprovalDecisionCommand, ApprovalId,
+    ApprovalRef, ApprovalResubmissionCommand, ApprovalStatus, ApprovalType, CheckoutCommand,
+    DomainError, IdempotencyKey, Issue, IssueId, IssueRef, IssueStatus, OrganizationId,
+    PrincipalRef, ReviewDecisionCommand, RunId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,6 +27,7 @@ use time::OffsetDateTime;
 pub const CHECKOUT_COMMAND_TYPE: &str = "issue.checkout";
 pub const REVIEW_COMMAND_TYPE: &str = "issue.review_decision";
 pub const APPROVAL_COMMAND_TYPE: &str = "approval.decision";
+pub const APPROVAL_RESUBMISSION_COMMAND_TYPE: &str = "approval.resubmission";
 
 /// An organization id captured from authenticated host state.
 ///
@@ -43,6 +48,44 @@ impl TrustedOrganizationId {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+/// Host-trusted authorization for one approval operation.
+///
+/// The host creates this value only after authenticating the actor and checking
+/// the board/approval policy. The command actor and approval id must match this
+/// context; command payloads cannot grant themselves approval authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrustedApprovalAuthorization {
+    organization: TrustedOrganizationId,
+    approval_id: ApprovalId,
+    actor: ActorRef,
+}
+
+impl TrustedApprovalAuthorization {
+    pub fn from_host(
+        organization: TrustedOrganizationId,
+        approval_id: ApprovalId,
+        actor: ActorRef,
+    ) -> Self {
+        Self {
+            organization,
+            approval_id,
+            actor,
+        }
+    }
+
+    pub fn organization(&self) -> &TrustedOrganizationId {
+        &self.organization
+    }
+
+    pub fn approval_id(&self) -> &ApprovalId {
+        &self.approval_id
+    }
+
+    pub fn actor(&self) -> &ActorRef {
+        &self.actor
     }
 }
 
@@ -80,6 +123,7 @@ pub enum MutationBind {
     NullableText(Option<String>),
     BigInt(i64),
     Json(Value),
+    NullableJson(Option<Value>),
     Timestamp(Option<OffsetDateTime>),
 }
 
@@ -92,6 +136,7 @@ pub struct MutationQueryPlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckoutQueryPlans {
     pub reserve_ledger: MutationQueryPlan,
+    pub validate_run: MutationQueryPlan,
     pub load_issue: MutationQueryPlan,
     pub update_issue: MutationQueryPlan,
     pub insert_activity: MutationQueryPlan,
@@ -101,8 +146,10 @@ pub struct CheckoutQueryPlans {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewQueryPlans {
     pub reserve_ledger: MutationQueryPlan,
+    pub validate_run: Option<MutationQueryPlan>,
     pub load_issue: MutationQueryPlan,
     pub update_issue: MutationQueryPlan,
+    pub insert_comment: MutationQueryPlan,
     pub insert_activity: MutationQueryPlan,
     pub finalize_ledger: MutationQueryPlan,
 }
@@ -110,6 +157,28 @@ pub struct ReviewQueryPlans {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApprovalQueryPlans {
     pub reserve_ledger: MutationQueryPlan,
+    pub validate_run: Option<MutationQueryPlan>,
+    pub load_approval: MutationQueryPlan,
+    pub update_approval: MutationQueryPlan,
+    pub insert_activity: MutationQueryPlan,
+    pub finalize_ledger: MutationQueryPlan,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApprovalResubmissionOptions {
+    pub payload: Option<Value>,
+}
+
+impl ApprovalResubmissionOptions {
+    pub fn new(payload: Option<Value>) -> Self {
+        Self { payload }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApprovalResubmissionQueryPlans {
+    pub reserve_ledger: MutationQueryPlan,
+    pub validate_run: Option<MutationQueryPlan>,
     pub load_approval: MutationQueryPlan,
     pub update_approval: MutationQueryPlan,
     pub insert_activity: MutationQueryPlan,
@@ -138,6 +207,8 @@ pub enum IssueMutationError {
     IdempotencyConflict { key: IdempotencyKey },
     #[error("approval already contains decision idempotency key {key:?}")]
     ApprovalDecisionKeyConflict { key: IdempotencyKey },
+    #[error("approval authorization does not match the host-trusted approval context")]
+    ApprovalAuthorizationMismatch,
     #[error("optimistic mutation precondition changed before persistence")]
     ConcurrentModification,
     #[error("{field} is outside PostgreSQL bigint range")]
@@ -173,6 +244,7 @@ enum ActivityKind {
     Checkout,
     Review,
     Approval,
+    ApprovalResubmission,
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +258,7 @@ struct ActorSqlParts {
     actor_type: &'static str,
     actor_id: String,
     agent_id: Option<String>,
+    user_id: Option<String>,
     run_id: Option<String>,
 }
 
@@ -209,6 +282,16 @@ struct LedgerIdRow {
 
 #[derive(Clone, Debug, FromRow)]
 struct ActivityIdRow {
+    id: String,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct CommentIdRow {
+    id: String,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct RunScopeRow {
     id: String,
 }
 
@@ -255,6 +338,7 @@ struct ApprovalMutationRow {
     requested_by_agent_id: Option<String>,
     requested_by_user_id: Option<String>,
     payload: Value,
+    linked_issue_id: Option<String>,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -309,6 +393,24 @@ fn ensure_approval_scope(
             found: actor.organization_id().clone(),
         }
         .into());
+    }
+    Ok(())
+}
+
+fn ensure_approval_authorization(
+    authorization: &TrustedApprovalAuthorization,
+    command_approval: &ApprovalRef,
+    command_actor: &ActorRef,
+) -> Result<(), IssueMutationError> {
+    ensure_approval_scope(
+        &authorization.organization,
+        command_approval,
+        &authorization.actor,
+    )?;
+    if authorization.approval_id != command_approval.approval_id
+        || authorization.actor != *command_actor
+    {
+        return Err(IssueMutationError::ApprovalAuthorizationMismatch);
     }
     Ok(())
 }
@@ -369,11 +471,7 @@ fn reserve_ledger_plan(
     fingerprint: &str,
 ) -> MutationQueryPlan {
     plan(
-        "INSERT INTO issue_mutation_commands (\
-             org_id, command_type, idempotency_key, command_fingerprint, outcome\
-         ) VALUES ($1::uuid, $2::text, $3::text, $4::text, $5::jsonb)\
-         ON CONFLICT (org_id, idempotency_key) DO NOTHING\
-         RETURNING id::text AS id",
+        "INSERT INTO issue_mutation_commands (\n             org_id, command_type, idempotency_key, command_fingerprint, outcome\n         ) VALUES ($1::uuid, $2::text, $3::text, $4::text, $5::jsonb)\n         ON CONFLICT (org_id, idempotency_key) DO NOTHING\n         RETURNING id::text AS id",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Text(command_type.into()),
@@ -386,12 +484,7 @@ fn reserve_ledger_plan(
 
 fn ledger_lookup_plan(scope: &TrustedOrganizationId, key: &IdempotencyKey) -> MutationQueryPlan {
     plan(
-        "SELECT id::text AS id, org_id::text AS org_id, issue_id::text AS issue_id,\
-                approval_id::text AS approval_id, command_type, idempotency_key,\
-                command_fingerprint, outcome, activity_id::text AS activity_id\
-           FROM issue_mutation_commands\
-          WHERE org_id = $1::uuid AND idempotency_key = $2::text\
-          FOR UPDATE",
+        "SELECT id::text AS id, org_id::text AS org_id, issue_id::text AS issue_id,\n                approval_id::text AS approval_id, command_type, idempotency_key,\n                command_fingerprint, outcome, activity_id::text AS activity_id\n           FROM issue_mutation_commands\n          WHERE org_id = $1::uuid AND idempotency_key = $2::text\n          FOR UPDATE",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Text(key.as_str().into()),
@@ -401,19 +494,55 @@ fn ledger_lookup_plan(scope: &TrustedOrganizationId, key: &IdempotencyKey) -> Mu
 
 fn load_issue_plan(scope: &TrustedOrganizationId, issue_id: &IssueId) -> MutationQueryPlan {
     plan(
-        "SELECT i.id::text AS id, i.org_id::text AS org_id, i.title, i.status,\
-                i.assignee_agent_id::text AS assignee_agent_id,\
-                i.assignee_user_id, i.reviewer_agent_id::text AS reviewer_agent_id,\
-                i.reviewer_user_id, i.revision, i.fencing_token,\
-                i.checkout_run_id::text AS checkout_run_id,\
-                i.execution_run_id::text AS execution_run_id,\
-                i.checkout_lease_owner, i.checkout_lease_expires_at\
-           FROM issues AS i\
-          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\
-          FOR UPDATE",
+        "SELECT i.id::text AS id, i.org_id::text AS org_id, i.title, i.status,\n                i.assignee_agent_id::text AS assignee_agent_id,\n                i.assignee_user_id, i.reviewer_agent_id::text AS reviewer_agent_id,\n                i.reviewer_user_id, i.revision, i.fencing_token,\n                i.checkout_run_id::text AS checkout_run_id,\n                i.execution_run_id::text AS execution_run_id,\n                i.checkout_lease_owner, i.checkout_lease_expires_at\n           FROM issues AS i\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n          FOR UPDATE",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(issue_id.as_str().into()),
+        ],
+    )
+}
+
+fn validate_run_plan(
+    scope: &TrustedOrganizationId,
+    run_id: &RunId,
+    agent_id: &AgentId,
+) -> MutationQueryPlan {
+    plan(
+        "SELECT r.id::text AS id\n           FROM heartbeat_runs AS r\n          WHERE r.org_id = $1::uuid AND r.id = $2::uuid AND r.agent_id = $3::uuid\n          FOR SHARE",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(run_id.as_str().into()),
+            MutationBind::Uuid(agent_id.as_str().into()),
+        ],
+    )
+}
+
+fn actor_run_plan(scope: &TrustedOrganizationId, actor: &ActorRef) -> Option<MutationQueryPlan> {
+    match actor {
+        ActorRef::Agent {
+            agent_id,
+            run_id: Some(run_id),
+            ..
+        } => Some(validate_run_plan(scope, run_id, agent_id)),
+        _ => None,
+    }
+}
+
+fn insert_comment_plan(
+    scope: &TrustedOrganizationId,
+    issue_id: &IssueId,
+    actor: &ActorRef,
+    body: &str,
+) -> MutationQueryPlan {
+    let actor = actor_sql_parts(actor);
+    plan(
+        "INSERT INTO issue_comments (\n             org_id, issue_id, author_agent_id, author_user_id, body, created_at, updated_at\n         ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, now(), now())\n         RETURNING id::text AS id",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(issue_id.as_str().into()),
+            MutationBind::NullableUuid(actor.agent_id),
+            MutationBind::NullableText(actor.user_id),
+            MutationBind::Text(body.into()),
         ],
     )
 }
@@ -423,13 +552,7 @@ fn load_approval_plan(
     approval_id: &rudder_issue_core::ApprovalId,
 ) -> MutationQueryPlan {
     plan(
-        "SELECT a.id::text AS id, a.org_id::text AS org_id, a.type AS approval_type,\
-                a.status, a.revision, a.decision, a.decision_idempotency_key,\
-                a.decision_note, a.requested_by_agent_id::text AS requested_by_agent_id,\
-                a.requested_by_user_id, a.payload\
-           FROM approvals AS a\
-          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\
-          FOR UPDATE",
+        "SELECT a.id::text AS id, a.org_id::text AS org_id, a.type AS approval_type,\n                a.status, a.revision, a.decision, a.decision_idempotency_key,\n                a.decision_note, a.requested_by_agent_id::text AS requested_by_agent_id,\n                a.requested_by_user_id, a.payload,\n                (SELECT i.id::text\n                   FROM issue_approvals AS ia\n                   JOIN issues AS i ON i.id = ia.issue_id\n                  WHERE ia.org_id = a.org_id AND ia.approval_id = a.id\n                    AND i.org_id = a.org_id\n                  ORDER BY ia.created_at, ia.issue_id\n                  LIMIT 1) AS linked_issue_id\n           FROM approvals AS a\n          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\n          FOR UPDATE",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(approval_id.as_str().into()),
@@ -450,23 +573,7 @@ fn update_checkout_plan(
         .as_ref()
         .ok_or(DomainError::CheckoutRunRequired)?;
     Ok(plan(
-        "UPDATE issues AS i\
-            SET status = 'in_progress',\
-                checkout_run_id = $6::uuid,\
-                execution_run_id = $6::uuid,\
-                checkout_lease_owner = $7::text,\
-                checkout_lease_expires_at = $8::timestamptz,\
-                revision = i.revision + 1,\
-                fencing_token = $5::int8,\
-                started_at = COALESCE(i.started_at, now()),\
-                updated_at = now()\
-          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\
-            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\
-            AND i.checkout_run_id IS NULL\
-            AND i.execution_run_id IS NULL\
-            AND i.checkout_lease_owner IS NULL\
-            AND i.checkout_lease_expires_at IS NULL\
-          RETURNING i.revision, i.fencing_token",
+        "UPDATE issues AS i\n            SET status = 'in_progress',\n                checkout_run_id = $6::uuid,\n                execution_run_id = $6::uuid,\n                checkout_lease_owner = $7::text,\n                checkout_lease_expires_at = $8::timestamptz,\n                revision = i.revision + 1,\n                fencing_token = $5::int8,\n                started_at = COALESCE(i.started_at, now()),\n                updated_at = now()\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\n            AND i.checkout_run_id IS NULL\n            AND i.execution_run_id IS NULL\n            AND i.checkout_lease_owner IS NULL\n            AND i.checkout_lease_expires_at IS NULL\n          RETURNING i.revision, i.fencing_token",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(command.issue.issue_id.as_str().into()),
@@ -488,18 +595,7 @@ fn update_review_plan(
     let expected_fence = bigint(command.expected_fencing_token, "expected fencing token")?;
     let status = command.decision.resulting_status();
     Ok(plan(
-        "UPDATE issues AS i\
-            SET status = $5::text,\
-                checkout_run_id = NULL,\
-                execution_run_id = NULL,\
-                checkout_lease_owner = NULL,\
-                checkout_lease_expires_at = NULL,\
-                revision = i.revision + 1,\
-                updated_at = now()\
-          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\
-            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\
-            AND i.status = 'in_review'\
-          RETURNING i.revision, i.fencing_token",
+        "UPDATE issues AS i\n            SET status = $5::text,\n                checkout_run_id = NULL,\n                execution_run_id = NULL,\n                checkout_lease_owner = NULL,\n                checkout_lease_expires_at = NULL,\n                started_at = CASE WHEN $5::text = 'in_progress'\n                                  THEN COALESCE(i.started_at, now())\n                                  ELSE i.started_at END,\n                completed_at = CASE WHEN $5::text = 'done'\n                                    THEN now()\n                                    ELSE NULL END,\n                cancelled_at = CASE WHEN $5::text = 'cancelled'\n                                    THEN now()\n                                    ELSE NULL END,\n                revision = i.revision + 1,\n                updated_at = now()\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\n            AND i.status IN ('in_review', 'blocked')\n          RETURNING i.revision, i.fencing_token",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(command.issue.issue_id.as_str().into()),
@@ -521,20 +617,7 @@ fn update_approval_plan(
         ActorRef::Agent { .. } => None,
     };
     Ok(plan(
-        "UPDATE approvals AS a\
-            SET status = $4::text,\
-                revision = a.revision + 1,\
-                decision = $5::text,\
-                decision_idempotency_key = $6::text,\
-                decision_note = $7::text,\
-                decided_by_user_id = $8::text,\
-                decided_at = now(),\
-                updated_at = now()\
-          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\
-            AND a.revision = $3::int8\
-            AND a.status = 'pending'\
-            AND a.decision_idempotency_key IS NULL\
-          RETURNING a.revision",
+        "UPDATE approvals AS a\n            SET status = $4::text,\n                revision = a.revision + 1,\n                decision = $5::text,\n                decision_idempotency_key = $6::text,\n                decision_note = $7::text,\n                decided_by_user_id = $8::text,\n                decided_at = now(),\n                updated_at = now()\n          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\n            AND a.revision = $3::int8\n            AND a.status = 'pending'\n            AND a.decision_idempotency_key IS NULL\n          RETURNING a.revision",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(command.approval.approval_id.as_str().into()),
@@ -544,6 +627,23 @@ fn update_approval_plan(
             MutationBind::Text(command.idempotency_key.as_str().into()),
             MutationBind::NullableText(command.note.clone()),
             MutationBind::NullableText(decided_by_user_id),
+        ],
+    ))
+}
+
+fn update_approval_resubmission_plan(
+    scope: &TrustedOrganizationId,
+    command: &ApprovalResubmissionCommand,
+    options: &ApprovalResubmissionOptions,
+) -> Result<MutationQueryPlan, IssueMutationError> {
+    let expected_revision = bigint(command.expected_revision, "expected approval revision")?;
+    Ok(plan(
+        "UPDATE approvals AS a\n            SET status = 'pending',\n                revision = a.revision + 1,\n                decision = NULL,\n                decision_idempotency_key = NULL,\n                decision_note = NULL,\n                decided_by_user_id = NULL,\n                decided_at = NULL,\n                payload = COALESCE($4::jsonb, a.payload),\n                updated_at = now()\n          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\n            AND a.revision = $3::int8\n            AND a.status = 'revision_requested'\n          RETURNING a.revision",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(command.approval.approval_id.as_str().into()),
+            MutationBind::BigInt(expected_revision),
+            MutationBind::NullableJson(options.payload.clone()),
         ],
     ))
 }
@@ -561,14 +661,10 @@ fn activity_plan(
         ActivityKind::Checkout => ("issue.checked_out", "issue"),
         ActivityKind::Review => ("issue.review_decision_recorded", "issue"),
         ActivityKind::Approval => ("approval.decision_recorded", "approval"),
+        ActivityKind::ApprovalResubmission => ("approval.resubmitted", "approval"),
     };
     plan(
-        "INSERT INTO activity_log (\
-             org_id, actor_type, actor_id, action, entity_type, entity_id,\
-             agent_id, run_id, details, idempotency_key\
-         ) VALUES ($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text,\
-                   $7::uuid, $8::uuid, $9::jsonb, $10::text)\
-         RETURNING id::text AS id",
+        "INSERT INTO activity_log (\n             org_id, actor_type, actor_id, action, entity_type, entity_id,\n             agent_id, run_id, details, idempotency_key\n         ) VALUES ($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text,\n                   $7::uuid, $8::uuid, $9::jsonb, $10::text)\n         RETURNING id::text AS id",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Text(actor.actor_type.into()),
@@ -593,10 +689,7 @@ fn finalize_ledger_plan(
 ) -> MutationQueryPlan {
     match target {
         LedgerTarget::Issue(issue_id) => plan(
-            "UPDATE issue_mutation_commands\
-                SET issue_id = $3::uuid, outcome = $4::jsonb, activity_id = $5::uuid\
-              WHERE org_id = $1::uuid AND id = $2::uuid\
-              RETURNING id::text AS id, activity_id::text AS activity_id",
+            "UPDATE issue_mutation_commands\n                SET issue_id = $3::uuid, outcome = $4::jsonb, activity_id = $5::uuid\n              WHERE org_id = $1::uuid AND id = $2::uuid\n              RETURNING id::text AS id, activity_id::text AS activity_id",
             vec![
                 MutationBind::Uuid(scope.as_str().into()),
                 MutationBind::Uuid(ledger_id.into()),
@@ -606,10 +699,7 @@ fn finalize_ledger_plan(
             ],
         ),
         LedgerTarget::Approval(approval_id) => plan(
-            "UPDATE issue_mutation_commands\
-                SET approval_id = $3::uuid, outcome = $4::jsonb, activity_id = $5::uuid\
-              WHERE org_id = $1::uuid AND id = $2::uuid\
-              RETURNING id::text AS id, activity_id::text AS activity_id",
+            "UPDATE issue_mutation_commands\n                SET approval_id = $3::uuid, outcome = $4::jsonb, activity_id = $5::uuid\n              WHERE org_id = $1::uuid AND id = $2::uuid\n              RETURNING id::text AS id, activity_id::text AS activity_id",
             vec![
                 MutationBind::Uuid(scope.as_str().into()),
                 MutationBind::Uuid(ledger_id.into()),
@@ -629,12 +719,14 @@ fn actor_sql_parts(actor: &ActorRef) -> ActorSqlParts {
             actor_type: "agent",
             actor_id: agent_id.as_str().into(),
             agent_id: Some(agent_id.as_str().into()),
+            user_id: None,
             run_id: run_id.as_ref().map(|value| value.as_str().into()),
         },
         ActorRef::User { user_id, .. } => ActorSqlParts {
             actor_type: "user",
             actor_id: user_id.as_str().into(),
             agent_id: None,
+            user_id: Some(user_id.as_str().into()),
             run_id: None,
         },
     }
@@ -656,12 +748,17 @@ fn approval_decision_text(decision: ApprovalDecision) -> (&'static str, &'static
     match decision {
         ApprovalDecision::Approve => ("approved", "approve"),
         ApprovalDecision::Reject => ("rejected", "reject"),
-        ApprovalDecision::RequestChanges => ("changes_requested", "request_changes"),
+        ApprovalDecision::RequestChanges => ("revision_requested", "request_changes"),
     }
 }
 
 fn approval_type(value: &str, id: &str) -> Result<ApprovalType, IssueMutationError> {
     match value {
+        "hire_agent" => Ok(ApprovalType::HireAgent),
+        "approve_ceo_strategy" => Ok(ApprovalType::ApproveCeoStrategy),
+        "chat_issue_creation" => Ok(ApprovalType::ChatIssueCreation),
+        "chat_operation" => Ok(ApprovalType::ChatOperation),
+        "agent_runtime" => Ok(ApprovalType::AgentRuntime),
         "budget_override_required" => Ok(ApprovalType::BudgetOverrideRequired),
         "issue_action" => Ok(ApprovalType::IssueAction),
         "agent_activation" => Ok(ApprovalType::AgentActivation),
@@ -679,7 +776,7 @@ fn approval_status(value: &str, id: &str) -> Result<ApprovalStatus, IssueMutatio
         "pending" => Ok(ApprovalStatus::Pending),
         "approved" => Ok(ApprovalStatus::Approved),
         "rejected" => Ok(ApprovalStatus::Rejected),
-        "changes_requested" | "revision_requested" => Ok(ApprovalStatus::ChangesRequested),
+        "changes_requested" | "revision_requested" => Ok(ApprovalStatus::RevisionRequested),
         "cancelled" => Ok(ApprovalStatus::Cancelled),
         _ => Err(IssueMutationError::InvalidStoredState {
             entity: "approval",
@@ -693,7 +790,7 @@ fn approval_decision(value: Option<&str>) -> Option<ApprovalDecision> {
     match value {
         Some("approve") | Some("approved") => Some(ApprovalDecision::Approve),
         Some("reject") | Some("rejected") => Some(ApprovalDecision::Reject),
-        Some("request_changes") | Some("changes_requested") => {
+        Some("request_changes") | Some("changes_requested") | Some("revision_requested") => {
             Some(ApprovalDecision::RequestChanges)
         }
         _ => None,
@@ -789,26 +886,37 @@ fn ensure_no_checkout_lease(row: &IssueMutationRow) -> Result<(), IssueMutationE
     Ok(())
 }
 
-fn approval_target_issue_id(payload: &Value) -> Option<String> {
-    payload
-        .get("issueId")
-        .and_then(Value::as_str)
-        .or_else(|| payload.get("primaryIssueId").and_then(Value::as_str))
-        .map(str::to_owned)
-        .or_else(|| {
-            payload
-                .get("issueIds")
-                .and_then(Value::as_array)
-                .and_then(|ids| ids.first())
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
+fn approval_target_issue_id(payload: &Value) -> Result<Option<String>, &'static str> {
+    let scalar_target = |key: &'static str| -> Result<Option<String>, &'static str> {
+        match payload.get(key) {
+            None => Ok(None),
+            Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+            Some(_) => Err(key),
+        }
+    };
+
+    if let Some(issue_id) = scalar_target("issueId")? {
+        return Ok(Some(issue_id));
+    }
+    if let Some(issue_id) = scalar_target("primaryIssueId")? {
+        return Ok(Some(issue_id));
+    }
+    match payload.get("issueIds") {
+        None => Ok(None),
+        Some(Value::Array(ids)) => {
+            if ids.iter().any(|value| !value.is_string()) {
+                return Err("issueIds");
+            }
+            Ok(ids.first().and_then(Value::as_str).map(str::to_owned))
+        }
+        Some(_) => Err("issueIds"),
+    }
 }
 
 fn approval_requester(
     scope: &TrustedOrganizationId,
     row: &ApprovalMutationRow,
-) -> Result<ActorRef, IssueMutationError> {
+) -> Result<Option<ActorRef>, IssueMutationError> {
     match (
         row.requested_by_agent_id.as_deref(),
         row.requested_by_user_id.as_deref(),
@@ -817,20 +925,16 @@ fn approval_requester(
             role: "approval requester",
         }
         .into()),
-        (Some(agent_id), None) => Ok(ActorRef::agent(
+        (Some(agent_id), None) => Ok(Some(ActorRef::agent(
             scope.0.clone(),
             AgentId::new(agent_id),
             None,
-        )),
-        (None, Some(user_id)) => Ok(ActorRef::user(
+        ))),
+        (None, Some(user_id)) => Ok(Some(ActorRef::user(
             scope.0.clone(),
             rudder_issue_core::UserId::new(user_id),
-        )),
-        (None, None) => Err(IssueMutationError::InvalidStoredState {
-            entity: "approval",
-            id: row.id.clone(),
-            detail: "approval requester is missing".into(),
-        }),
+        ))),
+        (None, None) => Ok(None),
     }
 }
 
@@ -845,24 +949,35 @@ fn approval_from_row(
             detail: "row organization differs from trusted scope".into(),
         });
     }
-    let issue_id = approval_target_issue_id(&row.payload).ok_or_else(|| {
+    let payload_issue_id = approval_target_issue_id(&row.payload).map_err(|field| {
         IssueMutationError::InvalidStoredState {
             entity: "approval",
             id: row.id.clone(),
-            detail: "payload has no issueId, primaryIssueId, or issueIds target".into(),
+            detail: format!("approval target field {field} is malformed"),
         }
     })?;
-    let identity = ApprovalRef::new(
-        scope.0.clone(),
-        rudder_issue_core::ApprovalId::new(row.id.clone()),
-    );
-    let mut approval = Approval::new(
-        identity,
-        approval_type(&row.approval_type, &row.id)?,
-        rudder_issue_core::GovernedTarget::issue(IssueRef::new(
+    match (payload_issue_id.as_ref(), row.linked_issue_id.as_ref()) {
+        (Some(payload_issue_id), Some(linked_issue_id)) if payload_issue_id != linked_issue_id => {
+            return Err(IssueMutationError::InvalidStoredState {
+                entity: "approval",
+                id: row.id.clone(),
+                detail: "payload and relational issue targets differ".into(),
+            });
+        }
+        _ => {}
+    }
+    let target = match row.linked_issue_id.clone().or(payload_issue_id) {
+        Some(issue_id) => rudder_issue_core::GovernedTarget::issue(IssueRef::new(
             scope.0.clone(),
             IssueId::new(issue_id),
         )),
+        None => rudder_issue_core::GovernedTarget::organization(scope.0.clone()),
+    };
+    let identity = ApprovalRef::new(scope.0.clone(), ApprovalId::new(row.id.clone()));
+    let mut approval = Approval::new(
+        identity,
+        approval_type(&row.approval_type, &row.id)?,
+        target,
         approval_requester(scope, row)?,
     )?;
     approval.status = approval_status(&row.status, &row.id)?;
@@ -985,10 +1100,49 @@ where
             }
             MutationBind::BigInt(value) => query.bind(*value),
             MutationBind::Json(value) => query.bind(value.clone()),
+            MutationBind::NullableJson(value) => query.bind(value.clone()),
             MutationBind::Timestamp(value) => query.bind(*value),
         };
     }
     query
+}
+
+async fn require_run_scope(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    query_plan: &MutationQueryPlan,
+    run_id: &RunId,
+) -> Result<(), IssueMutationError> {
+    bind_query_as::<RunScopeRow>(query_plan)
+        .fetch_optional(&mut **tx)
+        .await?
+        .map(|row| {
+            let _ = row.id;
+        })
+        .ok_or_else(|| IssueMutationError::NotFound {
+            entity: "run",
+            id: run_id.as_str().into(),
+        })
+}
+
+async fn require_actor_run_scope(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    query_plan: Option<&MutationQueryPlan>,
+    actor: &ActorRef,
+) -> Result<(), IssueMutationError> {
+    let ActorRef::Agent {
+        agent_id,
+        run_id: Some(run_id),
+        ..
+    } = actor
+    else {
+        return Ok(());
+    };
+    let query_plan = query_plan.ok_or_else(|| IssueMutationError::InvalidStoredState {
+        entity: "actor",
+        id: agent_id.as_str().into(),
+        detail: "agent run validation plan is missing".into(),
+    })?;
+    require_run_scope(tx, query_plan, run_id).await
 }
 
 /// Build all checkout queries without executing them.
@@ -998,6 +1152,10 @@ pub fn checkout_query_plans(
     options: &CheckoutOptions,
 ) -> Result<CheckoutQueryPlans, IssueMutationError> {
     ensure_issue_scope(scope, &command.issue, &command.actor)?;
+    let run_id = command
+        .run_id
+        .as_ref()
+        .ok_or(DomainError::CheckoutRunRequired)?;
     let fingerprint = command_fingerprint(CHECKOUT_COMMAND_TYPE, scope, command, options)?;
     Ok(CheckoutQueryPlans {
         reserve_ledger: reserve_ledger_plan(
@@ -1006,6 +1164,7 @@ pub fn checkout_query_plans(
             &command.idempotency_key,
             &fingerprint,
         ),
+        validate_run: validate_run_plan(scope, run_id, &command.target_agent_id),
         load_issue: load_issue_plan(scope, &command.issue.issue_id),
         update_issue: update_checkout_plan(scope, command, options)?,
         insert_activity: activity_plan(
@@ -1040,8 +1199,15 @@ pub fn review_decision_query_plans(
             &command.idempotency_key,
             &fingerprint,
         ),
+        validate_run: actor_run_plan(scope, &command.actor),
         load_issue: load_issue_plan(scope, &command.issue.issue_id),
         update_issue: update_review_plan(scope, command)?,
+        insert_comment: insert_comment_plan(
+            scope,
+            &command.issue.issue_id,
+            &command.actor,
+            &command.comment,
+        ),
         insert_activity: activity_plan(
             scope,
             &command.actor,
@@ -1062,10 +1228,11 @@ pub fn review_decision_query_plans(
 
 /// Build all approval-decision queries without executing them.
 pub fn approval_decision_query_plans(
-    scope: &TrustedOrganizationId,
+    authorization: &TrustedApprovalAuthorization,
     command: &ApprovalDecisionCommand,
 ) -> Result<ApprovalQueryPlans, IssueMutationError> {
-    ensure_approval_scope(scope, &command.approval, &command.actor)?;
+    ensure_approval_authorization(authorization, &command.approval, &command.actor)?;
+    let scope = authorization.organization();
     let fingerprint = fingerprint_value(APPROVAL_COMMAND_TYPE, scope, command, None)?;
     Ok(ApprovalQueryPlans {
         reserve_ledger: reserve_ledger_plan(
@@ -1074,12 +1241,55 @@ pub fn approval_decision_query_plans(
             &command.idempotency_key,
             &fingerprint,
         ),
+        validate_run: actor_run_plan(scope, &command.actor),
         load_approval: load_approval_plan(scope, &command.approval.approval_id),
         update_approval: update_approval_plan(scope, command)?,
         insert_activity: activity_plan(
             scope,
             &command.actor,
             ActivityKind::Approval,
+            command.approval.approval_id.as_str(),
+            json!({"state": "pending"}),
+            &command.idempotency_key,
+        ),
+        finalize_ledger: finalize_ledger_plan(
+            scope,
+            "ledger-id",
+            LedgerTarget::Approval(command.approval.approval_id.as_str()),
+            json!({"state": "pending"}),
+            "activity-id",
+        ),
+    })
+}
+
+/// Build all approval-resubmission queries without executing them.
+pub fn approval_resubmission_query_plans(
+    authorization: &TrustedApprovalAuthorization,
+    command: &ApprovalResubmissionCommand,
+    options: &ApprovalResubmissionOptions,
+) -> Result<ApprovalResubmissionQueryPlans, IssueMutationError> {
+    ensure_approval_authorization(authorization, &command.approval, &command.actor)?;
+    let scope = authorization.organization();
+    let fingerprint = fingerprint_value(
+        APPROVAL_RESUBMISSION_COMMAND_TYPE,
+        scope,
+        command,
+        Some(options.payload.clone().unwrap_or(Value::Null)),
+    )?;
+    Ok(ApprovalResubmissionQueryPlans {
+        reserve_ledger: reserve_ledger_plan(
+            scope,
+            APPROVAL_RESUBMISSION_COMMAND_TYPE,
+            &command.idempotency_key,
+            &fingerprint,
+        ),
+        validate_run: actor_run_plan(scope, &command.actor),
+        load_approval: load_approval_plan(scope, &command.approval.approval_id),
+        update_approval: update_approval_resubmission_plan(scope, command, options)?,
+        insert_activity: activity_plan(
+            scope,
+            &command.actor,
+            ActivityKind::ApprovalResubmission,
             command.approval.approval_id.as_str(),
             json!({"state": "pending"}),
             &command.idempotency_key,
@@ -1121,6 +1331,11 @@ impl IssueMutationRepository {
         let plans = checkout_query_plans(scope, &command, &options)?;
         let fingerprint = command_fingerprint(CHECKOUT_COMMAND_TYPE, scope, &command, &options)?;
         let mut tx = self.pool.begin().await?;
+        let run_id = command
+            .run_id
+            .as_ref()
+            .ok_or(DomainError::CheckoutRunRequired)?;
+        require_run_scope(&mut tx, &plans.validate_run, run_id).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -1218,6 +1433,7 @@ impl IssueMutationRepository {
         let plans = review_decision_query_plans(scope, &command)?;
         let fingerprint = fingerprint_value(REVIEW_COMMAND_TYPE, scope, &command, None)?;
         let mut tx = self.pool.begin().await?;
+        require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -1259,6 +1475,10 @@ impl IssueMutationRepository {
         {
             return Err(IssueMutationError::ConcurrentModification);
         }
+        let comment_id = bind_query_as::<CommentIdRow>(&plans.insert_comment)
+            .fetch_one(&mut *tx)
+            .await?
+            .id;
         let stored = stored_outcome(
             REVIEW_COMMAND_TYPE,
             &fingerprint,
@@ -1266,6 +1486,7 @@ impl IssueMutationRepository {
             json!({
                 "decision": command.decision,
                 "comment": command.comment.clone(),
+                "commentId": comment_id,
             }),
         );
         let activity = activity_plan(
@@ -1304,12 +1525,14 @@ impl IssueMutationRepository {
 
     pub async fn decide_approval(
         &self,
-        scope: &TrustedOrganizationId,
+        authorization: &TrustedApprovalAuthorization,
         command: ApprovalDecisionCommand,
     ) -> Result<MutationReceipt, IssueMutationError> {
-        let plans = approval_decision_query_plans(scope, &command)?;
+        let plans = approval_decision_query_plans(authorization, &command)?;
+        let scope = authorization.organization();
         let fingerprint = fingerprint_value(APPROVAL_COMMAND_TYPE, scope, &command, None)?;
         let mut tx = self.pool.begin().await?;
+        require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -1395,5 +1618,179 @@ impl IssueMutationRepository {
             outcome: result,
             replayed: false,
         })
+    }
+
+    pub async fn resubmit_approval(
+        &self,
+        authorization: &TrustedApprovalAuthorization,
+        command: ApprovalResubmissionCommand,
+        options: ApprovalResubmissionOptions,
+    ) -> Result<MutationReceipt, IssueMutationError> {
+        let plans = approval_resubmission_query_plans(authorization, &command, &options)?;
+        let scope = authorization.organization();
+        let fingerprint = fingerprint_value(
+            APPROVAL_RESUBMISSION_COMMAND_TYPE,
+            scope,
+            &command,
+            Some(options.payload.clone().unwrap_or(Value::Null)),
+        )?;
+        let mut tx = self.pool.begin().await?;
+        require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor).await?;
+        let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
+        let reservation = reserve_or_replay(
+            &mut tx,
+            ReservationRequest {
+                reserve: &plans.reserve_ledger,
+                lookup: &lookup,
+                scope,
+                key: &command.idempotency_key,
+                command_type: APPROVAL_RESUBMISSION_COMMAND_TYPE,
+                fingerprint: &fingerprint,
+                target: LedgerTarget::Approval(command.approval.approval_id.as_str()),
+            },
+        )
+        .await?;
+        let ledger_id = match reservation {
+            Reservation::Replay(receipt) => {
+                tx.commit().await?;
+                return Ok(receipt);
+            }
+            Reservation::New(id) => id,
+        };
+        let row = bind_query_as::<ApprovalMutationRow>(&plans.load_approval)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| IssueMutationError::NotFound {
+                entity: "approval",
+                id: command.approval.approval_id.as_str().into(),
+            })?;
+        let mut approval = approval_from_row(scope, &row)?;
+        let domain_outcome = approval.resubmit(command.clone())?;
+        let result = serde_json::to_value(&domain_outcome)?;
+        let update = update_approval_resubmission_plan(scope, &command, &options)?;
+        let updated = bind_query_as::<ApprovalUpdateRow>(&update)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(IssueMutationError::ConcurrentModification)?;
+        if updated.revision != i64::try_from(approval.revision).unwrap_or(i64::MAX) {
+            return Err(IssueMutationError::ConcurrentModification);
+        }
+        let stored = stored_outcome(
+            APPROVAL_RESUBMISSION_COMMAND_TYPE,
+            &fingerprint,
+            result.clone(),
+            json!({"payloadChanged": options.payload.is_some()}),
+        );
+        let activity = activity_plan(
+            scope,
+            &command.actor,
+            ActivityKind::ApprovalResubmission,
+            command.approval.approval_id.as_str(),
+            stored.clone(),
+            &command.idempotency_key,
+        );
+        let activity_id = bind_query_as::<ActivityIdRow>(&activity)
+            .fetch_one(&mut *tx)
+            .await?
+            .id;
+        let finalize = finalize_ledger_plan(
+            scope,
+            &ledger_id,
+            LedgerTarget::Approval(command.approval.approval_id.as_str()),
+            stored,
+            &activity_id,
+        );
+        let finalized = bind_query_as::<FinalizedLedgerRow>(&finalize)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(IssueMutationError::ConcurrentModification)?;
+        tx.commit().await?;
+        Ok(MutationReceipt {
+            command_type: APPROVAL_RESUBMISSION_COMMAND_TYPE.into(),
+            idempotency_key: command.idempotency_key,
+            ledger_id: finalized.id,
+            activity_id: finalized.activity_id,
+            outcome: result,
+            replayed: false,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_approval_types_are_all_decoded() {
+        let expected = [
+            ("hire_agent", ApprovalType::HireAgent),
+            ("approve_ceo_strategy", ApprovalType::ApproveCeoStrategy),
+            ("chat_issue_creation", ApprovalType::ChatIssueCreation),
+            ("chat_operation", ApprovalType::ChatOperation),
+            ("agent_runtime", ApprovalType::AgentRuntime),
+            (
+                "budget_override_required",
+                ApprovalType::BudgetOverrideRequired,
+            ),
+            ("goal_change", ApprovalType::GoalChange),
+        ];
+
+        for (value, expected_type) in expected {
+            assert_eq!(approval_type(value, "approval-id").unwrap(), expected_type);
+        }
+    }
+
+    #[test]
+    fn non_issue_approval_rows_allow_missing_requester_and_target() {
+        let scope = TrustedOrganizationId::from_host(OrganizationId::new("org-a"));
+        let row = ApprovalMutationRow {
+            id: "approval-id".into(),
+            org_id: "org-a".into(),
+            approval_type: "hire_agent".into(),
+            status: "pending".into(),
+            revision: 0,
+            decision: None,
+            decision_idempotency_key: None,
+            decision_note: None,
+            requested_by_agent_id: None,
+            requested_by_user_id: None,
+            payload: json!({"candidate": "new-agent"}),
+            linked_issue_id: None,
+        };
+
+        let approval = approval_from_row(&scope, &row).unwrap();
+        assert!(approval.requester.is_none());
+        assert_eq!(
+            approval.target,
+            rudder_issue_core::GovernedTarget::organization(OrganizationId::new("org-a"))
+        );
+    }
+
+    #[test]
+    fn production_issue_target_shapes_are_decoded_without_client_scope() {
+        assert_eq!(
+            approval_target_issue_id(&json!({"issueId": "issue-a"})).unwrap(),
+            Some("issue-a".into())
+        );
+        assert_eq!(
+            approval_target_issue_id(&json!({"primaryIssueId": "issue-b"})).unwrap(),
+            Some("issue-b".into())
+        );
+        assert_eq!(
+            approval_target_issue_id(&json!({"issueIds": ["issue-c", "issue-d"]})).unwrap(),
+            Some("issue-c".into())
+        );
+        assert_eq!(
+            approval_target_issue_id(&json!({"candidate": "agent"})).unwrap(),
+            None
+        );
+        assert_eq!(
+            approval_target_issue_id(&json!({"issueId": 42})),
+            Err("issueId")
+        );
+        assert_eq!(
+            approval_target_issue_id(&json!({"issueIds": ["issue-a", 42]})),
+            Err("issueIds")
+        );
     }
 }

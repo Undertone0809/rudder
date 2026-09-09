@@ -270,6 +270,8 @@ pub enum DomainError {
     ApprovalIdentityMismatch,
     #[error("approval is not pending")]
     ApprovalNotPending,
+    #[error("approval is not awaiting requested revisions")]
+    ApprovalNotRevisionRequested,
     #[error("approval target belongs to a different organization")]
     ApprovalTargetOrganizationMismatch,
 }
@@ -712,7 +714,7 @@ impl Issue {
                 actual: self.fencing_token,
             });
         }
-        if self.status != IssueStatus::InReview {
+        if !matches!(self.status, IssueStatus::InReview | IssueStatus::Blocked) {
             return Err(DomainError::ReviewNotOpen);
         }
         if command.decision == ReviewDecision::RequestChanges && self.assignee.is_none() {
@@ -751,6 +753,11 @@ impl Issue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalType {
+    HireAgent,
+    ApproveCeoStrategy,
+    ChatIssueCreation,
+    ChatOperation,
+    AgentRuntime,
     BudgetOverrideRequired,
     IssueAction,
     AgentActivation,
@@ -763,8 +770,14 @@ pub enum ApprovalStatus {
     Pending,
     Approved,
     Rejected,
-    ChangesRequested,
+    #[serde(alias = "changes_requested")]
+    RevisionRequested,
     Cancelled,
+}
+
+impl ApprovalStatus {
+    #[allow(non_upper_case_globals)]
+    pub const ChangesRequested: Self = Self::RevisionRequested;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -780,7 +793,7 @@ impl ApprovalDecision {
         match self {
             Self::Approve => ApprovalStatus::Approved,
             Self::Reject => ApprovalStatus::Rejected,
-            Self::RequestChanges => ApprovalStatus::ChangesRequested,
+            Self::RequestChanges => ApprovalStatus::RevisionRequested,
         }
     }
 }
@@ -807,6 +820,7 @@ impl ApprovalRef {
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum GovernedTarget {
     Issue(IssueRef),
+    Organization(OrganizationId),
 }
 
 impl GovernedTarget {
@@ -814,9 +828,14 @@ impl GovernedTarget {
         Self::Issue(issue)
     }
 
+    pub fn organization(organization_id: OrganizationId) -> Self {
+        Self::Organization(organization_id)
+    }
+
     pub fn organization_id(&self) -> &OrganizationId {
         match self {
             Self::Issue(issue) => &issue.organization_id,
+            Self::Organization(organization_id) => organization_id,
         }
     }
 }
@@ -851,6 +870,30 @@ impl ApprovalDecisionCommand {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalResubmissionCommand {
+    pub approval: ApprovalRef,
+    pub actor: ActorRef,
+    pub expected_revision: u64,
+    pub idempotency_key: IdempotencyKey,
+}
+
+impl ApprovalResubmissionCommand {
+    pub fn new(
+        approval: ApprovalRef,
+        actor: ActorRef,
+        expected_revision: u64,
+        idempotency_key: IdempotencyKey,
+    ) -> Self {
+        Self {
+            approval,
+            actor,
+            expected_revision,
+            idempotency_key,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub enum ApprovalDecisionOutcome {
     Recorded {
@@ -865,38 +908,58 @@ pub enum ApprovalDecisionOutcome {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub enum ApprovalResubmissionOutcome {
+    Recorded {
+        status: ApprovalStatus,
+        revision: u64,
+    },
+    AlreadyApplied {
+        status: ApprovalStatus,
+        revision: u64,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Approval {
     pub identity: ApprovalRef,
     pub approval_type: ApprovalType,
     pub target: GovernedTarget,
-    pub requester: ActorRef,
+    pub requester: Option<ActorRef>,
     pub status: ApprovalStatus,
     pub revision: u64,
     pub decision: Option<ApprovalDecision>,
     pub decided_by: Option<ActorRef>,
     pub note: Option<String>,
     decision_commands: BTreeMap<IdempotencyKey, ApprovalDecisionCommand>,
+    resubmission_commands: BTreeMap<IdempotencyKey, ApprovalResubmissionCommand>,
 }
 
 impl Approval {
-    pub fn new(
+    pub fn new<R>(
         identity: ApprovalRef,
         approval_type: ApprovalType,
         target: GovernedTarget,
-        requester: ActorRef,
-    ) -> Result<Self, DomainError> {
+        requester: R,
+    ) -> Result<Self, DomainError>
+    where
+        R: Into<Option<ActorRef>>,
+    {
         if identity.organization_id != *target.organization_id() {
             return Err(DomainError::CrossOrganization {
                 expected: identity.organization_id,
                 found: target.organization_id().clone(),
             });
         }
-        if requester.organization_id() != &identity.organization_id {
-            return Err(DomainError::CrossOrganization {
-                expected: identity.organization_id,
-                found: requester.organization_id().clone(),
-            });
+        let requester = requester.into();
+        match &requester {
+            Some(requester) if requester.organization_id() != &identity.organization_id => {
+                return Err(DomainError::CrossOrganization {
+                    expected: identity.organization_id.clone(),
+                    found: requester.organization_id().clone(),
+                });
+            }
+            _ => {}
         }
         Ok(Self {
             identity,
@@ -909,6 +972,7 @@ impl Approval {
             decided_by: None,
             note: None,
             decision_commands: BTreeMap::new(),
+            resubmission_commands: BTreeMap::new(),
         })
     }
 
@@ -919,11 +983,23 @@ impl Approval {
                 found: self.target.organization_id().clone(),
             });
         }
-        if self.requester.organization_id() != &self.identity.organization_id {
-            return Err(DomainError::CrossOrganization {
-                expected: self.identity.organization_id.clone(),
-                found: self.requester.organization_id().clone(),
-            });
+        match &self.requester {
+            Some(requester) if requester.organization_id() != &self.identity.organization_id => {
+                return Err(DomainError::CrossOrganization {
+                    expected: self.identity.organization_id.clone(),
+                    found: requester.organization_id().clone(),
+                });
+            }
+            _ => {}
+        }
+        match &self.decided_by {
+            Some(decided_by) if decided_by.organization_id() != &self.identity.organization_id => {
+                return Err(DomainError::CrossOrganization {
+                    expected: self.identity.organization_id.clone(),
+                    found: decided_by.organization_id().clone(),
+                });
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -979,6 +1055,58 @@ impl Approval {
         Ok(ApprovalDecisionOutcome::Recorded {
             decision: command.decision,
             status,
+            revision,
+        })
+    }
+
+    pub fn resubmit(
+        &mut self,
+        command: ApprovalResubmissionCommand,
+    ) -> Result<ApprovalResubmissionOutcome, DomainError> {
+        if command.approval != self.identity {
+            return Err(DomainError::ApprovalIdentityMismatch);
+        }
+        if command.actor.organization_id() != &self.identity.organization_id {
+            return Err(DomainError::CrossOrganization {
+                expected: self.identity.organization_id.clone(),
+                found: command.actor.organization_id().clone(),
+            });
+        }
+        self.validate()?;
+
+        let key = command.idempotency_key.clone();
+        if let Some(previous) = self.resubmission_commands.get(&key) {
+            if previous == &command {
+                return Ok(ApprovalResubmissionOutcome::AlreadyApplied {
+                    status: self.status,
+                    revision: self.revision,
+                });
+            }
+            return Err(DomainError::IdempotencyConflict { key });
+        }
+        if self.revision != command.expected_revision {
+            return Err(DomainError::RevisionMismatch {
+                expected: command.expected_revision,
+                actual: self.revision,
+            });
+        }
+        if self.status != ApprovalStatus::RevisionRequested {
+            return Err(DomainError::ApprovalNotRevisionRequested);
+        }
+
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(DomainError::RevisionOverflow)?;
+        self.status = ApprovalStatus::Pending;
+        self.revision = revision;
+        self.decision = None;
+        self.decided_by = None;
+        self.note = None;
+        self.resubmission_commands.insert(key, command);
+
+        Ok(ApprovalResubmissionOutcome::Recorded {
+            status: self.status,
             revision,
         })
     }
@@ -1533,6 +1661,90 @@ mod tests {
             issue.record_review_decision(repeat),
             Err(DomainError::ReviewNotOpen)
         );
+    }
+
+    #[test]
+    fn reviewer_can_record_a_decision_for_a_blocked_issue() {
+        let org = OrganizationId::new("org-a");
+        let reviewer = AgentId::new("reviewer-a");
+        let assignee = AgentId::new("agent-a");
+        let mut issue = Issue::new(
+            issue_ref("org-a", "issue-1"),
+            "Review the blocked change",
+            IssueStatus::Blocked,
+            Some(PrincipalRef::agent(org.clone(), assignee)),
+            Some(PrincipalRef::agent(org.clone(), reviewer.clone())),
+        )
+        .unwrap();
+        let command = ReviewDecisionCommand::new(
+            issue.identity.clone(),
+            ActorRef::agent(org, reviewer, Some(RunId::new("review-run"))),
+            ReviewDecision::Approve,
+            "The blocker is resolved.",
+            0,
+            0,
+            IdempotencyKey::new("blocked-review-1"),
+        );
+
+        let result = issue.record_review_decision(command).unwrap();
+
+        assert!(matches!(
+            result,
+            ReviewDecisionOutcome::Recorded {
+                previous_status: IssueStatus::Blocked,
+                status: IssueStatus::Done,
+                ..
+            }
+        ));
+        assert_eq!(issue.status, IssueStatus::Done);
+    }
+
+    #[test]
+    fn approval_request_changes_and_resubmission_follow_production_status_cycle() {
+        let org = OrganizationId::new("org-a");
+        let approval_ref = ApprovalRef::new(org.clone(), ApprovalId::new("approval-1"));
+        let actor = ActorRef::user(org.clone(), UserId::new("operator"));
+        let mut approval = Approval::new(
+            approval_ref.clone(),
+            ApprovalType::HireAgent,
+            GovernedTarget::organization(org.clone()),
+            None,
+        )
+        .unwrap();
+        let request_changes = ApprovalDecisionCommand::new(
+            approval_ref.clone(),
+            actor.clone(),
+            ApprovalDecision::RequestChanges,
+            Some("Please revise the proposal".into()),
+            0,
+            IdempotencyKey::new("approval-decision-1"),
+        );
+
+        let outcome = approval.decide(request_changes).unwrap();
+        assert!(matches!(
+            outcome,
+            ApprovalDecisionOutcome::Recorded {
+                status: ApprovalStatus::RevisionRequested,
+                revision: 1,
+                ..
+            }
+        ));
+
+        let resubmit = ApprovalResubmissionCommand::new(
+            approval_ref.clone(),
+            actor.clone(),
+            1,
+            IdempotencyKey::new("approval-resubmit-1"),
+        );
+        assert!(matches!(
+            approval.resubmit(resubmit).unwrap(),
+            ApprovalResubmissionOutcome::Recorded {
+                status: ApprovalStatus::Pending,
+                revision: 2,
+            }
+        ));
+        assert_eq!(approval.decision, None);
+        assert_eq!(approval.note, None);
     }
 
     #[test]
