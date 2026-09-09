@@ -323,7 +323,7 @@ pub struct MigrationReceipt {
 pub struct MigrationRunError<E> {
     code: &'static str,
     message: String,
-    receipt: Option<MigrationReceipt>,
+    receipt: Option<Box<MigrationReceipt>>,
     executor_error: Option<E>,
 }
 
@@ -337,7 +337,7 @@ impl<E> MigrationRunError<E> {
     }
 
     pub fn receipt(&self) -> Option<&MigrationReceipt> {
-        self.receipt.as_ref()
+        self.receipt.as_deref()
     }
 
     fn without_receipt(code: &'static str, message: impl Into<String>) -> Self {
@@ -395,7 +395,7 @@ impl<E: Error + 'static> RunFailure<E> {
         MigrationRunError {
             code: self.code,
             message: self.message,
-            receipt: Some(receipt),
+            receipt: Some(Box::new(receipt)),
             executor_error: self.executor_error,
         }
     }
