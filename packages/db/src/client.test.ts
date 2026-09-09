@@ -270,6 +270,95 @@ afterEach(async () => {
 
 describe("applyPendingMigrations", () => {
   it(
+    "refuses issue and approval deletion while retaining durable mutation ledger evidence",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+
+      const orgId = "00000000-0000-0000-0000-000000000901";
+      const issueId = "00000000-0000-0000-0000-000000000902";
+      const approvalId = "00000000-0000-0000-0000-000000000903";
+      const commandId = "00000000-0000-0000-0000-000000000904";
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe(`
+          INSERT INTO "organizations" ("id", "url_key", "name")
+          VALUES ('${orgId}', 'ledger-retention', 'Ledger Retention')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "issues" ("id", "org_id", "title")
+          VALUES ('${issueId}', '${orgId}', 'Retained issue')
+        `);
+        await sql.unsafe(`
+          INSERT INTO "approvals" ("id", "org_id", "type", "payload")
+          VALUES ('${approvalId}', '${orgId}', 'retained_approval', '{}'::jsonb)
+        `);
+        await sql.unsafe(`
+          INSERT INTO "issue_mutation_commands" (
+            "id",
+            "org_id",
+            "issue_id",
+            "approval_id",
+            "command_type",
+            "idempotency_key",
+            "command_fingerprint",
+            "outcome"
+          )
+          VALUES (
+            '${commandId}',
+            '${orgId}',
+            '${issueId}',
+            '${approvalId}',
+            'issue.approve',
+            'retained-idempotency-key',
+            'retained-command-fingerprint',
+            '{"status":"accepted","audit":"retained"}'::jsonb
+          )
+        `);
+
+        const deletionErrors: string[] = [];
+        for (const target of [
+          { table: "issues", id: issueId },
+          { table: "approvals", id: approvalId },
+        ]) {
+          try {
+            await sql.unsafe(`DELETE FROM "${target.table}" WHERE "id" = '${target.id}'`);
+          } catch (error) {
+            deletionErrors.push((error as { code?: string }).code ?? "unknown");
+          }
+        }
+        expect(deletionErrors).toEqual(["23001", "23001"]);
+
+        const ledgerRows = await sql.unsafe<{
+          id: string;
+          org_id: string;
+          issue_id: string;
+          approval_id: string;
+          idempotency_key: string;
+          command_fingerprint: string;
+          outcome: Record<string, unknown>;
+        }[]>(`
+          SELECT "id", "org_id", "issue_id", "approval_id", "idempotency_key", "command_fingerprint", "outcome"
+          FROM "issue_mutation_commands"
+          WHERE "id" = '${commandId}'
+        `);
+        expect(ledgerRows).toEqual([{
+          id: commandId,
+          org_id: orgId,
+          issue_id: issueId,
+          approval_id: approvalId,
+          idempotency_key: "retained-idempotency-key",
+          command_fingerprint: "retained-command-fingerprint",
+          outcome: { status: "accepted", audit: "retained" },
+        }]);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
     "serializes migration attempts with a database advisory lock",
     async () => {
       const connectionString = await createTempDatabase();
@@ -954,6 +1043,7 @@ describe("applyPendingMigrations", () => {
           "0161_chat_message_mutation_fingerprint.sql",
           "0162_run_debug_issue_origin.sql",
           "0163_issue_governance_mutations.sql",
+          "0164_retain_issue_mutation_ledger.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1138,6 +1228,7 @@ describe("applyPendingMigrations", () => {
           "0161_chat_message_mutation_fingerprint.sql",
           "0162_run_debug_issue_origin.sql",
           "0163_issue_governance_mutations.sql",
+          "0164_retain_issue_mutation_ledger.sql",
         ],
         reason: "pending-migrations",
       });

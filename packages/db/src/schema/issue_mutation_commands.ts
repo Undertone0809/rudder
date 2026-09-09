@@ -42,12 +42,12 @@ export const issueMutationCommands = pgTable(
       columns: [table.orgId, table.issueId],
       foreignColumns: [issues.orgId, issues.id],
       name: "issue_mutation_commands_org_issue_fk",
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     orgApprovalFk: foreignKey({
       columns: [table.orgId, table.approvalId],
       foreignColumns: [approvals.orgId, approvals.id],
       name: "issue_mutation_commands_org_approval_fk",
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     orgActivityFk: foreignKey({
       columns: [table.orgId, table.activityId],
       foreignColumns: [activityLog.orgId, activityLog.id],

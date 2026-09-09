@@ -1,6 +1,6 @@
+import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import { createMigrationManifest, validateMigrationManifestIntegrity } from "./migration-manifest.js";
 import * as schema from "./schema/index.js";
@@ -82,6 +82,14 @@ describe("issue governance schema contract", () => {
       "org_id,approval_id=>org_id,id",
       "org_id,activity_id=>org_id,id",
     ]));
+
+    const foreignKeyDeleteActions = Object.fromEntries(
+      getTableConfig(table).foreignKeys.map((foreignKey) => [foreignKey.getName(), foreignKey.onDelete]),
+    );
+    expect(foreignKeyDeleteActions).toMatchObject({
+      issue_mutation_commands_org_issue_fk: "restrict",
+      issue_mutation_commands_org_approval_fk: "restrict",
+    });
   });
 
   it("keeps the generated migration append-only and represented in the journal manifest", async () => {
@@ -92,8 +100,8 @@ describe("issue governance schema contract", () => {
     };
     const latest = journal.entries.at(-1);
     expect(latest).toMatchObject({
-      idx: 163,
-      tag: "0163_issue_governance_mutations",
+      idx: 164,
+      tag: "0164_retain_issue_mutation_ledger",
       version: "7",
       breakpoints: true,
     });
@@ -111,11 +119,22 @@ describe("issue governance schema contract", () => {
     expect(sql).toMatch(/FOREIGN KEY \("org_id", "approval_id"\)[\s\S]*REFERENCES "public"\."approvals"\("org_id", "id"\)/);
     expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "issue_mutation_commands_org_idempotency_uq"');
 
+    const retentionSql = readFileSync(
+      fileURLToPath(new URL("./migrations/0164_retain_issue_mutation_ledger.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(retentionSql).toMatch(/issue_mutation_commands_org_issue_fk[\s\S]*ON DELETE restrict/);
+    expect(retentionSql).toMatch(/issue_mutation_commands_org_approval_fk[\s\S]*ON DELETE restrict/);
+
     const manifest = await createMigrationManifest({ migrationsFolder, journalFile });
     expect(validateMigrationManifestIntegrity(manifest)).toMatchObject({ valid: true, errors: [] });
     expect(manifest.entries).toContainEqual(expect.objectContaining({
       order: 163,
       fileName: "0163_issue_governance_mutations.sql",
+    }));
+    expect(manifest.entries).toContainEqual(expect.objectContaining({
+      order: 164,
+      fileName: "0164_retain_issue_mutation_ledger.sql",
     }));
   });
 });
