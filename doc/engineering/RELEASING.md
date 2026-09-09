@@ -195,6 +195,9 @@ queue changes use the full family set. Pushes to `main` and trusted manual
 exact-source runs also produce a full qualification receipt. The required
 receipt is the successful `Qualification summary` job for the exact source,
 not merely a successful individual platform job.
+The `Test` plan also verifies the canary migration declaration before the
+qualification summary can turn green; `Release` repeats that check as a
+defense-in-depth preflight.
 
 Release builds are separated from publication. The candidate jobs build the 15
 npm payloads and seven Desktop assets once, then create the short-lived
