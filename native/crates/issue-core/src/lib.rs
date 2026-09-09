@@ -932,7 +932,9 @@ pub struct Approval {
     pub decided_by: Option<ActorRef>,
     pub note: Option<String>,
     decision_commands: BTreeMap<IdempotencyKey, ApprovalDecisionCommand>,
+    decision_outcomes: BTreeMap<IdempotencyKey, ApprovalDecisionOutcome>,
     resubmission_commands: BTreeMap<IdempotencyKey, ApprovalResubmissionCommand>,
+    resubmission_outcomes: BTreeMap<IdempotencyKey, ApprovalResubmissionOutcome>,
 }
 
 impl Approval {
@@ -972,7 +974,9 @@ impl Approval {
             decided_by: None,
             note: None,
             decision_commands: BTreeMap::new(),
+            decision_outcomes: BTreeMap::new(),
             resubmission_commands: BTreeMap::new(),
+            resubmission_outcomes: BTreeMap::new(),
         })
     }
 
@@ -1022,6 +1026,24 @@ impl Approval {
         let key = command.idempotency_key.clone();
         if let Some(previous) = self.decision_commands.get(&key) {
             if previous == &command {
+                if let Some(outcome) = self.decision_outcomes.get(&key) {
+                    return Ok(match outcome {
+                        ApprovalDecisionOutcome::Recorded {
+                            decision,
+                            status,
+                            revision,
+                        }
+                        | ApprovalDecisionOutcome::AlreadyApplied {
+                            decision,
+                            status,
+                            revision,
+                        } => ApprovalDecisionOutcome::AlreadyApplied {
+                            decision: *decision,
+                            status: *status,
+                            revision: *revision,
+                        },
+                    });
+                }
                 return Ok(ApprovalDecisionOutcome::AlreadyApplied {
                     decision: command.decision,
                     status: self.status,
@@ -1050,13 +1072,15 @@ impl Approval {
         self.decision = Some(command.decision);
         self.decided_by = Some(command.actor.clone());
         self.note = command.note.clone();
-        self.decision_commands.insert(key, command.clone());
+        self.decision_commands.insert(key.clone(), command.clone());
 
-        Ok(ApprovalDecisionOutcome::Recorded {
+        let outcome = ApprovalDecisionOutcome::Recorded {
             decision: command.decision,
             status,
             revision,
-        })
+        };
+        self.decision_outcomes.insert(key, outcome.clone());
+        Ok(outcome)
     }
 
     pub fn resubmit(
@@ -1077,6 +1101,17 @@ impl Approval {
         let key = command.idempotency_key.clone();
         if let Some(previous) = self.resubmission_commands.get(&key) {
             if previous == &command {
+                if let Some(outcome) = self.resubmission_outcomes.get(&key) {
+                    return Ok(match outcome {
+                        ApprovalResubmissionOutcome::Recorded { status, revision }
+                        | ApprovalResubmissionOutcome::AlreadyApplied { status, revision } => {
+                            ApprovalResubmissionOutcome::AlreadyApplied {
+                                status: *status,
+                                revision: *revision,
+                            }
+                        }
+                    });
+                }
                 return Ok(ApprovalResubmissionOutcome::AlreadyApplied {
                     status: self.status,
                     revision: self.revision,
@@ -1103,12 +1138,14 @@ impl Approval {
         self.decision = None;
         self.decided_by = None;
         self.note = None;
-        self.resubmission_commands.insert(key, command);
+        self.resubmission_commands.insert(key.clone(), command);
 
-        Ok(ApprovalResubmissionOutcome::Recorded {
+        let outcome = ApprovalResubmissionOutcome::Recorded {
             status: self.status,
             revision,
-        })
+        };
+        self.resubmission_outcomes.insert(key, outcome.clone());
+        Ok(outcome)
     }
 }
 
@@ -1745,6 +1782,69 @@ mod tests {
         ));
         assert_eq!(approval.decision, None);
         assert_eq!(approval.note, None);
+    }
+
+    #[test]
+    fn approval_idempotency_replays_original_outcomes_after_resubmission() {
+        let org = OrganizationId::new("org-a");
+        let approval_ref = ApprovalRef::new(org.clone(), ApprovalId::new("approval-1"));
+        let actor = ActorRef::user(org.clone(), UserId::new("operator"));
+        let mut approval = Approval::new(
+            approval_ref.clone(),
+            ApprovalType::HireAgent,
+            GovernedTarget::organization(org),
+            None,
+        )
+        .unwrap();
+        let decision = ApprovalDecisionCommand::new(
+            approval_ref.clone(),
+            actor.clone(),
+            ApprovalDecision::RequestChanges,
+            Some("Please revise the proposal".into()),
+            0,
+            IdempotencyKey::new("decision-1"),
+        );
+
+        approval.decide(decision.clone()).unwrap();
+        let resubmit = ApprovalResubmissionCommand::new(
+            approval_ref.clone(),
+            actor.clone(),
+            1,
+            IdempotencyKey::new("resubmit-1"),
+        );
+        assert!(matches!(
+            approval.resubmit(resubmit.clone()).unwrap(),
+            ApprovalResubmissionOutcome::Recorded {
+                status: ApprovalStatus::Pending,
+                revision: 2,
+            }
+        ));
+        assert_eq!(approval.decision, None);
+        assert!(matches!(
+            approval.decide(decision).unwrap(),
+            ApprovalDecisionOutcome::AlreadyApplied {
+                decision: ApprovalDecision::RequestChanges,
+                status: ApprovalStatus::RevisionRequested,
+                revision: 1,
+            }
+        ));
+        approval
+            .decide(ApprovalDecisionCommand::new(
+                approval_ref.clone(),
+                actor.clone(),
+                ApprovalDecision::Approve,
+                None,
+                2,
+                IdempotencyKey::new("decision-2"),
+            ))
+            .unwrap();
+        assert!(matches!(
+            approval.resubmit(resubmit).unwrap(),
+            ApprovalResubmissionOutcome::AlreadyApplied {
+                status: ApprovalStatus::Pending,
+                revision: 2,
+            }
+        ));
     }
 
     #[test]

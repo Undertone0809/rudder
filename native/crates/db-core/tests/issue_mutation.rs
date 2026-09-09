@@ -1,8 +1,11 @@
+#![cfg(feature = "test-support")]
+
 use rudder_db_core::issue_mutation::{
-    ApprovalQueryPlans, ApprovalResubmissionOptions, CheckoutOptions, IssueMutationError,
-    MutationBind, MutationQueryPlan, ReviewQueryPlans, TrustedApprovalAuthorization,
-    TrustedOrganizationId, approval_decision_query_plans, approval_resubmission_query_plans,
-    checkout_query_plans, command_fingerprint, review_decision_query_plans,
+    ApprovalQueryPlans, ApprovalResubmissionOptions, CheckoutOptions, HostApprovalCapability,
+    IssueMutationError, MutationBind, MutationQueryPlan, ReviewQueryPlans,
+    TrustedApprovalAuthorization, TrustedOrganizationId, approval_decision_query_plans,
+    approval_resubmission_query_plans, checkout_query_plans, command_fingerprint,
+    review_decision_query_plans,
 };
 use rudder_issue_core::{
     ActorRef, AgentId, ApprovalDecision, ApprovalDecisionCommand, ApprovalId, ApprovalRef,
@@ -105,6 +108,8 @@ fn checkout_query_plans_use_the_trusted_host_scope_and_fence_every_write() {
     );
     assert!(plans.validate_run.sql.contains("FROM heartbeat_runs"));
     assert!(plans.validate_run.sql.contains("r.agent_id = $3::uuid"));
+    assert!(plans.validate_run.sql.contains("JOIN agents AS a"));
+    assert!(plans.validate_run.sql.contains("a.org_id = r.org_id"));
     assert!(plans.validate_run.sql.contains("FOR SHARE"));
     assert!(plans.load_issue.sql.contains("FOR UPDATE"));
     assert!(plans.update_issue.sql.contains("i.revision = $3::int8"));
@@ -251,6 +256,18 @@ fn review_query_plans_bind_revision_and_fencing_preconditions() {
         plans
             .update_issue
             .sql
+            .contains("execution_agent_name_key = NULL")
+    );
+    assert!(
+        plans
+            .update_issue
+            .sql
+            .contains("execution_locked_at = NULL")
+    );
+    assert!(
+        plans
+            .update_issue
+            .sql
             .contains("checkout_lease_owner = NULL")
     );
     assert!(
@@ -296,10 +313,12 @@ fn approval_command() -> ApprovalDecisionCommand {
 fn approval_query_plans_fence_revision_and_persist_decision_idempotency() {
     let command = approval_command();
     let authorization = TrustedApprovalAuthorization::from_host(
+        &HostApprovalCapability::for_tests(),
         scope("org-client"),
         command.approval.approval_id.clone(),
         command.actor.clone(),
-    );
+    )
+    .unwrap();
     let plans: ApprovalQueryPlans =
         approval_decision_query_plans(&authorization, &command).unwrap();
     assert!(plans.load_approval.sql.contains("a.org_id = $1::uuid"));
@@ -342,15 +361,16 @@ fn approval_query_plans_fence_revision_and_persist_decision_idempotency() {
 #[test]
 fn approval_command_cannot_cross_the_trusted_organization_fence() {
     let command = approval_command();
-    let authorization = TrustedApprovalAuthorization::from_host(
+    let error = TrustedApprovalAuthorization::from_host(
+        &HostApprovalCapability::for_tests(),
         scope("org-host"),
-        command.approval.approval_id.clone(),
-        command.actor.clone(),
-    );
-    let error = approval_decision_query_plans(&authorization, &command).unwrap_err();
+        command.approval.approval_id,
+        command.actor,
+    )
+    .unwrap_err();
     assert!(matches!(
         error,
-        IssueMutationError::Domain(rudder_issue_core::DomainError::CrossOrganization { .. })
+        IssueMutationError::ApprovalAuthorizationMismatch
     ));
 }
 
@@ -358,10 +378,12 @@ fn approval_command_cannot_cross_the_trusted_organization_fence() {
 fn approval_decisions_require_host_trusted_approval_authorization() {
     let command = approval_command();
     let authorization = TrustedApprovalAuthorization::from_host(
+        &HostApprovalCapability::for_tests(),
         scope("org-client"),
         ApprovalId::new("different-approval"),
         command.actor.clone(),
-    );
+    )
+    .unwrap();
 
     let error = approval_decision_query_plans(&authorization, &command).unwrap_err();
 
@@ -386,10 +408,12 @@ fn approval_resubmission_plans_return_revision_requested_approvals_to_pending() 
         IdempotencyKey::new("approval-resubmit-key"),
     );
     let authorization = TrustedApprovalAuthorization::from_host(
+        &HostApprovalCapability::for_tests(),
         scope("org-client"),
         command.approval.approval_id.clone(),
         command.actor.clone(),
-    );
+    )
+    .unwrap();
     let plans = approval_resubmission_query_plans(
         &authorization,
         &command,
@@ -412,6 +436,46 @@ fn approval_resubmission_plans_return_revision_requested_approvals_to_pending() 
     );
     assert!(plans.update_approval.sql.contains("decision = NULL"));
     assert!(plans.update_approval.sql.contains("payload"));
+
+    let invalid = approval_resubmission_query_plans(
+        &authorization,
+        &command,
+        &ApprovalResubmissionOptions::new(Some(serde_json::json!({
+            "issueIds": ["issue-a", "issue-b"]
+        }))),
+    );
+    assert!(matches!(
+        invalid,
+        Err(IssueMutationError::InvalidStoredState { .. })
+    ));
+}
+
+#[test]
+fn approval_authorization_requires_an_opaque_host_capability_and_user_actor() {
+    let command = approval_command();
+    let authorization = TrustedApprovalAuthorization::from_host(
+        &HostApprovalCapability::for_tests(),
+        scope("org-client"),
+        command.approval.approval_id.clone(),
+        command.actor.clone(),
+    )
+    .unwrap();
+    assert!(approval_decision_query_plans(&authorization, &command).is_ok());
+
+    let agent_authorization = TrustedApprovalAuthorization::from_host(
+        &HostApprovalCapability::for_tests(),
+        scope("org-client"),
+        command.approval.approval_id,
+        ActorRef::agent(
+            OrganizationId::new("org-client"),
+            AgentId::new("00000000-0000-0000-0000-000000000002"),
+            Some(RunId::new("00000000-0000-0000-0000-000000000003")),
+        ),
+    );
+    assert!(matches!(
+        agent_authorization,
+        Err(IssueMutationError::ApprovalAuthorizationMismatch)
+    ));
 }
 
 #[test]

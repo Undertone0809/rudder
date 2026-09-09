@@ -51,6 +51,25 @@ impl TrustedOrganizationId {
     }
 }
 
+/// An opaque host capability required to construct approval authorization.
+///
+/// The private field prevents model/client payloads from deserializing or
+/// assembling this capability. `for_tests` is intentionally the only public
+/// construction hook for the current test harness; production callers must
+/// obtain the capability from their authenticated host boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostApprovalCapability {
+    _opaque: (),
+}
+
+impl HostApprovalCapability {
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn for_tests() -> Self {
+        Self { _opaque: () }
+    }
+}
+
 /// Host-trusted authorization for one approval operation.
 ///
 /// The host creates this value only after authenticating the actor and checking
@@ -65,15 +84,22 @@ pub struct TrustedApprovalAuthorization {
 
 impl TrustedApprovalAuthorization {
     pub fn from_host(
+        _capability: &HostApprovalCapability,
         organization: TrustedOrganizationId,
         approval_id: ApprovalId,
         actor: ActorRef,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, IssueMutationError> {
+        if !matches!(actor, ActorRef::User { .. }) {
+            return Err(IssueMutationError::ApprovalAuthorizationMismatch);
+        }
+        if actor.organization_id() != organization.as_id() {
+            return Err(IssueMutationError::ApprovalAuthorizationMismatch);
+        }
+        Ok(Self {
             organization,
             approval_id,
             actor,
-        }
+        })
     }
 
     pub fn organization(&self) -> &TrustedOrganizationId {
@@ -315,6 +341,8 @@ struct IssueMutationRow {
     fencing_token: i64,
     checkout_run_id: Option<String>,
     execution_run_id: Option<String>,
+    execution_agent_name_key: Option<String>,
+    execution_locked_at: Option<OffsetDateTime>,
     checkout_lease_owner: Option<String>,
     checkout_lease_expires_at: Option<OffsetDateTime>,
 }
@@ -335,10 +363,12 @@ struct ApprovalMutationRow {
     decision: Option<String>,
     decision_idempotency_key: Option<String>,
     decision_note: Option<String>,
+    decided_by_user_id: Option<String>,
+    decided_at: Option<OffsetDateTime>,
     requested_by_agent_id: Option<String>,
     requested_by_user_id: Option<String>,
     payload: Value,
-    linked_issue_id: Option<String>,
+    linked_issue_ids: Value,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -494,7 +524,80 @@ fn ledger_lookup_plan(scope: &TrustedOrganizationId, key: &IdempotencyKey) -> Mu
 
 fn load_issue_plan(scope: &TrustedOrganizationId, issue_id: &IssueId) -> MutationQueryPlan {
     plan(
-        "SELECT i.id::text AS id, i.org_id::text AS org_id, i.title, i.status,\n                i.assignee_agent_id::text AS assignee_agent_id,\n                i.assignee_user_id, i.reviewer_agent_id::text AS reviewer_agent_id,\n                i.reviewer_user_id, i.revision, i.fencing_token,\n                i.checkout_run_id::text AS checkout_run_id,\n                i.execution_run_id::text AS execution_run_id,\n                i.checkout_lease_owner, i.checkout_lease_expires_at\n           FROM issues AS i\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n          FOR UPDATE",
+        "SELECT i.id::text AS id, i.org_id::text AS org_id, i.title, i.status,\n                i.assignee_agent_id::text AS assignee_agent_id,\n                i.assignee_user_id, i.reviewer_agent_id::text AS reviewer_agent_id,\n                i.reviewer_user_id, i.revision, i.fencing_token,\n                i.checkout_run_id::text AS checkout_run_id,\n                i.execution_run_id::text AS execution_run_id,\n                i.execution_agent_name_key, i.execution_locked_at, i.checkout_lease_owner, i.checkout_lease_expires_at\n           FROM issues AS i\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n          FOR UPDATE",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(issue_id.as_str().into()),
+        ],
+    )
+}
+
+fn approval_issue_target(approval: &Approval) -> Option<&IssueId> {
+    match &approval.target {
+        rudder_issue_core::GovernedTarget::Issue(issue) => Some(&issue.issue_id),
+        rudder_issue_core::GovernedTarget::Organization(_) => None,
+    }
+}
+
+fn resubmission_payload_issue_id(
+    approval: &Approval,
+    payload: Option<&Value>,
+) -> Result<Option<IssueId>, IssueMutationError> {
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    let target = approval_target_issue_id(payload).map_err(|field| {
+        IssueMutationError::InvalidStoredState {
+            entity: "approval",
+            id: approval.identity.approval_id.as_str().into(),
+            detail: format!("resubmission target field {field} is malformed"),
+        }
+    })?;
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    if approval_issue_target(approval).map(IssueId::as_str) != Some(target.as_str()) {
+        return Err(IssueMutationError::InvalidStoredState {
+            entity: "approval",
+            id: approval.identity.approval_id.as_str().into(),
+            detail: "resubmission target differs from the stored approval target".into(),
+        });
+    }
+    Ok(Some(IssueId::new(target)))
+}
+
+fn invalid_resubmission_payload(
+    command: &ApprovalResubmissionCommand,
+    detail: impl Into<String>,
+) -> IssueMutationError {
+    IssueMutationError::InvalidStoredState {
+        entity: "approval",
+        id: command.approval.approval_id.as_str().into(),
+        detail: detail.into(),
+    }
+}
+
+fn validate_resubmission_payload_shape(
+    command: &ApprovalResubmissionCommand,
+    payload: Option<&Value>,
+) -> Result<(), IssueMutationError> {
+    if let Some(payload) = payload {
+        approval_target_issue_id(payload).map_err(|field| {
+            invalid_resubmission_payload(
+                command,
+                format!("resubmission target field {field} is malformed"),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_issue_target_plan(
+    scope: &TrustedOrganizationId,
+    issue_id: &IssueId,
+) -> MutationQueryPlan {
+    plan(
+        "SELECT i.id::text AS id\n           FROM issues AS i\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n          FOR SHARE",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(issue_id.as_str().into()),
@@ -508,7 +611,7 @@ fn validate_run_plan(
     agent_id: &AgentId,
 ) -> MutationQueryPlan {
     plan(
-        "SELECT r.id::text AS id\n           FROM heartbeat_runs AS r\n          WHERE r.org_id = $1::uuid AND r.id = $2::uuid AND r.agent_id = $3::uuid\n          FOR SHARE",
+        "SELECT r.id::text AS id\n           FROM heartbeat_runs AS r\n           JOIN agents AS a ON a.id = r.agent_id AND a.org_id = r.org_id\n          WHERE r.org_id = $1::uuid AND r.id = $2::uuid AND r.agent_id = $3::uuid\n          FOR SHARE",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(run_id.as_str().into()),
@@ -552,7 +655,7 @@ fn load_approval_plan(
     approval_id: &rudder_issue_core::ApprovalId,
 ) -> MutationQueryPlan {
     plan(
-        "SELECT a.id::text AS id, a.org_id::text AS org_id, a.type AS approval_type,\n                a.status, a.revision, a.decision, a.decision_idempotency_key,\n                a.decision_note, a.requested_by_agent_id::text AS requested_by_agent_id,\n                a.requested_by_user_id, a.payload,\n                (SELECT i.id::text\n                   FROM issue_approvals AS ia\n                   JOIN issues AS i ON i.id = ia.issue_id\n                  WHERE ia.org_id = a.org_id AND ia.approval_id = a.id\n                    AND i.org_id = a.org_id\n                  ORDER BY ia.created_at, ia.issue_id\n                  LIMIT 1) AS linked_issue_id\n           FROM approvals AS a\n          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\n          FOR UPDATE",
+        "SELECT a.id::text AS id, a.org_id::text AS org_id, a.type AS approval_type,\n                a.status, a.revision, a.decision, a.decision_idempotency_key,\n                a.decision_note, a.decided_by_user_id, a.decided_at,\n                a.requested_by_agent_id::text AS requested_by_agent_id,\n                a.requested_by_user_id, a.payload,\n                COALESCE((SELECT jsonb_agg(ia.issue_id::text ORDER BY ia.created_at, ia.issue_id)\n                            FROM issue_approvals AS ia\n                           WHERE ia.org_id = a.org_id AND ia.approval_id = a.id), '[]'::jsonb) AS linked_issue_ids\n           FROM approvals AS a\n          WHERE a.org_id = $1::uuid AND a.id = $2::uuid\n          FOR UPDATE",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(approval_id.as_str().into()),
@@ -595,7 +698,7 @@ fn update_review_plan(
     let expected_fence = bigint(command.expected_fencing_token, "expected fencing token")?;
     let status = command.decision.resulting_status();
     Ok(plan(
-        "UPDATE issues AS i\n            SET status = $5::text,\n                checkout_run_id = NULL,\n                execution_run_id = NULL,\n                checkout_lease_owner = NULL,\n                checkout_lease_expires_at = NULL,\n                started_at = CASE WHEN $5::text = 'in_progress'\n                                  THEN COALESCE(i.started_at, now())\n                                  ELSE i.started_at END,\n                completed_at = CASE WHEN $5::text = 'done'\n                                    THEN now()\n                                    ELSE NULL END,\n                cancelled_at = CASE WHEN $5::text = 'cancelled'\n                                    THEN now()\n                                    ELSE NULL END,\n                revision = i.revision + 1,\n                updated_at = now()\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\n            AND i.status IN ('in_review', 'blocked')\n          RETURNING i.revision, i.fencing_token",
+        "UPDATE issues AS i\n            SET status = $5::text,\n                checkout_run_id = NULL,\n                execution_run_id = NULL,\n                execution_agent_name_key = NULL,\n                execution_locked_at = NULL,\n                checkout_lease_owner = NULL,\n                checkout_lease_expires_at = NULL,\n                started_at = CASE WHEN $5::text = 'in_progress'\n                                  THEN COALESCE(i.started_at, now())\n                                  ELSE i.started_at END,\n                completed_at = CASE WHEN $5::text = 'done'\n                                    THEN now()\n                                    ELSE NULL END,\n                cancelled_at = CASE WHEN $5::text = 'cancelled'\n                                    THEN now()\n                                    ELSE NULL END,\n                revision = i.revision + 1,\n                updated_at = now()\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\n            AND i.status IN ('in_review', 'blocked')\n          RETURNING i.revision, i.fencing_token",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(command.issue.issue_id.as_str().into()),
@@ -786,14 +889,22 @@ fn approval_status(value: &str, id: &str) -> Result<ApprovalStatus, IssueMutatio
     }
 }
 
-fn approval_decision(value: Option<&str>) -> Option<ApprovalDecision> {
+fn approval_decision(
+    value: Option<&str>,
+    id: &str,
+) -> Result<Option<ApprovalDecision>, IssueMutationError> {
     match value {
-        Some("approve") | Some("approved") => Some(ApprovalDecision::Approve),
-        Some("reject") | Some("rejected") => Some(ApprovalDecision::Reject),
+        None => Ok(None),
+        Some("approve") | Some("approved") => Ok(Some(ApprovalDecision::Approve)),
+        Some("reject") | Some("rejected") => Ok(Some(ApprovalDecision::Reject)),
         Some("request_changes") | Some("changes_requested") | Some("revision_requested") => {
-            Some(ApprovalDecision::RequestChanges)
+            Ok(Some(ApprovalDecision::RequestChanges))
         }
-        _ => None,
+        Some(value) => Err(IssueMutationError::InvalidStoredState {
+            entity: "approval",
+            id: id.into(),
+            detail: format!("unknown approval decision {value}"),
+        }),
     }
 }
 
@@ -876,8 +987,12 @@ fn ensure_no_checkout_lease(row: &IssueMutationRow) -> Result<(), IssueMutationE
         .checkout_run_id
         .clone()
         .or_else(|| row.execution_run_id.clone())
+        .or_else(|| row.execution_agent_name_key.clone())
         .or_else(|| row.checkout_lease_owner.clone());
-    if held_run.is_some() || row.checkout_lease_expires_at.is_some() {
+    if held_run.is_some()
+        || row.execution_locked_at.is_some()
+        || row.checkout_lease_expires_at.is_some()
+    {
         return Err(DomainError::LeaseHeld {
             run_id: RunId::new(held_run.unwrap_or_else(|| "lease".into())),
         }
@@ -887,30 +1002,41 @@ fn ensure_no_checkout_lease(row: &IssueMutationRow) -> Result<(), IssueMutationE
 }
 
 fn approval_target_issue_id(payload: &Value) -> Result<Option<String>, &'static str> {
-    let scalar_target = |key: &'static str| -> Result<Option<String>, &'static str> {
-        match payload.get(key) {
-            None => Ok(None),
-            Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
-            Some(_) => Err(key),
+    let mut targets = Vec::new();
+    let mut add_target = |target: String| {
+        if targets.iter().any(|existing| existing != &target) {
+            Err("target")
+        } else {
+            targets.push(target);
+            Ok(())
         }
     };
 
-    if let Some(issue_id) = scalar_target("issueId")? {
-        return Ok(Some(issue_id));
-    }
-    if let Some(issue_id) = scalar_target("primaryIssueId")? {
-        return Ok(Some(issue_id));
-    }
-    match payload.get("issueIds") {
-        None => Ok(None),
-        Some(Value::Array(ids)) => {
-            if ids.iter().any(|value| !value.is_string()) {
-                return Err("issueIds");
+    for key in ["issueId", "primaryIssueId"] {
+        if let Some(value) = payload.get(key) {
+            match value {
+                Value::String(value) if !value.is_empty() => add_target(value.clone())?,
+                _ => return Err(key),
             }
-            Ok(ids.first().and_then(Value::as_str).map(str::to_owned))
         }
-        Some(_) => Err("issueIds"),
     }
+
+    if let Some(value) = payload.get("issueIds") {
+        let Value::Array(ids) = value else {
+            return Err("issueIds");
+        };
+        if ids.len() > 1 {
+            return Err("issueIds");
+        }
+        if let Some(value) = ids.first() {
+            let Some(issue_id) = value.as_str().filter(|value| !value.is_empty()) else {
+                return Err("issueIds");
+            };
+            add_target(issue_id.to_owned())?;
+        }
+    }
+
+    Ok(targets.into_iter().next())
 }
 
 fn approval_requester(
@@ -938,35 +1064,77 @@ fn approval_requester(
     }
 }
 
+fn approval_linked_issue_id(
+    row: &ApprovalMutationRow,
+) -> Result<Option<String>, IssueMutationError> {
+    let Value::Array(ids) = &row.linked_issue_ids else {
+        return Err(IssueMutationError::InvalidStoredState {
+            entity: "approval",
+            id: row.id.clone(),
+            detail: "linked issue targets are not an array".into(),
+        });
+    };
+    if ids.len() > 1 {
+        return Err(IssueMutationError::InvalidStoredState {
+            entity: "approval",
+            id: row.id.clone(),
+            detail: "multiple linked issue targets are unsupported".into(),
+        });
+    }
+    ids.first()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map_or_else(
+                    || {
+                        Err(IssueMutationError::InvalidStoredState {
+                            entity: "approval",
+                            id: row.id.clone(),
+                            detail: "linked issue target is malformed".into(),
+                        })
+                    },
+                    |value| Ok(Some(value.to_owned())),
+                )
+        })
+        .unwrap_or(Ok(None))
+}
+
+fn invalid_approval_state(
+    row: &ApprovalMutationRow,
+    detail: impl Into<String>,
+) -> IssueMutationError {
+    IssueMutationError::InvalidStoredState {
+        entity: "approval",
+        id: row.id.clone(),
+        detail: detail.into(),
+    }
+}
+
 fn approval_from_row(
     scope: &TrustedOrganizationId,
     row: &ApprovalMutationRow,
 ) -> Result<Approval, IssueMutationError> {
     if row.org_id != scope.as_str() {
-        return Err(IssueMutationError::InvalidStoredState {
-            entity: "approval",
-            id: row.id.clone(),
-            detail: "row organization differs from trusted scope".into(),
-        });
+        return Err(invalid_approval_state(
+            row,
+            "row organization differs from trusted scope",
+        ));
     }
     let payload_issue_id = approval_target_issue_id(&row.payload).map_err(|field| {
-        IssueMutationError::InvalidStoredState {
-            entity: "approval",
-            id: row.id.clone(),
-            detail: format!("approval target field {field} is malformed"),
-        }
+        invalid_approval_state(row, format!("approval target field {field} is malformed"))
     })?;
-    match (payload_issue_id.as_ref(), row.linked_issue_id.as_ref()) {
-        (Some(payload_issue_id), Some(linked_issue_id)) if payload_issue_id != linked_issue_id => {
-            return Err(IssueMutationError::InvalidStoredState {
-                entity: "approval",
-                id: row.id.clone(),
-                detail: "payload and relational issue targets differ".into(),
-            });
-        }
-        _ => {}
+    let linked_issue_id = approval_linked_issue_id(row)?;
+    if matches!(
+        (&payload_issue_id, &linked_issue_id),
+        (Some(payload_issue_id), Some(linked_issue_id)) if payload_issue_id != linked_issue_id
+    ) {
+        return Err(invalid_approval_state(
+            row,
+            "payload and relational issue targets differ",
+        ));
     }
-    let target = match row.linked_issue_id.clone().or(payload_issue_id) {
+    let target = match linked_issue_id.or(payload_issue_id) {
         Some(issue_id) => rudder_issue_core::GovernedTarget::issue(IssueRef::new(
             scope.0.clone(),
             IssueId::new(issue_id),
@@ -980,9 +1148,47 @@ fn approval_from_row(
         target,
         approval_requester(scope, row)?,
     )?;
-    approval.status = approval_status(&row.status, &row.id)?;
+    let status = approval_status(&row.status, &row.id)?;
+    let decision = approval_decision(row.decision.as_deref(), &row.id)?;
+    let expected_decision = match status {
+        ApprovalStatus::Pending | ApprovalStatus::Cancelled => None,
+        ApprovalStatus::Approved => Some(ApprovalDecision::Approve),
+        ApprovalStatus::Rejected => Some(ApprovalDecision::Reject),
+        ApprovalStatus::RevisionRequested => Some(ApprovalDecision::RequestChanges),
+    };
+    if decision != expected_decision {
+        return Err(invalid_approval_state(
+            row,
+            "approval status and decision disagree",
+        ));
+    }
+    let has_evidence = row.decision_idempotency_key.is_some()
+        || row.decision_note.is_some()
+        || row.decided_by_user_id.is_some()
+        || row.decided_at.is_some();
+    if decision.is_some() {
+        if row.decision_idempotency_key.is_none()
+            || row.decided_by_user_id.is_none()
+            || row.decided_at.is_none()
+        {
+            return Err(invalid_approval_state(
+                row,
+                "decided approval is missing decision evidence",
+            ));
+        }
+    } else if has_evidence {
+        return Err(invalid_approval_state(
+            row,
+            "undecided approval contains decision evidence",
+        ));
+    }
+    approval.status = status;
     approval.revision = revision(row.revision, "approval", &row.id)?;
-    approval.decision = approval_decision(row.decision.as_deref());
+    approval.decision = decision;
+    approval.decided_by = row
+        .decided_by_user_id
+        .as_deref()
+        .map(|user_id| ActorRef::user(scope.0.clone(), rudder_issue_core::UserId::new(user_id)));
     approval.note = row.decision_note.clone();
     approval.validate()?;
     Ok(approval)
@@ -1105,6 +1311,24 @@ where
         };
     }
     query
+}
+
+async fn require_issue_target(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    scope: &TrustedOrganizationId,
+    issue_id: &IssueId,
+) -> Result<(), IssueMutationError> {
+    let query_plan = validate_issue_target_plan(scope, issue_id);
+    bind_query_as::<RunScopeRow>(&query_plan)
+        .fetch_optional(&mut **tx)
+        .await?
+        .map(|row| {
+            let _ = row.id;
+        })
+        .ok_or_else(|| IssueMutationError::NotFound {
+            entity: "issue",
+            id: issue_id.as_str().into(),
+        })
 }
 
 async fn require_run_scope(
@@ -1269,6 +1493,7 @@ pub fn approval_resubmission_query_plans(
     options: &ApprovalResubmissionOptions,
 ) -> Result<ApprovalResubmissionQueryPlans, IssueMutationError> {
     ensure_approval_authorization(authorization, &command.approval, &command.actor)?;
+    validate_resubmission_payload_shape(command, options.payload.as_ref())?;
     let scope = authorization.organization();
     let fingerprint = fingerprint_value(
         APPROVAL_RESUBMISSION_COMMAND_TYPE,
@@ -1567,6 +1792,9 @@ impl IssueMutationRepository {
             });
         }
         let mut approval = approval_from_row(scope, &row)?;
+        if let Some(issue_id) = approval_issue_target(&approval) {
+            require_issue_target(&mut tx, scope, issue_id).await?;
+        }
         let domain_outcome = approval.decide(command.clone())?;
         let result = serde_json::to_value(&domain_outcome)?;
         let update = update_approval_plan(scope, &command)?;
@@ -1665,6 +1893,11 @@ impl IssueMutationRepository {
                 id: command.approval.approval_id.as_str().into(),
             })?;
         let mut approval = approval_from_row(scope, &row)?;
+        let target = resubmission_payload_issue_id(&approval, options.payload.as_ref())?
+            .or_else(|| approval_issue_target(&approval).cloned());
+        if let Some(issue_id) = target.as_ref() {
+            require_issue_target(&mut tx, scope, issue_id).await?;
+        }
         let domain_outcome = approval.resubmit(command.clone())?;
         let result = serde_json::to_value(&domain_outcome)?;
         let update = update_approval_resubmission_plan(scope, &command, &options)?;
@@ -1752,10 +1985,12 @@ mod tests {
             decision: None,
             decision_idempotency_key: None,
             decision_note: None,
+            decided_by_user_id: None,
+            decided_at: None,
             requested_by_agent_id: None,
             requested_by_user_id: None,
             payload: json!({"candidate": "new-agent"}),
-            linked_issue_id: None,
+            linked_issue_ids: json!([]),
         };
 
         let approval = approval_from_row(&scope, &row).unwrap();
@@ -1764,6 +1999,19 @@ mod tests {
             approval.target,
             rudder_issue_core::GovernedTarget::organization(OrganizationId::new("org-a"))
         );
+
+        let mut malformed = row;
+        malformed.decision = Some("not-a-decision".into());
+        assert!(matches!(
+            approval_from_row(&scope, &malformed),
+            Err(IssueMutationError::InvalidStoredState { .. })
+        ));
+        malformed.decision = None;
+        malformed.status = "approved".into();
+        assert!(matches!(
+            approval_from_row(&scope, &malformed),
+            Err(IssueMutationError::InvalidStoredState { .. })
+        ));
     }
 
     #[test]
@@ -1777,8 +2025,8 @@ mod tests {
             Some("issue-b".into())
         );
         assert_eq!(
-            approval_target_issue_id(&json!({"issueIds": ["issue-c", "issue-d"]})).unwrap(),
-            Some("issue-c".into())
+            approval_target_issue_id(&json!({"issueIds": ["issue-c", "issue-d"]})),
+            Err("issueIds")
         );
         assert_eq!(
             approval_target_issue_id(&json!({"candidate": "agent"})).unwrap(),
