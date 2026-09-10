@@ -1,7 +1,7 @@
 use rudder_authority_core::{
     AUTHORITY_PROTOCOL_VERSION, ActorIdentity, AuthorityError, ComponentAuthority, HandoffRequest,
-    LegacyBridgeRequestEnvelope, MigrationAuthority, NonceReplayGuard, OwnerId, RouteClaim,
-    RouteDecision, RouteRejection,
+    LegacyBridgeRequestEnvelope, MAX_BRIDGE_LIFETIME, MAX_NONCE_BYTES, MAX_REPLAY_CAPACITY,
+    MigrationAuthority, NonceReplayGuard, OwnerId, RouteClaim, RouteDecision, RouteRejection,
 };
 
 fn legacy_authority() -> ComponentAuthority {
@@ -33,7 +33,8 @@ fn authority_and_bridge_envelope_round_trip_with_versioned_fields() {
         br#"{"issueId":"issue-1"}"#,
         "request-1",
         "nonce-1",
-        2_000,
+        900,
+        1_200,
     )
     .expect("bridge envelope");
 
@@ -46,6 +47,229 @@ fn authority_and_bridge_envelope_round_trip_with_versioned_fields() {
     let decoded: LegacyBridgeRequestEnvelope =
         serde_json::from_value(encoded).expect("deserialize envelope");
     assert_eq!(decoded, envelope);
+}
+
+#[test]
+fn bridge_nonce_is_bounded_on_construction_and_validation_before_replay_claim() {
+    let (_, authority) = legacy_registry();
+    let long_nonce = "n".repeat(MAX_NONCE_BYTES + 1);
+    let error = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-long",
+        long_nonce.clone(),
+        900,
+        1_200,
+    )
+    .expect_err("construction must reject an overlong nonce");
+    assert!(matches!(
+        error,
+        AuthorityError::InvalidField { field: "nonce" }
+    ));
+
+    let valid = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-valid",
+        "nonce-valid",
+        900,
+        1_200,
+    )
+    .expect("valid bridge envelope");
+    for (request_id, nonce) in [
+        ("request-long", long_nonce),
+        ("request-control", "nonce\u{0001}".to_owned()),
+    ] {
+        let mut encoded = serde_json::to_value(&valid).expect("serialize envelope");
+        let object = encoded.as_object_mut().expect("object envelope");
+        object.insert(
+            "requestId".to_owned(),
+            serde_json::Value::String(request_id.to_owned()),
+        );
+        object.insert("nonce".to_owned(), serde_json::Value::String(nonce));
+        let envelope: LegacyBridgeRequestEnvelope =
+            serde_json::from_value(encoded).expect("deserialize envelope");
+        let mut replay = NonceReplayGuard::new();
+        let error = envelope
+            .validate(
+                &authority,
+                &actor(),
+                "org-1",
+                "issue.read",
+                b"body",
+                request_id,
+                1_000,
+                &mut replay,
+            )
+            .expect_err("validation must reject an unsafe nonce");
+        assert!(matches!(
+            error,
+            AuthorityError::InvalidField { field: "nonce" }
+        ));
+        assert!(
+            replay.is_empty(),
+            "invalid nonce must not reach replay storage"
+        );
+    }
+}
+
+#[test]
+fn bridge_lifetime_rejects_u64_max_and_far_future_expiry() {
+    let (_, authority) = legacy_registry();
+    for expires_at in [u64::MAX, 1_000 + MAX_BRIDGE_LIFETIME + 1] {
+        let valid = LegacyBridgeRequestEnvelope::new(
+            &authority,
+            actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-future",
+            "nonce-future",
+            1_000,
+            1_200,
+        )
+        .expect("valid bridge envelope");
+        let mut encoded = serde_json::to_value(&valid).expect("serialize envelope");
+        encoded["expiresAt"] = serde_json::Value::from(expires_at);
+        let envelope: LegacyBridgeRequestEnvelope =
+            serde_json::from_value(encoded).expect("deserialize envelope");
+        let mut replay = NonceReplayGuard::new();
+        let error = envelope
+            .validate(
+                &authority,
+                &actor(),
+                "org-1",
+                "issue.read",
+                b"body",
+                "request-future",
+                1_000,
+                &mut replay,
+            )
+            .expect_err("far-future expiry must fail closed");
+        assert!(matches!(error, AuthorityError::LifetimeTooLong));
+        assert!(replay.is_empty());
+    }
+
+    let error = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-construction-future",
+        "nonce-construction-future",
+        1_000,
+        1_000 + MAX_BRIDGE_LIFETIME + 1,
+    )
+    .expect_err("construction must reject an overlong bridge lifetime");
+    assert!(matches!(error, AuthorityError::LifetimeTooLong));
+}
+
+#[test]
+fn bridge_validation_rejects_not_yet_valid_and_expired_envelopes() {
+    let (_, authority) = legacy_registry();
+    let not_yet_valid = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-future",
+        "nonce-future",
+        2_000,
+        2_100,
+    )
+    .expect("future envelope fixture");
+    let mut replay = NonceReplayGuard::new();
+    let error = not_yet_valid
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-future",
+            1_999,
+            &mut replay,
+        )
+        .expect_err("not-yet-valid envelope must fail closed");
+    assert!(matches!(error, AuthorityError::NotYetValid));
+    assert!(replay.is_empty());
+
+    let expired = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-expired",
+        "nonce-expired",
+        900,
+        1_000,
+    )
+    .expect("expired envelope fixture");
+    let error = expired
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-expired",
+            1_000,
+            &mut replay,
+        )
+        .expect_err("expired envelope must fail closed");
+    assert!(matches!(error, AuthorityError::Expired));
+    assert!(replay.is_empty());
+}
+
+#[test]
+fn bridge_wire_without_issued_at_is_parse_compatible_but_rejected() {
+    let (_, authority) = legacy_registry();
+    let envelope = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-legacy-wire",
+        "nonce-legacy-wire",
+        900,
+        1_200,
+    )
+    .expect("bridge envelope");
+    let mut encoded = serde_json::to_value(&envelope).expect("serialize envelope");
+    encoded
+        .as_object_mut()
+        .expect("object envelope")
+        .remove("issuedAt");
+    let decoded: LegacyBridgeRequestEnvelope =
+        serde_json::from_value(encoded).expect("legacy wire remains parse-compatible");
+    let mut replay = NonceReplayGuard::new();
+    let error = decoded
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-legacy-wire",
+            1_000,
+            &mut replay,
+        )
+        .expect_err("missing issuedAt must not be accepted");
+    assert!(matches!(
+        error,
+        AuthorityError::InvalidField { field: "issuedAt" }
+    ));
+    assert!(replay.is_empty());
 }
 
 #[test]
@@ -92,7 +316,8 @@ fn bridge_validation_rejects_stale_epoch_before_legacy_owner_fallback() {
         b"body",
         "request-1",
         "nonce-1",
-        2_000,
+        900,
+        1_200,
     )
     .expect("bridge envelope");
     let current = registry
@@ -133,7 +358,8 @@ fn bridge_validation_rejects_a_mismatched_body_hash_without_consuming_nonce() {
         b"body",
         "request-1",
         "nonce-1",
-        2_000,
+        900,
+        1_200,
     )
     .expect("bridge envelope");
     let mut replay = NonceReplayGuard::new();
@@ -177,7 +403,8 @@ fn bridge_validation_rejects_fencing_token_mismatch() {
         b"body",
         "request-1",
         "nonce-1",
-        2_000,
+        900,
+        1_200,
     )
     .expect("bridge envelope");
     envelope.fencing_token = "not-the-current-fence".into();
@@ -209,7 +436,8 @@ fn bridge_validation_rejects_replay_and_expiry() {
         b"body",
         "request-1",
         "nonce-1",
-        2_000,
+        900,
+        1_200,
     )
     .expect("bridge envelope");
     let mut replay = NonceReplayGuard::new();
@@ -247,6 +475,7 @@ fn bridge_validation_rejects_replay_and_expiry() {
         b"body",
         "request-2",
         "nonce-2",
+        900,
         1_000,
     )
     .expect("expired envelope fixture");
@@ -328,6 +557,7 @@ fn bridge_replay_guard_evicts_expired_entries_and_rejects_active_overflow() {
         b"body",
         "request-replay-1",
         "nonce-replay-1",
+        900,
         1_010,
     )
     .expect("first bridge envelope");
@@ -339,6 +569,7 @@ fn bridge_replay_guard_evicts_expired_entries_and_rejects_active_overflow() {
         b"body",
         "request-replay-2",
         "nonce-replay-2",
+        900,
         1_020,
     )
     .expect("second bridge envelope");
@@ -384,4 +615,20 @@ fn bridge_replay_guard_evicts_expired_entries_and_rejects_active_overflow() {
         )
         .expect("expired entries are evicted before a new claim");
     assert_eq!(replay.len(), 1);
+}
+
+#[test]
+fn bridge_replay_guard_rejects_zero_and_oversized_capacity() {
+    assert!(matches!(
+        NonceReplayGuard::with_capacity(0),
+        Err(AuthorityError::InvalidReplayCapacity {
+            max: MAX_REPLAY_CAPACITY
+        })
+    ));
+    assert!(matches!(
+        NonceReplayGuard::with_capacity(MAX_REPLAY_CAPACITY + 1),
+        Err(AuthorityError::InvalidReplayCapacity {
+            max: MAX_REPLAY_CAPACITY
+        })
+    ));
 }
