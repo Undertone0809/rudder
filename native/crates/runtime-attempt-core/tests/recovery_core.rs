@@ -103,6 +103,8 @@ fn pristine_transport_failure_chooses_fresh_session_and_persists_retry_plan() {
         RecoveryResult::Terminal(outcome) => panic!("unexpected terminal outcome: {outcome:?}"),
     };
     assert_eq!(plan.failed_attempt.attempt, 1);
+    assert_eq!(plan.source_session_id, "session-1");
+    assert_eq!(plan.replacement_session_id, None);
     assert_eq!(plan.classification, FailureClassification::Transport);
     assert_eq!(plan.decision, RecoveryDecision::FreshIfPristine);
     assert_eq!(plan.backoff.base_seconds, 2);
@@ -1350,4 +1352,293 @@ fn indeterminate_evidence_is_monotonic_against_later_accepted_observations() {
         rudder_runtime_attempt_core::SideEffectRisk::Possible
     );
     assert!(!machine.model_output_observed());
+}
+
+#[test]
+fn terminal_checkpoint_ordinals_are_specific_to_each_outcome() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut waiting = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    waiting.start(&fence, 0).unwrap();
+    waiting.mark_waiting_for_network(&fence, 0).unwrap();
+    let retry_failure = Failure::transport(TransportFailure::Timeout, "timeout").unwrap();
+    waiting
+        .record_failure(retry_failure, &fence, 0, None)
+        .unwrap();
+
+    let failed = Failure::non_retryable("provider_rejected", "provider rejected").unwrap();
+    let mut forged_failed = waiting.checkpoint();
+    forged_failed.phase = Phase::Terminal;
+    forged_failed.last_failure = Some(failed.clone());
+    forged_failed.recovery = None;
+    forged_failed.terminal_outcome = Some(rudder_runtime_attempt_core::TerminalOutcome::Failed {
+        attempt: identity.attempt(1).unwrap(),
+        failure: failed,
+    });
+    let encoded = serde_json::to_value(&forged_failed).unwrap();
+    assert!(serde_json::from_value::<rudder_runtime_attempt_core::Checkpoint>(encoded).is_err());
+    assert!(AttemptMachine::from_checkpoint(forged_failed).is_err());
+
+    let mut exhausted = AttemptMachine::new(
+        identity.clone(),
+        "session-2",
+        fence.clone(),
+        "heartbeat-2",
+        "fingerprint-2",
+    )
+    .unwrap();
+    exhausted.start(&fence, 0).unwrap();
+    exhausted.checkpoint_progress(&fence, 0).unwrap();
+    for _ in 0..MAX_ATTEMPTS {
+        exhausted.mark_waiting_for_network(&fence, 0).unwrap();
+        let result = exhausted
+            .record_failure(
+                Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+                &fence,
+                0,
+                None,
+            )
+            .unwrap();
+        if let RecoveryResult::RetryScheduled(plan) = result {
+            exhausted
+                .resume_same_session(&fence, plan.next_attempt_at_millis)
+                .unwrap();
+        } else {
+            break;
+        }
+    }
+    let mut forged_exhaustion = exhausted.checkpoint();
+    assert!(matches!(
+        forged_exhaustion.terminal_outcome,
+        Some(rudder_runtime_attempt_core::TerminalOutcome::NetworkRetryExhausted { .. })
+    ));
+    forged_exhaustion.network_wait_count = MAX_NETWORK_WAITS - 1;
+    let encoded = serde_json::to_value(&forged_exhaustion).unwrap();
+    assert!(serde_json::from_value::<rudder_runtime_attempt_core::Checkpoint>(encoded).is_err());
+    assert!(AttemptMachine::from_checkpoint(forged_exhaustion).is_err());
+
+    let mut cancelled = waiting;
+    cancelled
+        .cancel(&fence, CancellationReason::Operator, 0)
+        .unwrap();
+    assert!(AttemptMachine::from_checkpoint(cancelled.checkpoint()).is_ok());
+
+    let mut fail_closed = AttemptMachine::new(
+        identity,
+        "session-3",
+        fence.clone(),
+        "heartbeat-3",
+        "fingerprint-3",
+    )
+    .unwrap();
+    fail_closed.start(&fence, 0).unwrap();
+    fail_closed.mark_waiting_for_network(&fence, 0).unwrap();
+    fail_closed
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap();
+    fail_closed.fail_closed(&fence, 0).unwrap();
+    assert!(AttemptMachine::from_checkpoint(fail_closed.checkpoint()).is_ok());
+
+    let mut unsupported_unsafe = fail_closed.checkpoint();
+    let ambiguous = Failure::ambiguous("ambiguous", "ambiguous outcome").unwrap();
+    unsupported_unsafe.last_failure = Some(ambiguous.clone());
+    unsupported_unsafe.terminal_outcome = Some(
+        rudder_runtime_attempt_core::TerminalOutcome::NetworkResumeUnsafe {
+            attempt: unsupported_unsafe.attempt.clone(),
+            failure: ambiguous,
+        },
+    );
+    let encoded = serde_json::to_value(&unsupported_unsafe).unwrap();
+    assert!(serde_json::from_value::<rudder_runtime_attempt_core::Checkpoint>(encoded).is_err());
+    assert!(AttemptMachine::from_checkpoint(unsupported_unsafe).is_err());
+}
+
+#[test]
+fn deserialized_resume_plan_rejects_indeterminate_evidence() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine.checkpoint_progress(&fence, 0).unwrap();
+    machine.mark_waiting_for_network(&fence, 0).unwrap();
+    machine
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap();
+
+    let mut forged = machine.checkpoint();
+    forged.submission_phase = rudder_runtime_attempt_core::SubmissionPhase::Indeterminate;
+    forged.side_effect_risk = rudder_runtime_attempt_core::SideEffectRisk::Possible;
+    forged.recovery.as_mut().unwrap().submission_phase =
+        rudder_runtime_attempt_core::SubmissionPhase::Indeterminate;
+    forged.recovery.as_mut().unwrap().side_effect_risk =
+        rudder_runtime_attempt_core::SideEffectRisk::Possible;
+    let raw_plan = serde_json::to_value(forged.recovery.as_ref().unwrap()).unwrap();
+    assert!(serde_json::from_value::<rudder_runtime_attempt_core::RecoveryPlan>(raw_plan).is_err());
+    let raw_checkpoint = serde_json::to_value(forged).unwrap();
+    assert!(
+        serde_json::from_value::<rudder_runtime_attempt_core::Checkpoint>(raw_checkpoint).is_err()
+    );
+}
+
+#[test]
+fn fresh_recovery_persists_source_and_replacement_binding() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine.mark_waiting_for_network(&fence, 0).unwrap();
+    let plan = match machine
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap()
+    {
+        RecoveryResult::RetryScheduled(plan) => plan,
+        RecoveryResult::Terminal(outcome) => panic!("unexpected terminal outcome: {outcome:?}"),
+    };
+
+    let mut forged_active = machine.checkpoint();
+    forged_active.phase = Phase::Executing;
+    forged_active.attempt = plan.next_attempt.clone();
+    forged_active.recovery = Some(plan.clone());
+    assert!(AttemptMachine::from_checkpoint(forged_active).is_err());
+
+    machine
+        .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-2")
+        .unwrap();
+    let checkpoint = machine.checkpoint();
+    let encoded = serde_json::to_string(&checkpoint).unwrap();
+    let decoded: rudder_runtime_attempt_core::Checkpoint = serde_json::from_str(&encoded).unwrap();
+    let mut restored = AttemptMachine::from_checkpoint(decoded).unwrap();
+    assert_eq!(
+        restored
+            .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-2")
+            .unwrap()
+            .attempt,
+        2
+    );
+    assert_eq!(
+        restored
+            .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-3")
+            .unwrap_err()
+            .code(),
+        "recovery_choice_mismatch"
+    );
+}
+
+#[test]
+fn deserialized_recovery_plan_rejects_timestamp_before_its_backoff() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 100).unwrap();
+    machine.mark_waiting_for_network(&fence, 100).unwrap();
+    machine
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            100,
+            None,
+        )
+        .unwrap();
+
+    let mut forged = machine.checkpoint();
+    let plan = forged.recovery.as_mut().unwrap();
+    plan.next_attempt_at_millis = plan.backoff.delay_millis - 1;
+    let raw_plan = serde_json::to_value(plan).unwrap();
+    assert!(serde_json::from_value::<rudder_runtime_attempt_core::RecoveryPlan>(raw_plan).is_err());
+    assert!(AttemptMachine::from_checkpoint(forged).is_err());
+}
+
+#[test]
+fn conflicting_unsafe_evidence_preserves_the_terminal_event_bit() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine
+        .record_evidence(
+            rudder_runtime_attempt_core::RecoveryEvidence::new(
+                rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+                rudder_runtime_attempt_core::SideEffectRisk::Confirmed,
+                false,
+                true,
+                false,
+            )
+            .unwrap(),
+            &fence,
+            0,
+        )
+        .unwrap();
+    machine.mark_waiting_for_network(&fence, 0).unwrap();
+    let result = machine
+        .record_failure_with_evidence(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            rudder_runtime_attempt_core::RecoveryEvidence::new(
+                rudder_runtime_attempt_core::SubmissionPhase::Indeterminate,
+                rudder_runtime_attempt_core::SideEffectRisk::Possible,
+                false,
+                false,
+                true,
+            )
+            .unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        result,
+        RecoveryResult::Terminal(ref outcome) if outcome.code() == "network_resume_unsafe"
+    ));
+    assert!(machine.terminal_event_observed());
+    assert!(AttemptMachine::from_checkpoint(machine.checkpoint()).is_ok());
 }
