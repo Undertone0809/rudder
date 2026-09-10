@@ -301,7 +301,7 @@ test.describe("@smoke real work loop", () => {
       });
 
       await failedMessage.getByRole("button", { name: "Retry" }).click();
-      await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: task })).toBeVisible({
+      await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: task }).last()).toBeVisible({
         timeout: 15_000,
       });
       await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
