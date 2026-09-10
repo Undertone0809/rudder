@@ -18,6 +18,8 @@ import {
   type ChildProcessWithEvents,
   type RunProcessResult,
 } from "./server-utils.process.js";
+import type { NativeProcessAuthority } from "./types.js";
+export type { NativeProcessAuthority } from "./types.js";
 
 const PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
 const V2_PROTOCOL_VERSION = { major: 2, minor: 0 } as const;
@@ -45,32 +47,6 @@ export interface NativeProcessRunOptions {
   binaryPath?: string | null;
   runtimeRoot?: string;
   spawnHost?: NativeHostSpawn;
-}
-
-/** Server/runtime-issued authority; legacy callers cannot construct this implicitly. */
-export interface NativeProcessAuthority {
-  authorityVersion: number;
-  runtimeIdentity: {
-    organizationId: string;
-    agentId: string;
-    runId: string;
-  };
-  ownership: {
-    epoch: number;
-    fence: string;
-  };
-  lease: {
-    owner: string;
-    issuedAtMillis: number;
-    expiresAtMillis: number;
-  };
-  attempt: number;
-  requestId: string;
-  bindingDigest: string;
-  receiptContext: {
-    runtimeRoot: string;
-    ownerToken: string;
-  };
 }
 
 type NativeProcessWireOptions = {

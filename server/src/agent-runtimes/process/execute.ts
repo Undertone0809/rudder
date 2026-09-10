@@ -7,10 +7,21 @@ import {
   parseObject,
   redactEnvForLogs,
   runChildProcess,
+  runNativeChildProcessV2,
 } from "../utils.js";
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
-  const { runId, agent, config, context, onLog, onMeta, onSpawn, abortSignal } = ctx;
+  const {
+    runId,
+    agent,
+    config,
+    context,
+    nativeProcessAuthority,
+    onLog,
+    onMeta,
+    onSpawn,
+    abortSignal,
+  } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
 
@@ -55,7 +66,7 @@ Complete only this bounded task and report the result through the normal Run evi
     });
   }
 
-  const proc = await runChildProcess(runId, command, args, {
+  const processOptions = {
     cwd,
     env,
     timeoutSec,
@@ -64,7 +75,13 @@ Complete only this bounded task and report the result through the normal Run evi
     onSpawn,
     ...(runtimePrompt !== null ? { stdin: runtimePrompt } : {}),
     abortSignal,
-  });
+  };
+  const proc = nativeProcessAuthority !== undefined
+    ? await runNativeChildProcessV2(runId, command, args, {
+      ...processOptions,
+      authority: nativeProcessAuthority,
+    })
+    : await runChildProcess(runId, command, args, processOptions);
 
   if (proc.timedOut) {
     return {

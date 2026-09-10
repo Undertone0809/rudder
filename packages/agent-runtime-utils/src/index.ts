@@ -116,6 +116,7 @@ export type {
   AgentRuntimeNetworkSubmissionPhase,
   AgentRuntimeNetworkSuspension,
   AgentRuntimeNetworkTransport, AgentRuntimeServiceReport,
+  NativeProcessAuthority,
   AgentRuntimeSessionCodec,
   AgentRuntimeSkillContext,
   AgentRuntimeSkillEntry,
