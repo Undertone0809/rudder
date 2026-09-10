@@ -283,8 +283,8 @@ function getCachedMessengerThreadUnreadCount(queryClient: QueryClient, orgId: st
 
 export function invalidateMessengerThreadSummaryQueries(queryClient: QueryClient, orgId: string) {
   return Promise.all([
+    // threads is the prefix for both page variants and previews; groups is a sibling.
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threadPages(orgId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.messenger.customGroups(orgId) }),
   ]);
 }

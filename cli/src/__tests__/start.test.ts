@@ -110,6 +110,29 @@ function writeRuntimePackageSync(cacheDir: string, packageName: string, version 
   writeFileSync(path.join(packageDir, "index.js"), "", "utf8");
 }
 
+function writeRuntimePackageManifestSync(
+  cacheDir: string,
+  packageName: string,
+  manifest: Record<string, unknown>,
+): void {
+  const packageDir = path.join(cacheDir, "node_modules", ...packageName.split("/"));
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(path.join(packageDir, "package.json"), JSON.stringify(manifest), "utf8");
+  writeFileSync(path.join(packageDir, "index.js"), "", "utf8");
+}
+
+function currentSharpPlatformPackage(): string | null {
+  if (process.platform === "darwin" && process.arch === "arm64") return "@img/sharp-darwin-arm64";
+  if (process.platform === "darwin" && process.arch === "x64") return "@img/sharp-darwin-x64";
+  if (process.platform === "linux" && process.arch === "arm64") return "@img/sharp-linux-arm64";
+  if (process.platform === "linux" && process.arch === "arm") return "@img/sharp-linux-arm";
+  if (process.platform === "linux" && process.arch === "ia32") return "@img/sharp-linux-ia32";
+  if (process.platform === "linux" && process.arch === "ppc64") return "@img/sharp-linux-ppc64";
+  if (process.platform === "linux" && process.arch === "x64") return "@img/sharp-linux-x64";
+  if (process.platform === "win32" && process.arch === "x64") return "@img/sharp-win32-x64";
+  return null;
+}
+
 async function writeFakePostgresRuntime(
   root: string,
   options: { nestedTimezone?: boolean } = {},
@@ -2600,6 +2623,109 @@ describe("runtime install helpers", () => {
         },
       );
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("can skip embedded PostgreSQL optional dependencies while retaining native runtime packages", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-install-external-postgres-flags-test."));
+    const previousPostgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR;
+    const previousOmitOptional = process.env.RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL;
+    try {
+      process.env.RUDDER_POSTGRES_BIN_DIR = await writeFakePostgresRuntime(path.join(root, "external"));
+      process.env.RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL = "true";
+      const sharpPlatformPackage = currentSharpPlatformPackage();
+      if (!sharpPlatformPackage) throw new Error(`Unsupported test platform: ${process.platform}/${process.arch}`);
+      const embeddedPostgresPlatformPackage = currentEmbeddedPostgresPlatformPackage();
+      const sharpTarball = `${sharpPlatformPackage.replace("@", "").replace("/", "-")}-0.34.5.tgz`;
+      let sharpRepairPrefix = "";
+      const spawnSyncImpl = vi
+        .fn()
+        .mockImplementationOnce((_command, args: string[]) => {
+          const runtimeCacheDir = args[args.indexOf("--prefix") + 1];
+          writeRuntimePackageSync(runtimeCacheDir, "@rudderhq/server", "1.2.3");
+          writeRuntimePackageManifestSync(runtimeCacheDir, "embedded-postgres", {
+            name: "embedded-postgres",
+            version: "18.1.0-beta.16",
+            optionalDependencies: embeddedPostgresPlatformPackage
+              ? { [embeddedPostgresPlatformPackage]: "18.1.0-beta.16" }
+              : {},
+          });
+          writeRuntimePackageManifestSync(runtimeCacheDir, "sharp", {
+            name: "sharp",
+            version: "0.34.5",
+            optionalDependencies: { [sharpPlatformPackage]: "0.34.5" },
+          });
+          return { status: 0, stdout: "added runtime", stderr: "" };
+        })
+        .mockImplementationOnce((_command, args: string[]) => {
+          sharpRepairPrefix = args[args.indexOf("--pack-destination") + 1];
+          return { status: 0, stdout: `${sharpTarball}\n`, stderr: "" };
+        })
+        .mockImplementationOnce((_command, args: string[]) => {
+          const targetDir = args[args.indexOf("-C") + 1];
+          mkdirSync(targetDir, { recursive: true });
+          writeFileSync(path.join(targetDir, "package.json"), JSON.stringify({
+            name: sharpPlatformPackage,
+            version: "0.34.5",
+          }), "utf8");
+          writeFileSync(path.join(targetDir, "index.js"), "", "utf8");
+          return { status: 0, stdout: "extracted native package", stderr: "" };
+        });
+
+      await expect(
+        ensureRuntimeInstalled({
+          version: "1.2.3",
+          homeDir: root,
+          spawnSyncImpl: spawnSyncImpl as never,
+          postgresVersionProbe: () => "PostgreSQL 18.4",
+          preparePostgresPayload: true,
+          pruneRuntimeCache: false,
+        }),
+      ).resolves.toMatchObject({
+        status: "installed",
+        command: expect.stringContaining("--omit=optional"),
+      });
+
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(3);
+      expect(spawnSyncImpl).toHaveBeenCalledWith(
+        npmInstallInvocation.command,
+        [
+          ...npmInstallInvocation.args,
+          "install",
+          "--prefix",
+          resolveRuntimeCacheDir("1.2.3", root),
+          "--omit=dev",
+          "--omit=optional",
+          "--no-audit",
+          "--no-fund",
+          "@rudderhq/server@1.2.3",
+        ],
+        expect.any(Object),
+      );
+      expect(spawnSyncImpl.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
+        "pack",
+        `${sharpPlatformPackage}@0.34.5`,
+        "--registry",
+        NPM_PUBLIC_REGISTRY_URL,
+        "--silent",
+      ]));
+      expect(spawnSyncImpl.mock.calls[2]?.[1]).toEqual([
+        "-xzf",
+        path.join(sharpRepairPrefix, sharpTarball),
+        "-C",
+        path.join(resolveRuntimeCacheDir("1.2.3", root), "node_modules", ...sharpPlatformPackage.split("/")),
+        "--strip-components",
+        "1",
+      ]);
+      if (embeddedPostgresPlatformPackage) {
+        expect(spawnSyncImpl.mock.calls.flatMap(([, args]) => args)).not.toContain(embeddedPostgresPlatformPackage);
+      }
+    } finally {
+      if (previousPostgresBinDir === undefined) delete process.env.RUDDER_POSTGRES_BIN_DIR;
+      else process.env.RUDDER_POSTGRES_BIN_DIR = previousPostgresBinDir;
+      if (previousOmitOptional === undefined) delete process.env.RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL;
+      else process.env.RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL = previousOmitOptional;
       await rm(root, { recursive: true, force: true });
     }
   });

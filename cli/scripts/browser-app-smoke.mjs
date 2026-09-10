@@ -17,10 +17,26 @@ const cliEntry = path.join(cliRoot, "dist", "index.js");
 const { version } = JSON.parse(await readFile(path.join(cliRoot, "package.json"), "utf8"));
 const testHome = await mkdtemp(path.join(tmpdir(), "rudder-browser-app-smoke."));
 const READY_TIMEOUT_MS = 300_000;
+const packagedRuntimePackageDirInput = process.env.RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR?.trim();
+const packagedRuntimePackageDir = path.resolve(
+  packagedRuntimePackageDirInput || path.resolve(cliRoot, "..", "desktop", ".packaged", "server-package"),
+);
+const packagedRuntimePackageJsonPath = path.join(packagedRuntimePackageDir, "package.json");
 const postgresBinDir = process.env.RUDDER_POSTGRES_BIN_DIR?.trim()
   || path.join(process.env.USERPROFILE ?? "", ".rudder", "runtime-payloads", "postgres-18.4", "win32-x64", "bin");
 
 assert.ok(existsSync(cliEntry), "build @rudderhq/cli before running browser-app smoke");
+assert.ok(
+  existsSync(packagedRuntimePackageJsonPath),
+  "build the packaged Desktop server runtime before running browser-app smoke",
+);
+const runtimePackage = JSON.parse(await readFile(packagedRuntimePackageJsonPath, "utf8"));
+assert.equal(runtimePackage.name, "@rudderhq/server", "packaged browser-app smoke runtime must be the Rudder server");
+assert.equal(
+  runtimePackage.version,
+  version,
+  "packaged browser-app smoke runtime must match the CLI candidate version",
+);
 assert.ok(
   existsSync(path.join(postgresBinDir, "postgres.exe")),
   `prepared PostgreSQL 18.4 runtime is required at ${postgresBinDir}`,
@@ -63,7 +79,9 @@ function startBrowserApp(label) {
   ], {
     env: {
       ...process.env,
+      RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR: packagedRuntimePackageDir,
       RUDDER_POSTGRES_BIN_DIR: postgresBinDir,
+      RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -92,7 +110,9 @@ function startBrowserAppParent() {
   ], {
     env: {
       ...process.env,
+      RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR: packagedRuntimePackageDir,
       RUDDER_POSTGRES_BIN_DIR: postgresBinDir,
+      RUDDER_RUNTIME_INSTALL_OMIT_OPTIONAL: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -183,17 +203,8 @@ try {
   assert.equal(health.localEnv, "e2e");
   assert.equal(health.runtimeOwnerKind, "cli");
   assert.equal(health.deploymentMode, "local_trusted");
-  const runtimeCacheKey = health.version === version ? version : "latest";
-  const installedRuntimePackage = JSON.parse(await readFile(path.join(
-    testHome,
-    "runtimes",
-    runtimeCacheKey,
-    "node_modules",
-    "@rudderhq",
-    "server",
-    "package.json",
-  ), "utf8"));
-  assert.equal(health.version, installedRuntimePackage.version);
+  const activeRuntimePackage = JSON.parse(await readFile(packagedRuntimePackageJsonPath, "utf8"));
+  assert.equal(health.version, activeRuntimePackage.version);
   if (health.version !== version) {
     console.log(
       `[browser-app-smoke] requested prepublish runtime ${version}; observed intentional latest fallback ${health.version}`,

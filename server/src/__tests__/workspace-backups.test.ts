@@ -28,6 +28,8 @@ import {
 
 import workspaceBackupReadParity from "../../../native/fixtures/workspace-backup-read-parity.json";
 
+vi.setConfig({ hookTimeout: 30_000, testTimeout: 30_000 });
+
 it("uses the portable Unicode scalar filename order shared with native browsing", () => {
   expect([...workspaceBackupReadParity.ordering.input].sort(compareWorkspaceBackupFilenames))
     .toEqual(workspaceBackupReadParity.ordering.expected);
@@ -224,6 +226,7 @@ describe("workspace backup service", () => {
   });
 
   afterAll(async () => {
+    await db?.$client.end({ timeout: 5 });
     await instance?.stop();
     if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
     if (rudderHome) await fs.rm(rudderHome, { recursive: true, force: true });

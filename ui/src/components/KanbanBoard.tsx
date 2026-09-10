@@ -430,11 +430,6 @@ function KanbanColumn({
             </Button>
           </div>
         ) : null}
-        {showPaginationState && pagination.hasLoaded && !pagination.hasMore && !pagination.isLoading && !pagination.error ? (
-          <div data-testid={`kanban-end-state-${status}`} className="py-2 text-center text-[11px] text-muted-foreground">
-            All issues loaded
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -444,11 +439,8 @@ function KanbanPaginationFooter({
   hasMoreIssues,
   isLoadingMoreIssues,
   loadMoreError,
-  showAggregateEndState = true,
   onLoadMoreIssues,
-}: Pick<KanbanBoardProps, "hasMoreIssues" | "isLoadingMoreIssues" | "loadMoreError" | "onLoadMoreIssues"> & {
-  showAggregateEndState?: boolean;
-}) {
+}: Pick<KanbanBoardProps, "hasMoreIssues" | "isLoadingMoreIssues" | "loadMoreError" | "onLoadMoreIssues">) {
   if (!onLoadMoreIssues) return null;
 
   const infiniteScrollSupported = typeof IntersectionObserver !== "undefined";
@@ -497,16 +489,6 @@ function KanbanPaginationFooter({
         <Button type="button" variant="outline" size="sm" onClick={() => void onLoadMoreIssues("board")}>
           Load more
         </Button>
-      </div>
-    );
-  }
-
-  if (!hasMoreIssues && showAggregateEndState) {
-    return (
-      <div className="flex shrink-0 justify-center border-t border-[color:var(--border-soft)] py-3">
-        <span data-testid="kanban-end-state" className="text-xs text-muted-foreground">
-          All issues loaded
-        </span>
       </div>
     );
   }
@@ -1034,7 +1016,6 @@ export function KanbanBoard({
           hasMoreIssues={hasMoreIssues}
           isLoadingMoreIssues={isLoadingMoreIssues}
           loadMoreError={loadMoreError}
-          showAggregateEndState={!paginationByStatus}
           onLoadMoreIssues={onLoadMoreIssues}
         />
       </div>

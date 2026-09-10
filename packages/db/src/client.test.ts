@@ -266,7 +266,7 @@ afterEach(async () => {
       retryDelay: 250,
     });
   }
-}, migrationTestTimeout(10_000));
+}, migrationTestTimeout(30_000));
 
 describe("applyPendingMigrations", () => {
   it(

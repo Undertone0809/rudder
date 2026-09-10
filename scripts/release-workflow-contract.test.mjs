@@ -11,6 +11,7 @@ const releaseWorkflow = readFileSync(join(workflowDir, "release.yml"), "utf8");
 const docsWorkflow = readFileSync(join(workflowDir, "docs-production.yml"), "utf8");
 const releaseSetup = readFileSync(join(repoRoot, "doc/engineering/RELEASE-AUTOMATION-SETUP.md"), "utf8");
 const nextReleaseScript = readFileSync(join(repoRoot, "scripts/prepare-next-release.mjs"), "utf8");
+const browserAppSmoke = readFileSync(join(repoRoot, "cli/scripts/browser-app-smoke.mjs"), "utf8");
 const releaseMirrorPolicy = join(repoRoot, "scripts/release-mirror-policy.mjs");
 
 function workflowJob(source, jobName) {
@@ -71,6 +72,12 @@ describe("unified delivery workflows", () => {
   });
 
   it("runs source, docs, platform, and fast packaged Desktop gates in Test", () => {
+    const plan = workflowJob(testWorkflow, "plan");
+    expect(plan).toContain("Verify canary migration compatibility declaration");
+    expect(plan).toContain("scripts/release-compatibility-matrix.mjs");
+    expect(plan).toContain("--channel canary");
+    expect(plan.indexOf("Verify canary migration compatibility declaration"))
+      .toBeLessThan(plan.indexOf("Upload impact plan evidence"));
     expect(testWorkflow).toContain("Architecture ratchet");
     expect(testWorkflow).toContain("pnpm test:run --maxWorkers=2");
     expect(testWorkflow).toContain("Ensure Electron runtime dependency");
@@ -109,6 +116,9 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).toContain("Smoke packaged account gate");
     expect(preflight).toContain("Verify migration compatibility manifest");
     expect(preflight).toContain("scripts/release-compatibility-matrix.mjs");
+    expect(desktop).toContain("RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR");
+    expect(desktop).toContain("desktop/.packaged/server-package");
+    expect(browserAppSmoke).toContain("readFile(packagedRuntimePackageJsonPath");
     expect(desktop).toContain("timeout-minutes: 25");
     expect(desktop).toContain("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts");
     expect(desktop.indexOf("pnpm --filter @rudderhq/db exec tsx ../../scripts/release-compatibility-runtime.ts"))
@@ -136,6 +146,8 @@ describe("unified delivery workflows", () => {
       expect(publish).toContain("--source-tree-sha");
       expect(publish).toContain("--workflow-source-sha");
       expect(publish).toContain("--phase binaries");
+      expect(publish).toContain("timeout-minutes: 45");
+      expect(publish).toContain('wait_for_npm_package_versions "$(cat "$package_map")" 180 5');
       expect(publish).not.toContain("--phase checksum");
       expect(publish).not.toContain("gh release upload");
     }

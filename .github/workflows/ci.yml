@@ -123,6 +123,13 @@ jobs:
             --report "$RUNNER_TEMP/ci-impact-plan.json"
           cat "$RUNNER_TEMP/ci-impact-plan.json" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify canary migration compatibility declaration
+        run: |
+          candidate_version="$(node -p "require('./cli/package.json').version")-canary.0"
+          node scripts/release-compatibility-matrix.mjs \
+            --channel canary \
+            --candidate-version "$candidate_version"
+
       - name: Upload impact plan evidence
         uses: actions/upload-artifact@v7
         with:

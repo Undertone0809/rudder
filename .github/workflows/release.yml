@@ -578,6 +578,8 @@ jobs:
 
       - name: Smoke Windows Smart App Control browser fallback
         if: matrix.platform == 'windows'
+        env:
+          RUDDER_BROWSER_APP_RUNTIME_PACKAGE_DIR: ${{ github.workspace }}/desktop/.packaged/server-package
         run: pnpm --filter @rudderhq/cli smoke:browser-app
 
       - name: Smoke packaged App Builder
@@ -802,6 +804,7 @@ jobs:
       contents: write
       id-token: write
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: npm-canary
     outputs:
       version: ${{ needs.preflight.outputs.version }}
@@ -872,7 +875,7 @@ jobs:
           package_map="$(mktemp)"
           awk -F '\t' 'NF == 4 { print ".\t" $1 "\t" $2 }' dist/npm-payloads/manifest.tsv > "$package_map"
           test "$(wc -l < "$package_map" | xargs)" = "15"
-          wait_for_npm_package_versions "$(cat "$package_map")" 60 5
+          wait_for_npm_package_versions "$(cat "$package_map")" 180 5
           git tag "$RELEASE_TAG" "$SOURCE_SHA"
           git push origin "refs/tags/$RELEASE_TAG"
           cd dist/desktop-assets
@@ -907,6 +910,7 @@ jobs:
       contents: write
       id-token: write
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: npm-stable
     outputs:
       version: ${{ needs.preflight.outputs.version }}
@@ -986,7 +990,7 @@ jobs:
           package_map="$(mktemp)"
           awk -F '\t' 'NF == 4 { print ".\t" $1 "\t" $2 }' dist/npm-payloads/manifest.tsv > "$package_map"
           test "$(wc -l < "$package_map" | xargs)" = "15"
-          wait_for_npm_package_versions "$(cat "$package_map")" 60 5
+          wait_for_npm_package_versions "$(cat "$package_map")" 180 5
       - name: Create immutable Release and upload verified Desktop assets
         env:
           GH_TOKEN: ${{ github.token }}

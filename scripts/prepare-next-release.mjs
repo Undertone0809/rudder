@@ -218,6 +218,11 @@ function main() {
     }
 
     run("node", ["scripts/release-package-map.mjs", "set-version", decision.nextVersion]);
+    run("node", [
+      "scripts/update-release-compatibility-matrix.mjs",
+      "--candidate-version", decision.nextVersion,
+      "--stable-version", options.stableVersion,
+    ]);
     run("git", ["add", "-u"]);
     run("git", ["commit", "-m", `chore(release): start v${decision.nextVersion} [skip release]`]);
 

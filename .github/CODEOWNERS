@@ -3,6 +3,7 @@
 .github/** @Rudderhq
 scripts/release*.sh @Rudderhq
 scripts/release-*.mjs @Rudderhq
+scripts/update-release-compatibility-matrix.mjs @Rudderhq
 scripts/create-github-release.sh @Rudderhq
 scripts/collect-desktop-release-assets.mjs @Rudderhq
 scripts/mirror-desktop-release-to-cos.mjs @Rudderhq

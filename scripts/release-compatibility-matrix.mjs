@@ -12,6 +12,36 @@ const journalPath = "packages/db/src/migrations/meta/_journal.json";
 const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
+  "0.7.21": {
+    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    fixtures: [
+      {
+        version: "0.7.20",
+        ref: "v0.7.20",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.19",
+        ref: "v0.7.19",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.18",
+        ref: "v0.7.18",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.16",
+        ref: "v0.7.16",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.15",
+        ref: "v0.7.15",
+        fingerprint: "3fa86ccfeb959872e3d87af335928aff13880fc990c51f1dcf3c42baa6eb07ce",
+      },
+    ],
+  },
   "0.7.20": {
     candidateFingerprint: "bd2aa12f392a084f24f1c1c957d332eea50c4fb9d06f516148957aef46c4a2d4",
     fixtures: [
@@ -594,7 +624,7 @@ export function buildMigrationManifest({ journalRaw, listSqlFiles, readSqlFile, 
   return { ...journal, entries, sqlFiles, fingerprint };
 }
 
-function readCandidateManifest(repoRoot) {
+export function readCandidateManifest(repoRoot = defaultRepoRoot) {
   return buildMigrationManifest({
     label: "candidate",
     journalRaw: readFileSync(join(repoRoot, journalPath), "utf8"),
@@ -650,7 +680,7 @@ function readGitFiles(repoRoot, ref, paths) {
   return files;
 }
 
-function readFixtureManifest(repoRoot, fixture) {
+export function readFixtureManifest(repoRoot, fixture) {
   try {
     execFileSync("git", ["-C", repoRoot, "rev-parse", "--verify", `${fixture.ref}^{commit}`], {
       encoding: "utf8",
