@@ -92,7 +92,22 @@ fn serves_initialize_tools_list_and_workspace_call_over_newline_stdio() {
         responses[1]["result"]["tools"][0]["name"],
         "rudder_workspace_list"
     );
-    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        responses[1]["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["rudder_workspace_list", "rudder_workspace_read_file"]
+    );
+    let read_tool = &responses[1]["result"]["tools"][1];
+    assert_eq!(read_tool["inputSchema"]["additionalProperties"], false);
+    assert_eq!(
+        read_tool["inputSchema"]["required"],
+        serde_json::json!(["path"])
+    );
+    assert_eq!(read_tool["annotations"]["readOnlyHint"], true);
     assert_eq!(responses[2]["result"]["isError"], false);
     assert_eq!(
         responses[2]["result"]["structuredContent"]["directoryPath"],
@@ -101,6 +116,130 @@ fn serves_initialize_tools_list_and_workspace_call_over_newline_stdio() {
     assert_eq!(
         responses[2]["result"]["structuredContent"]["entries"][0]["path"],
         "projects/readme.md"
+    );
+}
+
+#[test]
+fn serves_workspace_read_file_with_utf8_content_over_newline_stdio() {
+    let root = tempdir().unwrap();
+    std::fs::create_dir(root.path().join("projects")).unwrap();
+    std::fs::write(root.path().join("projects/readme.md"), "read 世界").unwrap();
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "read-file",
+        "method": "tools/call",
+        "params": {
+            "name": "rudder_workspace_read_file",
+            "arguments": {"path": "projects/readme.md", "maxBytes": 128}
+        }
+    });
+    let input = format!("{request}\n");
+
+    let (status, stdout, stderr) = run_to_eof(runtime_command(root.path()), input.as_bytes());
+
+    assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    let response: Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        response["result"]["structuredContent"],
+        serde_json::json!({
+            "path": "projects/readme.md",
+            "content": "read 世界",
+            "byteSize": "read 世界".len(),
+        })
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn returns_bounded_errors_for_workspace_read_file_edge_cases_and_identity_overrides() {
+    let outer = tempdir().unwrap();
+    let root = outer.path().join("workspace");
+    let outside = outer.path().join("outside");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::create_dir(root.join("projects")).unwrap();
+    std::fs::create_dir(root.join("projects/directory")).unwrap();
+    std::fs::write(root.join("projects/binary"), [0xff, 0xfe]).unwrap();
+    std::fs::write(root.join("projects/large"), b"12345").unwrap();
+    std::fs::write(outside.join("secret"), b"secret").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret"), root.join("projects/link")).unwrap();
+
+    let requests = [
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"traversal","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"../outside/secret"}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"missing","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/missing"}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"directory","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/directory"}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"binary","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/binary"}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"large","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/large","maxBytes":4}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"symlink","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/link"}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"root","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/binary","root":"/tmp/attacker"}}
+        }),
+        serde_json::json!({
+            "jsonrpc":"2.0","id":"identity","method":"tools/call",
+            "params":{"name":"rudder_workspace_read_file","arguments":{"path":"projects/binary","RUDDER_PROJECT_LIBRARY_PATH":"/tmp/attacker"}}
+        }),
+    ];
+    let input = requests
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let (status, stdout, stderr) = run_to_eof(runtime_command(&root), input.as_bytes());
+    assert!(status.success(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    let responses = stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), requests.len());
+    let codes = responses
+        .iter()
+        .map(|response| {
+            response["result"]["structuredContent"]["code"]
+                .as_str()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        codes,
+        [
+            "rudder_mcp_workspace_path_escape",
+            "rudder_mcp_workspace_file_not_found",
+            "rudder_mcp_workspace_not_regular_file",
+            "rudder_mcp_workspace_file_not_utf8",
+            "rudder_mcp_workspace_file_too_large",
+            "rudder_mcp_workspace_symlink_rejected",
+            "rudder_mcp_invalid_request",
+            "rudder_mcp_reserved_identity_argument",
+        ]
+    );
+    assert!(
+        responses
+            .iter()
+            .all(|response| response["result"]["isError"] == true)
     );
 }
 

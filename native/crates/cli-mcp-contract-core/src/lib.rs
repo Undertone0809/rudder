@@ -9,7 +9,11 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -27,8 +31,11 @@ pub const RUDDER_MCP_LEGACY_PROTOCOL_VERSIONS: &[&str] = &[
 ];
 pub const DEFAULT_WORKSPACE_MAX_ENTRIES: u64 = 10_000;
 pub const DEFAULT_WORKSPACE_MAX_PATH_BYTES: u64 = 1_048_576;
+pub const DEFAULT_WORKSPACE_MAX_FILE_BYTES: u64 = 256 * 1024;
 const MAX_WORKSPACE_ENTRIES: u64 = 100_000;
 const MAX_WORKSPACE_PATH_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_WORKSPACE_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_WORKSPACE_FILE_PATH_BYTES: usize = 8 * 1024;
 const DEFAULT_MAX_FRAME_BYTES: usize = 1_000_000;
 const DEFAULT_MAX_HEADER_BYTES: usize = 64 * 1024;
 
@@ -113,6 +120,21 @@ pub struct CapabilityContract {
 
 impl CapabilityContract {
     pub fn input_schema(&self) -> Value {
+        if self.id == "workspace.read_file" {
+            return json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path"],
+                "properties": {
+                    "path": { "type": "string", "minLength": 1 },
+                    "maxBytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_WORKSPACE_FILE_BYTES
+                    }
+                }
+            });
+        }
         json!({
             "type": "object",
             "additionalProperties": false,
@@ -137,18 +159,37 @@ static WORKSPACE_LIST: CapabilityContract = CapabilityContract {
     requires_run_id: false,
 };
 
+static WORKSPACE_READ_FILE: CapabilityContract = CapabilityContract {
+    id: "workspace.read_file",
+    command: "workspace read-file",
+    mcp_name: "rudder_workspace_read_file",
+    mutating: false,
+    read_only: true,
+    host_scoped_root: true,
+    requires_org_id: false,
+    requires_agent_id: false,
+    requires_run_id: false,
+};
+
 pub fn capability_by_id(id: &str) -> Option<&'static CapabilityContract> {
-    (id == WORKSPACE_LIST.id).then_some(&WORKSPACE_LIST)
+    match id {
+        "workspace.list" => Some(&WORKSPACE_LIST),
+        "workspace.read_file" => Some(&WORKSPACE_READ_FILE),
+        _ => None,
+    }
 }
 
 pub fn capabilities() -> Vec<&'static CapabilityContract> {
-    vec![&WORKSPACE_LIST]
+    vec![&WORKSPACE_LIST, &WORKSPACE_READ_FILE]
 }
 
 pub fn capability_registry() -> BTreeMap<String, &'static CapabilityContract> {
-    [(WORKSPACE_LIST.id.to_owned(), &WORKSPACE_LIST)]
-        .into_iter()
-        .collect()
+    [
+        (WORKSPACE_LIST.id.to_owned(), &WORKSPACE_LIST),
+        (WORKSPACE_READ_FILE.id.to_owned(), &WORKSPACE_READ_FILE),
+    ]
+    .into_iter()
+    .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -218,6 +259,81 @@ impl Default for WorkspaceListRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceReadFileRequest {
+    pub path: String,
+    pub max_bytes: u64,
+}
+
+impl WorkspaceReadFileRequest {
+    pub fn from_json(value: &Value) -> Result<Self, McpError> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| McpError::invalid("workspace.read_file params must be an object"))?;
+        if object.keys().any(|key| {
+            matches!(
+                key.as_str(),
+                "root" | "workspaceRoot" | "workspaceRootPath" | "RUDDER_PROJECT_LIBRARY_PATH"
+            )
+        }) {
+            return Err(McpError::invalid(
+                "workspace root is supplied by the managed host",
+            ));
+        }
+        let allowed = BTreeSet::from(["path", "maxBytes"]);
+        if let Some(unknown) = object.keys().find(|key| !allowed.contains(key.as_str())) {
+            return Err(McpError::invalid(format!(
+                "unknown workspace.read_file argument {unknown}"
+            )));
+        }
+        let path = object
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| McpError::invalid("workspace.read_file path is required"))?;
+        if path.trim().is_empty() {
+            return Err(McpError::invalid(
+                "workspace.read_file path must not be empty",
+            ));
+        }
+        if path.len() > MAX_WORKSPACE_FILE_PATH_BYTES {
+            return Err(McpError::invalid(
+                "workspace.read_file path exceeds the bounded limit",
+            ));
+        }
+        let max_bytes = object
+            .get("maxBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_WORKSPACE_MAX_FILE_BYTES);
+        if !(1..=MAX_WORKSPACE_FILE_BYTES).contains(&max_bytes) {
+            return Err(McpError::invalid(
+                "workspace.read_file maxBytes is outside the bounded range",
+            ));
+        }
+        Ok(Self {
+            path: path.to_owned(),
+            max_bytes,
+        })
+    }
+}
+
+impl Default for WorkspaceReadFileRequest {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            max_bytes: DEFAULT_WORKSPACE_MAX_FILE_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceReadFileResult {
+    pub path: String,
+    pub content: String,
+    pub byte_size: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceListEntry {
     pub name: String,
     pub path: String,
@@ -255,6 +371,233 @@ pub fn list_workspace_directory(
                 is_directory: entry.is_directory,
             })
             .collect(),
+    })
+}
+
+fn workspace_read_error(code: &'static str, message: impl Into<String>) -> McpError {
+    McpError::new(code, message)
+}
+
+fn normalize_workspace_file_path(path: &Path) -> Result<String, McpError> {
+    if path.is_absolute() {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_path_escape",
+            "workspace file path must be relative",
+        ));
+    }
+    let mut values = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => {
+                let value = value.to_str().ok_or_else(|| {
+                    workspace_read_error(
+                        "rudder_mcp_workspace_path_not_utf8",
+                        "workspace file path is not UTF-8",
+                    )
+                })?;
+                if value.contains('\0') || value.contains('\\') {
+                    return Err(workspace_read_error(
+                        "rudder_mcp_workspace_path_escape",
+                        "workspace file path contains an unsafe separator",
+                    ));
+                }
+                values.push(value);
+            }
+            _ => {
+                return Err(workspace_read_error(
+                    "rudder_mcp_workspace_path_escape",
+                    "workspace file path contains traversal or a platform prefix",
+                ));
+            }
+        }
+    }
+    if values.is_empty() {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_file_path_required",
+            "workspace file path must not be empty",
+        ));
+    }
+    Ok(values.join("/"))
+}
+
+fn workspace_root_for_read(root: &Path) -> Result<PathBuf, McpError> {
+    if !root.is_absolute() {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_root_not_absolute",
+            "managed workspace root must be an absolute path",
+        ));
+    }
+    let metadata = fs::symlink_metadata(root).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            workspace_read_error(
+                "rudder_mcp_workspace_root_not_found",
+                "managed workspace root was not found",
+            )
+        } else {
+            workspace_read_error(
+                "rudder_mcp_workspace_root_unavailable",
+                "managed workspace root is unavailable",
+            )
+        }
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_root_symlink",
+            "managed workspace root must not be a symlink",
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_root_not_directory",
+            "managed workspace root must be a directory",
+        ));
+    }
+    fs::canonicalize(root).map_err(|_| {
+        workspace_read_error(
+            "rudder_mcp_workspace_root_unavailable",
+            "managed workspace root is unavailable",
+        )
+    })
+}
+
+fn open_workspace_file(path: &Path) -> Result<fs::File, McpError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options.open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            workspace_read_error(
+                "rudder_mcp_workspace_file_not_found",
+                "workspace file was not found",
+            )
+        } else if error.kind() == std::io::ErrorKind::PermissionDenied {
+            workspace_read_error(
+                "rudder_mcp_workspace_file_unavailable",
+                "workspace file could not be read",
+            )
+        } else {
+            workspace_read_error(
+                "rudder_mcp_workspace_file_unavailable",
+                "workspace file could not be opened",
+            )
+        }
+    })
+}
+
+pub fn read_workspace_file(
+    root: &Path,
+    request: &WorkspaceReadFileRequest,
+) -> Result<WorkspaceReadFileResult, McpError> {
+    let portable_path = normalize_workspace_file_path(Path::new(&request.path))?;
+    let canonical_root = workspace_root_for_read(root)?;
+    let mut target = canonical_root.clone();
+    let components = Path::new(&request.path)
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (index, component) in components.iter().enumerate() {
+        target.push(component);
+        let metadata = fs::symlink_metadata(&target).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                workspace_read_error(
+                    "rudder_mcp_workspace_file_not_found",
+                    "workspace file was not found",
+                )
+            } else {
+                workspace_read_error(
+                    "rudder_mcp_workspace_file_unavailable",
+                    "workspace file metadata could not be read",
+                )
+            }
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(workspace_read_error(
+                "rudder_mcp_workspace_symlink_rejected",
+                "workspace file paths must not contain symlinks",
+            ));
+        }
+        if index + 1 < components.len() {
+            if !metadata.is_dir() {
+                return Err(workspace_read_error(
+                    "rudder_mcp_workspace_file_not_found",
+                    "workspace file was not found",
+                ));
+            }
+        } else if !metadata.is_file() {
+            return Err(workspace_read_error(
+                "rudder_mcp_workspace_not_regular_file",
+                "workspace target is not a regular file",
+            ));
+        }
+    }
+    let canonical_target = fs::canonicalize(&target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            workspace_read_error(
+                "rudder_mcp_workspace_file_not_found",
+                "workspace file was not found",
+            )
+        } else {
+            workspace_read_error(
+                "rudder_mcp_workspace_file_unavailable",
+                "workspace file could not be resolved",
+            )
+        }
+    })?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_path_escape",
+            "workspace file path escapes the managed root",
+        ));
+    }
+    let file = open_workspace_file(&canonical_target)?;
+    let metadata = file.metadata().map_err(|_| {
+        workspace_read_error(
+            "rudder_mcp_workspace_file_unavailable",
+            "workspace file metadata could not be read",
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_not_regular_file",
+            "workspace target is not a regular file",
+        ));
+    }
+    if metadata.len() > request.max_bytes {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_file_too_large",
+            "workspace file exceeds the requested byte limit",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(request.max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| {
+            workspace_read_error(
+                "rudder_mcp_workspace_file_unavailable",
+                "workspace file could not be read",
+            )
+        })?;
+    if bytes.len() as u64 > request.max_bytes {
+        return Err(workspace_read_error(
+            "rudder_mcp_workspace_file_too_large",
+            "workspace file exceeds the requested byte limit",
+        ));
+    }
+    let byte_size = bytes.len() as u64;
+    let content = String::from_utf8(bytes).map_err(|_| {
+        workspace_read_error(
+            "rudder_mcp_workspace_file_not_utf8",
+            "workspace file is not valid UTF-8",
+        )
+    })?;
+    Ok(WorkspaceReadFileResult {
+        path: portable_path,
+        content,
+        byte_size,
     })
 }
 
@@ -775,7 +1118,7 @@ mod tests {
 
     #[test]
     fn registry_exposes_only_the_read_only_contract_and_its_input_shape() {
-        assert_eq!(capabilities().len(), 1);
+        assert_eq!(capabilities().len(), 2);
         let registry = capability_registry();
         let contract = registry.get("workspace.list").unwrap();
         let schema = contract.input_schema();
@@ -948,6 +1291,125 @@ mod tests {
         assert_eq!(result.directory_path, "projects");
         assert_eq!(result.entries[0].path, "projects/readme.md");
         assert!(!root.path().join(".manifest.json").exists());
+    }
+
+    #[test]
+    fn workspace_read_file_reads_a_bounded_utf8_file_from_the_managed_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("projects")).unwrap();
+        std::fs::write(root.path().join("projects/readme.md"), "hello 世界").unwrap();
+        let request = WorkspaceReadFileRequest::from_json(&json!({
+            "path": "projects/readme.md",
+            "maxBytes": 128,
+        }))
+        .unwrap();
+
+        let result = read_workspace_file(root.path(), &request).unwrap();
+
+        assert_eq!(result.path, "projects/readme.md");
+        assert_eq!(result.content, "hello 世界");
+        assert_eq!(result.byte_size, "hello 世界".len() as u64);
+    }
+
+    #[test]
+    fn workspace_read_file_is_registered_as_a_host_scoped_read_only_capability() {
+        let contract = capability_by_id("workspace.read_file").expect("read capability");
+        assert_eq!(contract.command, "workspace read-file");
+        assert_eq!(contract.mcp_name, "rudder_workspace_read_file");
+        assert!(!contract.mutating);
+        assert!(contract.read_only);
+        assert!(contract.host_scoped_root);
+        let schema = contract.input_schema();
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema["required"], json!(["path"]));
+        assert_eq!(schema["properties"]["path"]["type"], "string");
+        assert_eq!(schema["properties"]["maxBytes"]["type"], "integer");
+    }
+
+    #[test]
+    fn workspace_read_file_rejects_traversal_root_overrides_and_invalid_limits() {
+        let root = tempfile::tempdir().unwrap();
+        let traversal = WorkspaceReadFileRequest::from_json(&json!({
+            "path": "../secret.txt",
+        }))
+        .unwrap();
+        assert_eq!(
+            read_workspace_file(root.path(), &traversal)
+                .unwrap_err()
+                .code(),
+            "rudder_mcp_workspace_path_escape"
+        );
+        let root_override = WorkspaceReadFileRequest::from_json(&json!({
+            "path": "projects/readme.md",
+            "root": "/tmp/attacker",
+        }))
+        .unwrap_err();
+        assert_eq!(root_override.code(), "rudder_mcp_invalid_request");
+        let oversized = WorkspaceReadFileRequest::from_json(&json!({
+            "path": "projects/readme.md",
+            "maxBytes": 1024 * 1024 + 1,
+        }))
+        .unwrap_err();
+        assert_eq!(oversized.code(), "rudder_mcp_invalid_request");
+    }
+
+    #[test]
+    fn workspace_read_file_rejects_missing_non_regular_invalid_utf8_and_oversized_files() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("projects")).unwrap();
+        std::fs::create_dir(root.path().join("projects/directory")).unwrap();
+        std::fs::write(root.path().join("projects/binary"), [0xff, 0xfe]).unwrap();
+        std::fs::write(root.path().join("projects/large"), b"12345").unwrap();
+
+        for (path, max_bytes, code) in [
+            (
+                "projects/missing",
+                32,
+                "rudder_mcp_workspace_file_not_found",
+            ),
+            (
+                "projects/directory",
+                32,
+                "rudder_mcp_workspace_not_regular_file",
+            ),
+            ("projects/binary", 32, "rudder_mcp_workspace_file_not_utf8"),
+            ("projects/large", 4, "rudder_mcp_workspace_file_too_large"),
+        ] {
+            let request = WorkspaceReadFileRequest::from_json(&json!({
+                "path": path,
+                "maxBytes": max_bytes,
+            }))
+            .unwrap();
+            assert_eq!(
+                read_workspace_file(root.path(), &request)
+                    .unwrap_err()
+                    .code(),
+                code,
+                "unexpected error for {path}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_read_file_rejects_symlinked_files_and_directories() {
+        let outer = tempfile::tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let outside = outer.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"secret").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("file-link")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("directory-link")).unwrap();
+
+        for path in ["file-link", "directory-link/secret.txt"] {
+            let request = WorkspaceReadFileRequest::from_json(&json!({"path": path})).unwrap();
+            assert_eq!(
+                read_workspace_file(&root, &request).unwrap_err().code(),
+                "rudder_mcp_workspace_symlink_rejected",
+                "symlink path unexpectedly readable: {path}"
+            );
+        }
     }
 
     #[test]

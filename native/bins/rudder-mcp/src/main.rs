@@ -2,9 +2,10 @@ use rudder_cli_mcp_contract_core::{
     CancellationToken, FrameLimits, FrameMode, IdentityRequirements, InputParser, McpError,
     RUDDER_MCP_CONTRACT_VERSION, RUDDER_MCP_LEGACY_PROTOCOL_VERSIONS,
     RUDDER_MCP_MODERN_PROTOCOL_VERSION, ResponseLimits, WorkspaceListRequest,
-    bounded_json_rpc_result, capability_by_id, encode_frame, has_conflicting_protocol_versions,
-    invalid_request_response, is_supported_protocol_version, list_workspace_directory,
-    reject_model_identity_overrides, unsupported_method_response, validate_managed_identity,
+    WorkspaceReadFileRequest, bounded_json_rpc_result, capability_by_id, encode_frame,
+    has_conflicting_protocol_versions, invalid_request_response, is_supported_protocol_version,
+    list_workspace_directory, read_workspace_file, reject_model_identity_overrides,
+    unsupported_method_response, validate_managed_identity,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -32,18 +33,27 @@ extern "C" fn record_signal(_signal: libc::c_int) {
 }
 
 #[cfg(unix)]
-fn install_signal_handlers() {
+fn install_signal_handlers() -> io::Result<()> {
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = record_signal as *const () as libc::sighandler_t;
-        let _ = libc::sigemptyset(&mut action.sa_mask);
-        let _ = libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
-        let _ = libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+        if libc::sigemptyset(&mut action.sa_mask) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut()) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut()) != 0 {
+            return Err(io::Error::last_os_error());
+        }
     }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn install_signal_handlers() {}
+fn install_signal_handlers() -> io::Result<()> {
+    Ok(())
+}
 
 #[cfg(unix)]
 fn signal_requested() -> bool {
@@ -81,7 +91,7 @@ fn main() {
 }
 
 fn run_stdio() -> io::Result<()> {
-    install_signal_handlers();
+    install_signal_handlers()?;
     let cancellation = CancellationToken::new();
     let mut parser = InputParser::with_cancellation(
         FrameLimits {
@@ -326,7 +336,7 @@ fn tools_list_response(id: Value, params: &Value) -> Value {
     {
         return invalid_request_response(id, "Invalid tools/list cursor");
     }
-    let result = json!({"tools": [workspace_tool()]});
+    let result = json!({"tools": [workspace_tool(), workspace_read_file_tool()]});
     raw_json_rpc_result(
         id,
         if modern {
@@ -357,24 +367,28 @@ fn tools_call_response(id: Value, params: &Value) -> Value {
             modern,
         );
     };
-    let Some(capability) = capability_by_id("workspace.list") else {
+    let capability_id = match name {
+        "rudder_workspace_list" => "workspace.list",
+        "rudder_workspace_read_file" => "workspace.read_file",
+        _ => {
+            return tool_error_response(
+                id,
+                "rudder_mcp_tool_not_available",
+                format!("Rudder MCP tool is not exposed: {name}"),
+                Value::Null,
+                modern,
+            );
+        }
+    };
+    let Some(capability) = capability_by_id(capability_id) else {
         return tool_error_response(
             id,
             "rudder_mcp_tool_not_available",
-            "workspace.list capability is unavailable",
+            format!("Rudder MCP capability is unavailable: {capability_id}"),
             Value::Null,
             modern,
         );
     };
-    if name != capability.mcp_name {
-        return tool_error_response(
-            id,
-            "rudder_mcp_tool_not_available",
-            format!("Rudder MCP tool is not exposed: {name}"),
-            Value::Null,
-            modern,
-        );
-    }
     let arguments = params
         .get("arguments")
         .cloned()
@@ -419,15 +433,27 @@ fn tools_call_response(id: Value, params: &Value) -> Value {
             modern,
         );
     }
-    let request = match WorkspaceListRequest::from_json(&arguments) {
-        Ok(request) => request,
-        Err(error) => return tool_error_from_mcp(id, error, modern),
+    let structured = if capability.id == "workspace.read_file" {
+        let request = match WorkspaceReadFileRequest::from_json(&arguments) {
+            Ok(request) => request,
+            Err(error) => return tool_error_from_mcp(id, error, modern),
+        };
+        let result = match read_workspace_file(Path::new(&root), &request) {
+            Ok(result) => result,
+            Err(error) => return tool_error_from_mcp(id, error, modern),
+        };
+        serde_json::to_value(result).unwrap_or_else(|_| json!({}))
+    } else {
+        let request = match WorkspaceListRequest::from_json(&arguments) {
+            Ok(request) => request,
+            Err(error) => return tool_error_from_mcp(id, error, modern),
+        };
+        let result = match list_workspace_directory(Path::new(&root), &request) {
+            Ok(result) => result,
+            Err(error) => return tool_error_from_mcp(id, error, modern),
+        };
+        serde_json::to_value(result).unwrap_or_else(|_| json!({}))
     };
-    let result = match list_workspace_directory(Path::new(&root), &request) {
-        Ok(result) => result,
-        Err(error) => return tool_error_from_mcp(id, error, modern),
-    };
-    let structured = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
     match bounded_json_rpc_result(id, structured, ResponseLimits::core()) {
         Ok(mut response) => {
             if modern {
@@ -460,6 +486,23 @@ fn workspace_tool() -> Value {
             .input_schema(),
         "annotations": {
             "title": "List a managed workspace directory",
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+        },
+    })
+}
+
+fn workspace_read_file_tool() -> Value {
+    json!({
+        "name": "rudder_workspace_read_file",
+        "description": "Read bounded UTF-8 content from a regular file under the managed workspace root without modifying it.",
+        "inputSchema": capability_by_id("workspace.read_file")
+            .expect("workspace.read_file capability is registered")
+            .input_schema(),
+        "annotations": {
+            "title": "Read a managed workspace file",
             "readOnlyHint": true,
             "destructiveHint": false,
             "idempotentHint": true,

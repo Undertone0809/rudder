@@ -1585,6 +1585,7 @@ dependencies = [
 name = "rudder-cli-mcp-contract-core"
 version = "0.7.21"
 dependencies = [
+ "libc",
  "rudder-workspace-manifest-core",
  "serde",
  "serde_json",
