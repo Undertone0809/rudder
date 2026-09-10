@@ -1600,6 +1600,7 @@ dependencies = [
  "base64",
  "rudder-issue-core",
  "rudder-read-surfaces-core",
+ "rudder-run-evidence-core",
  "serde",
  "serde_json",
  "sha2",

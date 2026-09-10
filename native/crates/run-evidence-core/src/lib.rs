@@ -10,6 +10,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const INDEX_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_READ_BYTES: u64 = 1_000_000;
 
+/// Safe metadata for a persisted run log.
+///
+/// This intentionally contains no local path or opaque log reference. Database
+/// read adapters may expose availability and integrity metadata without
+/// granting a caller a filesystem capability.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogMetadata {
+    pub available: bool,
+    pub bytes: u64,
+    pub sha256: Option<String>,
+    pub compressed: bool,
+    pub store: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndexLimits {
     pub max_record_bytes: u64,

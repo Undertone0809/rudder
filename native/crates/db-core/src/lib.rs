@@ -23,6 +23,7 @@ use sqlx::{
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
+pub mod activity_read;
 pub mod issue_mutation;
 
 #[cfg(test)]

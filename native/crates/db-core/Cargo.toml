@@ -8,6 +8,7 @@ publish.workspace = true
 base64 = "0.22"
 rudder-issue-core = { path = "../issue-core" }
 rudder-read-surfaces-core = { path = "../read-surfaces-core" }
+rudder-run-evidence-core = { path = "../run-evidence-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
