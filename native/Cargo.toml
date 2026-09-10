@@ -12,6 +12,7 @@ members = [
   "crates/runtime-payload-core",
   "crates/runtime-core",
   "crates/migration-core",
+  "crates/runtime-attempt-core",
   "crates/server-foundation",
   "crates/workspace-manifest-core",
   "bins/rudder-native",

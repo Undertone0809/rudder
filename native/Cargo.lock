@@ -1438,7 +1438,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "rudder-runtime-core"
+name = "rudder-runtime-attempt-core"
+version = "0.7.21"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 version = "0.7.21"
 dependencies = [
  "serde",
