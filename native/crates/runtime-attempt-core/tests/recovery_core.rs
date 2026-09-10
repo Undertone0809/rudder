@@ -1,8 +1,8 @@
 use rudder_runtime_attempt_core::{
     ATTEMPT_PROTOCOL_VERSION, AttemptMachine, BackoffDelay, CancellationReason, CancellationState,
     Failure, FailureClassification, HeartbeatIdentity, IdempotencyDecision, IdempotencyKey,
-    IdempotencyLedger, LeaseFence, MAX_ATTEMPTS, NETWORK_BACKOFF_SECONDS, Phase, RecoveryDecision,
-    RecoveryResult, TransportFailure,
+    IdempotencyLedger, LeaseFence, MAX_ATTEMPTS, MAX_NETWORK_WAITS, NETWORK_BACKOFF_SECONDS, Phase,
+    RecoveryDecision, RecoveryResult, TransportFailure,
 };
 
 fn lease() -> LeaseFence {
@@ -679,7 +679,7 @@ fn indeterminate_or_terminal_event_evidence_fails_closed() {
 }
 
 #[test]
-fn six_network_waits_reach_the_frozen_schedule_before_exhaustion() {
+fn six_network_waits_exhaust_without_starting_a_seventh_attempt() {
     let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
     let fence = lease();
     let mut machine = AttemptMachine::new(
@@ -693,7 +693,11 @@ fn six_network_waits_reach_the_frozen_schedule_before_exhaustion() {
     machine.start(&fence, 0).unwrap();
     machine.checkpoint_progress(&fence, 0).unwrap();
 
-    for (index, expected_seconds) in NETWORK_BACKOFF_SECONDS.into_iter().enumerate() {
+    for (index, expected_seconds) in NETWORK_BACKOFF_SECONDS
+        .into_iter()
+        .enumerate()
+        .take((MAX_ATTEMPTS - 1) as usize)
+    {
         let wait_number = index as u8 + 1;
         machine.start(&fence, 0).unwrap();
         machine.mark_waiting_for_network(&fence, 0).unwrap();
@@ -723,6 +727,9 @@ fn six_network_waits_reach_the_frozen_schedule_before_exhaustion() {
     assert!(
         matches!(exhausted, RecoveryResult::Terminal(outcome) if outcome.code() == "network_retry_exhausted")
     );
+    assert_eq!(machine.network_wait_count(), MAX_NETWORK_WAITS);
+    assert_eq!(machine.attempt_identity().attempt, MAX_ATTEMPTS);
+    assert!(AttemptMachine::from_checkpoint(machine.checkpoint()).is_ok());
 }
 
 #[test]
@@ -796,4 +803,551 @@ fn lease_rebind_requires_the_current_fence_and_accepts_a_new_valid_epoch_after_e
         machine.start(&expired, 150).unwrap_err().code(),
         "stale_lease_fence"
     );
+}
+
+#[test]
+fn retry_budget_has_six_failure_boundaries_but_never_starts_attempt_seven() {
+    assert_eq!(MAX_NETWORK_WAITS, 6);
+    assert_eq!(MAX_ATTEMPTS, MAX_NETWORK_WAITS);
+
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine.checkpoint_progress(&fence, 0).unwrap();
+
+    for expected_attempt in 1..=MAX_NETWORK_WAITS {
+        assert_eq!(machine.attempt_identity().attempt, expected_attempt);
+        machine.start(&fence, 0).unwrap();
+        machine.mark_waiting_for_network(&fence, 0).unwrap();
+        let failure =
+            Failure::transport(TransportFailure::ConnectionReset, "connection reset").unwrap();
+        match machine.record_failure(failure, &fence, 0, None).unwrap() {
+            RecoveryResult::RetryScheduled(plan) if expected_attempt < MAX_NETWORK_WAITS => {
+                assert_eq!(plan.failed_attempt.attempt, expected_attempt);
+                assert!(plan.next_attempt.attempt <= MAX_ATTEMPTS);
+                machine
+                    .resume_same_session(&fence, plan.next_attempt_at_millis)
+                    .unwrap();
+            }
+            RecoveryResult::Terminal(outcome) => {
+                assert_eq!(expected_attempt, MAX_NETWORK_WAITS);
+                assert_eq!(outcome.code(), "network_retry_exhausted");
+            }
+            RecoveryResult::RetryScheduled(plan) => {
+                panic!("sixth wait created an additional provider attempt: {plan:?}");
+            }
+        }
+    }
+
+    assert_eq!(machine.attempt_identity().attempt, MAX_NETWORK_WAITS);
+    assert_eq!(machine.network_wait_count(), MAX_NETWORK_WAITS);
+    assert!(
+        rudder_runtime_attempt_core::AttemptIdentity::new(
+            identity.organization_id,
+            identity.run_id,
+            identity.agent_id,
+            MAX_NETWORK_WAITS + 1,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn unsafe_evidence_wins_at_the_retry_boundary() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine.checkpoint_progress(&fence, 0).unwrap();
+    let accepted = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        true,
+        false,
+        false,
+    )
+    .unwrap();
+
+    while machine.attempt_identity().attempt < MAX_ATTEMPTS {
+        machine.start(&fence, 0).unwrap();
+        machine.mark_waiting_for_network(&fence, 0).unwrap();
+        let plan = match machine
+            .record_failure_with_evidence(
+                Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+                accepted,
+                &fence,
+                0,
+                None,
+            )
+            .unwrap()
+        {
+            RecoveryResult::RetryScheduled(plan) => plan,
+            RecoveryResult::Terminal(outcome) => {
+                panic!("unexpected terminal outcome before the retry boundary: {outcome:?}")
+            }
+        };
+        machine
+            .resume_same_session(&fence, plan.next_attempt_at_millis)
+            .unwrap();
+    }
+
+    machine.start(&fence, 0).unwrap();
+    machine.mark_waiting_for_network(&fence, 0).unwrap();
+    let indeterminate = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Indeterminate,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        false,
+        false,
+        false,
+    )
+    .unwrap();
+    let result = machine
+        .record_failure_with_evidence(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            indeterminate,
+            &fence,
+            0,
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        result,
+        RecoveryResult::Terminal(outcome) if outcome.code() == "network_resume_unsafe"
+    ));
+}
+
+#[test]
+fn active_recovery_plan_evidence_is_bound_and_cannot_be_downgraded() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine.checkpoint_progress(&fence, 0).unwrap();
+    machine.mark_waiting_for_network(&fence, 0).unwrap();
+    let accepted = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        true,
+        false,
+        false,
+    )
+    .unwrap();
+    let plan = match machine
+        .record_failure_with_evidence(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            accepted,
+            &fence,
+            0,
+            None,
+        )
+        .unwrap()
+    {
+        RecoveryResult::RetryScheduled(plan) => plan,
+        RecoveryResult::Terminal(outcome) => panic!("unexpected terminal outcome: {outcome:?}"),
+    };
+    machine
+        .resume_same_session(&fence, plan.next_attempt_at_millis)
+        .unwrap();
+
+    let mut downgraded = machine.checkpoint();
+    downgraded.submission_phase = rudder_runtime_attempt_core::SubmissionPhase::PreSubmission;
+    downgraded.side_effect_risk = rudder_runtime_attempt_core::SideEffectRisk::None;
+    downgraded.model_output_observed = false;
+    downgraded.tool_activity_observed = false;
+    downgraded.terminal_event_observed = false;
+    assert!(AttemptMachine::from_checkpoint(downgraded).is_err());
+
+    let mut pristine_resume = machine.checkpoint();
+    pristine_resume.session.pristine = true;
+    pristine_resume.submission_phase = rudder_runtime_attempt_core::SubmissionPhase::PreSubmission;
+    pristine_resume.side_effect_risk = rudder_runtime_attempt_core::SideEffectRisk::None;
+    pristine_resume.model_output_observed = false;
+    pristine_resume.tool_activity_observed = false;
+    pristine_resume.terminal_event_observed = false;
+    if let Some(plan) = &mut pristine_resume.recovery {
+        plan.submission_phase = rudder_runtime_attempt_core::SubmissionPhase::PreSubmission;
+        plan.side_effect_risk = rudder_runtime_attempt_core::SideEffectRisk::None;
+        plan.model_output_observed = false;
+        plan.tool_activity_observed = false;
+        plan.terminal_event_observed = false;
+    }
+    assert!(AttemptMachine::from_checkpoint(pristine_resume).is_err());
+}
+
+#[test]
+fn terminal_event_evidence_is_only_valid_for_matching_unsafe_terminal_state() {
+    let terminal_event = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        false,
+        false,
+        true,
+    )
+    .unwrap();
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+
+    let mut active = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    active.start(&fence, 10).unwrap();
+    let before = active.checkpoint();
+    assert_eq!(
+        active
+            .record_evidence(terminal_event, &fence, 10)
+            .unwrap_err()
+            .code(),
+        "network_resume_unsafe"
+    );
+    assert_eq!(active.checkpoint(), before);
+
+    let mut succeeded = AttemptMachine::new(
+        identity.clone(),
+        "session-2",
+        fence.clone(),
+        "heartbeat-2",
+        "fingerprint-2",
+    )
+    .unwrap();
+    succeeded.start(&fence, 10).unwrap();
+    succeeded
+        .record_evidence(
+            rudder_runtime_attempt_core::RecoveryEvidence::new(
+                rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+                rudder_runtime_attempt_core::SideEffectRisk::Possible,
+                false,
+                false,
+                false,
+            )
+            .unwrap(),
+            &fence,
+            10,
+        )
+        .unwrap();
+    succeeded.succeed(&fence, 10).unwrap();
+    let mut invalid_succeeded = succeeded.checkpoint();
+    invalid_succeeded.terminal_event_observed = true;
+    assert!(AttemptMachine::from_checkpoint(invalid_succeeded).is_err());
+
+    let mut unsafe_machine = AttemptMachine::new(
+        identity,
+        "session-3",
+        fence.clone(),
+        "heartbeat-3",
+        "fingerprint-3",
+    )
+    .unwrap();
+    unsafe_machine.start(&fence, 10).unwrap();
+    unsafe_machine.mark_waiting_for_network(&fence, 10).unwrap();
+    let result = unsafe_machine
+        .record_failure_with_evidence(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            terminal_event,
+            &fence,
+            10,
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        result,
+        RecoveryResult::Terminal(ref outcome)
+            if outcome.code() == "network_resume_unsafe"
+    ));
+    assert!(AttemptMachine::from_checkpoint(unsafe_machine.checkpoint()).is_ok());
+}
+
+#[test]
+fn fresh_replay_requires_the_persisted_replacement_session() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 0).unwrap();
+    machine.mark_waiting_for_network(&fence, 0).unwrap();
+    let plan = match machine
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap()
+    {
+        RecoveryResult::RetryScheduled(plan) => plan,
+        RecoveryResult::Terminal(outcome) => panic!("unexpected terminal outcome: {outcome:?}"),
+    };
+
+    let first = machine
+        .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-2")
+        .unwrap();
+    assert_eq!(machine.session_id(), "session-2");
+    assert_eq!(
+        machine
+            .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-2")
+            .unwrap(),
+        first
+    );
+    let before_rejected_replay = machine.checkpoint();
+    assert_eq!(
+        machine
+            .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-3")
+            .unwrap_err()
+            .code(),
+        "recovery_choice_mismatch"
+    );
+    assert_eq!(machine.checkpoint(), before_rejected_replay);
+    assert_eq!(
+        machine
+            .fresh_if_pristine(&fence, plan.next_attempt_at_millis, " ")
+            .unwrap_err()
+            .code(),
+        "invalid_input"
+    );
+    assert_eq!(machine.checkpoint(), before_rejected_replay);
+}
+
+#[test]
+fn terminal_leases_are_immutable() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let replacement = LeaseFence::new("worker-2", 2, 10, 100_000).unwrap();
+
+    let mut succeeded = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    succeeded.start(&fence, 10).unwrap();
+    succeeded.succeed(&fence, 10).unwrap();
+    let before_succeeded = succeeded.checkpoint();
+    assert_eq!(
+        succeeded
+            .renew_lease(&fence, replacement.clone(), 10)
+            .unwrap_err()
+            .code(),
+        "already_terminal"
+    );
+    assert_eq!(succeeded.checkpoint(), before_succeeded);
+
+    let mut cancelled = AttemptMachine::new(
+        identity,
+        "session-2",
+        fence.clone(),
+        "heartbeat-2",
+        "fingerprint-2",
+    )
+    .unwrap();
+    cancelled.start(&fence, 10).unwrap();
+    cancelled
+        .cancel(&fence, CancellationReason::Operator, 10)
+        .unwrap();
+    let before_cancelled = cancelled.checkpoint();
+    assert_eq!(
+        cancelled
+            .rebind_lease(&fence, replacement, 10)
+            .unwrap_err()
+            .code(),
+        "already_terminal"
+    );
+    assert_eq!(cancelled.checkpoint(), before_cancelled);
+}
+
+#[test]
+fn overflow_failures_leave_evidence_sessions_and_retry_state_unchanged() {
+    let accepted = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        true,
+        false,
+        false,
+    )
+    .unwrap();
+
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut evidence_at_max = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    evidence_at_max.start(&fence, 10).unwrap();
+    let mut checkpoint = evidence_at_max.checkpoint();
+    checkpoint.revision = u64::MAX;
+    let mut evidence_at_max = AttemptMachine::from_checkpoint(checkpoint).unwrap();
+    let before = evidence_at_max.checkpoint();
+    assert!(
+        evidence_at_max
+            .record_evidence(accepted, &fence, 10)
+            .is_err()
+    );
+    assert_eq!(evidence_at_max.checkpoint(), before);
+
+    let mut fresh_at_max = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-2",
+        "fingerprint-2",
+    )
+    .unwrap();
+    fresh_at_max.start(&fence, 0).unwrap();
+    fresh_at_max.mark_waiting_for_network(&fence, 0).unwrap();
+    let plan = match fresh_at_max
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap()
+    {
+        RecoveryResult::RetryScheduled(plan) => plan,
+        RecoveryResult::Terminal(outcome) => panic!("unexpected terminal outcome: {outcome:?}"),
+    };
+    let mut checkpoint = fresh_at_max.checkpoint();
+    checkpoint.revision = u64::MAX;
+    let mut fresh_at_max = AttemptMachine::from_checkpoint(checkpoint).unwrap();
+    let before = fresh_at_max.checkpoint();
+    assert!(
+        fresh_at_max
+            .fresh_if_pristine(&fence, plan.next_attempt_at_millis, "session-2")
+            .is_err()
+    );
+    assert_eq!(fresh_at_max.checkpoint(), before);
+
+    let mut retry_at_max_minus_one = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-3",
+        "fingerprint-3",
+    )
+    .unwrap();
+    retry_at_max_minus_one.start(&fence, 0).unwrap();
+    let mut checkpoint = retry_at_max_minus_one.checkpoint();
+    checkpoint.revision = u64::MAX - 1;
+    let mut retry_at_max_minus_one = AttemptMachine::from_checkpoint(checkpoint).unwrap();
+    let before = retry_at_max_minus_one.checkpoint();
+    assert!(
+        retry_at_max_minus_one
+            .record_failure_with_evidence(
+                Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+                accepted,
+                &fence,
+                0,
+                None,
+            )
+            .is_err()
+    );
+    assert_eq!(retry_at_max_minus_one.checkpoint(), before);
+
+    let near_max_fence = LeaseFence::new("worker-1", 1, 0, u64::MAX).unwrap();
+    let mut timestamp_overflow = AttemptMachine::new(
+        identity,
+        "session-1",
+        near_max_fence.clone(),
+        "heartbeat-4",
+        "fingerprint-4",
+    )
+    .unwrap();
+    timestamp_overflow
+        .start(&near_max_fence, u64::MAX - 1)
+        .unwrap();
+    let before = timestamp_overflow.checkpoint();
+    assert!(
+        timestamp_overflow
+            .record_failure_with_evidence(
+                Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+                accepted,
+                &near_max_fence,
+                u64::MAX - 1,
+                None,
+            )
+            .is_err()
+    );
+    assert_eq!(timestamp_overflow.checkpoint(), before);
+}
+
+#[test]
+fn indeterminate_evidence_is_monotonic_against_later_accepted_observations() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 10).unwrap();
+
+    let indeterminate = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Indeterminate,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        false,
+        false,
+        false,
+    )
+    .unwrap();
+    machine.record_evidence(indeterminate, &fence, 10).unwrap();
+
+    let accepted = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Accepted,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        false,
+        false,
+        false,
+    )
+    .unwrap();
+    machine.record_evidence(accepted, &fence, 10).unwrap();
+
+    assert_eq!(
+        machine.submission_phase(),
+        rudder_runtime_attempt_core::SubmissionPhase::Indeterminate
+    );
+    assert_eq!(
+        machine.side_effect_risk(),
+        rudder_runtime_attempt_core::SideEffectRisk::Possible
+    );
+    assert!(!machine.model_output_observed());
 }
