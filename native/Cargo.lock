@@ -1549,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-auth-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "hex",
  "hmac",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-authority-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-cli"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "rudder-cli-mcp-contract-core",
  "serde_json",
@@ -1582,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-cli-mcp-contract-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "rudder-workspace-manifest-core",
  "serde",
@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-db-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "base64",
  "rudder-issue-core",
@@ -1609,7 +1609,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-issue-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-legacy-bridge"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "rudder-authority-core",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-mcp"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "libc",
  "rudder-cli-mcp-contract-core",
@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-runner"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "async-trait",
  "rudder-migration-core",
@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-read-surfaces-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "base64",
  "serde",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-adapter-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "rudder-native-protocol",
  "rudder-runtime-core",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-runtime-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
