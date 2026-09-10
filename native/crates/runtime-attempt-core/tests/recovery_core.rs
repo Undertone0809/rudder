@@ -58,6 +58,86 @@ fn checkpoint_round_trip_preserves_identity_phase_and_session_metadata() {
 }
 
 #[test]
+fn v1_recovery_checkpoint_migration_is_safe_for_same_session_only() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut resume_machine = AttemptMachine::new(
+        identity.clone(),
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    resume_machine.start(&fence, 0).unwrap();
+    resume_machine.checkpoint_progress(&fence, 0).unwrap();
+    resume_machine.mark_waiting_for_network(&fence, 0).unwrap();
+    resume_machine
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap();
+
+    let mut legacy_resume = serde_json::to_value(resume_machine.checkpoint()).unwrap();
+    let recovery = legacy_resume["recovery"].as_object_mut().unwrap();
+    assert!(recovery.remove("sourceSessionId").is_some());
+    assert!(recovery.remove("replacementSessionId").is_some());
+    let migrated: rudder_runtime_attempt_core::Checkpoint =
+        serde_json::from_value(legacy_resume).unwrap();
+    assert_eq!(
+        migrated.recovery.as_ref().unwrap().source_session_id,
+        "session-1"
+    );
+    assert_eq!(
+        migrated.recovery.as_ref().unwrap().replacement_session_id,
+        None
+    );
+    let encoded = serde_json::to_string(&migrated).unwrap();
+    assert_eq!(
+        serde_json::from_str::<rudder_runtime_attempt_core::Checkpoint>(&encoded).unwrap(),
+        migrated
+    );
+    let next_attempt_at_millis = migrated.recovery.as_ref().unwrap().next_attempt_at_millis;
+    let mut restored = AttemptMachine::from_checkpoint(migrated).unwrap();
+    assert_eq!(
+        restored
+            .resume_same_session(&fence, next_attempt_at_millis)
+            .unwrap()
+            .attempt,
+        2
+    );
+
+    let mut fresh_machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-2",
+        "fingerprint-2",
+    )
+    .unwrap();
+    fresh_machine.start(&fence, 0).unwrap();
+    fresh_machine.mark_waiting_for_network(&fence, 0).unwrap();
+    fresh_machine
+        .record_failure(
+            Failure::transport(TransportFailure::Timeout, "timeout").unwrap(),
+            &fence,
+            0,
+            None,
+        )
+        .unwrap();
+    let mut legacy_fresh = serde_json::to_value(fresh_machine.checkpoint()).unwrap();
+    let recovery = legacy_fresh["recovery"].as_object_mut().unwrap();
+    assert!(recovery.remove("sourceSessionId").is_some());
+    assert!(recovery.remove("replacementSessionId").is_some());
+    assert!(
+        serde_json::from_value::<rudder_runtime_attempt_core::Checkpoint>(legacy_fresh).is_err()
+    );
+}
+
+#[test]
 fn backoff_is_frozen_and_deterministic_jitter_stays_bounded() {
     assert_eq!(NETWORK_BACKOFF_SECONDS, [2, 5, 10, 20, 30, 60]);
     for (retry_number, expected_seconds) in NETWORK_BACKOFF_SECONDS.into_iter().enumerate() {

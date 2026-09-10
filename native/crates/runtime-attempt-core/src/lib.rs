@@ -1241,7 +1241,9 @@ struct RecoveryPlanWire {
     backoff: BackoffDelay,
     network_wait_number: u8,
     next_attempt_at_millis: u64,
-    source_session_id: String,
+    #[serde(default)]
+    source_session_id: Option<String>,
+    #[serde(default)]
     replacement_session_id: Option<String>,
     failure: Failure,
     submission_phase: SubmissionPhase,
@@ -1251,30 +1253,52 @@ struct RecoveryPlanWire {
     terminal_event_observed: bool,
 }
 
+impl RecoveryPlanWire {
+    fn into_plan(
+        self,
+        fallback_source_session_id: Option<&str>,
+    ) -> Result<RecoveryPlan, AttemptError> {
+        let source_session_id = match (self.source_session_id, fallback_source_session_id) {
+            (Some(source_session_id), _) => source_session_id,
+            (None, Some(source_session_id))
+                if self.decision == RecoveryDecision::ResumeSameSession =>
+            {
+                source_session_id.to_owned()
+            }
+            (None, _) => {
+                return Err(AttemptError::invalid(
+                    "recovery plan is missing its source session binding",
+                ));
+            }
+        };
+        let plan = RecoveryPlan {
+            failed_attempt: self.failed_attempt,
+            next_attempt: self.next_attempt,
+            classification: self.classification,
+            decision: self.decision,
+            backoff: self.backoff,
+            network_wait_number: self.network_wait_number,
+            next_attempt_at_millis: self.next_attempt_at_millis,
+            source_session_id,
+            replacement_session_id: self.replacement_session_id,
+            failure: self.failure,
+            submission_phase: self.submission_phase,
+            side_effect_risk: self.side_effect_risk,
+            model_output_observed: self.model_output_observed,
+            tool_activity_observed: self.tool_activity_observed,
+            terminal_event_observed: self.terminal_event_observed,
+        };
+        plan.validate().map(|_| plan)
+    }
+}
+
 impl<'de> Deserialize<'de> for RecoveryPlan {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let wire = RecoveryPlanWire::deserialize(deserializer)?;
-        let plan = Self {
-            failed_attempt: wire.failed_attempt,
-            next_attempt: wire.next_attempt,
-            classification: wire.classification,
-            decision: wire.decision,
-            backoff: wire.backoff,
-            network_wait_number: wire.network_wait_number,
-            next_attempt_at_millis: wire.next_attempt_at_millis,
-            source_session_id: wire.source_session_id,
-            replacement_session_id: wire.replacement_session_id,
-            failure: wire.failure,
-            submission_phase: wire.submission_phase,
-            side_effect_risk: wire.side_effect_risk,
-            model_output_observed: wire.model_output_observed,
-            tool_activity_observed: wire.tool_activity_observed,
-            terminal_event_observed: wire.terminal_event_observed,
-        };
-        plan.validate().map(|_| plan).map_err(de::Error::custom)
+        wire.into_plan(None).map_err(de::Error::custom)
     }
 }
 
@@ -1685,7 +1709,7 @@ struct CheckpointWire {
     revision: u64,
     cancellation: CancellationState,
     last_failure: Option<Failure>,
-    recovery: Option<RecoveryPlan>,
+    recovery: Option<RecoveryPlanWire>,
     terminal_outcome: Option<TerminalOutcome>,
 }
 
@@ -1695,6 +1719,20 @@ impl<'de> Deserialize<'de> for Checkpoint {
         D: Deserializer<'de>,
     {
         let wire = CheckpointWire::deserialize(deserializer)?;
+        let session_id = wire.session.session_id.clone();
+        // v1 did not persist recovery session bindings. A missing binding is
+        // safe to derive only for same-session recovery; fresh recovery must
+        // retain its source binding and therefore fails closed.
+        let recovery = wire
+            .recovery
+            .map(|recovery| {
+                recovery.into_plan(
+                    (wire.protocol_version == ATTEMPT_PROTOCOL_VERSION)
+                        .then_some(session_id.as_str()),
+                )
+            })
+            .transpose()
+            .map_err(de::Error::custom)?;
         let checkpoint = Self {
             protocol_version: wire.protocol_version,
             identity: wire.identity,
@@ -1713,7 +1751,7 @@ impl<'de> Deserialize<'de> for Checkpoint {
             revision: wire.revision,
             cancellation: wire.cancellation,
             last_failure: wire.last_failure,
-            recovery: wire.recovery,
+            recovery,
             terminal_outcome: wire.terminal_outcome,
         };
         checkpoint
