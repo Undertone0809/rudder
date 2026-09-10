@@ -1,7 +1,8 @@
 use rudder_authority_core::{
     AUTHORITY_PROTOCOL_VERSION, ActorIdentity, AuthorityError, ComponentAuthority, HandoffRequest,
-    LegacyBridgeRequestEnvelope, MAX_BRIDGE_LIFETIME, MAX_NONCE_BYTES, MAX_REPLAY_CAPACITY,
-    MigrationAuthority, NonceReplayGuard, OwnerId, RouteClaim, RouteDecision, RouteRejection,
+    LEGACY_BRIDGE_PROTOCOL_VERSION, LEGACY_BRIDGE_SCHEMA, LegacyBridgeRequestEnvelope,
+    MAX_BRIDGE_LIFETIME, MAX_NONCE_BYTES, MAX_REPLAY_CAPACITY, MigrationAuthority,
+    NonceReplayGuard, OwnerId, RouteClaim, RouteDecision, RouteRejection,
 };
 
 fn legacy_authority() -> ComponentAuthority {
@@ -39,7 +40,8 @@ fn authority_and_bridge_envelope_round_trip_with_versioned_fields() {
     .expect("bridge envelope");
 
     let encoded = serde_json::to_value(&envelope).expect("serialize envelope");
-    assert_eq!(encoded["protocolVersion"], AUTHORITY_PROTOCOL_VERSION);
+    assert_eq!(encoded["protocolVersion"], LEGACY_BRIDGE_PROTOCOL_VERSION);
+    assert_eq!(encoded["schema"], LEGACY_BRIDGE_SCHEMA);
     assert_eq!(encoded["authorityEpoch"], authority.epoch);
     assert_eq!(encoded["bodySha256"].as_str().map(str::len), Some(64));
     assert_eq!(encoded["organizationId"], "org-1");
@@ -231,7 +233,7 @@ fn bridge_validation_rejects_not_yet_valid_and_expired_envelopes() {
 }
 
 #[test]
-fn bridge_wire_without_issued_at_is_parse_compatible_but_rejected() {
+fn bridge_v2_wire_without_issued_at_is_parse_compatible_but_rejected() {
     let (_, authority) = legacy_registry();
     let envelope = LegacyBridgeRequestEnvelope::new(
         &authority,
@@ -269,6 +271,58 @@ fn bridge_wire_without_issued_at_is_parse_compatible_but_rejected() {
         error,
         AuthorityError::InvalidField { field: "issuedAt" }
     ));
+    assert!(replay.is_empty());
+}
+
+#[test]
+fn legacy_v1_bridge_payload_is_rejected_as_unsupported() {
+    let (_, authority) = legacy_registry();
+    let envelope = LegacyBridgeRequestEnvelope::new(
+        &authority,
+        actor(),
+        "org-1",
+        "issue.read",
+        b"body",
+        "request-legacy-v1",
+        "nonce-legacy-v1",
+        900,
+        1_200,
+    )
+    .expect("bridge envelope");
+    let mut encoded = serde_json::to_value(&envelope).expect("serialize envelope");
+    let object = encoded.as_object_mut().expect("object envelope");
+    object.insert(
+        "schema".to_owned(),
+        serde_json::Value::String("rudder.migration.legacy-bridge.v1".to_owned()),
+    );
+    object.insert(
+        "protocolVersion".to_owned(),
+        serde_json::Value::from(AUTHORITY_PROTOCOL_VERSION),
+    );
+    object.remove("issuedAt");
+
+    let decoded: LegacyBridgeRequestEnvelope =
+        serde_json::from_value(encoded).expect("legacy v1 wire remains parse-compatible");
+    let mut replay = NonceReplayGuard::new();
+    let error = decoded
+        .validate(
+            &authority,
+            &actor(),
+            "org-1",
+            "issue.read",
+            b"body",
+            "request-legacy-v1",
+            1_000,
+            &mut replay,
+        )
+        .expect_err("legacy v1 bridge payload must fail closed as unsupported");
+    assert_eq!(
+        error,
+        AuthorityError::UnsupportedProtocolVersion {
+            actual: AUTHORITY_PROTOCOL_VERSION,
+            expected: LEGACY_BRIDGE_PROTOCOL_VERSION,
+        }
+    );
     assert!(replay.is_empty());
 }
 
