@@ -13,7 +13,8 @@ use thiserror::Error;
 
 pub const AUTHORITY_PROTOCOL_VERSION: u16 = 1;
 pub const AUTHORITY_SCHEMA: &str = "rudder.migration.authority.v1";
-pub const LEGACY_BRIDGE_SCHEMA: &str = "rudder.migration.legacy-bridge.v1";
+pub const LEGACY_BRIDGE_PROTOCOL_VERSION: u16 = 2;
+pub const LEGACY_BRIDGE_SCHEMA: &str = "rudder.migration.legacy-bridge.v2";
 pub const RUST_OWNER: &str = "rust";
 pub const LEGACY_OWNER: &str = "legacy";
 
@@ -533,9 +534,9 @@ pub struct LegacyBridgeRequestEnvelope {
     pub body_sha256: String,
     pub request_id: String,
     pub nonce: String,
-    /// Added without changing the protocol version. Missing legacy-wire values
-    /// default to zero for parsing compatibility, then fail validation rather
-    /// than being accepted without an issuance time.
+    /// Missing values default to zero so pre-v2 payloads can be decoded and
+    /// reported as unsupported; validation never accepts them without an
+    /// issuance time.
     #[serde(default)]
     pub issued_at: u64,
     pub expires_at: u64,
@@ -570,7 +571,7 @@ impl LegacyBridgeRequestEnvelope {
         validate_bridge_lifetime(issued_at, expires_at)?;
         Ok(Self {
             schema: LEGACY_BRIDGE_SCHEMA.to_owned(),
-            protocol_version: AUTHORITY_PROTOCOL_VERSION,
+            protocol_version: LEGACY_BRIDGE_PROTOCOL_VERSION,
             component: authority.component.clone(),
             component_version: authority.component_version.clone(),
             authority_epoch: authority.epoch,
@@ -600,14 +601,14 @@ impl LegacyBridgeRequestEnvelope {
         replay: &mut NonceReplayGuard,
     ) -> Result<(), AuthorityError> {
         authority.validate()?;
-        if self.schema != LEGACY_BRIDGE_SCHEMA {
-            return Err(AuthorityError::InvalidField { field: "schema" });
-        }
-        if self.protocol_version != AUTHORITY_PROTOCOL_VERSION {
+        if self.protocol_version != LEGACY_BRIDGE_PROTOCOL_VERSION {
             return Err(AuthorityError::UnsupportedProtocolVersion {
                 actual: self.protocol_version,
-                expected: AUTHORITY_PROTOCOL_VERSION,
+                expected: LEGACY_BRIDGE_PROTOCOL_VERSION,
             });
+        }
+        if self.schema != LEGACY_BRIDGE_SCHEMA {
+            return Err(AuthorityError::InvalidField { field: "schema" });
         }
         validate_bridge_lifetime(self.issued_at, self.expires_at)?;
         if self.component != authority.component {
