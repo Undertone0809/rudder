@@ -1,0 +1,13 @@
+[package]
+name = "rudder-runtime-attempt-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+description = "Pure, bounded heartbeat attempt and network-recovery state machine"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
