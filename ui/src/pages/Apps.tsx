@@ -17,6 +17,7 @@ import { launchManagedApp } from "@/lib/app-builder-launch";
 import {
   acknowledgeAppDirectOpen,
   activeKeyFromPath,
+  appLocationActionLabel,
   appRoute,
   localBindingKey,
   readAppDirectOpenIntent,
@@ -413,6 +414,7 @@ function ManagedSetupPane({
   const navigate = useNavigate();
   const desktopShell = readDesktopShell();
   const desktopAppBuilder = desktopShell?.appBuilder;
+  const sourceActionLabel = appLocationActionLabel(false, desktopShell?.platform);
   const retryMutation = useMutation({
     mutationFn: async () => {
       if (!desktopShell || !desktopAppBuilder?.supported) {
@@ -486,7 +488,7 @@ function ManagedSetupPane({
                 `/library?directory=${encodeURIComponent(entry.app.sourceRoot)}`,
               )}
             >
-              Open in Finder
+              {sourceActionLabel}
             </Button>
           </div>
           {retryMutation.error ? (

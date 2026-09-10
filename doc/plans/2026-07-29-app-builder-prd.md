@@ -81,7 +81,8 @@ V1 delivers:
 - a Desktop-owned fixed runner that installs dependencies, runs typecheck,
   unit tests, production build, and a real loopback readiness check;
 - a reviewed, opaque installation-local App binding;
-- Start, Stop, Open, Copy App link, Continue in Chat, and Open in Finder;
+- Start, Stop, Open, Copy App link, Continue in Chat, and source-location opening
+  through the platform folder opener;
 - development-data Backup, Export, Import, and Restore;
 - clear unavailable and failure states;
 - macOS, Linux, and Windows process-ownership adapters.
@@ -156,13 +157,17 @@ The Apps workspace shows durable build and binding state:
 
 - source work pending: `Continue in Chat`;
 - source exists: `Register & preview`;
-- running: `Open`, `Copy App link`, `Stop`, `Continue in Chat`, `Open in Finder`;
+- running: `Open`, `Copy App link`, `Stop`, `Continue in Chat`, and the platform
+  folder opener (`Open in Finder` on macOS, with the platform equivalent elsewhere);
 - bound App: development-data Backup, Import, and Restore;
 - failed or unavailable: causal error and recovery direction.
 
 `Register & preview` does not create generic source. If Chat/Skill work has not
 produced a valid manifest at the assigned root, the action fails and directs
 the operator back to Chat.
+
+When a managed App has no local Desktop definition yet, its source action opens
+the source in Rudder Library rather than invoking a native folder opener.
 
 ## Build And Runtime Contract
 

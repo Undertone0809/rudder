@@ -343,8 +343,15 @@ test.describe("Apps workspace", () => {
       Object.defineProperty(window, "desktopShell", {
         configurable: true,
         value: {
+          platform: "darwin",
           copyText: async (text: string) => {
             (window as typeof window & { __copiedText?: string }).__copiedText = text;
+          },
+          openPath: async (targetPath: string) => {
+            (window as typeof window & { __openedPaths?: string[] }).__openedPaths = [
+              ...((window as typeof window & { __openedPaths?: string[] }).__openedPaths ?? []),
+              targetPath,
+            ];
           },
           openExternal: async () => undefined,
           forceOpenExternal: async (target: string) => {
@@ -550,6 +557,14 @@ test.describe("Apps workspace", () => {
     ))).toBe("http://127.0.0.1:41731/");
     await expect(page.getByText("Source", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Stop App" })).toHaveCount(0);
+
+    await alphaEntry.hover();
+    await page.getByTestId("apps-more-local:definition-alpha").click();
+    await expect(page.getByRole("menuitem", { name: "Open in Finder" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Open in Finder" }).click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __openedPaths?: string[] }).__openedPaths ?? []
+    ))).toEqual(["/tmp/alpha"]);
 
     await page.getByTestId("apps-tab-local:definition-beta").getByRole("tab").focus();
     await page.keyboard.press("Delete");
@@ -1094,15 +1109,24 @@ test.describe("Apps workspace", () => {
       `${E2E_BASE_URL}/${organization.issuePrefix}/apps/view/managed%3A${created.id}`,
     );
     await expect(page.getByTestId("apps-retry-managed-app")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open in Finder" })).toBeVisible();
+    const sourceButton = page.getByRole("button", { name: "Open source" });
+    await expect(sourceButton).toBeVisible();
+    await sourceButton.click();
+    await expect(page).toHaveURL(/\/library\?directory=apps%2Fbroken-preview-app$/i);
+    await page.goto(
+      `${E2E_BASE_URL}/${organization.issuePrefix}/apps/view/managed%3A${created.id}`,
+    );
+    await expect(sourceButton).toBeVisible();
     const managedAppEntry = page.getByTestId(`apps-entry-managed:${created.id}`);
     await managedAppEntry.hover();
     await page.getByTestId(`apps-more-managed:${created.id}`).click();
-    await expect(page.getByRole("menuitem", { name: "Open in Finder" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Open source" })).toBeVisible();
     await page.screenshot({
-      path: `/tmp/rudder-app-builder-finder-menu-${testInfo.workerIndex}.png`,
+      path: `/tmp/rudder-app-builder-source-menu-${testInfo.workerIndex}.png`,
       fullPage: true,
     });
+    await page.getByRole("menuitem", { name: "Open source" }).click();
+    await expect(page).toHaveURL(/\/library\?directory=apps%2Fbroken-preview-app$/i);
   });
 
   test("keeps App Builder records organization-scoped", async ({ request }) => {
