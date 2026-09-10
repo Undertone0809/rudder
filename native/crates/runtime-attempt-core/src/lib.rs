@@ -10,9 +10,9 @@ use std::borrow::Borrow;
 use std::fmt;
 
 pub const ATTEMPT_PROTOCOL_VERSION: u16 = 1;
-/// The initial attempt plus one attempt for each bounded network wait.
+/// The maximum number of provider attempts and observed network waits.
 pub const MAX_NETWORK_WAITS: u8 = 6;
-pub const MAX_ATTEMPTS: u8 = MAX_NETWORK_WAITS + 1;
+pub const MAX_ATTEMPTS: u8 = MAX_NETWORK_WAITS;
 pub const MAX_ID_BYTES: usize = 255;
 pub const MAX_REQUEST_FINGERPRINT_BYTES: usize = 4 * 1024;
 pub const MAX_FAILURE_CODE_BYTES: usize = 128;
@@ -894,16 +894,17 @@ impl RecoveryEvidence {
         let model_output_observed = self.model_output_observed || newer.model_output_observed;
         let tool_activity_observed = self.tool_activity_observed || newer.tool_activity_observed;
         let terminal_event_observed = self.terminal_event_observed || newer.terminal_event_observed;
-        let submission_phase = if model_output_observed
+        // An unknown submission outcome is never made safe by a later lower-risk observation.
+        let submission_phase = if self.submission_phase == SubmissionPhase::Indeterminate
+            || newer.submission_phase == SubmissionPhase::Indeterminate
+        {
+            SubmissionPhase::Indeterminate
+        } else if model_output_observed
             || tool_activity_observed
             || self.submission_phase == SubmissionPhase::Accepted
             || newer.submission_phase == SubmissionPhase::Accepted
         {
             SubmissionPhase::Accepted
-        } else if self.submission_phase == SubmissionPhase::Indeterminate
-            || newer.submission_phase == SubmissionPhase::Indeterminate
-        {
-            SubmissionPhase::Indeterminate
         } else {
             SubmissionPhase::PreSubmission
         };
@@ -1361,6 +1362,16 @@ impl Checkpoint {
         evidence
             .validate()
             .map_err(|error| checkpoint_invalid(error.message()))?;
+        if self.terminal_event_observed
+            && !matches!(
+                self.terminal_outcome,
+                Some(TerminalOutcome::NetworkResumeUnsafe { .. })
+            )
+        {
+            return Err(checkpoint_invalid(
+                "terminal event evidence requires a network-unsafe terminal outcome",
+            ));
+        }
         if self.session.pristine && evidence != RecoveryEvidence::pre_submission() {
             return Err(checkpoint_invalid(
                 "a session with submission evidence cannot remain pristine",
@@ -1433,11 +1444,19 @@ impl Checkpoint {
                     return Err(checkpoint_invalid("active phase has inconsistent state"));
                 }
                 if let Some(plan) = &self.recovery {
+                    let evidence_preserves_plan = plan
+                        .evidence()
+                        .merge(evidence)
+                        .map(|merged| merged == evidence)
+                        .map_err(|error| checkpoint_invalid(error.message()))?;
                     if plan.next_attempt != self.attempt
                         || self.last_failure.as_ref() != Some(&plan.failure)
+                        || !evidence_preserves_plan
+                        || (plan.decision == RecoveryDecision::ResumeSameSession
+                            && self.session.pristine)
                     {
                         return Err(checkpoint_invalid(
-                            "active phase recovery plan does not name the active attempt",
+                            "active phase recovery plan is not bound to its state",
                         ));
                     }
                 } else if self.network_wait_count != 0
@@ -1464,7 +1483,6 @@ impl Checkpoint {
                     || (plan.decision == RecoveryDecision::FreshIfPristine
                         && !self.session.pristine)
                     || (plan.decision == RecoveryDecision::ResumeSameSession
-                        && plan.evidence().submission_phase == SubmissionPhase::PreSubmission
                         && self.session.pristine)
                 {
                     return Err(checkpoint_invalid("retry phase has inconsistent state"));
@@ -2176,11 +2194,14 @@ impl AttemptMachine {
         self.revision
     }
 
-    fn bump_revision(&mut self) -> Result<(), AttemptError> {
-        self.revision = self
-            .revision
+    fn next_revision(&self) -> Result<u64, AttemptError> {
+        self.revision
             .checked_add(1)
-            .ok_or_else(|| AttemptError::invalid("checkpoint revision overflow"))?;
+            .ok_or_else(|| AttemptError::invalid("checkpoint revision overflow"))
+    }
+
+    fn bump_revision(&mut self) -> Result<(), AttemptError> {
+        self.revision = self.next_revision()?;
         Ok(())
     }
 
@@ -2198,6 +2219,13 @@ impl AttemptMachine {
                 "stale_lease_fence",
                 ErrorKind::StaleLeaseFence,
                 "presented lease fence does not own this attempt",
+            ));
+        }
+        if matches!(self.phase, Phase::Succeeded | Phase::Terminal) {
+            return Err(AttemptError::new(
+                "already_terminal",
+                ErrorKind::AlreadyTerminal,
+                "terminal attempt leases are immutable",
             ));
         }
         new_lease.validate()?;
@@ -2246,6 +2274,7 @@ impl AttemptMachine {
         if merged == current {
             return Ok(());
         }
+        let next_revision = self.next_revision()?;
         self.submission_phase = merged.submission_phase;
         self.side_effect_risk = merged.side_effect_risk;
         self.model_output_observed = merged.model_output_observed;
@@ -2254,7 +2283,8 @@ impl AttemptMachine {
         if merged != RecoveryEvidence::pre_submission() {
             self.session.pristine = false;
         }
-        self.bump_revision()
+        self.revision = next_revision;
+        Ok(())
     }
 
     pub fn record_evidence(
@@ -2277,6 +2307,13 @@ impl AttemptMachine {
                 Ok(self.checkpoint())
             }
             Phase::Executing | Phase::WaitingForNetwork => {
+                if evidence.terminal_event_observed {
+                    return Err(AttemptError::new(
+                        "network_resume_unsafe",
+                        ErrorKind::NetworkResumeUnsafe,
+                        "a terminal event requires a network-unsafe terminal outcome",
+                    ));
+                }
                 self.install_evidence(evidence)?;
                 Ok(self.checkpoint())
             }
@@ -2473,11 +2510,34 @@ impl AttemptMachine {
         now_millis: u64,
         jitter_seed: Option<u64>,
     ) -> Result<RecoveryResult, AttemptError> {
+        // Evaluate the fallible transition on a candidate so evidence and session writes cannot
+        // survive a later revision, attempt, or retry-timestamp overflow.
+        let mut candidate = self.clone();
+        let result =
+            candidate.record_failure_unchecked(failure, evidence, fence, now_millis, jitter_seed);
+        if result.is_ok() {
+            *self = candidate;
+        }
+        result
+    }
+
+    fn record_failure_unchecked(
+        &mut self,
+        failure: Failure,
+        evidence: Option<RecoveryEvidence>,
+        fence: &LeaseFence,
+        now_millis: u64,
+        jitter_seed: Option<u64>,
+    ) -> Result<RecoveryResult, AttemptError> {
         self.lease.assert_presented(fence, now_millis)?;
         self.ensure_not_cancelled()?;
         failure.validate()?;
 
         let current_evidence = self.recovery_evidence();
+        let incoming_unsafe = evidence.is_some_and(|evidence| {
+            evidence.submission_phase == SubmissionPhase::Indeterminate
+                || evidence.terminal_event_observed
+        });
         let effective_evidence = match evidence {
             Some(evidence) if matches!(self.phase, Phase::WaitingForRetry | Phase::Terminal) => {
                 if evidence != current_evidence {
@@ -2489,7 +2549,14 @@ impl AttemptMachine {
                 }
                 current_evidence
             }
-            Some(evidence) => current_evidence.merge(evidence)?,
+            Some(evidence) => {
+                evidence.validate()?;
+                match current_evidence.merge(evidence) {
+                    Ok(merged) => merged,
+                    Err(_error) if incoming_unsafe => current_evidence,
+                    Err(error) => return Err(error),
+                }
+            }
             None => current_evidence,
         };
 
@@ -2550,6 +2617,32 @@ impl AttemptMachine {
         if effective_evidence != current_evidence {
             self.install_evidence(effective_evidence)?;
         }
+        let unsafe_evidence = incoming_unsafe
+            || effective_evidence.submission_phase == SubmissionPhase::Indeterminate
+            || effective_evidence.terminal_event_observed;
+        if unsafe_evidence {
+            let retry_number = if failure.retryable() {
+                Some(
+                    self.network_wait_count
+                        .checked_add(1)
+                        .ok_or_else(|| AttemptError::invalid("network wait count overflow"))?,
+                )
+            } else {
+                None
+            };
+            let outcome = TerminalOutcome::NetworkResumeUnsafe {
+                attempt: current_attempt,
+                failure: failure.clone(),
+            };
+            let result = self.install_terminal(outcome, Some(failure));
+            match retry_number {
+                Some(number) if number >= MAX_ATTEMPTS && result.is_ok() => {
+                    self.network_wait_count = number;
+                }
+                _ => {}
+            }
+            return result;
+        }
         if failure.classification() == FailureClassification::Ambiguous {
             let outcome = TerminalOutcome::NetworkResumeUnsafe {
                 attempt: current_attempt,
@@ -2569,20 +2662,29 @@ impl AttemptMachine {
             .network_wait_count
             .checked_add(1)
             .ok_or_else(|| AttemptError::invalid("network wait count overflow"))?;
-        if retry_number > MAX_NETWORK_WAITS {
-            let outcome = TerminalOutcome::NetworkRetryExhausted {
-                attempt: current_attempt,
-                failure: failure.clone(),
-            };
-            return self.install_terminal(outcome, Some(failure));
-        }
         let decision = effective_evidence.decision(self.session.pristine, true);
+        let exhausted = retry_number >= MAX_ATTEMPTS;
         if decision == RecoveryDecision::FailClosed {
             let outcome = TerminalOutcome::NetworkResumeUnsafe {
                 attempt: current_attempt,
                 failure: failure.clone(),
             };
-            return self.install_terminal(outcome, Some(failure));
+            let result = self.install_terminal(outcome, Some(failure));
+            if exhausted && result.is_ok() {
+                self.network_wait_count = retry_number;
+            }
+            return result;
+        }
+        if exhausted {
+            let outcome = TerminalOutcome::NetworkRetryExhausted {
+                attempt: current_attempt,
+                failure: failure.clone(),
+            };
+            let result = self.install_terminal(outcome, Some(failure));
+            if result.is_ok() {
+                self.network_wait_count = retry_number;
+            }
+            return result;
         }
         let backoff = BackoffDelay::for_retry(retry_number, jitter_seed)?;
         let next_attempt_number = self
@@ -2631,6 +2733,25 @@ impl AttemptMachine {
                 .as_ref()
                 .is_some_and(|plan| plan.decision == decision)
         {
+            if decision == RecoveryDecision::FreshIfPristine {
+                let session_id = fresh_session_id.ok_or_else(|| {
+                    AttemptError::invalid("fresh_if_pristine requires a new session id")
+                })?;
+                let session_id = bounded_string(session_id, "session_id", MAX_ID_BYTES)?;
+                if session_id != self.session.session_id {
+                    return Err(AttemptError::new(
+                        "recovery_choice_mismatch",
+                        ErrorKind::RecoveryChoiceMismatch,
+                        "fresh recovery replay must use its persisted replacement session",
+                    ));
+                }
+            } else if fresh_session_id.is_some() {
+                return Err(AttemptError::new(
+                    "recovery_choice_mismatch",
+                    ErrorKind::RecoveryChoiceMismatch,
+                    "resume_same_session cannot accept a replacement session",
+                ));
+            }
             return Ok(self.attempt_identity());
         }
         if self.phase != Phase::WaitingForRetry {
@@ -2668,7 +2789,7 @@ impl AttemptMachine {
                 "an unsafe recovery plan must be failed closed",
             ));
         }
-        if decision == RecoveryDecision::FreshIfPristine {
+        let replacement_session_id = if decision == RecoveryDecision::FreshIfPristine {
             if !self.session.pristine {
                 return Err(AttemptError::new(
                     "recovery_choice_mismatch",
@@ -2687,15 +2808,22 @@ impl AttemptMachine {
                     "fresh_if_pristine requires a different session id",
                 ));
             }
+            Some(session_id)
+        } else {
+            if fresh_session_id.is_some() {
+                return Err(AttemptError::new(
+                    "recovery_choice_mismatch",
+                    ErrorKind::RecoveryChoiceMismatch,
+                    "resume_same_session cannot accept a replacement session",
+                ));
+            }
+            None
+        };
+        let next_revision = self.next_revision()?;
+        if let Some(session_id) = replacement_session_id {
             self.session.session_id = session_id;
-        } else if fresh_session_id.is_some() {
-            return Err(AttemptError::new(
-                "recovery_choice_mismatch",
-                ErrorKind::RecoveryChoiceMismatch,
-                "resume_same_session cannot accept a replacement session",
-            ));
         }
-        self.bump_revision()?;
+        self.revision = next_revision;
         self.attempt = plan.next_attempt.attempt;
         self.phase = Phase::Executing;
         Ok(self.attempt_identity())
