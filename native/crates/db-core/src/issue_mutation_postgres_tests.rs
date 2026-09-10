@@ -120,6 +120,10 @@ async fn exercise_mutations(
         .checkout(&scope, checkout_command.clone(), checkout_options.clone())
         .await
         .map_err(|error| format!("first checkout failed: {error:?}"))?;
+    sqlx::query("UPDATE heartbeat_runs SET status = 'succeeded' WHERE id = $1::uuid")
+        .bind(RUN_A)
+        .execute(pool)
+        .await?;
     let replay_checkout = repository
         .checkout(&scope, checkout_command, checkout_options)
         .await?;
@@ -128,6 +132,10 @@ async fn exercise_mutations(
     assert_eq!(first_checkout.ledger_id, replay_checkout.ledger_id);
     assert_eq!(first_checkout.activity_id, replay_checkout.activity_id);
     assert_eq!(first_checkout.outcome, replay_checkout.outcome);
+    sqlx::query("UPDATE heartbeat_runs SET status = 'running' WHERE id = $1::uuid")
+        .bind(RUN_A)
+        .execute(pool)
+        .await?;
 
     let stale_checkout_command = CheckoutCommand::new(
         IssueRef::new(OrganizationId::new(ORG_A), IssueId::new(FENCED_ISSUE_ID)),

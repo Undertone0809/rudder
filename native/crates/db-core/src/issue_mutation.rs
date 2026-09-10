@@ -552,7 +552,7 @@ fn approval_target_associations_plan(
     approval_id: &rudder_issue_core::ApprovalId,
 ) -> MutationQueryPlan {
     plan(
-        "SELECT ia.issue_id::text AS issue_id,\n                ia.org_id::text AS association_org_id,\n                i.id::text AS joined_issue_id,\n                i.org_id::text AS issue_org_id\n           FROM issue_approvals AS ia\n           JOIN approvals AS a\n             ON a.id = ia.approval_id AND a.org_id = $1::uuid\n           LEFT JOIN issues AS i\n             ON i.id = ia.issue_id AND i.org_id = ia.org_id\n          WHERE ia.approval_id = $2::uuid\n          ORDER BY ia.created_at, ia.issue_id\n          FOR UPDATE OF ia",
+        "SELECT ia.issue_id::text AS issue_id,\n                ia.org_id::text AS association_org_id,\n                i.id::text AS joined_issue_id,\n                i.org_id::text AS issue_org_id\n           FROM issue_approvals AS ia\n           JOIN approvals AS a\n             ON a.id = ia.approval_id AND a.org_id = $1::uuid\n           LEFT JOIN issues AS i\n             ON i.id = ia.issue_id AND i.org_id = ia.org_id\n          WHERE ia.org_id = $1::uuid\n            AND ia.approval_id = $2::uuid\n          ORDER BY ia.created_at, ia.issue_id\n          FOR UPDATE OF ia",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(approval_id.as_str().into()),
@@ -1687,7 +1687,6 @@ impl IssueMutationRepository {
             .run_id
             .as_ref()
             .ok_or(DomainError::CheckoutRunRequired)?;
-        require_run_scope(&mut tx, &plans.validate_run, run_id).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -1707,7 +1706,10 @@ impl IssueMutationRepository {
                 tx.commit().await?;
                 return Ok(receipt);
             }
-            Reservation::New(id) => id,
+            Reservation::New(id) => {
+                require_run_scope(&mut tx, &plans.validate_run, run_id).await?;
+                id
+            }
         };
         let row = bind_query_as::<IssueMutationRow>(&plans.load_issue)
             .fetch_optional(&mut *tx)
@@ -1785,7 +1787,6 @@ impl IssueMutationRepository {
         let plans = review_decision_query_plans(scope, &command)?;
         let fingerprint = fingerprint_value(REVIEW_COMMAND_TYPE, scope, &command, None)?;
         let mut tx = self.pool.begin().await?;
-        require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -1805,7 +1806,11 @@ impl IssueMutationRepository {
                 tx.commit().await?;
                 return Ok(receipt);
             }
-            Reservation::New(id) => id,
+            Reservation::New(id) => {
+                require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor)
+                    .await?;
+                id
+            }
         };
         let row = bind_query_as::<IssueMutationRow>(&plans.load_issue)
             .fetch_optional(&mut *tx)
@@ -1884,7 +1889,6 @@ impl IssueMutationRepository {
         let scope = authorization.organization();
         let fingerprint = fingerprint_value(APPROVAL_COMMAND_TYPE, scope, &command, None)?;
         let mut tx = self.pool.begin().await?;
-        require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -1904,7 +1908,11 @@ impl IssueMutationRepository {
                 tx.commit().await?;
                 return Ok(receipt);
             }
-            Reservation::New(id) => id,
+            Reservation::New(id) => {
+                require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor)
+                    .await?;
+                id
+            }
         };
         let mut row = bind_query_as::<ApprovalMutationRow>(&plans.load_approval)
             .fetch_optional(&mut *tx)
@@ -1997,7 +2005,6 @@ impl IssueMutationRepository {
             Some(options.payload.clone().unwrap_or(Value::Null)),
         )?;
         let mut tx = self.pool.begin().await?;
-        require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor).await?;
         let lookup = ledger_lookup_plan(scope, &command.idempotency_key);
         let reservation = reserve_or_replay(
             &mut tx,
@@ -2017,7 +2024,11 @@ impl IssueMutationRepository {
                 tx.commit().await?;
                 return Ok(receipt);
             }
-            Reservation::New(id) => id,
+            Reservation::New(id) => {
+                require_actor_run_scope(&mut tx, plans.validate_run.as_ref(), &command.actor)
+                    .await?;
+                id
+            }
         };
         let mut row = bind_query_as::<ApprovalMutationRow>(&plans.load_approval)
             .fetch_optional(&mut *tx)
@@ -2094,6 +2105,21 @@ impl IssueMutationRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_target_associations_query_is_org_fenced_and_locks_rows() {
+        let scope = TrustedOrganizationId::from_host(OrganizationId::new("org-a"));
+        let approval_id = ApprovalId::new("approval-id");
+        let target_plan = approval_target_associations_plan(&scope, &approval_id);
+        let approval_plan = load_approval_plan(&scope, &approval_id);
+
+        assert!(target_plan.sql.contains("a.org_id = $1::uuid"));
+        assert!(target_plan.sql.contains("ia.org_id = $1::uuid"));
+        assert!(target_plan.sql.contains("i.org_id = ia.org_id"));
+        assert!(target_plan.sql.contains("FOR UPDATE OF ia"));
+        assert!(approval_plan.sql.contains("a.org_id = $1::uuid"));
+        assert!(approval_plan.sql.contains("FOR UPDATE"));
+    }
 
     #[test]
     fn production_approval_types_are_all_decoded() {
