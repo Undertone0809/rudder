@@ -1576,6 +1576,7 @@ name = "rudder-cli"
 version = "0.7.21"
 dependencies = [
  "rudder-cli-mcp-contract-core",
+ "rudder-migration-runner",
  "serde_json",
  "tempfile",
 ]

@@ -3,6 +3,7 @@ use rudder_migration_core::{JournalEntry, MigrationLimits, MigrationManifestOpti
 use rudder_migration_runner::{
     AppliedMigration, HistorySnapshot, LockAcquisition, MigrationExecutor, MigrationRunRequest,
     MigrationRunStatus, MigrationRunner, MigrationRunnerConfig, MigrationSource, RecoveryPoint,
+    inspect_migration_sources,
 };
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -637,6 +638,25 @@ fn splits_only_the_drizzle_breakpoint_and_discards_empty_chunks() {
         ),
         vec!["SELECT 1;", "SELECT 2;"]
     );
+}
+
+#[test]
+fn inspection_reports_append_only_compatibility_without_opening_a_database() {
+    let (_baseline_root, baseline) = fixture(&[("0000_first", "SELECT 1;")]);
+    let (_candidate_root, candidate) =
+        fixture(&[("0000_first", "SELECT 1;"), ("0001_second", "SELECT 2;")]);
+
+    let report = inspect_migration_sources(candidate, Some(baseline)).unwrap();
+
+    assert!(report.valid());
+    assert!(report.compatibility_checked);
+    assert!(report.compatible);
+    assert_eq!(report.candidate_journal_entries, 2);
+    assert_eq!(report.candidate_manifest_entries, 2);
+    assert_eq!(report.candidate_sql_files, 2);
+    assert_eq!(report.baseline_journal_entries, Some(1));
+    assert_eq!(report.added_entries, vec!["0001_second.sql"]);
+    assert!(report.errors.is_empty());
 }
 
 #[allow(dead_code)]

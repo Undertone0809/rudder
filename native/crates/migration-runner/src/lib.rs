@@ -56,6 +56,17 @@ pub struct MigrationSource {
 }
 
 impl MigrationSource {
+    pub fn with_default_options(
+        journal_path: impl Into<PathBuf>,
+        migrations_dir: impl Into<PathBuf>,
+    ) -> Self {
+        Self::new(
+            journal_path,
+            migrations_dir,
+            MigrationManifestOptions::default(),
+        )
+    }
+
     pub fn new(
         journal_path: impl Into<PathBuf>,
         migrations_dir: impl Into<PathBuf>,
@@ -167,6 +178,96 @@ impl MigrationSourceError {
     pub fn code(&self) -> &'static str {
         self.code
     }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// The result of explicitly inspecting migration assets without opening a
+/// database connection. A report with `compatible == false` is returned to
+/// preserve the candidate fingerprint and counts for operator diagnostics;
+/// callers must still treat it as a failed validation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MigrationInspection {
+    pub protocol_version: u16,
+    pub candidate_fingerprint: String,
+    pub baseline_fingerprint: Option<String>,
+    pub candidate_journal_entries: usize,
+    pub candidate_manifest_entries: usize,
+    pub candidate_sql_files: usize,
+    pub candidate_legacy_unjournaled: usize,
+    pub baseline_journal_entries: Option<usize>,
+    pub baseline_manifest_entries: Option<usize>,
+    pub baseline_sql_files: Option<usize>,
+    pub baseline_legacy_unjournaled: Option<usize>,
+    pub compatibility_checked: bool,
+    pub compatible: bool,
+    pub added_entries: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+impl MigrationInspection {
+    pub fn valid(&self) -> bool {
+        self.compatible && self.errors.is_empty()
+    }
+}
+
+/// Load and validate an explicitly supplied candidate and optional immutable
+/// baseline. This function only reads the journal and SQL files; it does not
+/// acquire a database lock, inspect a schema, or mutate any database state.
+pub fn inspect_migration_sources(
+    candidate_source: MigrationSource,
+    baseline_source: Option<MigrationSource>,
+) -> Result<MigrationInspection, MigrationSourceError> {
+    let candidate = candidate_source.load()?;
+    let baseline = baseline_source.map(|source| source.load()).transpose()?;
+    let compatibility = baseline.as_ref().map(|baseline| {
+        validate_migration_manifest_compatibility(&baseline.manifest, &candidate.manifest)
+    });
+    let compatibility_checked = compatibility.is_some();
+    let (compatible, added_entries, errors) = match compatibility {
+        Some(result) => (result.compatible, result.added_entries, result.errors),
+        None => (true, Vec::new(), Vec::new()),
+    };
+
+    Ok(MigrationInspection {
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        candidate_fingerprint: candidate.manifest.fingerprint.clone(),
+        baseline_fingerprint: baseline
+            .as_ref()
+            .map(|source| source.manifest.fingerprint.clone()),
+        candidate_journal_entries: candidate.manifest.journal.entries.len(),
+        candidate_manifest_entries: candidate.manifest.entries.len(),
+        candidate_sql_files: candidate.manifest.sql_files.len(),
+        candidate_legacy_unjournaled: candidate
+            .manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.is_legacy_unjournaled())
+            .count(),
+        baseline_journal_entries: baseline
+            .as_ref()
+            .map(|source| source.manifest.journal.entries.len()),
+        baseline_manifest_entries: baseline
+            .as_ref()
+            .map(|source| source.manifest.entries.len()),
+        baseline_sql_files: baseline
+            .as_ref()
+            .map(|source| source.manifest.sql_files.len()),
+        baseline_legacy_unjournaled: baseline.as_ref().map(|source| {
+            source
+                .manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.is_legacy_unjournaled())
+                .count()
+        }),
+        compatibility_checked,
+        compatible,
+        added_entries,
+        errors,
+    })
 }
 
 /// Explicit invocation input. `baseline` is an immutable manifest from the

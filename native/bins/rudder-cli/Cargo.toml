@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 rudder-cli-mcp-contract-core = { path = "../../crates/cli-mcp-contract-core" }
+rudder-migration-runner = { path = "../../crates/migration-runner" }
 serde_json = "1.0"
 
 [dev-dependencies]
