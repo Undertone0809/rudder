@@ -27,6 +27,8 @@ pub enum ReadError {
     InvalidPage { limit: usize },
     #[error("cursor is invalid or exceeds the bounded cursor size")]
     InvalidCursor,
+    #[error("approval contains {count} targets; limit is {limit}")]
+    TooManyApprovalTargets { count: usize, limit: usize },
     #[error("{entity} {id} was not found in the authorized organization scope")]
     NotFound { entity: &'static str, id: String },
 }
@@ -776,7 +778,10 @@ impl<S: ReadStore> ReadModel<S> {
         let (rows, next_cursor, has_more) =
             page_rows_with_key(rows, &page, |row| (&row.created_at, &row.id));
         Ok(Page {
-            items: rows.into_iter().map(project_approval).collect(),
+            items: rows
+                .into_iter()
+                .map(project_approval)
+                .collect::<Result<Vec<_>, _>>()?,
             next_cursor,
             has_more,
         })
@@ -787,15 +792,16 @@ impl<S: ReadStore> ReadModel<S> {
         scope: &OrganizationScope,
         id: &str,
     ) -> Result<ApprovalProjection, ReadError> {
-        self.store
+        let row = self
+            .store
             .approvals()
             .iter()
             .find(|row| row.id == id && scope.contains(&row.org_id))
-            .map(project_approval)
             .ok_or_else(|| ReadError::NotFound {
                 entity: "approval",
                 id: id.to_owned(),
-            })
+            })?;
+        project_approval(row)
     }
 }
 
@@ -960,8 +966,14 @@ fn project_issue(row: &IssueRow) -> IssueProjection {
     }
 }
 
-fn project_approval(row: &ApprovalRow) -> ApprovalProjection {
-    ApprovalProjection {
+fn project_approval(row: &ApprovalRow) -> Result<ApprovalProjection, ReadError> {
+    if row.targets.len() > MAX_APPROVAL_TARGETS {
+        return Err(ReadError::TooManyApprovalTargets {
+            count: row.targets.len(),
+            limit: MAX_APPROVAL_TARGETS,
+        });
+    }
+    Ok(ApprovalProjection {
         id: row.id.clone(),
         org_id: row.org_id.clone(),
         approval_type: row.approval_type.clone(),
@@ -985,7 +997,7 @@ fn project_approval(row: &ApprovalRow) -> ApprovalProjection {
                 title: target.title.clone(),
             })
             .collect(),
-    }
+    })
 }
 
 fn is_hidden(metadata: Option<&Value>) -> bool {
@@ -1495,5 +1507,37 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn approval_target_lists_are_bounded_before_projection() {
+        let mut row = approval("approval-large", "org-a", "2026-01-01T00:00:00Z");
+        row.targets = (0..=MAX_APPROVAL_TARGETS)
+            .map(|index| ApprovalTargetRow {
+                kind: "issue".into(),
+                id: format!("issue-{index}"),
+                ..Default::default()
+            })
+            .collect();
+        let model = ReadModel::new(InMemoryReadStore::new(ReadFixtures {
+            approvals: vec![row],
+            ..Default::default()
+        }));
+        let scope = OrganizationScope::single("org-a").unwrap();
+        let expected = ReadError::TooManyApprovalTargets {
+            count: MAX_APPROVAL_TARGETS + 1,
+            limit: MAX_APPROVAL_TARGETS,
+        };
+        assert_eq!(
+            model
+                .list_approvals(
+                    &scope,
+                    ApprovalListOptions::default(),
+                    PageRequest::new(10).unwrap(),
+                )
+                .unwrap_err(),
+            expected
+        );
+        assert_eq!(model.get_approval(&scope, "approval-large"), Err(expected));
     }
 }
