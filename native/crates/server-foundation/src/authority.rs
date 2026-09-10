@@ -142,6 +142,34 @@ const ROUTE_SPECS: &[RouteSpec] = &[
         owner: "rust",
     },
     RouteSpec {
+        route_id: "foundation.issues_read_list",
+        path: "/internal/read-surfaces/v1/orgs/{org_id}/issues",
+        claim: "/internal/read-surfaces/v1/orgs/{org_id}/issues",
+        scope: "loopback read-only issue list",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.issue_read_get",
+        path: "/internal/read-surfaces/v1/issues/{issue_id}",
+        claim: "/internal/read-surfaces/v1/issues/{issue_id}",
+        scope: "loopback read-only issue get",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.approvals_read_list",
+        path: "/internal/read-surfaces/v1/orgs/{org_id}/approvals",
+        claim: "/internal/read-surfaces/v1/orgs/{org_id}/approvals",
+        scope: "loopback read-only approval list",
+        owner: "rust",
+    },
+    RouteSpec {
+        route_id: "foundation.approval_read_get",
+        path: "/internal/read-surfaces/v1/approvals/{approval_id}",
+        claim: "/internal/read-surfaces/v1/approvals/{approval_id}",
+        scope: "loopback read-only approval get",
+        owner: "rust",
+    },
+    RouteSpec {
         route_id: "node.product_http",
         path: "node-public-product-http",
         claim: "node.product_http",
@@ -394,7 +422,7 @@ mod tests {
     fn fixed_inventory_has_both_rust_and_legacy_decisions_without_fences() {
         let registry = AuthorityRegistry::fixed().expect("fixed authority inventory");
         let receipt = registry.receipt(None).expect("authority receipt");
-        assert_eq!(receipt.routes.len(), 18);
+        assert_eq!(receipt.routes.len(), 22);
         assert!(receipt.routes.iter().any(|route| route.decision == "rust"));
         assert!(
             receipt

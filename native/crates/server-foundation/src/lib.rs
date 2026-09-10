@@ -40,7 +40,8 @@ pub use identity::{BuildIdentity, ServerIdentity};
 use authority::{AuthorityAdapterError, AuthorityRegistry, parse_route_selector};
 
 use read_surfaces::{
-    AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, GOAL_GET_ROUTE, GOALS_LIST_ROUTE, ORGANIZATIONS_GET_ROUTE,
+    AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, APPROVAL_GET_ROUTE, APPROVALS_LIST_ROUTE, GOAL_GET_ROUTE,
+    GOALS_LIST_ROUTE, ISSUE_GET_ROUTE, ISSUES_LIST_ROUTE, ORGANIZATIONS_GET_ROUTE,
     ORGANIZATIONS_LIST_ROUTE, PROJECT_GET_ROUTE, PROJECTS_LIST_ROUTE, ReadSurfaceAdapter,
     ReadSurfaceQuery, ReadSurfaceQueryError,
 };
@@ -83,6 +84,8 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_file_read",
     "workspace_backup_download",
     "organization_read_surfaces",
+    "issue_read_surfaces",
+    "approval_read_surfaces",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -941,6 +944,70 @@ impl AppState {
         }
     }
 
+    async fn read_issues(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let options = match query.issue_options() {
+            Ok(options) => options,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        match adapter.list_issues(&scope, options, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_issue(&self, issue_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_issue(issue_id).await {
+            Ok(issue) => bounded_json(StatusCode::OK, &issue, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_approvals(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let options = match query.approval_options() {
+            Ok(options) => options,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        match adapter.list_approvals(&scope, options, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_approval(&self, approval_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_approval(approval_id).await {
+            Ok(approval) => bounded_json(StatusCode::OK, &approval, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
     async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
@@ -1391,6 +1458,30 @@ async fn read_agent(state: web::Data<AppState>, agent_id: web::Path<String>) -> 
     state.read_agent(agent_id.as_str()).await
 }
 
+async fn read_issues(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_issues(route.as_str(), &query).await
+}
+
+async fn read_issue(state: web::Data<AppState>, issue_id: web::Path<String>) -> HttpResponse {
+    state.read_issue(issue_id.as_str()).await
+}
+
+async fn read_approvals(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_approvals(route.as_str(), &query).await
+}
+
+async fn read_approval(state: web::Data<AppState>, approval_id: web::Path<String>) -> HttpResponse {
+    state.read_approval(approval_id.as_str()).await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -1460,6 +1551,10 @@ impl ServerRuntime {
                 .route(PROJECT_GET_ROUTE, web::get().to(read_project))
                 .route(AGENTS_LIST_ROUTE, web::get().to(read_agents))
                 .route(AGENT_GET_ROUTE, web::get().to(read_agent))
+                .route(ISSUES_LIST_ROUTE, web::get().to(read_issues))
+                .route(ISSUE_GET_ROUTE, web::get().to(read_issue))
+                .route(APPROVALS_LIST_ROUTE, web::get().to(read_approvals))
+                .route(APPROVAL_GET_ROUTE, web::get().to(read_approval))
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),

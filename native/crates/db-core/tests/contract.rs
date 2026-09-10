@@ -1,8 +1,8 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rudder_db_core::{
-    AgentDbRow, AgentListOptions, EntityKind, GoalDbRow, OrganizationDbRow, OrganizationScope,
-    PageRequest, ProjectDbRow, ProjectionError, QueryBind, ReadAdapterError, ReadError,
-    get_query_plan, list_query_plan,
+    AgentDbRow, AgentListOptions, ApprovalDbRow, EntityKind, GoalDbRow, IssueDbRow,
+    OrganizationDbRow, OrganizationScope, PageRequest, ProjectDbRow, ProjectionError, QueryBind,
+    ReadAdapterError, ReadError, get_query_plan, list_query_plan,
 };
 use rudder_read_surfaces_core::{OrganizationWorkspaceProjection, QueryPlan};
 use serde_json::json;
@@ -303,4 +303,184 @@ fn default_agent_list_fences_terminated_and_hidden_rows_but_get_does_not() {
     let get = get_query_plan(EntityKind::Agent, &scope, "agent-id").unwrap();
     assert!(!get.sql.contains("terminated"));
     assert!(!get.sql.contains("hidden"));
+}
+
+#[test]
+fn issue_and_approval_query_plans_are_scoped_bounded_and_read_only() {
+    let scope = OrganizationScope::many(["org-a", "org-b"]).unwrap();
+    let page = PageRequest::new(3).unwrap();
+    for kind in [EntityKind::Issue, EntityKind::Approval] {
+        let plan = list_query_plan(kind, &scope, &page, AgentListOptions::default()).unwrap();
+        assert_read_only(&plan);
+        assert!(plan.sql.contains("IN ($1::uuid, $2::uuid)"));
+        assert!(plan.sql.contains("ORDER BY created_at ASC, id ASC"));
+        assert!(plan.sql.contains("LIMIT $3::int4"));
+        assert_eq!(
+            plan.binds,
+            vec![
+                QueryBind::Text("org-a".into()),
+                QueryBind::Text("org-b".into()),
+                QueryBind::Limit(4),
+            ]
+        );
+        assert!(!plan.sql.contains("org-a"));
+        assert!(!plan.sql.contains("org-b"));
+
+        let get = get_query_plan(kind, &scope, "entity-id").unwrap();
+        assert_read_only(&get);
+        assert!(get.sql.contains("IN ($1::uuid, $2::uuid)"));
+        assert!(get.sql.contains("= $3::uuid"));
+        assert!(get.sql.contains("LIMIT $4::int4"));
+        assert_eq!(
+            get.binds,
+            vec![
+                QueryBind::Text("org-a".into()),
+                QueryBind::Text("org-b".into()),
+                QueryBind::Text("entity-id".into()),
+                QueryBind::Limit(1),
+            ]
+        );
+        assert!(!get.sql.contains("entity-id"));
+    }
+
+    let issue_default = list_query_plan(
+        EntityKind::Issue,
+        &OrganizationScope::single("org-a").unwrap(),
+        &PageRequest::new(10).unwrap(),
+        AgentListOptions::default(),
+    )
+    .unwrap();
+    assert!(issue_default.sql.contains("i.hidden_at IS NULL"));
+    assert!(issue_default.sql.contains("i.status <> 'terminated'"));
+    let issue_all = list_query_plan(
+        EntityKind::Issue,
+        &OrganizationScope::single("org-a").unwrap(),
+        &PageRequest::new(10).unwrap(),
+        AgentListOptions {
+            include_hidden: true,
+            include_terminated: true,
+        },
+    )
+    .unwrap();
+    assert!(!issue_all.sql.contains("hidden_at IS NULL"));
+    assert!(!issue_all.sql.contains("status <> 'terminated'"));
+}
+
+#[test]
+fn issue_and_approval_rows_project_board_fields_and_reject_sensitive_or_malformed_data() {
+    let issue = IssueDbRow {
+        id: "00000000-0000-0000-0000-000000000001".into(),
+        org_id: "00000000-0000-0000-0000-000000000010".into(),
+        identifier: Some("RUD-1".into()),
+        title: "Review issue".into(),
+        status: "in_review".into(),
+        priority: "urgent".into(),
+        assignee_agent_id: Some("00000000-0000-0000-0000-000000000011".into()),
+        reviewer_user_id: Some("user-1".into()),
+        revision: 7,
+        fencing_token: 9,
+        started_at: Some("2026-01-02T00:00:00.000000Z".into()),
+        completed_at: None,
+        cancelled_at: None,
+        hidden_at: None,
+        created_at: "2026-01-01T00:00:00.000000Z".into(),
+        updated_at: "2026-01-03T00:00:00.000000Z".into(),
+        ..IssueDbRow::default()
+    }
+    .into_projection()
+    .unwrap();
+    assert_eq!(issue.identifier.as_deref(), Some("RUD-1"));
+    assert_eq!(issue.status, "in_review");
+    assert_eq!(issue.priority, "urgent");
+    assert_eq!(
+        issue.assignee_agent_id.as_deref(),
+        Some("00000000-0000-0000-0000-000000000011")
+    );
+    assert_eq!(issue.reviewer_user_id.as_deref(), Some("user-1"));
+    assert_eq!(issue.revision, 7);
+    assert_eq!(issue.fencing_token, 9);
+    assert_eq!(
+        issue.started_at.as_deref(),
+        Some("2026-01-02T00:00:00.000000Z")
+    );
+
+    let approval = ApprovalDbRow {
+        id: "00000000-0000-0000-0000-000000000002".into(),
+        org_id: "00000000-0000-0000-0000-000000000010".into(),
+        approval_type: "issue_action".into(),
+        status: "pending".into(),
+        revision: 4,
+        requested_by_agent_id: Some("00000000-0000-0000-0000-000000000011".into()),
+        decision_note: Some("safe note".into()),
+        payload: json!({"issueId": "00000000-0000-0000-0000-000000000001", "secret": "omit"}),
+        target_rows: json!([
+            {
+                "kind": "issue",
+                "id": "00000000-0000-0000-0000-000000000001",
+                "identifier": "RUD-1",
+                "title": "Review issue",
+                "associationOrgId": "00000000-0000-0000-0000-000000000010",
+                "issueOrgId": "00000000-0000-0000-0000-000000000010"
+            }
+        ]),
+        created_at: "2026-01-01T00:00:00.000000Z".into(),
+        updated_at: "2026-01-02T00:00:00.000000Z".into(),
+        ..ApprovalDbRow::default()
+    }
+    .into_projection()
+    .unwrap();
+    assert_eq!(approval.targets.len(), 1);
+    assert_eq!(approval.targets[0].kind, "issue");
+    assert_eq!(approval.targets[0].identifier.as_deref(), Some("RUD-1"));
+    let encoded = serde_json::to_string(&approval).unwrap();
+    assert!(!encoded.contains("payload"));
+    assert!(!encoded.contains("secret"));
+
+    let malformed = ApprovalDbRow {
+        payload: json!(["not-an-object"]),
+        ..ApprovalDbRow::default()
+    }
+    .into_projection()
+    .unwrap_err();
+    assert!(matches!(
+        malformed,
+        ProjectionError::ObjectRequired {
+            entity: "approval",
+            field: "payload"
+        }
+    ));
+
+    let foreign_target = ApprovalDbRow {
+        payload: json!({}),
+        target_rows: json!([{
+            "kind": "issue",
+            "id": "00000000-0000-0000-0000-000000000001",
+            "associationOrgId": "foreign",
+            "issueOrgId": "foreign"
+        }]),
+        ..ApprovalDbRow::default()
+    }
+    .into_projection()
+    .unwrap_err();
+    assert!(matches!(
+        foreign_target,
+        ProjectionError::InvalidObject {
+            entity: "approval",
+            ..
+        }
+    ));
+
+    let negative_revision = IssueDbRow {
+        revision: -1,
+        ..IssueDbRow::default()
+    }
+    .into_projection()
+    .unwrap_err();
+    assert!(matches!(
+        negative_revision,
+        ProjectionError::InvalidObject {
+            entity: "issue",
+            ..
+        }
+    ));
 }

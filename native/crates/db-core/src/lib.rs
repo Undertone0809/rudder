@@ -7,8 +7,9 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 pub use rudder_read_surfaces_core::{
-    AgentListOptions, AgentProjection, EntityKind, GoalCriterionProjection,
-    GoalEvaluationProjection, GoalProjection, OrganizationProjection, OrganizationScope,
+    AgentListOptions, AgentProjection, ApprovalListOptions, ApprovalProjection,
+    ApprovalTargetProjection, EntityKind, GoalCriterionProjection, GoalEvaluationProjection,
+    GoalProjection, IssueListOptions, IssueProjection, OrganizationProjection, OrganizationScope,
     OrganizationWorkspaceProjection, Page, PageRequest, ProjectGoalProjection, ProjectProjection,
     QueryBind, QueryPlan, ReadError,
 };
@@ -156,6 +157,54 @@ pub struct AgentDbRow {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+pub struct IssueDbRow {
+    pub id: String,
+    pub org_id: String,
+    pub project_id: Option<String>,
+    pub goal_id: Option<String>,
+    pub issue_number: Option<i32>,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: String,
+    pub board_order: i32,
+    pub assignee_agent_id: Option<String>,
+    pub assignee_user_id: Option<String>,
+    pub reviewer_agent_id: Option<String>,
+    pub reviewer_user_id: Option<String>,
+    pub revision: i64,
+    pub fencing_token: i64,
+    pub checkout_run_id: Option<String>,
+    pub execution_run_id: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub cancelled_at: Option<String>,
+    pub hidden_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Default, FromRow, PartialEq)]
+pub struct ApprovalDbRow {
+    pub id: String,
+    pub org_id: String,
+    pub approval_type: String,
+    pub status: String,
+    pub revision: i64,
+    pub decision: Option<String>,
+    pub requested_by_agent_id: Option<String>,
+    pub requested_by_user_id: Option<String>,
+    pub decision_note: Option<String>,
+    pub decided_by_user_id: Option<String>,
+    pub decided_at: Option<String>,
+    pub payload: Value,
+    pub target_rows: Value,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 impl OrganizationDbRow {
     pub fn into_projection(self) -> Result<OrganizationProjection, ProjectionError> {
         Ok(OrganizationProjection {
@@ -250,6 +299,184 @@ impl AgentDbRow {
             updated_at: self.updated_at,
         })
     }
+}
+
+impl IssueDbRow {
+    pub fn into_projection(self) -> Result<IssueProjection, ProjectionError> {
+        Ok(IssueProjection {
+            id: self.id,
+            org_id: self.org_id,
+            project_id: self.project_id,
+            goal_id: self.goal_id,
+            issue_number: self.issue_number,
+            identifier: self.identifier,
+            title: self.title,
+            description: self.description,
+            status: self.status,
+            priority: self.priority,
+            board_order: self.board_order,
+            assignee_agent_id: self.assignee_agent_id,
+            assignee_user_id: self.assignee_user_id,
+            reviewer_agent_id: self.reviewer_agent_id,
+            reviewer_user_id: self.reviewer_user_id,
+            revision: nonnegative("issue", self.revision, "revision")?,
+            fencing_token: nonnegative("issue", self.fencing_token, "fencing_token")?,
+            checkout_run_id: self.checkout_run_id,
+            execution_run_id: self.execution_run_id,
+            started_at: self.started_at,
+            completed_at: self.completed_at,
+            cancelled_at: self.cancelled_at,
+            hidden_at: self.hidden_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+impl ApprovalDbRow {
+    pub fn into_projection(self) -> Result<ApprovalProjection, ProjectionError> {
+        let targets = approval_targets(&self.payload, &self.target_rows, &self.org_id)?;
+        Ok(ApprovalProjection {
+            id: self.id,
+            org_id: self.org_id,
+            approval_type: self.approval_type,
+            status: self.status,
+            revision: nonnegative("approval", self.revision, "revision")?,
+            decision: self.decision,
+            requested_by_agent_id: self.requested_by_agent_id,
+            requested_by_user_id: self.requested_by_user_id,
+            decision_note: self.decision_note,
+            decided_by_user_id: self.decided_by_user_id,
+            decided_at: self.decided_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            targets,
+        })
+    }
+}
+
+fn nonnegative(
+    entity: &'static str,
+    value: i64,
+    field: &'static str,
+) -> Result<u64, ProjectionError> {
+    u64::try_from(value).map_err(|_| ProjectionError::InvalidObject { entity, field })
+}
+
+fn approval_targets(
+    payload: &Value,
+    target_rows: &Value,
+    org_id: &str,
+) -> Result<Vec<ApprovalTargetProjection>, ProjectionError> {
+    let payload_object = payload.as_object().ok_or(ProjectionError::ObjectRequired {
+        entity: "approval",
+        field: "payload",
+    })?;
+    let payload_issue_id = match payload_object.get("issueId") {
+        None => None,
+        Some(value) => Some(value.as_str().ok_or(ProjectionError::StringRequired {
+            entity: "approval",
+            field: "payload.issueId",
+        })?),
+    };
+    let rows = target_rows
+        .as_array()
+        .ok_or(ProjectionError::ArrayRequired {
+            entity: "approval",
+            field: "target_rows",
+        })?;
+    if rows.len() > rudder_read_surfaces_core::MAX_APPROVAL_TARGETS {
+        return Err(ProjectionError::InvalidObject {
+            entity: "approval",
+            field: "target_rows",
+        });
+    }
+
+    let mut targets = Vec::with_capacity(rows.len().max(1));
+    for value in rows {
+        let object = value.as_object().ok_or(ProjectionError::InvalidObject {
+            entity: "approval",
+            field: "target_rows",
+        })?;
+        let kind = required_json_string(object, "kind")?;
+        let id = required_json_string(object, "id")?;
+        if kind == "issue"
+            && (object.get("associationOrgId").and_then(Value::as_str) != Some(org_id)
+                || object.get("issueOrgId").and_then(Value::as_str) != Some(org_id))
+        {
+            return Err(ProjectionError::InvalidObject {
+                entity: "approval",
+                field: "target_rows",
+            });
+        }
+        if kind == "organization" && id != org_id {
+            return Err(ProjectionError::InvalidObject {
+                entity: "approval",
+                field: "target_rows",
+            });
+        }
+        if kind == "issue" && payload_issue_id.is_some_and(|payload_id| payload_id != id) {
+            return Err(ProjectionError::InvalidObject {
+                entity: "approval",
+                field: "payload.issueId",
+            });
+        }
+        targets.push(ApprovalTargetProjection {
+            kind: kind.to_owned(),
+            id: id.to_owned(),
+            identifier: optional_json_string(object, "identifier")?,
+            title: optional_json_string(object, "title")?,
+        });
+    }
+    if targets.is_empty() {
+        if payload_issue_id.is_some() {
+            return Err(ProjectionError::InvalidObject {
+                entity: "approval",
+                field: "payload.issueId",
+            });
+        }
+        targets.push(ApprovalTargetProjection {
+            kind: "organization".into(),
+            id: org_id.into(),
+            identifier: None,
+            title: None,
+        });
+    }
+    Ok(targets)
+}
+
+fn required_json_string<'a>(
+    object: &'a Map<String, Value>,
+    field: &'static str,
+) -> Result<&'a str, ProjectionError> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or(ProjectionError::StringRequired {
+            entity: "approval",
+            field,
+        })
+}
+
+fn optional_json_string(
+    object: &Map<String, Value>,
+    field: &'static str,
+) -> Result<Option<String>, ProjectionError> {
+    let Some(value) = object.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .map(Some)
+        .ok_or(ProjectionError::StringRequired {
+            entity: "approval",
+            field,
+        })
 }
 
 fn string_array(
@@ -470,6 +697,26 @@ impl CursorRow for AgentDbRow {
     }
 }
 
+impl CursorRow for IssueDbRow {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn created_at(&self) -> &str {
+        &self.created_at
+    }
+}
+
+impl CursorRow for ApprovalDbRow {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn created_at(&self) -> &str {
+        &self.created_at
+    }
+}
+
 fn page_rows<T, U>(
     mut rows: Vec<T>,
     page: &PageRequest,
@@ -504,6 +751,8 @@ fn table_parts(kind: EntityKind) -> (&'static str, &'static str, &'static str) {
         EntityKind::Goal => ("goals", "g", "g.org_id"),
         EntityKind::Project => ("projects", "p", "p.org_id"),
         EntityKind::Agent => ("agents", "a", "a.org_id"),
+        EntityKind::Issue => ("issues", "i", "i.org_id"),
+        EntityKind::Approval => ("approvals", "a", "a.org_id"),
     }
 }
 
@@ -560,6 +809,40 @@ fn list_select(kind: EntityKind) -> &'static str {
              to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at \
              FROM agents a"
         }
+        EntityKind::Issue => {
+            "SELECT i.id::text AS id, i.org_id::text AS org_id, \
+             i.project_id::text AS project_id, i.goal_id::text AS goal_id, i.issue_number, \
+             i.identifier, i.title, i.description, i.status, i.priority, i.board_order, \
+             i.assignee_agent_id::text AS assignee_agent_id, i.assignee_user_id, \
+             i.reviewer_agent_id::text AS reviewer_agent_id, i.reviewer_user_id, \
+             i.revision, i.fencing_token, i.checkout_run_id::text AS checkout_run_id, \
+             i.execution_run_id::text AS execution_run_id, \
+             to_char(i.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS started_at, \
+             to_char(i.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS completed_at, \
+             to_char(i.cancelled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS cancelled_at, \
+             to_char(i.hidden_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS hidden_at, \
+             to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, \
+             to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at \
+             FROM issues i"
+        }
+        EntityKind::Approval => {
+            "SELECT a.id::text AS id, a.org_id::text AS org_id, a.type AS approval_type, \
+             a.status, a.revision, a.decision, a.requested_by_agent_id::text AS requested_by_agent_id, \
+             a.requested_by_user_id, a.decision_note, a.decided_by_user_id, \
+             to_char(a.decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS decided_at, \
+             a.payload, \
+             COALESCE((SELECT jsonb_agg(jsonb_build_object( \
+                 'kind', 'issue', 'id', ia.issue_id::text, 'identifier', target.identifier, \
+                 'title', target.title, 'associationOrgId', ia.org_id::text, \
+                 'issueOrgId', target.org_id::text) ORDER BY ia.created_at, ia.issue_id) \
+               FROM (SELECT ia.issue_id, ia.approval_id, ia.org_id, ia.created_at \
+                     FROM issue_approvals ia WHERE ia.approval_id = a.id \
+                     ORDER BY ia.created_at, ia.issue_id LIMIT 33) ia \
+               LEFT JOIN issues target ON target.id = ia.issue_id), '[]'::jsonb) AS target_rows, \
+             to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, \
+             to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at \
+             FROM approvals a"
+        }
     }
 }
 
@@ -611,6 +894,15 @@ pub fn list_query_plan(
             predicates
                 .push("COALESCE(a.metadata->>'systemManaged', '') <> 'rudder_copilot'".into());
         }
+    } else if kind == EntityKind::Issue {
+        if !agent_options.include_terminated {
+            predicates.push("i.status <> 'terminated'".into());
+        }
+        if !agent_options.include_hidden {
+            predicates.push("i.hidden_at IS NULL".into());
+        }
+    } else if kind == EntityKind::Approval && !agent_options.include_terminated {
+        predicates.push("a.status <> 'terminated'".into());
     }
     let limit_bind = binds.len() + 1;
     binds.push(QueryBind::Limit(page.limit() + PAGE_LOOKAHEAD));
@@ -822,6 +1114,64 @@ impl ReadRepository {
         row.map(AgentDbRow::into_projection)
             .transpose()?
             .ok_or_else(|| not_found("agent", id))
+    }
+
+    pub async fn list_issues(
+        &self,
+        scope: &OrganizationScope,
+        options: IssueListOptions,
+        page: PageRequest,
+    ) -> Result<Page<IssueProjection>, ReadAdapterError> {
+        let plan = list_query_plan(EntityKind::Issue, scope, &page, options)?;
+        let rows = plan
+            .bind_query_as::<IssueDbRow>()
+            .fetch_all(&self.pool)
+            .await?;
+        page_rows(rows, &page, IssueDbRow::into_projection)
+    }
+
+    pub async fn get_issue(
+        &self,
+        scope: &OrganizationScope,
+        id: &str,
+    ) -> Result<IssueProjection, ReadAdapterError> {
+        let plan = get_query_plan(EntityKind::Issue, scope, id)?;
+        let row = plan
+            .bind_query_as::<IssueDbRow>()
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(IssueDbRow::into_projection)
+            .transpose()?
+            .ok_or_else(|| not_found("issue", id))
+    }
+
+    pub async fn list_approvals(
+        &self,
+        scope: &OrganizationScope,
+        options: ApprovalListOptions,
+        page: PageRequest,
+    ) -> Result<Page<ApprovalProjection>, ReadAdapterError> {
+        let plan = list_query_plan(EntityKind::Approval, scope, &page, options)?;
+        let rows = plan
+            .bind_query_as::<ApprovalDbRow>()
+            .fetch_all(&self.pool)
+            .await?;
+        page_rows(rows, &page, ApprovalDbRow::into_projection)
+    }
+
+    pub async fn get_approval(
+        &self,
+        scope: &OrganizationScope,
+        id: &str,
+    ) -> Result<ApprovalProjection, ReadAdapterError> {
+        let plan = get_query_plan(EntityKind::Approval, scope, id)?;
+        let row = plan
+            .bind_query_as::<ApprovalDbRow>()
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(ApprovalDbRow::into_projection)
+            .transpose()?
+            .ok_or_else(|| not_found("approval", id))
     }
 }
 

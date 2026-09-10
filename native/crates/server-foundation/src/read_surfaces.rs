@@ -1,6 +1,7 @@
 use rudder_db_core::{
-    AgentListOptions, AgentProjection, GoalProjection, OrganizationProjection, OrganizationScope,
-    Page, PageRequest, ProjectProjection, ReadAdapterError, ReadRepository,
+    AgentListOptions, AgentProjection, ApprovalListOptions, ApprovalProjection, GoalProjection,
+    IssueListOptions, IssueProjection, OrganizationProjection, OrganizationScope, Page,
+    PageRequest, ProjectProjection, ReadAdapterError, ReadRepository,
 };
 use rudder_read_surfaces_core::MAX_PAGE_SIZE;
 use serde::Deserialize;
@@ -15,6 +16,10 @@ pub const PROJECTS_LIST_ROUTE: &str = "/internal/read-surfaces/v1/orgs/{org_id}/
 pub const PROJECT_GET_ROUTE: &str = "/internal/read-surfaces/v1/projects/{project_id}";
 pub const AGENTS_LIST_ROUTE: &str = "/internal/read-surfaces/v1/orgs/{org_id}/agents";
 pub const AGENT_GET_ROUTE: &str = "/internal/read-surfaces/v1/agents/{agent_id}";
+pub const ISSUES_LIST_ROUTE: &str = "/internal/read-surfaces/v1/orgs/{org_id}/issues";
+pub const ISSUE_GET_ROUTE: &str = "/internal/read-surfaces/v1/issues/{issue_id}";
+pub const APPROVALS_LIST_ROUTE: &str = "/internal/read-surfaces/v1/orgs/{org_id}/approvals";
+pub const APPROVAL_GET_ROUTE: &str = "/internal/read-surfaces/v1/approvals/{approval_id}";
 
 #[derive(Clone)]
 pub struct ReadSurfaceAdapter {
@@ -100,6 +105,39 @@ impl ReadSurfaceAdapter {
             .get_agent(&self.trusted_scope, agent_id)
             .await
     }
+
+    pub async fn list_issues(
+        &self,
+        scope: &OrganizationScope,
+        options: IssueListOptions,
+        page: PageRequest,
+    ) -> Result<Page<IssueProjection>, ReadAdapterError> {
+        self.repository.list_issues(scope, options, page).await
+    }
+
+    pub async fn get_issue(&self, issue_id: &str) -> Result<IssueProjection, ReadAdapterError> {
+        self.repository
+            .get_issue(&self.trusted_scope, issue_id)
+            .await
+    }
+
+    pub async fn list_approvals(
+        &self,
+        scope: &OrganizationScope,
+        options: ApprovalListOptions,
+        page: PageRequest,
+    ) -> Result<Page<ApprovalProjection>, ReadAdapterError> {
+        self.repository.list_approvals(scope, options, page).await
+    }
+
+    pub async fn get_approval(
+        &self,
+        approval_id: &str,
+    ) -> Result<ApprovalProjection, ReadAdapterError> {
+        self.repository
+            .get_approval(&self.trusted_scope, approval_id)
+            .await
+    }
 }
 
 pub fn scope_for_requested_org(
@@ -151,6 +189,20 @@ impl ReadSurfaceQuery {
 
     pub fn agent_options(&self) -> Result<AgentListOptions, ReadSurfaceQueryError> {
         Ok(AgentListOptions {
+            include_terminated: optional_bool(self.include_terminated.as_deref())?,
+            include_hidden: optional_bool(self.include_hidden.as_deref())?,
+        })
+    }
+
+    pub fn issue_options(&self) -> Result<IssueListOptions, ReadSurfaceQueryError> {
+        Ok(IssueListOptions {
+            include_terminated: optional_bool(self.include_terminated.as_deref())?,
+            include_hidden: optional_bool(self.include_hidden.as_deref())?,
+        })
+    }
+
+    pub fn approval_options(&self) -> Result<ApprovalListOptions, ReadSurfaceQueryError> {
+        Ok(ApprovalListOptions {
             include_terminated: optional_bool(self.include_terminated.as_deref())?,
             include_hidden: optional_bool(self.include_hidden.as_deref())?,
         })

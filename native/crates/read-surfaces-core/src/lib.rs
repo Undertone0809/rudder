@@ -12,6 +12,8 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 pub const MAX_PAGE_SIZE: usize = 1_000;
+/// Individual approval responses never contain an unbounded target list.
+pub const MAX_APPROVAL_TARGETS: usize = 32;
 const MAX_SCOPE_IDS: usize = 256;
 const MAX_CURSOR_BYTES: usize = 4_096;
 
@@ -239,11 +241,71 @@ pub struct AgentRow {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IssueRow {
+    pub id: String,
+    pub org_id: String,
+    pub project_id: Option<String>,
+    pub goal_id: Option<String>,
+    pub issue_number: Option<i32>,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: String,
+    pub board_order: i32,
+    pub assignee_agent_id: Option<String>,
+    pub assignee_user_id: Option<String>,
+    pub reviewer_agent_id: Option<String>,
+    pub reviewer_user_id: Option<String>,
+    pub revision: u64,
+    pub fencing_token: u64,
+    pub checkout_run_id: Option<String>,
+    pub execution_run_id: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub cancelled_at: Option<String>,
+    pub hidden_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalTargetRow {
+    pub kind: String,
+    pub id: String,
+    pub identifier: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalRow {
+    pub id: String,
+    pub org_id: String,
+    pub approval_type: String,
+    pub status: String,
+    pub revision: u64,
+    pub decision: Option<String>,
+    pub requested_by_agent_id: Option<String>,
+    pub requested_by_user_id: Option<String>,
+    pub decision_note: Option<String>,
+    pub decided_by_user_id: Option<String>,
+    pub decided_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub targets: Vec<ApprovalTargetRow>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadFixtures {
     pub organizations: Vec<OrganizationRow>,
     pub goals: Vec<GoalRow>,
     pub projects: Vec<ProjectRow>,
     pub agents: Vec<AgentRow>,
+    pub issues: Vec<IssueRow>,
+    pub approvals: Vec<ApprovalRow>,
 }
 
 #[derive(Clone, Debug)]
@@ -262,6 +324,12 @@ pub trait ReadStore: Clone {
     fn goals(&self) -> &[GoalRow];
     fn projects(&self) -> &[ProjectRow];
     fn agents(&self) -> &[AgentRow];
+    fn issues(&self) -> &[IssueRow] {
+        &[]
+    }
+    fn approvals(&self) -> &[ApprovalRow] {
+        &[]
+    }
 }
 
 impl ReadStore for InMemoryReadStore {
@@ -279,6 +347,14 @@ impl ReadStore for InMemoryReadStore {
 
     fn agents(&self) -> &[AgentRow] {
         &self.fixtures.agents
+    }
+
+    fn issues(&self) -> &[IssueRow] {
+        &self.fixtures.issues
+    }
+
+    fn approvals(&self) -> &[ApprovalRow] {
+        &self.fixtures.approvals
     }
 }
 
@@ -360,6 +436,9 @@ pub struct AgentListOptions {
     pub include_hidden: bool,
 }
 
+pub type IssueListOptions = AgentListOptions;
+pub type ApprovalListOptions = AgentListOptions;
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProjection {
@@ -379,12 +458,72 @@ pub struct AgentProjection {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueProjection {
+    pub id: String,
+    pub org_id: String,
+    pub project_id: Option<String>,
+    pub goal_id: Option<String>,
+    pub issue_number: Option<i32>,
+    pub identifier: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: String,
+    pub board_order: i32,
+    pub assignee_agent_id: Option<String>,
+    pub assignee_user_id: Option<String>,
+    pub reviewer_agent_id: Option<String>,
+    pub reviewer_user_id: Option<String>,
+    pub revision: u64,
+    pub fencing_token: u64,
+    pub checkout_run_id: Option<String>,
+    pub execution_run_id: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub cancelled_at: Option<String>,
+    pub hidden_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalTargetProjection {
+    pub kind: String,
+    pub id: String,
+    pub identifier: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalProjection {
+    pub id: String,
+    pub org_id: String,
+    pub approval_type: String,
+    pub status: String,
+    pub revision: u64,
+    pub decision: Option<String>,
+    pub requested_by_agent_id: Option<String>,
+    pub requested_by_user_id: Option<String>,
+    pub decision_note: Option<String>,
+    pub decided_by_user_id: Option<String>,
+    pub decided_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub targets: Vec<ApprovalTargetProjection>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EntityKind {
     Organization,
     Goal,
     Project,
     Agent,
+    Issue,
+    Approval,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -406,6 +545,8 @@ pub fn query_plan(kind: EntityKind, scope: &OrganizationScope, page: &PageReques
         EntityKind::Goal => "goals",
         EntityKind::Project => "projects",
         EntityKind::Agent => "agents",
+        EntityKind::Issue => "issues",
+        EntityKind::Approval => "approvals",
     };
     let scope_column = match kind {
         EntityKind::Organization => "id",
@@ -577,6 +718,85 @@ impl<S: ReadStore> ReadModel<S> {
                 id: id.to_owned(),
             })
     }
+
+    pub fn list_issues(
+        &self,
+        scope: &OrganizationScope,
+        options: IssueListOptions,
+        page: PageRequest,
+    ) -> Result<Page<IssueProjection>, ReadError> {
+        let mut rows = self
+            .store
+            .issues()
+            .iter()
+            .filter(|row| scope.contains(&row.org_id))
+            .filter(|row| options.include_hidden || row.hidden_at.is_none())
+            .filter(|row| options.include_terminated || row.status != "terminated")
+            .collect::<Vec<_>>();
+        sort_rows(&mut rows, |row| (&row.created_at, &row.id));
+        let (rows, next_cursor, has_more) =
+            page_rows_with_key(rows, &page, |row| (&row.created_at, &row.id));
+        Ok(Page {
+            items: rows.into_iter().map(project_issue).collect(),
+            next_cursor,
+            has_more,
+        })
+    }
+
+    pub fn get_issue(
+        &self,
+        scope: &OrganizationScope,
+        id: &str,
+    ) -> Result<IssueProjection, ReadError> {
+        self.store
+            .issues()
+            .iter()
+            .find(|row| row.id == id && scope.contains(&row.org_id))
+            .map(project_issue)
+            .ok_or_else(|| ReadError::NotFound {
+                entity: "issue",
+                id: id.to_owned(),
+            })
+    }
+
+    pub fn list_approvals(
+        &self,
+        scope: &OrganizationScope,
+        options: ApprovalListOptions,
+        page: PageRequest,
+    ) -> Result<Page<ApprovalProjection>, ReadError> {
+        let mut rows = self
+            .store
+            .approvals()
+            .iter()
+            .filter(|row| scope.contains(&row.org_id))
+            .filter(|row| options.include_terminated || row.status != "terminated")
+            .collect::<Vec<_>>();
+        sort_rows(&mut rows, |row| (&row.created_at, &row.id));
+        let (rows, next_cursor, has_more) =
+            page_rows_with_key(rows, &page, |row| (&row.created_at, &row.id));
+        Ok(Page {
+            items: rows.into_iter().map(project_approval).collect(),
+            next_cursor,
+            has_more,
+        })
+    }
+
+    pub fn get_approval(
+        &self,
+        scope: &OrganizationScope,
+        id: &str,
+    ) -> Result<ApprovalProjection, ReadError> {
+        self.store
+            .approvals()
+            .iter()
+            .find(|row| row.id == id && scope.contains(&row.org_id))
+            .map(project_approval)
+            .ok_or_else(|| ReadError::NotFound {
+                entity: "approval",
+                id: id.to_owned(),
+            })
+    }
 }
 
 fn sort_rows<T>(rows: &mut [&T], key: impl Fn(&T) -> (&str, &str)) {
@@ -707,6 +927,64 @@ fn project_agent(row: &AgentRow) -> AgentProjection {
         },
         created_at: row.created_at.clone(),
         updated_at: row.updated_at.clone(),
+    }
+}
+
+fn project_issue(row: &IssueRow) -> IssueProjection {
+    IssueProjection {
+        id: row.id.clone(),
+        org_id: row.org_id.clone(),
+        project_id: row.project_id.clone(),
+        goal_id: row.goal_id.clone(),
+        issue_number: row.issue_number,
+        identifier: row.identifier.clone(),
+        title: row.title.clone(),
+        description: row.description.clone(),
+        status: row.status.clone(),
+        priority: row.priority.clone(),
+        board_order: row.board_order,
+        assignee_agent_id: row.assignee_agent_id.clone(),
+        assignee_user_id: row.assignee_user_id.clone(),
+        reviewer_agent_id: row.reviewer_agent_id.clone(),
+        reviewer_user_id: row.reviewer_user_id.clone(),
+        revision: row.revision,
+        fencing_token: row.fencing_token,
+        checkout_run_id: row.checkout_run_id.clone(),
+        execution_run_id: row.execution_run_id.clone(),
+        started_at: row.started_at.clone(),
+        completed_at: row.completed_at.clone(),
+        cancelled_at: row.cancelled_at.clone(),
+        hidden_at: row.hidden_at.clone(),
+        created_at: row.created_at.clone(),
+        updated_at: row.updated_at.clone(),
+    }
+}
+
+fn project_approval(row: &ApprovalRow) -> ApprovalProjection {
+    ApprovalProjection {
+        id: row.id.clone(),
+        org_id: row.org_id.clone(),
+        approval_type: row.approval_type.clone(),
+        status: row.status.clone(),
+        revision: row.revision,
+        decision: row.decision.clone(),
+        requested_by_agent_id: row.requested_by_agent_id.clone(),
+        requested_by_user_id: row.requested_by_user_id.clone(),
+        decision_note: row.decision_note.clone(),
+        decided_by_user_id: row.decided_by_user_id.clone(),
+        decided_at: row.decided_at.clone(),
+        created_at: row.created_at.clone(),
+        updated_at: row.updated_at.clone(),
+        targets: row
+            .targets
+            .iter()
+            .map(|target| ApprovalTargetProjection {
+                kind: target.kind.clone(),
+                id: target.id.clone(),
+                identifier: target.identifier.clone(),
+                title: target.title.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -864,6 +1142,8 @@ mod tests {
                     "Foreign Agent",
                 ),
             ],
+            issues: vec![],
+            approvals: vec![],
         }))
     }
 
@@ -1023,5 +1303,197 @@ mod tests {
         assert!(plan.sql.contains("LIMIT $"));
         assert_eq!(plan.binds.first(), Some(&QueryBind::Text("org-a".into())));
         assert!(!plan.sql.contains("org-a"));
+    }
+
+    fn issue(id: &str, org_id: &str, created_at: &str, status: &str, title: &str) -> IssueRow {
+        IssueRow {
+            id: id.into(),
+            org_id: org_id.into(),
+            created_at: created_at.into(),
+            updated_at: created_at.into(),
+            status: status.into(),
+            title: title.into(),
+            ..Default::default()
+        }
+    }
+
+    fn approval(id: &str, org_id: &str, created_at: &str) -> ApprovalRow {
+        ApprovalRow {
+            id: id.into(),
+            org_id: org_id.into(),
+            approval_type: "issue_action".into(),
+            status: "pending".into(),
+            created_at: created_at.into(),
+            updated_at: created_at.into(),
+            targets: vec![ApprovalTargetRow {
+                kind: "issue".into(),
+                id: "issue-a".into(),
+                identifier: Some("RUD-1".into()),
+                title: Some("Issue A".into()),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn issue_lists_are_fenced_bounded_and_hide_terminated_rows_by_default() {
+        let model = ReadModel::new(InMemoryReadStore::new(ReadFixtures {
+            issues: vec![
+                issue(
+                    "issue-hidden",
+                    "org-a",
+                    "2026-01-01T00:00:00Z",
+                    "todo",
+                    "Hidden",
+                ),
+                IssueRow {
+                    hidden_at: Some("2026-01-01T00:00:00Z".into()),
+                    ..issue(
+                        "issue-hidden-2",
+                        "org-a",
+                        "2026-01-01T00:00:00Z",
+                        "todo",
+                        "Hidden 2",
+                    )
+                },
+                issue(
+                    "issue-active",
+                    "org-a",
+                    "2026-01-02T00:00:00Z",
+                    "in_progress",
+                    "Active",
+                ),
+                issue(
+                    "issue-terminated",
+                    "org-a",
+                    "2026-01-03T00:00:00Z",
+                    "terminated",
+                    "Terminated",
+                ),
+                issue(
+                    "issue-foreign",
+                    "org-b",
+                    "2026-01-01T00:00:00Z",
+                    "todo",
+                    "Foreign",
+                ),
+            ],
+            ..Default::default()
+        }));
+        let scope = OrganizationScope::single("org-a").unwrap();
+
+        let page = model
+            .list_issues(
+                &scope,
+                IssueListOptions::default(),
+                PageRequest::new(10).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["issue-hidden", "issue-active"]
+        );
+        assert!(page.items.iter().all(|item| item.org_id == "org-a"));
+
+        let all = model
+            .list_issues(
+                &scope,
+                IssueListOptions {
+                    include_hidden: true,
+                    include_terminated: true,
+                },
+                PageRequest::new(10).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(all.items.len(), 4);
+        assert!(model.get_issue(&scope, "issue-hidden-2").is_ok());
+        assert!(model.get_issue(&scope, "issue-terminated").is_ok());
+        assert!(matches!(
+            model.get_issue(&scope, "issue-foreign"),
+            Err(ReadError::NotFound {
+                entity: "issue",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn issue_pages_use_created_at_and_id_keyset_and_preserve_board_fields() {
+        let mut row = issue(
+            "issue-a",
+            "org-a",
+            "2026-01-01T00:00:00Z",
+            "in_review",
+            "Review me",
+        );
+        row.priority = "urgent".into();
+        row.assignee_agent_id = Some("agent-a".into());
+        row.reviewer_user_id = Some("user-a".into());
+        row.revision = 7;
+        row.fencing_token = 11;
+        row.started_at = Some("2026-01-02T00:00:00Z".into());
+        row.completed_at = Some("2026-01-03T00:00:00Z".into());
+        row.updated_at = "2026-01-04T00:00:00Z".into();
+        let model = ReadModel::new(InMemoryReadStore::new(ReadFixtures {
+            issues: vec![row],
+            ..Default::default()
+        }));
+        let scope = OrganizationScope::single("org-a").unwrap();
+        let page = model
+            .list_issues(
+                &scope,
+                IssueListOptions::default(),
+                PageRequest::new(1).unwrap(),
+            )
+            .unwrap();
+        let projection = &page.items[0];
+        assert_eq!(projection.status, "in_review");
+        assert_eq!(projection.priority, "urgent");
+        assert_eq!(projection.assignee_agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(projection.reviewer_user_id.as_deref(), Some("user-a"));
+        assert_eq!(projection.revision, 7);
+        assert_eq!(projection.fencing_token, 11);
+        assert_eq!(
+            projection.started_at.as_deref(),
+            Some("2026-01-02T00:00:00Z")
+        );
+        assert_eq!(
+            projection.completed_at.as_deref(),
+            Some("2026-01-03T00:00:00Z")
+        );
+        assert_eq!(projection.updated_at, "2026-01-04T00:00:00Z");
+    }
+
+    #[test]
+    fn approval_lists_are_fenced_and_targets_are_projected_without_payload() {
+        let model = ReadModel::new(InMemoryReadStore::new(ReadFixtures {
+            approvals: vec![
+                approval("approval-a", "org-a", "2026-01-01T00:00:00Z"),
+                approval("approval-b", "org-b", "2026-01-02T00:00:00Z"),
+            ],
+            ..Default::default()
+        }));
+        let scope = OrganizationScope::single("org-a").unwrap();
+        let page = model
+            .list_approvals(
+                &scope,
+                ApprovalListOptions::default(),
+                PageRequest::new(1).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].targets[0].id, "issue-a");
+        let encoded = serde_json::to_string(&page.items[0]).unwrap();
+        assert!(!encoded.contains("payload"));
+        assert!(matches!(
+            model.get_approval(&scope, "approval-b"),
+            Err(ReadError::NotFound {
+                entity: "approval",
+                ..
+            })
+        ));
     }
 }
