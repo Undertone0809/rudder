@@ -19,6 +19,11 @@ pub const LEGACY_OWNER: &str = "legacy";
 
 const MAX_IDENTIFIER_BYTES: usize = 256;
 const FENCING_TOKEN_BYTES: usize = 64;
+/// Maximum UTF-8 byte length of a bridge nonce. This retains the existing
+/// bounded text-field limit for protocol compatibility.
+pub const MAX_NONCE_BYTES: usize = MAX_IDENTIFIER_BYTES;
+/// Maximum lifetime of a bridge envelope in the caller's timestamp units.
+pub const MAX_BRIDGE_LIFETIME: u64 = 5 * 60;
 pub const DEFAULT_REPLAY_CAPACITY: usize = 16 * 1024;
 pub const MAX_REPLAY_CAPACITY: usize = 64 * 1024;
 
@@ -69,6 +74,10 @@ pub enum AuthorityError {
     BodyHashMismatch,
     #[error("bridge envelope has expired")]
     Expired,
+    #[error("bridge envelope is not yet valid")]
+    NotYetValid,
+    #[error("bridge envelope lifetime exceeds the maximum")]
+    LifetimeTooLong,
     #[error("bridge nonce has already been used")]
     Replay,
     #[error("bridge replay guard capacity is exhausted")]
@@ -524,6 +533,11 @@ pub struct LegacyBridgeRequestEnvelope {
     pub body_sha256: String,
     pub request_id: String,
     pub nonce: String,
+    /// Added without changing the protocol version. Missing legacy-wire values
+    /// default to zero for parsing compatibility, then fail validation rather
+    /// than being accepted without an issuance time.
+    #[serde(default)]
+    pub issued_at: u64,
     pub expires_at: u64,
 }
 
@@ -537,6 +551,7 @@ impl LegacyBridgeRequestEnvelope {
         body: &[u8],
         request_id: impl Into<String>,
         nonce: impl Into<String>,
+        issued_at: u64,
         expires_at: u64,
     ) -> Result<Self, AuthorityError> {
         authority.validate()?;
@@ -551,10 +566,8 @@ impl LegacyBridgeRequestEnvelope {
         validate_text(&organization_id, "organizationId")?;
         validate_text(&action, "action")?;
         validate_text(&request_id, "requestId")?;
-        validate_text(&nonce, "nonce")?;
-        if expires_at == 0 {
-            return Err(AuthorityError::InvalidField { field: "expiresAt" });
-        }
+        validate_nonce(&nonce)?;
+        validate_bridge_lifetime(issued_at, expires_at)?;
         Ok(Self {
             schema: LEGACY_BRIDGE_SCHEMA.to_owned(),
             protocol_version: AUTHORITY_PROTOCOL_VERSION,
@@ -568,6 +581,7 @@ impl LegacyBridgeRequestEnvelope {
             body_sha256: body_sha256(body),
             request_id,
             nonce,
+            issued_at,
             expires_at,
         })
     }
@@ -595,6 +609,7 @@ impl LegacyBridgeRequestEnvelope {
                 expected: AUTHORITY_PROTOCOL_VERSION,
             });
         }
+        validate_bridge_lifetime(self.issued_at, self.expires_at)?;
         if self.component != authority.component {
             return Err(AuthorityError::ComponentMismatch);
         }
@@ -632,15 +647,16 @@ impl LegacyBridgeRequestEnvelope {
         if self.request_id != request_id {
             return Err(AuthorityError::RequestIdMismatch);
         }
-        if self.expires_at == 0 || now >= self.expires_at {
+        if now < self.issued_at {
+            return Err(AuthorityError::NotYetValid);
+        }
+        if now >= self.expires_at {
             return Err(AuthorityError::Expired);
         }
         if self.body_sha256 != body_sha256(body) {
             return Err(AuthorityError::BodyHashMismatch);
         }
-        if self.nonce.is_empty() {
-            return Err(AuthorityError::InvalidField { field: "nonce" });
-        }
+        validate_nonce(&self.nonce)?;
         replay.claim(&self.nonce, self.expires_at, now)
     }
 }
@@ -684,6 +700,7 @@ impl NonceReplayGuard {
     }
 
     fn claim(&mut self, nonce: &str, expires_at: u64, now: u64) -> Result<(), AuthorityError> {
+        validate_nonce(nonce)?;
         self.used.retain(|_, expiry| *expiry > now);
         if expires_at <= now {
             return Err(AuthorityError::Expired);
@@ -742,13 +759,38 @@ fn validate_owner(owner: &OwnerId) -> Result<(), AuthorityError> {
 }
 
 fn validate_text(value: &str, field: &'static str) -> Result<(), AuthorityError> {
+    validate_text_bounded(value, field, MAX_IDENTIFIER_BYTES)
+}
+
+fn validate_nonce(nonce: &str) -> Result<(), AuthorityError> {
+    validate_text_bounded(nonce, "nonce", MAX_NONCE_BYTES)
+}
+
+fn validate_text_bounded(
+    value: &str,
+    field: &'static str,
+    max_bytes: usize,
+) -> Result<(), AuthorityError> {
     if value.is_empty()
-        || value.len() > MAX_IDENTIFIER_BYTES
+        || value.len() > max_bytes
         || value
             .bytes()
             .any(|byte| byte == 0 || byte.is_ascii_control())
     {
         return Err(AuthorityError::InvalidField { field });
+    }
+    Ok(())
+}
+
+fn validate_bridge_lifetime(issued_at: u64, expires_at: u64) -> Result<(), AuthorityError> {
+    if issued_at == 0 {
+        return Err(AuthorityError::InvalidField { field: "issuedAt" });
+    }
+    if expires_at == 0 || expires_at <= issued_at {
+        return Err(AuthorityError::InvalidField { field: "expiresAt" });
+    }
+    if expires_at - issued_at > MAX_BRIDGE_LIFETIME {
+        return Err(AuthorityError::LifetimeTooLong);
     }
     Ok(())
 }
