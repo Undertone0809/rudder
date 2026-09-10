@@ -1124,6 +1124,8 @@ pub struct RecoveryPlan {
     pub backoff: BackoffDelay,
     pub network_wait_number: u8,
     pub next_attempt_at_millis: u64,
+    pub source_session_id: String,
+    pub replacement_session_id: Option<String>,
     pub failure: Failure,
     pub submission_phase: SubmissionPhase,
     pub side_effect_risk: SideEffectRisk,
@@ -1162,6 +1164,33 @@ impl RecoveryPlan {
             ));
         }
         self.backoff.validate()?;
+        if self.next_attempt_at_millis < self.backoff.delay_millis {
+            return Err(AttemptError::invalid(
+                "recovery plan retry timestamp is earlier than its backoff delay",
+            ));
+        }
+        bounded_string(
+            self.source_session_id.clone(),
+            "source_session_id",
+            MAX_ID_BYTES,
+        )?;
+        if let Some(replacement_session_id) = &self.replacement_session_id {
+            bounded_string(
+                replacement_session_id.clone(),
+                "replacement_session_id",
+                MAX_ID_BYTES,
+            )?;
+            if replacement_session_id == &self.source_session_id {
+                return Err(AttemptError::invalid(
+                    "fresh recovery replacement must differ from its source session",
+                ));
+            }
+            if self.decision != RecoveryDecision::FreshIfPristine {
+                return Err(AttemptError::invalid(
+                    "only fresh recovery can bind a replacement session",
+                ));
+            }
+        }
         if self.classification != self.failure.classification() {
             return Err(AttemptError::invalid(
                 "recovery plan classification does not match its failure",
@@ -1191,6 +1220,13 @@ impl RecoveryPlan {
                 "fresh recovery requires pre-submission evidence",
             ));
         }
+        if self.decision == RecoveryDecision::ResumeSameSession
+            && evidence.submission_phase == SubmissionPhase::Indeterminate
+        {
+            return Err(AttemptError::invalid(
+                "indeterminate evidence requires fail-closed recovery",
+            ));
+        }
         Ok(())
     }
 }
@@ -1205,6 +1241,8 @@ struct RecoveryPlanWire {
     backoff: BackoffDelay,
     network_wait_number: u8,
     next_attempt_at_millis: u64,
+    source_session_id: String,
+    replacement_session_id: Option<String>,
     failure: Failure,
     submission_phase: SubmissionPhase,
     side_effect_risk: SideEffectRisk,
@@ -1227,6 +1265,8 @@ impl<'de> Deserialize<'de> for RecoveryPlan {
             backoff: wire.backoff,
             network_wait_number: wire.network_wait_number,
             next_attempt_at_millis: wire.next_attempt_at_millis,
+            source_session_id: wire.source_session_id,
+            replacement_session_id: wire.replacement_session_id,
             failure: wire.failure,
             submission_phase: wire.submission_phase,
             side_effect_risk: wire.side_effect_risk,
@@ -1397,6 +1437,48 @@ impl Checkpoint {
                     "recovery plan wait count does not match the checkpoint",
                 ));
             }
+            match self.phase {
+                Phase::Executing | Phase::WaitingForNetwork => match plan.decision {
+                    RecoveryDecision::FreshIfPristine => {
+                        if plan.replacement_session_id.as_deref()
+                            != Some(self.session.session_id.as_str())
+                            || plan.source_session_id == self.session.session_id
+                        {
+                            return Err(checkpoint_invalid(
+                                "active fresh recovery is not bound to its replacement session",
+                            ));
+                        }
+                    }
+                    RecoveryDecision::ResumeSameSession => {
+                        if plan.replacement_session_id.is_some()
+                            || plan.source_session_id != self.session.session_id
+                        {
+                            return Err(checkpoint_invalid(
+                                "active same-session recovery is not bound to its session",
+                            ));
+                        }
+                    }
+                    RecoveryDecision::FailClosed => {
+                        return Err(checkpoint_invalid(
+                            "active recovery cannot use a fail-closed decision",
+                        ));
+                    }
+                },
+                Phase::WaitingForRetry => {
+                    if plan.source_session_id != self.session.session_id
+                        || plan.replacement_session_id.is_some()
+                    {
+                        return Err(checkpoint_invalid(
+                            "scheduled recovery is not bound to its source session",
+                        ));
+                    }
+                }
+                Phase::Pristine | Phase::Succeeded | Phase::Terminal => {
+                    return Err(checkpoint_invalid(
+                        "recovery plan is not valid in this checkpoint phase",
+                    ));
+                }
+            }
         }
         if let Some(outcome) = &self.terminal_outcome {
             outcome
@@ -1504,11 +1586,32 @@ impl Checkpoint {
                 }
             }
             Phase::Terminal => {
+                let terminal_attempt_is_valid = match self.terminal_outcome.as_ref() {
+                    Some(TerminalOutcome::Succeeded { attempt })
+                    | Some(TerminalOutcome::Failed { attempt, .. }) => {
+                        attempt.attempt == expected_active_attempt
+                    }
+                    Some(TerminalOutcome::Cancelled { attempt, .. }) => {
+                        attempt.attempt == expected_active_attempt
+                            || (self.network_wait_count > 0
+                                && attempt.attempt == self.network_wait_count)
+                    }
+                    Some(TerminalOutcome::NetworkResumeUnsafe { attempt, failure }) => {
+                        attempt.attempt == expected_active_attempt
+                            || (self.network_wait_count > 0
+                                && attempt.attempt == self.network_wait_count
+                                && failure.retryable())
+                    }
+                    Some(TerminalOutcome::NetworkRetryExhausted { attempt, .. }) => {
+                        self.network_wait_count == MAX_NETWORK_WAITS
+                            && attempt.attempt == MAX_ATTEMPTS
+                    }
+                    None => false,
+                };
                 if self.recovery.is_some()
                     || self.terminal_outcome.is_none()
                     || self.revision == 0
-                    || (self.attempt.attempt != expected_active_attempt
-                        && self.attempt.attempt != self.network_wait_count)
+                    || !terminal_attempt_is_valid
                 {
                     return Err(checkpoint_invalid("terminal phase has inconsistent state"));
                 }
@@ -2538,6 +2641,8 @@ impl AttemptMachine {
             evidence.submission_phase == SubmissionPhase::Indeterminate
                 || evidence.terminal_event_observed
         });
+        let incoming_terminal_event =
+            evidence.is_some_and(|evidence| evidence.terminal_event_observed);
         let effective_evidence = match evidence {
             Some(evidence) if matches!(self.phase, Phase::WaitingForRetry | Phase::Terminal) => {
                 if evidence != current_evidence {
@@ -2553,7 +2658,18 @@ impl AttemptMachine {
                 evidence.validate()?;
                 match current_evidence.merge(evidence) {
                     Ok(merged) => merged,
-                    Err(_error) if incoming_unsafe => current_evidence,
+                    Err(_error) if incoming_unsafe => {
+                        let mut fallback = current_evidence;
+                        if incoming_terminal_event {
+                            if fallback.submission_phase == SubmissionPhase::PreSubmission {
+                                fallback.submission_phase = SubmissionPhase::Indeterminate;
+                                fallback.side_effect_risk = SideEffectRisk::Possible;
+                            }
+                            fallback.terminal_event_observed = true;
+                            fallback.validate()?;
+                        }
+                        fallback
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -2703,6 +2819,8 @@ impl AttemptMachine {
             backoff,
             network_wait_number: retry_number,
             next_attempt_at_millis,
+            source_session_id: self.session.session_id.clone(),
+            replacement_session_id: None,
             failure: failure.clone(),
             submission_phase: effective_evidence.submission_phase,
             side_effect_risk: effective_evidence.side_effect_risk,
@@ -2733,24 +2851,45 @@ impl AttemptMachine {
                 .as_ref()
                 .is_some_and(|plan| plan.decision == decision)
         {
-            if decision == RecoveryDecision::FreshIfPristine {
-                let session_id = fresh_session_id.ok_or_else(|| {
-                    AttemptError::invalid("fresh_if_pristine requires a new session id")
-                })?;
-                let session_id = bounded_string(session_id, "session_id", MAX_ID_BYTES)?;
-                if session_id != self.session.session_id {
+            let plan = self
+                .recovery
+                .as_ref()
+                .ok_or_else(|| checkpoint_invalid("active recovery choice has no recovery plan"))?;
+            match decision {
+                RecoveryDecision::FreshIfPristine => {
+                    let session_id = fresh_session_id.ok_or_else(|| {
+                        AttemptError::invalid("fresh_if_pristine requires a new session id")
+                    })?;
+                    let session_id = bounded_string(session_id, "session_id", MAX_ID_BYTES)?;
+                    if plan.replacement_session_id.as_deref() != Some(session_id.as_str())
+                        || plan.source_session_id == self.session.session_id
+                    {
+                        return Err(AttemptError::new(
+                            "recovery_choice_mismatch",
+                            ErrorKind::RecoveryChoiceMismatch,
+                            "fresh recovery replay must use its persisted replacement session",
+                        ));
+                    }
+                }
+                RecoveryDecision::ResumeSameSession => {
+                    if fresh_session_id.is_some()
+                        || plan.replacement_session_id.is_some()
+                        || plan.source_session_id != self.session.session_id
+                    {
+                        return Err(AttemptError::new(
+                            "recovery_choice_mismatch",
+                            ErrorKind::RecoveryChoiceMismatch,
+                            "resume_same_session cannot accept a replacement session",
+                        ));
+                    }
+                }
+                RecoveryDecision::FailClosed => {
                     return Err(AttemptError::new(
-                        "recovery_choice_mismatch",
-                        ErrorKind::RecoveryChoiceMismatch,
-                        "fresh recovery replay must use its persisted replacement session",
+                        "network_resume_unsafe",
+                        ErrorKind::NetworkResumeUnsafe,
+                        "an unsafe recovery plan must be failed closed",
                     ));
                 }
-            } else if fresh_session_id.is_some() {
-                return Err(AttemptError::new(
-                    "recovery_choice_mismatch",
-                    ErrorKind::RecoveryChoiceMismatch,
-                    "resume_same_session cannot accept a replacement session",
-                ));
             }
             return Ok(self.attempt_identity());
         }
@@ -2761,13 +2900,18 @@ impl AttemptMachine {
                 "recovery requires a scheduled retry",
             ));
         }
-        let plan = self.recovery.clone().ok_or_else(|| {
+        let mut plan = self.recovery.clone().ok_or_else(|| {
             AttemptError::new(
                 "checkpoint_invalid",
                 ErrorKind::CheckpointInvalid,
                 "retry phase has no recovery plan",
             )
         })?;
+        if plan.source_session_id != self.session.session_id {
+            return Err(checkpoint_invalid(
+                "recovery plan is not bound to its source session",
+            ));
+        }
         if now_millis < plan.next_attempt_at_millis {
             return Err(AttemptError::new(
                 "retry_not_due",
@@ -2797,6 +2941,13 @@ impl AttemptMachine {
                     "a non-pristine session cannot be replaced",
                 ));
             }
+            if plan.replacement_session_id.is_some() {
+                return Err(AttemptError::new(
+                    "recovery_choice_mismatch",
+                    ErrorKind::RecoveryChoiceMismatch,
+                    "fresh recovery already has a replacement session",
+                ));
+            }
             let session_id = fresh_session_id.ok_or_else(|| {
                 AttemptError::invalid("fresh_if_pristine requires a new session id")
             })?;
@@ -2810,7 +2961,7 @@ impl AttemptMachine {
             }
             Some(session_id)
         } else {
-            if fresh_session_id.is_some() {
+            if plan.replacement_session_id.is_some() || fresh_session_id.is_some() {
                 return Err(AttemptError::new(
                     "recovery_choice_mismatch",
                     ErrorKind::RecoveryChoiceMismatch,
@@ -2821,7 +2972,9 @@ impl AttemptMachine {
         };
         let next_revision = self.next_revision()?;
         if let Some(session_id) = replacement_session_id {
-            self.session.session_id = session_id;
+            self.session.session_id = session_id.clone();
+            plan.replacement_session_id = Some(session_id);
+            self.recovery = Some(plan.clone());
         }
         self.revision = next_revision;
         self.attempt = plan.next_attempt.attempt;
