@@ -678,7 +678,9 @@ fn comment_attention_query_plans_fence_comment_targets_and_wakeup_writes() {
     assert!(
         insert_wakeup
             .sql
-            .contains("ON CONFLICT (org_id, agent_id, idempotency_key) DO NOTHING")
+            .contains(
+                "ON CONFLICT (org_id, agent_id, idempotency_key)\n        WHERE idempotency_key IS NOT NULL DO NOTHING",
+            )
     );
     assert!(plans.insert_activity.binds.iter().any(|bind| {
         matches!(bind, MutationBind::Text(value) if value == "issue.comment_attention_routed")

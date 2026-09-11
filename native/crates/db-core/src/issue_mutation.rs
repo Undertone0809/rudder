@@ -1891,7 +1891,7 @@ fn insert_wakeup_plan_for(
 ) -> MutationQueryPlan {
     let actor = actor_sql_parts(&request.author);
     plan(
-        "INSERT INTO agent_wakeup_requests (\n             org_id, agent_id, source, trigger_detail, reason, payload,\n             requested_by_actor_type, requested_by_actor_id, idempotency_key, run_id\n         ) VALUES ($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::jsonb,\n                   $7::text, $8::text, $9::text, $10::uuid)\n         ON CONFLICT (org_id, agent_id, idempotency_key) DO NOTHING\n         RETURNING id::text AS id",
+        "INSERT INTO agent_wakeup_requests (\n             org_id, agent_id, source, trigger_detail, reason, payload,\n             requested_by_actor_type, requested_by_actor_id, idempotency_key, run_id\n         ) VALUES ($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::jsonb,\n                   $7::text, $8::text, $9::text, $10::uuid)\n         ON CONFLICT (org_id, agent_id, idempotency_key)\n        WHERE idempotency_key IS NOT NULL DO NOTHING\n        RETURNING id::text AS id",
         vec![
             MutationBind::Uuid(scope.as_str().into()),
             MutationBind::Uuid(wake.target_agent_id.as_str().into()),
