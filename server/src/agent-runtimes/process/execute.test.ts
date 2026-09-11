@@ -9,6 +9,7 @@ vi.mock("../utils.js", () => ({
   buildRudderEnv: () => ({ RUDDER_AGENT_ID: "agent-1" }),
   parseObject: (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value : {},
   redactEnvForLogs: (value: unknown) => value,
+  resolveSpawnTarget: async (command: string, args: string[]) => ({ command: `/usr/local/bin/${command}`, args }),
   runChildProcess: mockRunChildProcess,
   runNativeChildProcessV2: mockRunNativeChildProcessV2,
 }));
@@ -110,9 +111,84 @@ describe("process adapter Delegation delivery", () => {
     expect(mockRunChildProcess).not.toHaveBeenCalled();
     expect(mockRunNativeChildProcessV2).toHaveBeenCalledWith(
       "run-2",
-      "worker",
+      "/usr/local/bin/worker",
       ["--native"],
       expect.objectContaining({ authority, stdin: "Run the native process" }),
     );
+  });
+
+  it("treats a missing exit code as a failed process", async () => {
+    mockRunChildProcess.mockResolvedValue({
+      timedOut: false,
+      exitCode: null,
+      signal: null,
+      stdout: "",
+      stderr: "stopped before exit",
+    });
+
+    const result = await execute({
+      runId: "run-null-exit",
+      agent: {
+        id: "agent-1",
+        orgId: "org-1",
+        name: "Target",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "worker" },
+      context: {},
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: null,
+      timedOut: false,
+      errorCode: "process_exit_unknown",
+      errorMessage: "Process ended without a terminal exit code",
+    });
+  });
+
+  it("maps an authority-bound terminal failure even when the app exit code is zero", async () => {
+    mockRunNativeChildProcessV2.mockResolvedValue({
+      timedOut: false,
+      exitCode: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      terminalStatus: "failed",
+      errorCode: "lease_expired",
+    });
+
+    const result = await execute({
+      runId: "run-failed-terminal",
+      agent: {
+        id: "agent-1",
+        orgId: "org-1",
+        name: "Target",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "worker" },
+      context: {},
+      nativeProcessAuthority: {
+        authorityVersion: 1,
+        runtimeIdentity: { organizationId: "org-1", agentId: "agent-1", runId: "run-failed-terminal" },
+        ownership: { epoch: 3, fence: "fence-3" },
+        lease: { owner: "worker-1", issuedAtMillis: 1_000, expiresAtMillis: 60_000 },
+        attempt: 2,
+        requestId: "request-run-failed-terminal",
+        bindingDigest: "a".repeat(64),
+        receiptContext: { runtimeRoot: "/tmp/rudder-receipts", ownerToken: "owner-run-failed-terminal" },
+      },
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      errorCode: "lease_expired",
+      errorMessage: "Process exited with terminal status failed (lease_expired)",
+    });
   });
 });

@@ -1426,15 +1426,20 @@ impl Checkpoint {
         evidence
             .validate()
             .map_err(|error| checkpoint_invalid(error.message()))?;
-        if self.terminal_event_observed
-            && !matches!(
-                self.terminal_outcome,
-                Some(TerminalOutcome::NetworkResumeUnsafe { .. })
-            )
-        {
-            return Err(checkpoint_invalid(
-                "terminal event evidence requires a network-unsafe terminal outcome",
-            ));
+        if self.terminal_event_observed {
+            let fail_closed = match self.terminal_outcome.as_ref() {
+                Some(TerminalOutcome::NetworkResumeUnsafe { .. }) => true,
+                Some(TerminalOutcome::Failed { failure, .. }) => {
+                    !failure.retryable()
+                        && failure.classification() != FailureClassification::Ambiguous
+                }
+                _ => false,
+            };
+            if !fail_closed {
+                return Err(checkpoint_invalid(
+                    "terminal event evidence requires a fail-closed terminal outcome",
+                ));
+            }
         }
         if self.session.pristine && evidence != RecoveryEvidence::pre_submission() {
             return Err(checkpoint_invalid(
@@ -2784,9 +2789,18 @@ impl AttemptMachine {
             } else {
                 None
             };
-            let outcome = TerminalOutcome::NetworkResumeUnsafe {
-                attempt: current_attempt,
-                failure: failure.clone(),
+            let outcome = if !failure.retryable()
+                && failure.classification() != FailureClassification::Ambiguous
+            {
+                TerminalOutcome::Failed {
+                    attempt: current_attempt,
+                    failure: failure.clone(),
+                }
+            } else {
+                TerminalOutcome::NetworkResumeUnsafe {
+                    attempt: current_attempt,
+                    failure: failure.clone(),
+                }
             };
             let result = self.install_terminal(outcome, Some(failure));
             match retry_number {

@@ -761,6 +761,57 @@ fn indeterminate_or_terminal_event_evidence_fails_closed() {
 }
 
 #[test]
+fn unsafe_non_retryable_failure_is_terminal_and_preserves_durable_evidence() {
+    let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
+    let fence = lease();
+    let mut machine = AttemptMachine::new(
+        identity,
+        "session-1",
+        fence.clone(),
+        "heartbeat-1",
+        "fingerprint-1",
+    )
+    .unwrap();
+    machine.start(&fence, 10).unwrap();
+    machine.mark_waiting_for_network(&fence, 10).unwrap();
+
+    let evidence = rudder_runtime_attempt_core::RecoveryEvidence::new(
+        rudder_runtime_attempt_core::SubmissionPhase::Indeterminate,
+        rudder_runtime_attempt_core::SideEffectRisk::Possible,
+        false,
+        false,
+        true,
+    )
+    .unwrap();
+    let result = machine
+        .record_failure_with_evidence(
+            Failure::non_retryable("provider_rejected", "provider rejected the request").unwrap(),
+            evidence,
+            &fence,
+            10,
+            None,
+        )
+        .unwrap();
+
+    assert!(matches!(
+        result,
+        RecoveryResult::Terminal(outcome) if outcome.code() == "failed"
+    ));
+    let checkpoint = machine.checkpoint();
+    assert_eq!(checkpoint.phase, Phase::Terminal);
+    assert!(checkpoint.terminal_event_observed);
+    assert_eq!(
+        checkpoint.submission_phase,
+        rudder_runtime_attempt_core::SubmissionPhase::Indeterminate
+    );
+    assert!(matches!(
+        checkpoint.terminal_outcome,
+        Some(rudder_runtime_attempt_core::TerminalOutcome::Failed { .. })
+    ));
+    assert!(AttemptMachine::from_checkpoint(checkpoint).is_ok());
+}
+
+#[test]
 fn six_network_waits_exhaust_without_starting_a_seventh_attempt() {
     let identity = HeartbeatIdentity::new("org-1", "run-1", "agent-1").unwrap();
     let fence = lease();

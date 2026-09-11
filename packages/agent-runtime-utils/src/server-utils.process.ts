@@ -6,8 +6,9 @@ import type {
   AgentRuntimeSkillEntry
 } from "./types.js";
 export {
+  createNativeProcessAuthority,
   runNativeChildProcessOrFallback,
-  runNativeChildProcessV2,
+  runNativeChildProcessV2
 } from "./native-process-runner.js";
 
 export interface RunProcessResult {
@@ -18,6 +19,8 @@ export interface RunProcessResult {
   stderr: string;
   pid: number | null;
   startedAt: string | null;
+  terminalStatus?: "succeeded" | "failed" | "cancelled" | "timed_out";
+  errorCode?: string | null;
   diagnostic?: RudderNativeDiagnostic;
 }
 

@@ -96,6 +96,16 @@ function authorityBindingDigest(authority: NativeProcessAuthority): string {
   return createHash("sha256").update(material).digest("hex");
 }
 
+export function createNativeProcessAuthority(
+  input: Omit<NativeProcessAuthority, "bindingDigest">,
+): NativeProcessAuthority {
+  const authority = { ...input } as NativeProcessAuthority;
+  return {
+    ...authority,
+    bindingDigest: authorityBindingDigest(authority),
+  };
+}
+
 function invalidV2Authority(message: string): NativeProcessUnavailableError {
   return new NativeProcessUnavailableError(message, "authority_invalid");
 }
@@ -380,6 +390,13 @@ async function runNativeChildProcessInternal(
   opts: NativeProcessRunOptions,
   wire: NativeProcessWireOptions,
 ): Promise<RunProcessResult> {
+  if (!path.isAbsolute(executable)) {
+    throw new NativeProcessUnavailableError(
+      "Rust process host requires an absolute executable path",
+      "executable_not_absolute",
+      false,
+    );
+  }
   const configuredBinaryPath = opts.binaryPath === undefined
     ? resolveNativeProcessHostPath()
     : opts.binaryPath;
@@ -401,6 +418,36 @@ async function runNativeChildProcessInternal(
       { cause: error },
     );
   });
+
+  const inheritedEnv = Object.fromEntries(
+    Object.entries({ ...process.env, ...opts.env })
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  for (const key of [
+    "RUDDER_DESKTOP_CLI_ENTRY",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION",
+    "CLAUDE_CODE_PARENT_SESSION",
+  ]) {
+    delete inheritedEnv[key];
+  }
+  for (const key of [
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+  ]) {
+    if (inheritedEnv[key] === "" && !Object.prototype.hasOwnProperty.call(opts.env, key)) {
+      delete inheritedEnv[key];
+    }
+  }
+  const requestedHome = opts.env.HOME?.trim();
+  const inheritedHome = process.env.HOME?.trim();
+  if (requestedHome && inheritedHome && path.resolve(requestedHome) !== path.resolve(inheritedHome)
+    && !opts.env.ZDOTDIR?.trim()) {
+    delete inheritedEnv.ZDOTDIR;
+  }
 
   return await new Promise<RunProcessResult>((resolve, reject) => {
     const spawnHost = opts.spawnHost ?? ((command, argv, options) => spawn(command, argv, options));
@@ -449,6 +496,8 @@ async function runNativeChildProcessInternal(
     let spawnedPid: number | null = null;
     let appExitCode: number | null = null;
     let appSignal: string | null = null;
+    let terminalStatus: RunProcessResult["terminalStatus"];
+    let terminalErrorCode: string | null = null;
     let terminalSeen = false;
     let cleanupReceiptTrusted = false;
     let timedOut = false;
@@ -517,12 +566,14 @@ async function runNativeChildProcessInternal(
         if (fatalError) reject(fatalError);
         else resolve({
           exitCode: appExitCode,
-          signal: aborted || timedOut ? "SIGTERM" : appSignal,
+          signal: aborted || timedOut || terminalStatus === "cancelled" ? "SIGTERM" : appSignal,
           timedOut,
           stdout,
           stderr,
           pid: spawnedPid,
           startedAt,
+          terminalStatus,
+          errorCode: terminalErrorCode,
           diagnostic: createRudderNativeDiagnostic({
             capability: "agent-run-process",
             target: nativeIdentity.target,
@@ -679,7 +730,7 @@ async function runNativeChildProcessInternal(
           executable,
           argv: args,
           cwd: opts.cwd,
-          env: opts.env,
+          env: inheritedEnv,
           ownerToken: lifecycleOwnerToken,
           runtimeRoot,
           ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
@@ -752,17 +803,51 @@ async function runNativeChildProcessInternal(
         return;
       }
       if (type === "terminal") {
+        const frameStatus = frame.status;
+        const validStatus = frameStatus === "succeeded"
+          || frameStatus === "failed"
+          || frameStatus === "cancelled"
+          || frameStatus === "timed_out";
+        const frameErrorCode = typeof frame.errorCode === "string" && frame.errorCode.trim().length > 0
+          ? frame.errorCode
+          : null;
+        if (!validStatus || (frameStatus !== "succeeded" && frameErrorCode === null)) {
+          fatalError ??= new NativeProcessUnavailableError(
+            "Rust process host terminal receipt is missing a valid status/error code",
+            "terminal_receipt_invalid",
+            accepted,
+          );
+          terminalSeen = true;
+          return;
+        }
         if (!accepted) {
           settleReject(new NativeProcessUnavailableError(
-            typeof frame.errorCode === "string" ? `Rust process host rejected launch: ${frame.errorCode}` : "Rust process host rejected launch",
-            typeof frame.errorCode === "string" ? frame.errorCode : "launch_rejected",
+            `Rust process host rejected launch: ${frameErrorCode ?? "launch_rejected"}`,
+            frameErrorCode ?? "launch_rejected",
           ));
+          return;
+        }
+        terminalStatus = frameStatus;
+        terminalErrorCode = frameErrorCode;
+        if (frameStatus === "timed_out") timedOut = true;
+        const locallyStopped = timedOut || aborted;
+        if (frameStatus === "succeeded" && locallyStopped && appExitCode === null) {
+          terminalStatus = timedOut ? "timed_out" : "cancelled";
+          terminalErrorCode = timedOut ? "process_timeout" : "process_cancelled";
+        }
+        if (terminalStatus === "succeeded" && appExitCode !== 0) {
+          fatalError ??= new NativeProcessUnavailableError(
+            "Rust process host reported success without a zero exit code",
+            appExitCode === null ? "exit_code_missing" : "terminal_success_exit_mismatch",
+            true,
+          );
+          terminalSeen = true;
           return;
         }
         if (frame.cleanupProven !== true || frame.receiptWritten !== true) {
           fatalError ??= new NativeProcessUnavailableError(
             "Rust process host could not prove process-tree cleanup and receipt durability",
-            typeof frame.errorCode === "string" ? frame.errorCode : "cleanup_unproven",
+            frameErrorCode ?? "cleanup_unproven",
             true,
           );
           terminalSeen = true;

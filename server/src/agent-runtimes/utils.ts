@@ -4,17 +4,18 @@
 import { logger } from "../middleware/logger.js";
 export {
   appendWithCap, asBoolean, asNumber, asString, asStringArray, buildRudderEnv,
+  createNativeProcessAuthority,
   defaultPathForPlatform, ensureAbsoluteDirectory,
-  ensureCommandResolvable, ensurePathInEnv, killChildProcessTree, MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, parseJson, parseObject, redactEnvForLogs, renderTemplate, resolvePathValue, runningProcesses, type RunProcessResult
+  ensureCommandResolvable, ensurePathInEnv, killChildProcessTree, MAX_CAPTURE_BYTES, MAX_EXCERPT_BYTES, parseJson, parseObject, redactEnvForLogs, renderTemplate, resolvePathValue, resolveSpawnTarget, runningProcesses, type RunProcessResult
 } from "@rudderhq/agent-runtime-utils/server-utils";
 
 // Re-export runChildProcess with the server's pino logger wired in.
+import type { NativeProcessAuthority } from "@rudderhq/agent-runtime-utils";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   runChildProcess as _runChildProcess,
   runNativeChildProcessV2 as _runNativeChildProcessV2,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import type { NativeProcessAuthority } from "@rudderhq/agent-runtime-utils";
 
 export async function runChildProcess(
   runId: string,

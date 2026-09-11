@@ -20,6 +20,11 @@ interface ModelFallbackExecutionOptions {
   resolveAdapter?: (agentRuntimeType: string) => ServerAgentRuntimeModule | null;
   createAuthToken?: (agentRuntimeType: string) => string | undefined;
   onAttemptStart?: (attempt: ModelAttemptSpec, adapter: ServerAgentRuntimeModule) => Promise<void> | void;
+  /** Issued by the trusted runtime caller after the durable attempt is started. */
+  issueNativeProcessAuthority?: (
+    attempt: ModelAttemptSpec,
+    adapter: ServerAgentRuntimeModule,
+  ) => Promise<AgentRuntimeExecutionContext["nativeProcessAuthority"] | undefined> | AgentRuntimeExecutionContext["nativeProcessAuthority"] | undefined;
   /** Called only when this attempt failed and the next fallback will run. */
   onAttemptFailure?: (attempt: ModelAttemptSpec, failure: AgentRuntimeExecutionResult | Error) => Promise<void> | void;
   /** Resume a network-suspended fallback at its persisted model cursor. */
@@ -364,8 +369,12 @@ export async function executeAdapterWithModelFallbacks(
         isFallback: attempt.isFallback,
       }) ?? null;
       await options.onAttemptStart?.(attempt, attemptAdapter);
+      const issuedNativeProcessAuthority = await options.issueNativeProcessAuthority?.(attempt, attemptAdapter);
+      const attemptExecutionContext = issuedNativeProcessAuthority
+        ? { ...attemptContext, nativeProcessAuthority: issuedNativeProcessAuthority }
+        : attemptContext;
       const result = await attemptAdapter.execute({
-        ...attemptContext,
+        ...attemptExecutionContext,
         controlAttempt: controlAttempt ?? undefined,
         onMeta: ctx.onMeta
           ? async (meta) => {

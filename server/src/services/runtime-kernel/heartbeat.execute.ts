@@ -71,6 +71,14 @@ import {
   type HeartbeatAttemptRef,
 } from "./heartbeat-attempt-ledger.js";
 import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
+import {
+  issueNativeProcessAuthorityForAttempt,
+} from "./native-process-authority.js";
+import {
+  buildRuntimeAttemptCheckpoint,
+  mergeRuntimeAttemptCheckpoint,
+  persistRuntimeAttemptCheckpoint,
+} from "./runtime-attempt-adapter.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -190,13 +198,43 @@ export function createHeartbeatExecuteHandlers(context: any) {
     const executionAbortController = runAbortControllers.get(run.id) ?? new AbortController();
     runAbortControllers.set(run.id, executionAbortController);
     let activeAttemptRef: HeartbeatAttemptRef | null = null;
+    let activeNativeProcessAuthority: any = undefined;
     let networkSuspended = false;
     const finishActiveAttempt = async (input: Record<string, unknown>) => {
       const ref = activeAttemptRef;
       activeAttemptRef = null;
       if (!ref) return;
+      const checkpoint = activeAttemptSpec
+        ? buildRuntimeAttemptCheckpoint({
+            orgId: run.orgId,
+            runId: run.id,
+            agentId: run.agentId,
+            executionOwnerToken,
+            executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+            attemptIndex: activeAttemptSpec.ledgerIndex,
+            fallbackIndex: activeAttemptSpec.fallbackIndex,
+            runtimeType: activeAttemptSpec.runtimeType,
+            model: activeAttemptSpec.model,
+            isFallback: activeAttemptSpec.isFallback,
+            recoveryAttemptOrdinal: Math.max(0, Math.floor(Number(run.networkWaitAttemptCount) || 0)),
+            resumeSource: run.recoveryCheckpoint?.continuation === "resume_same_session"
+              ? "same_session"
+              : Number(run.networkWaitAttemptCount) > 0
+                ? "pristine_replay"
+                : "fresh",
+            phase: input.status as any,
+            authority: activeNativeProcessAuthority,
+            evidence: {
+              errorCode: input.errorCode ?? null,
+              error: input.error ?? null,
+            },
+          })
+        : null;
       try {
-        await finishHeartbeatRunAttempt(db, ref, input as any);
+        await finishHeartbeatRunAttempt(db, ref, {
+          ...input,
+          ...(checkpoint ? { checkpointJson: checkpoint } : {}),
+        } as any);
       } catch (error) {
         logger.warn({ err: error, runId: runId, attemptIndex: ref.attemptIndex }, "failed to persist heartbeat attempt terminal state");
       }
@@ -274,7 +312,14 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let shouldCompleteTerminalEffects = false;
     let assignmentRecoveryEligible = false;
     let assignmentRecoveryRequestedAt: Date | null = null;
-    let activeAttemptSpec: { index: number; fallbackIndex: number | null } | null = null;
+    let activeAttemptSpec: {
+      index: number;
+      ledgerIndex: number;
+      fallbackIndex: number | null;
+      runtimeType: string;
+      model: string | null;
+      isFallback: boolean;
+    } | null = null;
     const finalizeExecutionTranscript = () => {
       stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
         buffer: stdoutTranscriptBuffer,
@@ -1036,8 +1081,27 @@ export function createHeartbeatExecuteHandlers(context: any) {
         onAttemptStart: async (attempt, attemptAdapter) => {
           activeAttemptSpec = {
             index: attempt.index,
+            ledgerIndex: resolveLedgerAttemptIndex(attempt),
             fallbackIndex: attempt.fallbackIndex,
+            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
+            model: attempt.model,
+            isFallback: attempt.isFallback,
           };
+          const initialCheckpoint = buildRuntimeAttemptCheckpoint({
+            orgId: run.orgId,
+            runId: run.id,
+            agentId: run.agentId,
+            executionOwnerToken,
+            executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+            attemptIndex: resolveLedgerAttemptIndex(attempt),
+            fallbackIndex: attempt.fallbackIndex,
+            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
+            model: attempt.model,
+            isFallback: attempt.isFallback,
+            recoveryAttemptOrdinal,
+            resumeSource: attemptResumeSource,
+            phase: "executing",
+          });
           activeAttemptRef = await persistAttempt("started", () => beginHeartbeatRunAttempt(db, {
             orgId: run.orgId,
             runId: run.id,
@@ -1048,8 +1112,43 @@ export function createHeartbeatExecuteHandlers(context: any) {
             model: attempt.model,
             isFallback: attempt.isFallback,
             resumeSource: attemptResumeSource,
+            checkpointJson: initialCheckpoint,
           }));
           stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
+        },
+        issueNativeProcessAuthority: async (attempt, attemptAdapter) => {
+          if (attemptAdapter.type !== "process") return undefined;
+          const authority = issueNativeProcessAuthorityForAttempt({
+            run: {
+              id: run.id,
+              orgId: run.orgId,
+              agentId: run.agentId,
+              executionOwnerToken,
+              executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+            },
+            attemptIndex: resolveLedgerAttemptIndex(attempt),
+          });
+          activeNativeProcessAuthority = authority;
+          if (authority && activeAttemptRef) {
+            const checkpoint = buildRuntimeAttemptCheckpoint({
+              orgId: run.orgId,
+              runId: run.id,
+              agentId: run.agentId,
+              executionOwnerToken,
+              executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+              attemptIndex: resolveLedgerAttemptIndex(attempt),
+              fallbackIndex: attempt.fallbackIndex,
+              runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
+              model: attempt.model,
+              isFallback: attempt.isFallback,
+              recoveryAttemptOrdinal,
+              resumeSource: attemptResumeSource,
+              phase: "executing",
+              authority,
+            });
+            await persistAttempt("authority_checkpoint", () => persistRuntimeAttemptCheckpoint(db, activeAttemptRef, checkpoint));
+          }
+          return authority;
         },
         onAttemptFailure: async (_attempt, failure) => {
           const failureRecord = failure && typeof failure === "object" ? failure as Record<string, unknown> : null;
@@ -1175,6 +1274,24 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ?? adapterResult.sessionParams
           ?? runtimeForAdapter.sessionParams
           ?? null;
+        const durableAttemptCheckpoint = buildRuntimeAttemptCheckpoint({
+          orgId: run.orgId,
+          runId: run.id,
+          agentId: run.agentId,
+          executionOwnerToken,
+          executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+          attemptIndex: activeAttemptSpec?.ledgerIndex ?? waitAttempt,
+          fallbackIndex: activeAttemptSpec?.fallbackIndex ?? null,
+          runtimeType: activeAttemptSpec?.runtimeType ?? agent.agentRuntimeType,
+          model: activeAttemptSpec?.model ?? null,
+          isFallback: activeAttemptSpec?.isFallback ?? false,
+          recoveryAttemptOrdinal: waitAttempt,
+          resumeSource: attemptResumeSource,
+          phase: "waiting_for_network",
+          authority: activeNativeProcessAuthority,
+          evidence: checkpoint,
+        });
+        const durableWaitingCheckpoint = mergeRuntimeAttemptCheckpoint(checkpoint, durableAttemptCheckpoint);
         const waitingRun = await db
           .update(heartbeatRuns)
           .set({
@@ -1210,7 +1327,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           providerTurnId: networkSuspension.providerTurnId ?? adapterResult.providerTurnId,
           sessionDisplayId: resumedSessionId,
           sessionParamsJson: resumedSessionParams,
-          checkpointJson: checkpoint,
+          checkpointJson: durableWaitingCheckpoint,
           errorCode: networkSuspension.code ?? "provider_transport_unavailable",
           error: networkSuspension.message ?? null,
           suspendedAt: now,
@@ -1263,7 +1380,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const forbiddenMarkerScan = buildForbiddenMarkerScan(adapterResult.resultJson ?? null);
 
       let outcome: "succeeded" | "failed" | "cancelled" | "timed_out";
-      const adapterWouldHaveSucceeded = (adapterResult.exitCode ?? 0) === 0 && !adapterResult.errorMessage;
+      const adapterWouldHaveSucceeded = adapterResult.exitCode === 0 && !adapterResult.errorMessage && !adapterResult.errorCode;
       const latestRun = await getRun(run.id);
       if (latestRun?.status === "cancelled") {
         outcome = "cancelled";
