@@ -281,7 +281,12 @@ fn quote_identifier(identifier: &str) -> String {
 static DISPOSABLE_SCHEMA_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn schema_name_for(nanos: u128, sequence: u64) -> String {
-    format!("rudder_issue_mutation_{}_{}_{}", process::id(), nanos, sequence)
+    format!(
+        "rudder_issue_mutation_{}_{}_{}",
+        process::id(),
+        nanos,
+        sequence
+    )
 }
 
 fn disposable_schema_name() -> String {
