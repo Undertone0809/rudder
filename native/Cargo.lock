@@ -1446,6 +1446,7 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-runtime-core"
 version = "0.7.21"
 dependencies = [
  "serde",
