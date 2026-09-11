@@ -486,7 +486,7 @@ function ManagedSetupPane({
                 `/library?directory=${encodeURIComponent(entry.app.sourceRoot)}`,
               )}
             >
-              Open source
+              Open in Finder
             </Button>
           </div>
           {retryMutation.error ? (

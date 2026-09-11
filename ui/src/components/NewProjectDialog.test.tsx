@@ -237,7 +237,7 @@ describe("NewProjectDialog", () => {
 
     const sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]');
     expect(sourceDialog).not.toBeNull();
-    expect(sourceDialog?.textContent).toContain("Add from library");
+    expect(sourceDialog?.textContent).not.toContain("Add from library");
     expect(sourceDialog?.textContent).toContain("Select from local");
     expect(sourceDialog?.textContent).toContain("Add from URL");
     expect(sourceDialog?.textContent).not.toContain("Search Library");
@@ -294,38 +294,16 @@ describe("NewProjectDialog", () => {
     expect(submittedData).not.toHaveProperty("goalIds");
   });
 
-  it("keeps Library search inside its own source step", () => {
-    vi.useFakeTimers();
-    mockState.libraryEntries = [
-      {
-        name: "brief.md",
-        displayLabel: "Project brief",
-        path: "projects/rudder/brief.md",
-        isDirectory: false,
-      },
-    ];
+  it("does not expose the library source step when creating a project", () => {
     const container = renderDialog();
     const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("Add sources"));
 
     act(() => trigger!.click());
-    let sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
-    const libraryButton = [...sourceDialog.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("Add from library"));
-    act(() => libraryButton!.click());
-    sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
+    const sourceDialog = container.querySelector('[data-testid="new-project-add-sources-dialog"]')!;
 
-    const libraryScroll = sourceDialog.querySelector<HTMLElement>("[data-testid='new-project-library-sources-scroll']");
-    expect(libraryScroll).not.toBeNull();
-    act(() => libraryScroll!.dispatchEvent(new Event("scroll")));
-    expect(libraryScroll?.classList.contains("is-scrolling")).toBe(true);
-    act(() => vi.advanceTimersByTime(700));
-    expect(libraryScroll?.classList.contains("is-scrolling")).toBe(false);
-    expect(sourceDialog.querySelector("input[placeholder='Search Library or paste relative path']")).not.toBeNull();
-    expect(sourceDialog.textContent).toContain("Project brief");
-    expect(sourceDialog.textContent).not.toContain("Recent sources");
-    expect(sourceDialog.querySelector("input[type='url']")).toBeNull();
-    vi.useRealTimers();
+    expect(sourceDialog.textContent).not.toContain("Add from library");
+    expect(sourceDialog.querySelector("[data-testid='new-project-library-sources-scroll']")).toBeNull();
   });
 
   it("reuses recent local sources and keeps direct file selection available", async () => {

@@ -621,7 +621,7 @@ test.describe("Apps workspace", () => {
     });
     await expect(page.getByRole("heading", { name: "The App could not open" })).toBeVisible();
     await expect(page.getByTestId("apps-ask-ai")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open source" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open in Finder" })).toHaveCount(0);
     await page.screenshot({
       path: `/tmp/rudder-apps-e2e-failure-${testInfo.workerIndex}.png`,
       fullPage: true,
@@ -1029,7 +1029,7 @@ test.describe("Apps workspace", () => {
     });
   });
 
-  test("preserves recovery when automatic App startup fails", async ({ page }) => {
+  test("preserves recovery when automatic App startup fails", async ({ page }, testInfo) => {
     const organization = await createOrganization(page.request, "App-Auto-Failure");
     await setPluginsEnabled(page.request, true);
     const createdResponse = await page.request.post(
@@ -1094,7 +1094,15 @@ test.describe("Apps workspace", () => {
       `${E2E_BASE_URL}/${organization.issuePrefix}/apps/view/managed%3A${created.id}`,
     );
     await expect(page.getByTestId("apps-retry-managed-app")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open source" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open in Finder" })).toBeVisible();
+    const managedAppEntry = page.getByTestId(`apps-entry-managed:${created.id}`);
+    await managedAppEntry.hover();
+    await page.getByTestId(`apps-more-managed:${created.id}`).click();
+    await expect(page.getByRole("menuitem", { name: "Open in Finder" })).toBeVisible();
+    await page.screenshot({
+      path: `/tmp/rudder-app-builder-finder-menu-${testInfo.workerIndex}.png`,
+      fullPage: true,
+    });
   });
 
   test("keeps App Builder records organization-scoped", async ({ request }) => {
