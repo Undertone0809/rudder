@@ -28,6 +28,7 @@ use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
 mod authority;
+mod evidence_read;
 mod identity;
 mod read_surfaces;
 mod workspace_backup_files;
@@ -35,9 +36,13 @@ mod workspace_backup_files;
 pub use authority::{
     AUTHORITY_ENDPOINT, AUTHORITY_RECEIPT_SCHEMA, AuthorityReceipt, AuthorityRouteReceipt,
 };
+pub use evidence_read::TrustedRunEvidence;
 pub use identity::{BuildIdentity, ServerIdentity};
 
 use authority::{AuthorityAdapterError, AuthorityRegistry, parse_route_selector};
+use evidence_read::{
+    EVIDENCE_READ_ROUTE, EvidenceReadAdapter, EvidenceReadError, EvidenceReadQuery,
+};
 
 use read_surfaces::{
     ACTIVITY_LIST_ROUTE, AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, APPROVAL_GET_ROUTE,
@@ -89,6 +94,7 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "approval_read_surfaces",
     "activity_read_surfaces",
     "run_read_surfaces",
+    "run_evidence_read",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -145,6 +151,9 @@ pub struct ServerConfig {
     /// Organization scope injected by a trusted host/runtime adapter. It is
     /// never read from request headers or query parameters.
     pub trusted_organization_scope: Option<OrganizationScope>,
+    /// Run evidence capabilities injected by a trusted host. Request paths can
+    /// select only a run identity already present in this allowlisted set.
+    pub trusted_run_evidence: Vec<TrustedRunEvidence>,
     pub workers: usize,
 }
 
@@ -163,6 +172,7 @@ impl Default for ServerConfig {
             database_url: None,
             database_required: false,
             trusted_organization_scope: None,
+            trusted_run_evidence: Vec::new(),
             workers: DEFAULT_WORKERS,
         }
     }
@@ -275,6 +285,12 @@ impl ServerConfig {
                 "database URL is required when database readiness is enabled",
             ));
         }
+        if !self.trusted_run_evidence.is_empty() && self.trusted_organization_scope.is_none() {
+            return Err(ConfigError::invalid(
+                "RUDDER_NATIVE_RUN_EVIDENCE",
+                "trusted organization scope is required for run evidence capabilities",
+            ));
+        }
         Ok(())
     }
 
@@ -295,6 +311,11 @@ impl ServerConfig {
         self.trusted_organization_scope = Some(scope);
         self
     }
+
+    pub fn with_trusted_run_evidence(mut self, evidence: Vec<TrustedRunEvidence>) -> Self {
+        self.trusted_run_evidence = evidence;
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -305,6 +326,8 @@ pub enum ConfigError {
     DatabaseUrl,
     #[error("authority inventory is invalid")]
     Authority,
+    #[error("run evidence configuration is invalid")]
+    Evidence,
 }
 
 impl ConfigError {
@@ -512,6 +535,7 @@ struct AppState {
     database: DatabaseState,
     read_surfaces: Option<ReadSurfaceAdapter>,
     activity_runs: Option<ActivityRunReadAdapter>,
+    evidence_read: Option<EvidenceReadAdapter>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     started_at: Instant,
@@ -683,6 +707,13 @@ impl AppState {
             )),
             _ => None,
         };
+        let evidence_read = match config.trusted_organization_scope.clone() {
+            Some(scope) if !config.trusted_run_evidence.is_empty() => Some(
+                EvidenceReadAdapter::new(scope, config.trusted_run_evidence.clone())
+                    .map_err(|_| ConfigError::Evidence)?,
+            ),
+            _ => None,
+        };
         Ok(Self {
             admission: Arc::new(RequestAdmission::new(
                 config.workers,
@@ -693,6 +724,7 @@ impl AppState {
             database,
             read_surfaces,
             activity_runs,
+            evidence_read,
             started_at: Instant::now(),
             authority: Arc::new(authority),
             authority_receipt,
@@ -1053,6 +1085,45 @@ impl AppState {
         match adapter.list_runs(org_id, filter, page).await {
             Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
             Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_evidence(
+        &self,
+        org_id: &str,
+        run_id: &str,
+        query: &EvidenceReadQuery,
+    ) -> HttpResponse {
+        let Some(adapter) = &self.evidence_read else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "evidence_read_unavailable");
+        };
+        let request = match query.parse() {
+            Ok(request) => request,
+            Err(_) => {
+                return self.json_error(StatusCode::BAD_REQUEST, "evidence_read_query_invalid");
+            }
+        };
+        let adapter = adapter.clone();
+        let organization_id = org_id.to_owned();
+        let run_id = run_id.to_owned();
+        let result =
+            tokio::task::spawn_blocking(move || adapter.read(&organization_id, &run_id, request))
+                .await;
+        match result {
+            Ok(Ok(page)) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Ok(Err(EvidenceReadError::NotFound)) => {
+                self.json_error(StatusCode::NOT_FOUND, "evidence_read_not_found")
+            }
+            Ok(Err(EvidenceReadError::InvalidRequest)) => {
+                self.json_error(StatusCode::BAD_REQUEST, "evidence_read_query_invalid")
+            }
+            Ok(Err(EvidenceReadError::InvalidInput)) => self.json_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "evidence_read_input_invalid",
+            ),
+            Ok(Err(EvidenceReadError::Backend)) | Err(_) => {
+                self.json_error(StatusCode::SERVICE_UNAVAILABLE, "evidence_read_failed")
+            }
         }
     }
 
@@ -1546,6 +1617,15 @@ async fn read_runs(
     state.read_runs(route.as_str(), &query).await
 }
 
+async fn read_evidence(
+    state: web::Data<AppState>,
+    route: web::Path<(String, String)>,
+    query: web::Query<EvidenceReadQuery>,
+) -> HttpResponse {
+    let (org_id, run_id) = route.into_inner();
+    state.read_evidence(&org_id, &run_id, &query).await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -1621,6 +1701,7 @@ impl ServerRuntime {
                 .route(APPROVAL_GET_ROUTE, web::get().to(read_approval))
                 .route(ACTIVITY_LIST_ROUTE, web::get().to(read_activity))
                 .route(RUNS_LIST_ROUTE, web::get().to(read_runs))
+                .route(EVIDENCE_READ_ROUTE, web::get().to(read_evidence))
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),
@@ -1974,5 +2055,25 @@ mod tests {
         assert_eq!(runs.status(), StatusCode::SERVICE_UNAVAILABLE);
         let runs_body = actix_web::body::to_bytes(runs.into_body()).await.unwrap();
         assert!(String::from_utf8_lossy(&runs_body).contains("read_surface_unavailable"));
+    }
+
+    #[test]
+    fn run_evidence_capabilities_require_a_trusted_organization_scope() {
+        let capability = TrustedRunEvidence::from_host(
+            "org-a",
+            "run-a",
+            PathBuf::from("/tmp/rudder-run-evidence.log"),
+        )
+        .expect("host capability");
+        let error = ServerRuntime::bind(ServerConfig {
+            trusted_run_evidence: vec![capability],
+            ..ServerConfig::default()
+        });
+
+        assert!(matches!(
+            error,
+            Err(ServerError::Config(ConfigError::Invalid { field, .. }))
+                if field == "RUDDER_NATIVE_RUN_EVIDENCE"
+        ));
     }
 }
