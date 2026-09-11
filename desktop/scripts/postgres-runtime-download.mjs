@@ -143,7 +143,7 @@ async function streamArchive(readable, targetPath, options) {
     if (expectedLength !== null && bytes !== expectedLength) {
       throw new ArchiveDownloadError(
         "PostgreSQL runtime archive response was truncated or had an invalid content-length",
-        { retryable: false },
+        { retryable: true },
       );
     }
     if (!digestMatches(hash.digest("hex"), expectedSha256)) {

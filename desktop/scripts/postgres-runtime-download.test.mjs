@@ -113,6 +113,7 @@ describe("PostgreSQL runtime archive download", () => {
 
     await expect(downloadPostgresRuntimeArchive("https://example.test/archive.zip", target, {
       expectedSha256: sha256(contents),
+      maxAttempts: 1,
       fetchImpl: async () => responseFor(readableBody(contents), 10),
     })).rejects.toThrow("truncated");
     await expect(fs.access(target)).rejects.toThrow();
@@ -153,6 +154,31 @@ describe("PostgreSQL runtime archive download", () => {
         };
       }
       return responseFor(readableBody(contents));
+    });
+
+    await downloadPostgresRuntimeArchive("https://example.test/archive.zip", target, {
+      expectedSha256: sha256(contents),
+      maxAttempts: 2,
+      retryDelayMs: 1,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe(contents);
+    await expect(fs.readdir(root)).resolves.toEqual(["archive.zip"]);
+  });
+
+  it("retries a truncated response after removing the partial archive", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-postgres-download-stream-retry-"));
+    roots.push(root);
+    const target = path.join(root, "archive.zip");
+    const contents = "verified stream retry";
+    let attempts = 0;
+    const fetchImpl = vi.fn(async () => {
+      attempts += 1;
+      return attempts === 1
+        ? responseFor(readableBody("partial archive"), 100)
+        : responseFor(readableBody(contents));
     });
 
     await downloadPostgresRuntimeArchive("https://example.test/archive.zip", target, {
