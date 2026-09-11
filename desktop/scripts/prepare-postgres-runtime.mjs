@@ -4,6 +4,7 @@ import { copyFile, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, wri
 import os from "node:os";
 import path from "node:path";
 import { downloadPostgresRuntimeArchive } from "./postgres-runtime-download.mjs";
+import { resolvePostgresRuntimeArchiveSource } from "./postgres-runtime-source.mjs";
 
 const POSTGRES_VERSION = "18.4";
 const runtimeDirName = `postgres-${POSTGRES_VERSION}`;
@@ -21,16 +22,11 @@ function executableName(name) {
   return platform === "win32" ? `${name}.exe` : name;
 }
 
-function archiveUrl() {
-  if (process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL) {
-    return process.env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL;
-  }
+function archiveSource() {
+  const source = resolvePostgresRuntimeArchiveSource(platform, arch, process.env);
+  if (source) return source;
   if (platform === "win32") {
-    if (arch !== "x64") throw new Error(`PostgreSQL ${POSTGRES_VERSION} Windows payload is only configured for x64; got ${arch}`);
-    return `https://get.enterprisedb.com/postgresql/postgresql-${POSTGRES_VERSION}-1-windows-x64-binaries.zip`;
-  }
-  if (platform === "darwin") {
-    return `https://get.enterprisedb.com/postgresql/postgresql-${POSTGRES_VERSION}-1-osx-binaries.zip`;
+    throw new Error(`PostgreSQL ${POSTGRES_VERSION} Windows payload is only configured for x64; got ${arch}`);
   }
   throw new Error(`Automatic PostgreSQL ${POSTGRES_VERSION} runtime provisioning is not configured for ${platform}-${arch}`);
 }
@@ -240,7 +236,7 @@ async function main() {
         console.log(binDir);
         return;
       }
-      const url = archiveUrl();
+      const source = archiveSource();
       const workDir = path.join(path.dirname(runtimeRoot), `.${path.basename(runtimeRoot)}.download-${process.pid}`);
       const archivePath = path.join(workDir, `postgresql-${POSTGRES_VERSION}.zip`);
       const extractDir = path.join(workDir, "extract");
@@ -251,9 +247,11 @@ async function main() {
       await mkdir(extractDir, { recursive: true });
 
       try {
-        console.error(`[postgres-runtime] downloading PostgreSQL ${POSTGRES_VERSION} runtime for ${platform}-${arch} from ${url}`);
+        console.error(`[postgres-runtime] downloading PostgreSQL ${POSTGRES_VERSION} runtime for ${platform}-${arch}`);
         console.error(`[postgres-runtime] first download can be several hundred MB; cache target: ${binDir}`);
-        await downloadPostgresRuntimeArchive(url, archivePath);
+        await downloadPostgresRuntimeArchive(source.url, archivePath, {
+          expectedSha256: source.expectedSha256,
+        });
         extractArchive(archivePath, extractDir);
 
         const extractedBinDir = await findBinDir(extractDir);

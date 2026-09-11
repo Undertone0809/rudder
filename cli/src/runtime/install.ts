@@ -1542,7 +1542,7 @@ async function downloadSharedRuntimePostgresPayload(
 
       const configuredMaxBytes = Number.parseInt(process.env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_MAX_BYTES_ENV] ?? "", 10);
       const maxArchiveBytes = Number.isSafeInteger(configuredMaxBytes) && configuredMaxBytes > 0
-        ? configuredMaxBytes
+        ? Math.min(configuredMaxBytes, DEFAULT_RUNTIME_POSTGRES_ARCHIVE_MAX_BYTES)
         : DEFAULT_RUNTIME_POSTGRES_ARCHIVE_MAX_BYTES;
       const nativePublishStaging = `${sharedPlatformRoot}.tmp-native-${process.pid}-${Date.now()}`;
       await mkdir(path.dirname(sharedPlatformRoot), { recursive: true });
@@ -1616,7 +1616,7 @@ async function downloadSharedRuntimePostgresPayload(
       if (!extractedBinDir) {
         throw new RuntimeInstallError(
           "PostgreSQL 18.4 archive did not contain a complete verified runtime",
-          { cacheDir, command: `download ${archiveUrl}`, output: "" },
+          { cacheDir, command: "download PostgreSQL runtime archive", output: "" },
         );
       }
       return await installSharedRuntimePostgresPayload(
