@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   issueNativeProcessAuthorityForAttempt,
   nativeProcessAuthorityIssuanceEnabled,
+  selectNativeProcessAuthority,
 } from "./native-process-authority.js";
 
 const run = {
@@ -43,5 +44,20 @@ describe("native process authority issuance seam", () => {
       receiptContext: { runtimeRoot: "/tmp/rudder-test-receipts" },
     });
     expect(authority?.bindingDigest).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it("clears a prior process authority when the next attempt is not a process", () => {
+    const authority = issueNativeProcessAuthorityForAttempt({
+      run,
+      attemptIndex: 0,
+      nowMillis: 1_000,
+      env: {
+        RUDDER_NATIVE_PROCESS_AUTHORITY_ISSUANCE: "1",
+      },
+    });
+
+    expect(selectNativeProcessAuthority("process", authority)).toBe(authority);
+    expect(selectNativeProcessAuthority("claude_local", authority)).toBeUndefined();
+    expect(selectNativeProcessAuthority("process", undefined)).toBeUndefined();
   });
 });

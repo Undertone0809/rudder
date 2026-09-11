@@ -73,6 +73,7 @@ import {
 import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 import {
   issueNativeProcessAuthorityForAttempt,
+  selectNativeProcessAuthority,
 } from "./native-process-authority.js";
 import {
   buildRuntimeAttemptCheckpoint,
@@ -1117,19 +1118,20 @@ export function createHeartbeatExecuteHandlers(context: any) {
           stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
         },
         issueNativeProcessAuthority: async (attempt, attemptAdapter) => {
-          if (attemptAdapter.type !== "process") return undefined;
-          const authority = issueNativeProcessAuthorityForAttempt({
-            run: {
-              id: run.id,
-              orgId: run.orgId,
-              agentId: run.agentId,
-              executionOwnerToken,
-              executionLeaseExpiresAt: run.executionLeaseExpiresAt,
-            },
-            attemptIndex: resolveLedgerAttemptIndex(attempt),
-          });
-          activeNativeProcessAuthority = authority;
-          if (authority && activeAttemptRef) {
+          const authority = attemptAdapter.type === "process"
+            ? issueNativeProcessAuthorityForAttempt({
+                run: {
+                  id: run.id,
+                  orgId: run.orgId,
+                  agentId: run.agentId,
+                  executionOwnerToken,
+                  executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+                },
+                attemptIndex: resolveLedgerAttemptIndex(attempt),
+              })
+            : undefined;
+          activeNativeProcessAuthority = selectNativeProcessAuthority(attemptAdapter.type, authority);
+          if (activeNativeProcessAuthority && activeAttemptRef) {
             const checkpoint = buildRuntimeAttemptCheckpoint({
               orgId: run.orgId,
               runId: run.id,
@@ -1144,11 +1146,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
               recoveryAttemptOrdinal,
               resumeSource: attemptResumeSource,
               phase: "executing",
-              authority,
+              authority: activeNativeProcessAuthority,
             });
             await persistAttempt("authority_checkpoint", () => persistRuntimeAttemptCheckpoint(db, activeAttemptRef, checkpoint));
           }
-          return authority;
+          return activeNativeProcessAuthority;
         },
         onAttemptFailure: async (_attempt, failure) => {
           const failureRecord = failure && typeof failure === "object" ? failure as Record<string, unknown> : null;

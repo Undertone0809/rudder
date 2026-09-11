@@ -34,6 +34,13 @@ export function nativeProcessAuthorityIssuanceEnabled(
   return env[NATIVE_PROCESS_AUTHORITY_ISSUANCE_ENV] === "1";
 }
 
+export function selectNativeProcessAuthority(
+  attemptType: string,
+  authority: NativeProcessAuthority | undefined,
+): NativeProcessAuthority | undefined {
+  return attemptType === "process" ? authority : undefined;
+}
+
 export function issueNativeProcessAuthorityForAttempt(input: {
   run: NativeProcessAuthorityRun;
   attemptIndex: number;
