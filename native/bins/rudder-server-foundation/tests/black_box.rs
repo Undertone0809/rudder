@@ -1,7 +1,9 @@
 #![cfg(unix)]
 
 use rudder_archive_core::create_archive;
-use rudder_server_foundation_core::{OrganizationScope, ServerConfig, ServerRuntime};
+use rudder_server_foundation_core::{
+    OrganizationScope, ServerConfig, ServerRuntime, TrustedRunEvidence,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
@@ -183,7 +185,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
     assert_eq!(
         startup["routeAuthority"]["routes"].as_array().map(Vec::len),
-        Some(24)
+        Some(25)
     );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
@@ -204,7 +206,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "issue_read_surfaces",
             "approval_read_surfaces",
             "activity_read_surfaces",
-            "run_read_surfaces"
+            "run_read_surfaces",
+            "run_evidence_read"
         ])
     );
 
@@ -228,6 +231,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("organization_read_surfaces"));
     assert!(capabilities.contains("activity_read_surfaces"));
     assert!(capabilities.contains("run_read_surfaces"));
+    assert!(capabilities.contains("run_evidence_read"));
 
     let read_without_scope = get_with_retry(bound_addr, "/internal/read-surfaces/v1/organizations");
     assert!(
@@ -251,6 +255,16 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "{path}: {response}"
         );
     }
+    let evidence_without_capability = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs/00000000-0000-0000-0000-000000000002/evidence",
+    );
+    assert!(
+        evidence_without_capability.starts_with("HTTP/1.1 503"),
+        "{evidence_without_capability}"
+    );
+    assert!(evidence_without_capability.contains("evidence_read_unavailable"));
+
     for path in [
         "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/issues?limit=1001",
         "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/approvals?limit=1001",
@@ -331,6 +345,71 @@ fn health_and_readiness_expose_non_authoritative_identity() {
     }
 
     stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn trusted_run_evidence_route_reads_only_a_host_issued_capability() {
+    const ORG_ID: &str = "00000000-0000-0000-0000-000000000001";
+    const RUN_ID: &str = "00000000-0000-0000-0000-000000000002";
+    let root = TempDir::new().expect("evidence fixture root");
+    let log_path = root.path().join("run.ndjson");
+    fs::write(
+        &log_path,
+        b"{\"ts\":\"2026-09-11T00:00:00Z\",\"stream\":\"stdout\",\"chunk\":\"hello\"}\n",
+    )
+    .expect("evidence fixture");
+    let log_path_text = log_path.to_string_lossy().into_owned();
+    let capability =
+        TrustedRunEvidence::from_host(ORG_ID, RUN_ID, log_path).expect("host evidence capability");
+    let config = ServerConfig {
+        listen_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        trusted_organization_scope: Some(
+            OrganizationScope::single(ORG_ID).expect("trusted organization scope"),
+        ),
+        trusted_run_evidence: vec![capability],
+        ..Default::default()
+    };
+    let runtime = ServerRuntime::bind(config).expect("bind evidence server");
+    let bound_addr = runtime.bound_addr();
+    let control = runtime.control();
+    let server = tokio::spawn(runtime.run());
+
+    let path =
+        format!("/internal/read-surfaces/v1/orgs/{ORG_ID}/runs/{RUN_ID}/evidence?limitBytes=1024");
+    let response = tokio::task::spawn_blocking(move || get_with_retry(bound_addr, &path))
+        .await
+        .expect("evidence request task");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let body = response_json(&response);
+    assert!(
+        body["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("hello"))
+    );
+    assert!(!response.contains(&log_path_text));
+
+    let foreign = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/runs/00000000-0000-0000-0000-000000000002/evidence",
+    );
+    assert!(foreign.starts_with("HTTP/1.1 404"), "{foreign}");
+    let missing = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs/00000000-0000-0000-0000-000000000099/evidence",
+    );
+    assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
+    let invalid_limit = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs/00000000-0000-0000-0000-000000000002/evidence?limitBytes=1000001",
+    );
+    assert!(invalid_limit.starts_with("HTTP/1.1 400"), "{invalid_limit}");
+
+    control.shutdown().await;
+    server
+        .await
+        .expect("evidence server task")
+        .expect("evidence server shutdown");
 }
 
 #[cfg(unix)]
@@ -640,7 +719,7 @@ fn authority_introspection_is_versioned_bounded_and_fail_closed() {
     assert_eq!(startup["nodeAuthorityUnchanged"], true);
 
     let routes = startup["routes"].as_array().expect("authority routes");
-    assert_eq!(routes.len(), 24);
+    assert_eq!(routes.len(), 25);
     assert!(routes.iter().any(|route| {
         route["routeId"] == "foundation.authority"
             && route["decision"] == "rust"
@@ -650,6 +729,12 @@ fn authority_introspection_is_versioned_bounded_and_fail_closed() {
         route["routeId"] == "node.product_http"
             && route["decision"] == "legacy"
             && route["owner"] == "legacy"
+    }));
+    assert!(routes.iter().any(|route| {
+        route["routeId"] == "foundation.run_evidence_read"
+            && route["path"] == "/internal/read-surfaces/v1/orgs/{org_id}/runs/{run_id}/evidence"
+            && route["decision"] == "rust"
+            && route["owner"] == "rust"
     }));
 
     let selected = response_json(&get_with_retry(
@@ -1384,7 +1469,7 @@ fn spawn_server(overrides: &[(&str, &str)]) -> (Child, BufReader<ChildStdout>, S
     assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
     assert_eq!(
         startup["routeAuthority"]["routes"].as_array().map(Vec::len),
-        Some(24)
+        Some(25)
     );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()

@@ -1806,6 +1806,7 @@ dependencies = [
  "rudder-authority-core",
  "rudder-db-core",
  "rudder-read-surfaces-core",
+ "rudder-run-evidence-core",
  "serde",
  "serde_json",
  "sha2",
