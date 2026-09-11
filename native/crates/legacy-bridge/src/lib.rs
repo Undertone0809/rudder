@@ -356,6 +356,7 @@ impl LegacyBridgeRequest {
         body: Value,
         request_id: impl Into<String>,
         nonce: impl Into<String>,
+        issued_at: u64,
         expires_at: u64,
     ) -> Result<Self, BridgeError> {
         let body_bytes = serde_json::to_vec(&body).map_err(BridgeError::BodyEncoding)?;
@@ -367,6 +368,7 @@ impl LegacyBridgeRequest {
             &body_bytes,
             request_id,
             nonce,
+            issued_at,
             expires_at,
         )
         .map_err(BridgeError::Authority)?;

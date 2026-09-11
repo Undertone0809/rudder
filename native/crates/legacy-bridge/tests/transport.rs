@@ -38,7 +38,8 @@ fn request(authority: &ComponentAuthority, request_id: &str, nonce: &str) -> Leg
         &body_bytes,
         request_id,
         nonce,
-        2_000,
+        900,
+        1_200,
     )
     .expect("envelope");
     LegacyBridgeRequest::new(envelope, body)
@@ -353,7 +354,8 @@ fn oversized_body_is_rejected_by_the_client_codec() {
         body,
         "request-large",
         "nonce-large",
-        2_000,
+        900,
+        1_200,
     )
     .expect("request");
     let mut client = LegacyBridgeClient::connect(&socket, config).expect("connect bridge");
