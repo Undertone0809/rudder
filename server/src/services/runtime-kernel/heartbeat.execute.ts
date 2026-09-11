@@ -65,21 +65,12 @@ import {
   type AssignmentRunGuardrailCheckpoint,
 } from "./assignment-run-guardrail.js";
 import {
-  beginHeartbeatRunAttempt,
-  finishHeartbeatRunAttempt,
   markHeartbeatRunAttemptWaiting,
-  type HeartbeatAttemptRef,
 } from "./heartbeat-attempt-ledger.js";
 import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 import {
-  issueNativeProcessAuthorityForAttempt,
-  selectNativeProcessAuthority,
-} from "./native-process-authority.js";
-import {
-  buildRuntimeAttemptCheckpoint,
-  mergeRuntimeAttemptCheckpoint,
-  persistRuntimeAttemptCheckpoint,
-} from "./runtime-attempt-adapter.js";
+  createHeartbeatAttemptLifecycle,
+} from "./heartbeat-attempt-lifecycle.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -198,48 +189,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     }
     const executionAbortController = runAbortControllers.get(run.id) ?? new AbortController();
     runAbortControllers.set(run.id, executionAbortController);
-    let activeAttemptRef: HeartbeatAttemptRef | null = null;
-    let activeNativeProcessAuthority: any = undefined;
     let networkSuspended = false;
-    const finishActiveAttempt = async (input: Record<string, unknown>) => {
-      const ref = activeAttemptRef;
-      activeAttemptRef = null;
-      if (!ref) return;
-      const checkpoint = activeAttemptSpec
-        ? buildRuntimeAttemptCheckpoint({
-            orgId: run.orgId,
-            runId: run.id,
-            agentId: run.agentId,
-            executionOwnerToken,
-            executionLeaseExpiresAt: run.executionLeaseExpiresAt,
-            attemptIndex: activeAttemptSpec.ledgerIndex,
-            fallbackIndex: activeAttemptSpec.fallbackIndex,
-            runtimeType: activeAttemptSpec.runtimeType,
-            model: activeAttemptSpec.model,
-            isFallback: activeAttemptSpec.isFallback,
-            recoveryAttemptOrdinal: Math.max(0, Math.floor(Number(run.networkWaitAttemptCount) || 0)),
-            resumeSource: run.recoveryCheckpoint?.continuation === "resume_same_session"
-              ? "same_session"
-              : Number(run.networkWaitAttemptCount) > 0
-                ? "pristine_replay"
-                : "fresh",
-            phase: input.status as any,
-            authority: activeNativeProcessAuthority,
-            evidence: {
-              errorCode: input.errorCode ?? null,
-              error: input.error ?? null,
-            },
-          })
-        : null;
-      try {
-        await finishHeartbeatRunAttempt(db, ref, {
-          ...input,
-          ...(checkpoint ? { checkpointJson: checkpoint } : {}),
-        } as any);
-      } catch (error) {
-        logger.warn({ err: error, runId: runId, attemptIndex: ref.attemptIndex }, "failed to persist heartbeat attempt terminal state");
-      }
-    };
     let assignmentContinuationAttempt = Math.max(
       0,
       Math.floor(Number(parseObject(run.contextSnapshot).assignmentGuardrailContinuationAttempt) || 0),
@@ -313,14 +263,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let shouldCompleteTerminalEffects = false;
     let assignmentRecoveryEligible = false;
     let assignmentRecoveryRequestedAt: Date | null = null;
-    let activeAttemptSpec: {
-      index: number;
-      ledgerIndex: number;
-      fallbackIndex: number | null;
-      runtimeType: string;
-      model: string | null;
-      isFallback: boolean;
-    } | null = null;
+
     const finalizeExecutionTranscript = () => {
       stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
         buffer: stdoutTranscriptBuffer,
@@ -759,8 +702,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
       : run.recoveryCheckpoint?.continuation === "resume_same_session"
         ? "same_session"
         : "pristine_replay";
-    const resolveLedgerAttemptIndex = (attempt: { index: number }) =>
-      recoveryAttemptOrdinal * attemptStride + attempt.index;
     const recoveryStartAttemptIndex = recoveryAttemptOrdinal > 0
       && typeof run.recoveryCheckpoint?.fallbackIndex === "number"
       ? Math.max(0, Math.floor(run.recoveryCheckpoint.fallbackIndex))
@@ -773,6 +714,25 @@ export function createHeartbeatExecuteHandlers(context: any) {
         return null;
       }
     };
+    const attemptLifecycle = createHeartbeatAttemptLifecycle({
+      db,
+      run: {
+        id: run.id,
+        orgId: run.orgId,
+        agentId: run.agentId,
+        executionOwnerToken,
+        executionLeaseExpiresAt: run.executionLeaseExpiresAt,
+      },
+      agentRuntimeType: agent.agentRuntimeType,
+      attemptStride,
+      recoveryAttemptOrdinal,
+      resumeSource: attemptResumeSource,
+      persistAttempt,
+      setStdoutTranscriptParser: (parser) => {
+        stdoutTranscriptParser = parser;
+      },
+    });
+    const finishActiveAttempt = attemptLifecycle.finishActiveAttempt;
 
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
@@ -1079,95 +1039,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
         resolveAdapter: findServerAdapter,
         createAuthToken: (agentRuntimeType) =>
           createLocalAgentJwt(agent.id, agent.orgId, agentRuntimeType, run.id) ?? undefined,
-        onAttemptStart: async (attempt, attemptAdapter) => {
-          activeAttemptSpec = {
-            index: attempt.index,
-            ledgerIndex: resolveLedgerAttemptIndex(attempt),
-            fallbackIndex: attempt.fallbackIndex,
-            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
-            model: attempt.model,
-            isFallback: attempt.isFallback,
-          };
-          const initialCheckpoint = buildRuntimeAttemptCheckpoint({
-            orgId: run.orgId,
-            runId: run.id,
-            agentId: run.agentId,
-            executionOwnerToken,
-            executionLeaseExpiresAt: run.executionLeaseExpiresAt,
-            attemptIndex: resolveLedgerAttemptIndex(attempt),
-            fallbackIndex: attempt.fallbackIndex,
-            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
-            model: attempt.model,
-            isFallback: attempt.isFallback,
-            recoveryAttemptOrdinal,
-            resumeSource: attemptResumeSource,
-            phase: "executing",
-          });
-          activeAttemptRef = await persistAttempt("started", () => beginHeartbeatRunAttempt(db, {
-            orgId: run.orgId,
-            runId: run.id,
-            agentId: run.agentId,
-            attemptIndex: resolveLedgerAttemptIndex(attempt),
-            fallbackIndex: attempt.fallbackIndex,
-            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
-            model: attempt.model,
-            isFallback: attempt.isFallback,
-            resumeSource: attemptResumeSource,
-            checkpointJson: initialCheckpoint,
-          }));
-          stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
-        },
-        issueNativeProcessAuthority: async (attempt, attemptAdapter) => {
-          const authority = attemptAdapter.type === "process"
-            ? issueNativeProcessAuthorityForAttempt({
-                run: {
-                  id: run.id,
-                  orgId: run.orgId,
-                  agentId: run.agentId,
-                  executionOwnerToken,
-                  executionLeaseExpiresAt: run.executionLeaseExpiresAt,
-                },
-                attemptIndex: resolveLedgerAttemptIndex(attempt),
-              })
-            : undefined;
-          activeNativeProcessAuthority = selectNativeProcessAuthority(attemptAdapter.type, authority);
-          if (activeNativeProcessAuthority && activeAttemptRef) {
-            const checkpoint = buildRuntimeAttemptCheckpoint({
-              orgId: run.orgId,
-              runId: run.id,
-              agentId: run.agentId,
-              executionOwnerToken,
-              executionLeaseExpiresAt: run.executionLeaseExpiresAt,
-              attemptIndex: resolveLedgerAttemptIndex(attempt),
-              fallbackIndex: attempt.fallbackIndex,
-              runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
-              model: attempt.model,
-              isFallback: attempt.isFallback,
-              recoveryAttemptOrdinal,
-              resumeSource: attemptResumeSource,
-              phase: "executing",
-              authority: activeNativeProcessAuthority,
-            });
-            await persistAttempt("authority_checkpoint", () => persistRuntimeAttemptCheckpoint(db, activeAttemptRef, checkpoint));
-          }
-          return activeNativeProcessAuthority;
-        },
-        onAttemptFailure: async (_attempt, failure) => {
-          const failureRecord = failure && typeof failure === "object" ? failure as Record<string, unknown> : null;
-          const failureMessage = failure instanceof Error
-            ? failure.message
-            : readNonEmptyString(failureRecord?.errorMessage) ?? "Adapter fallback attempt failed";
-          await finishActiveAttempt({
-            status: "failed",
-            errorCode: readNonEmptyString(failureRecord?.errorCode) ?? "adapter_failed",
-            error: failureMessage,
-            usageDeltaJson: failureRecord?.usage,
-            costUsd: failureRecord?.costUsd,
-            sessionDisplayId: readNonEmptyString(failureRecord?.sessionDisplayId)
-              ?? readNonEmptyString(failureRecord?.sessionId),
-            sessionParamsJson: failureRecord?.sessionParams,
-          });
-        },
+        onAttemptStart: attemptLifecycle.onAttemptStart,
+        issueNativeProcessAuthority: attemptLifecycle.issueNativeProcessAuthority,
+        onAttemptFailure: attemptLifecycle.onAttemptFailure,
       });
       if (assignmentGuardrailCheckpoint) {
         assignmentRecoveryEligible = assignmentContinuationAttempt < 1
@@ -1241,6 +1115,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         const backoff = networkWaitBackoffMs(waitAttempt);
         const jitteredBackoff = Math.max(1_000, Math.round(backoff * (0.9 + Math.random() * 0.2)));
         const nextRetryAt = new Date(now.getTime() + jitteredBackoff);
+        const activeAttempt = attemptLifecycle.getActiveAttemptSpec();
         const checkpoint = {
           kind: networkSuspension.kind,
           code: networkSuspension.code ?? "provider_transport_unavailable",
@@ -1262,8 +1137,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
             ?? networkSuspension.progress?.toolActivityObserved
             ?? false,
           sideEffectRisk: networkSuspension.sideEffectRisk ?? null,
-          attemptIndex: activeAttemptSpec?.index ?? 0,
-          fallbackIndex: activeAttemptSpec?.fallbackIndex ?? null,
+          attemptIndex: activeAttempt?.index ?? 0,
+          fallbackIndex: activeAttempt?.fallbackIndex ?? null,
           message: networkSuspension.message,
           observedAt: now.toISOString(),
         } satisfies Record<string, unknown>;
@@ -1276,24 +1151,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ?? adapterResult.sessionParams
           ?? runtimeForAdapter.sessionParams
           ?? null;
-        const durableAttemptCheckpoint = buildRuntimeAttemptCheckpoint({
-          orgId: run.orgId,
-          runId: run.id,
-          agentId: run.agentId,
-          executionOwnerToken,
-          executionLeaseExpiresAt: run.executionLeaseExpiresAt,
-          attemptIndex: activeAttemptSpec?.ledgerIndex ?? waitAttempt,
-          fallbackIndex: activeAttemptSpec?.fallbackIndex ?? null,
-          runtimeType: activeAttemptSpec?.runtimeType ?? agent.agentRuntimeType,
-          model: activeAttemptSpec?.model ?? null,
-          isFallback: activeAttemptSpec?.isFallback ?? false,
+        const durableWaitingCheckpoint = attemptLifecycle.buildWaitingCheckpoint({
+          checkpoint,
           recoveryAttemptOrdinal: waitAttempt,
           resumeSource: attemptResumeSource,
-          phase: "waiting_for_network",
-          authority: activeNativeProcessAuthority,
-          evidence: checkpoint,
+          fallbackAttemptIndex: waitAttempt,
         });
-        const durableWaitingCheckpoint = mergeRuntimeAttemptCheckpoint(checkpoint, durableAttemptCheckpoint);
         const waitingRun = await db
           .update(heartbeatRuns)
           .set({
@@ -1321,8 +1184,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           .then((rows) => rows[0] ?? null);
         if (!waitingRun) return;
         networkSuspended = true;
-        const waitingAttemptRef = activeAttemptRef;
-        activeAttemptRef = null;
+        const waitingAttemptRef = attemptLifecycle.takeActiveAttemptRef();
         await persistAttempt("waiting_for_network", () => markHeartbeatRunAttemptWaiting(db, waitingAttemptRef, {
           submissionPhase: networkSuspension.submissionPhase,
           providerThreadId: networkSuspension.providerThreadId ?? adapterResult.providerThreadId,
