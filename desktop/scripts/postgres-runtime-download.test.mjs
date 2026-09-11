@@ -18,15 +18,14 @@ function responseFor(body, contentLength) {
   return { ok: true, status: 200, statusText: "OK", headers, body };
 }
 
-function readableBody(contents, { error } = {}) {
+function readableBody(contents) {
   let sent = false;
   return new ReadableStream({
     pull(controller) {
       if (sent) return;
       sent = true;
       if (contents) controller.enqueue(new TextEncoder().encode(contents));
-      if (error) setTimeout(() => controller.error(error), 0);
-      else controller.close();
+      controller.close();
     },
   });
 }
@@ -144,11 +143,16 @@ describe("PostgreSQL runtime archive download", () => {
     let attempts = 0;
     const fetchImpl = vi.fn(async () => {
       attempts += 1;
-      return responseFor(
-        attempts === 1
-          ? readableBody("partial", { error: new Error("connection reset") })
-          : readableBody(contents),
-      );
+      if (attempts === 1) {
+        return {
+          ok: false,
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: new Headers(),
+          body: readableBody("temporary failure"),
+        };
+      }
+      return responseFor(readableBody(contents));
     });
 
     await downloadPostgresRuntimeArchive("https://example.test/archive.zip", target, {
