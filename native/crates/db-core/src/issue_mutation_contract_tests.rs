@@ -5,10 +5,13 @@ use crate::issue_mutation::{
     approval_resubmission_query_plans, checkout_query_plans, command_fingerprint,
     review_decision_query_plans,
 };
+use crate::issue_mutation::{
+    COMMENT_ATTENTION_COMMAND_TYPE, CommentAttentionQueryPlans, comment_attention_query_plans,
+};
 use rudder_issue_core::{
     ActorRef, AgentId, ApprovalDecision, ApprovalDecisionCommand, ApprovalId, ApprovalRef,
-    CheckoutCommand, IdempotencyKey, IssueId, IssueRef, IssueStatus, OrganizationId,
-    ReviewDecision, ReviewDecisionCommand, RunId,
+    AttentionRequest, CheckoutCommand, IdempotencyKey, IssueId, IssueRef, IssueStatus,
+    MentionTarget, OrganizationId, ReviewDecision, ReviewDecisionCommand, RunId,
 };
 use serde_json::Value;
 use time::{Duration, OffsetDateTime};
@@ -597,4 +600,139 @@ fn receipts_carry_both_audit_and_ledger_evidence() {
     assert_eq!(receipt.ledger_id, "ledger");
     assert_eq!(receipt.activity_id, "activity");
     assert!(!receipt.replayed);
+}
+
+fn comment_attention_request() -> AttentionRequest {
+    let organization = OrganizationId::new("00000000-0000-0000-0000-000000000001");
+    let author = AgentId::new("00000000-0000-0000-0000-000000000002");
+    AttentionRequest::new(
+        IssueRef::new(
+            organization.clone(),
+            IssueId::new("00000000-0000-0000-0000-000000000003"),
+        ),
+        rudder_issue_core::CommentId::new("00000000-0000-0000-0000-000000000004"),
+        ActorRef::agent(
+            organization.clone(),
+            author.clone(),
+            Some(RunId::new("00000000-0000-0000-0000-000000000005")),
+        ),
+        [
+            MentionTarget::wake(
+                organization.clone(),
+                AgentId::new("00000000-0000-0000-0000-000000000006"),
+            ),
+            MentionTarget::wake(
+                organization.clone(),
+                AgentId::new("00000000-0000-0000-0000-000000000006"),
+            ),
+            MentionTarget::reference(
+                organization.clone(),
+                AgentId::new("00000000-0000-0000-0000-000000000007"),
+            ),
+            MentionTarget::wake(organization, author),
+        ],
+        true,
+        IdempotencyKey::new("comment-attention-key"),
+    )
+}
+
+#[test]
+fn comment_attention_query_plans_fence_comment_targets_and_wakeup_writes() {
+    let request = comment_attention_request();
+    let scope = scope("00000000-0000-0000-0000-000000000001");
+    let plans: CommentAttentionQueryPlans =
+        comment_attention_query_plans(&scope, &request).expect("comment attention plans");
+
+    assert!(plans.reserve_ledger.binds.iter().any(|bind| {
+        matches!(bind, MutationBind::Text(value) if value == COMMENT_ATTENTION_COMMAND_TYPE)
+    }));
+    assert!(plans.load_issue.sql.contains("i.org_id = $1::uuid"));
+    assert!(plans.load_issue.sql.contains("i.id = $2::uuid"));
+    assert!(plans.load_issue.sql.contains("FOR UPDATE"));
+    assert!(plans.load_comment.sql.contains("c.org_id = $1::uuid"));
+    assert!(plans.load_comment.sql.contains("c.issue_id = $2::uuid"));
+    assert!(plans.load_comment.sql.contains("c.deleted_at IS NULL"));
+    assert!(plans.load_comment.sql.contains("author_agent_id"));
+    assert!(plans.load_comment.sql.contains("author_user_id"));
+    assert!(plans.load_comment.sql.contains("FOR SHARE"));
+    assert!(plans.validate_run.as_ref().is_some_and(|plan| {
+        plan.sql.contains("r.org_id = $1::uuid")
+            && plan.sql.contains("r.agent_id = $3::uuid")
+            && plan.sql.contains("r.status IN ('queued', 'running')")
+    }));
+    assert!(
+        plans
+            .validate_mentioned_agents
+            .as_ref()
+            .is_some_and(|plan| {
+                plan.sql.contains("FROM agents AS a")
+                    && plan.sql.contains("a.org_id = $1::uuid")
+                    && plan.sql.contains("FOR SHARE")
+            })
+    );
+    let insert_wakeup = plans
+        .insert_wakeup
+        .as_ref()
+        .expect("wake target should produce a wakeup plan");
+    assert!(insert_wakeup.sql.contains("agent_wakeup_requests"));
+    assert!(
+        insert_wakeup
+            .sql
+            .contains("ON CONFLICT (org_id, agent_id, idempotency_key) DO NOTHING")
+    );
+    assert!(plans.insert_activity.binds.iter().any(|bind| {
+        matches!(bind, MutationBind::Text(value) if value == "issue.comment_attention_routed")
+    }));
+    assert!(plans.finalize_ledger.sql.contains("issue_id = $3::uuid"));
+    for plan in [
+        &plans.reserve_ledger,
+        &plans.load_issue,
+        &plans.load_comment,
+        &plans.validate_run.unwrap(),
+        &plans.validate_mentioned_agents.unwrap(),
+        insert_wakeup,
+        &plans.insert_activity,
+        &plans.finalize_ledger,
+    ] {
+        assert!(!plan.sql.contains("00000000-0000-0000-0000-000000000"));
+        assert!(plan.sql.contains('$'));
+    }
+}
+
+#[test]
+fn comment_attention_query_plans_reject_cross_org_and_oversized_requests() {
+    let mut request = comment_attention_request();
+    request.issue.organization_id = OrganizationId::new("00000000-0000-0000-0000-000000000099");
+    assert!(matches!(
+        comment_attention_query_plans(&scope("00000000-0000-0000-0000-000000000001"), &request,),
+        Err(IssueMutationError::Domain(
+            rudder_issue_core::DomainError::CrossOrganization { .. }
+        ))
+    ));
+
+    let mut oversized = comment_attention_request();
+    oversized.mentions = (0..65)
+        .map(|index| {
+            MentionTarget::wake(
+                OrganizationId::new("00000000-0000-0000-0000-000000000001"),
+                AgentId::new(format!("00000000-0000-0000-0000-{index:012}")),
+            )
+        })
+        .collect();
+    assert!(matches!(
+        comment_attention_query_plans(&scope("00000000-0000-0000-0000-000000000001"), &oversized,),
+        Err(IssueMutationError::TooManyMentions)
+    ));
+}
+
+#[test]
+fn comment_attention_query_plans_do_not_create_a_placeholder_wakeup_without_mentions() {
+    let mut request = comment_attention_request();
+    request.mentions.retain(|mention| !mention.is_wake());
+
+    let plans =
+        comment_attention_query_plans(&scope("00000000-0000-0000-0000-000000000001"), &request)
+            .expect("comment attention plans");
+
+    assert!(plans.insert_wakeup.is_none());
 }

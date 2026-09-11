@@ -10,14 +10,15 @@
 //! fences added by migration 0163.
 
 use crate::issue_mutation::{
-    ApprovalResubmissionOptions, CHECKOUT_COMMAND_TYPE, CheckoutOptions, HostApprovalCapability,
-    IssueMutationError, IssueMutationRepository, TrustedApprovalAuthorization,
-    TrustedOrganizationId, command_fingerprint,
+    ApprovalResubmissionOptions, CHECKOUT_COMMAND_TYPE, COMMENT_ATTENTION_COMMAND_TYPE,
+    CheckoutOptions, HostApprovalCapability, IssueMutationError, IssueMutationRepository,
+    TrustedApprovalAuthorization, TrustedOrganizationId, command_fingerprint,
 };
 use rudder_issue_core::{
     ActorRef, AgentId, ApprovalDecision, ApprovalDecisionCommand, ApprovalId, ApprovalRef,
-    ApprovalResubmissionCommand, CheckoutCommand, IdempotencyKey, IssueId, IssueRef, IssueStatus,
-    OrganizationId, ReviewDecision, ReviewDecisionCommand, RunId, UserId,
+    ApprovalResubmissionCommand, AttentionRequest, CheckoutCommand, IdempotencyKey, IssueId,
+    IssueRef, IssueStatus, MentionTarget, OrganizationId, ReviewDecision, ReviewDecisionCommand,
+    RunId, UserId,
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -73,6 +74,182 @@ async fn issue_mutations_execute_replay_and_fence_all_relevant_rows()
         Ok(result) => result?,
         Err(join_error) => return Err(format!("mutation exercise panicked: {join_error}").into()),
     }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "explicit opt-in: set RUDDER_DB_CORE_ISSUE_MUTATION_DATABASE_URL to a disposable PostgreSQL instance"]
+async fn comment_attention_is_transactional_idempotent_and_organization_fenced()
+-> Result<(), Box<dyn Error + Send + Sync>> {
+    let url = env::var("RUDDER_DB_CORE_ISSUE_MUTATION_DATABASE_URL")
+        .map_err(|_| "explicit disposable PostgreSQL URL is required")?;
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await?;
+    let schema = disposable_schema_name();
+    let quoted_schema = quote_identifier(&schema);
+    sqlx::query(&format!("CREATE SCHEMA {quoted_schema}"))
+        .execute(&pool)
+        .await?;
+
+    let task_pool = pool.clone();
+    let task_schema = quoted_schema.clone();
+    let exercise =
+        tokio::spawn(async move { exercise_comment_attention(&task_pool, &task_schema).await })
+            .await;
+    let cleanup = sqlx::query(&format!("DROP SCHEMA {quoted_schema} CASCADE"))
+        .execute(&pool)
+        .await;
+    pool.close().await;
+    cleanup?;
+
+    match exercise {
+        Ok(result) => result?,
+        Err(join_error) => {
+            return Err(format!("comment attention exercise panicked: {join_error}").into());
+        }
+    }
+    Ok(())
+}
+
+async fn exercise_comment_attention(
+    pool: &PgPool,
+    quoted_schema: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    sqlx::query(&format!("SET search_path TO {quoted_schema}"))
+        .execute(pool)
+        .await?;
+    create_fixture(pool).await?;
+    const COMMENT_ID: &str = "00000000-0000-0000-0000-000000000050";
+    sqlx::query(
+        "INSERT INTO issue_comments (id, org_id, issue_id, author_user_id, body)\n         VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::text)",
+    )
+    .bind(COMMENT_ID)
+    .bind(ORG_A)
+    .bind(CHECKOUT_ISSUE_ID)
+    .bind(BOARD_USER_ID)
+    .bind("please review this comment")
+    .execute(pool)
+    .await?;
+
+    let organization = OrganizationId::new(ORG_A);
+    let request = AttentionRequest::new(
+        IssueRef::new(organization.clone(), IssueId::new(CHECKOUT_ISSUE_ID)),
+        rudder_issue_core::CommentId::new(COMMENT_ID),
+        ActorRef::user(organization.clone(), UserId::new(BOARD_USER_ID)),
+        [
+            MentionTarget::wake(organization.clone(), AgentId::new(AGENT_A)),
+            MentionTarget::wake(organization.clone(), AgentId::new(AGENT_A)),
+            MentionTarget::reference(organization.clone(), AgentId::new(AGENT_A)),
+        ],
+        false,
+        IdempotencyKey::new("integration-comment-attention-key"),
+    );
+    let scope = TrustedOrganizationId::from_host(organization.clone());
+    let repository = IssueMutationRepository::new(pool.clone());
+    let first = repository
+        .route_comment_attention(&scope, request.clone())
+        .await?;
+    let replay = repository.route_comment_attention(&scope, request).await?;
+    assert!(!first.replayed);
+    assert!(replay.replayed);
+    assert_eq!(first.ledger_id, replay.ledger_id);
+    assert_eq!(first.activity_id, replay.activity_id);
+    assert_eq!(first.outcome, replay.outcome);
+    assert_eq!(first.outcome.as_array().map(Vec::len), Some(1));
+
+    let wakeups: (i64, String, String, String) = sqlx::query_as(
+        "SELECT count(*), max(reason), max(requested_by_actor_type), max(idempotency_key)\n           FROM agent_wakeup_requests WHERE org_id = $1::uuid",
+    )
+    .bind(ORG_A)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(wakeups.0, 1);
+    assert_eq!(wakeups.1, "issue_comment_mentioned");
+    assert_eq!(wakeups.2, "user");
+    assert_eq!(
+        wakeups.3,
+        "integration-comment-attention-key:wakeup:00000000-0000-0000-0000-000000000020"
+    );
+
+    let evidence: (i64, i64, i64, Value) = sqlx::query_as(
+        "SELECT\n             (SELECT count(*) FROM issue_mutation_commands WHERE org_id = $1::uuid AND command_type = $2::text),\n             (SELECT count(*) FROM activity_log WHERE org_id = $1::uuid AND action = 'issue.comment_attention_routed'),\n             (SELECT count(*) FROM issue_comments WHERE org_id = $1::uuid),\n             (SELECT outcome FROM issue_mutation_commands WHERE org_id = $1::uuid AND command_type = $2::text)",
+    )
+    .bind(ORG_A)
+    .bind(COMMENT_ATTENTION_COMMAND_TYPE)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(evidence.0, 1);
+    assert_eq!(evidence.1, 1);
+    assert_eq!(evidence.2, 1);
+    assert_eq!(evidence.3["evidence"]["wakeCount"], 1);
+    assert!(
+        !evidence
+            .3
+            .to_string()
+            .contains("please review this comment")
+    );
+
+    let mismatched_author = AttentionRequest::new(
+        IssueRef::new(organization.clone(), IssueId::new(CHECKOUT_ISSUE_ID)),
+        rudder_issue_core::CommentId::new(COMMENT_ID),
+        ActorRef::user(organization.clone(), UserId::new("different-user")),
+        [],
+        false,
+        IdempotencyKey::new("integration-comment-attention-mismatched-author"),
+    );
+    assert!(matches!(
+        repository
+            .route_comment_attention(&scope, mismatched_author)
+            .await,
+        Err(IssueMutationError::CommentAuthorMismatch)
+    ));
+
+    let missing_target = AttentionRequest::new(
+        IssueRef::new(organization.clone(), IssueId::new(CHECKOUT_ISSUE_ID)),
+        rudder_issue_core::CommentId::new(COMMENT_ID),
+        ActorRef::user(organization.clone(), UserId::new(BOARD_USER_ID)),
+        [MentionTarget::wake(
+            organization.clone(),
+            AgentId::new(AGENT_B),
+        )],
+        false,
+        IdempotencyKey::new("integration-comment-attention-missing-agent"),
+    );
+    assert!(matches!(
+        repository
+            .route_comment_attention(&scope, missing_target)
+            .await,
+        Err(IssueMutationError::NotFound {
+            entity: "agent",
+            ..
+        })
+    ));
+    let missing_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM issue_mutation_commands WHERE org_id = $1::uuid AND idempotency_key = $2::text",
+    )
+    .bind(ORG_A)
+    .bind("integration-comment-attention-missing-agent")
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(missing_ledger_count, 0);
+
+    let mut foreign = AttentionRequest::new(
+        IssueRef::new(organization.clone(), IssueId::new(CHECKOUT_ISSUE_ID)),
+        rudder_issue_core::CommentId::new(COMMENT_ID),
+        ActorRef::user(organization, UserId::new(BOARD_USER_ID)),
+        [],
+        false,
+        IdempotencyKey::new("integration-comment-attention-foreign"),
+    );
+    foreign.issue.organization_id = OrganizationId::new(ORG_B);
+    assert!(matches!(
+        repository.route_comment_attention(&scope, foreign).await,
+        Err(IssueMutationError::Domain(
+            rudder_issue_core::DomainError::CrossOrganization { .. }
+        ))
+    ));
     Ok(())
 }
 
@@ -547,7 +724,8 @@ async fn create_fixture(pool: &PgPool) -> Result<(), sqlx::Error> {
         "CREATE TABLE approvals (\n             id uuid PRIMARY KEY,\n             org_id uuid NOT NULL REFERENCES organizations(id),\n             type text NOT NULL,\n             requested_by_agent_id uuid,\n             requested_by_user_id text,\n             status text NOT NULL,\n             revision bigint NOT NULL,\n             decision text,\n             decision_idempotency_key text,\n             decision_note text,\n             decided_by_user_id text,\n             decided_at timestamptz,\n             payload jsonb NOT NULL,\n             updated_at timestamptz NOT NULL,\n             UNIQUE (org_id, id),
              UNIQUE (org_id, decision_idempotency_key),\n             FOREIGN KEY (requested_by_agent_id) REFERENCES agents(id)\n         )",
         "CREATE TABLE issue_approvals (\n             org_id uuid NOT NULL REFERENCES organizations(id),\n             issue_id uuid NOT NULL,\n             approval_id uuid NOT NULL,\n             created_at timestamptz NOT NULL DEFAULT now(),\n             PRIMARY KEY (issue_id, approval_id),\n             FOREIGN KEY (issue_id) REFERENCES issues(id),\n             FOREIGN KEY (approval_id) REFERENCES approvals(id)\n         )",
-        "CREATE TABLE issue_comments (\n             id uuid PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),\n             org_id uuid NOT NULL REFERENCES organizations(id),\n             issue_id uuid NOT NULL,\n             author_agent_id uuid,\n             author_user_id text,\n             body text NOT NULL,\n             created_at timestamptz NOT NULL DEFAULT now(),\n             updated_at timestamptz NOT NULL DEFAULT now(),\n             FOREIGN KEY (issue_id) REFERENCES issues(id),\n             FOREIGN KEY (author_agent_id) REFERENCES agents(id)\n         )",
+        "CREATE TABLE issue_comments (\n             id uuid PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),\n             org_id uuid NOT NULL REFERENCES organizations(id),\n             issue_id uuid NOT NULL,\n             author_agent_id uuid,\n             author_user_id text,\n             body text NOT NULL,\n             deleted_at timestamptz,\n             created_at timestamptz NOT NULL DEFAULT now(),\n             updated_at timestamptz NOT NULL DEFAULT now(),\n             FOREIGN KEY (issue_id) REFERENCES issues(id),\n             FOREIGN KEY (author_agent_id) REFERENCES agents(id)\n         )",
+        "CREATE TABLE agent_wakeup_requests (\n             id uuid PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),\n             org_id uuid NOT NULL REFERENCES organizations(id),\n             agent_id uuid NOT NULL REFERENCES agents(id),\n             source text NOT NULL,\n             trigger_detail text,\n             reason text,\n             payload jsonb,\n             status text NOT NULL DEFAULT 'queued',\n             requested_by_actor_type text,\n             requested_by_actor_id text,\n             idempotency_key text,\n             run_id uuid,\n             requested_at timestamptz NOT NULL DEFAULT now(),\n             created_at timestamptz NOT NULL DEFAULT now(),\n             updated_at timestamptz NOT NULL DEFAULT now(),\n             UNIQUE (org_id, agent_id, idempotency_key)\n         )",
         "CREATE TABLE activity_log (\n             id uuid PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),\n             org_id uuid NOT NULL REFERENCES organizations(id),\n             actor_type text NOT NULL,\n             actor_id text NOT NULL,\n             action text NOT NULL,\n             entity_type text NOT NULL,\n             entity_id text NOT NULL,\n             agent_id uuid,\n             run_id uuid,\n             details jsonb,\n             idempotency_key text,\n             created_at timestamptz NOT NULL DEFAULT now(),\n             UNIQUE (org_id, id),\n             UNIQUE (org_id, idempotency_key),\n             FOREIGN KEY (agent_id) REFERENCES agents(id),\n             FOREIGN KEY (run_id) REFERENCES heartbeat_runs(id)\n         )",
         "CREATE TABLE issue_mutation_commands (\n             id uuid PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),\n             org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,\n             issue_id uuid,\n             approval_id uuid,\n             command_type text NOT NULL,\n             idempotency_key text NOT NULL,\n             command_fingerprint text NOT NULL,\n             outcome jsonb NOT NULL,\n             activity_id uuid,\n             created_at timestamptz NOT NULL DEFAULT now(),\n             UNIQUE (org_id, idempotency_key),\n             FOREIGN KEY (org_id, issue_id) REFERENCES issues(org_id, id) ON DELETE RESTRICT,\n             FOREIGN KEY (org_id, approval_id) REFERENCES approvals(org_id, id) ON DELETE RESTRICT,\n             FOREIGN KEY (org_id, activity_id) REFERENCES activity_log(org_id, id)\n         )",
     ] {

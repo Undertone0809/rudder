@@ -13,14 +13,16 @@
 
 use rudder_issue_core::{
     ActorRef, AgentId, Approval, ApprovalDecision, ApprovalDecisionCommand, ApprovalId,
-    ApprovalRef, ApprovalResubmissionCommand, ApprovalStatus, ApprovalType, CheckoutCommand,
-    DomainError, IdempotencyKey, Issue, IssueId, IssueRef, IssueStatus, OrganizationId,
-    PrincipalRef, ReviewDecisionCommand, RunId,
+    ApprovalRef, ApprovalResubmissionCommand, ApprovalStatus, ApprovalType, AttentionRequest,
+    CheckoutCommand, DomainError, IdempotencyKey, Issue, IssueId, IssueRef, IssueStatus,
+    OrganizationId, PrincipalRef, ReviewDecisionCommand, RunId, WakeReason, WakeRelationship,
+    WakeRequest, route_comment_attention as route_domain_comment_attention,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool, Postgres, postgres::PgRow, query::QueryAs};
+use std::collections::BTreeSet;
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -28,6 +30,8 @@ pub const CHECKOUT_COMMAND_TYPE: &str = "issue.checkout";
 pub const REVIEW_COMMAND_TYPE: &str = "issue.review_decision";
 pub const APPROVAL_COMMAND_TYPE: &str = "approval.decision";
 pub const APPROVAL_RESUBMISSION_COMMAND_TYPE: &str = "approval.resubmission";
+pub const COMMENT_ATTENTION_COMMAND_TYPE: &str = "issue.comment_attention";
+const MAX_COMMENT_ATTENTION_MENTIONS: usize = 64;
 
 /// An organization id captured from authenticated host state.
 ///
@@ -212,6 +216,18 @@ pub struct ApprovalResubmissionQueryPlans {
     pub finalize_ledger: MutationQueryPlan,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommentAttentionQueryPlans {
+    pub reserve_ledger: MutationQueryPlan,
+    pub validate_run: Option<MutationQueryPlan>,
+    pub load_issue: MutationQueryPlan,
+    pub load_comment: MutationQueryPlan,
+    pub validate_mentioned_agents: Option<MutationQueryPlan>,
+    pub insert_wakeup: Option<MutationQueryPlan>,
+    pub insert_activity: MutationQueryPlan,
+    pub finalize_ledger: MutationQueryPlan,
+}
+
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum IssueMutationError {
     #[error(transparent)]
@@ -240,6 +256,12 @@ pub enum IssueMutationError {
     ConcurrentModification,
     #[error("{field} is outside PostgreSQL bigint range")]
     NumericOverflow { field: &'static str },
+    #[error("comment attention mentions exceed the bounded limit")]
+    TooManyMentions,
+    #[error("comment attention {field} must be a canonical UUID")]
+    InvalidCommentAttentionIdentity { field: &'static str },
+    #[error("comment author does not match the trusted attention actor")]
+    CommentAuthorMismatch,
 }
 
 impl From<sqlx::Error> for IssueMutationError {
@@ -272,6 +294,7 @@ enum ActivityKind {
     Review,
     Approval,
     ApprovalResubmission,
+    CommentAttention,
 }
 
 #[derive(Clone, Copy)]
@@ -315,6 +338,12 @@ struct ActivityIdRow {
 #[derive(Clone, Debug, FromRow)]
 struct CommentIdRow {
     id: String,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct CommentAttentionRow {
+    author_agent_id: Option<String>,
+    author_user_id: Option<String>,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -883,6 +912,7 @@ fn activity_plan(
         ActivityKind::Review => ("issue.review_decision_recorded", "issue"),
         ActivityKind::Approval => ("approval.decision_recorded", "approval"),
         ActivityKind::ApprovalResubmission => ("approval.resubmitted", "approval"),
+        ActivityKind::CommentAttention => ("issue.comment_attention_routed", "issue"),
     };
     plan(
         "INSERT INTO activity_log (\n             org_id, actor_type, actor_id, action, entity_type, entity_id,\n             agent_id, run_id, details, idempotency_key\n         ) VALUES ($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text,\n                   $7::uuid, $8::uuid, $9::jsonb, $10::text)\n         RETURNING id::text AS id",
@@ -1707,6 +1737,247 @@ pub fn approval_resubmission_query_plans(
     })
 }
 
+fn is_canonical_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+fn validate_comment_attention_identity(
+    value: &str,
+    field: &'static str,
+) -> Result<(), IssueMutationError> {
+    if is_canonical_uuid(value) {
+        Ok(())
+    } else {
+        Err(IssueMutationError::InvalidCommentAttentionIdentity { field })
+    }
+}
+
+fn attention_wake_agent_ids(request: &AttentionRequest) -> BTreeSet<String> {
+    let author_agent = request.author.agent_id().map(AgentId::as_str);
+    request
+        .mentions
+        .iter()
+        .filter(|mention| mention.is_wake())
+        .filter(|mention| author_agent != Some(mention.agent_id.as_str()))
+        .map(|mention| mention.agent_id.as_str().to_owned())
+        .collect()
+}
+
+fn ensure_comment_attention_request(
+    scope: &TrustedOrganizationId,
+    request: &AttentionRequest,
+) -> Result<(), IssueMutationError> {
+    ensure_issue_scope(scope, &request.issue, &request.author)?;
+    if request.mentions.len() > MAX_COMMENT_ATTENTION_MENTIONS {
+        return Err(IssueMutationError::TooManyMentions);
+    }
+    validate_comment_attention_identity(request.issue.issue_id.as_str(), "issue_id")?;
+    validate_comment_attention_identity(request.comment_id.as_str(), "comment_id")?;
+    if let ActorRef::Agent {
+        agent_id, run_id, ..
+    } = &request.author
+    {
+        validate_comment_attention_identity(agent_id.as_str(), "author_agent_id")?;
+        if let Some(run_id) = run_id {
+            validate_comment_attention_identity(run_id.as_str(), "author_run_id")?;
+        }
+    }
+    for mention in &request.mentions {
+        if mention.organization_id != *scope.as_id() {
+            return Err(DomainError::CrossOrganization {
+                expected: scope.0.clone(),
+                found: mention.organization_id.clone(),
+            }
+            .into());
+        }
+        validate_comment_attention_identity(mention.agent_id.as_str(), "mentioned_agent_id")?;
+    }
+    Ok(())
+}
+
+fn load_comment_attention_plan(
+    scope: &TrustedOrganizationId,
+    request: &AttentionRequest,
+) -> MutationQueryPlan {
+    plan(
+        "SELECT c.author_agent_id::text AS author_agent_id,\n                c.author_user_id\n           FROM issue_comments AS c\n          WHERE c.org_id = $1::uuid\n            AND c.issue_id = $2::uuid\n            AND c.id = $3::uuid\n            AND c.deleted_at IS NULL\n          FOR SHARE",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(request.issue.issue_id.as_str().into()),
+            MutationBind::Uuid(request.comment_id.as_str().into()),
+        ],
+    )
+}
+
+fn ensure_comment_author(
+    comment: &CommentAttentionRow,
+    actor: &ActorRef,
+) -> Result<(), IssueMutationError> {
+    let matches = match actor {
+        ActorRef::Agent { agent_id, .. } => {
+            comment.author_agent_id.as_deref() == Some(agent_id.as_str())
+                && comment.author_user_id.is_none()
+        }
+        ActorRef::User { user_id, .. } => {
+            comment.author_user_id.as_deref() == Some(user_id.as_str())
+                && comment.author_agent_id.is_none()
+        }
+    };
+    matches
+        .then_some(())
+        .ok_or(IssueMutationError::CommentAuthorMismatch)
+}
+
+fn validate_mentioned_agents_plan(
+    scope: &TrustedOrganizationId,
+    request: &AttentionRequest,
+) -> Option<MutationQueryPlan> {
+    let target_ids = attention_wake_agent_ids(request);
+    if target_ids.is_empty() {
+        return None;
+    }
+    let placeholders = target_ids
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("${}::uuid", index + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut binds = vec![MutationBind::Uuid(scope.as_str().into())];
+    binds.extend(target_ids.into_iter().map(MutationBind::Uuid));
+    Some(plan(
+        &format!(
+            "SELECT a.id::text AS id\n               FROM agents AS a\n              WHERE a.org_id = $1::uuid\n                AND a.id IN ({placeholders})\n              FOR SHARE"
+        ),
+        binds,
+    ))
+}
+
+fn wake_reason_text(reason: WakeReason) -> &'static str {
+    match reason {
+        WakeReason::IssueCommentMentioned => "issue_comment_mentioned",
+        WakeReason::IssueReopened => "issue_reopened",
+    }
+}
+
+fn wake_relationship_text(relationship: WakeRelationship) -> &'static str {
+    match relationship {
+        WakeRelationship::Assignee => "assignee",
+        WakeRelationship::Reviewer => "reviewer",
+        WakeRelationship::Collaborator => "collaborator",
+    }
+}
+
+fn wakeup_idempotency_key(request: &AttentionRequest, wake: &WakeRequest) -> String {
+    format!(
+        "{}:wakeup:{}",
+        request.idempotency_key.as_str(),
+        wake.target_agent_id.as_str()
+    )
+}
+
+fn insert_wakeup_plan_for(
+    scope: &TrustedOrganizationId,
+    request: &AttentionRequest,
+    wake: &WakeRequest,
+    idempotency_key: &str,
+) -> MutationQueryPlan {
+    let actor = actor_sql_parts(&request.author);
+    plan(
+        "INSERT INTO agent_wakeup_requests (\n             org_id, agent_id, source, trigger_detail, reason, payload,\n             requested_by_actor_type, requested_by_actor_id, idempotency_key, run_id\n         ) VALUES ($1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::jsonb,\n                   $7::text, $8::text, $9::text, $10::uuid)\n         ON CONFLICT (org_id, agent_id, idempotency_key) DO NOTHING\n         RETURNING id::text AS id",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(wake.target_agent_id.as_str().into()),
+            MutationBind::Text("automation".into()),
+            MutationBind::Text("system".into()),
+            MutationBind::Text(wake_reason_text(wake.reason).into()),
+            MutationBind::Json(json!({
+                "issueId": wake.issue.issue_id.as_str(),
+                "commentId": wake.comment_id.as_str(),
+                "reason": wake_reason_text(wake.reason),
+                "relationship": wake_relationship_text(wake.relationship),
+            })),
+            MutationBind::Text(actor.actor_type.into()),
+            MutationBind::Text(actor.actor_id),
+            MutationBind::Text(idempotency_key.into()),
+            MutationBind::NullableUuid(actor.run_id),
+        ],
+    )
+}
+
+fn representative_wakeup(request: &AttentionRequest) -> Option<WakeRequest> {
+    let author_agent = request.author.agent_id();
+    let target_agent_id = request
+        .mentions
+        .iter()
+        .find(|mention| mention.is_wake() && author_agent != Some(&mention.agent_id))
+        .map(|mention| mention.agent_id.clone())?;
+    Some(WakeRequest {
+        issue: request.issue.clone(),
+        comment_id: request.comment_id.clone(),
+        target_agent_id,
+        reason: WakeReason::IssueCommentMentioned,
+        relationship: WakeRelationship::Collaborator,
+    })
+}
+
+/// Build the private query set for routing comment attention.
+///
+/// This operation does not create or edit a comment. The host must have already
+/// persisted the comment and authenticated the author; this adapter locks that
+/// comment, derives wake requests through issue-core, and records wakeups plus
+/// audit evidence in one transaction.
+pub fn comment_attention_query_plans(
+    scope: &TrustedOrganizationId,
+    request: &AttentionRequest,
+) -> Result<CommentAttentionQueryPlans, IssueMutationError> {
+    ensure_comment_attention_request(scope, request)?;
+    let fingerprint = fingerprint_value(COMMENT_ATTENTION_COMMAND_TYPE, scope, request, None)?;
+    let representative = representative_wakeup(request);
+    Ok(CommentAttentionQueryPlans {
+        reserve_ledger: reserve_ledger_plan(
+            scope,
+            COMMENT_ATTENTION_COMMAND_TYPE,
+            &request.idempotency_key,
+            &fingerprint,
+        ),
+        validate_run: actor_run_plan(scope, &request.author),
+        load_issue: load_issue_plan(scope, &request.issue.issue_id),
+        load_comment: load_comment_attention_plan(scope, request),
+        validate_mentioned_agents: validate_mentioned_agents_plan(scope, request),
+        insert_wakeup: representative.map(|representative| {
+            insert_wakeup_plan_for(
+                scope,
+                request,
+                &representative,
+                &wakeup_idempotency_key(request, &representative),
+            )
+        }),
+        insert_activity: activity_plan(
+            scope,
+            &request.author,
+            ActivityKind::CommentAttention,
+            request.issue.issue_id.as_str(),
+            json!({"state": "pending"}),
+            &request.idempotency_key,
+        ),
+        finalize_ledger: finalize_ledger_plan(
+            scope,
+            "ledger-id",
+            LedgerTarget::Issue(request.issue.issue_id.as_str()),
+            json!({"state": "pending"}),
+            "activity-id",
+        ),
+    })
+}
+
 #[derive(Clone)]
 pub struct IssueMutationRepository {
     pool: PgPool,
@@ -1723,6 +1994,136 @@ impl IssueMutationRepository {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    pub async fn route_comment_attention(
+        &self,
+        scope: &TrustedOrganizationId,
+        request: AttentionRequest,
+    ) -> Result<MutationReceipt, IssueMutationError> {
+        let plans = comment_attention_query_plans(scope, &request)?;
+        let fingerprint = fingerprint_value(COMMENT_ATTENTION_COMMAND_TYPE, scope, &request, None)?;
+        let mut tx = self.pool.begin().await?;
+        let lookup = ledger_lookup_plan(scope, &request.idempotency_key);
+        let reservation = reserve_or_replay(
+            &mut tx,
+            ReservationRequest {
+                reserve: &plans.reserve_ledger,
+                lookup: &lookup,
+                scope,
+                key: &request.idempotency_key,
+                command_type: COMMENT_ATTENTION_COMMAND_TYPE,
+                fingerprint: &fingerprint,
+                target: LedgerTarget::Issue(request.issue.issue_id.as_str()),
+            },
+        )
+        .await?;
+        let ledger_id = match reservation {
+            Reservation::Replay(receipt) => {
+                tx.commit().await?;
+                return Ok(receipt);
+            }
+            Reservation::New(id) => {
+                if let Some(validate_run) = plans.validate_run.as_ref() {
+                    let run_id = request.author.run_id().ok_or_else(|| {
+                        IssueMutationError::InvalidStoredState {
+                            entity: "actor",
+                            id: request
+                                .author
+                                .agent_id()
+                                .map(AgentId::as_str)
+                                .unwrap_or("unknown")
+                                .into(),
+                            detail: "agent run validation plan exists without a run id".into(),
+                        }
+                    })?;
+                    require_run_scope(&mut tx, validate_run, run_id).await?;
+                }
+                id
+            }
+        };
+        let issue_row = bind_query_as::<IssueMutationRow>(&plans.load_issue)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| IssueMutationError::NotFound {
+                entity: "issue",
+                id: request.issue.issue_id.as_str().into(),
+            })?;
+        let issue = issue_from_row(scope, &issue_row)?;
+        let comment = bind_query_as::<CommentAttentionRow>(&plans.load_comment)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| IssueMutationError::NotFound {
+                entity: "comment",
+                id: request.comment_id.as_str().into(),
+            })?;
+        ensure_comment_author(&comment, &request.author)?;
+        let wakes = route_domain_comment_attention(&issue, request.clone())?;
+
+        if let Some(validate_targets) = plans.validate_mentioned_agents.as_ref() {
+            let found = bind_query_as::<RunScopeRow>(validate_targets)
+                .fetch_all(&mut *tx)
+                .await?
+                .into_iter()
+                .map(|row| row.id)
+                .collect::<BTreeSet<_>>();
+            if let Some(missing) = attention_wake_agent_ids(&request).difference(&found).next() {
+                return Err(IssueMutationError::NotFound {
+                    entity: "agent",
+                    id: missing.clone(),
+                });
+            }
+        }
+
+        let result = serde_json::to_value(&wakes)?;
+        let stored = stored_outcome(
+            COMMENT_ATTENTION_COMMAND_TYPE,
+            &fingerprint,
+            result.clone(),
+            json!({
+                "commentId": request.comment_id.as_str(),
+                "wakeCount": wakes.len(),
+            }),
+        );
+        for wake in &wakes {
+            let idempotency_key = wakeup_idempotency_key(&request, wake);
+            let wakeup = insert_wakeup_plan_for(scope, &request, wake, &idempotency_key);
+            let _ = bind_query_as::<RunScopeRow>(&wakeup)
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+        let activity = activity_plan(
+            scope,
+            &request.author,
+            ActivityKind::CommentAttention,
+            request.issue.issue_id.as_str(),
+            stored.clone(),
+            &request.idempotency_key,
+        );
+        let activity_id = bind_query_as::<ActivityIdRow>(&activity)
+            .fetch_one(&mut *tx)
+            .await?
+            .id;
+        let finalize = finalize_ledger_plan(
+            scope,
+            &ledger_id,
+            LedgerTarget::Issue(request.issue.issue_id.as_str()),
+            stored,
+            &activity_id,
+        );
+        let finalized = bind_query_as::<FinalizedLedgerRow>(&finalize)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(IssueMutationError::ConcurrentModification)?;
+        tx.commit().await?;
+        Ok(MutationReceipt {
+            command_type: COMMENT_ATTENTION_COMMAND_TYPE.into(),
+            idempotency_key: request.idempotency_key,
+            ledger_id: finalized.id,
+            activity_id: finalized.activity_id,
+            outcome: result,
+            replayed: false,
+        })
     }
 
     pub async fn checkout(
