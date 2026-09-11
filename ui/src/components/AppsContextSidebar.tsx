@@ -17,6 +17,8 @@ import { useAppRegistry } from "@/hooks/useAppRegistry";
 import {
   activeKeyFromPath,
   appBuildStatusLabel,
+  appLocationActionErrorTitle,
+  appLocationActionLabel,
   appRoute,
   requestAppDirectOpen,
   type AppEntry,
@@ -107,6 +109,11 @@ function AppRowActions({
   const localApps = desktopShell?.localApps;
   const appBuilder = desktopShell?.appBuilder;
   const definition = entry.definition;
+  const locationActionLabel = appLocationActionLabel(Boolean(definition), desktopShell?.platform);
+  const locationActionErrorTitle = appLocationActionErrorTitle(
+    Boolean(definition),
+    desktopShell?.platform,
+  );
   const [lastSnapshotId, setLastSnapshotId] = useState<string | null>(null);
   const statusQuery = useQuery({
     queryKey: queryKeys.localApps.status(definition?.localBindingId ?? entry.key),
@@ -314,7 +321,7 @@ function AppRowActions({
               if (definition) {
                 void desktopShell?.openPath(definition.cwd).catch((error) => {
                   pushToast({
-                    title: "Could not open App in Finder",
+                    title: locationActionErrorTitle,
                     body: error instanceof Error ? error.message : undefined,
                     tone: "error",
                   });
@@ -327,7 +334,7 @@ function AppRowActions({
             }}
           >
             <FolderSearch aria-hidden />
-            Open in Finder
+            {locationActionLabel}
           </DropdownMenuItem>
         ) : null}
         {entry.kind === "managed" && entry.app.conversationId ? (

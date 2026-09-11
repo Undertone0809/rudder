@@ -104,3 +104,23 @@ export function appBuildStatusLabel(status: AppBuilderApp["buildStatus"]) {
   if (status === "launch_failed") return "Could not open";
   return "Needs attention";
 }
+
+export function appLocationActionLabel(
+  hasLocalDefinition: boolean,
+  platform?: NodeJS.Platform,
+) {
+  if (!hasLocalDefinition) return "Open source";
+  if (platform === "darwin") return "Open in Finder";
+  if (platform === "win32") return "Open in File Explorer";
+  return "Open in File Manager";
+}
+
+export function appLocationActionErrorTitle(
+  hasLocalDefinition: boolean,
+  platform?: NodeJS.Platform,
+) {
+  if (!hasLocalDefinition) return "Could not open App source";
+  if (platform === "darwin") return "Could not open App in Finder";
+  if (platform === "win32") return "Could not open App in File Explorer";
+  return "Could not open App in File Manager";
+}
