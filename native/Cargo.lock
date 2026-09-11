@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-migration-core"
-version = "0.7.20"
+version = "0.7.21"
 dependencies = [
  "serde",
  "serde_json",
