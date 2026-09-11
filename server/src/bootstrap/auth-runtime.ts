@@ -1,10 +1,10 @@
 import type { Db } from "@rudderhq/db";
 import type { Request, RequestHandler } from "express";
-import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import {
   createPrivateActorEnvelopeBridge,
   type PrivateActorEnvelopeBridge,
 } from "../auth/actor-envelope-bridge.js";
+import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { initializeBoardClaimChallenge } from "../board-claim.js";
 import type { Config } from "../config.js";
 import { logger } from "../middleware/logger.js";

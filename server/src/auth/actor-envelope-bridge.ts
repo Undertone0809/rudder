@@ -1,8 +1,8 @@
+import type { Request } from "express";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
-import type { Request } from "express";
-import type { BetterAuthSessionResult } from "./better-auth.js";
 import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
+import type { BetterAuthSessionResult } from "./better-auth.js";
 
 /**
  * This bridge is a private transport adapter, not an authentication authority.

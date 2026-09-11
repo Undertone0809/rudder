@@ -5,6 +5,7 @@ import type {
   ServerAgentRuntimeModule,
 } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
+import { logger } from "../../middleware/logger.js";
 import {
   beginHeartbeatRunAttempt,
   finishHeartbeatRunAttempt,
@@ -19,7 +20,6 @@ import {
   mergeRuntimeAttemptCheckpoint,
   persistRuntimeAttemptCheckpoint,
 } from "./runtime-attempt-adapter.js";
-import { logger } from "../../middleware/logger.js";
 
 export type HeartbeatActiveAttemptSpec = {
   index: number;

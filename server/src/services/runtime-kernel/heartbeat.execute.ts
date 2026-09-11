@@ -67,10 +67,10 @@ import {
 import {
   markHeartbeatRunAttemptWaiting,
 } from "./heartbeat-attempt-ledger.js";
-import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 import {
   createHeartbeatAttemptLifecycle,
 } from "./heartbeat-attempt-lifecycle.js";
+import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 

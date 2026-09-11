@@ -1,7 +1,7 @@
+import type { NativeProcessAuthority } from "@rudderhq/agent-runtime-utils";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import type { NativeProcessAuthority } from "@rudderhq/agent-runtime-utils";
 import { createNativeProcessAuthority } from "../../agent-runtimes/utils.js";
 
 /**

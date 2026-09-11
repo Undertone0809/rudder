@@ -1,15 +1,15 @@
+import type { Request } from "express";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { Request } from "express";
 import { describe, expect, it, vi } from "vitest";
-import { createLocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 import {
   ACTOR_ENVELOPE_BRIDGE_AUTHORITY,
+  actorEnvelopeBodySha256,
   canonicalActorEnvelopeV2SigningBytes,
   createPrivateActorEnvelopeBridge,
-  actorEnvelopeBodySha256,
   type ActorEnvelopeV2UnsignedClaims,
 } from "../auth/actor-envelope-bridge.js";
+import { createLocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 
 const SIGNING_KEY = "bridge-test-key-do-not-log";
 const BODY = Buffer.from('{"message":"hello"}', "utf8");

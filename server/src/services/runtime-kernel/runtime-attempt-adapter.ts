@@ -1,5 +1,5 @@
-import type { Db } from "@rudderhq/db";
 import type { NativeProcessAuthority } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import {
   checkpointHeartbeatRunAttempt,
   type HeartbeatAttemptRef,
