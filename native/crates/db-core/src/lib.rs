@@ -373,13 +373,7 @@ fn approval_targets(
         entity: "approval",
         field: "payload",
     })?;
-    let payload_issue_id = match payload_object.get("issueId") {
-        None => None,
-        Some(value) => Some(value.as_str().ok_or(ProjectionError::StringRequired {
-            entity: "approval",
-            field: "payload.issueId",
-        })?),
-    };
+    let payload_issue_id = approval_payload_issue_id(payload_object)?;
     let rows = target_rows
         .as_array()
         .ok_or(ProjectionError::ArrayRequired {
@@ -394,6 +388,7 @@ fn approval_targets(
     }
 
     let mut targets = Vec::with_capacity(rows.len().max(1));
+    let mut relational_issue_target = false;
     for value in rows {
         let object = value.as_object().ok_or(ProjectionError::InvalidObject {
             entity: "approval",
@@ -416,11 +411,17 @@ fn approval_targets(
                 field: "target_rows",
             });
         }
-        if kind == "issue" && payload_issue_id.is_some_and(|payload_id| payload_id != id) {
-            return Err(ProjectionError::InvalidObject {
-                entity: "approval",
-                field: "payload.issueId",
-            });
+        if kind == "issue" {
+            relational_issue_target = true;
+            if payload_issue_id
+                .as_deref()
+                .is_some_and(|payload_id| payload_id != id)
+            {
+                return Err(ProjectionError::InvalidObject {
+                    entity: "approval",
+                    field: "payload",
+                });
+            }
         }
         targets.push(ApprovalTargetProjection {
             kind: kind.to_owned(),
@@ -430,20 +431,94 @@ fn approval_targets(
         });
     }
     if targets.is_empty() {
-        if payload_issue_id.is_some() {
-            return Err(ProjectionError::InvalidObject {
-                entity: "approval",
-                field: "payload.issueId",
+        if let Some(issue_id) = payload_issue_id {
+            targets.push(ApprovalTargetProjection {
+                kind: "issue".into(),
+                id: issue_id,
+                identifier: None,
+                title: None,
+            });
+        } else {
+            targets.push(ApprovalTargetProjection {
+                kind: "organization".into(),
+                id: org_id.into(),
+                identifier: None,
+                title: None,
             });
         }
-        targets.push(ApprovalTargetProjection {
-            kind: "organization".into(),
-            id: org_id.into(),
-            identifier: None,
-            title: None,
+    } else if payload_issue_id.is_some() && !relational_issue_target {
+        return Err(ProjectionError::InvalidObject {
+            entity: "approval",
+            field: "payload",
         });
     }
     Ok(targets)
+}
+
+fn approval_payload_issue_id(
+    payload: &Map<String, Value>,
+) -> Result<Option<String>, ProjectionError> {
+    let mut issue_id = None;
+    for (field, value) in [
+        ("issueId", payload.get("issueId")),
+        ("primaryIssueId", payload.get("primaryIssueId")),
+    ] {
+        let Some(value) = value else {
+            continue;
+        };
+        let value = value.as_str().filter(|value| !value.is_empty()).ok_or(
+            ProjectionError::StringRequired {
+                entity: "approval",
+                field: match field {
+                    "issueId" => "payload.issueId",
+                    _ => "payload.primaryIssueId",
+                },
+            },
+        )?;
+        if issue_id
+            .as_deref()
+            .is_some_and(|existing| existing != value)
+        {
+            return Err(ProjectionError::InvalidObject {
+                entity: "approval",
+                field: "payload",
+            });
+        }
+        issue_id = Some(value.to_owned());
+    }
+
+    if let Some(value) = payload.get("issueIds") {
+        let ids = value.as_array().ok_or(ProjectionError::ArrayRequired {
+            entity: "approval",
+            field: "payload.issueIds",
+        })?;
+        if ids.len() > 1 {
+            return Err(ProjectionError::InvalidObject {
+                entity: "approval",
+                field: "payload.issueIds",
+            });
+        }
+        if let Some(value) = ids.first() {
+            let value = value.as_str().filter(|value| !value.is_empty()).ok_or(
+                ProjectionError::StringRequired {
+                    entity: "approval",
+                    field: "payload.issueIds",
+                },
+            )?;
+            if issue_id
+                .as_deref()
+                .is_some_and(|existing| existing != value)
+            {
+                return Err(ProjectionError::InvalidObject {
+                    entity: "approval",
+                    field: "payload",
+                });
+            }
+            issue_id = Some(value.to_owned());
+        }
+    }
+
+    Ok(issue_id)
 }
 
 fn required_json_string<'a>(
@@ -832,16 +907,33 @@ fn list_select(kind: EntityKind) -> &'static str {
              a.requested_by_user_id, a.decision_note, a.decided_by_user_id, \
              to_char(a.decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS decided_at, \
              a.payload, \
-             COALESCE((SELECT jsonb_agg(jsonb_build_object( \
-                 'kind', 'issue', 'id', ia.issue_id::text, 'identifier', target.identifier, \
-                 'title', target.title, 'associationOrgId', ia.org_id::text, \
-                 'issueOrgId', target.org_id::text) ORDER BY ia.created_at, ia.issue_id) \
-               FROM (SELECT ia.issue_id, ia.approval_id, ia.org_id, ia.created_at \
-                     FROM issue_approvals ia WHERE ia.approval_id = a.id \
-                       AND ia.org_id = a.org_id \
-                     ORDER BY ia.created_at, ia.issue_id LIMIT 33) ia \
-               LEFT JOIN issues target ON target.id = ia.issue_id \
-                                      AND target.org_id = ia.org_id), '[]'::jsonb) AS target_rows, \
+             COALESCE( \
+               (SELECT jsonb_agg(jsonb_build_object( \
+                   'kind', 'issue', 'id', ia.issue_id::text, 'identifier', target.identifier, \
+                   'title', target.title, 'associationOrgId', ia.org_id::text, \
+                   'issueOrgId', target.org_id::text) ORDER BY ia.created_at, ia.issue_id) \
+                FROM (SELECT ia.issue_id, ia.approval_id, ia.org_id, ia.created_at \
+                      FROM issue_approvals ia WHERE ia.approval_id = a.id \
+                        AND ia.org_id = a.org_id \
+                      ORDER BY ia.created_at, ia.issue_id LIMIT 33) ia \
+                LEFT JOIN issues target ON target.id = ia.issue_id \
+                                       AND target.org_id = ia.org_id), \
+               (SELECT jsonb_agg(jsonb_build_object( \
+                   'kind', 'issue', 'id', payload_target.issue_id, \
+                   'identifier', target.identifier, 'title', target.title, \
+                   'associationOrgId', a.org_id::text, 'issueOrgId', target.org_id::text) \
+                               ORDER BY payload_target.issue_id) \
+                FROM LATERAL (SELECT COALESCE( \
+                    NULLIF(a.payload->>'issueId', ''), \
+                    NULLIF(a.payload->>'primaryIssueId', ''), \
+                    NULLIF(a.payload->'issueIds'->>0, '') \
+                ) AS issue_id) payload_target \
+                LEFT JOIN issues target ON target.id::text = payload_target.issue_id \
+                                       AND target.org_id = a.org_id \
+                WHERE NOT EXISTS (SELECT 1 FROM issue_approvals ia \
+                                  WHERE ia.approval_id = a.id AND ia.org_id = a.org_id) \
+                  AND payload_target.issue_id IS NOT NULL), \
+               '[]'::jsonb) AS target_rows, \
              to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, \
              to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at \
              FROM approvals a"

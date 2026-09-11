@@ -344,6 +344,7 @@ fn issue_and_approval_query_plans_are_scoped_bounded_and_read_only() {
         if kind == EntityKind::Approval {
             assert!(plan.sql.contains("ia.org_id = a.org_id"));
             assert!(plan.sql.contains("target.org_id = ia.org_id"));
+            assert!(plan.sql.contains("target.org_id = a.org_id"));
         }
     }
 
@@ -487,4 +488,70 @@ fn issue_and_approval_rows_project_board_fields_and_reject_sensitive_or_malforme
             ..
         }
     ));
+}
+
+#[test]
+fn payload_only_approval_aliases_project_as_issue_targets() {
+    for payload in [
+        json!({"primaryIssueId": "00000000-0000-0000-0000-000000000001"}),
+        json!({"issueIds": ["00000000-0000-0000-0000-000000000001"]}),
+        json!({
+            "issueId": "00000000-0000-0000-0000-000000000001",
+            "primaryIssueId": "00000000-0000-0000-0000-000000000001",
+            "issueIds": ["00000000-0000-0000-0000-000000000001"]
+        }),
+    ] {
+        let approval = ApprovalDbRow {
+            org_id: "00000000-0000-0000-0000-000000000010".into(),
+            payload,
+            target_rows: json!([]),
+            ..ApprovalDbRow::default()
+        }
+        .into_projection()
+        .unwrap();
+
+        assert_eq!(
+            approval.targets,
+            vec![rudder_db_core::ApprovalTargetProjection {
+                kind: "issue".into(),
+                id: "00000000-0000-0000-0000-000000000001".into(),
+                identifier: None,
+                title: None,
+            }]
+        );
+    }
+}
+
+#[test]
+fn approval_payload_aliases_must_be_valid_and_match_relational_targets() {
+    let relational_target = json!([{
+        "kind": "issue",
+        "id": "issue-a",
+        "associationOrgId": "org-a",
+        "issueOrgId": "org-a"
+    }]);
+
+    for payload in [
+        json!({"primaryIssueId": "issue-b"}),
+        json!({"issueIds": ["issue-b"]}),
+        json!({"issueId": "issue-a", "primaryIssueId": "issue-b"}),
+        json!({"issueIds": ["issue-a", "issue-b"]}),
+        json!({"primaryIssueId": ""}),
+        json!({"primaryIssueId": 42}),
+        json!({"issueIds": [""]}),
+        json!({"issueIds": [42]}),
+    ] {
+        let result = ApprovalDbRow {
+            org_id: "org-a".into(),
+            payload,
+            target_rows: relational_target.clone(),
+            ..ApprovalDbRow::default()
+        }
+        .into_projection();
+
+        assert!(
+            result.is_err(),
+            "malformed or conflicting payload was projected"
+        );
+    }
 }

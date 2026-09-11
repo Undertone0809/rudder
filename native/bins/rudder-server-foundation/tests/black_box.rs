@@ -105,10 +105,28 @@ INSERT INTO issues (
     4, 'RUD-4', 'Terminated issue', NULL, 'terminated', 'medium',
     4, NULL, NULL, 1, 1,
     NULL, '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000005',
+    '00000000-0000-0000-0000-000000000001',
+    5, 'RUD-5', 'Payload primary issue', NULL, 'todo', 'medium',
+    5, NULL, NULL, 1, 1,
+    NULL, '2026-01-05T00:00:00Z', '2026-01-05T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000006',
+    '00000000-0000-0000-0000-000000000001',
+    6, 'RUD-6', 'Payload issue array', NULL, 'todo', 'medium',
+    6, NULL, NULL, 1, 1,
+    NULL, '2026-01-06T00:00:00Z', '2026-01-06T00:00:00Z'
 );
 UPDATE issues
 SET hidden_at = '2026-01-03T00:00:00Z'
 WHERE id = '10000000-0000-0000-0000-000000000003';
+UPDATE issues
+SET hidden_at = '2026-01-05T00:00:00Z'
+WHERE id IN (
+    '10000000-0000-0000-0000-000000000005',
+    '10000000-0000-0000-0000-000000000006'
+);
 INSERT INTO approvals (
     id, org_id, type, status, revision, payload, decision_note,
     created_at, updated_at
@@ -118,6 +136,18 @@ INSERT INTO approvals (
     'issue_review', 'pending', 3,
     '{"issueId":"10000000-0000-0000-0000-000000000001","secret":"must-not-leak"}',
     'safe note', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+), (
+    '20000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000001',
+    'issue_review', 'pending', 1,
+    '{"primaryIssueId":"10000000-0000-0000-0000-000000000005"}',
+    NULL, '2026-01-05T00:00:00Z', '2026-01-05T00:00:00Z'
+), (
+    '20000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000001',
+    'issue_review', 'pending', 1,
+    '{"issueIds":["10000000-0000-0000-0000-000000000006"]}',
+    NULL, '2026-01-06T00:00:00Z', '2026-01-06T00:00:00Z'
 ), (
     '20000000-0000-0000-0000-000000000099',
     '00000000-0000-0000-0000-000000000099',
@@ -647,6 +677,10 @@ async fn issue_and_approval_read_surfaces_use_disposable_postgres_and_fence_read
     let issue_get_path = "/internal/read-surfaces/v1/issues/10000000-0000-0000-0000-000000000001";
     let approval_get_path =
         "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000001";
+    let primary_payload_approval_get_path =
+        "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000002";
+    let array_payload_approval_get_path =
+        "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000003";
     let hidden_issue_get_path =
         "/internal/read-surfaces/v1/issues/10000000-0000-0000-0000-000000000003";
     let terminated_issue_get_path =
@@ -659,6 +693,8 @@ async fn issue_and_approval_read_surfaces_use_disposable_postgres_and_fence_read
         [
             get_with_retry(bound_addr, issue_get_path),
             get_with_retry(bound_addr, approval_get_path),
+            get_with_retry(bound_addr, primary_payload_approval_get_path),
+            get_with_retry(bound_addr, array_payload_approval_get_path),
             get_with_retry(bound_addr, hidden_issue_get_path),
             get_with_retry(bound_addr, terminated_issue_get_path),
             get_with_retry(bound_addr, foreign_issue_get_path),
@@ -688,11 +724,35 @@ async fn issue_and_approval_read_surfaces_use_disposable_postgres_and_fence_read
     assert!(!approval_get.contains("must-not-leak"));
     assert!(response_body_len(approval_get) <= 4096);
 
-    assert!(responses[2].starts_with("HTTP/1.1 200"), "{}", responses[2]);
-    assert!(responses[2].contains("hiddenAt"), "{}", responses[2]);
-    assert!(responses[3].starts_with("HTTP/1.1 200"), "{}", responses[3]);
-    assert!(responses[3].contains("terminated"), "{}", responses[3]);
-    for response in [&responses[4], &responses[5]] {
+    let primary_payload_approval_get = &responses[2];
+    assert!(
+        primary_payload_approval_get.starts_with("HTTP/1.1 200"),
+        "{primary_payload_approval_get}"
+    );
+    let primary_payload_approval_body = response_json(primary_payload_approval_get);
+    assert_eq!(primary_payload_approval_body["targets"][0]["kind"], "issue");
+    assert_eq!(
+        primary_payload_approval_body["targets"][0]["id"],
+        "10000000-0000-0000-0000-000000000005"
+    );
+
+    let array_payload_approval_get = &responses[3];
+    assert!(
+        array_payload_approval_get.starts_with("HTTP/1.1 200"),
+        "{array_payload_approval_get}"
+    );
+    let array_payload_approval_body = response_json(array_payload_approval_get);
+    assert_eq!(array_payload_approval_body["targets"][0]["kind"], "issue");
+    assert_eq!(
+        array_payload_approval_body["targets"][0]["id"],
+        "10000000-0000-0000-0000-000000000006"
+    );
+
+    assert!(responses[4].starts_with("HTTP/1.1 200"), "{}", responses[4]);
+    assert!(responses[4].contains("hiddenAt"), "{}", responses[4]);
+    assert!(responses[5].starts_with("HTTP/1.1 200"), "{}", responses[5]);
+    assert!(responses[5].contains("terminated"), "{}", responses[5]);
+    for response in [&responses[6], &responses[7]] {
         assert!(response.starts_with("HTTP/1.1 404"), "{response}");
         assert!(response.contains("read_surface_not_found"), "{response}");
     }
