@@ -190,6 +190,22 @@ fn activity_projection_redacts_nested_secrets_and_keeps_visible_issue_context() 
 }
 
 #[test]
+fn activity_projection_does_not_expose_secret_reference_ids() {
+    let projection = activity_row(Some(json!({
+        "credential": {
+            "type": "secret_ref",
+            "secretId": "concrete-secret-id",
+        },
+    })))
+    .into_projection()
+    .unwrap();
+    let details = projection.details.unwrap();
+
+    assert!(!details.to_string().contains("concrete-secret-id"));
+    assert_eq!(details["credential"], json!({"type": "secret_ref"}));
+}
+
+#[test]
 fn run_projection_reuses_safe_log_metadata_and_bounds_invalid_bytes() {
     let projection = run_row().into_projection().unwrap();
     assert_eq!(projection.duration_ms, Some(1_250));

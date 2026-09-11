@@ -40,10 +40,11 @@ pub use identity::{BuildIdentity, ServerIdentity};
 use authority::{AuthorityAdapterError, AuthorityRegistry, parse_route_selector};
 
 use read_surfaces::{
-    AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, APPROVAL_GET_ROUTE, APPROVALS_LIST_ROUTE, GOAL_GET_ROUTE,
-    GOALS_LIST_ROUTE, ISSUE_GET_ROUTE, ISSUES_LIST_ROUTE, ORGANIZATIONS_GET_ROUTE,
-    ORGANIZATIONS_LIST_ROUTE, PROJECT_GET_ROUTE, PROJECTS_LIST_ROUTE, ReadSurfaceAdapter,
-    ReadSurfaceQuery, ReadSurfaceQueryError,
+    ACTIVITY_LIST_ROUTE, AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, APPROVAL_GET_ROUTE,
+    APPROVALS_LIST_ROUTE, ActivityRunReadAdapter, GOAL_GET_ROUTE, GOALS_LIST_ROUTE,
+    ISSUE_GET_ROUTE, ISSUES_LIST_ROUTE, ORGANIZATIONS_GET_ROUTE, ORGANIZATIONS_LIST_ROUTE,
+    PROJECT_GET_ROUTE, PROJECTS_LIST_ROUTE, RUNS_LIST_ROUTE, ReadSurfaceAdapter, ReadSurfaceQuery,
+    ReadSurfaceQueryError,
 };
 
 use workspace_backup_files::{
@@ -86,6 +87,8 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "organization_read_surfaces",
     "issue_read_surfaces",
     "approval_read_surfaces",
+    "activity_read_surfaces",
+    "run_read_surfaces",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -508,6 +511,7 @@ struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
     read_surfaces: Option<ReadSurfaceAdapter>,
+    activity_runs: Option<ActivityRunReadAdapter>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     started_at: Instant,
@@ -672,6 +676,13 @@ impl AppState {
             )),
             _ => None,
         };
+        let activity_runs = match (&database, config.trusted_organization_scope.clone()) {
+            (DatabaseState::Configured(pool), Some(scope)) => Some(ActivityRunReadAdapter::new(
+                rudder_db_core::activity_read::ActivityRunReadRepository::new(pool.clone()),
+                scope,
+            )),
+            _ => None,
+        };
         Ok(Self {
             admission: Arc::new(RequestAdmission::new(
                 config.workers,
@@ -681,6 +692,7 @@ impl AppState {
             config: Arc::new(config),
             database,
             read_surfaces,
+            activity_runs,
             started_at: Instant::now(),
             authority: Arc::new(authority),
             authority_receipt,
@@ -1004,6 +1016,42 @@ impl AppState {
         };
         match adapter.get_approval(approval_id).await {
             Ok(approval) => bounded_json(StatusCode::OK, &approval, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_activity(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = &self.activity_runs else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let page = match query.activity_page() {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let filter = match query.activity_filter() {
+            Ok(filter) => filter,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_activity(org_id, filter, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_runs(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = &self.activity_runs else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let page = match query.run_page() {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let filter = match query.run_filter() {
+            Ok(filter) => filter,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_runs(org_id, filter, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
             Err(error) => self.read_surface_error(error),
         }
     }
@@ -1482,6 +1530,22 @@ async fn read_approval(state: web::Data<AppState>, approval_id: web::Path<String
     state.read_approval(approval_id.as_str()).await
 }
 
+async fn read_activity(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_activity(route.as_str(), &query).await
+}
+
+async fn read_runs(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_runs(route.as_str(), &query).await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -1555,6 +1619,8 @@ impl ServerRuntime {
                 .route(ISSUE_GET_ROUTE, web::get().to(read_issue))
                 .route(APPROVALS_LIST_ROUTE, web::get().to(read_approvals))
                 .route(APPROVAL_GET_ROUTE, web::get().to(read_approval))
+                .route(ACTIVITY_LIST_ROUTE, web::get().to(read_activity))
+                .route(RUNS_LIST_ROUTE, web::get().to(read_runs))
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),
@@ -1890,5 +1956,23 @@ mod tests {
         for mutation in ["insert ", "update ", "delete ", "truncate "] {
             assert!(!normalized.contains(mutation), "query contains {mutation}");
         }
+    }
+
+    #[actix_web::test]
+    async fn activity_and_run_read_surfaces_fail_closed_without_database_or_trusted_scope() {
+        let state = AppState::new(ServerConfig::default()).unwrap();
+        let query = ReadSurfaceQuery::default();
+
+        let activity = state.read_activity("organization-1", &query).await;
+        assert_eq!(activity.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let activity_body = actix_web::body::to_bytes(activity.into_body())
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&activity_body).contains("read_surface_unavailable"));
+
+        let runs = state.read_runs("organization-1", &query).await;
+        assert_eq!(runs.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let runs_body = actix_web::body::to_bytes(runs.into_body()).await.unwrap();
+        assert!(String::from_utf8_lossy(&runs_body).contains("read_surface_unavailable"));
     }
 }

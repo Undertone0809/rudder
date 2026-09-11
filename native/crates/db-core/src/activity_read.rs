@@ -996,10 +996,8 @@ fn is_secret_key(key: &str) -> bool {
 
 fn redact_secret_value(value: Value) -> Value {
     if let Value::Object(object) = &value {
-        if object.get("type").and_then(Value::as_str) == Some("secret_ref")
-            && object.get("secretId").and_then(Value::as_str).is_some()
-        {
-            return value;
+        if object.get("type").and_then(Value::as_str) == Some("secret_ref") {
+            return json!({"type": "secret_ref"});
         }
         if object.get("type").and_then(Value::as_str) == Some("plain")
             && object.contains_key("value")

@@ -183,7 +183,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
     assert_eq!(
         startup["routeAuthority"]["routes"].as_array().map(Vec::len),
-        Some(22)
+        Some(24)
     );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
@@ -202,7 +202,9 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "workspace_backup_download",
             "organization_read_surfaces",
             "issue_read_surfaces",
-            "approval_read_surfaces"
+            "approval_read_surfaces",
+            "activity_read_surfaces",
+            "run_read_surfaces"
         ])
     );
 
@@ -224,6 +226,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("workspace_backup_file_read"));
     assert!(capabilities.contains("workspace_backup_download"));
     assert!(capabilities.contains("organization_read_surfaces"));
+    assert!(capabilities.contains("activity_read_surfaces"));
+    assert!(capabilities.contains("run_read_surfaces"));
 
     let read_without_scope = get_with_retry(bound_addr, "/internal/read-surfaces/v1/organizations");
     assert!(
@@ -237,6 +241,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         "/internal/read-surfaces/v1/issues/00000000-0000-0000-0000-000000000001",
         "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/approvals",
         "/internal/read-surfaces/v1/approvals/00000000-0000-0000-0000-000000000001",
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/activity",
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs",
     ] {
         let response = get_with_retry(bound_addr, path);
         assert!(response.starts_with("HTTP/1.1 503"), "{path}: {response}");
@@ -365,10 +371,15 @@ async fn trusted_read_surfaces_use_sqlx_and_fence_organizations() {
         format!("/internal/read-surfaces/v1/orgs/{organization_id}/issues?limit=1");
     let approval_list_path =
         format!("/internal/read-surfaces/v1/orgs/{organization_id}/approvals?limit=1");
+    let activity_list_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/activity?limit=1");
+    let run_list_path = format!("/internal/read-surfaces/v1/orgs/{organization_id}/runs?limit=1");
     let read_surface_lists = tokio::task::spawn_blocking(move || {
         [
             get_with_retry(bound_addr, &issue_list_path),
             get_with_retry(bound_addr, &approval_list_path),
+            get_with_retry(bound_addr, &activity_list_path),
+            get_with_retry(bound_addr, &run_list_path),
         ]
     })
     .await
@@ -393,6 +404,14 @@ async fn trusted_read_surfaces_use_sqlx_and_fence_organizations() {
                 bound_addr,
                 "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/approvals",
             ),
+            get_with_retry(
+                bound_addr,
+                "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/activity",
+            ),
+            get_with_retry(
+                bound_addr,
+                "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/runs",
+            ),
         ]
     })
     .await
@@ -406,10 +425,16 @@ async fn trusted_read_surfaces_use_sqlx_and_fence_organizations() {
         format!("/internal/read-surfaces/v1/orgs/{organization_id}/issues?limit=1001");
     let approval_limit_path =
         format!("/internal/read-surfaces/v1/orgs/{organization_id}/approvals?limit=1001");
+    let activity_limit_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/activity?limit=101");
+    let run_limit_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/runs?limit=101");
     let invalid_read_surface_limits = tokio::task::spawn_blocking(move || {
         [
             get_with_retry(bound_addr, &issue_limit_path),
             get_with_retry(bound_addr, &approval_limit_path),
+            get_with_retry(bound_addr, &activity_limit_path),
+            get_with_retry(bound_addr, &run_limit_path),
         ]
     })
     .await
@@ -615,7 +640,7 @@ fn authority_introspection_is_versioned_bounded_and_fail_closed() {
     assert_eq!(startup["nodeAuthorityUnchanged"], true);
 
     let routes = startup["routes"].as_array().expect("authority routes");
-    assert_eq!(routes.len(), 22);
+    assert_eq!(routes.len(), 24);
     assert!(routes.iter().any(|route| {
         route["routeId"] == "foundation.authority"
             && route["decision"] == "rust"
@@ -1359,7 +1384,7 @@ fn spawn_server(overrides: &[(&str, &str)]) -> (Child, BufReader<ChildStdout>, S
     assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
     assert_eq!(
         startup["routeAuthority"]["routes"].as_array().map(Vec::len),
-        Some(22)
+        Some(24)
     );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
