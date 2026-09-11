@@ -22,7 +22,13 @@ use rudder_issue_core::{
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::{env, error::Error, process, time::SystemTime};
+use std::{
+    env,
+    error::Error,
+    process,
+    sync::atomic::{AtomicU64, Ordering},
+    time::SystemTime,
+};
 use time::{Duration, OffsetDateTime};
 
 const ORG_A: &str = "00000000-0000-0000-0000-000000000001";
@@ -41,6 +47,21 @@ const RUN_D: &str = "00000000-0000-0000-0000-000000000033";
 const APPROVAL_ID: &str = "00000000-0000-0000-0000-000000000040";
 const AMBIGUOUS_APPROVAL_ID: &str = "00000000-0000-0000-0000-000000000041";
 const BOARD_USER_ID: &str = "board-user";
+
+#[test]
+fn disposable_schema_names_remain_unique_when_timestamps_collide() {
+    let first = schema_name_for(42, 0);
+    let second = schema_name_for(42, 1);
+
+    assert_ne!(first, second);
+    for name in [first, second] {
+        assert!(name.len() <= 63);
+        assert!(
+            name.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        );
+    }
+}
 
 #[tokio::test]
 #[ignore = "explicit opt-in: set RUDDER_DB_CORE_ISSUE_MUTATION_DATABASE_URL to a disposable PostgreSQL instance"]
@@ -257,12 +278,19 @@ fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
+static DISPOSABLE_SCHEMA_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn schema_name_for(nanos: u128, sequence: u64) -> String {
+    format!("rudder_issue_mutation_{}_{}_{}", process::id(), nanos, sequence)
+}
+
 fn disposable_schema_name() -> String {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("system clock after Unix epoch")
         .as_nanos();
-    format!("rudder_issue_mutation_{}_{}", process::id(), nanos)
+    let sequence = DISPOSABLE_SCHEMA_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    schema_name_for(nanos, sequence)
 }
 
 async fn exercise_mutations(
