@@ -298,6 +298,93 @@ fn review_query_plans_bind_revision_and_fencing_preconditions() {
     assert!(plans.insert_comment.sql.contains("$5::text"));
 }
 
+#[test]
+fn agent_review_query_plans_require_an_explicit_current_run() {
+    let mut command = review_command();
+    command.actor = ActorRef::agent(
+        OrganizationId::new("org-client"),
+        AgentId::new("00000000-0000-0000-0000-000000000002"),
+        None,
+    );
+
+    let error = review_decision_query_plans(&scope("org-client"), &command).unwrap_err();
+
+    assert!(matches!(
+        error,
+        IssueMutationError::Domain(rudder_issue_core::DomainError::ReviewRunRequired)
+    ));
+}
+
+#[test]
+fn agent_review_query_plans_atomically_fence_the_run_to_the_active_issue_run() {
+    let mut command = review_command();
+    command.actor = ActorRef::agent(
+        OrganizationId::new("org-client"),
+        AgentId::new("00000000-0000-0000-0000-000000000002"),
+        Some(RunId::new("00000000-0000-0000-0000-000000000003")),
+    );
+
+    let plans = review_decision_query_plans(&scope("org-client"), &command).unwrap();
+    let validate_run = plans
+        .validate_run
+        .as_ref()
+        .expect("agent review must validate its current run");
+
+    assert!(validate_run.sql.contains("i.org_id = r.org_id"));
+    assert!(validate_run.sql.contains("i.id = $2::uuid"));
+    assert!(
+        validate_run
+            .sql
+            .contains("(i.checkout_run_id = r.id OR i.execution_run_id = r.id)")
+    );
+    assert!(validate_run.sql.contains("r.agent_id = $4::uuid"));
+    assert!(validate_run.sql.contains("FOR SHARE OF r, i"));
+    assert!(
+        validate_run
+            .sql
+            .contains("r.status IN ('queued', 'running')")
+    );
+    assert!(matches!(
+        validate_run.binds.get(1),
+        Some(MutationBind::Uuid(value))
+            if value == "00000000-0000-0000-0000-000000000001"
+    ));
+    assert!(matches!(
+        validate_run.binds.get(2),
+        Some(MutationBind::Uuid(value))
+            if value == "00000000-0000-0000-0000-000000000003"
+    ));
+    assert!(matches!(
+        validate_run.binds.get(3),
+        Some(MutationBind::Uuid(value))
+            if value == "00000000-0000-0000-0000-000000000002"
+    ));
+    assert!(
+        plans
+            .update_issue
+            .sql
+            .contains("(i.checkout_run_id = $6::uuid OR i.execution_run_id = $6::uuid)")
+    );
+    assert!(matches!(
+        plans.update_issue.binds.get(5),
+        Some(MutationBind::Uuid(value))
+            if value == "00000000-0000-0000-0000-000000000003"
+    ));
+}
+
+#[test]
+fn user_review_query_plans_do_not_require_a_run() {
+    let plans = review_decision_query_plans(&scope("org-client"), &review_command()).unwrap();
+
+    assert!(plans.validate_run.is_none());
+    assert!(
+        !plans
+            .update_issue
+            .sql
+            .contains("checkout_run_id = $6::uuid")
+    );
+}
+
 fn approval_command() -> ApprovalDecisionCommand {
     ApprovalDecisionCommand::new(
         ApprovalRef::new(

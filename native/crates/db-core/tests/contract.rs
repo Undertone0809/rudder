@@ -341,6 +341,10 @@ fn issue_and_approval_query_plans_are_scoped_bounded_and_read_only() {
             ]
         );
         assert!(!get.sql.contains("entity-id"));
+        if kind == EntityKind::Approval {
+            assert!(plan.sql.contains("ia.org_id = a.org_id"));
+            assert!(plan.sql.contains("target.org_id = ia.org_id"));
+        }
     }
 
     let issue_default = list_query_plan(

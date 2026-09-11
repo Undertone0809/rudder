@@ -686,6 +686,23 @@ fn validate_run_plan(
     )
 }
 
+fn validate_review_run_plan(
+    scope: &TrustedOrganizationId,
+    issue_id: &IssueId,
+    run_id: &RunId,
+    agent_id: &AgentId,
+) -> MutationQueryPlan {
+    plan(
+        "SELECT r.id::text AS id\n           FROM heartbeat_runs AS r\n           JOIN agents AS a ON a.id = r.agent_id AND a.org_id = r.org_id\n           JOIN issues AS i\n             ON i.org_id = r.org_id\n            AND i.id = $2::uuid\n            AND (i.checkout_run_id = r.id OR i.execution_run_id = r.id)\n          WHERE r.org_id = $1::uuid AND r.id = $3::uuid AND r.agent_id = $4::uuid\n            AND r.status IN ('queued', 'running')\n          FOR SHARE OF r, i",
+        vec![
+            MutationBind::Uuid(scope.as_str().into()),
+            MutationBind::Uuid(issue_id.as_str().into()),
+            MutationBind::Uuid(run_id.as_str().into()),
+            MutationBind::Uuid(agent_id.as_str().into()),
+        ],
+    )
+}
+
 fn actor_run_plan(scope: &TrustedOrganizationId, actor: &ActorRef) -> Option<MutationQueryPlan> {
     match actor {
         ActorRef::Agent {
@@ -694,6 +711,24 @@ fn actor_run_plan(scope: &TrustedOrganizationId, actor: &ActorRef) -> Option<Mut
             ..
         } => Some(validate_run_plan(scope, run_id, agent_id)),
         _ => None,
+    }
+}
+
+fn review_actor_run_plan(
+    scope: &TrustedOrganizationId,
+    issue_id: &IssueId,
+    actor: &ActorRef,
+) -> Result<Option<MutationQueryPlan>, IssueMutationError> {
+    match actor {
+        ActorRef::Agent {
+            agent_id,
+            run_id: Some(run_id),
+            ..
+        } => Ok(Some(validate_review_run_plan(
+            scope, issue_id, run_id, agent_id,
+        ))),
+        ActorRef::Agent { .. } => Err(DomainError::ReviewRunRequired.into()),
+        ActorRef::User { .. } => Ok(None),
     }
 }
 
@@ -763,16 +798,33 @@ fn update_review_plan(
     let expected_revision = bigint(command.expected_revision, "expected issue revision")?;
     let expected_fence = bigint(command.expected_fencing_token, "expected fencing token")?;
     let status = command.decision.resulting_status();
-    Ok(plan(
-        "UPDATE issues AS i\n            SET status = $5::text,\n                checkout_run_id = NULL,\n                execution_run_id = NULL,\n                execution_agent_name_key = NULL,\n                execution_locked_at = NULL,\n                checkout_lease_owner = NULL,\n                checkout_lease_expires_at = NULL,\n                started_at = CASE WHEN $5::text = 'in_progress'\n                                  THEN COALESCE(i.started_at, now())\n                                  ELSE i.started_at END,\n                completed_at = CASE WHEN $5::text = 'done'\n                                    THEN now()\n                                    ELSE NULL END,\n                cancelled_at = CASE WHEN $5::text = 'cancelled'\n                                    THEN now()\n                                    ELSE NULL END,\n                revision = i.revision + 1,\n                updated_at = now()\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\n            AND i.status IN ('in_review', 'blocked')\n          RETURNING i.revision, i.fencing_token",
-        vec![
-            MutationBind::Uuid(scope.as_str().into()),
-            MutationBind::Uuid(command.issue.issue_id.as_str().into()),
-            MutationBind::BigInt(expected_revision),
-            MutationBind::BigInt(expected_fence),
-            MutationBind::Text(issue_status_text(status).into()),
-        ],
-    ))
+    let run_id = match &command.actor {
+        ActorRef::Agent {
+            run_id: Some(run_id),
+            ..
+        } => Some(run_id),
+        ActorRef::Agent { .. } => return Err(DomainError::ReviewRunRequired.into()),
+        ActorRef::User { .. } => None,
+    };
+    let active_run_predicate = if run_id.is_some() {
+        "\n            AND (i.checkout_run_id = $6::uuid OR i.execution_run_id = $6::uuid)"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "UPDATE issues AS i\n            SET status = $5::text,\n                checkout_run_id = NULL,\n                execution_run_id = NULL,\n                execution_agent_name_key = NULL,\n                execution_locked_at = NULL,\n                checkout_lease_owner = NULL,\n                checkout_lease_expires_at = NULL,\n                started_at = CASE WHEN $5::text = 'in_progress'\n                                  THEN COALESCE(i.started_at, now())\n                                  ELSE i.started_at END,\n                completed_at = CASE WHEN $5::text = 'done'\n                                    THEN now()\n                                    ELSE NULL END,\n                cancelled_at = CASE WHEN $5::text = 'cancelled'\n                                    THEN now()\n                                    ELSE NULL END,\n                revision = i.revision + 1,\n                updated_at = now()\n          WHERE i.org_id = $1::uuid AND i.id = $2::uuid\n            AND i.revision = $3::int8 AND i.fencing_token = $4::int8\n            AND i.status IN ('in_review', 'blocked'){active_run_predicate}\n          RETURNING i.revision, i.fencing_token"
+    );
+    let mut binds = vec![
+        MutationBind::Uuid(scope.as_str().into()),
+        MutationBind::Uuid(command.issue.issue_id.as_str().into()),
+        MutationBind::BigInt(expected_revision),
+        MutationBind::BigInt(expected_fence),
+        MutationBind::Text(issue_status_text(status).into()),
+    ];
+    if let Some(run_id) = run_id {
+        binds.push(MutationBind::Uuid(run_id.as_str().into()));
+    }
+    Ok(plan(&sql, binds))
 }
 
 fn update_approval_plan(
@@ -1473,13 +1525,12 @@ async fn require_actor_run_scope(
     actor: &ActorRef,
 ) -> Result<(), IssueMutationError> {
     let ActorRef::Agent {
-        agent_id,
-        run_id: Some(run_id),
-        ..
+        agent_id, run_id, ..
     } = actor
     else {
         return Ok(());
     };
+    let run_id = run_id.as_ref().ok_or(DomainError::ReviewRunRequired)?;
     let query_plan = query_plan.ok_or_else(|| IssueMutationError::InvalidStoredState {
         entity: "actor",
         id: agent_id.as_str().into(),
@@ -1542,7 +1593,7 @@ pub fn review_decision_query_plans(
             &command.idempotency_key,
             &fingerprint,
         ),
-        validate_run: actor_run_plan(scope, &command.actor),
+        validate_run: review_actor_run_plan(scope, &command.issue.issue_id, &command.actor)?,
         load_issue: load_issue_plan(scope, &command.issue.issue_id),
         update_issue: update_review_plan(scope, command)?,
         insert_comment: insert_comment_plan(

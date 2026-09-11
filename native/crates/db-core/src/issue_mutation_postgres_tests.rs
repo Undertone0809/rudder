@@ -36,6 +36,7 @@ const AGENT_B: &str = "00000000-0000-0000-0000-000000000021";
 const RUN_A: &str = "00000000-0000-0000-0000-000000000030";
 const RUN_B: &str = "00000000-0000-0000-0000-000000000031";
 const RUN_C: &str = "00000000-0000-0000-0000-000000000032";
+const RUN_D: &str = "00000000-0000-0000-0000-000000000033";
 const APPROVAL_ID: &str = "00000000-0000-0000-0000-000000000040";
 const AMBIGUOUS_APPROVAL_ID: &str = "00000000-0000-0000-0000-000000000041";
 const BOARD_USER_ID: &str = "board-user";
@@ -183,6 +184,58 @@ async fn exercise_mutations(
         Err(IssueMutationError::NotFound { entity: "run", .. })
     ));
 
+    let mismatched_review = ReviewDecisionCommand::new(
+        IssueRef::new(
+            OrganizationId::new(ORG_A),
+            IssueId::new(REVIEW_DONE_ISSUE_ID),
+        ),
+        ActorRef::agent(
+            OrganizationId::new(ORG_A),
+            AgentId::new(AGENT_A),
+            Some(RunId::new(RUN_D)),
+        ),
+        ReviewDecision::Approve,
+        "must use the active review run",
+        0,
+        0,
+        IdempotencyKey::new("integration-review-mismatched-run-key"),
+    );
+    let mismatched_review_result = repository.decide_review(&scope, mismatched_review).await;
+    assert!(matches!(
+        mismatched_review_result,
+        Err(IssueMutationError::NotFound { entity: "run", .. })
+    ));
+
+    sqlx::query("UPDATE heartbeat_runs SET status = 'succeeded' WHERE id = $1::uuid")
+        .bind(RUN_A)
+        .execute(pool)
+        .await?;
+    let terminal_review = ReviewDecisionCommand::new(
+        IssueRef::new(
+            OrganizationId::new(ORG_A),
+            IssueId::new(REVIEW_DONE_ISSUE_ID),
+        ),
+        ActorRef::agent(
+            OrganizationId::new(ORG_A),
+            AgentId::new(AGENT_A),
+            Some(RunId::new(RUN_A)),
+        ),
+        ReviewDecision::Approve,
+        "must use a live review run",
+        0,
+        0,
+        IdempotencyKey::new("integration-review-terminal-run-key"),
+    );
+    let terminal_review_result = repository.decide_review(&scope, terminal_review).await;
+    assert!(matches!(
+        terminal_review_result,
+        Err(IssueMutationError::NotFound { entity: "run", .. })
+    ));
+    sqlx::query("UPDATE heartbeat_runs SET status = 'running' WHERE id = $1::uuid")
+        .bind(RUN_A)
+        .execute(pool)
+        .await?;
+
     let review_agent = ActorRef::agent(
         OrganizationId::new(ORG_A),
         AgentId::new(AGENT_A),
@@ -200,7 +253,14 @@ async fn exercise_mutations(
         0,
         IdempotencyKey::new("integration-review-done-key"),
     );
-    repository.decide_review(&scope, approve_review).await?;
+    let review_receipt = repository
+        .decide_review(&scope, approve_review.clone())
+        .await?;
+    let review_replay = repository.decide_review(&scope, approve_review).await?;
+    assert!(!review_receipt.replayed);
+    assert!(review_replay.replayed);
+    assert_eq!(review_replay.ledger_id, review_receipt.ledger_id);
+    assert_eq!(review_replay.activity_id, review_receipt.activity_id);
 
     let progress_review = ReviewDecisionCommand::new(
         IssueRef::new(
@@ -509,7 +569,7 @@ async fn create_fixture(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status) VALUES\n             ($1::uuid, $3::uuid, $5::uuid, 'running'),\n             ($2::uuid, $4::uuid, $6::uuid, 'running'),\n             ($7::uuid, $3::uuid, $6::uuid, 'running')",
+        "INSERT INTO heartbeat_runs (id, org_id, agent_id, status) VALUES\n             ($1::uuid, $3::uuid, $5::uuid, 'running'),\n             ($2::uuid, $4::uuid, $6::uuid, 'running'),\n             ($7::uuid, $3::uuid, $6::uuid, 'running'),\n             ($8::uuid, $3::uuid, $5::uuid, 'running')",
     )
     .bind(RUN_A)
     .bind(RUN_B)
@@ -518,6 +578,7 @@ async fn create_fixture(pool: &PgPool) -> Result<(), sqlx::Error> {
     .bind(AGENT_A)
     .bind(AGENT_B)
     .bind(RUN_C)
+    .bind(RUN_D)
     .execute(pool)
     .await?;
 
@@ -569,6 +630,15 @@ async fn create_fixture(pool: &PgPool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     }
+
+    sqlx::query(
+        "UPDATE issues SET checkout_run_id = $1::uuid\n          WHERE org_id = $2::uuid AND id = $3::uuid",
+    )
+    .bind(RUN_A)
+    .bind(ORG_A)
+    .bind(REVIEW_DONE_ISSUE_ID)
+    .execute(pool)
+    .await?;
 
     sqlx::query(
         "UPDATE issues SET execution_agent_name_key = 'stale-agent-lock', execution_locked_at = now()\n          WHERE id = $1::uuid",

@@ -837,8 +837,10 @@ fn list_select(kind: EntityKind) -> &'static str {
                  'issueOrgId', target.org_id::text) ORDER BY ia.created_at, ia.issue_id) \
                FROM (SELECT ia.issue_id, ia.approval_id, ia.org_id, ia.created_at \
                      FROM issue_approvals ia WHERE ia.approval_id = a.id \
+                       AND ia.org_id = a.org_id \
                      ORDER BY ia.created_at, ia.issue_id LIMIT 33) ia \
-               LEFT JOIN issues target ON target.id = ia.issue_id), '[]'::jsonb) AS target_rows, \
+               LEFT JOIN issues target ON target.id = ia.issue_id \
+                                      AND target.org_id = ia.org_id), '[]'::jsonb) AS target_rows, \
              to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at, \
              to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at \
              FROM approvals a"

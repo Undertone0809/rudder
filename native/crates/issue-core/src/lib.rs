@@ -717,6 +717,35 @@ impl Issue {
         if !matches!(self.status, IssueStatus::InReview | IssueStatus::Blocked) {
             return Err(DomainError::ReviewNotOpen);
         }
+        if let ActorRef::Agent {
+            run_id: Some(actor_run),
+            ..
+        } = &command.actor
+        {
+            let matches_active_run = self
+                .checkout_run_id
+                .as_ref()
+                .is_some_and(|active_run| active_run == actor_run)
+                || self
+                    .execution_run_id
+                    .as_ref()
+                    .is_some_and(|active_run| active_run == actor_run);
+            if !matches_active_run {
+                match self
+                    .execution_run_id
+                    .clone()
+                    .or_else(|| self.checkout_run_id.clone())
+                {
+                    Some(expected) => {
+                        return Err(DomainError::ReviewRunMismatch {
+                            expected,
+                            found: actor_run.clone(),
+                        });
+                    }
+                    None => return Err(DomainError::ReviewRunRequired),
+                }
+            }
+        }
         if command.decision == ReviewDecision::RequestChanges && self.assignee.is_none() {
             return Err(DomainError::MissingAssignee);
         }
@@ -1663,6 +1692,7 @@ mod tests {
             Some(PrincipalRef::agent(org.clone(), reviewer.clone())),
         )
         .unwrap();
+        issue.execution_run_id = Some(RunId::new("review-run"));
         let command = ReviewDecisionCommand::new(
             issue.identity.clone(),
             ActorRef::agent(org, reviewer, Some(RunId::new("review-run"))),
@@ -1713,6 +1743,7 @@ mod tests {
             Some(PrincipalRef::agent(org.clone(), reviewer.clone())),
         )
         .unwrap();
+        issue.execution_run_id = Some(RunId::new("review-run"));
         let command = ReviewDecisionCommand::new(
             issue.identity.clone(),
             ActorRef::agent(org, reviewer, Some(RunId::new("review-run"))),
@@ -1734,6 +1765,95 @@ mod tests {
             }
         ));
         assert_eq!(issue.status, IssueStatus::Done);
+    }
+
+    #[test]
+    fn agent_review_requires_the_actor_run_to_match_an_active_issue_run() {
+        let org = OrganizationId::new("org-a");
+        let reviewer = AgentId::new("reviewer-a");
+        let assignee = AgentId::new("agent-a");
+        let mut issue = Issue::new(
+            issue_ref("org-a", "issue-1"),
+            "Review the change",
+            IssueStatus::InReview,
+            Some(PrincipalRef::agent(org.clone(), assignee)),
+            Some(PrincipalRef::agent(org.clone(), reviewer.clone())),
+        )
+        .unwrap();
+        issue.execution_run_id = Some(RunId::new("active-run"));
+        let command = ReviewDecisionCommand::new(
+            issue.identity.clone(),
+            ActorRef::agent(org, reviewer, Some(RunId::new("different-run"))),
+            ReviewDecision::Approve,
+            "The change is ready.",
+            0,
+            0,
+            IdempotencyKey::new("review-run-mismatch"),
+        );
+
+        assert_eq!(
+            issue.decide_review(command),
+            Err(DomainError::ReviewRunMismatch {
+                expected: RunId::new("active-run"),
+                found: RunId::new("different-run"),
+            })
+        );
+    }
+
+    #[test]
+    fn agent_review_requires_an_active_issue_run_even_with_an_explicit_run() {
+        let org = OrganizationId::new("org-a");
+        let reviewer = AgentId::new("reviewer-a");
+        let assignee = AgentId::new("agent-a");
+        let mut issue = Issue::new(
+            issue_ref("org-a", "issue-1"),
+            "Review the change",
+            IssueStatus::InReview,
+            Some(PrincipalRef::agent(org.clone(), assignee)),
+            Some(PrincipalRef::agent(org.clone(), reviewer.clone())),
+        )
+        .unwrap();
+        let command = ReviewDecisionCommand::new(
+            issue.identity.clone(),
+            ActorRef::agent(org, reviewer, Some(RunId::new("review-run"))),
+            ReviewDecision::Approve,
+            "The change is ready.",
+            0,
+            0,
+            IdempotencyKey::new("review-run-required"),
+        );
+
+        assert_eq!(
+            issue.decide_review(command),
+            Err(DomainError::ReviewRunRequired)
+        );
+    }
+
+    #[test]
+    fn user_review_does_not_require_an_active_issue_run() {
+        let org = OrganizationId::new("org-a");
+        let mut issue = Issue::new(
+            issue_ref("org-a", "issue-1"),
+            "Review the change",
+            IssueStatus::InReview,
+            None,
+            Some(PrincipalRef::user(org.clone(), UserId::new("reviewer"))),
+        )
+        .unwrap();
+        let command = ReviewDecisionCommand::new(
+            issue.identity.clone(),
+            ActorRef::user(org, UserId::new("reviewer")),
+            ReviewDecision::Approve,
+            "The change is ready.",
+            0,
+            0,
+            IdempotencyKey::new("user-review-without-run"),
+        );
+
+        assert!(matches!(
+            issue.decide_review(command),
+            Ok(ReviewDecisionOutcome::Recorded { .. })
+        ));
     }
 
     #[test]
