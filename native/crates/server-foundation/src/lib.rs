@@ -2062,7 +2062,7 @@ mod tests {
         let capability = TrustedRunEvidence::from_host(
             "org-a",
             "run-a",
-            PathBuf::from("/tmp/rudder-run-evidence.log"),
+            std::env::temp_dir().join("rudder-run-evidence.log"),
         )
         .expect("host capability");
         let error = ServerRuntime::bind(ServerConfig {

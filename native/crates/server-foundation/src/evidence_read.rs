@@ -215,15 +215,20 @@ mod tests {
             TrustedRunEvidence::from_host("org-a", "run-a", PathBuf::from("run.ndjson")).is_err()
         );
         assert!(
-            TrustedRunEvidence::from_host("", "run-a", PathBuf::from("/tmp/run.ndjson")).is_err()
+            TrustedRunEvidence::from_host("", "run-a", std::env::temp_dir().join("run.ndjson"))
+                .is_err()
         );
         assert!(
-            TrustedRunEvidence::from_host("org-a", "", PathBuf::from("/tmp/run.ndjson")).is_err()
+            TrustedRunEvidence::from_host("org-a", "", std::env::temp_dir().join("run.ndjson"))
+                .is_err()
         );
 
-        let capability =
-            TrustedRunEvidence::from_host("org-b", "run-a", PathBuf::from("/tmp/run.ndjson"))
-                .expect("capability identity");
+        let capability = TrustedRunEvidence::from_host(
+            "org-b",
+            "run-a",
+            std::env::temp_dir().join("run.ndjson"),
+        )
+        .expect("capability identity");
         assert!(matches!(
             EvidenceReadAdapter::new(
                 OrganizationScope::single("org-a").expect("trusted organization scope"),
