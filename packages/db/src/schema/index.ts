@@ -71,6 +71,7 @@ export { issueComments } from "./issue_comments.js";
 export { issueDocuments } from "./issue_documents.js";
 export { issueFollows } from "./issue_follows.js";
 export { issueLabels } from "./issue_labels.js";
+export { issueMutationCommands } from "./issue_mutation_commands.js";
 export { issueReadStates } from "./issue_read_states.js";
 export { issueWorkProducts } from "./issue_work_products.js";
 export { issues } from "./issues.js";

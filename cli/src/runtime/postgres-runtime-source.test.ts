@@ -1,29 +1,65 @@
 import { describe, expect, it } from "vitest";
 import { resolvePostgresRuntimeArchiveSource } from "./postgres-runtime-source.js";
 
+const MACOS_SHA256 = "e3af8c3b4a98a790dba60f2733673b35712a81a201b1f9af6e8ebed5d3b64d0c";
+const WINDOWS_SHA256 = "7effe34c0bf89027b3f171447d351cbc460f4566c8d0f643daec67f140787858";
+
 describe("PostgreSQL runtime archive source", () => {
-  it("pins the supported macOS archive", () => {
-    expect(resolvePostgresRuntimeArchiveSource("darwin", "arm64")).toMatchObject({
+  it("pins the supported macOS arm64 archive", () => {
+    expect(resolvePostgresRuntimeArchiveSource("darwin", "arm64")).toEqual({
       url: "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-osx-binaries.zip",
-      expectedSha256: "e3af8c3b4a98a790dba60f2733673b35712a81a201b1f9af6e8ebed5d3b64d0c",
+      expectedSha256: MACOS_SHA256,
       trustedDefault: true,
     });
   });
 
-  it("pins the supported Windows archive", () => {
-    expect(resolvePostgresRuntimeArchiveSource("win32", "x64")).toMatchObject({
-      expectedSha256: "7effe34c0bf89027b3f171447d351cbc460f4566c8d0f643daec67f140787858",
+  it("pins the supported macOS x64 archive", () => {
+    expect(resolvePostgresRuntimeArchiveSource("darwin", "x64")).toMatchObject({
+      url: "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-osx-binaries.zip",
+      expectedSha256: MACOS_SHA256,
       trustedDefault: true,
     });
   });
 
-  it("requires an explicit digest for a custom URL", () => {
+  it("pins the supported Windows x64 archive", () => {
+    expect(resolvePostgresRuntimeArchiveSource("win32", "x64")).toEqual({
+      url: "https://get.enterprisedb.com/postgresql/postgresql-18.4-1-windows-x64-binaries.zip",
+      expectedSha256: WINDOWS_SHA256,
+      trustedDefault: true,
+    });
+  });
+
+  it("does not allow an environment digest to replace a trusted default pin", () => {
     expect(resolvePostgresRuntimeArchiveSource("darwin", "arm64", {
+      RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256: "0".repeat(64),
+    })).toMatchObject({ expectedSha256: MACOS_SHA256, trustedDefault: true });
+  });
+
+  it("rejects a custom URL without an explicit digest", () => {
+    expect(() => resolvePostgresRuntimeArchiveSource("darwin", "arm64", {
       RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: "file:///tmp/custom.zip",
-    })).toMatchObject({ expectedSha256: null, trustedDefault: false });
+    })).toThrow("SHA-256 digest is required");
+  });
+
+  it("rejects an override URL with a malformed digest", () => {
+    expect(() => resolvePostgresRuntimeArchiveSource("darwin", "arm64", {
+      RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: "file:///tmp/custom.zip",
+      RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256: "not-a-digest",
+    })).toThrow("64-character hexadecimal value");
+  });
+
+  it("uses the explicit digest for an override URL", () => {
     expect(resolvePostgresRuntimeArchiveSource("darwin", "arm64", {
       RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: "file:///tmp/custom.zip",
       RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256: "A".repeat(64),
-    })).toMatchObject({ expectedSha256: "a".repeat(64) });
+    })).toEqual({
+      url: "file:///tmp/custom.zip",
+      expectedSha256: "a".repeat(64),
+      trustedDefault: false,
+    });
+  });
+
+  it("does not invent a default source for an unsupported target", () => {
+    expect(resolvePostgresRuntimeArchiveSource("linux", "x64")).toBeNull();
   });
 });

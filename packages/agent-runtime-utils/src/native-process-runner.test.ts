@@ -1,11 +1,17 @@
 import type { ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { runNativeChildProcess, runNativeChildProcessOrFallback } from "./native-process-runner.js";
+import {
+  runNativeChildProcess,
+  runNativeChildProcessOrFallback,
+  runNativeChildProcessV2,
+  type NativeProcessAuthority,
+} from "./native-process-runner.js";
 
 const nativeHostPath = process.env.RUDDER_NATIVE_PROCESS_HOST_PATH;
 const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].includes(process.arch))
@@ -13,7 +19,209 @@ const supportedTarget = (process.platform === "darwin" && ["arm64", "x64"].inclu
   || (process.platform === "linux" && process.arch === "x64");
 const nativeOnly = it.skipIf(!nativeHostPath || !supportedTarget);
 
+function validAuthority(
+  runId: string,
+  runtimeRoot: string,
+  leaseTtlMs = 60_000,
+): NativeProcessAuthority {
+  const now = Date.now();
+  const authority: NativeProcessAuthority = {
+    authorityVersion: 1,
+    runtimeIdentity: { organizationId: "org-1", agentId: "agent-1", runId },
+    ownership: { epoch: 1, fence: "fence-1" },
+    lease: { owner: "worker-1", issuedAtMillis: now - 1_000, expiresAtMillis: now + leaseTtlMs },
+    attempt: 1,
+    requestId: `request-${runId}`,
+    bindingDigest: "0".repeat(64),
+    receiptContext: { runtimeRoot, ownerToken: `owner-${runId}` },
+  };
+  const values = [
+    "rudder.native.process-authority.v2",
+    authority.authorityVersion,
+    authority.runtimeIdentity.organizationId,
+    authority.runtimeIdentity.agentId,
+    authority.runtimeIdentity.runId,
+    authority.ownership.epoch,
+    authority.ownership.fence,
+    authority.lease.owner,
+    authority.lease.issuedAtMillis,
+    authority.lease.expiresAtMillis,
+    authority.attempt,
+    authority.requestId,
+    authority.receiptContext.runtimeRoot,
+    authority.receiptContext.ownerToken,
+  ];
+  const material = values.map((value) => `${Buffer.byteLength(String(value), "utf8")}:${value}|`).join("");
+  authority.bindingDigest = createHash("sha256").update(material).digest("hex");
+  return authority;
+}
+
 describe("Rust Agent Run process host", () => {
+  it("fails closed before spawning when v2 authority is not a valid server receipt", async () => {
+    let spawned = false;
+    await expect(runNativeChildProcessV2("v2-run", process.execPath, ["-e", ""], {
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 1,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: path.join(os.tmpdir(), "unused-rudder-process-host"),
+      spawnHost: () => {
+        spawned = true;
+        throw new Error("must not spawn without a valid authority");
+      },
+      authority: {
+        authorityVersion: 1,
+        runtimeIdentity: { organizationId: "org-1", agentId: "agent-1", runId: "v2-run" },
+        ownership: { epoch: 1, fence: "fence-1" },
+        lease: {
+          owner: "worker-1",
+          issuedAtMillis: Date.now() - 1_000,
+          expiresAtMillis: Date.now() + 60_000,
+        },
+        attempt: 1,
+        requestId: "request-1",
+        bindingDigest: "0".repeat(64),
+        receiptContext: { runtimeRoot: path.join(os.tmpdir(), "rudder-v2"), ownerToken: "owner-1" },
+      },
+    })).rejects.toMatchObject({ fallbackCode: "authority_invalid", accepted: false });
+    expect(spawned).toBe(false);
+  });
+
+  it("rejects PATH commands at the native boundary when no trusted absolute resolution was provided", async () => {
+    await expect(runNativeChildProcess("raw-command", "worker", [], {
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 1,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: path.join(os.tmpdir(), "unused-rudder-process-host"),
+      spawnHost: () => {
+        throw new Error("must not spawn for an unresolved executable");
+      },
+    })).rejects.toMatchObject({ fallbackCode: "executable_not_absolute", accepted: false });
+  });
+
+  nativeOnly("runs a valid authority-bound v2 lifecycle", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-v2-"));
+    const runtimeRoot = path.join(root, "receipts");
+    const result = await runNativeChildProcessV2("v2-lifecycle", process.execPath, [
+      "-e",
+      "process.stdout.write('v2-ok')",
+    ], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 10,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: nativeHostPath!,
+      runtimeRoot,
+      authority: validAuthority("v2-lifecycle", runtimeRoot),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("v2-ok");
+    expect(result.stderr).toBe("");
+  });
+
+  nativeOnly("recovers a child when the host dies after spawn but before spawned", { timeout: 10_000 }, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-host-loss-"));
+    const runtimeRoot = path.join(root, "receipts");
+    const authority = validAuthority("host-loss-before-spawned", runtimeRoot);
+    const previousInjection = process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED;
+    process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED = "1";
+    try {
+      await expect(runNativeChildProcessV2("host-loss-before-spawned", process.execPath, [
+        "-e",
+        "setInterval(()=>{},1000)",
+      ], {
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "" },
+        timeoutSec: 0,
+        graceSec: 1,
+        onLog: async () => {},
+        onLogError: () => {},
+        binaryPath: nativeHostPath!,
+        runtimeRoot,
+        authority,
+      })).rejects.toMatchObject({
+        fallbackCode: "control_lost",
+        accepted: true,
+      });
+    } finally {
+      if (previousInjection === undefined) delete process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED;
+      else process.env.RUDDER_PROCESS_HOST_TEST_AFTER_SPAWN_BEFORE_SPAWNED = previousInjection;
+    }
+
+    const descriptorPath = path.join(
+      runtimeRoot,
+      authority.receiptContext.ownerToken,
+      "owner-descriptor.json",
+    );
+    const descriptor = JSON.parse(await readFile(descriptorPath, "utf8")) as {
+      childPid?: unknown;
+      opaqueOwnerToken?: unknown;
+      authority?: unknown;
+    };
+    expect(descriptor.opaqueOwnerToken).toBe(authority.receiptContext.ownerToken);
+    expect(descriptor.authority).toEqual(authority);
+    expect(typeof descriptor.childPid).toBe("number");
+    expect(() => process.kill(descriptor.childPid as number, 0)).toThrow();
+  });
+
+  nativeOnly("expires an active v2 child without waiting for a stop command", { timeout: 10_000 }, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-lease-expiry-"));
+    const runtimeRoot = path.join(root, "receipts");
+    const authority = validAuthority("lease-expiry", runtimeRoot, 300);
+    const result = await runNativeChildProcessV2("lease-expiry", process.execPath, [
+      "-e",
+      "setInterval(()=>{},1000)",
+    ], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "" },
+      timeoutSec: 0,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: nativeHostPath!,
+      runtimeRoot,
+      authority,
+    });
+
+    if (process.platform === "win32") {
+      expect(result.signal).toBeNull();
+    } else {
+      expect(result.signal).toBe("SIGTERM");
+    }
+    expect(result.timedOut).toBe(false);
+    const descriptorPath = path.join(
+      runtimeRoot,
+      authority.receiptContext.ownerToken,
+      "owner-descriptor.json",
+    );
+    const descriptor = JSON.parse(await readFile(descriptorPath, "utf8")) as { childPid?: unknown };
+    expect(typeof descriptor.childPid).toBe("number");
+    expect(() => process.kill(descriptor.childPid as number, 0)).toThrow();
+
+    const receipt = JSON.parse(
+      await readFile(path.join(runtimeRoot, authority.receiptContext.ownerToken, "terminal-receipt.json"), "utf8"),
+    ) as {
+      authority?: unknown;
+      opaqueOwnerToken?: unknown;
+      terminal?: { status?: string; errorCode?: string; cleanupProven?: boolean; receiptWritten?: boolean };
+    };
+    expect(receipt.authority).toEqual(authority);
+    expect(receipt.opaqueOwnerToken).toBe(authority.receiptContext.ownerToken);
+    expect(receipt.terminal).toMatchObject({
+      status: "failed",
+      errorCode: "lease_expired",
+      cleanupProven: true,
+      receiptWritten: true,
+    });
+  });
+
   it("honors a per-run Node rollback mode before attempting the native host", async () => {
     const result = await runNativeChildProcessOrFallback("node-mode", process.execPath, ["-e", ""], {
       RUDDER_NATIVE_MODE: "node",
@@ -170,7 +378,7 @@ describe("Rust Agent Run process host", () => {
       // unnecessarily expensive for slower platform runners.
       lifecycle.write(Array.from({ length: 320 }, () => `${JSON.stringify({ type: "output", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, stream: "stdout", data })}\n`).join(""));
       lifecycle.write(`${JSON.stringify({ type: "app-exit", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, code: 0 })}\n`);
-      lifecycle.write(`${JSON.stringify({ type: "terminal", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, cleanupProven: true, receiptWritten: true })}\n`);
+      lifecycle.write(`${JSON.stringify({ type: "terminal", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, status: "succeeded", cleanupProven: true, receiptWritten: true })}\n`);
       lifecycle.end();
       fakeHost.emit("close", 0, null);
     });
@@ -248,6 +456,7 @@ describe("Rust Agent Run process host", () => {
         protocolVersion: { major: 1, minor: 0 },
         requestId,
         ownerToken: requestId,
+        status: "succeeded",
         cleanupProven: true,
         receiptWritten: true,
       })}\n`);
@@ -283,6 +492,106 @@ describe("Rust Agent Run process host", () => {
 
     expect(result.stdout).toBe("before-accepted-after-terminal");
     expect(logs.join("")).toBe(result.stdout);
+  });
+
+  it("fails closed when a terminal receipt omits status or error code", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-terminal-receipt-"));
+    const commandInput = new PassThrough();
+    const lifecycle = new PassThrough();
+    const rawStdout = new PassThrough();
+    const rawStderr = new PassThrough();
+    const fakeHost = Object.assign(new EventEmitter(), {
+      stdin: commandInput,
+      stdio: [null, null, null, lifecycle, rawStdout, rawStderr],
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => true,
+    }) as unknown as ChildProcess;
+    const capabilities = [
+      "process_spawn",
+      "process_group_cleanup",
+      "parent_eof_cleanup",
+      "owner_receipt",
+      "stdout_relay",
+      "stderr_relay",
+    ];
+    let started = false;
+    let startEnvironment: Record<string, string> | undefined;
+    commandInput.on("data", (chunk: Buffer) => {
+      if (started) return;
+      started = true;
+      const startFrame = JSON.parse(String(chunk)) as {
+        requestId: string;
+        env?: Record<string, string>;
+      };
+      startEnvironment = startFrame.env;
+      const requestId = startFrame.requestId;
+      lifecycle.write(`${JSON.stringify({
+        type: "accepted",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        outputTransport: "raw",
+      })}\n`);
+      lifecycle.write(`${JSON.stringify({
+        type: "spawned",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        ownerToken: requestId,
+        pid: 12345,
+      })}\n`);
+      lifecycle.write(`${JSON.stringify({
+        type: "app-exit",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        ownerToken: requestId,
+        code: 0,
+      })}\n`);
+      lifecycle.write(`${JSON.stringify({
+        type: "terminal",
+        protocolVersion: { major: 1, minor: 0 },
+        requestId,
+        ownerToken: requestId,
+        cleanupProven: true,
+        receiptWritten: true,
+      })}\n`);
+      lifecycle.end();
+      fakeHost.emit("close", 0, null);
+      rawStdout.end();
+      rawStderr.end();
+    });
+    setImmediate(() => {
+      lifecycle.write(`${JSON.stringify({
+        type: "handshake",
+        protocolVersion: { major: 1, minor: 0 },
+        capabilities,
+        target: "test",
+        binaryVersion: "test",
+      })}\n`);
+    });
+
+    await expect(runNativeChildProcess("missing-terminal-status", process.execPath, [], {
+      cwd: root,
+      env: {
+        PATH: process.env.PATH ?? "",
+        RUDDER_EXPLICIT_AUTHORITY_ENV: "retained",
+      },
+      timeoutSec: 10,
+      graceSec: 1,
+      onLog: async () => {},
+      onLogError: () => {},
+      binaryPath: "fake-process-host",
+      runtimeRoot: path.join(root, "receipts"),
+      spawnHost: () => fakeHost,
+    })).rejects.toMatchObject({
+      fallbackCode: "terminal_receipt_invalid",
+      accepted: true,
+    });
+    expect(startEnvironment).toMatchObject({
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      RUDDER_EXPLICIT_AUTHORITY_ENV: "retained",
+    });
   });
 
   nativeOnly("times out through host Stop and leaves no owned process", async () => {

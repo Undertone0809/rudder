@@ -5,7 +5,11 @@ import path from "node:path";
 import type {
   AgentRuntimeSkillEntry
 } from "./types.js";
-export { runNativeChildProcessOrFallback } from "./native-process-runner.js";
+export {
+  createNativeProcessAuthority,
+  runNativeChildProcessOrFallback,
+  runNativeChildProcessV2
+} from "./native-process-runner.js";
 
 export interface RunProcessResult {
   exitCode: number | null;
@@ -15,6 +19,8 @@ export interface RunProcessResult {
   stderr: string;
   pid: number | null;
   startedAt: string | null;
+  terminalStatus?: "succeeded" | "failed" | "cancelled" | "timed_out";
+  errorCode?: string | null;
   diagnostic?: RudderNativeDiagnostic;
 }
 

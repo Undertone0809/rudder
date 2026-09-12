@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -219,6 +220,7 @@ describe("desktop stage-server", () => {
       env: {
         ...process.env,
         RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: pathToFileURL(archivePath).href,
+        RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256: createHash("sha256").update(readFileSync(archivePath)).digest("hex"),
         RUDDER_POSTGRES_RUNTIME_CACHE_DIR: cacheDir,
       },
       encoding: "utf8",
@@ -276,6 +278,7 @@ describe("desktop stage-server", () => {
       env: {
         ...process.env,
         RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL: pathToFileURL(archivePath).href,
+        RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256: createHash("sha256").update(readFileSync(archivePath)).digest("hex"),
         RUDDER_POSTGRES_RUNTIME_CACHE_DIR: join(root, "cache"),
       },
       encoding: "utf8",
@@ -284,6 +287,27 @@ describe("desktop stage-server", () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const preparedBinDir = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
     expect(readFileSync(join(preparedBinDir, "..", "share", "timezone", "UTC"), "utf8")).toBe("timezone data\n");
+  });
+
+  it("rejects an override archive without a digest before publication", () => {
+    const root = mkdtempSync(join(tmpdir(), "rudder-prepare-postgres-digest-required-test-"));
+    tempRoots.push(root);
+    const archivePath = join(root, "untrusted-postgres-runtime.zip");
+    const cacheDir = join(root, "cache");
+    writeFileSync(archivePath, "untrusted archive bytes");
+    const env = { ...process.env };
+    delete env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256;
+    env.RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL = pathToFileURL(archivePath).href;
+    env.RUDDER_POSTGRES_RUNTIME_CACHE_DIR = cacheDir;
+
+    const result = spawnSync("node", [join(scriptsDir, "prepare-postgres-runtime.mjs")], {
+      env,
+      encoding: "utf8",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("SHA-256 digest is required");
+    expect(() => readFileSync(join(cacheDir, "postgres-18.4"))).toThrow();
   });
 
   it("does not bundle PostgreSQL runtime by default", () => {

@@ -10,6 +10,36 @@ export interface AgentRuntimeAgent {
   agentRuntimeConfig: unknown;
 }
 
+/**
+ * Server/runtime-issued authority for the explicit native process-host v2 path.
+ * This is injected outside model/config payloads; legacy callers do not create
+ * it implicitly.
+ */
+export interface NativeProcessAuthority {
+  authorityVersion: number;
+  runtimeIdentity: {
+    organizationId: string;
+    agentId: string;
+    runId: string;
+  };
+  ownership: {
+    epoch: number;
+    fence: string;
+  };
+  lease: {
+    owner: string;
+    issuedAtMillis: number;
+    expiresAtMillis: number;
+  };
+  attempt: number;
+  requestId: string;
+  bindingDigest: string;
+  receiptContext: {
+    runtimeRoot: string;
+    ownerToken: string;
+  };
+}
+
 export interface AgentRuntimeState {
   /**
    * Legacy single session id view. Prefer `sessionParams` + `sessionDisplayId`.
@@ -337,6 +367,8 @@ export interface AgentRuntimeExecutionContext {
   runtime: AgentRuntimeState;
   config: Record<string, unknown>;
   context: Record<string, unknown>;
+  /** Host-injected only; never derived from config, prompts, or model input. */
+  nativeProcessAuthority?: NativeProcessAuthority;
   media?: AgentRuntimeMediaAttachment[];
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   onMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void>;

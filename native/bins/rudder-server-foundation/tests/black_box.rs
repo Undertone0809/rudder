@@ -1,6 +1,9 @@
 #![cfg(unix)]
 
 use rudder_archive_core::create_archive;
+use rudder_server_foundation_core::{
+    OrganizationScope, ServerConfig, ServerRuntime, TrustedRunEvidence,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
@@ -16,6 +19,154 @@ use tempfile::TempDir;
 
 const READ_PARITY_FIXTURE: &str =
     include_str!("../../../fixtures/workspace-backup-read-parity.json");
+
+const ISSUE_APPROVAL_FIXTURE_SQL: &str = r#"
+CREATE TABLE issues (
+    id uuid PRIMARY KEY,
+    org_id uuid NOT NULL,
+    project_id uuid,
+    goal_id uuid,
+    issue_number integer,
+    identifier text,
+    title text NOT NULL,
+    description text,
+    status text NOT NULL,
+    priority text NOT NULL,
+    board_order integer NOT NULL,
+    assignee_agent_id uuid,
+    assignee_user_id text,
+    reviewer_agent_id uuid,
+    reviewer_user_id text,
+    revision bigint NOT NULL,
+    fencing_token bigint NOT NULL,
+    checkout_run_id uuid,
+    execution_run_id uuid,
+    started_at timestamptz,
+    completed_at timestamptz,
+    cancelled_at timestamptz,
+    hidden_at timestamptz,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
+);
+CREATE TABLE approvals (
+    id uuid PRIMARY KEY,
+    org_id uuid NOT NULL,
+    type text NOT NULL,
+    requested_by_agent_id uuid,
+    requested_by_user_id text,
+    status text NOT NULL,
+    revision bigint NOT NULL,
+    decision text,
+    decision_note text,
+    decided_by_user_id text,
+    decided_at timestamptz,
+    payload jsonb NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
+);
+CREATE TABLE issue_approvals (
+    org_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    approval_id uuid NOT NULL,
+    created_at timestamptz NOT NULL
+);
+INSERT INTO issues (
+    id, org_id, issue_number, identifier, title, description, status, priority,
+    board_order, assignee_user_id, reviewer_user_id, revision, fencing_token,
+    started_at, created_at, updated_at
+) VALUES
+(
+    '10000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000001',
+    1, 'RUD-1', 'First issue', 'board parity', 'in_review', 'urgent',
+    1, 'assignee-1', 'reviewer-1', 7, 11,
+    '2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-04T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000001',
+    2, 'RUD-2', 'Second issue', NULL, 'todo', 'medium',
+    2, NULL, NULL, 1, 2,
+    NULL, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000001',
+    3, 'RUD-3', 'Hidden issue', NULL, 'todo', 'low',
+    3, NULL, NULL, 1, 1,
+    NULL, '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000099',
+    '00000000-0000-0000-0000-000000000099',
+    99, 'OTHER-99', 'Foreign issue', NULL, 'todo', 'medium',
+    1, NULL, NULL, 1, 1,
+    NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000004',
+    '00000000-0000-0000-0000-000000000001',
+    4, 'RUD-4', 'Terminated issue', NULL, 'terminated', 'medium',
+    4, NULL, NULL, 1, 1,
+    NULL, '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000005',
+    '00000000-0000-0000-0000-000000000001',
+    5, 'RUD-5', 'Payload primary issue', NULL, 'todo', 'medium',
+    5, NULL, NULL, 1, 1,
+    NULL, '2026-01-05T00:00:00Z', '2026-01-05T00:00:00Z'
+), (
+    '10000000-0000-0000-0000-000000000006',
+    '00000000-0000-0000-0000-000000000001',
+    6, 'RUD-6', 'Payload issue array', NULL, 'todo', 'medium',
+    6, NULL, NULL, 1, 1,
+    NULL, '2026-01-06T00:00:00Z', '2026-01-06T00:00:00Z'
+);
+UPDATE issues
+SET hidden_at = '2026-01-03T00:00:00Z'
+WHERE id = '10000000-0000-0000-0000-000000000003';
+UPDATE issues
+SET hidden_at = '2026-01-05T00:00:00Z'
+WHERE id IN (
+    '10000000-0000-0000-0000-000000000005',
+    '10000000-0000-0000-0000-000000000006'
+);
+INSERT INTO approvals (
+    id, org_id, type, status, revision, payload, decision_note,
+    created_at, updated_at
+) VALUES (
+    '20000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000001',
+    'issue_review', 'pending', 3,
+    '{"issueId":"10000000-0000-0000-0000-000000000001","secret":"must-not-leak"}',
+    'safe note', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+), (
+    '20000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000001',
+    'issue_review', 'pending', 1,
+    '{"primaryIssueId":"10000000-0000-0000-0000-000000000005"}',
+    NULL, '2026-01-05T00:00:00Z', '2026-01-05T00:00:00Z'
+), (
+    '20000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000001',
+    'issue_review', 'pending', 1,
+    '{"issueIds":["10000000-0000-0000-0000-000000000006"]}',
+    NULL, '2026-01-06T00:00:00Z', '2026-01-06T00:00:00Z'
+), (
+    '20000000-0000-0000-0000-000000000099',
+    '00000000-0000-0000-0000-000000000099',
+    'issue_review', 'pending', 1, '{}', NULL,
+    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+);
+INSERT INTO issue_approvals (org_id, issue_id, approval_id, created_at) VALUES
+(
+    '00000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000001',
+    '2026-01-01T00:00:00Z'
+), (
+    '00000000-0000-0000-0000-000000000099',
+    '10000000-0000-0000-0000-000000000099',
+    '20000000-0000-0000-0000-000000000099',
+    '2026-01-01T00:00:00Z'
+);
+"#;
 
 fn parity_fixture() -> Value {
     serde_json::from_str(READ_PARITY_FIXTURE).expect("workspace backup read parity fixture")
@@ -53,6 +204,19 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         .read_line(&mut startup_line)
         .expect("startup receipt");
     let startup: Value = serde_json::from_str(&startup_line).expect("startup JSON");
+    assert_eq!(
+        startup["routeAuthority"]["schema"],
+        "rudder.native.server.route-authority.v1"
+    );
+    assert_eq!(
+        startup["routeAuthority"]["authoritySchema"],
+        "rudder.migration.authority.v1"
+    );
+    assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
+    assert_eq!(
+        startup["routeAuthority"]["routes"].as_array().map(Vec::len),
+        Some(25)
+    );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
         .expect("bound address")
@@ -67,7 +231,13 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "workspace_backup_list",
             "workspace_backup_files_list",
             "workspace_backup_file_read",
-            "workspace_backup_download"
+            "workspace_backup_download",
+            "organization_read_surfaces",
+            "issue_read_surfaces",
+            "approval_read_surfaces",
+            "activity_read_surfaces",
+            "run_read_surfaces",
+            "run_evidence_read"
         ])
     );
 
@@ -88,6 +258,54 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("workspace_backup_files_list"));
     assert!(capabilities.contains("workspace_backup_file_read"));
     assert!(capabilities.contains("workspace_backup_download"));
+    assert!(capabilities.contains("organization_read_surfaces"));
+    assert!(capabilities.contains("activity_read_surfaces"));
+    assert!(capabilities.contains("run_read_surfaces"));
+    assert!(capabilities.contains("run_evidence_read"));
+
+    let read_without_scope = get_with_retry(bound_addr, "/internal/read-surfaces/v1/organizations");
+    assert!(
+        read_without_scope.starts_with("HTTP/1.1 503"),
+        "{read_without_scope}"
+    );
+    assert!(read_without_scope.contains("read_surface_unavailable"));
+
+    for path in [
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/issues",
+        "/internal/read-surfaces/v1/issues/00000000-0000-0000-0000-000000000001",
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/approvals",
+        "/internal/read-surfaces/v1/approvals/00000000-0000-0000-0000-000000000001",
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/activity",
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs",
+    ] {
+        let response = get_with_retry(bound_addr, path);
+        assert!(response.starts_with("HTTP/1.1 503"), "{path}: {response}");
+        assert!(
+            response.contains("read_surface_unavailable"),
+            "{path}: {response}"
+        );
+    }
+    let evidence_without_capability = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs/00000000-0000-0000-0000-000000000002/evidence",
+    );
+    assert!(
+        evidence_without_capability.starts_with("HTTP/1.1 503"),
+        "{evidence_without_capability}"
+    );
+    assert!(evidence_without_capability.contains("evidence_read_unavailable"));
+
+    for path in [
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/issues?limit=1001",
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/approvals?limit=1001",
+    ] {
+        let response = get_with_retry(bound_addr, path);
+        assert!(response.starts_with("HTTP/1.1 400"), "{path}: {response}");
+        assert!(
+            response.contains("read_surface_query_invalid"),
+            "{path}: {response}"
+        );
+    }
 
     let parity = parity_fixture();
 
@@ -125,6 +343,507 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert_eq!(shutdown["schema"], "rudder.native.server.shutdown.v1");
     assert_eq!(shutdown["state"], "stopped");
     assert_eq!(shutdown["reason"], "sigterm");
+}
+
+#[cfg(unix)]
+#[test]
+fn health_and_readiness_expose_non_authoritative_identity() {
+    let (child, stdout, bound_addr) = spawn_server(&[]);
+
+    let health = response_json(&get_with_retry(bound_addr, "/healthz"));
+    let readiness = response_json(&get_with_retry(bound_addr, "/readyz"));
+    for receipt in [&health, &readiness] {
+        assert_eq!(
+            receipt["identity"]["buildIdentity"]["package"],
+            "rudder-server-foundation-core"
+        );
+        assert_eq!(
+            receipt["identity"]["buildIdentity"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            receipt["identity"]["buildIdentity"]["target"]
+                .as_str()
+                .is_some_and(|target| !target.is_empty())
+        );
+        assert!(receipt["identity"]["schemaFingerprint"].is_null());
+        assert_eq!(receipt["identity"]["routeAuthority"], "node");
+        assert_eq!(receipt["identity"]["commandAuthority"], "node");
+        assert_eq!(receipt["identity"]["toolAuthority"], "node");
+        assert_eq!(receipt["identity"]["ownershipEpoch"], 0);
+        assert_eq!(receipt["identity"]["migrationState"], "node-authoritative");
+    }
+
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn trusted_run_evidence_route_reads_only_a_host_issued_capability() {
+    const ORG_ID: &str = "00000000-0000-0000-0000-000000000001";
+    const RUN_ID: &str = "00000000-0000-0000-0000-000000000002";
+    let root = TempDir::new().expect("evidence fixture root");
+    let log_path = root.path().join("run.ndjson");
+    fs::write(
+        &log_path,
+        b"{\"ts\":\"2026-09-11T00:00:00Z\",\"stream\":\"stdout\",\"chunk\":\"hello\"}\n",
+    )
+    .expect("evidence fixture");
+    let log_path_text = log_path.to_string_lossy().into_owned();
+    let capability =
+        TrustedRunEvidence::from_host(ORG_ID, RUN_ID, log_path).expect("host evidence capability");
+    let config = ServerConfig {
+        listen_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        trusted_organization_scope: Some(
+            OrganizationScope::single(ORG_ID).expect("trusted organization scope"),
+        ),
+        trusted_run_evidence: vec![capability],
+        ..Default::default()
+    };
+    let runtime = ServerRuntime::bind(config).expect("bind evidence server");
+    let bound_addr = runtime.bound_addr();
+    let control = runtime.control();
+    let server = tokio::spawn(runtime.run());
+
+    let path =
+        format!("/internal/read-surfaces/v1/orgs/{ORG_ID}/runs/{RUN_ID}/evidence?limitBytes=1024");
+    let response = tokio::task::spawn_blocking(move || get_with_retry(bound_addr, &path))
+        .await
+        .expect("evidence request task");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let body = response_json(&response);
+    assert!(
+        body["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("hello"))
+    );
+    assert!(!response.contains(&log_path_text));
+
+    let foreign = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/runs/00000000-0000-0000-0000-000000000002/evidence",
+    );
+    assert!(foreign.starts_with("HTTP/1.1 404"), "{foreign}");
+    let missing = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs/00000000-0000-0000-0000-000000000099/evidence",
+    );
+    assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
+    let invalid_limit = get_with_retry(
+        bound_addr,
+        "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000001/runs/00000000-0000-0000-0000-000000000002/evidence?limitBytes=1000001",
+    );
+    assert!(invalid_limit.starts_with("HTTP/1.1 400"), "{invalid_limit}");
+
+    control.shutdown().await;
+    server
+        .await
+        .expect("evidence server task")
+        .expect("evidence server shutdown");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "set RUDDER_READ_SURFACES_DATABASE_URL and RUDDER_READ_SURFACES_ORG_ID for PostgreSQL integration"]
+async fn trusted_read_surfaces_use_sqlx_and_fence_organizations() {
+    let database_url = std::env::var("RUDDER_READ_SURFACES_DATABASE_URL")
+        .expect("RUDDER_READ_SURFACES_DATABASE_URL");
+    let organization_id =
+        std::env::var("RUDDER_READ_SURFACES_ORG_ID").expect("RUDDER_READ_SURFACES_ORG_ID");
+    let scope = OrganizationScope::single(organization_id.clone()).expect("organization scope");
+    let config = ServerConfig {
+        listen_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        database_url: Some(database_url),
+        database_required: true,
+        trusted_organization_scope: Some(scope),
+        ..Default::default()
+    };
+    let runtime = ServerRuntime::bind(config).expect("bind read-surface server");
+    let bound_addr = runtime.bound_addr();
+    let control = runtime.control();
+    let server = tokio::spawn(runtime.run());
+
+    let organizations = tokio::task::spawn_blocking(move || {
+        get_with_retry(
+            bound_addr,
+            "/internal/read-surfaces/v1/organizations?limit=1",
+        )
+    })
+    .await
+    .expect("organization request task");
+    assert!(organizations.starts_with("HTTP/1.1 200"), "{organizations}");
+    let organization_page = response_json(&organizations);
+    assert_eq!(organization_page["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(organization_page["items"][0]["id"], organization_id);
+
+    let issue_list_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/issues?limit=1");
+    let approval_list_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/approvals?limit=1");
+    let activity_list_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/activity?limit=1");
+    let run_list_path = format!("/internal/read-surfaces/v1/orgs/{organization_id}/runs?limit=1");
+    let read_surface_lists = tokio::task::spawn_blocking(move || {
+        [
+            get_with_retry(bound_addr, &issue_list_path),
+            get_with_retry(bound_addr, &approval_list_path),
+            get_with_retry(bound_addr, &activity_list_path),
+            get_with_retry(bound_addr, &run_list_path),
+        ]
+    })
+    .await
+    .expect("issue and approval list request task");
+    for response in read_surface_lists {
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let page = response_json(&response);
+        assert!(
+            page["items"]
+                .as_array()
+                .is_some_and(|items| items.len() <= 1)
+        );
+    }
+
+    let foreign_read_surfaces = tokio::task::spawn_blocking(move || {
+        [
+            get_with_retry(
+                bound_addr,
+                "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/issues",
+            ),
+            get_with_retry(
+                bound_addr,
+                "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/approvals",
+            ),
+            get_with_retry(
+                bound_addr,
+                "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/activity",
+            ),
+            get_with_retry(
+                bound_addr,
+                "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/runs",
+            ),
+        ]
+    })
+    .await
+    .expect("foreign issue and approval list request task");
+    for response in foreign_read_surfaces {
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+        assert!(response.contains("read_surface_not_found"), "{response}");
+    }
+
+    let issue_limit_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/issues?limit=1001");
+    let approval_limit_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/approvals?limit=1001");
+    let activity_limit_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/activity?limit=101");
+    let run_limit_path =
+        format!("/internal/read-surfaces/v1/orgs/{organization_id}/runs?limit=101");
+    let invalid_read_surface_limits = tokio::task::spawn_blocking(move || {
+        [
+            get_with_retry(bound_addr, &issue_limit_path),
+            get_with_retry(bound_addr, &approval_limit_path),
+            get_with_retry(bound_addr, &activity_limit_path),
+            get_with_retry(bound_addr, &run_limit_path),
+        ]
+    })
+    .await
+    .expect("invalid issue and approval list limit request task");
+    for response in invalid_read_surface_limits {
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+        assert!(
+            response.contains("read_surface_query_invalid"),
+            "{response}"
+        );
+    }
+
+    let foreign = tokio::task::spawn_blocking(move || {
+        get_with_retry(
+            bound_addr,
+            "/internal/read-surfaces/v1/orgs/00000000-0000-0000-0000-000000000099/goals",
+        )
+    })
+    .await
+    .expect("foreign organization request task");
+    assert!(foreign.starts_with("HTTP/1.1 404"), "{foreign}");
+    assert!(foreign.contains("read_surface_not_found"), "{foreign}");
+
+    let invalid_limit = tokio::task::spawn_blocking(move || {
+        get_with_retry(
+            bound_addr,
+            "/internal/read-surfaces/v1/organizations?limit=1001",
+        )
+    })
+    .await
+    .expect("invalid limit request task");
+    assert!(invalid_limit.starts_with("HTTP/1.1 400"), "{invalid_limit}");
+    assert!(invalid_limit.contains("read_surface_query_invalid"));
+
+    control.shutdown().await;
+    server.await.expect("server task").expect("server shutdown");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn issue_and_approval_read_surfaces_use_disposable_postgres_and_fence_reads() {
+    const ORG_ID: &str = "00000000-0000-0000-0000-000000000001";
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&postgres.url)
+        .await
+        .expect("connect issue and approval PostgreSQL fixture");
+    sqlx::raw_sql(ISSUE_APPROVAL_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install issue and approval fixture");
+    pool.close().await;
+
+    let config = ServerConfig {
+        listen_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        database_url: Some(postgres.url.clone()),
+        database_required: true,
+        max_response_bytes: 4096,
+        trusted_organization_scope: Some(
+            OrganizationScope::single(ORG_ID).expect("trusted organization scope"),
+        ),
+        ..Default::default()
+    };
+    let runtime = ServerRuntime::bind(config).expect("bind issue and approval server");
+    let bound_addr = runtime.bound_addr();
+    let control = runtime.control();
+    let server = tokio::spawn(runtime.run());
+
+    let first_issue_path = format!("/internal/read-surfaces/v1/orgs/{ORG_ID}/issues?limit=1");
+    let first_approval_path = format!("/internal/read-surfaces/v1/orgs/{ORG_ID}/approvals?limit=1");
+    let (first_issue, first_approval) = tokio::task::spawn_blocking(move || {
+        (
+            get_with_retry(bound_addr, &first_issue_path),
+            get_with_retry(bound_addr, &first_approval_path),
+        )
+    })
+    .await
+    .expect("first issue and approval request task");
+    assert!(first_issue.starts_with("HTTP/1.1 200"), "{first_issue}");
+    assert!(
+        first_approval.starts_with("HTTP/1.1 200"),
+        "{first_approval}"
+    );
+    assert!(response_body_len(&first_issue) <= 4096);
+    assert!(response_body_len(&first_approval) <= 4096);
+
+    let first_issue_body = response_json(&first_issue);
+    assert_eq!(first_issue_body["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(first_issue_body["items"][0]["identifier"], "RUD-1");
+    assert_eq!(first_issue_body["items"][0]["status"], "in_review");
+    assert_eq!(first_issue_body["hasMore"], true);
+    let cursor = first_issue_body["nextCursor"]
+        .as_str()
+        .expect("issue next cursor")
+        .to_owned();
+    let second_issue_path =
+        format!("/internal/read-surfaces/v1/orgs/{ORG_ID}/issues?limit=1&cursor={cursor}");
+    let second_issue =
+        tokio::task::spawn_blocking(move || get_with_retry(bound_addr, &second_issue_path))
+            .await
+            .expect("second issue request task");
+    assert!(second_issue.starts_with("HTTP/1.1 200"), "{second_issue}");
+    let second_issue_body = response_json(&second_issue);
+    assert_eq!(second_issue_body["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(second_issue_body["items"][0]["identifier"], "RUD-2");
+    assert_eq!(second_issue_body["hasMore"], false);
+    assert!(!second_issue.contains("RUD-3"));
+    assert!(!second_issue.contains("RUD-4"));
+
+    let first_approval_body = response_json(&first_approval);
+    assert_eq!(
+        first_approval_body["items"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        first_approval_body["items"][0]["approvalType"],
+        "issue_review"
+    );
+    assert_eq!(
+        first_approval_body["items"][0]["targets"][0]["kind"],
+        "issue"
+    );
+    assert_eq!(
+        first_approval_body["items"][0]["targets"][0]["id"],
+        "10000000-0000-0000-0000-000000000001"
+    );
+    assert!(!first_approval.to_ascii_lowercase().contains("payload"));
+    assert!(!first_approval.contains("must-not-leak"));
+
+    let issue_get_path = "/internal/read-surfaces/v1/issues/10000000-0000-0000-0000-000000000001";
+    let approval_get_path =
+        "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000001";
+    let primary_payload_approval_get_path =
+        "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000002";
+    let array_payload_approval_get_path =
+        "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000003";
+    let hidden_issue_get_path =
+        "/internal/read-surfaces/v1/issues/10000000-0000-0000-0000-000000000003";
+    let terminated_issue_get_path =
+        "/internal/read-surfaces/v1/issues/10000000-0000-0000-0000-000000000004";
+    let foreign_issue_get_path =
+        "/internal/read-surfaces/v1/issues/10000000-0000-0000-0000-000000000099";
+    let foreign_approval_get_path =
+        "/internal/read-surfaces/v1/approvals/20000000-0000-0000-0000-000000000099";
+    let responses = tokio::task::spawn_blocking(move || {
+        [
+            get_with_retry(bound_addr, issue_get_path),
+            get_with_retry(bound_addr, approval_get_path),
+            get_with_retry(bound_addr, primary_payload_approval_get_path),
+            get_with_retry(bound_addr, array_payload_approval_get_path),
+            get_with_retry(bound_addr, hidden_issue_get_path),
+            get_with_retry(bound_addr, terminated_issue_get_path),
+            get_with_retry(bound_addr, foreign_issue_get_path),
+            get_with_retry(bound_addr, foreign_approval_get_path),
+        ]
+    })
+    .await
+    .expect("issue and approval get request task");
+    let issue_get = &responses[0];
+    assert!(issue_get.starts_with("HTTP/1.1 200"), "{issue_get}");
+    let issue_body = response_json(issue_get);
+    assert_eq!(issue_body["identifier"], "RUD-1");
+    assert_eq!(issue_body["priority"], "urgent");
+    assert_eq!(issue_body["assigneeUserId"], "assignee-1");
+    assert_eq!(issue_body["reviewerUserId"], "reviewer-1");
+    assert_eq!(issue_body["revision"], 7);
+    assert_eq!(issue_body["fencingToken"], 11);
+    assert_eq!(issue_body["startedAt"], "2026-01-02T00:00:00.000000Z");
+    assert_eq!(issue_body["createdAt"], "2026-01-01T00:00:00.000000Z");
+    assert_eq!(issue_body["updatedAt"], "2026-01-04T00:00:00.000000Z");
+    assert!(response_body_len(issue_get) <= 4096);
+
+    let approval_get = &responses[1];
+    assert!(approval_get.starts_with("HTTP/1.1 200"), "{approval_get}");
+    assert_eq!(response_json(approval_get)["status"], "pending");
+    assert!(!approval_get.to_ascii_lowercase().contains("payload"));
+    assert!(!approval_get.contains("must-not-leak"));
+    assert!(response_body_len(approval_get) <= 4096);
+
+    let primary_payload_approval_get = &responses[2];
+    assert!(
+        primary_payload_approval_get.starts_with("HTTP/1.1 200"),
+        "{primary_payload_approval_get}"
+    );
+    let primary_payload_approval_body = response_json(primary_payload_approval_get);
+    assert_eq!(primary_payload_approval_body["targets"][0]["kind"], "issue");
+    assert_eq!(
+        primary_payload_approval_body["targets"][0]["id"],
+        "10000000-0000-0000-0000-000000000005"
+    );
+
+    let array_payload_approval_get = &responses[3];
+    assert!(
+        array_payload_approval_get.starts_with("HTTP/1.1 200"),
+        "{array_payload_approval_get}"
+    );
+    let array_payload_approval_body = response_json(array_payload_approval_get);
+    assert_eq!(array_payload_approval_body["targets"][0]["kind"], "issue");
+    assert_eq!(
+        array_payload_approval_body["targets"][0]["id"],
+        "10000000-0000-0000-0000-000000000006"
+    );
+
+    assert!(responses[4].starts_with("HTTP/1.1 200"), "{}", responses[4]);
+    assert!(responses[4].contains("hiddenAt"), "{}", responses[4]);
+    assert!(responses[5].starts_with("HTTP/1.1 200"), "{}", responses[5]);
+    assert!(responses[5].contains("terminated"), "{}", responses[5]);
+    for response in [&responses[6], &responses[7]] {
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+        assert!(response.contains("read_surface_not_found"), "{response}");
+    }
+
+    control.shutdown().await;
+    server
+        .await
+        .expect("issue and approval server task")
+        .expect("issue and approval server shutdown");
+}
+
+#[cfg(unix)]
+#[test]
+fn authority_introspection_is_versioned_bounded_and_fail_closed() {
+    let (child, stdout, bound_addr) = spawn_server(&[]);
+
+    let startup = response_json(&get_with_retry(bound_addr, "/v1/authority"));
+    assert_eq!(startup["schema"], "rudder.native.server.route-authority.v1");
+    assert_eq!(startup["authoritySchema"], "rudder.migration.authority.v1");
+    assert_eq!(startup["protocolVersion"], 1);
+    assert_eq!(startup["status"], "ready");
+    assert_eq!(startup["publicListener"], false);
+    assert_eq!(startup["productWriteAuthority"], false);
+    assert_eq!(startup["nodeAuthorityUnchanged"], true);
+
+    let routes = startup["routes"].as_array().expect("authority routes");
+    assert_eq!(routes.len(), 25);
+    assert!(routes.iter().any(|route| {
+        route["routeId"] == "foundation.authority"
+            && route["decision"] == "rust"
+            && route["owner"] == "rust"
+    }));
+    assert!(routes.iter().any(|route| {
+        route["routeId"] == "node.product_http"
+            && route["decision"] == "legacy"
+            && route["owner"] == "legacy"
+    }));
+    assert!(routes.iter().any(|route| {
+        route["routeId"] == "foundation.run_evidence_read"
+            && route["path"] == "/internal/read-surfaces/v1/orgs/{org_id}/runs/{run_id}/evidence"
+            && route["decision"] == "rust"
+            && route["owner"] == "rust"
+    }));
+
+    let selected = response_json(&get_with_retry(
+        bound_addr,
+        "/v1/authority?route=%2Fhealthz",
+    ));
+    assert_eq!(selected["selectedRoute"]["routeId"], "foundation.health");
+    assert_eq!(selected["selectedRoute"]["decision"], "rust");
+    assert!(selected.get("fencingToken").is_none());
+    let selected_text = get_with_retry(bound_addr, "/v1/authority?route=%2Fhealthz");
+    assert!(!selected_text.contains("fencingToken"));
+    assert!(!selected_text.contains("secret"));
+
+    let unknown = get_with_retry(bound_addr, "/v1/authority?route=%2Fnot-registered");
+    assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
+    assert!(unknown.contains("unknown_route"), "{unknown}");
+
+    let malformed = get_with_retry(bound_addr, "/v1/authority?route=");
+    assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+    assert!(
+        malformed.contains("malformed_authority_query"),
+        "{malformed}"
+    );
+
+    let duplicate = get_with_retry(bound_addr, "/v1/authority?route=%2Fhealthz&route=%2Freadyz");
+    assert!(duplicate.starts_with("HTTP/1.1 400"), "{duplicate}");
+    assert!(
+        duplicate.contains("malformed_authority_query"),
+        "{duplicate}"
+    );
+
+    let extra_parameter = get_with_retry(bound_addr, "/v1/authority?owner=legacy");
+    assert!(
+        extra_parameter.starts_with("HTTP/1.1 400"),
+        "{extra_parameter}"
+    );
+    assert!(
+        extra_parameter.contains("malformed_authority_query"),
+        "{extra_parameter}"
+    );
+
+    let method_not_allowed =
+        http_request(bound_addr, "POST", "/v1/authority").expect("POST authority endpoint");
+    assert!(
+        method_not_allowed.starts_with("HTTP/1.1 404"),
+        "{method_not_allowed}"
+    );
+
+    stop_server(child, stdout);
 }
 
 #[cfg(unix)]
@@ -799,6 +1518,19 @@ fn spawn_server(overrides: &[(&str, &str)]) -> (Child, BufReader<ChildStdout>, S
         .read_line(&mut startup_line)
         .expect("startup receipt");
     let startup: Value = serde_json::from_str(&startup_line).expect("startup JSON");
+    assert_eq!(
+        startup["routeAuthority"]["schema"],
+        "rudder.native.server.route-authority.v1"
+    );
+    assert_eq!(
+        startup["routeAuthority"]["authoritySchema"],
+        "rudder.migration.authority.v1"
+    );
+    assert_eq!(startup["routeAuthority"]["protocolVersion"], 1);
+    assert_eq!(
+        startup["routeAuthority"]["routes"].as_array().map(Vec::len),
+        Some(25)
+    );
     let bound_addr: SocketAddr = startup["boundAddr"]
         .as_str()
         .expect("bound address")

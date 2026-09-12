@@ -18,8 +18,11 @@ import {
   type ChildProcessWithEvents,
   type RunProcessResult,
 } from "./server-utils.process.js";
+import type { NativeProcessAuthority } from "./types.js";
+export type { NativeProcessAuthority } from "./types.js";
 
 const PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
+const V2_PROTOCOL_VERSION = { major: 2, minor: 0 } as const;
 const MAX_LIFECYCLE_FRAME_BYTES = 64 * 1024;
 const MAX_OUTPUT_QUEUE_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
@@ -46,6 +49,11 @@ export interface NativeProcessRunOptions {
   spawnHost?: NativeHostSpawn;
 }
 
+type NativeProcessWireOptions = {
+  protocolVersion: typeof PROTOCOL_VERSION | typeof V2_PROTOCOL_VERSION;
+  authority?: NativeProcessAuthority;
+};
+
 export class NativeProcessUnavailableError extends Error {
   readonly fallbackCode: string;
   readonly accepted: boolean;
@@ -63,6 +71,118 @@ export class NativeProcessUnavailableError extends Error {
       protocolVersion: `${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`,
     });
   }
+}
+
+function authorityBindingDigest(authority: NativeProcessAuthority): string {
+  const values = [
+    "rudder.native.process-authority.v2",
+    authority.authorityVersion,
+    authority.runtimeIdentity.organizationId,
+    authority.runtimeIdentity.agentId,
+    authority.runtimeIdentity.runId,
+    authority.ownership.epoch,
+    authority.ownership.fence,
+    authority.lease.owner,
+    authority.lease.issuedAtMillis,
+    authority.lease.expiresAtMillis,
+    authority.attempt,
+    authority.requestId,
+    authority.receiptContext.runtimeRoot,
+    authority.receiptContext.ownerToken,
+  ].map(String);
+  const material = values
+    .map((value) => `${Buffer.byteLength(value, "utf8")}:${value}|`)
+    .join("");
+  return createHash("sha256").update(material).digest("hex");
+}
+
+export function createNativeProcessAuthority(
+  input: Omit<NativeProcessAuthority, "bindingDigest">,
+): NativeProcessAuthority {
+  const authority = { ...input } as NativeProcessAuthority;
+  return {
+    ...authority,
+    bindingDigest: authorityBindingDigest(authority),
+  };
+}
+
+function invalidV2Authority(message: string): NativeProcessUnavailableError {
+  return new NativeProcessUnavailableError(message, "authority_invalid");
+}
+
+function validateV2Authority(
+  runId: string,
+  authority: NativeProcessAuthority,
+  runtimeRoot?: string,
+): void {
+  const identity = authority?.runtimeIdentity;
+  const ownership = authority?.ownership;
+  const lease = authority?.lease;
+  const receipt = authority?.receiptContext;
+  const textValues = [
+    identity?.organizationId,
+    identity?.agentId,
+    identity?.runId,
+    ownership?.fence,
+    lease?.owner,
+    authority?.requestId,
+  ];
+  if (authority?.authorityVersion !== 1
+    || !identity || !ownership || !lease || !receipt
+    || textValues.some((value) => typeof value !== "string"
+      || value.trim().length === 0
+      || Buffer.byteLength(value, "utf8") > 256)
+    || identity.runId !== runId
+    || !Number.isSafeInteger(ownership.epoch) || ownership.epoch < 1
+    || !Number.isSafeInteger(authority.attempt) || authority.attempt < 1 || authority.attempt > 1_000_000
+    || !Number.isSafeInteger(lease.issuedAtMillis)
+    || !Number.isSafeInteger(lease.expiresAtMillis)
+    || lease.expiresAtMillis <= lease.issuedAtMillis
+    || lease.expiresAtMillis - lease.issuedAtMillis > 86_400_000
+    || Date.now() < lease.issuedAtMillis
+    || Date.now() >= lease.expiresAtMillis
+    || !/^[0-9a-f]{64}$/u.test(authority.bindingDigest)
+    || authority.bindingDigest !== authorityBindingDigest(authority)
+    || !path.isAbsolute(receipt.runtimeRoot)
+    || Buffer.byteLength(receipt.runtimeRoot, "utf8") > 4_096
+    || typeof receipt.ownerToken !== "string"
+    || receipt.ownerToken.trim().length === 0
+    || receipt.ownerToken.length > 256
+    || receipt.ownerToken === "."
+    || receipt.ownerToken === ".."
+    || receipt.ownerToken.includes("/")
+    || receipt.ownerToken.includes("\\")
+    || receipt.ownerToken.includes("\0")
+    || (runtimeRoot !== undefined && path.resolve(runtimeRoot) !== path.resolve(receipt.runtimeRoot))) {
+    throw invalidV2Authority("Rust process host v2 authority is invalid");
+  }
+}
+
+function sameAuthority(left: unknown, right: NativeProcessAuthority): boolean {
+  const candidate = asFrame(left);
+  const identity = candidate && asFrame(candidate.runtimeIdentity);
+  const ownership = candidate && asFrame(candidate.ownership);
+  const lease = candidate && asFrame(candidate.lease);
+  const receipt = candidate && asFrame(candidate.receiptContext);
+  return candidate !== null
+    && identity !== null
+    && ownership !== null
+    && lease !== null
+    && receipt !== null
+    && candidate.authorityVersion === right.authorityVersion
+    && identity.organizationId === right.runtimeIdentity.organizationId
+    && identity.agentId === right.runtimeIdentity.agentId
+    && identity.runId === right.runtimeIdentity.runId
+    && ownership.epoch === right.ownership.epoch
+    && ownership.fence === right.ownership.fence
+    && lease.owner === right.lease.owner
+    && lease.issuedAtMillis === right.lease.issuedAtMillis
+    && lease.expiresAtMillis === right.lease.expiresAtMillis
+    && candidate.attempt === right.attempt
+    && candidate.requestId === right.requestId
+    && candidate.bindingDigest === right.bindingDigest
+    && receipt.runtimeRoot === right.receiptContext.runtimeRoot
+    && receipt.ownerToken === right.receiptContext.ownerToken;
 }
 
 export function nativeAgentRunPolicy(env: NodeJS.ProcessEnv = process.env) {
@@ -191,11 +311,20 @@ function asFrame(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function compatibleProtocol(value: unknown): boolean {
+function compatibleProtocol(
+  value: unknown,
+  expected: { major: number; minor: number } = PROTOCOL_VERSION,
+): boolean {
   const version = asFrame(value);
-  return version?.major === PROTOCOL_VERSION.major
+  return version?.major === expected.major
     && typeof version.minor === "number"
-    && version.minor <= PROTOCOL_VERSION.minor;
+    && version.minor <= expected.minor;
+}
+
+function supportsProtocol(frame: Record<string, unknown>, expected: { major: number; minor: number }): boolean {
+  if (compatibleProtocol(frame.protocolVersion, expected)) return true;
+  return Array.isArray(frame.supportedProtocolVersions)
+    && frame.supportedProtocolVersions.some((version) => compatibleProtocol(version, expected));
 }
 
 function protocolVersion(value: unknown): { major: number; minor: number } | null {
@@ -232,6 +361,42 @@ export async function runNativeChildProcess(
   args: string[],
   opts: NativeProcessRunOptions,
 ): Promise<RunProcessResult> {
+  return runNativeChildProcessInternal(runId, executable, args, opts, {
+    protocolVersion: PROTOCOL_VERSION,
+  });
+}
+
+/**
+ * Explicit authority-bearing process-host entrypoint. Legacy callers remain on
+ * v1; v2 callers must pass the server/runtime-issued envelope unchanged.
+ */
+export async function runNativeChildProcessV2(
+  runId: string,
+  executable: string,
+  args: string[],
+  opts: NativeProcessRunOptions & { authority: NativeProcessAuthority },
+): Promise<RunProcessResult> {
+  validateV2Authority(runId, opts.authority, opts.runtimeRoot);
+  return runNativeChildProcessInternal(runId, executable, args, opts, {
+    protocolVersion: V2_PROTOCOL_VERSION,
+    authority: opts.authority,
+  });
+}
+
+async function runNativeChildProcessInternal(
+  runId: string,
+  executable: string,
+  args: string[],
+  opts: NativeProcessRunOptions,
+  wire: NativeProcessWireOptions,
+): Promise<RunProcessResult> {
+  if (!path.isAbsolute(executable)) {
+    throw new NativeProcessUnavailableError(
+      "Rust process host requires an absolute executable path",
+      "executable_not_absolute",
+      false,
+    );
+  }
   const configuredBinaryPath = opts.binaryPath === undefined
     ? resolveNativeProcessHostPath()
     : opts.binaryPath;
@@ -242,7 +407,9 @@ export async function runNativeChildProcess(
       nativeTarget() ? "binary_unavailable" : "target_unsupported",
     );
   }
-  const runtimeRoot = path.resolve(opts.runtimeRoot ?? defaultRuntimeRoot(process.env));
+  const runtimeRoot = path.resolve(wire.authority?.receiptContext.runtimeRoot ?? opts.runtimeRoot ?? defaultRuntimeRoot(process.env));
+  const requestId = wire.authority?.requestId ?? ownerToken(runId);
+  const lifecycleOwnerToken = wire.authority?.receiptContext.ownerToken ?? requestId;
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 }).catch((error) => {
     throw new NativeProcessUnavailableError(
       "Rust process host receipt root is unavailable",
@@ -251,6 +418,36 @@ export async function runNativeChildProcess(
       { cause: error },
     );
   });
+
+  const inheritedEnv = Object.fromEntries(
+    Object.entries({ ...process.env, ...opts.env })
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  for (const key of [
+    "RUDDER_DESKTOP_CLI_ENTRY",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION",
+    "CLAUDE_CODE_PARENT_SESSION",
+  ]) {
+    delete inheritedEnv[key];
+  }
+  for (const key of [
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+  ]) {
+    if (inheritedEnv[key] === "" && !Object.prototype.hasOwnProperty.call(opts.env, key)) {
+      delete inheritedEnv[key];
+    }
+  }
+  const requestedHome = opts.env.HOME?.trim();
+  const inheritedHome = process.env.HOME?.trim();
+  if (requestedHome && inheritedHome && path.resolve(requestedHome) !== path.resolve(inheritedHome)
+    && !opts.env.ZDOTDIR?.trim()) {
+    delete inheritedEnv.ZDOTDIR;
+  }
 
   return await new Promise<RunProcessResult>((resolve, reject) => {
     const spawnHost = opts.spawnHost ?? ((command, argv, options) => spawn(command, argv, options));
@@ -289,17 +486,18 @@ export async function runNativeChildProcess(
     rawStdout.resume();
     rawStderr.resume();
 
-    const requestId = ownerToken(runId);
     const startedAt = new Date().toISOString();
     let accepted = false;
     let nativeIdentity: Pick<RudderNativeDiagnostic, "target" | "binaryVersion" | "protocolVersion"> = {
       target: resolveRudderNativeTarget() ?? "unsupported",
       binaryVersion: "unavailable",
-      protocolVersion: `${PROTOCOL_VERSION.major}.${PROTOCOL_VERSION.minor}`,
+      protocolVersion: `${wire.protocolVersion.major}.${wire.protocolVersion.minor}`,
     };
     let spawnedPid: number | null = null;
     let appExitCode: number | null = null;
     let appSignal: string | null = null;
+    let terminalStatus: RunProcessResult["terminalStatus"];
+    let terminalErrorCode: string | null = null;
     let terminalSeen = false;
     let cleanupReceiptTrusted = false;
     let timedOut = false;
@@ -368,12 +566,14 @@ export async function runNativeChildProcess(
         if (fatalError) reject(fatalError);
         else resolve({
           exitCode: appExitCode,
-          signal: aborted || timedOut ? "SIGTERM" : appSignal,
+          signal: aborted || timedOut || terminalStatus === "cancelled" ? "SIGTERM" : appSignal,
           timedOut,
           stdout,
           stderr,
           pid: spawnedPid,
           startedAt,
+          terminalStatus,
+          errorCode: terminalErrorCode,
           diagnostic: createRudderNativeDiagnostic({
             capability: "agent-run-process",
             target: nativeIdentity.target,
@@ -465,8 +665,9 @@ export async function runNativeChildProcess(
       stopSent = true;
       send({
         type: "stop",
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: wire.protocolVersion,
         requestId,
+        ...(wire.authority ? { authority: wire.authority } : {}),
         ...(graceMs === undefined ? {} : { graceMs: Math.max(1, Math.min(60_000, Math.floor(graceMs))) }),
       });
     };
@@ -486,7 +687,10 @@ export async function runNativeChildProcess(
       const type = frame.type;
       if (type === "handshake") {
         const version = protocolVersion(frame.protocolVersion);
-        if (accepted || !version || !compatibleProtocol(version)) {
+        const handshakeCompatible = wire.authority
+          ? supportsProtocol(frame, wire.protocolVersion)
+          : compatibleProtocol(version);
+        if (accepted || !version || !handshakeCompatible) {
           settleReject(new NativeProcessUnavailableError(
             "Rust process host handshake is incompatible",
             "protocol_mismatch",
@@ -495,14 +699,22 @@ export async function runNativeChildProcess(
           return;
         }
         const capabilities = frame.capabilities;
+        const requiredCapabilities = [
+          "process_spawn",
+          "process_group_cleanup",
+          "parent_eof_cleanup",
+          "owner_receipt",
+          "stdout_relay",
+          "stderr_relay",
+          ...(wire.authority ? ["authority_v2"] : []),
+        ];
         nativeIdentity = {
           target: typeof frame.target === "string" ? frame.target : nativeIdentity.target,
           binaryVersion: typeof frame.binaryVersion === "string" ? frame.binaryVersion : nativeIdentity.binaryVersion,
-          protocolVersion: `${version.major}.${version.minor}`,
+          protocolVersion: `${wire.protocolVersion.major}.${wire.protocolVersion.minor}`,
         };
         if (!Array.isArray(capabilities)
-          || !["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "owner_receipt", "stdout_relay", "stderr_relay"]
-            .every((capability) => capabilities.includes(capability))) {
+          || !requiredCapabilities.every((capability) => capabilities.includes(capability))) {
           settleReject(new NativeProcessUnavailableError(
             "Rust process host capabilities are incomplete",
             "capability_mismatch",
@@ -512,23 +724,26 @@ export async function runNativeChildProcess(
         clearTimeout(handshakeTimeout);
         send({
           type: "startProcess",
-          protocolVersion: PROTOCOL_VERSION,
+          protocolVersion: wire.protocolVersion,
           requestId,
+          ...(wire.authority ? { authority: wire.authority } : {}),
           executable,
           argv: args,
           cwd: opts.cwd,
-          env: opts.env,
-          ownerToken: requestId,
+          env: inheritedEnv,
+          ownerToken: lifecycleOwnerToken,
           runtimeRoot,
           ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
           graceMs: Math.max(1, Math.min(60_000, Math.floor(opts.graceSec * 1_000))),
         });
         return;
       }
+      const authorityValid = !wire.authority || sameAuthority(frame.authority, wire.authority);
       if (type !== "handshake"
-        && (!compatibleProtocol(frame.protocolVersion)
+        && (!compatibleProtocol(frame.protocolVersion, wire.protocolVersion)
           || frame.requestId !== requestId
-          || (accepted ? frame.ownerToken !== requestId : frame.ownerToken !== undefined && frame.ownerToken !== requestId))) {
+          || (accepted ? frame.ownerToken !== lifecycleOwnerToken : frame.ownerToken !== undefined && frame.ownerToken !== lifecycleOwnerToken)
+          || !authorityValid)) {
         settleReject(new NativeProcessUnavailableError(
           "Rust process host lifecycle identity is invalid",
           "lifecycle_identity_invalid",
@@ -588,17 +803,51 @@ export async function runNativeChildProcess(
         return;
       }
       if (type === "terminal") {
+        const frameStatus = frame.status;
+        const validStatus = frameStatus === "succeeded"
+          || frameStatus === "failed"
+          || frameStatus === "cancelled"
+          || frameStatus === "timed_out";
+        const frameErrorCode = typeof frame.errorCode === "string" && frame.errorCode.trim().length > 0
+          ? frame.errorCode
+          : null;
+        if (!validStatus || (frameStatus !== "succeeded" && frameErrorCode === null)) {
+          fatalError ??= new NativeProcessUnavailableError(
+            "Rust process host terminal receipt is missing a valid status/error code",
+            "terminal_receipt_invalid",
+            accepted,
+          );
+          terminalSeen = true;
+          return;
+        }
         if (!accepted) {
           settleReject(new NativeProcessUnavailableError(
-            typeof frame.errorCode === "string" ? `Rust process host rejected launch: ${frame.errorCode}` : "Rust process host rejected launch",
-            typeof frame.errorCode === "string" ? frame.errorCode : "launch_rejected",
+            `Rust process host rejected launch: ${frameErrorCode ?? "launch_rejected"}`,
+            frameErrorCode ?? "launch_rejected",
           ));
+          return;
+        }
+        terminalStatus = frameStatus;
+        terminalErrorCode = frameErrorCode;
+        if (frameStatus === "timed_out") timedOut = true;
+        const locallyStopped = timedOut || aborted;
+        if (frameStatus === "succeeded" && locallyStopped && appExitCode === null) {
+          terminalStatus = timedOut ? "timed_out" : "cancelled";
+          terminalErrorCode = timedOut ? "process_timeout" : "process_cancelled";
+        }
+        if (terminalStatus === "succeeded" && appExitCode !== 0) {
+          fatalError ??= new NativeProcessUnavailableError(
+            "Rust process host reported success without a zero exit code",
+            appExitCode === null ? "exit_code_missing" : "terminal_success_exit_mismatch",
+            true,
+          );
+          terminalSeen = true;
           return;
         }
         if (frame.cleanupProven !== true || frame.receiptWritten !== true) {
           fatalError ??= new NativeProcessUnavailableError(
             "Rust process host could not prove process-tree cleanup and receipt durability",
-            typeof frame.errorCode === "string" ? frame.errorCode : "cleanup_unproven",
+            frameErrorCode ?? "cleanup_unproven",
             true,
           );
           terminalSeen = true;
@@ -650,7 +899,7 @@ export async function runNativeChildProcess(
     host.stderr?.on("data", (chunk) => {
       stderr = appendWithCap(stderr, String(chunk));
     });
-    host.once("error", (error) => {
+    host.once("error", (error: Error) => {
       settleReject(new NativeProcessUnavailableError(
         "Rust process host failed",
         "host_error",
@@ -658,7 +907,10 @@ export async function runNativeChildProcess(
         { cause: error },
       ));
     });
-    host.once("close", (code, signal) => {
+    let hostTerminationHandled = false;
+    const handleHostTermination = (code: number | null, signal: string | null) => {
+      if (hostTerminationHandled) return;
+      hostTerminationHandled = true;
       runningProcesses.delete(runId);
       if (terminalSeen && cleanupReceiptTrusted) {
         finish();
@@ -678,7 +930,7 @@ export async function runNativeChildProcess(
         if (ownedPid === null) {
           try {
             const descriptor = JSON.parse(
-              await readFile(path.join(runtimeRoot, requestId, "owner-descriptor.json"), "utf8"),
+              await readFile(path.join(runtimeRoot, lifecycleOwnerToken, "owner-descriptor.json"), "utf8"),
             ) as { childPid?: unknown };
             if (typeof descriptor.childPid === "number") ownedPid = descriptor.childPid;
           } catch {
@@ -695,7 +947,9 @@ export async function runNativeChildProcess(
           { cause: cleanupError },
         )),
       );
-    });
+    };
+    host.once("exit", handleHostTermination);
+    host.once("close", handleHostTermination);
 
     if (opts.timeoutSec > 0) {
       timeout = setTimeout(() => {

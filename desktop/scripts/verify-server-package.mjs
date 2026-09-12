@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifyNativeReleaseVersion } from "../../scripts/native-release-version.mjs";
+import { verifyNativeArtifactManifest } from "./native-artifact-manifest.mjs";
 import { resolveNativeTarget } from "./native-target.mjs";
 import {
   EMBEDDED_POSTGRES_PLATFORM_PACKAGES,
@@ -412,17 +413,30 @@ async function verifyVersionCompatibility(serverPackageDir) {
   ok(`release version compatibility checked (${expectedVersion}; ${firstPartyDependencies.length} first-party dependencies)`);
 
   const repoRoot = path.resolve(desktopRoot, "..");
-  const target = resolveNativeTarget(process.platform, process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch);
+  const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+  const target = resolveNativeTarget(process.platform, targetArch);
   const binaryPaths = target
     ? [
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-native.exe" : "rudder-native"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host"),
         path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper"),
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-cli.exe" : "rudder-cli"),
+        path.join(resourcesDir, "native", target, process.platform === "win32" ? "rudder-mcp.exe" : "rudder-mcp"),
       ]
     : [];
   try {
     const nativeReceipt = verifyNativeReleaseVersion({ repoRoot, expectedVersion, binaryPaths });
     ok(`Rust release version compatibility checked (${nativeReceipt.productVersion}; ${nativeReceipt.versionSources.nativePackages.length} native packages)`);
+    if (!target) throw new Error(`no supported native target for ${process.platform}/${targetArch}`);
+    await verifyNativeArtifactManifest({
+      manifestPath: path.join(resourcesDir, "native", target, "rudder-native-artifacts.json"),
+      expectedVersion,
+      expectedTarget: target,
+      expectedPlatform: process.platform,
+      expectedArch: targetArch,
+      targetRoot: path.join(resourcesDir, "native", target),
+    });
+    ok(`Rust native artifact identities checked (${target}; ${binaryPaths.length} binaries)`);
   } catch (e) {
     error(`Rust release version compatibility failed: ${e.message}`);
   }

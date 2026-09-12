@@ -1,0 +1,19 @@
+[package]
+name = "rudder-migration-runner"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+rudder-migration-core = { path = "../migration-core" }
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["time"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3.23"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }

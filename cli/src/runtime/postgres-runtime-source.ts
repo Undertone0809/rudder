@@ -1,5 +1,6 @@
 export const RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_URL";
 export const RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV = "RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256";
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 const SOURCES = {
   "darwin/arm64": {
@@ -18,7 +19,7 @@ const SOURCES = {
 
 export type PostgresRuntimeArchiveSource = {
   url: string;
-  expectedSha256: string | null;
+  expectedSha256: string;
   trustedDefault: boolean;
 };
 
@@ -33,9 +34,23 @@ export function resolvePostgresRuntimeArchiveSource(
   const url = explicitUrl || trusted?.url;
   if (!url) return null;
   const configuredSha256 = env[RUDDER_POSTGRES_RUNTIME_ARCHIVE_SHA256_ENV]?.trim().toLowerCase();
+  if (explicitUrl) {
+    if (!configuredSha256) {
+      throw new Error("PostgreSQL runtime archive SHA-256 digest is required for an override URL");
+    }
+    if (!SHA256_PATTERN.test(configuredSha256)) {
+      throw new Error("PostgreSQL runtime archive SHA-256 digest must be a 64-character hexadecimal value");
+    }
+    return {
+      url: explicitUrl,
+      expectedSha256: configuredSha256,
+      trustedDefault: false,
+    };
+  }
+  if (!trusted) return null;
   return {
-    url,
-    expectedSha256: configuredSha256 || (explicitUrl ? null : trusted.sha256),
-    trustedDefault: !explicitUrl && Boolean(trusted),
+    url: trusted.url,
+    expectedSha256: trusted.sha256,
+    trustedDefault: true,
   };
 }

@@ -1,0 +1,11 @@
+[package]
+name = "rudder-runtime-adapter-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-native-protocol = { path = "../native-protocol" }
+rudder-runtime-core = { path = "../runtime-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

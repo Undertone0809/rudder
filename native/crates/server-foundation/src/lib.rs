@@ -1,11 +1,13 @@
 use actix_web::{
-    App, Error, HttpResponse, HttpServer,
+    App, Error, HttpRequest, HttpResponse, HttpServer,
     body::MessageBody,
     dev::ServiceRequest,
     http::{StatusCode, header},
     middleware::{self, Next},
     web,
 };
+pub use rudder_db_core::OrganizationScope;
+use rudder_db_core::{PageRequest, ReadAdapterError, ReadRepository};
 use serde::Serialize;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
@@ -25,7 +27,30 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod authority;
+mod evidence_read;
+mod identity;
+mod read_surfaces;
 mod workspace_backup_files;
+
+pub use authority::{
+    AUTHORITY_ENDPOINT, AUTHORITY_RECEIPT_SCHEMA, AuthorityReceipt, AuthorityRouteReceipt,
+};
+pub use evidence_read::TrustedRunEvidence;
+pub use identity::{BuildIdentity, ServerIdentity};
+
+use authority::{AuthorityAdapterError, AuthorityRegistry, parse_route_selector};
+use evidence_read::{
+    EVIDENCE_READ_ROUTE, EvidenceReadAdapter, EvidenceReadError, EvidenceReadQuery,
+};
+
+use read_surfaces::{
+    ACTIVITY_LIST_ROUTE, AGENT_GET_ROUTE, AGENTS_LIST_ROUTE, APPROVAL_GET_ROUTE,
+    APPROVALS_LIST_ROUTE, ActivityRunReadAdapter, GOAL_GET_ROUTE, GOALS_LIST_ROUTE,
+    ISSUE_GET_ROUTE, ISSUES_LIST_ROUTE, ORGANIZATIONS_GET_ROUTE, ORGANIZATIONS_LIST_ROUTE,
+    PROJECT_GET_ROUTE, PROJECTS_LIST_ROUTE, RUNS_LIST_ROUTE, ReadSurfaceAdapter, ReadSurfaceQuery,
+    ReadSurfaceQueryError,
+};
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,
@@ -64,6 +89,12 @@ const READ_ONLY_AUTHORITIES: &[&str] = &[
     "workspace_backup_files_list",
     "workspace_backup_file_read",
     "workspace_backup_download",
+    "organization_read_surfaces",
+    "issue_read_surfaces",
+    "approval_read_surfaces",
+    "activity_read_surfaces",
+    "run_read_surfaces",
+    "run_evidence_read",
 ];
 const FALLBACK_ERROR_BODY: &[u8] =
     br#"{"schema":"rudder.native.server.error.v1","status":"error","reason":"response_limit"}"#;
@@ -117,6 +148,12 @@ pub struct ServerConfig {
     pub shutdown_grace: Duration,
     pub database_url: Option<String>,
     pub database_required: bool,
+    /// Organization scope injected by a trusted host/runtime adapter. It is
+    /// never read from request headers or query parameters.
+    pub trusted_organization_scope: Option<OrganizationScope>,
+    /// Run evidence capabilities injected by a trusted host. Request paths can
+    /// select only a run identity already present in this allowlisted set.
+    pub trusted_run_evidence: Vec<TrustedRunEvidence>,
     pub workers: usize,
 }
 
@@ -134,6 +171,8 @@ impl Default for ServerConfig {
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             database_url: None,
             database_required: false,
+            trusted_organization_scope: None,
+            trusted_run_evidence: Vec::new(),
             workers: DEFAULT_WORKERS,
         }
     }
@@ -246,6 +285,12 @@ impl ServerConfig {
                 "database URL is required when database readiness is enabled",
             ));
         }
+        if !self.trusted_run_evidence.is_empty() && self.trusted_organization_scope.is_none() {
+            return Err(ConfigError::invalid(
+                "RUDDER_NATIVE_RUN_EVIDENCE",
+                "trusted organization scope is required for run evidence capabilities",
+            ));
+        }
         Ok(())
     }
 
@@ -259,6 +304,18 @@ impl ServerConfig {
             max_database_connections: self.max_database_connections,
         }
     }
+
+    /// Attach organization scope supplied by the authenticated host/runtime.
+    /// The scope is intentionally not configurable through request data.
+    pub fn with_trusted_organization_scope(mut self, scope: OrganizationScope) -> Self {
+        self.trusted_organization_scope = Some(scope);
+        self
+    }
+
+    pub fn with_trusted_run_evidence(mut self, evidence: Vec<TrustedRunEvidence>) -> Self {
+        self.trusted_run_evidence = evidence;
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -267,6 +324,10 @@ pub enum ConfigError {
     Invalid { field: String, reason: String },
     #[error("database URL could not be parsed")]
     DatabaseUrl,
+    #[error("authority inventory is invalid")]
+    Authority,
+    #[error("run evidence configuration is invalid")]
+    Evidence,
 }
 
 impl ConfigError {
@@ -381,11 +442,13 @@ pub struct StartupReceipt {
     pub schema: &'static str,
     pub component: &'static str,
     pub protocol_version: u32,
+    pub identity: ServerIdentity,
     pub bound_addr: SocketAddr,
     pub public_listener: bool,
     pub product_write_authority: bool,
     pub database_authority: &'static str,
     pub read_only_authorities: &'static [&'static str],
+    pub route_authority: AuthorityReceipt,
     pub limits: LimitsReceipt,
 }
 
@@ -405,6 +468,7 @@ struct HealthReceipt {
     schema: &'static str,
     component: &'static str,
     protocol_version: u32,
+    identity: ServerIdentity,
     status: &'static str,
     authority: &'static str,
     uptime_ms: u128,
@@ -424,6 +488,7 @@ struct ReadinessReceipt {
     schema: &'static str,
     component: &'static str,
     protocol_version: u32,
+    identity: ServerIdentity,
     status: &'static str,
     ready: bool,
     dependencies: ReadinessDependencies,
@@ -443,6 +508,7 @@ struct CapabilitiesReceipt {
     schema: &'static str,
     component: &'static str,
     protocol_version: u32,
+    identity: ServerIdentity,
     effective_engine: &'static str,
     public_listener: bool,
     product_write_authority: bool,
@@ -467,9 +533,14 @@ enum DatabaseState {
 struct AppState {
     config: Arc<ServerConfig>,
     database: DatabaseState,
+    read_surfaces: Option<ReadSurfaceAdapter>,
+    activity_runs: Option<ActivityRunReadAdapter>,
+    evidence_read: Option<EvidenceReadAdapter>,
     admission: Arc<RequestAdmission>,
     download_admission: Arc<Semaphore>,
     started_at: Instant,
+    authority: Arc<AuthorityRegistry>,
+    authority_receipt: AuthorityReceipt,
 }
 
 struct DownloadCancellation(Arc<AtomicBool>);
@@ -606,6 +677,10 @@ impl Drop for RequestPermit {
 impl AppState {
     fn new(config: ServerConfig) -> Result<Self, ConfigError> {
         config.validate()?;
+        let authority = AuthorityRegistry::fixed().map_err(|_| ConfigError::Authority)?;
+        let authority_receipt = authority
+            .receipt(None)
+            .map_err(|_| ConfigError::Authority)?;
         let database = match config.database_url.as_deref() {
             Some(url) => {
                 let pool = PgPoolOptions::new()
@@ -618,6 +693,27 @@ impl AppState {
             }
             None => DatabaseState::Disabled,
         };
+        let read_surfaces = match (&database, config.trusted_organization_scope.clone()) {
+            (DatabaseState::Configured(pool), Some(scope)) => Some(ReadSurfaceAdapter::new(
+                ReadRepository::new(pool.clone()),
+                scope,
+            )),
+            _ => None,
+        };
+        let activity_runs = match (&database, config.trusted_organization_scope.clone()) {
+            (DatabaseState::Configured(pool), Some(scope)) => Some(ActivityRunReadAdapter::new(
+                rudder_db_core::activity_read::ActivityRunReadRepository::new(pool.clone()),
+                scope,
+            )),
+            _ => None,
+        };
+        let evidence_read = match config.trusted_organization_scope.clone() {
+            Some(scope) if !config.trusted_run_evidence.is_empty() => Some(
+                EvidenceReadAdapter::new(scope, config.trusted_run_evidence.clone())
+                    .map_err(|_| ConfigError::Evidence)?,
+            ),
+            _ => None,
+        };
         Ok(Self {
             admission: Arc::new(RequestAdmission::new(
                 config.workers,
@@ -626,7 +722,12 @@ impl AppState {
             download_admission: Arc::new(Semaphore::new(config.workers)),
             config: Arc::new(config),
             database,
+            read_surfaces,
+            activity_runs,
+            evidence_read,
             started_at: Instant::now(),
+            authority: Arc::new(authority),
+            authority_receipt,
         })
     }
 
@@ -644,6 +745,7 @@ impl AppState {
             schema: HEALTH_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             status: "ok",
             authority: "foundation-only",
             uptime_ms: self.started_at.elapsed().as_millis(),
@@ -687,6 +789,7 @@ impl AppState {
             schema: READINESS_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             status: if ready { "ready" } else { "notReady" },
             ready,
             dependencies: ReadinessDependencies { runtime, database },
@@ -708,6 +811,7 @@ impl AppState {
             schema: CAPABILITIES_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             effective_engine: "rust",
             public_listener: false,
             product_write_authority: false,
@@ -716,6 +820,311 @@ impl AppState {
             limits: self.config.limits(),
         };
         bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes)
+    }
+
+    fn authority(&self, query: &str) -> HttpResponse {
+        let selector = match parse_route_selector(query) {
+            Ok(selector) => selector,
+            Err(_) => {
+                return self.json_error(StatusCode::BAD_REQUEST, "malformed_authority_query");
+            }
+        };
+        match self.authority.receipt(selector.as_deref()) {
+            Ok(receipt) => bounded_json(StatusCode::OK, &receipt, self.config.max_response_bytes),
+            Err(AuthorityAdapterError::UnknownRoute) => {
+                self.json_error(StatusCode::NOT_FOUND, "unknown_route")
+            }
+            Err(_) => self.json_error(StatusCode::SERVICE_UNAVAILABLE, "authority_unavailable"),
+        }
+    }
+
+    fn read_surface_adapter(&self) -> Option<&ReadSurfaceAdapter> {
+        self.read_surfaces.as_ref()
+    }
+
+    fn read_surface_page(
+        &self,
+        query: &ReadSurfaceQuery,
+    ) -> Result<PageRequest, ReadSurfaceQueryError> {
+        query.page()
+    }
+
+    fn read_surface_query_error(&self, _: ReadSurfaceQueryError) -> HttpResponse {
+        self.json_error(StatusCode::BAD_REQUEST, "read_surface_query_invalid")
+    }
+
+    fn read_surface_error(&self, error: ReadAdapterError) -> HttpResponse {
+        match error {
+            ReadAdapterError::NotFound { .. } => {
+                self.json_error(StatusCode::NOT_FOUND, "read_surface_not_found")
+            }
+            ReadAdapterError::Contract(_) => {
+                self.json_error(StatusCode::BAD_REQUEST, "read_surface_query_invalid")
+            }
+            ReadAdapterError::Database(_) => self.json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "read_surface_database_error",
+            ),
+            ReadAdapterError::Projection(_) => self.json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "read_surface_projection_error",
+            ),
+        }
+    }
+
+    async fn read_organizations(&self, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_organizations(page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_organization(&self, organization_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_organization(organization_id).await {
+            Ok(organization) => bounded_json(
+                StatusCode::OK,
+                &organization,
+                self.config.max_response_bytes,
+            ),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_goals(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_goals(&scope, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_goal(&self, goal_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_goal(goal_id).await {
+            Ok(goal) => bounded_json(StatusCode::OK, &goal, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_projects(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_projects(&scope, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_project(&self, project_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_project(project_id).await {
+            Ok(project) => bounded_json(StatusCode::OK, &project, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_agents(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let options = match query.agent_options() {
+            Ok(options) => options,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_agents(&scope, options, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_agent(&self, agent_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_agent(agent_id).await {
+            Ok(agent) => bounded_json(StatusCode::OK, &agent, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_issues(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let options = match query.issue_options() {
+            Ok(options) => options,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        match adapter.list_issues(&scope, options, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_issue(&self, issue_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_issue(issue_id).await {
+            Ok(issue) => bounded_json(StatusCode::OK, &issue, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_approvals(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let page = match self.read_surface_page(query) {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let options = match query.approval_options() {
+            Ok(options) => options,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let scope = match adapter.scope_for_org(org_id) {
+            Ok(scope) => scope,
+            Err(error) => return self.read_surface_error(error),
+        };
+        match adapter.list_approvals(&scope, options, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_approval(&self, approval_id: &str) -> HttpResponse {
+        let Some(adapter) = self.read_surface_adapter() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        match adapter.get_approval(approval_id).await {
+            Ok(approval) => bounded_json(StatusCode::OK, &approval, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_activity(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = &self.activity_runs else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let page = match query.activity_page() {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let filter = match query.activity_filter() {
+            Ok(filter) => filter,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_activity(org_id, filter, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_runs(&self, org_id: &str, query: &ReadSurfaceQuery) -> HttpResponse {
+        let Some(adapter) = &self.activity_runs else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "read_surface_unavailable");
+        };
+        let page = match query.run_page() {
+            Ok(page) => page,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        let filter = match query.run_filter() {
+            Ok(filter) => filter,
+            Err(error) => return self.read_surface_query_error(error),
+        };
+        match adapter.list_runs(org_id, filter, page).await {
+            Ok(page) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Err(error) => self.read_surface_error(error),
+        }
+    }
+
+    async fn read_evidence(
+        &self,
+        org_id: &str,
+        run_id: &str,
+        query: &EvidenceReadQuery,
+    ) -> HttpResponse {
+        let Some(adapter) = &self.evidence_read else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "evidence_read_unavailable");
+        };
+        let request = match query.parse() {
+            Ok(request) => request,
+            Err(_) => {
+                return self.json_error(StatusCode::BAD_REQUEST, "evidence_read_query_invalid");
+            }
+        };
+        let adapter = adapter.clone();
+        let organization_id = org_id.to_owned();
+        let run_id = run_id.to_owned();
+        let result =
+            tokio::task::spawn_blocking(move || adapter.read(&organization_id, &run_id, request))
+                .await;
+        match result {
+            Ok(Ok(page)) => bounded_json(StatusCode::OK, &page, self.config.max_response_bytes),
+            Ok(Err(EvidenceReadError::NotFound)) => {
+                self.json_error(StatusCode::NOT_FOUND, "evidence_read_not_found")
+            }
+            Ok(Err(EvidenceReadError::InvalidRequest)) => {
+                self.json_error(StatusCode::BAD_REQUEST, "evidence_read_query_invalid")
+            }
+            Ok(Err(EvidenceReadError::InvalidInput)) => self.json_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "evidence_read_input_invalid",
+            ),
+            Ok(Err(EvidenceReadError::Backend)) | Err(_) => {
+                self.json_error(StatusCode::SERVICE_UNAVAILABLE, "evidence_read_failed")
+            }
+        }
     }
 
     async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
@@ -1114,6 +1523,109 @@ async fn capabilities(state: web::Data<AppState>) -> HttpResponse {
     state.capabilities()
 }
 
+async fn authority(request: HttpRequest, state: web::Data<AppState>) -> HttpResponse {
+    state.authority(request.query_string())
+}
+
+async fn read_organizations(
+    state: web::Data<AppState>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_organizations(&query).await
+}
+
+async fn read_organization(
+    state: web::Data<AppState>,
+    organization_id: web::Path<String>,
+) -> HttpResponse {
+    state.read_organization(organization_id.as_str()).await
+}
+
+async fn read_goals(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_goals(route.as_str(), &query).await
+}
+
+async fn read_goal(state: web::Data<AppState>, goal_id: web::Path<String>) -> HttpResponse {
+    state.read_goal(goal_id.as_str()).await
+}
+
+async fn read_projects(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_projects(route.as_str(), &query).await
+}
+
+async fn read_project(state: web::Data<AppState>, project_id: web::Path<String>) -> HttpResponse {
+    state.read_project(project_id.as_str()).await
+}
+
+async fn read_agents(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_agents(route.as_str(), &query).await
+}
+
+async fn read_agent(state: web::Data<AppState>, agent_id: web::Path<String>) -> HttpResponse {
+    state.read_agent(agent_id.as_str()).await
+}
+
+async fn read_issues(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_issues(route.as_str(), &query).await
+}
+
+async fn read_issue(state: web::Data<AppState>, issue_id: web::Path<String>) -> HttpResponse {
+    state.read_issue(issue_id.as_str()).await
+}
+
+async fn read_approvals(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_approvals(route.as_str(), &query).await
+}
+
+async fn read_approval(state: web::Data<AppState>, approval_id: web::Path<String>) -> HttpResponse {
+    state.read_approval(approval_id.as_str()).await
+}
+
+async fn read_activity(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_activity(route.as_str(), &query).await
+}
+
+async fn read_runs(
+    state: web::Data<AppState>,
+    route: web::Path<String>,
+    query: web::Query<ReadSurfaceQuery>,
+) -> HttpResponse {
+    state.read_runs(route.as_str(), &query).await
+}
+
+async fn read_evidence(
+    state: web::Data<AppState>,
+    route: web::Path<(String, String)>,
+    query: web::Query<EvidenceReadQuery>,
+) -> HttpResponse {
+    let (org_id, run_id) = route.into_inner();
+    state.read_evidence(&org_id, &run_id, &query).await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -1174,6 +1686,22 @@ impl ServerRuntime {
                 .route("/healthz", web::get().to(health))
                 .route("/readyz", web::get().to(readiness))
                 .route("/v1/capabilities", web::get().to(capabilities))
+                .route(AUTHORITY_ENDPOINT, web::get().to(authority))
+                .route(ORGANIZATIONS_LIST_ROUTE, web::get().to(read_organizations))
+                .route(ORGANIZATIONS_GET_ROUTE, web::get().to(read_organization))
+                .route(GOALS_LIST_ROUTE, web::get().to(read_goals))
+                .route(GOAL_GET_ROUTE, web::get().to(read_goal))
+                .route(PROJECTS_LIST_ROUTE, web::get().to(read_projects))
+                .route(PROJECT_GET_ROUTE, web::get().to(read_project))
+                .route(AGENTS_LIST_ROUTE, web::get().to(read_agents))
+                .route(AGENT_GET_ROUTE, web::get().to(read_agent))
+                .route(ISSUES_LIST_ROUTE, web::get().to(read_issues))
+                .route(ISSUE_GET_ROUTE, web::get().to(read_issue))
+                .route(APPROVALS_LIST_ROUTE, web::get().to(read_approvals))
+                .route(APPROVAL_GET_ROUTE, web::get().to(read_approval))
+                .route(ACTIVITY_LIST_ROUTE, web::get().to(read_activity))
+                .route(RUNS_LIST_ROUTE, web::get().to(read_runs))
+                .route(EVIDENCE_READ_ROUTE, web::get().to(read_evidence))
                 .route(
                     "/api/orgs/{org_id}/workspace/backups",
                     web::get().to(workspace_backups),
@@ -1227,11 +1755,13 @@ impl ServerRuntime {
             schema: STARTUP_SCHEMA,
             component: "server-foundation",
             protocol_version: PROTOCOL_VERSION,
+            identity: ServerIdentity::default(),
             bound_addr: self.bound_addr,
             public_listener: false,
             product_write_authority: false,
             database_authority: "read-only-product-data",
             read_only_authorities: READ_ONLY_AUTHORITIES,
+            route_authority: self.control.state.authority_receipt.clone(),
             limits: self.control.state.config.limits(),
         }
     }
@@ -1507,5 +2037,43 @@ mod tests {
         for mutation in ["insert ", "update ", "delete ", "truncate "] {
             assert!(!normalized.contains(mutation), "query contains {mutation}");
         }
+    }
+
+    #[actix_web::test]
+    async fn activity_and_run_read_surfaces_fail_closed_without_database_or_trusted_scope() {
+        let state = AppState::new(ServerConfig::default()).unwrap();
+        let query = ReadSurfaceQuery::default();
+
+        let activity = state.read_activity("organization-1", &query).await;
+        assert_eq!(activity.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let activity_body = actix_web::body::to_bytes(activity.into_body())
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&activity_body).contains("read_surface_unavailable"));
+
+        let runs = state.read_runs("organization-1", &query).await;
+        assert_eq!(runs.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let runs_body = actix_web::body::to_bytes(runs.into_body()).await.unwrap();
+        assert!(String::from_utf8_lossy(&runs_body).contains("read_surface_unavailable"));
+    }
+
+    #[test]
+    fn run_evidence_capabilities_require_a_trusted_organization_scope() {
+        let capability = TrustedRunEvidence::from_host(
+            "org-a",
+            "run-a",
+            std::env::temp_dir().join("rudder-run-evidence.log"),
+        )
+        .expect("host capability");
+        let error = ServerRuntime::bind(ServerConfig {
+            trusted_run_evidence: vec![capability],
+            ..ServerConfig::default()
+        });
+
+        assert!(matches!(
+            error,
+            Err(ServerError::Config(ConfigError::Invalid { field, .. }))
+                if field == "RUDDER_NATIVE_RUN_EVIDENCE"
+        ));
     }
 }

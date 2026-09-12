@@ -1,5 +1,9 @@
 import type { Db } from "@rudderhq/db";
 import type { Request, RequestHandler } from "express";
+import {
+  createPrivateActorEnvelopeBridge,
+  type PrivateActorEnvelopeBridge,
+} from "../auth/actor-envelope-bridge.js";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { initializeBoardClaimChallenge } from "../board-claim.js";
 import type { Config } from "../config.js";
@@ -36,6 +40,8 @@ export interface AuthRuntime {
   resolveSessionFromHeaders?: (headers: Headers) => Promise<BetterAuthSessionResult | null>;
   localAccountExchangePolicy?: LocalAccountExchangePolicy;
   localAccountSessionRevocation?: LocalAccountSessionRevocation;
+  /** Private/non-authoritative Rust actor-envelope transport bridge. */
+  privateActorEnvelopeBridge?: PrivateActorEnvelopeBridge;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -93,6 +99,18 @@ export async function createAuthRuntime(options: {
       });
       return resolveLocalSession(rawHeaders);
     };
+    const sessionRevocation = runtime.localAccountSessionRevocation;
+    if (!sessionRevocation || !runtime.resolveSessionFromHeaders) {
+      throw new Error("Local account session bridge dependencies are unavailable");
+    }
+    runtime.privateActorEnvelopeBridge = createPrivateActorEnvelopeBridge({
+      // Reuse the already-injected local session secret; do not accept a key
+      // from request, model, or route payload data.
+      signingKey: localAccountAuth.sessionSecret,
+      audience: localAccountAuth.audience,
+      resolveSessionFromHeaders: runtime.resolveSessionFromHeaders,
+      sessionRevocation,
+    });
     runtime.authReady = true;
   }
 

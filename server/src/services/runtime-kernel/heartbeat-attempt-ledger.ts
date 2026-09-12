@@ -22,6 +22,7 @@ export type BeginHeartbeatAttemptInput = {
   model: string | null;
   isFallback: boolean;
   resumeSource: ResumeSource;
+  checkpointJson?: unknown;
 };
 
 function normalizeJsonObject(value: unknown): Record<string, unknown> | null {
@@ -66,6 +67,7 @@ export async function beginHeartbeatRunAttempt(
       model: input.model,
       isFallback: input.isFallback,
       resumeSource: input.resumeSource,
+      checkpointJson: normalizeJsonObject(input.checkpointJson) ?? undefined,
       status: "started",
     })
     .onConflictDoNothing({
@@ -84,6 +86,23 @@ export async function beginHeartbeatRunAttempt(
       eq(heartbeatRunAttempts.attemptIndex, input.attemptIndex),
     ))
     .limit(1)
+    .then((rows) => rows[0] ?? null);
+}
+
+export async function checkpointHeartbeatRunAttempt(
+  db: Db,
+  ref: HeartbeatAttemptRef | null,
+  checkpointJson: unknown,
+) {
+  if (!ref) return null;
+  return db
+    .update(heartbeatRunAttempts)
+    .set({ checkpointJson: normalizeJsonObject(checkpointJson) ?? undefined })
+    .where(and(
+      attemptWhere(ref),
+      notInArray(heartbeatRunAttempts.status, terminalStatuses),
+    ))
+    .returning()
     .then((rows) => rows[0] ?? null);
 }
 
@@ -134,6 +153,7 @@ export async function finishHeartbeatRunAttempt(
     sessionParamsJson?: unknown;
     usageDeltaJson?: unknown;
     costUsd?: unknown;
+    checkpointJson?: unknown;
     errorCode?: string | null;
     error?: string | null;
     finishedAt?: Date;
@@ -151,6 +171,7 @@ export async function finishHeartbeatRunAttempt(
       sessionParamsJson: normalizeJsonObject(input.sessionParamsJson) ?? undefined,
       usageDeltaJson: normalizeJsonObject(input.usageDeltaJson) ?? undefined,
       costCents: costToCents(input.costUsd),
+      checkpointJson: normalizeJsonObject(input.checkpointJson) ?? undefined,
       errorCode: input.errorCode ?? undefined,
       error: input.error ?? undefined,
       finishedAt: input.finishedAt ?? new Date(),

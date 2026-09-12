@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../types.js";
 import {
   asNumber,
@@ -6,11 +8,23 @@ import {
   buildRudderEnv,
   parseObject,
   redactEnvForLogs,
+  resolveSpawnTarget,
   runChildProcess,
+  runNativeChildProcessV2,
 } from "../utils.js";
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
-  const { runId, agent, config, context, onLog, onMeta, onSpawn, abortSignal } = ctx;
+  const {
+    runId,
+    agent,
+    config,
+    context,
+    nativeProcessAuthority,
+    onLog,
+    onMeta,
+    onSpawn,
+    abortSignal,
+  } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
 
@@ -55,7 +69,14 @@ Complete only this bounded task and report the result through the normal Run evi
     });
   }
 
-  const proc = await runChildProcess(runId, command, args, {
+  const nativeSpawnTarget = nativeProcessAuthority === undefined
+    ? null
+    : await resolveSpawnTarget(command, args, cwd, { ...process.env, ...env });
+  if (nativeSpawnTarget !== null && !path.isAbsolute(nativeSpawnTarget.command)) {
+    throw new Error(`Native process host requires an absolute executable; could not resolve ${command}`);
+  }
+
+  const processOptions = {
     cwd,
     env,
     timeoutSec,
@@ -64,23 +85,77 @@ Complete only this bounded task and report the result through the normal Run evi
     onSpawn,
     ...(runtimePrompt !== null ? { stdin: runtimePrompt } : {}),
     abortSignal,
-  });
+  };
+  const proc = nativeProcessAuthority !== undefined
+    ? await runNativeChildProcessV2(runId, nativeSpawnTarget!.command, nativeSpawnTarget!.args, {
+      ...processOptions,
+      authority: nativeProcessAuthority,
+    })
+    : await runChildProcess(runId, command, args, processOptions);
 
-  if (proc.timedOut) {
+  const terminalStatus = proc.terminalStatus;
+  const terminalErrorCode = proc.errorCode ?? null;
+  if (terminalStatus === "timed_out" || proc.timedOut) {
     return {
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: true,
-      errorMessage: `Timed out after ${timeoutSec}s`,
+      errorCode: terminalErrorCode ?? "process_timeout",
+      errorMessage: terminalErrorCode
+        ? `Process timed out (${terminalErrorCode})`
+        : `Timed out after ${timeoutSec}s`,
     };
   }
 
-  if ((proc.exitCode ?? 0) !== 0) {
+  if (terminalStatus === "cancelled") {
     return {
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: false,
-      errorMessage: `Process exited with code ${proc.exitCode ?? -1}`,
+      errorCode: terminalErrorCode ?? "process_cancelled",
+      errorMessage: `Process cancelled${terminalErrorCode ? ` (${terminalErrorCode})` : ""}`,
+      resultJson: {
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+      },
+    };
+  }
+
+  if (terminalStatus === "failed") {
+    return {
+      exitCode: proc.exitCode,
+      signal: proc.signal,
+      timedOut: false,
+      errorCode: terminalErrorCode ?? "process_failed",
+      errorMessage: `Process exited with terminal status failed${terminalErrorCode ? ` (${terminalErrorCode})` : ""}`,
+      resultJson: {
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+      },
+    };
+  }
+
+  if (proc.exitCode === null) {
+    return {
+      exitCode: null,
+      signal: proc.signal,
+      timedOut: false,
+      errorCode: "process_exit_unknown",
+      errorMessage: "Process ended without a terminal exit code",
+      resultJson: {
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+      },
+    };
+  }
+
+  if (proc.exitCode !== 0) {
+    return {
+      exitCode: proc.exitCode,
+      signal: proc.signal,
+      timedOut: false,
+      errorCode: "process_exit_nonzero",
+      errorMessage: `Process exited with code ${proc.exitCode}`,
       resultJson: {
         stdout: proc.stdout,
         stderr: proc.stderr,

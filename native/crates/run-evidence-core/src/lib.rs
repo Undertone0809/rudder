@@ -10,6 +10,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const INDEX_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_READ_BYTES: u64 = 1_000_000;
 
+/// Safe metadata for a persisted run log.
+///
+/// This intentionally contains no local path or opaque log reference. Database
+/// read adapters may expose availability and integrity metadata without
+/// granting a caller a filesystem capability.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogMetadata {
+    pub available: bool,
+    pub bytes: u64,
+    pub sha256: Option<String>,
+    pub compressed: bool,
+    pub store: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndexLimits {
     pub max_record_bytes: u64,
@@ -99,12 +114,11 @@ pub fn read_run_log_range(
     if limit_bytes == 0 || limit_bytes > MAX_READ_BYTES {
         return Err(ReadError::new("evidence_read_limit_invalid"));
     }
-    let metadata = fs::symlink_metadata(input)
-        .map_err(|error| ReadError::io("evidence_read_not_found", error))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(ReadError::new("evidence_read_input_invalid"));
-    }
-    let file_size = metadata.len();
+    let mut file = open_evidence_file(input)?;
+    let file_size = file
+        .metadata()
+        .map_err(|error| ReadError::io("evidence_read_failed", error))?
+        .len();
     let start = offset.min(file_size);
     if start >= file_size {
         return Ok(EvidenceReadPage {
@@ -116,8 +130,6 @@ pub fn read_run_log_range(
     }
 
     let read_len = limit_bytes.max(4).min(file_size - start);
-    let mut file =
-        File::open(input).map_err(|error| ReadError::io("evidence_read_failed", error))?;
     file.seek(SeekFrom::Start(start))
         .map_err(|error| ReadError::io("evidence_read_failed", error))?;
     let mut bytes = vec![0; read_len as usize];
@@ -147,6 +159,54 @@ pub fn read_run_log_range(
         eof,
         next_offset: (!eof).then_some(end_offset),
     })
+}
+
+fn open_evidence_file(input: &Path) -> Result<File, ReadError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut options = OpenOptions::new();
+        options.read(true).custom_flags(libc::O_NOFOLLOW);
+        let file = options.open(input).map_err(map_open_error)?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| ReadError::io("evidence_read_failed", error))?;
+        if !metadata.is_file() {
+            return Err(ReadError::new("evidence_read_input_invalid"));
+        }
+        Ok(file)
+    }
+
+    #[cfg(not(unix))]
+    {
+        let metadata = fs::symlink_metadata(input)
+            .map_err(|error| ReadError::io("evidence_read_not_found", error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(ReadError::new("evidence_read_input_invalid"));
+        }
+        let file = File::open(input).map_err(map_open_error)?;
+        let opened_metadata = file
+            .metadata()
+            .map_err(|error| ReadError::io("evidence_read_failed", error))?;
+        if !opened_metadata.is_file() {
+            return Err(ReadError::new("evidence_read_input_invalid"));
+        }
+        Ok(file)
+    }
+}
+
+fn map_open_error(error: io::Error) -> ReadError {
+    #[cfg(unix)]
+    if error.raw_os_error() == Some(libc::ELOOP) {
+        return ReadError::new("evidence_read_input_invalid");
+    }
+    let code = if error.kind() == io::ErrorKind::NotFound {
+        "evidence_read_not_found"
+    } else {
+        "evidence_read_failed"
+    };
+    ReadError::io(code, error)
 }
 
 #[derive(Debug)]
@@ -409,6 +469,25 @@ mod tests {
                 "evidence_read_input_invalid"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_leaf_symlinks_without_following_the_target() {
+        let root = tempdir().unwrap();
+        let target = root.path().join("outside.log");
+        let link = root.path().join("run.log");
+        std::fs::write(
+            &target,
+            b"{\"ts\":\"2026-08-13T00:00:00Z\",\"stream\":\"stdout\",\"chunk\":\"outside\"}\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert_eq!(
+            read_run_log_range(&link, 0, 256).unwrap_err().code(),
+            "evidence_read_input_invalid"
+        );
     }
 
     #[test]

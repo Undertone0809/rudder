@@ -46,6 +46,18 @@ pub struct MigrationManifestOptions {
     pub legacy_unjournaled: Vec<String>,
 }
 
+impl Default for MigrationManifestOptions {
+    fn default() -> Self {
+        Self {
+            limits: MigrationLimits::default(),
+            legacy_unjournaled: DEFAULT_LEGACY_UNJOURNALED
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MigrationJournal {
@@ -194,10 +206,7 @@ pub fn load_migration_manifest(
         migrations_dir,
         MigrationManifestOptions {
             limits,
-            legacy_unjournaled: DEFAULT_LEGACY_UNJOURNALED
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect(),
+            ..MigrationManifestOptions::default()
         },
     )
 }
@@ -480,8 +489,12 @@ fn read_bounded_file(
     if metadata.len() > max_bytes {
         return Err(MigrationError::new(limit_code, path.display().to_string()));
     }
-    fs::read(path)
-        .map_err(|error| MigrationError::new("migration_file_unreadable", error.to_string()))
+    let bytes = fs::read(path)
+        .map_err(|error| MigrationError::new("migration_file_unreadable", error.to_string()))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(MigrationError::new(limit_code, path.display().to_string()));
+    }
+    Ok(bytes)
 }
 
 fn validate_file_name(name: String) -> Result<String, MigrationError> {
