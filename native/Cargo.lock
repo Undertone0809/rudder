@@ -1735,6 +1735,7 @@ dependencies = [
 name = "rudder-run-evidence-core"
 version = "0.7.21"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "sha2",
