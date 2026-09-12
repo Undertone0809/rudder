@@ -63,24 +63,34 @@ test.describe("Primary rail layout", () => {
         await expect(nav).toBeVisible();
 
         const navBox = await nav.boundingBox();
+        const railBox = await rail.boundingBox();
         expect(navBox).not.toBeNull();
+        expect(railBox).not.toBeNull();
         expect(navBox!.width).toBeGreaterThanOrEqual(61);
+        const contextCard = page.getByTestId("workspace-context-card");
+        if (await contextCard.count() > 0) {
+          const contextBox = await contextCard.boundingBox();
+          expect(contextBox).not.toBeNull();
+          expect(contextBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width - 0.5);
+        }
 
         for (const label of ["Messenger", "Organization", "Automations"]) {
           const item = nav.getByRole("link", { name: label, exact: true });
           await expect(item).toBeVisible();
-          const textBox = await item.evaluate((element) => {
+          const itemBox = await item.boundingBox();
+          expect(itemBox).not.toBeNull();
+          expect(itemBox!.x).toBeGreaterThanOrEqual(railBox!.x - 0.5);
+          expect(itemBox!.x + itemBox!.width).toBeLessThanOrEqual(railBox!.x + railBox!.width + 0.5);
+          const labelBox = await item.evaluate((element) => {
             const labelElement = element.lastElementChild;
             if (!labelElement?.textContent?.trim()) {
               throw new Error("Primary rail label element not found");
             }
-            const range = document.createRange();
-            range.selectNodeContents(labelElement);
-            const rect = range.getBoundingClientRect();
+            const rect = labelElement.getBoundingClientRect();
             return { left: rect.left, right: rect.right };
           });
-          expect(textBox.left).toBeGreaterThanOrEqual(navBox!.x - 0.5);
-          expect(textBox.right).toBeLessThanOrEqual(navBox!.x + navBox!.width + 0.5);
+          expect(labelBox.left).toBeGreaterThanOrEqual(itemBox!.x - 0.5);
+          expect(labelBox.right).toBeLessThanOrEqual(itemBox!.x + itemBox!.width + 0.5);
         }
 
         await testInfo.attach(`primary-rail-labels-${platform.expectedPlatform ?? "browser"}`, {

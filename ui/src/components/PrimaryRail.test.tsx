@@ -449,7 +449,10 @@ describe("PrimaryRail active motion indicator", () => {
     const nav = document.querySelector(".motion-rail-nav");
 
     expect(rail?.getAttribute("data-desktop-platform")).toBe("macos");
-    expect(rail?.className).toContain("w-[40px]");
+    expect(rail?.className).toContain("w-[66px]");
+    expect(rail?.className).toContain("[--primary-rail-item-width:66px]");
+    expect(rail?.className).toContain("[--primary-rail-item-shift:0px]");
+    expect(rail?.className).not.toContain("w-[40px]");
     expect(rail?.className).not.toContain("w-[52px]");
     expect(rail?.className).not.toContain("[--primary-rail-item-width:52px]");
     expect(nav?.className).toContain(
