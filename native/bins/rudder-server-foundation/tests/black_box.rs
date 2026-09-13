@@ -16,6 +16,7 @@ use tempfile::TempDir;
 
 const READ_PARITY_FIXTURE: &str =
     include_str!("../../../fixtures/workspace-backup-read-parity.json");
+const POSTGRES_LOCALE: &str = "C";
 
 fn parity_fixture() -> Value {
     serde_json::from_str(READ_PARITY_FIXTURE).expect("workspace backup read parity fixture")
@@ -1011,17 +1012,22 @@ impl PostgresHarness {
             .port();
 
         run_checked(
-            Command::new(&initdb).arg("-D").arg(&data_dir).args([
-                "--encoding=UTF8",
-                "--locale=C",
-                "--auth=trust",
-                "--username=postgres",
-                "--no-sync",
-            ]),
+            Command::new(&initdb)
+                .env("LC_ALL", POSTGRES_LOCALE)
+                .arg("-D")
+                .arg(&data_dir)
+                .args([
+                    "--encoding=UTF8",
+                    "--locale=C",
+                    "--auth=trust",
+                    "--username=postgres",
+                    "--no-sync",
+                ]),
             "initdb",
         );
         run_checked(
             Command::new(&pg_ctl)
+                .env("LC_ALL", POSTGRES_LOCALE)
                 .arg("-D")
                 .arg(&data_dir)
                 .arg("-l")
@@ -1047,6 +1053,7 @@ impl PostgresHarness {
 impl Drop for PostgresHarness {
     fn drop(&mut self) {
         let _ = Command::new(&self.pg_ctl)
+            .env("LC_ALL", POSTGRES_LOCALE)
             .arg("-D")
             .arg(&self.data_dir)
             .args(["-m", "immediate", "-w", "stop"])
