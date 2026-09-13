@@ -1449,6 +1449,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-project-goal-link-core"
+version = "0.7.22"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-run-evidence-core"
 version = "0.7.23"
 dependencies = [
