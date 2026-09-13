@@ -12,15 +12,26 @@ use notify::{Config, PollWatcher};
 #[cfg(any(not(target_os = "linux"), test))]
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufWriter, Read, Write};
 #[cfg(unix)]
-use std::fs::File;
-use std::fs::{self, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::mpsc::Sender;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    GetFileInformationByHandle,
+};
 
 pub const MANIFEST_PROTOCOL_VERSION: u32 = 1;
 
@@ -87,6 +98,21 @@ pub struct DirectoryListEntry {
 pub struct DirectoryListResult {
     pub directory_path: String,
     pub entries: Vec<DirectoryListEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileReadLimits {
+    pub max_bytes: u64,
+    pub max_path_bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileReadResult {
+    pub file_path: String,
+    pub byte_size: u64,
+    pub modified_millis: u64,
+    pub content: String,
 }
 
 #[derive(Debug)]
@@ -189,6 +215,62 @@ fn modified_millis(metadata: &fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+fn same_file_snapshot(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    if left.dev() != right.dev() || left.ino() != right.ino() {
+        return false;
+    }
+    if left.len() != right.len() || modified_millis(left) != modified_millis(right) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        left.ctime() == right.ctime() && left.ctime_nsec() == right.ctime_nsec()
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    volume: u64,
+    index: u64,
+}
+
+fn file_identity(_file: &File, _metadata: &fs::Metadata) -> io::Result<FileIdentity> {
+    #[cfg(unix)]
+    {
+        Ok(FileIdentity {
+            volume: _metadata.dev(),
+            index: _metadata.ino(),
+        })
+    }
+
+    #[cfg(windows)]
+    {
+        let mut information = BY_HANDLE_FILE_INFORMATION::default();
+        let result = unsafe { GetFileInformationByHandle(_file.as_raw_handle(), &mut information) };
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(FileIdentity {
+            volume: u64::from(information.dwVolumeSerialNumber),
+            index: (u64::from(information.nFileIndexHigh) << 32)
+                | u64::from(information.nFileIndexLow),
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(FileIdentity {
+            volume: 0,
+            index: metadata.len(),
+        })
+    }
+}
+
 pub fn list_directory(
     root: &Path,
     requested_path: &Path,
@@ -275,6 +357,184 @@ pub fn list_directory(
         directory_path,
         entries,
     })
+}
+
+pub fn read_file(
+    root: &Path,
+    requested_path: &Path,
+    limits: FileReadLimits,
+) -> Result<FileReadResult, ManifestError> {
+    if limits.max_bytes == 0 || limits.max_path_bytes == 0 {
+        return Err(ManifestError::safe("invalid_limit"));
+    }
+    if requested_path.is_absolute()
+        || requested_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(ManifestError::safe("unsafe_workspace_path"));
+    }
+
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(ManifestError::safe("workspace_not_directory"));
+    }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    let canonical_root_metadata = fs::metadata(&canonical_root)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let root_handle = open_root_handle(&canonical_root)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let root_identity = file_identity(&root_handle, &canonical_root_metadata)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let canonical_target = fs::canonicalize(root.join(requested_path)).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            ManifestError::safe_source("workspace_file_not_found", error)
+        } else {
+            ManifestError::safe_source("workspace_file_read_failed", error)
+        }
+    })?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(ManifestError::safe("workspace_path_escape"));
+    }
+    let file_path = portable_path(
+        canonical_target
+            .strip_prefix(&canonical_root)
+            .map_err(|_| ManifestError::safe("workspace_path_escape"))?,
+    )?;
+    if file_path.is_empty() || file_path.len() as u64 > limits.max_path_bytes {
+        return Err(ManifestError::safe("manifest_path_limit"));
+    }
+
+    let metadata = fs::metadata(&canonical_target).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            ManifestError::safe_source("workspace_file_not_found", error)
+        } else {
+            ManifestError::safe_source("workspace_metadata_failed", error)
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(ManifestError::safe("workspace_not_file"));
+    }
+    if metadata.len() > limits.max_bytes {
+        return Err(ManifestError::safe("workspace_file_size_limit"));
+    }
+
+    let file = open_read_handle(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let opened_identity = file_identity(&file, &opened_metadata)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !opened_metadata.is_file() || !same_file_snapshot(&metadata, &opened_metadata) {
+        return Err(ManifestError::safe("workspace_file_changed"));
+    }
+
+    let stable_target = fs::canonicalize(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    if !stable_target.starts_with(&canonical_root) {
+        return Err(ManifestError::safe("workspace_path_escape"));
+    }
+    let stable_path_metadata = fs::metadata(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let stable_path_file = open_read_handle(&canonical_target)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    let stable_path_file_metadata = stable_path_file
+        .metadata()
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let stable_path_identity = file_identity(&stable_path_file, &stable_path_file_metadata)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !same_file_snapshot(&stable_path_metadata, &opened_metadata)
+        || stable_path_identity != opened_identity
+    {
+        return Err(ManifestError::safe("workspace_file_changed"));
+    }
+    if opened_metadata.len() > limits.max_bytes {
+        return Err(ManifestError::safe("workspace_file_size_limit"));
+    }
+
+    let mut bytes = Vec::new();
+    (&file)
+        .take(limits.max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    if bytes.len() as u64 > limits.max_bytes {
+        return Err(ManifestError::safe("workspace_file_size_limit"));
+    }
+    let stable_metadata = file
+        .metadata()
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let stable_root_handle = open_root_handle(&canonical_root)
+        .map_err(|_| ManifestError::safe("workspace_file_changed"))?;
+    let stable_root_metadata = stable_root_handle
+        .metadata()
+        .map_err(|_| ManifestError::safe("workspace_file_changed"))?;
+    let stable_root_identity = file_identity(&stable_root_handle, &stable_root_metadata)
+        .map_err(|_| ManifestError::safe("workspace_file_changed"))?;
+    if !stable_metadata.is_file()
+        || !same_file_snapshot(&stable_metadata, &opened_metadata)
+        || !same_file_snapshot(&stable_root_metadata, &canonical_root_metadata)
+        || stable_root_identity != root_identity
+    {
+        return Err(ManifestError::safe("workspace_file_changed"));
+    }
+    let content =
+        String::from_utf8(bytes).map_err(|_| ManifestError::safe("non_utf8_workspace_file"))?;
+
+    Ok(FileReadResult {
+        file_path,
+        byte_size: opened_metadata.len(),
+        modified_millis: modified_millis(&opened_metadata),
+        content,
+    })
+}
+
+fn open_read_handle(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    }
+
+    #[cfg(windows)]
+    {
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        File::open(path)
+    }
+}
+
+fn open_root_handle(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    }
+
+    #[cfg(windows)]
+    {
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        File::open(path)
+    }
 }
 
 fn collect_entries(
@@ -839,6 +1099,13 @@ mod tests {
         }
     }
 
+    fn file_limits() -> FileReadLimits {
+        FileReadLimits {
+            max_bytes: 1024,
+            max_path_bytes: 1024 * 1024,
+        }
+    }
+
     #[test]
     fn lists_one_directory_with_stable_portable_paths() {
         let root = tempdir().unwrap();
@@ -896,6 +1163,84 @@ mod tests {
             .unwrap_err()
             .code(),
             "manifest_entry_limit"
+        );
+    }
+
+    #[test]
+    fn reads_bounded_utf8_files_and_rejects_invalid_requests() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("docs")).unwrap();
+        fs::write(root.path().join("docs/readme.md"), "Aé🙂Z").unwrap();
+        fs::write(root.path().join("docs/é.md"), "accented path").unwrap();
+        fs::write(root.path().join("docs/binary.md"), [0, 159, 146, 150]).unwrap();
+
+        let result = read_file(root.path(), Path::new("docs/readme.md"), file_limits()).unwrap();
+        assert_eq!(result.file_path, "docs/readme.md");
+        assert_eq!(result.byte_size, 8);
+        assert_eq!(result.content, "Aé🙂Z");
+
+        assert_eq!(
+            read_file(
+                root.path(),
+                Path::new("docs/é.md"),
+                FileReadLimits {
+                    max_bytes: 1024,
+                    max_path_bytes: 8,
+                },
+            )
+            .unwrap_err()
+            .code(),
+            "manifest_path_limit"
+        );
+
+        assert_eq!(
+            read_file(
+                root.path(),
+                Path::new("docs/readme.md"),
+                FileReadLimits {
+                    max_bytes: 4,
+                    max_path_bytes: 1024,
+                },
+            )
+            .unwrap_err()
+            .code(),
+            "workspace_file_size_limit"
+        );
+        assert_eq!(
+            read_file(root.path(), Path::new("docs"), file_limits())
+                .unwrap_err()
+                .code(),
+            "workspace_not_file"
+        );
+        assert_eq!(
+            read_file(root.path(), Path::new("../outside"), file_limits())
+                .unwrap_err()
+                .code(),
+            "unsafe_workspace_path"
+        );
+        assert_eq!(
+            read_file(root.path(), Path::new("docs/binary.md"), file_limits())
+                .unwrap_err()
+                .code(),
+            "non_utf8_workspace_file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_file_symlinks_that_escape_the_canonical_root() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let outside = outer.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&outside, b"outside").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape.txt")).unwrap();
+
+        assert_eq!(
+            read_file(&root, Path::new("escape.txt"), file_limits())
+                .unwrap_err()
+                .code(),
+            "workspace_path_escape"
         );
     }
 

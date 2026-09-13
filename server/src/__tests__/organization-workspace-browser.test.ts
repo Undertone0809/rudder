@@ -9,11 +9,12 @@ import {
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import fs, { type FileHandle } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
@@ -101,6 +102,7 @@ describe("organization workspace browser", () => {
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
   const originalNativeMode = process.env.RUDDER_NATIVE_MODE;
   const originalNativeWorkspaceFilesPath = process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH;
+  const originalNativeWorkspaceFilePath = process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -126,6 +128,8 @@ describe("organization workspace browser", () => {
     else process.env.RUDDER_NATIVE_MODE = originalNativeMode;
     if (originalNativeWorkspaceFilesPath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH;
     else process.env.RUDDER_NATIVE_WORKSPACE_FILES_PATH = originalNativeWorkspaceFilesPath;
+    if (originalNativeWorkspaceFilePath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
+    else process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = originalNativeWorkspaceFilePath;
   });
 
   afterAll(async () => {
@@ -196,6 +200,192 @@ describe("organization workspace browser", () => {
       expect.objectContaining({ name: "zeta", path: "projects/zeta", isDirectory: true }),
       expect.objectContaining({ name: "alpha.md", path: "projects/alpha.md", isDirectory: false }),
     ]);
+  });
+
+  it("uses required native reads for bounded text-file projection", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = resolveNativeWorkspaceFilesBinary();
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Native Workspace File Org",
+      urlKey: deriveOrganizationUrlKey("Native Workspace File Org"),
+      issuePrefix: "NWF",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "readme.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "Aé🙂Z", "utf8");
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/readme.md")).resolves.toMatchObject({
+      filePath: "projects/readme.md",
+      content: "Aé🙂Z",
+      contentType: "text/markdown",
+      previewKind: "text",
+      truncated: false,
+    });
+  });
+
+  it("does not fall back after native workspace reads report a size limit", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "auto";
+    const fakeBinary = path.join(rudderHome, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(JSON.stringify({ ok: false, capability: 'workspace.read', operation: 'readWorkspaceFile', protocolVersion: 1, accepted: false, errorCode: 'workspace_file_size_limit' }) + '\\n');",
+        "process.exitCode = 2;",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Native Workspace Size Limit Org",
+      urlKey: deriveOrganizationUrlKey("Native Workspace Size Limit Org"),
+      issuePrefix: "NWS",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "small.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "small", "utf8");
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/small.md")).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
+  it("keeps explicit Node workspace reads bounded", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Node Workspace Bounded Read Org",
+      urlKey: deriveOrganizationUrlKey("Node Workspace Bounded Read Org"),
+      issuePrefix: "NWBR",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "large.md");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, Buffer.alloc(1_000_001, 97));
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/large.md")).rejects.toMatchObject({
+      status: 422,
+    });
+
+    await fs.writeFile(filePath, Buffer.from([0xc3, 0x28]));
+    await expect(workspaceBrowser.readFile(orgId, "projects/large.md")).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
+  it("keeps unmapped workspace reads bounded and validates text encoding", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Unmapped Workspace Bounded Read Org",
+      urlKey: deriveOrganizationUrlKey("Unmapped Workspace Bounded Read Org"),
+      issuePrefix: "UWBR",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const projectsDirectory = path.join(workspaceRoot, "projects");
+    await fs.mkdir(projectsDirectory, { recursive: true });
+    await fs.writeFile(path.join(projectsDirectory, "README"), Buffer.alloc(1_000_001, 97));
+
+    await expect(workspaceBrowser.readFile(orgId, "projects/README")).rejects.toMatchObject({
+      status: 422,
+      message: "The organization Library file exceeds the 1 MB read limit",
+    });
+
+    await fs.writeFile(path.join(projectsDirectory, "source.ts"), Buffer.from([0xc3, 0x28]));
+    await expect(workspaceBrowser.readFile(orgId, "projects/source.ts")).rejects.toMatchObject({
+      status: 422,
+      message: "The organization Library text file must be valid UTF-8",
+    });
+  });
+
+  it("cancels an in-flight unmapped workspace read through the public service", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+    process.env.RUDDER_NATIVE_MODE = "node";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Unmapped Workspace Cancellation Org",
+      urlKey: deriveOrganizationUrlKey("Unmapped Workspace Cancellation Org"),
+      issuePrefix: "UWCA",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await workspaceBrowser.listFiles(orgId);
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "projects", "pending");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "pending", "utf8");
+    const stat = await fs.stat(filePath);
+    let resolveReadStarted!: () => void;
+    let resolveRead!: (result: { bytesRead: number }) => void;
+    const readStarted = new Promise<void>((resolve) => {
+      resolveReadStarted = resolve;
+    });
+    const readResult = new Promise<{ bytesRead: number }>((resolve) => {
+      resolveRead = resolve;
+    });
+    const handle = {
+      stat: vi.fn(async () => stat),
+      read: vi.fn(async () => {
+        resolveReadStarted();
+        return readResult;
+      }),
+      close: vi.fn(async () => {
+        resolveRead({ bytesRead: 0 });
+      }),
+    } as unknown as FileHandle;
+    const originalOpen = fs.open.bind(fs);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (target, flags, mode) => {
+      try {
+        if (realpathSync(String(target)) === realpathSync(filePath)) return handle;
+      } catch {
+        // Let the real open surface the underlying filesystem error.
+      }
+      return await originalOpen(target, flags, mode);
+    });
+    const controller = new AbortController();
+    try {
+      const pending = workspaceBrowser.readFile(orgId, "projects/pending", controller.signal);
+      await readStarted;
+      controller.abort(new Error("client disconnected"));
+
+      await expect(pending).rejects.toMatchObject({ code: "workspace_file_cancelled" });
+      expect(handle.close).toHaveBeenCalledTimes(1);
+    } finally {
+      openSpy.mockRestore();
+    }
   });
 
   it.runIf(process.platform !== "win32")("fails closed when a listed directory symlink escapes the Library root", async () => {

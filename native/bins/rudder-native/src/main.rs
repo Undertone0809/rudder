@@ -12,7 +12,8 @@ use rudder_runtime_payload_core::{
     publish_payload, verify_payload,
 };
 use rudder_workspace_manifest_core::{
-    MANIFEST_PROTOCOL_VERSION, ManifestLimits, ManifestState, list_directory, watch_workspace,
+    FileReadLimits, MANIFEST_PROTOCOL_VERSION, ManifestLimits, ManifestState, list_directory,
+    read_file, watch_workspace,
 };
 use serde_json::json;
 use std::io::{self, Read, Write};
@@ -28,6 +29,7 @@ const CAPABILITIES: &[&str] = &[
     "evidence.read",
     "workspace.watch",
     "workspace.list",
+    "workspace.read",
     "payload.verify",
     "payload.extract",
     "payload.probeVersion",
@@ -86,6 +88,7 @@ fn capability_for_args(namespace: Option<&str>, operation: Option<&str>) -> Opti
         (Some("evidence"), Some("read")) => Some("evidence.read"),
         (Some("workspace"), Some("watch")) => Some("workspace.watch"),
         (Some("workspace"), Some("list")) => Some("workspace.list"),
+        (Some("workspace"), Some("read")) => Some("workspace.read"),
         (Some("payload"), Some("verify")) => Some("payload.verify"),
         (Some("payload"), Some("extract")) => Some("payload.extract"),
         (Some("payload"), Some("probe-version")) => Some("payload.probeVersion"),
@@ -275,6 +278,36 @@ fn run() -> Result<serde_json::Value, NativeFailure> {
             }))
         }
         (Some("workspace"), Some("watch")) => run_workspace_watch(args).map_err(Into::into),
+        (Some("workspace"), Some("read")) => {
+            let root = absolute(required(&mut args, "root_required")?)?;
+            let file = PathBuf::from(required(&mut args, "file_required")?);
+            let max_bytes = number(required(&mut args, "max_bytes_required")?)?;
+            let max_path_bytes = number(required(&mut args, "max_path_bytes_required")?)?;
+            if args.next().is_some() {
+                return Err("usage".into());
+            }
+            let result = read_file(
+                &root,
+                &file,
+                FileReadLimits {
+                    max_bytes,
+                    max_path_bytes,
+                },
+            )
+            .map_err(|error| NativeFailure {
+                code: error.code(),
+                accepted: false,
+            })?;
+            let mut response = response_metadata(MANIFEST_PROTOCOL_VERSION, "workspace.read");
+            response["ok"] = json!(true);
+            response["operation"] = json!("readWorkspaceFile");
+            response["accepted"] = json!(false);
+            response["filePath"] = json!(result.file_path);
+            response["byteSize"] = json!(result.byte_size);
+            response["modifiedMillis"] = json!(result.modified_millis);
+            response["content"] = json!(result.content);
+            Ok(response)
+        }
         (Some("workspace"), Some("list")) => {
             let root = absolute(required(&mut args, "root_required")?)?;
             let directory = PathBuf::from(required(&mut args, "directory_required")?);
