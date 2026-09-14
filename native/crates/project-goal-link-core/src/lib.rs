@@ -93,6 +93,7 @@ pub struct ProjectGoalLinkCommand {
 }
 
 impl ProjectGoalLinkCommand {
+    #[allow(clippy::too_many_arguments)]
     pub fn board(
         organization_id: impl Into<String>,
         principal_id: impl Into<String>,
@@ -119,6 +120,7 @@ impl ProjectGoalLinkCommand {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn ceo_agent(
         organization_id: impl Into<String>,
         principal_id: impl Into<String>,
@@ -145,6 +147,7 @@ impl ProjectGoalLinkCommand {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn agent(
         organization_id: impl Into<String>,
         principal_id: impl Into<String>,
