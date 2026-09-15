@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 3
+          fetch-depth: 4
       - name: Apply only exact validated patch bytes and source trees
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -30,20 +30,26 @@ jobs:
           transport = os.environ['EXPECTED_HEAD']
           branch = 'codex/r6z-120-project-goal-link-core-luna-fast-20260914'
           assert git('rev-parse', 'HEAD') == transport
-          assert git('rev-parse', 'HEAD^') == '7bf476e90e344eed5b0359617f5a339ad5d03955'
+          assert git('rev-parse', 'HEAD^') == '72ab0268e6f2e72021a444368e37989b4f94d2c9'
           assert git('diff', '--name-only', base, 'HEAD') == workflow
           source = git('show', '7bf476e90e344eed5b0359617f5a339ad5d03955:' + workflow)
           pathlib.Path(os.environ['RUNNER_TEMP'], 'public-transport.txt').write_text(source)
           data = source.split("batches = json.loads(r'''", 1)[1].split("''')", 1)[0]
           batches = json.loads(data)
           corrections = [
-              [('dxqgFzpl', 'dxqvFzpl'), ('Pi+PInZJZtT', 'Pi+PInZvtT')],
-              [('DyLqSr9', 'DyL7qSr9'), ('KLC5Rbq3Zx', 'KLC5Rbq2Zx'),
-               ('TCyftUYpXKU', 'TCyftUYpKU'), ('NIYgVg', 'NIYVg'),
-               ('StVRz3OB', 'StVRz4OB'), ('SllFjFl1', 'SlljFl1'),
-               ('B6mI0yth', 'B6m0yth'), ('XuVuVuXA3', 'XuVuJqXA3'),
-               ('YPDYJcu6l', 'YPDYJ2i6l'), ('HDZcf9x', 'HDZx9x'),
-               ('NVqiSl0', 'NVqi0')]
+              [('n6C9uZOusdxqgFzplBmuqvnN3', 'n6C9uZOusdxqvFzplBmuqvnN3'),
+               ('jkrFiPi+PInZJZtTBLtLZ+1st7', 'jkrFiPi+PInZvtTBLtLZ+1st7')],
+              [('ibVxMrWTvDyLqSr9GWkSX0Z2', 'ibVxMrWTvDyL7qSr9GWkSX0Z2'),
+               ('POhNhKLC5Rbq3ZxYKa18weY8v', 'POhNhKLC5Rbq2ZxYKa18weY8v'),
+               ('iGxuTCyftUYpXKUYygmTMZxyL', 'iGxuTCyftUYpKUYygmTMZxyL'),
+               ('K1zNpIQ64NIYgVgMmfYpMpU+R', 'K1zNpIQ64NIYVgMmfYpMpU+R'),
+               ('rpwh6ES3tVRz3OBWsh706x9bD', 'rpwh6ES3tVRz4OBWsh706x9bD'),
+               ('SR602NeEGSllFjFl1pBRqilDs', 'SR602NeEGSlljFl1pBRqilDs'),
+               ('20RjGiVltB6mI0ythheLorEqA', '20RjGiVltB6m0ythheLorEqA'),
+               ('LGAs6FD1XuVuVuXA3u1gn5NUFC', 'LGAs6FD1XuVuJqXA3u1gn5NUFC'),
+               ('0BViJTKYPDYJcu6lSfZBGvSVtl', '0BViJTKYPDYJ2i6lSfZBGvSVtl'),
+               ('2Dsld3kfvHDZcf9xw6iyFS3Vbm', '2Dsld3kfvHDZx9xw6iyFS3Vbm'),
+               ('2tsUwqBbNVqiSl0OEGBGSACRNq', '2tsUwqBbNVqi0OEGBGSACRNq')]
           ]
           patches = []
           for batch, fixes in zip(batches, corrections):
