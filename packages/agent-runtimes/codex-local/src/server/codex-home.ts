@@ -17,6 +17,7 @@ import {
   createRudderSkillDirectoryLink,
   resolveLocalOperatorHome,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +25,7 @@ import { fileURLToPath } from "node:url";
 
 const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
 const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
-const SYMLINKED_SHARED_FILES = ["auth.json"] as const;
+const MIRRORED_SHARED_FILES = ["auth.json"] as const;
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const LEGACY_RUDDER_MANAGED_SKILLS_MARKERS = new Set([
   "# rudder-managed-skills:start",
@@ -149,54 +150,58 @@ async function ensureParentDir(target: string): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
 }
 
-function isRecoverableSharedFileSymlinkError(error: unknown): boolean {
+function isSharedFileRenameCollision(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as NodeJS.ErrnoException).code;
-  return code === "EPERM" || code === "EACCES";
+  return code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
 }
 
-async function ensureSharedFileReference(
+async function copySharedFileIntoPlace(source: string, target: string): Promise<void> {
+  await ensureParentDir(target);
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.copyFile(source, temporary);
+    try {
+      await fs.rename(temporary, target);
+    } catch (error) {
+      if (!isSharedFileRenameCollision(error)) throw error;
+      // Windows cannot replace an existing file with rename; retain the same
+      // source-of-truth semantics with the platform's overwrite primitive.
+      await fs.copyFile(temporary, target);
+    }
+  } finally {
+    await fs.unlink(temporary).catch(() => undefined);
+  }
+}
+
+async function mirrorSharedAuthSnapshot(
   target: string,
   source: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
 ): Promise<void> {
   const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) {
-    await ensureParentDir(target);
-    try {
-      await fs.symlink(source, target);
-    } catch (err) {
-      if (!isRecoverableSharedFileSymlinkError(err)) throw err;
-      await fs.copyFile(source, target);
-      await onLog(
-        "stdout",
-        `[rudder] Copied shared Codex file "${source}" to "${target}" because this environment cannot create symlinks.\n`,
-      );
+  if (!(await pathExists(source))) {
+    if (existing?.isFile() || existing?.isSymbolicLink()) {
+      await fs.unlink(target).catch(() => undefined);
     }
     return;
   }
 
-  if (!existing.isSymbolicLink()) {
-    return;
+  // Auth policy is deliberately one-way: the operator's auth.json is the
+  // source of truth and each run receives a private snapshot. A symlink would
+  // let Codex write token refreshes and provider state into the shared home;
+  // provider refreshes are therefore not persisted by Rudder. A manual Codex
+  // login or auth-file refresh in the shared home is picked up on the next run.
+  if (existing?.isSymbolicLink()) {
+    await fs.unlink(target);
+  } else if (existing && !existing.isFile()) {
+    throw new Error(`Managed Codex auth path is not a regular file: ${target}`);
   }
-
-  const linkedPath = await fs.readlink(target).catch(() => null);
-  if (!linkedPath) return;
-
-  const resolvedLinkedPath = path.resolve(path.dirname(target), linkedPath);
-  if (resolvedLinkedPath === source) return;
-
-  await fs.unlink(target);
-  try {
-    await fs.symlink(source, target);
-  } catch (err) {
-    if (!isRecoverableSharedFileSymlinkError(err)) throw err;
-    await fs.copyFile(source, target);
-    await onLog(
-      "stdout",
-      `[rudder] Copied shared Codex file "${source}" to "${target}" because this environment cannot create symlinks.\n`,
-    );
-  }
+  await copySharedFileIntoPlace(source, target);
+  await onLog(
+    "stdout",
+    `[rudder] Mirrored shared Codex auth into isolated home "${target}" without provider-state writeback.\n`,
+  ).catch(() => undefined);
 }
 
 async function ensureCopiedFile(target: string, source: string): Promise<void> {
@@ -606,11 +611,7 @@ async function syncManagedCodexConfigToml(
   const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
   const sourceExists = await pathExists(source);
   // The managed home is derived from the operator's current Codex config; do not preserve stale provider/auth settings.
-  const rawContent = sourceExists
-    ? await fs.readFile(source, "utf8")
-    : existingTargetContent !== null
-      ? existingTargetContent
-      : "";
+  const rawContent = sourceExists ? await fs.readFile(source, "utf8") : "";
   const withoutLegacyMarkers = rawContent
     .split(/\r?\n/)
     .filter((line) => !LEGACY_RUDDER_MANAGED_SKILLS_MARKERS.has(line.trim()))
@@ -742,19 +743,20 @@ export async function prepareManagedCodexHome(
     await fs.mkdir(targetHome, { recursive: true });
     await pruneManagedCodexPluginSurface(targetHome, onLog);
 
-    for (const name of SYMLINKED_SHARED_FILES) {
+    for (const name of MIRRORED_SHARED_FILES) {
       const source = path.join(sourceHome, name);
-      if (!(await pathExists(source))) continue;
-      await ensureSharedFileReference(path.join(targetHome, name), source, onLog);
+      await mirrorSharedAuthSnapshot(path.join(targetHome, name), source, onLog);
     }
 
     for (const name of COPIED_SHARED_FILES) {
       const source = path.join(sourceHome, name);
-      if (!(await pathExists(source))) continue;
       if (name === "config.toml") {
+        // Rebuild even when the operator removed config.toml so an old
+        // provider configuration cannot survive in the managed snapshot.
         await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog, isolationSurface, moduleDir, mcpEnv);
         continue;
       }
+      if (!(await pathExists(source))) continue;
       await ensureCopiedFile(path.join(targetHome, name), source);
     }
   });
