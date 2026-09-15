@@ -224,6 +224,41 @@ export function validateMigrationManifestIntegrity(
     seenFiles.add(entry.fileName);
   });
 
+  // Bind the flattened convenience view to the canonical, fingerprinted assets.
+  // Legacy files follow the journal in that view; their offsets are not identities.
+  const journalNames = new Set(manifest.canonical.entries.map((entry) => `${entry.tag}.sql`));
+  const sqlByName = new Map<string, string>();
+  for (const entry of manifest.canonical.sqlFiles) {
+    if (sqlByName.has(entry.fileName) || !/^[0-9a-f]{64}$/.test(entry.fingerprint)) {
+      errors.push(`Invalid canonical SQL identity for ${entry.fileName}`);
+    }
+    sqlByName.set(entry.fileName, entry.fingerprint);
+  }
+  const canonicalEntries: Array<{ fileName: string; sha256: string }> = [];
+  manifest.canonical.entries.forEach((entry, position) => {
+    const fileName = `${entry.tag}.sql`;
+    if (entry.idx !== position || sqlByName.get(fileName) !== entry.sqlFingerprint) {
+      errors.push(`Canonical journal does not match SQL identity for ${fileName}`);
+    }
+    canonicalEntries.push({ fileName, sha256: entry.sqlFingerprint });
+  });
+  for (const entry of manifest.canonical.sqlFiles) {
+    if (journalNames.has(entry.fileName)) continue;
+    if (!LEGACY_UNJOURNALED_MIGRATIONS.has(entry.fileName)) {
+      errors.push(`Unknown canonical unjournaled SQL file ${entry.fileName}`);
+    }
+    canonicalEntries.push({ fileName: entry.fileName, sha256: entry.fingerprint });
+  }
+  if (canonicalEntries.length !== manifest.entries.length) {
+    errors.push("Manifest entries do not match canonical SQL and journal assets");
+  }
+  canonicalEntries.forEach((expected, position) => {
+    const actual = manifest.entries[position];
+    if (actual?.fileName !== expected.fileName || actual?.sha256 !== expected.sha256) {
+      errors.push(`Manifest entry ${position} does not match its canonical identity`);
+    }
+  });
+
   const expectedFingerprint = manifestFingerprint(manifest.canonical);
   if (manifest.fingerprint !== expectedFingerprint) {
     errors.push(
@@ -249,32 +284,48 @@ export function validateMigrationManifestCompatibility(
     ...candidateIntegrity.errors.map((error) => `Candidate: ${error}`),
   ];
 
-  if (candidate.entries.length < baseline.entries.length) {
-    errors.push(
-      `Candidate removed ${baseline.entries.length - candidate.entries.length} published migration(s)`,
-    );
+  const baseJournal = baseline.canonical.entries;
+  const nextJournal = candidate.canonical.entries;
+  if (baseline.canonical.version !== candidate.canonical.version
+    || baseline.canonical.dialect !== candidate.canonical.dialect) {
+    errors.push("Candidate changed published journal format");
   }
-
-  const sharedLength = Math.min(baseline.entries.length, candidate.entries.length);
-  for (let index = 0; index < sharedLength; index += 1) {
-    const expected = baseline.entries[index];
-    const actual = candidate.entries[index];
-    if (!expected || !actual) continue;
-    if (expected.order !== actual.order || expected.fileName !== actual.fileName) {
-      errors.push(
-        `Candidate changed published migration order ${index}: expected ${expected.fileName}, received ${actual.fileName}`,
-      );
-      continue;
+  if (nextJournal.length < baseJournal.length) {
+    errors.push("Candidate removed published journal entries");
+  }
+  baseJournal.forEach((expected, index) => {
+    const actual = nextJournal[index];
+    if (!actual) return;
+    if (expected.idx !== actual.idx || expected.tag !== actual.tag
+      || expected.version !== actual.version || expected.when !== actual.when
+      || expected.breakpoints !== actual.breakpoints) {
+      errors.push(`Candidate changed published journal entry ${index}: ${expected.tag}`);
     }
-    if (expected.sha256 !== actual.sha256) {
-      errors.push(`Candidate changed published migration ${expected.fileName}`);
+  });
+
+  // Compare published SQL by immutable name/hash, not a shifted legacy-tail index.
+  const baseSql = new Map(baseline.canonical.sqlFiles.map((entry) => [entry.fileName, entry.fingerprint]));
+  const nextSql = new Map(candidate.canonical.sqlFiles.map((entry) => [entry.fileName, entry.fingerprint]));
+  for (const [fileName, hash] of baseSql) {
+    if (!nextSql.has(fileName)) errors.push(`Candidate removed published migration ${fileName}`);
+    else if (nextSql.get(fileName) !== hash) errors.push(`Candidate changed published migration ${fileName}`);
+  }
+  const nextJournalNames = new Set(nextJournal.map((entry) => `${entry.tag}.sql`));
+  for (const fileName of nextSql.keys()) {
+    if (!baseSql.has(fileName) && !nextJournalNames.has(fileName)) {
+      errors.push(`Candidate added unjournaled migration ${fileName}`);
+    }
+  }
+  for (const entry of nextJournal.slice(baseJournal.length)) {
+    if (baseSql.has(`${entry.tag}.sql`)) {
+      errors.push(`Candidate journaled historical SQL again: ${entry.tag}.sql`);
     }
   }
 
   return Object.freeze({
     valid: errors.length === 0,
     errors: Object.freeze(errors),
-    addedEntries: Object.freeze(candidate.entries.slice(baseline.entries.length)),
+    addedEntries: Object.freeze(candidate.entries.slice(baseJournal.length, nextJournal.length)),
   });
 }
 

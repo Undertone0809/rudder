@@ -177,6 +177,28 @@ impl MigrationManifest {
         {
             errors.push("sql file list does not match ordered entries".to_owned());
         }
+        if self.journal.entries.len() > self.entries.len() {
+            errors.push("manifest omits journal entries".to_owned());
+        }
+        for (index, entry) in self.entries.iter().enumerate() {
+            match self.journal.entries.get(index) {
+                Some(journal_entry) => {
+                    if journal_entry.idx != index
+                        || entry.journal_entry.as_ref() != Some(journal_entry)
+                        || entry.file_name != format!("{}.sql", journal_entry.tag)
+                    {
+                        errors.push(format!("journal identity mismatch for {}", entry.file_name));
+                    }
+                }
+                None if entry.journal_entry.is_some() => {
+                    errors.push(format!("unexpected journal entry for {}", entry.file_name));
+                }
+                None => {}
+            }
+        }
+        if self.fingerprint != fingerprint(&self.journal, &self.entries) {
+            errors.push("migration manifest fingerprint mismatch".to_owned());
+        }
         IntegrityResult {
             valid: errors.is_empty(),
             errors,
@@ -394,26 +416,75 @@ pub fn validate_migration_manifest_compatibility(
     candidate: &MigrationManifest,
 ) -> MigrationCompatibility {
     let mut errors = Vec::new();
-    let baseline_len = baseline.entries.len();
-    if candidate.entries.len() < baseline_len {
-        errors.push("candidate removes published migration entries".to_owned());
+    for (label, manifest) in [("baseline", baseline), ("candidate", candidate)] {
+        errors.extend(
+            manifest
+                .validate_integrity()
+                .errors
+                .into_iter()
+                .map(|error| format!("{label}: {error}")),
+        );
     }
-    for (index, expected) in baseline.entries.iter().enumerate() {
-        let Some(actual) = candidate.entries.get(index) else {
-            break;
-        };
-        if expected.file_name != actual.file_name || expected.sha256 != actual.sha256 {
-            errors.push(format!("candidate rewrites {}", expected.file_name));
+    if baseline.journal.version != candidate.journal.version
+        || baseline.journal.dialect != candidate.journal.dialect
+    {
+        errors.push("candidate changes published journal format".to_owned());
+    }
+    if candidate.journal.entries.len() < baseline.journal.entries.len() {
+        errors.push("candidate removes published journal entries".to_owned());
+    }
+    for (expected, actual) in baseline
+        .journal
+        .entries
+        .iter()
+        .zip(&candidate.journal.entries)
+    {
+        if expected != actual {
+            errors.push(format!("candidate rewrites journal entry {}", expected.tag));
         }
     }
-    let added_entries = if candidate.entries.len() > baseline_len {
-        candidate.entries[baseline_len..]
-            .iter()
-            .map(|entry| entry.file_name.clone())
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+
+    // The legacy tail shifts on every append. Its offsets are not identities.
+    let base_sql = baseline
+        .entries
+        .iter()
+        .map(|entry| (entry.file_name.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let next_sql = candidate
+        .entries
+        .iter()
+        .map(|entry| (entry.file_name.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    for (name, expected) in &base_sql {
+        match next_sql.get(name) {
+            None => errors.push(format!("candidate removes published migration {name}")),
+            Some(actual) => {
+                if expected.sha256 != actual.sha256
+                    || expected.byte_size != actual.byte_size
+                    || expected.is_legacy_unjournaled() != actual.is_legacy_unjournaled()
+                {
+                    errors.push(format!("candidate rewrites {name}"));
+                }
+            }
+        }
+    }
+    for (name, entry) in &next_sql {
+        if !base_sql.contains_key(name) && entry.is_legacy_unjournaled() {
+            errors.push(format!("candidate adds unjournaled migration {name}"));
+        }
+    }
+    let added_entries = candidate
+        .journal
+        .entries
+        .iter()
+        .skip(baseline.journal.entries.len())
+        .map(|entry| format!("{}.sql", entry.tag))
+        .collect::<Vec<_>>();
+    for name in &added_entries {
+        if base_sql.contains_key(name.as_str()) {
+            errors.push(format!("candidate journals historical SQL again: {name}"));
+        }
+    }
     let valid = errors.is_empty();
     MigrationCompatibility {
         valid,
