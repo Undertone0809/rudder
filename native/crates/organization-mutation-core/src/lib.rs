@@ -29,7 +29,7 @@ pub enum Actor {
 }
 
 impl Actor {
-    fn organization_id(&self) -> &str {
+    pub fn organization_id(&self) -> &str {
         match self {
             Self::Board {
                 organization_id, ..
@@ -43,7 +43,7 @@ impl Actor {
         }
     }
 
-    fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &str {
         match self {
             Self::Board { principal_id, .. }
             | Self::CeoAgent { principal_id, .. }
@@ -51,7 +51,7 @@ impl Actor {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Board { .. } => "board",
             Self::CeoAgent { .. } => "ceo_agent",
@@ -65,15 +65,36 @@ impl Actor {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct OrganizationBrandingCommand {
     pub organization_id: String,
     pub actor: Actor,
     pub idempotency_key: String,
     pub expected_version: u64,
     pub fence_epoch: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_name"
+    )]
     pub name: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_patch"
+    )]
     pub description: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_patch"
+    )]
     pub brand_color: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_patch"
+    )]
     pub logo_asset_id: Option<Option<String>>,
 }
 
@@ -172,14 +193,14 @@ impl OrganizationBrandingCommand {
         self
     }
 
-    fn validate(&self) -> Result<(), MutationError> {
+    pub fn validate(&self) -> Result<(), MutationError> {
         if self.organization_id.is_empty() || self.idempotency_key.is_empty() {
             return Err(MutationError::InvalidIdempotencyKey);
         }
         if self.actor.organization_id() != self.organization_id {
             return Err(MutationError::CrossOrganization);
         }
-        if !self.actor.can_update_branding() {
+        if self.actor.principal_id().is_empty() || !self.actor.can_update_branding() {
             return Err(MutationError::Unauthorized);
         }
         if self.name.is_none()
@@ -211,15 +232,21 @@ impl OrganizationBrandingCommand {
         Ok(())
     }
 
-    fn fingerprint(&self) -> Result<String, MutationError> {
+    /// Stable private command identity. Callers must still bind a trusted actor
+    /// and persist the original receipt in the same transaction as the write.
+    pub fn fingerprint(&self) -> Result<String, MutationError> {
+        self.validate()?;
         #[derive(Serialize)]
         struct Fingerprint<'a> {
             organization_id: &'a str,
             actor_kind: &'static str,
             actor_id: &'a str,
             name: &'a Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
             description: &'a Option<Option<String>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
             brand_color: &'a Option<Option<String>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
             logo_asset_id: &'a Option<Option<String>>,
             expected_version: u64,
             fence_epoch: u64,
@@ -241,6 +268,40 @@ impl OrganizationBrandingCommand {
     }
 }
 
+// A missing member is defaulted to None, while a present JSON null means clear.
+fn nullable_patch<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
+fn present_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
+}
+
+/// A transaction result, not a state machine or a recursively embedded ledger.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationSettingsSnapshot {
+    pub organization_id: String,
+    pub version: u64,
+    pub fence_epoch: u64,
+    pub name: String,
+    pub description: Option<String>,
+    pub brand_color: Option<String>,
+    pub logo_asset_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct AppliedReceipt {
+    fingerprint: String,
+    state: OrganizationSettingsSnapshot,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OrganizationSettingsState {
     pub organization_id: String,
@@ -250,7 +311,7 @@ pub struct OrganizationSettingsState {
     pub description: Option<String>,
     pub brand_color: Option<String>,
     pub logo_asset_id: Option<String>,
-    applied_idempotency: BTreeMap<String, String>,
+    applied_idempotency: BTreeMap<String, AppliedReceipt>,
 }
 
 impl OrganizationSettingsState {
@@ -272,6 +333,18 @@ impl OrganizationSettingsState {
         }
     }
 
+    pub fn snapshot(&self) -> OrganizationSettingsSnapshot {
+        OrganizationSettingsSnapshot {
+            organization_id: self.organization_id.clone(),
+            version: self.version,
+            fence_epoch: self.fence_epoch,
+            name: self.name.clone(),
+            description: self.description.clone(),
+            brand_color: self.brand_color.clone(),
+            logo_asset_id: self.logo_asset_id.clone(),
+        }
+    }
+
     pub fn apply(
         &mut self,
         command: OrganizationBrandingCommand,
@@ -282,11 +355,11 @@ impl OrganizationSettingsState {
         }
         let fingerprint = command.fingerprint()?;
         if let Some(previous) = self.applied_idempotency.get(&command.idempotency_key) {
-            if previous == &fingerprint {
+            if previous.fingerprint == fingerprint {
                 return Ok(MutationOutcome::AlreadyApplied {
-                    version: self.version,
+                    version: previous.state.version,
                     fingerprint,
-                    state: self.clone(),
+                    state: previous.state.clone(),
                 });
             }
             return Err(MutationError::IdempotencyConflict);
@@ -297,6 +370,11 @@ impl OrganizationSettingsState {
         if command.fence_epoch != self.fence_epoch {
             return Err(MutationError::StaleFence);
         }
+
+        let next_version = self
+            .version
+            .checked_add(1)
+            .ok_or(MutationError::VersionOverflow)?;
 
         if let Some(value) = command.name {
             self.name = value;
@@ -310,16 +388,19 @@ impl OrganizationSettingsState {
         if let Some(value) = command.logo_asset_id {
             self.logo_asset_id = value;
         }
-        self.version = self
-            .version
-            .checked_add(1)
-            .ok_or(MutationError::VersionOverflow)?;
-        self.applied_idempotency
-            .insert(command.idempotency_key, fingerprint.clone());
+        self.version = next_version;
+        let state = self.snapshot();
+        self.applied_idempotency.insert(
+            command.idempotency_key,
+            AppliedReceipt {
+                fingerprint: fingerprint.clone(),
+                state: state.clone(),
+            },
+        );
         Ok(MutationOutcome::Applied {
             version: self.version,
             fingerprint,
-            state: self.clone(),
+            state,
         })
     }
 }
@@ -329,12 +410,12 @@ pub enum MutationOutcome {
     Applied {
         version: u64,
         fingerprint: String,
-        state: OrganizationSettingsState,
+        state: OrganizationSettingsSnapshot,
     },
     AlreadyApplied {
         version: u64,
         fingerprint: String,
-        state: OrganizationSettingsState,
+        state: OrganizationSettingsSnapshot,
     },
 }
 
@@ -345,7 +426,7 @@ impl MutationOutcome {
         }
     }
 
-    pub fn state(&self) -> &OrganizationSettingsState {
+    pub fn state(&self) -> &OrganizationSettingsSnapshot {
         match self {
             Self::Applied { state, .. } | Self::AlreadyApplied { state, .. } => state,
         }

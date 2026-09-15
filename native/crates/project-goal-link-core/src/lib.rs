@@ -28,7 +28,7 @@ pub enum Actor {
 }
 
 impl Actor {
-    fn organization_id(&self) -> &str {
+    pub fn organization_id(&self) -> &str {
         match self {
             Self::Board {
                 organization_id, ..
@@ -42,7 +42,7 @@ impl Actor {
         }
     }
 
-    fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &str {
         match self {
             Self::Board { principal_id, .. }
             | Self::CeoAgent { principal_id, .. }
@@ -50,7 +50,7 @@ impl Actor {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Board { .. } => "board",
             Self::CeoAgent { .. } => "ceo_agent",
@@ -174,24 +174,17 @@ impl ProjectGoalLinkCommand {
         }
     }
 
-    fn validate(&self, state: &ProjectGoalLinkState) -> Result<(), LinkMutationError> {
+    pub fn validate(&self) -> Result<(), LinkMutationError> {
         if self.organization_id.is_empty()
             || self.project_id.is_empty()
             || self.goal_id.is_empty()
             || self.idempotency_key.is_empty()
             || self.actor.principal_id().is_empty()
             || self.actor.organization_id().is_empty()
-            || state.organization_id.is_empty()
-            || state.project_org_id.is_empty()
-            || state.goal_org_id.is_empty()
         {
             return Err(LinkMutationError::InvalidField);
         }
-        if self.actor.organization_id() != self.organization_id
-            || state.organization_id != self.organization_id
-            || state.project_org_id != self.organization_id
-            || state.goal_org_id != self.organization_id
-        {
+        if self.actor.organization_id() != self.organization_id {
             return Err(LinkMutationError::CrossOrganization);
         }
         if !self.actor.can_mutate() {
@@ -200,7 +193,9 @@ impl ProjectGoalLinkCommand {
         Ok(())
     }
 
-    fn fingerprint(&self) -> Result<String, LinkMutationError> {
+    /// Private identity, not proof that a serialized actor is authenticated.
+    pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
+        self.validate()?;
         #[derive(Serialize)]
         struct Fingerprint<'a> {
             organization_id: &'a str,
@@ -228,6 +223,14 @@ impl ProjectGoalLinkCommand {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct AppliedReceipt {
+    version: u64,
+    fence_epoch: u64,
+    linked: bool,
+    fingerprint: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectGoalLinkState {
     pub organization_id: String,
@@ -236,7 +239,7 @@ pub struct ProjectGoalLinkState {
     pub version: u64,
     pub fence_epoch: u64,
     pub linked: bool,
-    applied_idempotency: BTreeMap<String, String>,
+    applied_idempotency: BTreeMap<String, AppliedReceipt>,
 }
 
 impl ProjectGoalLinkState {
@@ -263,13 +266,26 @@ impl ProjectGoalLinkState {
         &mut self,
         command: ProjectGoalLinkCommand,
     ) -> Result<LinkMutationOutcome, LinkMutationError> {
-        command.validate(self)?;
+        command.validate()?;
+        if self.organization_id.is_empty()
+            || self.project_org_id.is_empty()
+            || self.goal_org_id.is_empty()
+        {
+            return Err(LinkMutationError::InvalidField);
+        }
+        if self.organization_id != command.organization_id
+            || self.project_org_id != command.organization_id
+            || self.goal_org_id != command.organization_id
+        {
+            return Err(LinkMutationError::CrossOrganization);
+        }
         let fingerprint = command.fingerprint()?;
         if let Some(previous) = self.applied_idempotency.get(&command.idempotency_key) {
-            if previous == &fingerprint {
+            if previous.fingerprint == fingerprint {
                 return Ok(LinkMutationOutcome::AlreadyApplied {
-                    version: self.version,
-                    linked: self.linked,
+                    version: previous.version,
+                    fence_epoch: previous.fence_epoch,
+                    linked: previous.linked,
                     fingerprint,
                 });
             }
@@ -284,45 +300,65 @@ impl ProjectGoalLinkState {
 
         let requested_linked = matches!(command.operation, Operation::Attach);
         if requested_linked == self.linked {
-            self.applied_idempotency
-                .insert(command.idempotency_key, fingerprint.clone());
+            self.applied_idempotency.insert(
+                command.idempotency_key,
+                AppliedReceipt {
+                    version: self.version,
+                    fence_epoch: self.fence_epoch,
+                    linked: self.linked,
+                    fingerprint: fingerprint.clone(),
+                },
+            );
             return Ok(LinkMutationOutcome::Noop {
                 version: self.version,
+                fence_epoch: self.fence_epoch,
                 linked: self.linked,
                 fingerprint,
             });
         }
 
-        self.linked = requested_linked;
-        self.version = self
+        let next_version = self
             .version
             .checked_add(1)
             .ok_or(LinkMutationError::VersionOverflow)?;
-        self.applied_idempotency
-            .insert(command.idempotency_key, fingerprint.clone());
+        self.linked = requested_linked;
+        self.version = next_version;
+        self.applied_idempotency.insert(
+            command.idempotency_key,
+            AppliedReceipt {
+                version: self.version,
+                fence_epoch: self.fence_epoch,
+                linked: self.linked,
+                fingerprint: fingerprint.clone(),
+            },
+        );
         Ok(LinkMutationOutcome::Applied {
             version: self.version,
+            fence_epoch: self.fence_epoch,
             linked: self.linked,
             fingerprint,
         })
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkMutationOutcome {
     Applied {
         version: u64,
+        fence_epoch: u64,
         linked: bool,
         fingerprint: String,
     },
     Noop {
         version: u64,
+        fence_epoch: u64,
         linked: bool,
         fingerprint: String,
     },
     AlreadyApplied {
         version: u64,
+        fence_epoch: u64,
         linked: bool,
         fingerprint: String,
     },
