@@ -1,6 +1,6 @@
 name: R6Z isolated native test kit
 
-# Temporary development support for PR 172. No deployment or writer authority.
+# Temporary artifact transport for PR 172. No deployment or writer authority.
 # Remove after the offline environment has been recovered.
 on:
   pull_request:
@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: r6z-native-test-kit-${{ github.event.pull_request.number }}
@@ -18,81 +19,62 @@ jobs:
   kit:
     if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    env:
-      CI: true
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    defaults:
-      run:
-        shell: bash
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
+          github-token: ${{ github.token }}
+          run-id: 34997859870
+          name: r6z-native-test-kit-3e8f300f52bbe41510d24321e9abf736d64f736c
+          path: ${{ runner.temp }}/r6z-kit
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
-
-      - name: Install locked public dependencies
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare pnpm@9.15.4 --activate
-          pnpm install --frozen-lockfile
-          mkdir -p "$RUNNER_TEMP/r6z-kit"
-          cargo vendor --locked --manifest-path native/Cargo.toml "$RUNNER_TEMP/r6z-vendor" > "$RUNNER_TEMP/r6z-kit/vendor-config.toml"
-          git diff --exit-code -- pnpm-lock.yaml native/Cargo.lock
-
-      - name: Baseline pure Rust contracts
-        run: |
-          set -euo pipefail
-          cargo test --locked --manifest-path native/Cargo.toml \
-            -p rudder-migration-core \
-            -p rudder-organization-mutation-core \
-            -p rudder-project-goal-link-core 2>&1 | tee "$RUNNER_TEMP/r6z-kit/baseline-core-tests.txt"
-
-      - name: Export only source and public development dependencies
+      - name: Verify and split the exact public-source test kit
+        shell: bash
         run: |
           set -euo pipefail
           kit="$RUNNER_TEMP/r6z-kit"
-          git rev-parse HEAD > "$kit/source-sha.txt"
-          git rev-parse 'HEAD^{tree}' > "$kit/source-tree-sha.txt"
-          git ls-tree -rz HEAD > "$kit/source-tree.entries"
-          sha256sum pnpm-lock.yaml native/Cargo.lock > "$kit/lock-sha256.txt"
-          rustc --version --verbose > "$kit/rust-version.txt"
-          node --version > "$kit/node-version.txt"
-          git archive --format=tar HEAD -- . \
-            ':(exclude).env*' ':(exclude)**/.env*' \
-            ':(exclude).npmrc' ':(exclude)**/.npmrc' \
-            ':(exclude).netrc' ':(exclude)**/.netrc' \
-            ':(exclude).git-credentials' ':(exclude)**/.git-credentials' \
-            ':(exclude)**/*.pem' ':(exclude)**/*.key' \
-            ':(exclude)**/*.p12' ':(exclude)**/*.pfx' \
-            ':(exclude).rudder/**' | gzip -1 > "$kit/source.tar.gz"
-          # Never archive runner home, Git metadata, credentials, or live data.
-          tar -C "$RUNNER_TEMP" --exclude='*/.env*' -cf - r6z-vendor | gzip -1 > "$kit/rust-vendor.tar.gz"
-          sysroot="$(rustc --print sysroot)"
-          tar -C "$sysroot" -cf - bin lib | gzip -1 > "$kit/rust-toolchain.tar.gz"
-          node_root="$(dirname "$(dirname "$(command -v node)")")"
-          tar -C "$node_root" -cf - bin lib/node_modules | gzip -1 > "$kit/node-runtime.tar.gz"
-          npm pack pnpm@9.15.4 --pack-destination "$kit"
-          find . -type d -name node_modules -prune -print0 > "$kit/dependency-paths.txt"
-          tar --exclude='*/.env*' --exclude='*/.npmrc' --exclude='*/.netrc' \
-            --exclude='*/.git-credentials' --exclude='*.pem' --exclude='*.key' \
-            --exclude='*.p12' --exclude='*.pfx' \
-            --null -T "$kit/dependency-paths.txt" -cf - | gzip -1 > "$kit/node-dependencies.tar.gz"
-          (cd "$kit" && sha256sum *.tar.gz *.tgz > SHA256SUMS)
+          test "$(cat "$kit/source-sha.txt")" = "3e8f300f52bbe41510d24321e9abf736d64f736c"
+          (cd "$kit" && sha256sum --check SHA256SUMS)
+          tar -C "$kit" -cf "$RUNNER_TEMP/r6z-kit.tar" .
+          split --bytes=200M --numeric-suffixes=0 --suffix-length=2 "$RUNNER_TEMP/r6z-kit.tar" "$RUNNER_TEMP/r6z-kit.part-"
+          test ! -f "$RUNNER_TEMP/r6z-kit.part-05"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: r6z-native-test-kit-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/r6z-kit/
+          name: r6z-native-kit-part-00-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/r6z-kit.part-00
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: r6z-native-kit-part-01-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/r6z-kit.part-01
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: r6z-native-kit-part-02-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/r6z-kit.part-02
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: r6z-native-kit-part-03-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/r6z-kit.part-03
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: r6z-native-kit-part-04-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/r6z-kit.part-04
+          if-no-files-found: ignore
           compression-level: 0
           retention-days: 1
