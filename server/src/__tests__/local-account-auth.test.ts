@@ -87,7 +87,7 @@ async function startTempDatabase() {
     password: "rudder",
     port,
     persistent: true,
-    initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
     onLog: () => {},
     onError: (message: unknown) => {
       if (process.env.RUDDER_TEST_POSTGRES_DEBUG === "true") console.error(message);

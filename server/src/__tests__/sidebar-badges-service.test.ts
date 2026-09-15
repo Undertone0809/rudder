@@ -91,7 +91,7 @@ async function startTempDatabase() {
     password: "rudder",
     port,
     persistent: true,
-    initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
     onLog: (message) => console.log(message),
     onError: (message) => console.error(message),
   });

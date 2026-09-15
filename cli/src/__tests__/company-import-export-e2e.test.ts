@@ -63,7 +63,7 @@ async function startTempDatabase() {
     password: "rudder",
     port,
     persistent: true,
-    initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
     onLog: (msg: unknown) => console.log("[pg log]", msg),
     onError: (msg: unknown) => console.error("[pg err]", msg),
   });
