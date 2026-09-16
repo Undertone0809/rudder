@@ -38,7 +38,7 @@ jobs:
             const merge = 'df9fd0b92656bd09a119c9b91a751a76d707e49b';
             const workflow = '.github/workflows/r6z-qualify-integrated-baseline.yml';
             assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
-            assert.equal(git('rev-parse','HEAD^'),'959482573ad60295d17a8e0fb271b424796f50a7');
+            assert.equal(git('rev-parse','HEAD^'),'0468f0df1ac2335d5368f12a016e8fb7a62aa798');
             assert.deepEqual(git('diff','--name-only',head,'HEAD').split('\n').sort(),[
               '.github/workflows/r6z-baseline-diagnostics.yml',workflow
             ].sort());
@@ -199,7 +199,7 @@ jobs:
           test "$status" -ne 0
           grep -F 'test result: FAILED. 2 passed; 1 failed;' "$RUNNER_TEMP/capacity-red.log"
           grep -F 'link_capacity_append_cannot_create_a_state_the_adapter_cannot_read ... FAILED' "$RUNNER_TEMP/capacity-red.log"
-      - name: Apply the reviewed bounded link implementation
+      - name: Apply the complete reviewed bounded link implementation
         uses: actions/github-script@v8
         with:
           script: |
@@ -214,10 +214,11 @@ jobs:
             fs.writeFileSync(file,Buffer.from(data.content,'base64'));
             assert.equal(execFileSync('git',['hash-object',file],{encoding:'utf8'}).trim(),sha);
             const before=fs.readFileSync(file,'utf8');
+            assert.ok(before.endsWith('    Ok(())\n'));
             const old='    if next_linked && !linked && goals.len() == MAX_PROJECT_GOALS {\n        return Err(StoreError::InvalidInput);\n    }\n    if next_linked {\n        goals.insert(command.goal_id.clone());';
             const replacement='    if next_linked {\n        if !linked && goals.len() == MAX_PROJECT_GOALS {\n            return Err(StoreError::InvalidInput);\n        }\n        goals.insert(command.goal_id.clone());';
             assert.equal(before.split(old).length,2);
-            fs.writeFileSync(file,before.replace(old,replacement));
+            fs.writeFileSync(file,before.replace(old,replacement)+'}\n');
       - name: Locked full native qualification
         run: |
           cargo fmt --manifest-path native/Cargo.toml --all
