@@ -1341,6 +1341,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-agent-permissions-service"
+version = "0.7.22"
+dependencies = [
+ "actix-web",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-archive-core"
 version = "0.7.22"
 dependencies = [
