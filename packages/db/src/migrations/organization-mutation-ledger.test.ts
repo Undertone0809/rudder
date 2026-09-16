@@ -175,20 +175,16 @@ describe("D1 durable organization mutation ledger", () => {
     const orgId = await organization();
     const activityId = randomUUID();
     await expect(db.begin(async (tx) => {
-      await tx`UPDATE organizations SET name = 'Must roll back' WHERE id = ${orgId}`;
-      await tx`UPDATE organization_mutation_authorities SET mutation_version = 1 WHERE org_id = ${orgId}`;
-      await tx`
-        INSERT INTO activity_log (id, org_id, actor_type, actor_id, action, entity_type, entity_id)
-        VALUES (${activityId}, ${orgId}, 'user', 'd1-fixture', 'organization.updated', 'organization', ${orgId})
-      `;
-      await tx`
-        INSERT INTO organization_mutation_receipts
-          (org_id, idempotency_key, command_kind, command_fingerprint,
-           expected_version, resulting_version, fence_epoch, resulting_fence_epoch,
-           outcome_kind, result, activity_id)
-        VALUES (${orgId}, 'rollback', 'organization_branding', ${"b".repeat(64)},
-          0, 1, 0, 0, 'applied', '{}'::jsonb, ${activityId})
-      `;
+      await tx.unsafe("UPDATE organizations SET name = 'Must roll back' WHERE id = $1", [orgId]);
+      await tx.unsafe("UPDATE organization_mutation_authorities SET mutation_version = 1 WHERE org_id = $1", [orgId]);
+      await tx.unsafe(
+        "INSERT INTO activity_log (id, org_id, actor_type, actor_id, action, entity_type, entity_id) VALUES ($1, $2, 'user', 'd1-fixture', 'organization.updated', 'organization', $2)",
+        [activityId, orgId],
+      );
+      await tx.unsafe(
+        "INSERT INTO organization_mutation_receipts (org_id, idempotency_key, command_kind, command_fingerprint, expected_version, resulting_version, fence_epoch, resulting_fence_epoch, outcome_kind, result, activity_id) VALUES ($1, 'rollback', 'organization_branding', $2, 0, 1, 0, 0, 'applied', '{}'::jsonb, $3)",
+        [orgId, "b".repeat(64), activityId],
+      );
       throw new Error("injected transaction failure");
     })).rejects.toThrow("injected transaction failure");
     const [row] = await db`
@@ -212,14 +208,24 @@ describe("D1 durable organization mutation ledger", () => {
     expect(row.result).toEqual({ schemaVersion: 1 });
   });
 
+  it("rejects audit-only deletion instead of silently erasing the replay receipt", async () => {
+    const orgId = await organization();
+    const activityId = await activity(orgId, "retained-audit");
+    await receipt(orgId, "retained-audit", activityId);
+    await expect(db`DELETE FROM activity_log WHERE org_id = ${orgId} AND id = ${activityId}`)
+      .rejects.toMatchObject({ code: "23503" });
+    expect(await db`SELECT id FROM activity_log WHERE org_id = ${orgId}`).toHaveLength(1);
+    expect(await db`SELECT org_id FROM organization_mutation_receipts WHERE org_id = ${orgId}`).toHaveLength(1);
+  });
+
   it("preserves the old activity-first organization deletion order and other organizations", async () => {
     const removed = await organization();
     const retained = await organization();
     await receipt(removed, "delete", await activity(removed, "delete"));
     await receipt(retained, "keep", await activity(retained, "keep"));
     await db.begin(async (tx) => {
-      await tx`DELETE FROM activity_log WHERE org_id = ${removed}`;
-      await tx`DELETE FROM organizations WHERE id = ${removed}`;
+      await tx.unsafe("DELETE FROM activity_log WHERE org_id = $1", [removed]);
+      await tx.unsafe("DELETE FROM organizations WHERE id = $1", [removed]);
     });
     expect(await db`SELECT org_id FROM organization_mutation_authorities WHERE org_id = ${removed}`).toHaveLength(0);
     expect(await db`SELECT org_id FROM organization_mutation_receipts WHERE org_id = ${removed}`).toHaveLength(0);
