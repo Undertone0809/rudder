@@ -1,0 +1,175 @@
+name: Consolidate existing Rust checkpoints
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-consolidate-checkpoints.yml
+permissions:
+  contents: read
+jobs:
+  consolidate:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Recover only existing bounded source deliveries
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const {createHash}=require('crypto');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8',maxBuffer:16*1024*1024}).trim();
+            const base='a2223e80cfcc1f05ec9361efd6271c14222704da';
+            const workflow='.github/workflows/r6z-consolidate-checkpoints.yml';
+            assert.equal(git('rev-parse','HEAD^'),base);
+            assert.equal(git('diff','--name-only',base,'HEAD'),workflow);
+            git('rm','--cached','--',workflow); fs.unlinkSync(workflow);
+            let previous=git('write-tree');
+            assert.equal(previous,'a0ecd0717cdb936c01c3e38a048c2a8cf3ac9671');
+            const comments=await github.paginate(github.rest.issues.listComments,{...context.repo,issue_number:172,per_page:100});
+            const candidates=comments.filter(c=>c.user?.login==='chatgpt-codex-connector[bot]' && c.created_at>='2026-09-16T17:00:00Z');
+            const slugs=['migration-service','agent-permissions-service','bearer-auth-service','project-service','issue-checkout-service','agent-request-planner'];
+            const records=[];
+            for(const slug of slugs) {
+              const prefix=`native/crates/${slug}/`;
+              const deliveries=[];
+              for(const c of candidates) {
+                const blocks=[...c.body.matchAll(/^```(?:diff|patch)[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm)].map(m=>m[1]);
+                const blocksForCrate=blocks.filter(p=>p.includes(`diff --git a/${prefix}`));
+                if(blocksForCrate.length) deliveries.push({comment:c,patch:blocksForCrate.join('\n')});
+              }
+              if(!deliveries.length) { core.info('RECOVERY_MISSING='+slug); continue; }
+              const {comment,patch}=deliveries.at(-1);
+              assert.ok(!fs.existsSync(prefix),'Never overwrite an existing crate');
+              const segments=patch.split(/(?=^diff --git )/m).filter(s=>s.startsWith(`diff --git a/${prefix}`));
+              assert.ok(segments.length>0);
+              for(const segment of segments) {
+                const header=/^diff --git a\/([^\n ]+) b\/([^\n ]+)\r?\n/.exec(segment);
+                assert.ok(header && header[1]===header[2] && header[1].startsWith(prefix));
+                assert.ok(!header[1].split('/').some(p=>p==='..' || p==='.git'));
+                assert.ok(!/^new file mode (?!100644$|100755$)/m.test(segment),'No symlink or special files');
+              }
+              const selected=segments.join('');
+              const patchFile=path.join(process.env.RUNNER_TEMP,`${slug}.diff`);
+              fs.writeFileSync(patchFile,selected);
+              try {
+                git('apply','--check','--binary',patchFile);
+                git('apply','--binary',patchFile);
+                const manifest='native/Cargo.toml';
+                const old=fs.readFileSync(manifest,'utf8');
+                assert.equal(old.split('members = [\n').length,2);
+                fs.writeFileSync(manifest,old.replace('members = [\n',`members = [\n  "crates/${slug}",\n`));
+                const packageText=fs.readFileSync(`${prefix}Cargo.toml`,'utf8');
+                const packageName=/^name\s*=\s*"([a-z0-9-]+)"/m.exec(packageText)?.[1];
+                assert.equal(packageName,`rudder-${slug}`);
+                fs.copyFileSync('native/Cargo.lock',path.join(process.env.RUNNER_TEMP,'before.lock'));
+                execFileSync('cargo',['metadata','--manifest-path','native/Cargo.toml','--format-version','1'],{stdio:['ignore','ignore','inherit'],timeout:240000});
+                execFileSync('python3',['-c',`import os,pathlib,tomllib,json\na=tomllib.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'before.lock').read_text())\nb=tomllib.loads(pathlib.Path('native/Cargo.lock').read_text())\ndef identities(v):\n return {(p['name'],p['version'],p['source'],p.get('checksum')) for p in v['package'] if 'source' in p}\nbefore,after=identities(a),identities(b)\nassert before<=after, 'Existing dependency identities may not be replaced'\nprint('ADDITIVE_DEPENDENCIES='+json.dumps(sorted(after-before)))`],{stdio:'inherit'});
+                git('add','--',manifest,'native/Cargo.lock',prefix);
+                git('diff','--cached','--check',previous);
+                const expected=git('write-tree');
+                const files=git('diff','--cached','--name-only',previous).split('\n');
+                assert.ok(files.every(f=>f.startsWith(prefix)||['native/Cargo.toml','native/Cargo.lock'].includes(f)));
+                const entries=[];
+                for(const file of files) {
+                  assert.ok(fs.lstatSync(file).isFile());
+                  const bytes=fs.readFileSync(file);
+                  assert.ok(!bytes.includes(0),'Source files must be UTF-8 text');
+                  const content=bytes.toString('utf8'); assert.ok(Buffer.from(content).equals(bytes));
+                  const {data}=await github.rest.git.createBlob({...context.repo,content,encoding:'utf-8'});
+                  assert.equal(data.sha,git('hash-object',file));
+                  entries.push({path:file,mode:git('ls-files','-s','--',file).split(' ')[0],type:'blob',sha:data.sha});
+                }
+                const {data:tree}=await github.rest.git.createTree({...context.repo,base_tree:previous,tree:entries});
+                assert.equal(tree.sha,expected);
+                const record={slug,packageName,commentId:comment.id,commentUpdatedAt:comment.updated_at,patchSha256:createHash('sha256').update(selected).digest('hex'),tree:tree.sha,files:entries};
+                records.push(record); previous=tree.sha;
+                core.info('RECOVERED_STAGE='+JSON.stringify(record));
+              } catch(error) {
+                core.info('RECOVERY_ERROR='+slug+' '+String(error));
+                git('restore',`--source=${previous}`,'--staged','--worktree','--','native/Cargo.toml','native/Cargo.lock');
+                try { git('rm','-r','--cached','--ignore-unmatch','--',prefix); } catch {}
+                fs.rmSync(prefix,{recursive:true,force:true});
+              }
+            }
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'recovered-stages.json'),JSON.stringify(records,null,2));
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'recovered-packages.txt'),records.map(r=>r.packageName).join('\n')+'\n');
+            git('diff','--exit-code');
+            core.info('RECOVERY_TOTAL='+records.length);
+            await core.summary.addHeading('Existing source checkpoint recovery').addCodeBlock(JSON.stringify(records,null,2)).write();
+            assert.ok(records.length>0,'No existing source checkpoint was recovered');
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+          corepack enable && corepack prepare pnpm@9.15.4 --activate
+          pnpm install --frozen-lockfile
+      - name: Record actual compilation and test results for every recovered package
+        run: |
+          set +e
+          failed=0
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check > "$RUNNER_TEMP/format.log" 2>&1
+          format_result=$?
+          echo "CHECKPOINT_CHECK=format exit=$format_result"
+          cat "$RUNNER_TEMP/format.log"
+          test "$format_result" -eq 0 || failed=1
+          while IFS= read -r package; do
+            test -n "$package" || continue
+            timeout 480 cargo clippy --manifest-path native/Cargo.toml --locked -p "$package" --all-targets -- -D warnings > "$RUNNER_TEMP/$package.clippy.log" 2>&1
+            code=$?
+            echo "CHECKPOINT_CHECK=$package clippy exit=$code"
+            if test "$code" -ne 0; then cat "$RUNNER_TEMP/$package.clippy.log"; failed=1; fi
+            timeout 300 cargo test --manifest-path native/Cargo.toml --locked -p "$package" -- --test-threads=1 > "$RUNNER_TEMP/$package.test.log" 2>&1
+            code=$?
+            echo "CHECKPOINT_CHECK=$package test exit=$code"
+            if test "$code" -ne 0; then cat "$RUNNER_TEMP/$package.test.log"; failed=1; else grep -E 'Running|test result:' "$RUNNER_TEMP/$package.test.log"; fi
+          done < "$RUNNER_TEMP/recovered-packages.txt"
+          echo "CHECKPOINT_CHECK=aggregate exit=$failed"
+          exit "$failed"
+      - name: Preserve evidence without advancing any branch
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-existing-checkpoints-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/recovered-stages.json
+            ${{ runner.temp }}/recovered-packages.txt
+            ${{ runner.temp }}/rudder-*.log
+            ${{ runner.temp }}/format.log
+          if-no-files-found: warn
+  diagnostics:
+    needs: consolidate
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...context.repo,run_id:context.runId});
+            const job=jobs.jobs.find(j=>j.name==='consolidate');
+            const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:job.id});
+            const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected=new Set();
+            for(let i=0;i<lines.length;i++) if(/^\d{4}-.+(RECOVERED_STAGE=|RECOVERY_TOTAL=|RECOVERY_MISSING=|RECOVERY_ERROR=|CHECKPOINT_CHECK=|error\[|error:|test result:|panicked at|FAILED|AssertionError)/.test(lines[i])) {
+              for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+10);j++) selected.add(j);
+            }
+            for(const i of [...selected].sort((a,b)=>a-b).slice(0,420)) core.info(lines[i]);
+            core.info('Consolidation verification: '+job.conclusion);
