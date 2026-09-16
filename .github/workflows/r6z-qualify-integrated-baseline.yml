@@ -38,15 +38,16 @@ jobs:
             const merge = 'df9fd0b92656bd09a119c9b91a751a76d707e49b';
             const workflow = '.github/workflows/r6z-qualify-integrated-baseline.yml';
             assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
-            assert.equal(git('rev-parse','HEAD^'),'5bd5dd914d4345d2e3435320ac24fe3271d65182');
-            assert.equal(git('diff','--name-only',head,'HEAD'),workflow);
+            assert.equal(git('rev-parse','HEAD^'),'314d19d1d6b281b3f6a08dcf364a3f75b805f062');
+            assert.deepEqual(git('diff','--name-only',head,'HEAD').split('\n').sort(),[
+              '.github/workflows/r6z-baseline-diagnostics.yml',workflow
+            ].sort());
             const {data:commit} = await github.rest.git.getCommit({...context.repo,commit_sha:merge});
             assert.deepEqual(commit.parents.map(p=>p.sha),[main,head]);
             assert.equal(commit.tree.sha,'8830e5750ba6022902f537a2d1fa2a5e987d83d5');
             execFileSync('git',['fetch','--no-tags','origin',merge]);
             assert.equal(git('rev-parse',`${merge}^{tree}`),commit.tree.sha);
             git('read-tree','--reset','-u',merge);
-            if (fs.existsSync(workflow)) fs.unlinkSync(workflow);
             assert.equal(git('write-tree'),commit.tree.sha);
             assert.match(fs.readFileSync('native/Cargo.toml','utf8'),/version = "0\.7\.22"/);
             const file='native/Cargo.lock';
@@ -167,15 +168,54 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
-      - name: Install disposable PostgreSQL
+      - name: Install disposable native PostgreSQL runtime
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql
           bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
           test -x "$bin_dir/initdb"
           echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+      - name: Add the reviewed link capacity and scope regressions
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs');
+            const assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const file='native/crates/d1-persistence/tests/postgres.rs';
+            assert.equal(execFileSync('git',['hash-object',file],{encoding:'utf8'}).trim(),'0d8433b65e156c91d078ab606296da306af8d3eb');
+            const sha='965ddaefefac94d8642c2477d85f867df2683bf7';
+            const {data}=await github.rest.git.getBlob({...context.repo,file_sha:sha});
+            assert.equal(data.sha,sha);
+            fs.appendFileSync(file,Buffer.from(data.content,'base64'));
+      - name: Reproduce the capacity overflow before applying the fix
+        shell: bash
+        run: |
+          set +e
+          cargo test --manifest-path native/Cargo.toml --locked -p rudder-d1-persistence --test postgres link_capacity_ -- --test-threads=1 > "$RUNNER_TEMP/capacity-red.log" 2>&1
+          status=$?
+          set -e
+          tail -n 75 "$RUNNER_TEMP/capacity-red.log"
+          test "$status" -ne 0
+          grep -F 'test result: FAILED. 2 passed; 1 failed;' "$RUNNER_TEMP/capacity-red.log"
+          grep -F 'link_capacity_append_cannot_create_a_state_the_adapter_cannot_read ... FAILED' "$RUNNER_TEMP/capacity-red.log"
+      - name: Apply the reviewed bounded link implementation
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs');
+            const assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const file='native/crates/d1-persistence/src/links.rs';
+            assert.equal(execFileSync('git',['hash-object',file],{encoding:'utf8'}).trim(),'ee71599aab9eb5c893e1d1ea81b4bfc3436d0ab2');
+            const sha='1f9ed35c12949afee6e17a43609be39fc94f0c71';
+            const {data}=await github.rest.git.getBlob({...context.repo,file_sha:sha});
+            assert.equal(data.sha,sha);
+            fs.writeFileSync(file,Buffer.from(data.content,'base64'));
+            assert.equal(execFileSync('git',['hash-object',file],{encoding:'utf8'}).trim(),sha);
       - name: Locked full native qualification
         run: |
+          cargo fmt --manifest-path native/Cargo.toml --all
           cargo fmt --manifest-path native/Cargo.toml --all -- --check
           cargo clippy --manifest-path native/Cargo.toml --locked --workspace --all-targets -- -D warnings
           cargo test --manifest-path native/Cargo.toml --locked --workspace -- --test-threads=1
@@ -183,10 +223,27 @@ jobs:
         run: pnpm lint && pnpm -r typecheck
       - name: Build the real native release binaries
         run: pnpm native:build
-      - name: Complete Node baseline including actual migration upgrades
-        run: pnpm test:run --maxWorkers=2
+      - name: Complete Node baseline with its own PostgreSQL provider selection
+        id: node_baseline
+        shell: bash
+        run: |
+          set +e
+          env -u RUDDER_POSTGRES_BIN_DIR pnpm test:run --maxWorkers=2 > "$RUNNER_TEMP/node-baseline.log" 2>&1
+          status=$?
+          set -e
+          grep -E 'Test Files|Tests  |FAIL |Failed Tests|Failed Suites|Error:' "$RUNNER_TEMP/node-baseline.log" | tail -n 80 || true
+          tail -n 60 "$RUNNER_TEMP/node-baseline.log"
+          exit "$status"
       - name: Complete root build with non-overlapping Desktop packaging
-        run: pnpm build
+        if: ${{ !cancelled() && steps.node_baseline.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          set +e
+          env -u RUDDER_POSTGRES_BIN_DIR pnpm build > "$RUNNER_TEMP/build-baseline.log" 2>&1
+          status=$?
+          set -e
+          tail -n 90 "$RUNNER_TEMP/build-baseline.log"
+          exit "$status"
       - name: Prepare separate history-preserving integration and repair trees
         uses: actions/github-script@v8
         with:
@@ -196,7 +253,7 @@ jobs:
             const {execFileSync} = require('child_process');
             const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
             const merge='df9fd0b92656bd09a119c9b91a751a76d707e49b';
-            const groups=[['native/Cargo.lock'],['scripts/release-compatibility-matrix.mjs','scripts/release-compatibility-matrix.test.mjs'],['package.json']];
+            const groups=[['native/Cargo.lock'],['scripts/release-compatibility-matrix.mjs','scripts/release-compatibility-matrix.test.mjs'],['package.json'],['native/crates/d1-persistence/src/links.rs','native/crates/d1-persistence/tests/postgres.rs']];
             const files=groups.flat();
             git('add','--',...files);
             git('diff','--cached','--check',merge);
@@ -217,5 +274,29 @@ jobs:
             }
             assert.equal(base_tree,git('write-tree'));
             core.info(`QUALIFIED_INTEGRATION_TREES=${JSON.stringify(trees)}`);
-            core.info(git('diff','--cached',merge,'--',...files));
+            core.info(git('diff','--cached','--stat',merge));
             await core.summary.addHeading('Integrated migration baseline').addRaw(JSON.stringify({main:'81cff2958923cb9009b23a457cd1b9bfcc9d4b69',originalHead:'47ae2915597afa601b2ffc26d3d36f40e731754a',trees,branchAdvanced:false,productionAuthorityChanged:false},null,2)).write();
+  diagnostics:
+    needs: qualify
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...context.repo,run_id:context.runId});
+            const job=jobs.jobs.find(job=>job.name==='qualify');
+            if(!job) throw new Error('qualification job missing');
+            const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:job.id});
+            const text=typeof data==='string'?data:Buffer.from(data).toString('utf8');
+            const lines=text.replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected=new Set();
+            for(let i=0;i<lines.length;i++) {
+              if(/FAIL |Failed Suites|Failed Tests|AssertionError|Test Files|Tests  |test result:|QUALIFIED_INTEGRATION_TREES=|Error:/.test(lines[i]) && lines[i].length<6000) {
+                for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+10);j++) selected.add(j);
+              }
+            }
+            for(const index of [...selected].sort((a,b)=>a-b).slice(-200)) core.info(lines[index].slice(0,6000));
+            core.info(`Qualification conclusion: ${job.conclusion}`);
