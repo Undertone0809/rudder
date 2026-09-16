@@ -1326,6 +1326,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-agent-key-service"
+version = "0.7.22"
+dependencies = [
+ "actix-web",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-archive-core"
 version = "0.7.22"
 dependencies = [
