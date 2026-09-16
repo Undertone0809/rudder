@@ -1,0 +1,47 @@
+name: Export existing bearer source
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-export-existing-auth.yml
+permissions:
+  contents: read
+  issues: read
+jobs:
+  export:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),path=require('path'),assert=require('assert/strict'),crypto=require('crypto');
+            const {data}=await github.rest.issues.getComment({...context.repo,comment_id:5702026080});
+            assert.equal(data.user.login,'chatgpt-codex-connector[bot]');
+            assert.equal(data.updated_at,'2026-09-16T17:51:34Z');
+            const root=path.join(process.env.RUNNER_TEMP,'existing-bearer');
+            fs.mkdirSync(root,{recursive:true});
+            fs.writeFileSync(path.join(root,'original-comment.md'),data.body);
+            const blocks=[...data.body.matchAll(/^```(?:diff|patch)[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm)].map(m=>m[1]);
+            const evidence=[];
+            for(const segment of blocks.join('\n').split(/(?=^diff --git )/m)) {
+              const match=/^diff --git a\/(native\/crates\/bearer-auth-service\/[a-zA-Z0-9_./-]+) b\/\1\n/.exec(segment);
+              if(!match) continue;
+              const file=match[1];assert.ok(!file.split('/').includes('..'));
+              const lines=segment.split('\n');
+              const start=lines.findIndex(line=>line.startsWith('@@ '));assert.ok(start>=0);
+              const body=lines.slice(start+1).filter(line=>line.startsWith('+')).map(line=>line.slice(1)).join('\n')+'\n';
+              const bytes=Buffer.from(body),actual=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+              const declared=/^index 0+\.\.([0-9a-f]+)/m.exec(segment)?.[1];
+              const dest=path.join(root,file);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.writeFileSync(dest,bytes);
+              evidence.push({file,declaredHash:declared,actualHash:actual,match:actual.startsWith(declared),bytes:bytes.length});
+            }
+            assert.equal(evidence.length,2);
+            fs.writeFileSync(path.join(root,'provenance.json'),JSON.stringify({commentId:data.id,updatedAt:data.updated_at,evidence},null,2));
+            core.info(JSON.stringify(evidence));
+      - uses: actions/upload-artifact@v7
+        with:
+          name: existing-bearer-delivery
+          path: ${{ runner.temp }}/existing-bearer/
+          retention-days: 7
+          if-no-files-found: error
