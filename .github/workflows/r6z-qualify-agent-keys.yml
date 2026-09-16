@@ -1,0 +1,126 @@
+name: Qualify Rust Agent key service
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-qualify-agent-keys.yml
+permissions:
+  contents: read
+jobs:
+  qualify:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Materialize exact candidate source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base='ae0a25d05ad22e1694579daa79abf381daa20787';
+            assert.equal(git('rev-parse','HEAD^'),base);
+            assert.equal(git('diff','--name-only',base,'HEAD'),'.github/workflows/r6z-qualify-agent-keys.yml');
+            const files={
+              'Cargo.toml':'1ca0b29bc1fba8fc657e376b3a6102755e7c90ab',
+              'src/lib.rs':'84e5af5f18132e25578518cf0259398dd132933b',
+              'src/store.rs':'beec3747b19f73017979b121aa99e4f63c392f49',
+              'src/http.rs':'9422835aa720e7467b711a6c25eb8de8c48b6df7',
+              'tests/postgres.rs':'6edc3aff10e11da25faa187fa27e186741dbe947'
+            };
+            const root='native/crates/agent-key-service';
+            for(const [file,sha] of Object.entries(files)) {
+              const {data}=await github.rest.git.getBlob({...context.repo,file_sha:sha});
+              assert.equal(data.sha,sha);
+              const dest=path.join(root,file);
+              fs.mkdirSync(path.dirname(dest),{recursive:true});
+              fs.writeFileSync(dest,Buffer.from(data.content,'base64'));
+              assert.equal(git('hash-object',dest),sha);
+            }
+            const {data}=await github.rest.git.getBlob({...context.repo,file_sha:'23c9173e675cda0fa3a53014cc580dd4e712f7d5'});
+            assert.equal(data.sha,'23c9173e675cda0fa3a53014cc580dd4e712f7d5');
+            fs.appendFileSync(path.join(root,'tests/postgres.rs'),Buffer.from(data.content,'base64'));
+            const manifest='native/Cargo.toml',text=fs.readFileSync(manifest,'utf8');
+            assert.equal(text.split('members = [\n').length,2);
+            fs.writeFileSync(manifest,text.replace('members = [\n','members = [\n  "crates/agent-key-service",\n'));
+            fs.copyFileSync('native/Cargo.lock',path.join(process.env.RUNNER_TEMP,'original.lock'));
+      - name: Install disposable PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          test -x "$bin_dir/initdb"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+      - name: Register package without upgrading existing dependencies
+        run: |
+          cargo check --manifest-path native/Cargo.toml -p rudder-agent-key-service
+          python3 - <<'PY'
+          import os, pathlib, tomllib
+          before=tomllib.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'original.lock').read_text())
+          after=tomllib.loads(pathlib.Path('native/Cargo.lock').read_text())
+          def external(lock):
+              return {(p['name'],p['version'],p['source']):p for p in lock['package'] if 'source' in p}
+          assert external(before)==external(after), 'Existing external dependency identities must not change'
+          PY
+      - name: Format and verify the complete native workspace
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml --all
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check
+          cargo clippy --manifest-path native/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path native/Cargo.toml --locked -p rudder-agent-key-service -- --test-threads=1
+          cargo test --manifest-path native/Cargo.toml --locked --workspace -- --test-threads=1
+      - name: Export validated source tree without updating refs
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base='ae0a25d05ad22e1694579daa79abf381daa20787';
+            const workflow='.github/workflows/r6z-qualify-agent-keys.yml';
+            git('add','--','native/Cargo.toml','native/Cargo.lock','native/crates/agent-key-service');
+            git('rm','--cached','--',workflow); fs.unlinkSync(workflow);
+            git('diff','--cached','--check',base); git('diff','--exit-code');
+            const files=git('diff','--cached','--name-only',base).split('\n');
+            assert.equal(files.length,7);
+            assert.ok(files.every(f=>f.startsWith('native/crates/agent-key-service/') || ['native/Cargo.toml','native/Cargo.lock'].includes(f)));
+            const entries=[];
+            for(const file of files) {
+              const {data}=await github.rest.git.createBlob({...context.repo,content:fs.readFileSync(file,'utf8'),encoding:'utf-8'});
+              assert.equal(data.sha,git('hash-object',file));
+              entries.push({path:file,mode:'100644',type:'blob',sha:data.sha});
+            }
+            const {data:tree}=await github.rest.git.createTree({...context.repo,base_tree:'228b759858913f50ad3139879cf9134e7f1d6cf2',tree:entries});
+            assert.equal(tree.sha,git('write-tree'));
+            core.info('AGENT_KEYS_TREE='+JSON.stringify({tree:tree.sha,files:entries}));
+            await core.summary.addHeading('Rust Agent key service qualification').addCodeBlock(JSON.stringify({tree:tree.sha,files:entries},null,2)).write();
+  diagnostics:
+    needs: qualify
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...context.repo,run_id:context.runId});
+            const job=jobs.jobs.find(j=>j.name==='qualify');
+            const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:job.id});
+            const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected=new Set();
+            for(let i=0;i<lines.length;i++) if(/error\[|error:|AssertionError|FAILED|test result:|AGENT_KEYS_TREE=/.test(lines[i])) {
+              for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+14);j++) selected.add(j);
+            }
+            for(const i of [...selected].sort((a,b)=>a-b).slice(-210)) core.info(lines[i]);
+            core.info('Qualification: '+job.conclusion);
