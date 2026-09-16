@@ -695,3 +695,374 @@ async fn actor_status_paused_ceo_preserves_existing_authentication_semantics() {
         .unwrap();
     assert_eq!(db.counts().await, (2, 2, 2));
 }
+
+const REVIEW_RUN_A: &str = "70000000-0000-4000-8000-000000000001";
+const REVIEW_RUN_B: &str = "70000000-0000-4000-8000-000000000002";
+
+async fn review_runs(db: &Database) {
+    for run in [REVIEW_RUN_A, REVIEW_RUN_B] {
+        sqlx::query("INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source) VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand')")
+            .bind(run).bind(ORG).bind(CEO).execute(&db.pool).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn review_branding_replay_survives_a_new_run_and_restart_without_changing_provenance() {
+    let mut db = Database::start().await;
+    review_runs(&db).await;
+    let store = MutationStore::new(db.pool.clone());
+    let first_actor = AuthorizedActor::agent_after_authorization(ORG, CEO)
+        .with_run_after_authorization(REVIEW_RUN_A);
+    let first = store
+        .branding(&first_actor, ceo_branding("cross-run-brand", 0))
+        .await
+        .unwrap();
+    store
+        .branding(
+            &first_actor,
+            ceo_branding("later-brand", 1).with_name(Some("Later state".into())),
+        )
+        .await
+        .unwrap();
+    drop(store);
+    db.restart().await;
+    let store = MutationStore::new(db.pool.clone());
+    for auth in [
+        AuthorizedActor::agent_after_authorization(ORG, CEO)
+            .with_run_after_authorization(REVIEW_RUN_B),
+        AuthorizedActor::agent_after_authorization(ORG, CEO),
+    ] {
+        let replay = store
+            .branding(&auth, ceo_branding("cross-run-brand", 0))
+            .await
+            .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.receipt, first.receipt);
+    }
+    let original_run: String = sqlx::query_scalar(
+        "SELECT run_id::text FROM activity_log WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&first.receipt.activity_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(original_run, REVIEW_RUN_A);
+    assert_eq!(db.name().await, "Later state");
+    assert_eq!(db.counts().await, (2, 2, 2));
+}
+
+#[tokio::test]
+async fn review_link_replay_uses_logical_command_identity_across_runs() {
+    let db = Database::start().await;
+    review_runs(&db).await;
+    let store = MutationStore::new(db.pool.clone());
+    let first_actor = AuthorizedActor::agent_after_authorization(ORG, CEO)
+        .with_run_after_authorization(REVIEW_RUN_A);
+    let first = store
+        .project_goal(&first_actor, ceo_link("cross-run-link", 0))
+        .await
+        .unwrap();
+    let next_actor = AuthorizedActor::agent_after_authorization(ORG, CEO)
+        .with_run_after_authorization(REVIEW_RUN_B);
+    let replay = store
+        .project_goal(&next_actor, ceo_link("cross-run-link", 0))
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, first.receipt);
+    let original_run: String = sqlx::query_scalar(
+        "SELECT run_id::text FROM activity_log WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(&first.receipt.activity_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(original_run, REVIEW_RUN_A);
+    assert_eq!(db.counts().await, (1, 1, 1));
+}
+
+// End of replay regressions.
+
+#[tokio::test]
+async fn review_foreign_run_is_still_rejected_before_a_logical_replay() {
+    let db = Database::start().await;
+    review_runs(&db).await;
+    let foreign_ceo = "50000000-0000-4000-8000-000000000002";
+    let foreign_run = "70000000-0000-4000-8000-000000000003";
+    sqlx::query(
+        "INSERT INTO agents(id,org_id,name,role) VALUES($1::uuid,$2::uuid,'Other CEO','ceo')",
+    )
+    .bind(foreign_ceo)
+    .bind(OTHER)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO heartbeat_runs(id,org_id,agent_id,invocation_source) VALUES($1::uuid,$2::uuid,$3::uuid,'on_demand')")
+        .bind(foreign_run).bind(OTHER).bind(foreign_ceo).execute(&db.pool).await.unwrap();
+    let store = MutationStore::new(db.pool.clone());
+    let first_actor = AuthorizedActor::agent_after_authorization(ORG, CEO)
+        .with_run_after_authorization(REVIEW_RUN_A);
+    store
+        .branding(&first_actor, ceo_branding("foreign-run-replay", 0))
+        .await
+        .unwrap();
+    let forged = AuthorizedActor::agent_after_authorization(ORG, CEO)
+        .with_run_after_authorization(foreign_run);
+    assert!(matches!(
+        store
+            .branding(&forged, ceo_branding("foreign-run-replay", 0))
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert_eq!(db.counts().await, (1, 1, 1));
+}
+
+async fn review_forged_snapshot(
+    db: &Database,
+    original: &rudder_d1_persistence::Receipt,
+    key: &str,
+    field: &str,
+    value: &str,
+) {
+    let activity: String = sqlx::query_scalar("INSERT INTO activity_log(org_id,actor_id,action,entity_type,entity_id) VALUES($1::uuid,'synthetic','organization.branding_updated','organization',$1::text) RETURNING id::text")
+        .bind(ORG).fetch_one(&db.pool).await.unwrap();
+    let mut result = serde_json::to_value(original).unwrap();
+    result["activity_id"] = serde_json::json!(activity);
+    result["result"]["state"][field] = serde_json::json!(value);
+    sqlx::query("INSERT INTO organization_mutation_receipts(org_id,idempotency_key,command_kind,command_fingerprint,receipt_format,outcome,resulting_version,fence_epoch,activity_id,result) VALUES($1::uuid,$2,'organization_branding',$3,1,'applied',1,7,$4::uuid,$5::jsonb)")
+        .bind(ORG).bind(key).bind(&original.fingerprint).bind(activity).bind(result.to_string())
+        .execute(&db.pool).await.unwrap();
+}
+
+fn review_description_command(key: &str) -> OrganizationBrandingCommand {
+    OrganizationBrandingCommand::board(ORG, "board-one", key, 0, 7)
+        .with_description(Some("Only this field changes".into()))
+}
+
+// End of reviewed authorization fixture helpers.
+
+#[tokio::test]
+async fn review_branding_replay_validates_fields_omitted_by_the_original_command() {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    let first = store
+        .branding(&actor(), review_description_command("snapshot-source"))
+        .await
+        .unwrap();
+    for (key, field, value) in [
+        ("empty-snapshot-name", "name", ""),
+        ("invalid-snapshot-color", "brand_color", "not-a-color"),
+        ("invalid-snapshot-logo", "logo_asset_id", "not-a-uuid"),
+    ] {
+        review_forged_snapshot(&db, &first.receipt, key, field, value).await;
+        assert!(
+            matches!(
+                store
+                    .branding(&actor(), review_description_command(key))
+                    .await,
+                Err(StoreError::InvalidReceipt)
+            ),
+            "accepted corrupt omitted {field}"
+        );
+    }
+    assert_eq!(db.name().await, "Original");
+    assert_eq!(db.counts().await, (1, 4, 4));
+}
+
+#[tokio::test]
+async fn review_invalid_existing_snapshot_cannot_be_committed_as_an_immutable_receipt() {
+    let db = Database::start().await;
+    sqlx::query("UPDATE organizations SET brand_color='invalid-old-color' WHERE id=$1::uuid")
+        .bind(ORG)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let store = MutationStore::new(db.pool.clone());
+    assert!(matches!(
+        store
+            .branding(&actor(), review_description_command("invalid-base"))
+            .await,
+        Err(StoreError::InvalidReceipt)
+    ));
+    let description: Option<String> =
+        sqlx::query_scalar("SELECT description FROM organizations WHERE id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(description, None);
+    assert_eq!(db.counts().await, (0, 0, 0));
+}
+
+#[tokio::test]
+async fn review_historical_valid_snapshot_does_not_require_a_deleted_logo_asset() {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    let command = branding("historical-logo", 0).with_logo_asset_id(Some(ASSET.into()));
+    let original = store.branding(&actor(), command.clone()).await.unwrap();
+    store
+        .branding(
+            &actor(),
+            branding("remove-historical-logo", 1).with_logo_asset_id(None),
+        )
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM assets WHERE id=$1::uuid")
+        .bind(ASSET)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let replay = store.branding(&actor(), command).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, original.receipt);
+    assert_eq!(db.counts().await, (2, 2, 2));
+}
+
+#[tokio::test]
+async fn review_logical_identity_still_binds_the_authorized_principal() {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    store
+        .branding(&actor(), branding("principal-bound", 0))
+        .await
+        .unwrap();
+    let other_actor = AuthorizedActor::board_after_authorization(ORG, "board-two");
+    let different = OrganizationBrandingCommand::board(ORG, "board-two", "principal-bound", 0, 7)
+        .with_name(Some("Changed".into()));
+    assert!(matches!(
+        store.branding(&other_actor, different).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    assert_eq!(db.counts().await, (1, 1, 1));
+}
+
+// End of complete-snapshot and principal-binding regressions.
+
+#[tokio::test]
+async fn review_partial_snapshot_cannot_silently_default_an_omitted_stored_field() {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    let first = store
+        .branding(
+            &actor(),
+            review_description_command("complete-snapshot-source"),
+        )
+        .await
+        .unwrap();
+    let activity: String = sqlx::query_scalar("INSERT INTO activity_log(org_id,actor_id,action,entity_type,entity_id) VALUES($1::uuid,'synthetic','organization.branding_updated','organization',$1::text) RETURNING id::text")
+        .bind(ORG).fetch_one(&db.pool).await.unwrap();
+    let mut result = serde_json::to_value(&first.receipt).unwrap();
+    result["activity_id"] = serde_json::json!(activity);
+    result["result"]["state"]
+        .as_object_mut()
+        .unwrap()
+        .remove("brand_color");
+    sqlx::query("INSERT INTO organization_mutation_receipts(org_id,idempotency_key,command_kind,command_fingerprint,receipt_format,outcome,resulting_version,fence_epoch,activity_id,result) VALUES($1::uuid,'incomplete-snapshot','organization_branding',$2,1,'applied',1,7,$3::uuid,$4::jsonb)")
+        .bind(ORG).bind(&first.receipt.fingerprint).bind(activity).bind(result.to_string())
+        .execute(&db.pool).await.unwrap();
+    assert!(matches!(
+        store
+            .branding(&actor(), review_description_command("incomplete-snapshot"))
+            .await,
+        Err(StoreError::InvalidReceipt)
+    ));
+    assert_eq!(db.name().await, "Original");
+    assert_eq!(db.counts().await, (1, 2, 2));
+}
+
+// End of review snapshot-completeness regression.
+
+async fn full_project_goal_set(db: &Database) {
+    sqlx::query("INSERT INTO goals(id,org_id,title) SELECT md5('synthetic-capacity-' || n::text)::uuid,$1::uuid,'Capacity fixture ' || n::text FROM generate_series(1,1023) AS n")
+        .bind(ORG).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO project_goals(project_id,goal_id,org_id) SELECT $1::uuid,id,org_id FROM goals WHERE org_id=$2::uuid AND id<>$3::uuid")
+        .bind(PROJECT).bind(ORG).bind(GOAL_TWO).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE projects SET goal_id=$2::uuid WHERE id=$1::uuid")
+        .bind(PROJECT)
+        .bind(GOAL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+}
+
+async fn project_goal_count(db: &Database) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM project_goals WHERE org_id=$1::uuid AND project_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn link_capacity_append_cannot_create_a_state_the_adapter_cannot_read() {
+    let db = Database::start().await;
+    full_project_goal_set(&db).await;
+    assert_eq!(project_goal_count(&db).await, 1024);
+    let store = MutationStore::new(db.pool.clone());
+    let mut request = link("over-capacity", 0, Operation::Attach, Some(GOAL));
+    request.command.goal_id = GOAL_TWO.into();
+    assert!(matches!(
+        store.project_goal(&actor(), request).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert_eq!(project_goal_count(&db).await, 1024);
+    assert_eq!(db.counts().await, (0, 0, 0));
+}
+
+#[tokio::test]
+async fn link_capacity_noop_and_detach_remain_available_at_the_read_bound() {
+    let db = Database::start().await;
+    full_project_goal_set(&db).await;
+    let store = MutationStore::new(db.pool.clone());
+    let noop = store
+        .project_goal(
+            &actor(),
+            link("capacity-noop", 0, Operation::Attach, Some(GOAL)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(noop.receipt.outcome, Outcome::Noop);
+    let removable: String = sqlx::query_scalar("SELECT goal_id::text FROM project_goals WHERE org_id=$1::uuid AND project_id=$2::uuid AND goal_id<>$3::uuid ORDER BY goal_id LIMIT 1")
+        .bind(ORG).bind(PROJECT).bind(GOAL).fetch_one(&db.pool).await.unwrap();
+    let mut detach = link("capacity-detach", 0, Operation::Detach, Some(GOAL));
+    detach.command.goal_id = removable;
+    store.project_goal(&actor(), detach).await.unwrap();
+    assert_eq!(project_goal_count(&db).await, 1023);
+    let mut attach = link("capacity-refill", 1, Operation::Attach, Some(GOAL));
+    attach.command.goal_id = GOAL_TWO.into();
+    store.project_goal(&actor(), attach).await.unwrap();
+    assert_eq!(project_goal_count(&db).await, 1024);
+    assert_eq!(db.counts().await, (2, 3, 3));
+}
+
+#[tokio::test]
+async fn link_capacity_bulk_scope_check_rejects_a_foreign_goal_in_an_existing_link() {
+    let db = Database::start().await;
+    sqlx::query(
+        "INSERT INTO project_goals(project_id,goal_id,org_id) VALUES($1::uuid,$2::uuid,$3::uuid)",
+    )
+    .bind(PROJECT)
+    .bind(FOREIGN_GOAL)
+    .bind(ORG)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let store = MutationStore::new(db.pool.clone());
+    assert!(matches!(
+        store
+            .project_goal(
+                &actor(),
+                link("corrupt-existing-goal", 0, Operation::Attach, Some(GOAL))
+            )
+            .await,
+        Err(StoreError::NotFound)
+    ));
+    assert_eq!(db.counts().await, (0, 0, 0));
+    assert_eq!(project_goal_count(&db).await, 1);
+}

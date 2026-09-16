@@ -1,7 +1,9 @@
 use crate::{
     AuthorizedActor, CommittedMutation, LinkRequest, Outcome, Receipt, ResultState, StoreError,
 };
-use rudder_organization_mutation_core::OrganizationBrandingCommand;
+use rudder_organization_mutation_core::{
+    OrganizationBrandingCommand, OrganizationSettingsSnapshot,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -45,7 +47,8 @@ impl Metadata {
             &cmd.organization_id,
             &cmd.idempotency_key,
             "organization_branding",
-            json!([1, cmd.fingerprint()?, actor.run_id]),
+            // Run provenance belongs to the original activity, not logical command identity.
+            json!([1, cmd.fingerprint()?]),
             cmd.expected_version,
             cmd.fence_epoch,
             ExpectedResult::Branding(cmd.clone()),
@@ -69,12 +72,7 @@ impl Metadata {
             &cmd.organization_id,
             &cmd.idempotency_key,
             "project_goal_link",
-            json!([
-                1,
-                cmd.fingerprint()?,
-                request.primary_goal_after,
-                actor.run_id
-            ]),
+            json!([1, cmd.fingerprint()?, request.primary_goal_after]),
             cmd.expected_version,
             cmd.fence_epoch,
             ExpectedResult::Link(request.clone()),
@@ -258,7 +256,13 @@ pub(crate) async fn replay(
     if row.try_get::<i32, _>("receipt_format")? != 1 || text.len() > MAX_RESULT_BYTES {
         return Err(StoreError::InvalidReceipt);
     }
-    let receipt: Receipt = serde_json::from_str(&text).map_err(|_| StoreError::InvalidReceipt)?;
+    let stored: Value = serde_json::from_str(&text).map_err(|_| StoreError::InvalidReceipt)?;
+    let receipt: Receipt =
+        serde_json::from_value(stored.clone()).map_err(|_| StoreError::InvalidReceipt)?;
+    // A full receipt must not silently default omitted snapshot members.
+    if serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)? != stored {
+        return Err(StoreError::InvalidReceipt);
+    }
     let outcome = if receipt.outcome == Outcome::Applied {
         "applied"
     } else {
@@ -361,6 +365,7 @@ fn validate_original_result(meta: &Metadata, receipt: &Receipt) -> Result<(), St
     }
     let valid = match (&meta.expected, &receipt.result) {
         (ExpectedResult::Branding(cmd), ResultState::OrganizationBranding { state }) => {
+            validate_branding_snapshot(state)?;
             receipt.outcome == Outcome::Applied
                 && cmd.name.as_ref().is_none_or(|name| *name == state.name)
                 && cmd
@@ -400,4 +405,30 @@ fn validate_original_result(meta: &Metadata, receipt: &Receipt) -> Result<(), St
         return Err(StoreError::InvalidReceipt);
     }
     Ok(())
+}
+
+/// Validate the complete immutable snapshot, including fields the patch omitted.
+/// Historical asset references are syntax-checked, never resolved against live state.
+pub(crate) fn validate_branding_snapshot(
+    state: &OrganizationSettingsSnapshot,
+) -> Result<(), StoreError> {
+    uuid(&state.organization_id).map_err(|_| StoreError::InvalidReceipt)?;
+    signed(state.version).map_err(|_| StoreError::InvalidReceipt)?;
+    signed(state.fence_epoch).map_err(|_| StoreError::InvalidReceipt)?;
+    if let Some(asset) = &state.logo_asset_id {
+        uuid(asset).map_err(|_| StoreError::InvalidReceipt)?;
+    }
+    OrganizationBrandingCommand::board(
+        &state.organization_id,
+        "snapshot-validation",
+        "snapshot-validation",
+        state.version,
+        state.fence_epoch,
+    )
+    .with_name(Some(state.name.clone()))
+    .with_description(state.description.clone())
+    .with_brand_color(state.brand_color.clone())
+    .with_logo_asset_id(state.logo_asset_id.clone())
+    .validate()
+    .map_err(|_| StoreError::InvalidReceipt)
 }

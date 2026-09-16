@@ -45,6 +45,7 @@ pub(crate) async fn apply(
     let outcome = state.apply(command)?;
     let next = outcome.state().clone();
     transaction::signed(next.version)?; // Reject BIGINT overflow before the first write.
+    transaction::validate_branding_snapshot(&next)?;
     sqlx::query("UPDATE organizations SET name=$2,description=$3,brand_color=$4,updated_at=now() WHERE id=$1::uuid")
         .bind(&meta.org).bind(&next.name).bind(&next.description).bind(&next.brand_color).execute(&mut **tx).await?;
     if logo != next.logo_asset_id {

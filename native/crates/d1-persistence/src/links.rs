@@ -5,6 +5,8 @@ use serde_json::json;
 use sqlx::Row;
 use std::collections::BTreeSet;
 
+const MAX_PROJECT_GOALS: usize = 1024;
+
 pub(crate) async fn apply(
     tx: &mut Tx<'_>,
     actor: &AuthorizedActor,
@@ -33,15 +35,13 @@ pub(crate) async fn apply(
     if corrupt {
         return Err(StoreError::InvalidProjection);
     }
-    let ids: Vec<String> = sqlx::query_scalar("SELECT goal_id::text FROM project_goals WHERE project_id=$1::uuid AND org_id=$2::uuid LIMIT 1025 FOR UPDATE")
+    let ids: Vec<String> = sqlx::query_scalar("SELECT goal_id::text FROM project_goals WHERE project_id=$1::uuid AND org_id=$2::uuid ORDER BY goal_id LIMIT 1025 FOR UPDATE")
         .bind(&command.project_id).bind(&meta.org).fetch_all(&mut **tx).await?;
-    if ids.len() > 1024 {
+    if ids.len() > MAX_PROJECT_GOALS {
         return Err(StoreError::InvalidInput);
     }
+    validate_goal_set(tx, &meta.org, &ids).await?;
     let mut goals: BTreeSet<String> = ids.into_iter().collect();
-    for id in &goals {
-        goal(tx, &meta.org, id).await?;
-    }
     if let Some(primary) = &previous_primary {
         goal(tx, &meta.org, primary).await?;
         if !goals.contains(primary) {
@@ -62,7 +62,11 @@ pub(crate) async fn apply(
         LinkMutationOutcome::AlreadyApplied { .. } => return Err(StoreError::InvalidReceipt),
     };
     transaction::signed(next_version)?;
+    // Never commit a state beyond the adapter's own bounded read contract.
     if next_linked {
+        if !linked && goals.len() == MAX_PROJECT_GOALS {
+            return Err(StoreError::InvalidInput);
+        }
         goals.insert(command.goal_id.clone());
     } else {
         goals.remove(&command.goal_id);
@@ -121,6 +125,25 @@ pub(crate) async fn apply(
     )
     .await
 }
+
+async fn validate_goal_set(tx: &mut Tx<'_>, org: &str, ids: &[String]) -> Result<(), StoreError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // One scoped query instead of one database round trip per association.
+    let found: Vec<String> = sqlx::query_scalar(
+        "SELECT id::text FROM goals WHERE org_id=$1::uuid AND id=ANY($2::text[]::uuid[]) ORDER BY id FOR UPDATE",
+    )
+    .bind(org)
+    .bind(ids)
+    .fetch_all(&mut **tx)
+    .await?;
+    if found.len() != ids.len() {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
 async fn goal(tx: &mut Tx<'_>, org: &str, id: &str) -> Result<(), StoreError> {
     let found =
         sqlx::query("SELECT id FROM goals WHERE id=$1::uuid AND org_id=$2::uuid FOR UPDATE")
