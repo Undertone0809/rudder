@@ -321,6 +321,7 @@ describe("desktop stage-server", () => {
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: "",
         RUDDER_DESKTOP_BUNDLE_POSTGRES_RUNTIME: "1",
+        RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: "0",
         RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR: pgBinDir,
       },
       encoding: "utf8",
