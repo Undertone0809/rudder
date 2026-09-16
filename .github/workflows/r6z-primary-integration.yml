@@ -1,0 +1,199 @@
+name: Primary Rust checkpoint integration
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-primary-integration.yml
+permissions:
+  contents: read
+jobs:
+  integrate:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Inspect existing delivery inventory and recover hash-bound bearer files
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8',maxBuffer:16*1024*1024}).trim();
+            const base='366c64ae0584dd75101c78c5d742107af386942a';
+            assert.equal(git('rev-parse','HEAD^'),base);
+            const comments=await github.paginate(github.rest.issues.listComments,{...context.repo,issue_number:172,per_page:100});
+            const delivered=comments.filter(c=>c.user?.login==='chatgpt-codex-connector[bot]');
+            for(const c of delivered) {
+              const paths=[...new Set([...c.body.matchAll(/^diff --git a\/(native\/crates\/[^/]+)\//gm)].map(m=>m[1]))];
+              if(paths.length) core.info('DELIVERY_INVENTORY='+JSON.stringify({id:c.id,created:c.created_at,updated:c.updated_at,paths}));
+            }
+            const prefix='native/crates/bearer-auth-service/';
+            const matches=delivered.map(c=>({comment:c,blocks:[...c.body.matchAll(/^```(?:diff|patch)[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm)].map(m=>m[1])})).filter(d=>d.blocks.some(p=>p.includes(`diff --git a/${prefix}`)));
+            assert.ok(matches.length,'Existing bearer source delivery is required');
+            const {comment,blocks}=matches.at(-1);
+            const segments=blocks.join('\n').split(/(?=^diff --git )/m).filter(s=>s.startsWith(`diff --git a/${prefix}`));
+            const expected=[];
+            for(const segment of segments) {
+              const header=/^diff --git a\/([^\n ]+) b\/([^\n ]+)\r?\n/.exec(segment);
+              assert.ok(header && header[1]===header[2] && header[1].startsWith(prefix));
+              assert.ok(!header[1].split('/').some(p=>p==='..'||p==='.git'));
+              assert.ok(/^new file mode 100644$/m.test(segment),'Only regular new source files are recoverable');
+              const index=/^index 0+\.\.([0-9a-f]{7,40})$/m.exec(segment);
+              assert.ok(index,`Missing original file hash: ${header[1]}`);
+              expected.push({file:header[1],sha:index[1]});
+            }
+            const patch=segments.join('');
+            const patchFile=path.join(process.env.RUNNER_TEMP,'bearer-recount.diff');
+            fs.writeFileSync(patchFile,patch);
+            try {
+              git('apply','--check','--recount',patchFile);
+              git('apply','--recount',patchFile);
+              for(const {file,sha} of expected) assert.ok(git('hash-object',file).startsWith(sha),`Recounted source differs from delivered hash: ${file}`);
+              const manifest='native/Cargo.toml',text=fs.readFileSync(manifest,'utf8');
+              assert.equal(text.split('members = [\n').length,2);
+              fs.writeFileSync(manifest,text.replace('members = [\n','members = [\n  "crates/bearer-auth-service",\n'));
+              fs.copyFileSync('native/Cargo.lock',path.join(process.env.RUNNER_TEMP,'before.lock'));
+              execFileSync('cargo',['metadata','--manifest-path','native/Cargo.toml','--format-version','1'],{stdio:['ignore','ignore','inherit'],timeout:240000});
+              execFileSync('python3',['-c',`import os,pathlib,tomllib,json\na=tomllib.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'before.lock').read_text())\nb=tomllib.loads(pathlib.Path('native/Cargo.lock').read_text())\ndef identities(v):\n return {(p['name'],p['version'],p['source'],p.get('checksum')) for p in v['package'] if 'source' in p}\nbefore,after=identities(a),identities(b)\nassert before<=after\nprint('ADDITIVE_DEPENDENCIES='+json.dumps(sorted(after-before)))`],{stdio:'inherit'});
+              core.info('BEARER_RECOVERED='+JSON.stringify({commentId:comment.id,files:expected}));
+              core.exportVariable('BEARER_RECOVERED','1');
+            } catch(error) {
+              core.info('BEARER_RECOVERY_BLOCKED='+String(error));
+              for(const s of segments) core.info('BEARER_PATCH_HEADER='+s.split('\n').slice(0,6).join('|'));
+              const lines=patch.split('\n');
+              core.info('BEARER_PATCH_BOUNDARY='+JSON.stringify(lines.slice(335,375)));
+              core.info('BEARER_PATCH_END='+JSON.stringify(lines.slice(-20)));
+              git('restore',`--source=${base}`,'--','native/Cargo.toml','native/Cargo.lock');
+              fs.rmSync(prefix,{recursive:true,force:true});
+            }
+      - name: Add PostgreSQL startup diagnostics and isolate its Unix socket
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const file='native/crates/agent-permissions-service/tests/support/mod.rs';
+          let text=fs.readFileSync(file,'utf8');
+          const original='fn checked(command: &mut Command) {\n    let output = command.output().unwrap();\n    assert!(\n        output.status.success(),\n        "disposable PostgreSQL failed: {}",\n        String::from_utf8_lossy(&output.stderr)\n    );\n}';
+          const improved='fn checked(command: &mut Command) {\n    let arguments: Vec<_> = command.get_args().collect();\n    let log = arguments.windows(2).find(|pair| pair[0] == "-l")\n        .map(|pair| PathBuf::from(pair[1]));\n    let output = command.output().unwrap();\n    assert!(\n        output.status.success(),\n        "disposable PostgreSQL failed: {}\\n{}",\n        String::from_utf8_lossy(&output.stderr),\n        log.and_then(|path| fs::read_to_string(path).ok()).unwrap_or_default()\n    );\n}';
+          assert.equal(text.split(original).length,2);
+          text=text.replace(original,improved);
+          fs.writeFileSync(file,text);
+          const before='format!("-h 127.0.0.1 -p {port} -F")';
+          assert.equal(text.split(before).length,2);
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/permissions-fixed.rs',text.replace(before,'format!("-h 127.0.0.1 -p {port} -F -c unix_socket_directories=\\\"\\\"")'));
+          NODE
+      - name: Install disposable test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+          corepack enable && corepack prepare pnpm@9.15.4 --activate
+          pnpm install --frozen-lockfile
+      - name: Reproduce permissions fixture startup failure before isolation
+        run: |
+          set +e
+          cargo test --manifest-path native/Cargo.toml --locked -p rudder-agent-permissions-service --test http -- --test-threads=1 > "$RUNNER_TEMP/permissions-red.log" 2>&1
+          code=$?
+          set -e
+          echo "PRIMARY_CHECK=permissions-before-isolation exit=$code"
+          cat "$RUNNER_TEMP/permissions-red.log"
+          test "$code" -ne 0
+          grep -E 'Permission denied|could not create lock file' "$RUNNER_TEMP/permissions-red.log"
+      - name: Apply fixture repair and export exact reviewable candidate source
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base='366c64ae0584dd75101c78c5d742107af386942a';
+            const file='native/crates/agent-permissions-service/tests/support/mod.rs';
+            fs.copyFileSync(process.env.RUNNER_TEMP+'/permissions-fixed.rs',file);
+            execFileSync('cargo',['fmt','--manifest-path','native/Cargo.toml','--all'],{stdio:'inherit'});
+            const workflow='.github/workflows/r6z-primary-integration.yml';
+            git('rm','--cached','--',workflow); fs.unlinkSync(workflow);
+            const groups=[[file]];
+            if(process.env.BEARER_RECOVERED==='1') groups.push(['native/Cargo.toml','native/Cargo.lock','native/crates/bearer-auth-service']);
+            let previous='61f04fe1e444571cf9b982189ac7856cc099f282';
+            for(const group of groups) {
+              git('add','--',...group);
+              git('diff','--cached','--check',previous);
+              const files=git('diff','--cached','--name-only',previous).split('\n').filter(Boolean);
+              const entries=[];
+              for(const path of files) {
+                const {data}=await github.rest.git.createBlob({...context.repo,content:fs.readFileSync(path,'utf8'),encoding:'utf-8'});
+                assert.equal(data.sha,git('hash-object',path));
+                entries.push({path,mode:'100644',type:'blob',sha:data.sha});
+              }
+              const {data:tree}=await github.rest.git.createTree({...context.repo,base_tree:previous,tree:entries});
+              assert.equal(tree.sha,git('write-tree'));
+              core.info('PRIMARY_SOURCE_STAGE='+JSON.stringify({tree:tree.sha,files:entries}));
+              previous=tree.sha;
+            }
+            git('diff','--exit-code');
+      - name: Test the repaired permissions service and full native workspace
+        if: always()
+        run: |
+          set +e
+          failed=0
+          for command in \
+            'cargo fmt --manifest-path native/Cargo.toml --all -- --check' \
+            'cargo clippy --manifest-path native/Cargo.toml --locked --workspace --all-targets -- -D warnings' \
+            'cargo test --manifest-path native/Cargo.toml --locked -p rudder-agent-permissions-service -- --test-threads=1' \
+            'cargo test --manifest-path native/Cargo.toml --locked --workspace -- --test-threads=1'; do
+            timeout 900 bash -c "$command" > "$RUNNER_TEMP/current-check.log" 2>&1
+            code=$?
+            echo "PRIMARY_CHECK=$command exit=$code"
+            if test "$code" -ne 0; then cat "$RUNNER_TEMP/current-check.log"; failed=1; else grep -E 'Running|test result:' "$RUNNER_TEMP/current-check.log" || true; fi
+          done
+          exit "$failed"
+  baseline-diagnostics:
+    if: github.event.pull_request.number == 172
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            for(const id of [104904707153,104937968931]) {
+              const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:id});
+              const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+              const indices=new Set();
+              for(let i=0;i<lines.length;i++) if(/FAIL |Failed Tests|AssertionError|Error:|Test Files|Tests  |Error: Unable|##\[error\]/.test(lines[i])&&!/console\.error/.test(lines[i])) for(let j=Math.max(0,i-2);j<Math.min(lines.length,i+14);j++) indices.add(j);
+              core.info('BASELINE_JOB='+id);
+              for(const i of [...indices].sort((a,b)=>a-b).slice(-180)) core.info(lines[i]);
+            }
+  diagnostics:
+    needs: integrate
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...context.repo,run_id:context.runId});
+            const job=jobs.jobs.find(j=>j.name==='integrate');
+            const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:job.id});
+            const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const indices=new Set();
+            for(let i=0;i<lines.length;i++) if(/^\d{4}-.+(DELIVERY_INVENTORY=|BEARER_RECOVERED=|BEARER_RECOVERY_BLOCKED=|BEARER_PATCH_|PRIMARY_SOURCE_STAGE=|PRIMARY_CHECK=|error\[|error:|test result:|panicked at|FAILED|AssertionError|Permission denied|could not create lock file)/.test(lines[i])) for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+12);j++) indices.add(j);
+            for(const i of [...indices].sort((a,b)=>a-b).slice(0,430)) core.info(lines[i]);
+            core.info('Primary integration verification: '+job.conclusion);
