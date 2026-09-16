@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -29,7 +29,7 @@ jobs:
             const {execFileSync}=require('child_process');
             const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
             const base='ae0a25d05ad22e1694579daa79abf381daa20787';
-            assert.equal(git('rev-parse','HEAD^'),base);
+            assert.equal(git('rev-parse','HEAD^'),'5f3cbfbd60c8a31b6d599e10070ad0299b6828ab');
             assert.equal(git('diff','--name-only',base,'HEAD'),'.github/workflows/r6z-qualify-agent-keys.yml');
             const files={
               'Cargo.toml':'1ca0b29bc1fba8fc657e376b3a6102755e7c90ab',
@@ -47,6 +47,9 @@ jobs:
               fs.writeFileSync(dest,Buffer.from(data.content,'base64'));
               assert.equal(git('hash-object',dest),sha);
             }
+            const cargo=path.join(root,'Cargo.toml'), original=fs.readFileSync(cargo,'utf8');
+            assert.equal(original.split('actix-web = "4"').length,2);
+            fs.writeFileSync(cargo,original.replace('actix-web = "4"','actix-web = { version = "4.11", default-features = false, features = ["macros"] }'));
             const {data}=await github.rest.git.getBlob({...context.repo,file_sha:'23c9173e675cda0fa3a53014cc580dd4e712f7d5'});
             assert.equal(data.sha,'23c9173e675cda0fa3a53014cc580dd4e712f7d5');
             fs.appendFileSync(path.join(root,'tests/postgres.rs'),Buffer.from(data.content,'base64'));
@@ -65,12 +68,15 @@ jobs:
         run: |
           cargo check --manifest-path native/Cargo.toml -p rudder-agent-key-service
           python3 - <<'PY'
-          import os, pathlib, tomllib
+          import os, pathlib, tomllib, json
           before=tomllib.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'original.lock').read_text())
           after=tomllib.loads(pathlib.Path('native/Cargo.lock').read_text())
           def external(lock):
               return {(p['name'],p['version'],p['source']):p for p in lock['package'] if 'source' in p}
-          assert external(before)==external(after), 'Existing external dependency identities must not change'
+          a,b=external(before),external(after)
+          for key in sorted(a.keys() | b.keys()):
+              if a.get(key)!=b.get(key): print('LOCK_DIFFERENCE',key,a.get(key),b.get(key))
+          assert a==b, 'Existing external dependency identities must not change'
           PY
       - name: Format and verify the complete native workspace
         run: |
@@ -119,7 +125,7 @@ jobs:
             const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:job.id});
             const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
             const selected=new Set();
-            for(let i=0;i<lines.length;i++) if(/error\[|error:|AssertionError|FAILED|test result:|AGENT_KEYS_TREE=/.test(lines[i])) {
+            for(let i=0;i<lines.length;i++) if(/error\[|error:|AssertionError|FAILED|test result:|AGENT_KEYS_TREE=|LOCK_DIFFERENCE/.test(lines[i])) {
               for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+14);j++) selected.add(j);
             }
             for(const i of [...selected].sort((a,b)=>a-b).slice(-210)) core.info(lines[i]);
