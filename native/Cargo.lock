@@ -1400,6 +1400,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-bearer-auth-service"
+version = "0.7.22"
+dependencies = [
+ "actix-service",
+ "actix-web",
+ "base64",
+ "hmac",
+ "rudder-agent-key-service",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-cli-mcp-contract-core"
 version = "0.7.22"
 dependencies = [
