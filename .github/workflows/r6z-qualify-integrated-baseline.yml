@@ -38,7 +38,7 @@ jobs:
             const merge = 'df9fd0b92656bd09a119c9b91a751a76d707e49b';
             const workflow = '.github/workflows/r6z-qualify-integrated-baseline.yml';
             assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
-            assert.equal(git('rev-parse','HEAD^'),head);
+            assert.equal(git('rev-parse','HEAD^'),'fedd7728b261cc57aa9a0dc5dcaa7be55710c5b3');
             assert.equal(git('diff','--name-only',head,'HEAD'),workflow);
             const {data:commit} = await github.rest.git.getCommit({...context.repo,commit_sha:merge});
             assert.deepEqual(commit.parents.map(p=>p.sha),[main,head]);
@@ -84,10 +84,11 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import assert from 'node:assert/strict';
-          import {readCandidateManifest,migrationCompatibilityMatrix} from './scripts/release-compatibility-matrix.mjs';
+          import {readCandidateManifest} from './scripts/release-compatibility-matrix.mjs';
           const manifest=readCandidateManifest();
           assert.equal(manifest.entries.at(-1).tag,'0163_organization_mutations');
           assert.equal(manifest.entries.length,164);
+          assert.equal(manifest.fingerprint,'4315219366d44c9350db4b23977b5d86df80aee341a2253ae0fe7a5239c8cbd8');
           const file='scripts/release-compatibility-matrix.mjs';
           const before=fs.readFileSync(file,'utf8');
           const old='  "0.7.22": {\n    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",';
@@ -110,7 +111,7 @@ jobs:
         run: |
           node scripts/release-compatibility-matrix.mjs --candidate-version 0.7.22 --channel stable
           node scripts/release-compatibility-matrix.mjs --candidate-version 0.7.22-canary.1 --channel canary
-          node --test scripts/release-compatibility-matrix.test.mjs
+          pnpm exec vitest run --root scripts --config vitest.config.ts release-compatibility-matrix.test.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
