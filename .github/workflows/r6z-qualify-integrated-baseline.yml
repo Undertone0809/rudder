@@ -1,0 +1,163 @@
+name: Qualify integrated Rust migration baseline
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-qualify-integrated-baseline.yml
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/r6z-120-project-goal-link-core-luna-fast-20260914'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: '1'
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Materialize the verified two-parent integration candidate
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
+            const head = '47ae2915597afa601b2ffc26d3d36f40e731754a';
+            const main = '81cff2958923cb9009b23a457cd1b9bfcc9d4b69';
+            const merge = 'df9fd0b92656bd09a119c9b91a751a76d707e49b';
+            const workflow = '.github/workflows/r6z-qualify-integrated-baseline.yml';
+            assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
+            assert.equal(git('rev-parse','HEAD^'),head);
+            assert.equal(git('diff','--name-only',head,'HEAD'),workflow);
+            const {data:commit} = await github.rest.git.getCommit({...context.repo,commit_sha:merge});
+            assert.deepEqual(commit.parents.map(p=>p.sha),[main,head]);
+            assert.equal(commit.tree.sha,'8830e5750ba6022902f537a2d1fa2a5e987d83d5');
+            execFileSync('git',['fetch','--no-tags','origin',merge]);
+            assert.equal(git('rev-parse',`${merge}^{tree}`),commit.tree.sha);
+            git('read-tree','--reset','-u',merge);
+            if (fs.existsSync(workflow)) fs.unlinkSync(workflow);
+            assert.equal(git('write-tree'),commit.tree.sha);
+            const manifest=fs.readFileSync('native/Cargo.toml','utf8');
+            assert.match(manifest,/version = "0\.7\.22"/);
+            const file='native/Cargo.lock';
+            const before=fs.readFileSync(file,'utf8');
+            const changed=[];
+            const after=before.split('[[package]]').map(block=>{
+              const name=/^\nname = "([^"]+)"/m.exec(block)?.[1];
+              if (!name?.startsWith('rudder-') || /\nsource = /.test(block) || !/\nversion = "0\.7\.21"\n/.test(block)) return block;
+              changed.push(name);
+              return block.replace('\nversion = "0.7.21"\n','\nversion = "0.7.22"\n');
+            }).join('[[package]]');
+            assert.deepEqual(changed.sort(),['rudder-d1-persistence','rudder-organization-mutation-core','rudder-project-goal-link-core'].sort());
+            fs.writeFileSync(file,after);
+            git('add','--',file);
+            core.info(`Integrated source ${merge}; only three new workspace lock entries synchronized.`);
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: corepack enable && corepack prepare pnpm@9.15.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Reproduce the missing development migration declaration
+        shell: bash
+        run: |
+          set +e
+          node scripts/release-compatibility-matrix.mjs --candidate-version 0.7.22 --channel stable > "$RUNNER_TEMP/compat-red.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/compat-red.log"
+          test "$status" -ne 0
+          grep -F 'but 0.7.22 declares 085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db' "$RUNNER_TEMP/compat-red.log"
+      - name: Declare the reviewed additive schema and prevent overlapping packaging builds
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import {readCandidateManifest,migrationCompatibilityMatrix} from './scripts/release-compatibility-matrix.mjs';
+          const manifest=readCandidateManifest();
+          assert.equal(manifest.entries.at(-1).tag,'0163_organization_mutations');
+          assert.equal(manifest.entries.length,164);
+          const file='scripts/release-compatibility-matrix.mjs';
+          const before=fs.readFileSync(file,'utf8');
+          const old='  "0.7.22": {\n    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",';
+          assert.equal(before.split(old).length,2);
+          fs.writeFileSync(file,before.replace(old,`  "0.7.22": {\n    candidateFingerprint: "${manifest.fingerprint}",`));
+          console.log(`Reviewed development schema fingerprint: ${manifest.fingerprint}`);
+          const pkgFile='package.json';
+          const text=fs.readFileSync(pkgFile,'utf8');
+          const pkg=JSON.parse(text);
+          assert.equal(pkg.scripts.build,'pnpm -r build');
+          const replacement='pnpm -r --filter "!@rudderhq/desktop" build && pnpm --filter @rudderhq/desktop build';
+          const oldBuild='"build": "pnpm -r build"';
+          assert.equal(text.split(oldBuild).length,2);
+          fs.writeFileSync(pkgFile,text.replace(oldBuild,`"build": ${JSON.stringify(replacement)}`));
+          const after=JSON.parse(fs.readFileSync(pkgFile,'utf8'));
+          after.scripts.build=pkg.scripts.build;
+          assert.deepEqual(after,pkg);
+          NODE
+      - name: Verify every declared immutable historical release fixture
+        run: |
+          node scripts/release-compatibility-matrix.mjs --candidate-version 0.7.22 --channel stable
+          node scripts/release-compatibility-matrix.mjs --candidate-version 0.7.22-canary.1 --channel canary
+          node --test scripts/release-compatibility-matrix.test.mjs
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Install disposable PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          test -x "$bin_dir/initdb"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+      - name: Locked full native qualification
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check
+          cargo clippy --manifest-path native/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path native/Cargo.toml --locked --workspace -- --test-threads=1
+      - name: Full repository lint and typecheck
+        run: pnpm lint && pnpm -r typecheck
+      - name: Build the real native release binaries
+        run: pnpm native:build
+      - name: Complete Node baseline including actual migration upgrades
+        run: pnpm test:run --maxWorkers=2
+      - name: Complete root build with non-overlapping Desktop packaging
+        run: pnpm build
+      - name: Prepare separate history-preserving integration and repair trees
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
+            const merge='df9fd0b92656bd09a119c9b91a751a76d707e49b';
+            const files=['native/Cargo.lock','scripts/release-compatibility-matrix.mjs','package.json'];
+            git('add','--',...files);
+            git('diff','--cached','--check',merge);
+            git('diff','--exit-code');
+            assert.deepEqual(git('diff','--cached','--name-only',merge).split('\n').sort(),[...files].sort());
+            let base_tree='8830e5750ba6022902f537a2d1fa2a5e987d83d5';
+            const trees=[];
+            for (const file of files) {
+              const {data:blob} = await github.rest.git.createBlob({...context.repo,content:fs.readFileSync(file,'utf8'),encoding:'utf-8'});
+              assert.equal(blob.sha,git('hash-object',file));
+              const {data:tree} = await github.rest.git.createTree({...context.repo,base_tree,tree:[{path:file,mode:'100644',type:'blob',sha:blob.sha}]});
+              base_tree=tree.sha;
+              trees.push({file,blob:blob.sha,tree:tree.sha});
+            }
+            assert.equal(base_tree,git('write-tree'));
+            core.info(`QUALIFIED_INTEGRATION_TREES=${JSON.stringify(trees)}`);
+            core.info(git('diff','--cached',merge,'--',...files));
+            await core.summary.addHeading('Integrated migration baseline').addRaw(JSON.stringify({main:'81cff2958923cb9009b23a457cd1b9bfcc9d4b69',originalHead:'47ae2915597afa601b2ffc26d3d36f40e731754a',trees,branchAdvanced:false,productionAuthorityChanged:false},null,2)).write();
