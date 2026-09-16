@@ -5,11 +5,15 @@ members = [
   "crates/archive-core",
   "crates/authority-core",
   "crates/auth-core",
+  "crates/cli-mcp-contract-core",
   "crates/native-protocol",
   "crates/plugin-archive-core",
   "crates/update-helper-core",
   "crates/run-evidence-core",
   "crates/runtime-payload-core",
+  "crates/runtime-core",
+  "crates/migration-core",
+  "crates/runtime-attempt-core",
   "crates/server-foundation",
   "crates/workspace-manifest-core",
   "bins/rudder-native",
@@ -20,6 +24,6 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.21"
+version = "0.7.22"
 edition = "2024"
 publish = false

@@ -8,12 +8,13 @@ import {
   RUDDER_MCP_TOOL_COUNT,
   type AgentRuntimeControlHandle,
 } from "@rudderhq/agent-runtime-utils";
+import * as rudderMcpPreflight from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRuntimeSkillFixture,
   installCanonicalDesktopMcp,
@@ -487,6 +488,28 @@ process.stdin.on("end", () => {
   };
   retry();
   setInterval(retry, 250);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeSharedAuthAwareCodexCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const authPath = path.join(process.env.CODEX_HOME, "auth.json");
+const auth = JSON.parse(fs.readFileSync(authPath, "utf8"));
+process.stdin.resume();
+  process.stdin.on("end", () => {
+  if (auth.token !== "fresh") {
+    console.error('unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED"}');
+    process.exit(1);
+    return;
+  }
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-auth-refresh" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "authenticated" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
 });
 `;
   await fs.writeFile(commandPath, script, "utf8");
@@ -1874,8 +1897,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const managedGh = path.join(managedCodexHome, "home", ".config", "gh");
       const managedGhShim = path.join(managedCodexHome, "home", ".rudder", "local-cli-shims", "gh");
       const managedSkillLink = path.join(managedCodexHome, "skills", "rudder-docs");
-      expect((await fs.lstat(managedAuth)).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(managedAuth)).toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
+      expect((await fs.lstat(managedAuth)).isFile()).toBe(true);
+      expect(await fs.realpath(managedAuth)).not.toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
       expect((await fs.lstat(managedConfig)).isFile()).toBe(true);
       const managedConfigContents = await fs.readFile(managedConfig, "utf8");
       expect(managedConfigContents).toContain('model = "codex-mini-latest"');
@@ -3336,8 +3359,8 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const isolatedAuth = path.join(isolatedCodexHome, "auth.json");
       const isolatedConfig = path.join(isolatedCodexHome, "config.toml");
 
-      expect((await fs.lstat(isolatedAuth)).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(isolatedAuth)).toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
+      expect((await fs.lstat(isolatedAuth)).isFile()).toBe(true);
+      expect(await fs.realpath(isolatedAuth)).not.toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
       expect((await fs.lstat(isolatedConfig)).isFile()).toBe(true);
       const isolatedConfigContents = await fs.readFile(isolatedConfig, "utf8");
       expect(isolatedConfigContents).toContain('model = "codex-mini-latest"');
@@ -4145,7 +4168,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   }, 10_000);
 
-  it("blocks a later Run with the same auth readiness fingerprint and retries after it changes", async () => {
+  it("blocks a later Run with the same auth readiness fingerprint and re-probes after cooldown or change", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-readiness-"));
     const workspace = path.join(root, "workspace");
     const agentHome = path.join(root, "agent-home");
@@ -4216,6 +4239,31 @@ describe("codex execute", { timeout: 20_000 }, () => {
       });
       expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1"]);
 
+      const fingerprint = first.resultJson?.providerFailure?.readinessFingerprint;
+      if (typeof fingerprint !== "string") throw new Error("missing readiness fingerprint");
+      const gatePath = path.join(
+        agentHome,
+        ".rudder",
+        "provider-readiness",
+        "codex",
+        `${fingerprint}.json`,
+      );
+      const expiredState = JSON.parse(await fs.readFile(gatePath, "utf8")) as Record<string, unknown>;
+      expiredState.failedAt = new Date(0).toISOString();
+      await fs.writeFile(gatePath, `${JSON.stringify(expiredState)}\n`, "utf8");
+
+      const expired = await run("run-auth-readiness-expired");
+      expect(expired).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        resultJson: {
+          providerFailure: {
+            readinessState: "failed",
+            readinessFingerprint: fingerprint,
+          },
+        },
+      });
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1", "1"]);
+
       const third = await run("run-auth-readiness-changed", "replacement-api-key");
       expect(third).toMatchObject({
         errorCode: "codex_provider_auth_required",
@@ -4225,7 +4273,73 @@ describe("codex execute", { timeout: 20_000 }, () => {
       });
       expect(third.resultJson?.providerFailure?.readinessFingerprint)
         .not.toBe(first.resultJson?.providerFailure?.readinessFingerprint);
-      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1", "1"]);
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1", "1", "1"]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reloads a refreshed shared auth snapshot on the next Run", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-refresh-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const commandPath = path.join(root, "codex");
+    const sharedAuthPath = path.join(sharedCodexHome, "auth.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(sharedAuthPath, '{"token":"expired"}\n', "utf8");
+    await writeSharedAuthAwareCodexCommand(commandPath);
+
+    const run = (runId: string) => execute({
+      runId,
+      agent: {
+        id: "agent-auth-refresh",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: {
+          CODEX_HOME: sharedCodexHome,
+          RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+        },
+        promptTemplate: "Continue the assigned work.",
+        graceSec: 1,
+      },
+      context: { rudderScene: "issue", rudderWorkspace: { agentHome } },
+      authToken: "run-jwt-token",
+      onLog: async () => {},
+    });
+
+    try {
+      const first = await run("run-auth-refresh-expired");
+      expect(first).toMatchObject({
+        errorCode: "codex_provider_auth_required",
+        resultJson: {
+          providerFailure: {
+            readinessState: "failed",
+            readinessFingerprint: expect.any(String),
+          },
+        },
+      });
+
+      await fs.writeFile(sharedAuthPath, '{"token":"fresh"}\n', "utf8");
+
+      const second = await run("run-auth-refresh-recovered");
+      expect(second).toMatchObject({
+        exitCode: 0,
+        signal: null,
+        summary: "authenticated",
+      });
+      expect(second.errorCode).toBeUndefined();
+      expect(second.resultJson?.providerFailure).toBeUndefined();
+      expect(second.resultJson?.stdout).toContain("codex-session-auth-refresh");
+      expect(second.sessionId).toBe("codex-session-auth-refresh");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -4292,6 +4406,106 @@ describe("codex execute", { timeout: 20_000 }, () => {
       ]));
       expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1"]);
     } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("terminates an active Codex probe when readiness lease renewal loses ownership", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-readiness-lease-loss-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const commandPath = path.join(root, "codex");
+    const abortController = new AbortController();
+    const logs: string[] = [];
+    const previousRudderHome = process.env.RUDDER_HOME;
+    process.env.RUDDER_HOME = path.join(root, "rudder-home");
+    let triggerReadinessRenewal!: () => void;
+    let resolveReadinessClaimed!: () => void;
+    const readinessClaimed = new Promise<void>((resolve) => {
+      resolveReadinessClaimed = resolve;
+    });
+    const realSetInterval = globalThis.setInterval.bind(globalThis);
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(((callback, delay, ...args) => {
+      if (delay === 30_000 && typeof callback === "function") {
+        triggerReadinessRenewal = callback as () => void;
+      }
+      return realSetInterval(callback, delay, ...args);
+    }) as typeof setInterval);
+    const preflightSpy = vi.spyOn(rudderMcpPreflight, "preflightRudderMcpServer").mockResolvedValue({
+      available: false,
+      provenance: "repo",
+      version: null,
+      contractVersion: null,
+      coreContractHash: null,
+      diagnosticCode: "core_bundle_handshake_failed",
+      diagnostic: "test preflight disabled",
+      tools: [],
+    });
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"subscription-auth"}\n', "utf8");
+    await writeBlockingCodexCommand(commandPath);
+
+    const resultPromise = execute({
+      runId: "run-readiness-lease-loss",
+      agent: {
+        id: "agent-readiness",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: {
+          CODEX_HOME: sharedCodexHome,
+          RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          RUDDER_NATIVE_MODE: "node",
+        },
+        promptTemplate: "Continue the assigned work.",
+        timeoutSec: 300,
+        graceSec: 1,
+      },
+      context: { rudderScene: "issue", rudderWorkspace: { agentHome } },
+      authToken: "run-jwt-token",
+      abortSignal: abortController.signal,
+      onMeta: async () => {
+        resolveReadinessClaimed();
+      },
+      onLog: async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+    });
+
+    try {
+      await readinessClaimed;
+      expect(triggerReadinessRenewal).toBeTypeOf("function");
+
+      const readinessDir = path.join(agentHome, ".rudder", "provider-readiness", "codex");
+      const entry = (await fs.readdir(readinessDir)).find((name) => name.endsWith(".json"));
+      if (!entry) throw new Error("readiness probe did not claim a state");
+      const gatePath = path.join(readinessDir, entry);
+
+      const state = JSON.parse(await fs.readFile(gatePath, "utf8")) as Record<string, unknown>;
+      state.probeId = "replacement-owner";
+      state.generation = Number(state.generation ?? 0) + 1;
+      await fs.writeFile(gatePath, `${JSON.stringify(state)}\n`, "utf8");
+
+      triggerReadinessRenewal();
+      const result = await resultPromise;
+      expect(result.signal).toBe("SIGTERM");
+      expect(result.errorMessage).not.toBeNull();
+      expect(logs.join("\n")).toContain("readiness lease was lost");
+    } finally {
+      if (!abortController.signal.aborted) abortController.abort();
+      await resultPromise.catch(() => undefined);
+      preflightSpy.mockRestore();
+      setIntervalSpy.mockRestore();
+      if (previousRudderHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousRudderHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });
