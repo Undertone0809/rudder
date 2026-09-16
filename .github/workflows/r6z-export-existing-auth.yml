@@ -24,7 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
-      - name: Materialize the primary-thread candidate without changing production code
+      - name: Materialize and repair the exact reviewed candidate
         uses: actions/github-script@v8
         with:
           script: |
@@ -57,6 +57,16 @@ jobs:
               assert.equal(git('hash-object',file),sha);
               if(name.endsWith('.rs')) assert.ok(fs.readFileSync(file,'utf8').trimEnd().split('\n').at(-1).startsWith('// End of'));
             }
+            function replace(file,before,after) {
+              const text=fs.readFileSync(file,'utf8');assert.equal(text.split(before).length,2);
+              fs.writeFileSync(file,text.replace(before,after));
+            }
+            replace(root+'/src/middleware.rs','request.headers().get_all(name).into_iter()','request.headers().get_all(name)');
+            const lib=root+'/src/lib.rs';
+            replace(lib,'        if self.source() == ActorSource::AgentJwt {\n            if let Some(run) = run.filter(|run| Some(*run) != self.run_id()) {',
+              '        if self.source() == ActorSource::AgentJwt && let Some(run) = run.filter(|run| Some(*run) != self.run_id()) {');
+            replace(lib,'                });\n            }\n        }\n        let Some(expected)',
+              '                });\n        }\n        let Some(expected)');
             const manifest='native/Cargo.toml',text=fs.readFileSync(manifest,'utf8');
             assert.equal(text.split('members = [\n').length,2);
             fs.writeFileSync(manifest,text.replace('members = [\n','members = [\n  "crates/bearer-auth-service",\n'));
@@ -131,3 +141,21 @@ jobs:
             }
             for(const i of [...selected].sort((a,b)=>a-b).slice(-240)) core.info(lines[i]);
             core.info('Qualification: '+job.conclusion);
+  previous-baseline:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:104945443755});
+            const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected=new Set();
+            for(let i=0;i<lines.length;i++) if(/FAIL |Failed Tests|Failed Suites|AssertionError|Test Files|Tests  |Error:|ERR_PNPM/.test(lines[i]) && lines[i].length<2000) {
+              for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+18);j++) selected.add(j);
+            }
+            for(const i of [...selected].sort((a,b)=>a-b).slice(-220)) core.info(lines[i].slice(0,1800));
+            core.info('Last baseline lines:');
+            for(const line of lines.slice(-40)) core.info(line.slice(0,1800));
